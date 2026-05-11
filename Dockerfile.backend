@@ -36,6 +36,7 @@ RUN npm ci --omit=dev
 # Copy pre-generated Prisma client from builder (avoids needing the CLI in prod)
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
 COPY --from=builder /app/dist ./dist
 
@@ -45,4 +46,4 @@ USER appuser
 EXPOSE 3001
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "dist/main"]
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node dist/main"]

@@ -9,6 +9,11 @@ export class PrismaService
   private readonly logger = new Logger(PrismaService.name);
 
   async onModuleInit(): Promise<void> {
+    if (process.env.DATABASE_CONNECT_ON_STARTUP === 'false') {
+      this.logger.warn('Skipping startup database connection check');
+      return;
+    }
+
     try {
       await this.$connect();
       this.logger.log('Database connected');

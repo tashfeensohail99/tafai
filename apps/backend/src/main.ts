@@ -31,8 +31,8 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
 
-  const port = parseInt(process.env.APP_PORT ?? '3001', 10);
-  await app.listen(port);
+  const port = parseInt(process.env.PORT ?? process.env.APP_PORT ?? '3001', 10);
+  await app.listen(port, '0.0.0.0');
   console.log(`Tashfeen backend running on port ${port}`);
 }
 

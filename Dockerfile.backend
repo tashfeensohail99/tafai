@@ -14,9 +14,9 @@ COPY apps/backend/prisma ./prisma/
 
 RUN npm ci
 
-RUN npx prisma generate
-
 COPY apps/backend/ .
+
+RUN ./node_modules/.bin/prisma generate
 
 RUN npm run build
 
@@ -31,7 +31,7 @@ RUN apk add --no-cache openssl tini
 
 COPY apps/backend/package*.json ./
 COPY apps/backend/prisma ./prisma/
-RUN npm ci --omit=dev && npx prisma generate
+RUN npm ci --omit=dev && ./node_modules/.bin/prisma generate
 
 COPY --from=builder /app/dist ./dist
 

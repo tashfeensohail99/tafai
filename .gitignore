@@ -1,0 +1,78 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+.nuxt/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.staging
+.env.production
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Prisma generated
+apps/backend/src/generated/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Flutter
+apps/mobile/.dart_tool/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/build/
+apps/mobile/.packages
+apps/mobile/pubspec.lock
+
+# Uploads / temp
+uploads/
+tmp/
+temp/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Docker
+infra/docker/.env
+
+# Secrets
+*.pem
+*.key
+*.cert
+*.p12

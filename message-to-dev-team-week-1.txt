@@ -1,0 +1,84 @@
+# Message To Dev Team - Week 1 Technical Package Review
+
+Date: May 8, 2026
+Project: Tashfeen Immigration Solutions AI Platform
+
+Team,
+
+Week 1 technical outputs are now ready.
+
+Please review the following package before we approve Week 2 coding.
+
+Files to review (all in week-1-technical-outputs folder):
+
+- 00-week-1-technical-output-index.md
+- 01-architecture-document.md
+- 02-architecture-diagram.mmd
+- 03-erd-draft.md
+- 04-rbac-permission-matrix.csv
+- 05-api-module-map.md
+- 06-ui-sitemap.md
+- 07-design-system-starter.md
+- 08-devops-staging-plan.md
+- 09-week-1-4-backlog.csv
+- 10-risk-and-blocker-register.csv
+- DEVELOPMENT_STANDARDS.md (workspace root)
+
+Your review should confirm:
+
+1. Architecture is acceptable.
+2. ERD is acceptable for initial schema and migration planning.
+3. RBAC permissions are complete.
+4. API module map covers the required modules.
+5. UI sitemap is aligned with Tashfeen workflows.
+6. Design system and shared component rules are clear.
+7. DevOps/staging plan is workable.
+8. Week 1-4 backlog is ready for project board import.
+9. Blockers are clearly identified.
+10. No unrelated project terminology is used.
+
+Please reply in this format:
+
+Approved items:
+Required changes:
+Missing items:
+Blockers:
+Week 2 coding readiness: Yes/No
+
+Do not start random feature coding before the Week 2 start gate is approved.
+
+Approved stack:
+
+- Web: Next.js / React / TypeScript.
+- Backend: NestJS / Node.js modular monolith.
+- Database: PostgreSQL.
+- ORM/query: Prisma or approved ORM.
+- Queue/jobs: Redis + BullMQ.
+- AI worker: Python FastAPI.
+- Storage: S3-compatible private storage.
+- Mobile: Flutter.
+- Deployment: Dockerized staging and production.
+- Theme: light and dark theme from day 1.
+- Phase 2: basic rollout only.
+
+Mandatory standards:
+
+- Follow DEVELOPMENT_STANDARDS.md.
+- Follow .github/copilot-instructions.md.
+- No shortcut code or screen-only logic.
+- No unrelated terminology: candidate, worker, manpower, employer, recruitment, job order.
+- Use Tashfeen terminology only: client, lead, consultant, case, visa/service, target country, documentation, processing, finance, appointment, partner/referral, WhatsApp, client portal.
+- Build shared design system and components before full screens.
+- Backend must enforce RBAC and ownership checks. Frontend hiding is UX only.
+- Documents must use private storage and signed URLs only.
+- AI outputs must be assistive only and reviewed by staff.
+- Audit logs and activity timelines are both required and are separate.
+
+Commercial reference:
+
+- Final development amount is CAD 10,500.
+- All project documents must use CAD 10,500.
+- Old commercial wording must not appear in any new project document.
+
+Once Week 2 gate is approved, begin with foundation only.
+See week-2-start-command.txt for exact Week 2 task list and what not to start yet.

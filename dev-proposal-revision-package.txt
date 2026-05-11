@@ -1,0 +1,260 @@
+## Plan: Dev Proposal Approval And Required Revision Package
+
+This document converts the proposal review into an actionable approval/revision package. It should be used to ask the developer/team for the next version before final roadmap sign-off. It does not replace `D:\tafsheen\plan.txt` and does not replace the independent technical proposal; it is the comparison/revision layer.
+
+**Final Verdict**
+- Approve the architecture direction conditionally.
+- The dev proposal is strong and approximately 90% aligned with the recommended internal direction.
+- Final approval should wait until the developer expands the proposal with ERD, API contracts, detailed RBAC keys, screen-wise acceptance criteria, security design, DevOps plan, UI/UX deliverables, CAD 10,500 consistency, and Week 1-4 execution backlog.
+
+**Architecture Items To Approve**
+- Modular monolith backend is approved. Do not start with microservices.
+- NestJS/Node.js main backend is approved.
+- PostgreSQL as source of truth is approved.
+- Redis/BullMQ for background jobs is approved.
+- Separate Python FastAPI AI worker is approved.
+- Flutter mobile app using the same backend APIs is approved.
+- S3-compatible private object storage is approved.
+- Phase 2 basic-only boundary is approved.
+- Partner/Referral portal should remain in scope.
+- Earlier start for audit, reporting, security, and Flutter is approved.
+
+**Commercial Correction Required**
+- Final project development fee must be CAD 10,500.
+- Remove all old USD 8,000 references from final documents.
+- Update Agreement Clause 3, Clause 9 Payment Terms, Annexure C, master plan boundary, proposal documents, and payment schedule references.
+- Recommended wording: The total agreed project development fee shall be CAD 10,500/- Canadian Dollars Ten Thousand Five Hundred Only.
+- Do not mix CAD and USD in final legal, planning, invoice, milestone, or proposal documents.
+
+**Required Revision 1 - Proper ERD**
+The entity list must be converted into an actual ERD with table names, primary keys, foreign keys, indexes, audit fields, soft-delete fields, ownership fields, and relationship cardinality.
+
+Required baseline table groups:
+- Identity/RBAC: users, roles, permissions, role_permissions, user_roles, login_sessions, password_reset_tokens, consent_records.
+- Organization: organizations, branches, departments, designations, employee_profiles, client_profiles, partner_profiles.
+- Leads/referrals: leads, lead_sources, campaigns, lead_duplicate_matches, lead_assignments, assignment_rules, lead_status_history, referral_submissions.
+- Cases: cases, case_stages, case_status_history, case_notes, handovers, escalations, tasks.
+- Communications: conversations, messages, whatsapp_templates, bot_flows, bot_steps, bot_sessions, communication_attachments.
+- Appointments: appointments, calendar_slots, appointment_types, reminder_jobs, appointment_status_history.
+- Documents: document_requirements, documents, document_versions, document_verifications, ocr_results, missing_document_requests, document_expiry_alerts.
+- Processing: processing_stages, processing_checklist_items, submission_records, proof_attachments, processing_decisions.
+- Finance: payments, invoices, receipts, installments, refunds, commission_records, finance_audit_events.
+- Reports: report_definitions, report_runs, dashboard_metrics, export_logs, daily_operation_snapshots.
+- AI: ai_jobs, ai_outputs, transcripts, summaries, interview_sessions, interview_questions, interview_answers, business_plans, business_plan_versions.
+- Devices/attendance: devices, device_assignments, device_access_logs, attendance_records, leave_requests, overtime_records, activity_monitoring_events.
+- Audit/timeline: audit_logs, activity_timeline_events, security_events, notifications.
+
+ERD field rules:
+- Every business table should include id, created_at, updated_at, deleted_at where soft delete is needed, created_by_user_id, updated_by_user_id where applicable.
+- Ownership fields should exist where access is scoped, such as owner_employee_id, assigned_employee_id, department_id, client_id, partner_id, branch_id.
+- Audit-sensitive tables should include status, status_changed_at, status_changed_by_user_id where applicable.
+- Indexes required for phone/email duplicate checks, lead source/campaign filters, assigned employee queues, case status, document status, payment status, appointment date, audit event lookup, and timeline lookup.
+
+**Required Revision 2 - API Contract V1**
+The developer must provide first-pass REST API routes with request/response examples, auth requirements, permission key, and error responses.
+
+Required route groups:
+- Auth: POST /auth/login, POST /auth/logout, POST /auth/refresh, POST /auth/forgot-password, POST /auth/reset-password, GET /auth/me.
+- Users/RBAC: GET/POST /users, GET/PATCH/DELETE /users/:id, GET/POST /roles, PATCH /roles/:id, GET /permissions, POST /roles/:id/permissions.
+- Departments/organization: GET/POST /departments, PATCH /departments/:id, GET/POST /branches, GET/POST /designations.
+- Partners/referrals: GET/POST /partners, PATCH /partners/:id, POST /referrals, GET /referrals, GET /referrals/:id, PATCH /referrals/:id/status.
+- Leads: GET /leads, POST /leads, GET /leads/:id, PATCH /leads/:id, POST /leads/:id/assign, POST /leads/:id/reassign, POST /leads/:id/convert, POST /leads/:id/reject, GET /leads/:id/timeline.
+- Duplicate checks: POST /leads/check-duplicate, GET /leads/:id/duplicate-matches, POST /leads/:id/merge.
+- WhatsApp/communications: POST /webhooks/meta/whatsapp, GET /conversations, GET /conversations/:id/messages, POST /conversations/:id/messages, POST /conversations/:id/handover, GET/POST /whatsapp/templates, GET/POST /bot-flows.
+- Appointments: GET/POST /appointments, GET /appointments/:id, PATCH /appointments/:id, POST /appointments/:id/cancel, POST /appointments/:id/reschedule, GET /calendar/slots.
+- Clients/cases: GET /clients, GET /clients/:id, PATCH /clients/:id, GET /clients/:id/timeline, GET/POST /cases, GET /cases/:id, PATCH /cases/:id/status, POST /cases/:id/handover, POST /cases/:id/escalate.
+- Documents: POST /documents/upload, GET /documents, GET /documents/:id, POST /documents/:id/review, POST /documents/:id/request-replacement, GET /clients/:id/document-checklist, POST /document-requirements.
+- Finance: GET/POST /invoices, GET/POST /payments, POST /payments/:id/verify, GET/POST /receipts, GET/POST /installments, POST /refunds, GET /finance/reports.
+- AI jobs: POST /ai/jobs, GET /ai/jobs/:id, POST /ai/documents/:documentId/classify, POST /ai/audio/transcribe, POST /ai/interviews, POST /ai/business-plans.
+- Reports: GET /reports/daily-operations, GET /reports/leads, GET /reports/appointments, GET /reports/revenue, GET /reports/employees, POST /reports/export.
+- Devices/attendance: GET/POST /devices, PATCH /devices/:id, POST /attendance/check-in, POST /attendance/check-out, GET /attendance/reports.
+- Audit/logs: GET /audit-logs, GET /activity-timeline, GET /security-events.
+- Mobile: GET /mobile/dashboard, GET /mobile/tasks, GET /mobile/case-status, POST /mobile/documents/upload, POST /mobile/push-token.
+
+**Required Revision 3 - Detailed RBAC Matrix**
+The proposal must list exact permission keys and map them to roles.
+
+Recommended permission key groups:
+- users.view, users.manage, roles.view, roles.manage, permissions.manage.
+- departments.view, departments.manage, branches.manage.
+- leads.view_all, leads.view_assigned, leads.create, leads.edit, leads.assign, leads.reassign, leads.convert, leads.reject, leads.merge_duplicates.
+- referrals.view_all, referrals.view_own, referrals.create, referrals.manage, referrals.status_update, referrals.commission_view.
+- conversations.view_all, conversations.view_assigned, conversations.reply, conversations.handover, whatsapp.templates_manage, bot_flows.manage.
+- appointments.view_all, appointments.view_assigned, appointments.create, appointments.reschedule, appointments.cancel.
+- clients.view_all, clients.view_assigned, clients.view_own, clients.edit, clients.timeline_view.
+- cases.view_all, cases.view_assigned, cases.update_stage, cases.handover, cases.escalate, cases.close.
+- documents.view_all, documents.view_assigned, documents.view_own, documents.upload, documents.verify, documents.reject, documents.request_replacement, document_requirements.manage.
+- finance.view, finance.create_invoice, finance.verify_payment, finance.issue_receipt, finance.manage_refund, finance.view_reports.
+- reports.view_dashboard, reports.view_leads, reports.view_finance, reports.view_employee, reports.export.
+- ai_jobs.create, ai_jobs.view, ai_outputs.review, business_plans.create, business_plans.export.
+- devices.view, devices.manage, attendance.check_in, attendance.manage, attendance.reports_view.
+- audit.view, security_events.view, settings.manage, integrations.manage, backups.view.
+
+Role mapping summary:
+- Super Admin: all permission keys.
+- Admin/Manager: all operational permissions except destructive system actions unless granted.
+- Sales/Consultant: assigned lead/client/conversation/appointment permissions, document request, conversion/handover, own reports.
+- Documentation Officer: document queue, document verification/rejection/replacement, assigned client/case view, document reports.
+- Processing Officer: case stage updates, handovers, escalations, assigned case view, processing reports.
+- Finance Officer: invoices, payments, receipts, installments, refunds, finance reports, limited client/case view.
+- Support/Call Center: tickets, appointment confirmations, conversations assigned/support queue, limited client/case view.
+- Marketing: campaign/social lead view, content drafts, campaign reports, no finance/document verification.
+- Client: own profile, own case, own documents, own appointments, own payments, own notifications.
+- Partner/Referral: own referrals only, limited status, optional commission view if approved.
+
+**Required Revision 4 - Screen-Wise Acceptance Criteria**
+The developer must create module-level acceptance checklists, not only weekly acceptance.
+
+Minimum acceptance examples:
+- Lead module: admin can create manual lead; website/test lead enters CRM; social/test lead enters CRM; duplicate phone/email is detected; lead source/campaign is saved; auto assignment works; admin can reassign with reason; employee sees assigned lead; audit log records assignment.
+- Partner/referral module: partner can log in; partner can submit referral; referral is attributed to partner; admin can view and assign referral; partner sees limited status only; private client notes/documents are hidden.
+- WhatsApp module: webhook receives message; bot flow captures service interest; template can be sent where approved; conversation links to lead/client; employee can reply; human handover works; provider errors are logged.
+- Appointment module: employee availability can be configured; appointment can be booked, rescheduled, canceled; reminder job runs; appointment appears on admin and employee calendars.
+- Client portal: client can log in; client sees only own case; client uploads document; client sees missing document request; client sees appointment/payment status.
+- Document module: officer sees queue; document can be previewed; OCR/classification runs or manual review is required; officer can verify/reject/request replacement; expiry/missing status is visible; audit records access and decision.
+- Processing module: processing officer sees converted cases; case moves through configured stages; notes/proofs can be added; escalation works; timeline updates.
+- Finance module: invoice can be created; payment can be recorded/verified; receipt can be generated/uploaded; installment/refund statuses work; finance report totals match test data.
+- Reports module: daily operations, lead source, employee, appointment, revenue reports load; filters work; exports work; export is audited.
+- AI module: AI job is queued; status changes from pending to processing to completed/failed; output is stored; employee reviews output; failures are retryable/logged.
+- Flutter mobile: user logs in; dashboard loads; case status loads; document upload works; appointment notifications/push token works where provider ready; attendance check-in/out basic works.
+
+**Required Revision 5 - Security Design Document**
+The developer must prepare a standalone security design covering:
+- Password hashing method such as Argon2id or bcrypt with proper cost factor.
+- Access token and refresh token policy, expiry, rotation, revocation, secure storage.
+- HttpOnly cookie policy for web and secure storage approach for Flutter.
+- Server-side role guards and ownership guards.
+- Client/partner/employee data isolation rules.
+- Signed file URL expiry and permission check before URL generation.
+- Document access logs and export logs.
+- Failed login protection and account lockout/rate limit policy.
+- Optional 2FA/MFA-ready design for admin accounts.
+- Admin account recovery procedure.
+- Secrets management, production environment variable policy, no secrets in code.
+- Backup policy, restore testing, access control to backups.
+- Data retention policy for documents, call recordings, AI outputs, logs, and deleted records.
+- AI privacy policy: reduce PII sent to providers where possible and require human review.
+- Employee monitoring/call recording/attendance consent requirements.
+- Incident response workflow and severity classification.
+
+**Required Revision 6 - DevOps And Deployment Plan**
+The developer must provide an exact hosting/deployment plan:
+- Backend hosting location/provider.
+- Frontend hosting location/provider.
+- AI worker hosting location/provider.
+- PostgreSQL hosting location/provider.
+- Redis hosting location/provider.
+- Object/file storage provider.
+- Domain/subdomain plan: admin, client, API, mobile API, webhooks.
+- CI/CD pipeline steps: build, lint, test, migration check, deploy staging, manual production approval.
+- Environment variable and secret management.
+- Database migration process and rollback handling.
+- Backup schedule and restore test process.
+- Monitoring/logging/error alert tool.
+- Webhook monitoring for Meta/WhatsApp and telephony.
+- Production deployment checklist.
+- Rollback procedure.
+- Estimated monthly hosting and provider cost ranges.
+
+**Required Revision 7 - UI/UX Design Deliverables**
+The developer/designer must prepare Figma or equivalent wireframe direction before full development:
+- Design system: color palette, typography, spacing, buttons, tables, forms, status badges, modals, alerts.
+- Login page.
+- Admin dashboard.
+- Lead inbox.
+- Assignment/reassignment modal.
+- WhatsApp CRM inbox.
+- Client/lead profile.
+- Document review screen.
+- Processing stage board.
+- Finance dashboard.
+- Reports dashboard.
+- Client portal dashboard.
+- Partner portal dashboard and referral form.
+- Flutter login.
+- Flutter employee dashboard.
+- Flutter client dashboard.
+- Mobile document upload flow.
+
+Design direction:
+- Use a professional CRM style, not a marketing landing page.
+- Prioritize dense, scannable operational screens.
+- Use consistent status colors for lead/case/document/payment states.
+- Keep navigation predictable by role.
+- Assume logo and colors for now; final brand assets can be swapped later.
+
+**Required Revision 8 - Detailed Week 1 To Week 4 Execution Backlog**
+The next developer submission should include exact tasks, owners, dependencies, and acceptance criteria for Weeks 1-4.
+
+Week 1 recommended backlog:
+- Owner: Project lead/business analyst. Task: finalize scope matrix from ai.txt and agreement.txt. Dependency: client confirms services/departments/statuses. Acceptance: all modules mapped to milestone/week.
+- Owner: Solution architect. Task: final architecture diagram and module boundaries. Dependency: approved stack. Acceptance: architecture signed off.
+- Owner: Database lead. Task: ERD v1. Dependency: confirmed modules/roles. Acceptance: tables, PK/FK, indexes, audit fields documented.
+- Owner: UX lead. Task: sitemap and design system draft. Dependency: assumed branding. Acceptance: admin/employee/client/partner/mobile sitemap approved.
+- Owner: DevOps lead. Task: environment/provider plan. Dependency: domain/hosting decision. Acceptance: staging approach and costs documented.
+
+Week 2 recommended backlog:
+- Owner: Backend lead. Task: NestJS project, auth, RBAC, users, departments. Dependency: ERD v1. Acceptance: login and role guard work.
+- Owner: Database lead. Task: initial migrations and seed data. Dependency: ERD v1 approval. Acceptance: seed admin/roles/departments created.
+- Owner: Backend lead. Task: audit/report event foundation. Dependency: auth/RBAC. Acceptance: login/create/update events stored.
+- Owner: DevOps lead. Task: Docker/staging CI baseline. Dependency: hosting selected. Acceptance: staging deploy works.
+- Owner: Mobile lead. Task: Flutter API contract and shell plan. Dependency: auth API contract. Acceptance: mobile login contract documented.
+
+Week 3 recommended backlog:
+- Owner: Frontend lead. Task: admin shell/dashboard/users/roles/departments. Dependency: auth/RBAC APIs. Acceptance: admin manages users/roles/departments.
+- Owner: Backend lead. Task: partner/referral base APIs. Dependency: RBAC. Acceptance: admin can create partner record.
+- Owner: Frontend lead. Task: audit/report skeleton screens. Dependency: audit/report event APIs. Acceptance: dashboard shows basic counts.
+- Owner: DevOps lead. Task: backup/monitoring baseline. Dependency: staging DB. Acceptance: backup plan and health checks documented.
+
+Week 4 recommended backlog:
+- Owner: Frontend lead. Task: employee portal shell, work queue, profile, notes, timeline. Dependency: admin/user/department setup. Acceptance: employee sees role-based queue.
+- Owner: Mobile lead. Task: Flutter shell/login connected to staging. Dependency: mobile auth API. Acceptance: mobile login works on test device/emulator.
+- Owner: QA lead. Task: Month 1 UAT checklist. Dependency: Week 2-4 features. Acceptance: Super Admin/Admin/Employee/Partner roles tested.
+- Owner: Project lead. Task: Month 1 milestone review. Dependency: UAT. Acceptance: client sign-off or issue list.
+
+**Improved Weekly Roadmap To Use**
+- Week 1: Discovery, architecture, ERD, RBAC, design system, backlog.
+- Week 2: Backend foundation, auth, RBAC, audit, file storage, DevOps.
+- Week 3: Admin core, employee/user management, departments, roles.
+- Week 4: Employee portal core, work queues, Flutter shell, Month 1 UAT.
+- Week 5: Lead intake, website/manual/social lead capture, duplicate handling.
+- Week 6: Lead distribution, partner referral, assignment audit.
+- Week 7: WhatsApp API, CRM inbox, bot flow, AI reply suggestion.
+- Week 8: Sales workflow, appointment system, Month 2 UAT.
+- Week 9: Client portal, document upload, mobile client/employee core.
+- Week 10: Document AI, verification, missing document workflow.
+- Week 11: Processing, finance, support, marketing workflows.
+- Week 12: Department handover, lifecycle timeline, Month 3 UAT.
+- Week 13: AI call agent, AI interview, telephony/provider fallback.
+- Week 14: AI business plan, reports, exports, audit completion.
+- Week 15: Flutter completion, push notifications, Phase 2 basic.
+- Week 16: Regression, security testing, deployment, training, handover.
+- Week 17-24: Stabilization only, no new features.
+
+**Ready-To-Send Message To Developer**
+Your technical proposal is strong and mostly aligned with our internal direction. We agree with the modular monolith approach, separate AI worker, PostgreSQL, Redis/BullMQ, S3 storage, Flutter mobile app, and Phase 2 basic-only boundary.
+
+Before we approve it as the final development roadmap, please revise and expand it with the following:
+
+1. Prepare a proper ERD. Convert the entity list into an actual database ERD with table names, primary keys, foreign keys, relationships, indexes, soft-delete fields, ownership fields, and audit fields.
+
+2. Prepare API contract. Create a first version of API routes for auth, users, roles, leads, assignments, WhatsApp, appointments, clients, cases, documents, finance, reports, AI jobs, devices, attendance, and audit logs. Include request/response examples, required permission key, and important error responses.
+
+3. Prepare detailed RBAC matrix. For each role, define exact permissions using permission keys such as leads.view_assigned, leads.assign, documents.verify, finance.verify_payment, reports.view, users.manage, referrals.view_own, and audit.view.
+
+4. Prepare screen-wise acceptance criteria. For each major screen/module, define what must work before we mark it complete. Include Admin, Employee, Client, Partner, WhatsApp, Documents, Finance, Reports, AI, and Mobile.
+
+5. Prepare Security Design Document. Include password hashing, token/session policy, refresh token handling, signed file URLs, role guards, document access control, audit log events, backups, data retention, failed login protection, optional 2FA, and client/employee/partner data isolation.
+
+6. Prepare DevOps and deployment plan. Mention exact hosting approach, staging/production setup, CI/CD, database hosting, Redis, file storage, backups, environment variables, rollback process, monitoring/logging, and estimated monthly hosting cost.
+
+7. Prepare UI/UX design deliverables. Create initial Figma or wireframe direction for login, admin dashboard, lead inbox, WhatsApp inbox, client profile, document review, finance dashboard, reports dashboard, client portal dashboard, partner portal dashboard, Flutter employee dashboard, and Flutter client dashboard.
+
+8. Confirm commercial amount. Your proposal states CAD 10,500. Please keep all project documents consistent with CAD 10,500 and remove any old USD 8,000 reference from the final version, including agreement-related references.
+
+9. Prepare detailed Week 1 to Week 4 execution backlog. Before full development starts, give us exact tasks, owners, dependencies, and acceptance criteria for the first 4 weeks.
+
+Once you update these items, we will compare the revised proposal with our internal plan and approve the final roadmap.
+
+**Decision**
+Use this package to request the revised proposal. Do not fully approve development until the revised ERD, API contract, RBAC matrix, screen acceptance criteria, security plan, DevOps plan, UI/UX deliverables, CAD consistency, and Week 1-4 backlog are submitted and reviewed.

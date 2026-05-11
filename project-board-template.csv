@@ -1,0 +1,34 @@
+Title,Module,Description,Owner,Priority,Dependency,Status,Due Week,Acceptance Criteria
+Confirm CAD 10500 agreement correction,Legal/Commercial,Ensure all final legal documents use CAD 10500 and no USD 8000 references remain,Client/Project Lead,Critical,Corrected agreement text,Ready for Development,Week 1,Final agreement DOCX/PDF/text all show CAD 10500
+Confirm main client approver,Project Management,Name one decision maker for scope/UAT/change approvals,Client,Critical,None,Backlog,Week 1,Approver name and contact confirmed in writing
+Confirm project start date,Project Management,Confirm official start date in writing,Client,Critical,Agreement/payment,Backlog,Week 1,Start date recorded in project docs
+Create project communication channel,Project Management,Create WhatsApp/Slack/Teams channel for project communication,Client/Project Lead,High,Approver confirmation,Backlog,Week 1,Channel created with decision makers and dev lead
+Create project repository,DevOps,Create GitHub/GitLab repository and access rules,Dev Team,High,Client repo decision,Backlog,Week 1,Repository created with branch strategy
+Create project board,Project Management,Create board with Backlog Ready In Progress Code Review Testing UAT Approved Blocked Change Request,Project Lead,High,Tool selection,Backlog,Week 1,Board created and Week 1-4 tasks loaded
+Finalize scope matrix,Scope,Map ai.txt agreement.txt plan.txt modules to milestones and boundaries,Business Analyst,High,Source docs,Backlog,Week 1,Scope matrix approved
+Prepare architecture diagram,Architecture,Create web backend mobile AI database queue storage integration diagram,Solution Architect,High,Approved stack,Backlog,Week 1,Architecture diagram reviewed and approved
+Prepare ERD draft,Database,Create ERD with tables PK FK ownership audit fields indexes,Database Lead,High,Scope matrix,Backlog,Week 1,ERD draft approved
+Prepare RBAC permission matrix,Security/RBAC,Map permission keys to Super Admin Admin Sales Documentation Processing Finance Support Marketing Client Partner,Backend Lead,High,Role list,Backlog,Week 1,RBAC matrix approved
+Prepare API module map,API,Define route groups for auth users roles leads WhatsApp appointments clients cases documents finance reports AI devices attendance audit,Backend Lead,High,ERD/RBAC draft,Backlog,Week 1,API module map approved
+Prepare UI sitemap,UI/UX,Create admin employee client partner mobile sitemap,UX Lead,High,Scope matrix,Backlog,Week 1,Sitemap approved
+Prepare design system starter,UI/UX,Create tokens buttons badges inputs table modal status badge theme toggle,UX/Frontend Lead,High,Brand direction,Backlog,Week 1,Light/dark design system starter approved
+Prepare DevOps staging plan,DevOps,Define hosting database Redis storage env secrets CI/CD backups monitoring,DevOps Lead,High,Hosting decision,Backlog,Week 1,Staging plan approved
+Prepare security model,Security,Define auth token policy RBAC ownership signed URLs audit backups secrets failed login 2FA-ready,Security/Backend Lead,High,RBAC/architecture,Backlog,Week 1,Security model approved
+Confirm services list,Business Setup,Confirm services offered and categories,Client,High,None,Backlog,Week 1,Final services list approved
+Confirm countries list,Business Setup,Confirm countries/target regions handled,Client,High,None,Backlog,Week 1,Final country list approved
+Confirm departments,Business Setup,Confirm departments and managers,Client,High,None,Backlog,Week 1,Department list approved
+Provide employee list,Business Setup,Provide employee name email phone department role access level,Client,High,Department list,Backlog,Week 1,Employee import sheet ready
+Approve lead statuses,Workflow,Confirm lead status list and transitions,Client/Sales Lead,High,Sales process,Backlog,Week 1,Lead statuses approved
+Approve case statuses,Workflow,Confirm case status list and visibility,Client/Operations,High,Processing workflow,Backlog,Week 1,Case statuses approved
+Provide document checklist,Documents,Provide required documents by service and country,Client/Documentation,High,Services/countries,Backlog,Week 1,Checklist v1 approved
+Provide payment/invoice format,Finance,Provide invoice receipt numbering payment methods installment refund rules,Client/Finance,High,Finance process,Backlog,Week 1,Finance format approved
+Prepare message templates,Communications,Prepare WhatsApp/email templates for greeting appointment documents payment case updates,Client/Project Lead,Medium,Workflow approvals,Backlog,Week 1,Template v1 ready
+Setup backend foundation,Backend,Initialize NestJS modular backend with linting strict TS env config,Backend Lead,High,Architecture approval,Ready for Development,Week 2,Backend runs locally and staging
+Setup database migrations,Database,Create initial Prisma schema/migrations for auth RBAC org foundation,Backend/Database Lead,High,ERD approval,Ready for Development,Week 2,Migrations run cleanly
+Implement auth baseline,Backend,Implement login logout refresh me password reset skeleton,Backend Lead,High,DB setup,Ready for Development,Week 2,Auth APIs pass smoke test
+Implement RBAC guard,Backend,Implement permission and ownership guard foundation,Backend Lead,High,RBAC matrix,Ready for Development,Week 2,Unauthorized actions blocked
+Implement audit foundation,Backend,Create audit log service and basic events,Backend Lead,High,Auth/RBAC,Ready for Development,Week 2,Login and role/user changes audited
+Setup private file storage,Storage,Connect S3-compatible storage and signed URL flow,Backend/DevOps,High,Storage provider,Ready for Development,Week 2,Upload/download signed URL test passes
+Create web frontend shell,Frontend,Initialize Next.js app shell login layout theme toggle route groups,Frontend Lead,High,Design system starter,Ready for Development,Week 2,Shell runs with light/dark theme
+Create Flutter shell plan,Mobile,Define Flutter auth API and starter shell,Mobile Lead,Medium,Auth API contract,Ready for Development,Week 2,Mobile login contract documented
+Setup staging CI/CD,DevOps,Deploy backend/frontend skeleton to staging,DevOps Lead,High,Hosting selected,Ready for Development,Week 2,Staging URL accessible

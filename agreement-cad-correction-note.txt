@@ -1,0 +1,24 @@
+# Agreement CAD Correction Note
+
+Date: May 8, 2026
+File corrected: agreement.txt
+
+Correction completed:
+- Clause 3 Project Value changed from USD 8,000 to CAD 10,500.
+- Clause 8 Third-Party Services and Costs changed from USD 8,000 to CAD 10,500.
+- Clause 9 Payment Terms changed from USD 8,000 to CAD 10,500.
+- Annexure C Payment Schedule changed from USD milestone amounts to CAD milestone amounts.
+- Special Scope Clarification changed from USD 8,000 to CAD 10,500.
+
+Current CAD payment schedule in agreement.txt:
+- Advance Payment: CAD 2,000 at signing.
+- Milestone 1: CAD 2,000 after Month 1 foundation delivery.
+- Milestone 2: CAD 2,000 after Month 2 lead/WhatsApp/sales workflow delivery.
+- Milestone 3: CAD 2,500 after Month 3 client portal/document/processing/finance delivery.
+- Final Payment: CAD 2,000 before final deployment/handover in Month 4.
+- Total: CAD 10,500.
+
+Important:
+- agreement.txt has been corrected and verified with no remaining USD or 8,000 matches.
+- agreement.docx and agreement.pdf are binary/original files and should be regenerated from the corrected text before signing/final sharing.
+- Do not sign or share the old PDF/DOCX if it still contains USD 8,000.

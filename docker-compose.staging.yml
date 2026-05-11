@@ -1,0 +1,92 @@
+# =====================================================================
+# docker-compose.staging.yml
+# Staging / UAT environment — all services containerized.
+# Override env vars via a .env.staging file or CI secrets.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+# =====================================================================
+
+version: '3.9'
+
+services:
+  # ---- Infrastructure (override prod-safe settings) ----
+  postgres:
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-tafsheen_staging}
+      POSTGRES_USER: ${DB_USER:-tafsheen_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    # Do not expose postgres port externally in staging
+    ports: []
+
+  redis:
+    restart: always
+    ports: []
+
+  minio:
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    ports: []
+
+  # ---- Application Services ----
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: tafsheen_backend
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      NODE_ENV: staging
+      APP_PORT: 3001
+      DATABASE_URL: postgresql://${DB_USER:-tafsheen_user}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-tafsheen_staging}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      STORAGE_SECRET_KEY: ${MINIO_SECRET_KEY}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-tafsheen-docs}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      THROTTLE_TTL: ${THROTTLE_TTL:-60}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+    ports:
+      - '3001:3001'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/health']
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    container_name: tafsheen_frontend
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:3001}
+    ports:
+      - '3000:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000']
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s

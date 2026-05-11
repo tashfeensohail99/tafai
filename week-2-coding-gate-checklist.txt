@@ -1,0 +1,33 @@
+# Week 2 Coding Gate Checklist
+
+Do not begin real Week 2 coding until these items are complete.
+
+[ ] Agreement amount corrected to CAD 10,500 in final signing documents.
+[ ] Payment schedule confirmed.
+[ ] Advance/payment kickoff condition confirmed.
+[ ] Project start date confirmed.
+[ ] Main approver confirmed.
+[ ] Communication channel created.
+[ ] DEVELOPMENT_STANDARDS.md approved by dev/team.
+[ ] Architecture diagram approved.
+[ ] ERD draft approved.
+[ ] RBAC permission matrix approved.
+[ ] API module map approved.
+[ ] UI sitemap approved.
+[ ] Design system starter approved.
+[ ] Git repository created.
+[ ] Project board created.
+[ ] Dev/staging environment decided.
+[ ] Database selected.
+[ ] File storage selected.
+[ ] Redis/queue hosting selected.
+[ ] Week 2 backlog approved.
+[ ] Services list confirmed or temporary seed list approved.
+[ ] Countries list confirmed or temporary seed list approved.
+[ ] Departments confirmed.
+[ ] User roles confirmed.
+[ ] Lead statuses confirmed.
+[ ] Case statuses confirmed.
+[ ] Document checklist v1 confirmed or temporary checklist approved.
+
+If any item is missing, Week 2 may still do setup/prototypes, but not locked production workflow coding.

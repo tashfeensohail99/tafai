@@ -1,0 +1,159 @@
+## Plan: Independent Technical Proposal For Tashfeen AI Platform
+
+This is my independent professional recommendation for the Tashfeen AI Platform. It is intentionally written as a technical proposal and execution plan to compare with the internal/client plan before final development. Commercial correction: project amount is CAD 10,500 for software development only. Blank legal fields in the agreement are not filled here.
+
+**Recommendation Summary**
+- Build Version 1 as a modular monolith, not microservices. The project has many modules, but the budget/timeline favors one well-structured backend with clear module boundaries.
+- Use separate AI worker service for OCR, transcription, summaries, interviews, and business plan generation.
+- Start reporting, audit, security, and Flutter early instead of leaving them to the end.
+- Treat Phase 2 as basic only: attendance, device registry, activity monitoring, social content, and enterprise settings are lightweight operational modules, not full ERP/MDM/endpoint security.
+- Use provider-dependent fallback modes for WhatsApp, telephony, app stores, AI, OCR, and social APIs.
+
+**1. Recommended Architecture**
+- Frontend architecture: Next.js/React/TypeScript web app with route groups for admin, employee, client, and partner portals. Use shared UI components, shared form validation, permission-aware navigation, and TanStack Query for API state.
+- Backend architecture: NestJS/Node.js modular monolith. Modules: auth, users, roles, departments, leads, referrals, communications, appointments, clients, cases, documents, finance, reports, AI jobs, devices, attendance, audit, integrations.
+- Database architecture: PostgreSQL as source of truth, normalized relational schema, UUID primary keys, event/audit tables, report-friendly indexes, optional materialized views for dashboards.
+- AI worker architecture: Python FastAPI AI service called by backend jobs. Responsibilities: OCR parsing, document classification, transcription, summaries, interview evaluation, business plan draft generation. Backend remains the system of record.
+- Mobile app architecture: Flutter app consuming the same backend APIs. Start with employee/client login, dashboards, case status, document upload, notifications, attendance basic, and optional admin summary.
+- Queue/job system: Redis + BullMQ in backend for webhooks, reminders, notifications, report generation, OCR/AI jobs, transcript jobs, and retryable integrations.
+- File storage: S3-compatible private object storage with signed URLs, file metadata in PostgreSQL, private buckets, retention policy, and optional virus/provider scanning.
+- Deployment approach: Dockerized services on managed VPS/cloud or managed container platform. Use staging and production environments, CI/CD, migrations, backups, monitoring, and rollback checklist.
+- Security approach: server-side RBAC, record ownership checks, signed document access, audit logs, PII minimization, consent records, encrypted secrets, HTTPS, backup controls, and human review for AI outputs.
+
+**2. Recommended Technology Stack**
+- Web framework: Next.js + React + TypeScript.
+- UI layer: Tailwind CSS + Radix/shadcn-style components, React Hook Form, Zod, TanStack Table, Recharts.
+- Backend framework: NestJS + TypeScript.
+- Database: PostgreSQL.
+- ORM/query layer: Prisma for CRUD and migrations, with raw SQL/views for complex reports where needed.
+- Authentication: email/password with hashed passwords, JWT access tokens, refresh tokens, HttpOnly cookies for web, secure token storage for Flutter, optional MFA-ready design.
+- Storage: S3-compatible storage such as AWS S3, Cloudflare R2, DigitalOcean Spaces, or MinIO-compatible provider.
+- Queue system: Redis + BullMQ.
+- AI/OCR/transcription tools: OpenAI/Claude-compatible LLM gateway, Azure Document Intelligence/Google Document AI/AWS Textract for OCR, Whisper/OpenAI/Azure Speech/Deepgram for transcription depending on price and region.
+- WhatsApp/Meta integration: Meta WhatsApp Cloud API, webhook receiver, template manager, bot flow state machine, conversation inbox, human handover.
+- SIP/telephony approach: Twilio/Vonage/local SIP provider only if call recording/transcription APIs and consent/legal workflow are available.
+- Mobile app stack: Flutter + Dart, Riverpod or Bloc, Dio/HTTP client, secure storage, Firebase Cloud Messaging.
+- Hosting/deployment stack: Docker, GitHub Actions/GitLab CI, managed PostgreSQL, Redis, object storage, domain/SSL, monitoring/logging service.
+
+**3. Database And Module Design**
+- Users/RBAC: User, Role, Permission, RolePermission, UserRole, LoginSession, PasswordResetToken, ConsentRecord.
+- Organization: Organization, Branch, Department, Designation, EmployeeProfile, ClientUserProfile, PartnerProfile.
+- Leads: Lead, LeadSource, Campaign, LeadDuplicateMatch, LeadAssignment, AssignmentRule, LeadStatusHistory, ReferralSubmission.
+- Clients/cases: ClientProfile, CaseApplication, CaseStage, CaseStatusHistory, CaseNote, Handover, Escalation, Task.
+- WhatsApp/communications: Conversation, Message, WhatsAppTemplate, BotFlow, BotStep, BotSession, CommunicationAttachment.
+- Appointments: Appointment, CalendarSlot, AppointmentType, ReminderJob, AppointmentStatusHistory.
+- Documents: DocumentRequirement, Document, DocumentVersion, DocumentVerification, OCRResult, MissingDocumentRequest, DocumentExpiryAlert.
+- Processing: ProcessingStage, ProcessingChecklistItem, SubmissionRecord, ProofAttachment, ProcessingDecision.
+- Finance: Payment, Invoice, Receipt, Installment, Refund, CommissionRecord, FinanceAuditEvent.
+- Reports: ReportDefinition, ReportRun, DashboardMetric, ExportLog, DailyOperationSnapshot.
+- AI: AIJob, AIOutput, Transcript, Summary, InterviewSession, InterviewQuestion, InterviewAnswer, BusinessPlan, BusinessPlanVersion.
+- Devices/attendance: Device, DeviceAssignment, DeviceAccessLog, AttendanceRecord, LeaveRequest, OvertimeRecord, ActivityMonitoringEvent.
+- Audit/timeline: AuditLog, ActivityTimelineEvent, SecurityEvent, Notification.
+
+**4. Role And Permission Matrix**
+- Super Admin: full system access, roles, settings, integrations, reports, audit logs, emergency access, delete/deactivate controls.
+- Admin/Manager: operational access across departments, assignment, reports, approvals, escalations, limited settings, no destructive system-level actions unless granted.
+- Sales/Consultant: assigned leads, lead notes, WhatsApp/sales communication, screening, appointments, document requests, conversion/handover.
+- Documentation Officer: document queue, document review, verification/rejection, missing document requests, document reports, no finance edits.
+- Processing Officer: converted cases, processing stages, application notes, submission proofs, escalations, no payment modification.
+- Finance Officer: invoices, receipts, payments, installments, refunds, finance reports, payment status updates, no document approval unless granted.
+- Support/Call Center: tickets, follow-ups, appointment confirmations, missed calls, client communication, escalation, limited client/case view.
+- Marketing: campaign leads, social lead source data, content calendar, AI content drafts, campaign analytics, no finance/document/case authority.
+- Client: own profile, own case timeline, own document upload/status, own appointments, own payment/receipt view, notifications.
+- Partner/Referral: submit referrals, view limited referral status, optional commission summary if approved, no private client documents/case notes.
+
+**5. Main System Flow**
+1. Lead enters from website, Facebook/Instagram, WhatsApp, manual entry, or partner referral.
+2. System normalizes phone/email/name/service/country and runs duplicate check.
+3. Duplicate match is flagged for merge/review; clean lead proceeds to assignment.
+4. Assignment engine routes lead by service, country, workload, availability, priority, and manual admin override.
+5. Sales/consultant receives notification and starts WhatsApp/call/manual communication.
+6. WhatsApp bot collects initial service interest and basic screening data, then hands over to human staff.
+7. Consultant completes screening, marks lead priority, schedules appointment, and sends document request.
+8. Client gets portal/mobile access and uploads required documents.
+9. Documentation officer reviews documents, uses OCR/classification assistance, requests replacements/missing items.
+10. Approved documents move case to processing department with handover notes.
+11. Processing updates case stages, submission proofs, status, escalations, and timeline.
+12. Finance verifies payments, invoices, receipts, installments, refunds, and payment status.
+13. Client sees lifecycle status and pending actions; admins monitor dashboards/reports.
+14. Audit/activity timeline records all important actions, exports, handovers, and sensitive access.
+
+**6. UI/UX Plan**
+- Admin portal screens: dashboard, users/employees, roles/permissions, departments/branches, partners/referrals, lead inbox, assignment rules, client/case database, WhatsApp inbox, appointments, documents overview, processing overview, finance, support, marketing, reports, audit logs, security/privacy, integrations, backup/settings, Phase 2 basic screens.
+- Employee portal screens: dashboard, assigned work queue, lead/client profile, notes, timeline, communication panel, department actions, handover, notifications, daily work report.
+- Client portal screens: login, dashboard, case status, timeline, document checklist/upload, missing data form, appointments, payment/receipt view, consultant details, notifications, profile.
+- Partner portal screens: login, dashboard, new referral form, referral list/detail, limited status tracking, optional commission view, notifications, support contact.
+- Flutter app screens: splash/login, employee dashboard, client dashboard, assigned leads/tasks, case status, document upload, appointments, notifications, attendance check-in/out basic, optional admin summary.
+- Dashboard layout: top KPI row, priority queues, today appointments/tasks, recent activity timeline, alerts/escalations, charts for lead source/conversion/revenue/department workload.
+- Design system/theme: professional CRM style, light-first interface, strong contrast, restrained brand color, status colors for lead/case/payment/document states, reusable spacing/type scale.
+- Reusable components: data table, filters, status badge, timeline, upload widget, preview modal, notes panel, activity feed, permission gate, confirmation modal, assignment modal, report export button, notification center.
+
+**7. Weekly Delivery Plan**
+- Week 1: discovery, scope freeze, architecture, provider decisions. Deliverables: backlog, sitemap, ERD draft, risk register. Risk: missing credentials.
+- Week 2: backend foundation, DB, auth, RBAC, audit/report event model, Flutter API contract, DevOps baseline. Acceptance: login/RBAC/audit works.
+- Week 3: admin core, employees, departments, partner setup, reporting skeleton. Acceptance: admin can configure users/roles/departments/partners.
+- Week 4: employee portal core, work queues, timeline, notifications, Flutter shell. Acceptance: core Month 1 UAT passes.
+- Week 5: lead intake, social/web/manual leads, duplicate check, partner referral submission. Acceptance: all test lead sources enter CRM.
+- Week 6: assignment engine, notifications, partner status tracking. Acceptance: assignment and reassignment are audited.
+- Week 7: WhatsApp Cloud API, bot flows, CRM inbox, AI reply suggestions. Acceptance: inquiry flow and human handover work where Meta access is ready.
+- Week 8: sales workflow, screening, follow-ups, appointments, reminders, Month 2 UAT. Acceptance: sales can convert/reject and book appointments.
+- Week 9: client portal, document upload, Flutter client/employee core. Acceptance: client uploads docs; mobile login/dashboard works.
+- Week 10: document workflow, OCR/classification, verification, missing/expired document requests. Acceptance: docs can be verified/rejected/requested.
+- Week 11: processing, finance, support, marketing, operations workflows; mobile case/status. Acceptance: each department completes main workflow.
+- Week 12: handovers, lifecycle timeline, reporting v1, Month 3 UAT. Acceptance: lead-to-case-to-payment lifecycle works end-to-end.
+- Week 13: telephony/AI call basic, transcripts, AI interview. Acceptance: provider-ready calls/interviews create summaries or fallback is documented.
+- Week 14: AI business plan, finalized reports, exports, audit completion. Acceptance: generated plan/export/report/audit works.
+- Week 15: Flutter completion, push notifications, Phase 2 basic rollout. Acceptance: mobile core complete; Phase 2 basic screens available.
+- Week 16: regression, security/privacy tests, production deployment, training, handover. Acceptance: final UAT/handover completed after payment.
+- Grace Weeks 17-24: stabilization, provider approval follow-up, AI/report tuning, mobile fixes, security hardening, final UAT closure, support handoff. Boundary: no new features without change request.
+
+**8. Third-Party Dependency List**
+- Domain and DNS access.
+- Hosting/cloud account or approved managed deployment provider.
+- Meta Business Manager and business verification access.
+- WhatsApp Business number and template approvals.
+- Facebook/Instagram page and lead form access.
+- Email/SMTP provider and DNS records.
+- AI/LLM provider and billing keys.
+- OCR/document intelligence provider.
+- SIP/telephony provider with recording/transcription support.
+- Google Play Console and Apple Developer accounts.
+- Firebase project for push notifications.
+- Payment gateway, if required.
+- Policies/consents for employee monitoring, device registry, attendance, call recording, AI usage, and data privacy.
+
+**9. Risk Register**
+- Scope creep: control with written change requests and milestone acceptance.
+- Meta approval delays: submit early, build mock/test flows, document blocked items.
+- WhatsApp template approval: write compliant templates, keep fallback manual messaging.
+- App Store/Play Store delays: prepare accounts/assets/privacy early; approval not guaranteed.
+- AI accuracy: human review required, low-confidence outputs flagged.
+- OCR errors: manual review fallback and correction workflow.
+- Telephony limitations: provider evaluation early; WhatsApp app calls not promised as recordable.
+- Document privacy: signed URLs, private buckets, RBAC, audit logs.
+- Employee monitoring/legal consent: require written policy and consent before rollout.
+- Mobile app timeline: start Flutter early; keep v1 mobile scope focused.
+- Data security: RBAC, audit, backups, secrets handling, HTTPS, access reviews.
+- Client delay in credentials/feedback: timeline and milestones shift according to dependency impact.
+
+**10. Out Of Scope Unless Separately Approved**
+- Full ERP.
+- Advanced MDM.
+- Full endpoint/PC control.
+- Advanced biometric attendance, GPS enforcement, liveness verification.
+- Payroll/accounting system.
+- Guaranteed visa, immigration, business, sales, or client conversion results.
+- Guaranteed Meta, Apple, Google, telecom, payment gateway, or social media approvals.
+- Major redesigns after approval.
+- New reports, modules, workflows, integrations, or business logic changes after scope approval.
+- Advanced Phase 2 enterprise suite beyond basic operational screens.
+
+**Professional Development Governance**
+- Use milestone acceptance checklists for Month 1-4.
+- Keep a requirements traceability matrix from source documents to modules/screens/tests.
+- Use staging UAT before production deployment.
+- Record all change requests in writing with impact on cost, timeline, affected modules, and acceptance criteria.
+- Maintain 90-day post-handover bug support with severity rules.
+
+**Final Recommendation**
+My recommendation is to approve a focused modular monolith architecture with separate AI worker service, early audit/reporting/mobile foundations, and strict third-party dependency handling. This gives the best balance of delivery speed, maintainability, budget control, and future scalability for Tashfeen's 4-month active delivery plus grace period.

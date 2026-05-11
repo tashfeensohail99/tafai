@@ -1,0 +1,65 @@
+flowchart TD
+    ClientWeb[Client Web Portal\nNext.js React TypeScript]
+    EmployeeWeb[Employee Portal\nNext.js React TypeScript]
+    AdminWeb[Admin Portal\nNext.js React TypeScript]
+    PartnerWeb[Partner Referral Portal\nNext.js React TypeScript]
+    MobileApp[Flutter Mobile App\nEmployee and Client]
+
+    Api[NestJS Modular Monolith API\nAuth RBAC Workflows Audit]
+    Db[(PostgreSQL\nSource of Truth)]
+    Redis[(Redis\nBullMQ Queues)]
+    Storage[(Private S3-Compatible Storage\nSigned URLs Only)]
+    AIWorker[Python FastAPI AI Worker\nOCR Transcription Summaries]
+
+    Meta[Meta WhatsApp API]
+    Social[Facebook Instagram Website Forms]
+    Email[Email SMTP Provider]
+    Push[Firebase Push Notifications]
+    Telephony[SIP Telephony Provider]
+    AIProvider[AI/OCR/STT Providers]
+
+    ClientWeb --> Api
+    EmployeeWeb --> Api
+    AdminWeb --> Api
+    PartnerWeb --> Api
+    MobileApp --> Api
+
+    Api --> Db
+    Api --> Redis
+    Api --> Storage
+    Redis --> AIWorker
+    AIWorker --> Db
+    AIWorker --> Storage
+    AIWorker --> AIProvider
+
+    Api --> Meta
+    Meta --> Api
+    Social --> Api
+    Api --> Email
+    Api --> Push
+    Api --> Telephony
+    Telephony --> Api
+
+    Api -. signed URL after permission check .-> Storage
+
+    subgraph Backend Modules
+      Auth[Auth Users Roles Permissions]
+      CRM[Leads Clients Cases]
+      Docs[Documents Requirements Reviews]
+      Comm[WhatsApp Conversations Templates]
+      Appt[Appointments Reminders]
+      Finance[Payments Invoices Receipts]
+      Reports[Reports Exports]
+      Audit[Audit Logs Activity Timeline]
+      Settings[Settings Services Countries Statuses]
+    end
+
+    Api --- Auth
+    Api --- CRM
+    Api --- Docs
+    Api --- Comm
+    Api --- Appt
+    Api --- Finance
+    Api --- Reports
+    Api --- Audit
+    Api --- Settings

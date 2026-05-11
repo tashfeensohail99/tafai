@@ -1,0 +1,137 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { PermissionGuard } from '../../common/guards/permission.guard';
+import {
+  RequireAnyPermissions,
+  RequirePermissions,
+} from '../../common/decorators/require-permissions.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequestUser } from '../../common/types/auth.types';
+import { FinanceService } from './finance.service';
+import {
+  CreateFinanceHandoverDto,
+  CreateInvoiceDto,
+  CreatePaymentDto,
+  FinanceHandoverReviewDto,
+  ListFinanceHandoversQueryDto,
+  ListFinanceQueueQueryDto,
+  ListInvoicesQueryDto,
+  RefundPaymentDto,
+  UpdateFinanceHandoverDto,
+  UpdateInvoiceDto,
+  VerifyPaymentDto,
+} from './finance.dto';
+
+@Controller('finance')
+@UseGuards(JwtAuthGuard, PermissionGuard)
+export class FinanceController {
+  constructor(private readonly financeService: FinanceService) {}
+
+  @Get('invoices')
+  @RequirePermissions('finance.view_all')
+  listInvoices(@Query() query: ListInvoicesQueryDto) {
+    return this.financeService.listInvoices(query);
+  }
+
+  @Get('invoices/:id')
+  @RequirePermissions('finance.view_all')
+  findInvoiceById(@Param('id', ParseUUIDPipe) id: string) {
+    return this.financeService.findInvoiceById(id);
+  }
+
+  @Get('queue')
+  @RequirePermissions('finance.view_all')
+  getQueue(@Query() query: ListFinanceQueueQueryDto) {
+    return this.financeService.getQueue(query);
+  }
+
+  @Get('handovers')
+  @RequireAnyPermissions('finance_handover.view_all', 'finance_handover.view_own')
+  listHandovers(@Query() query: ListFinanceHandoversQueryDto, @CurrentUser() user: RequestUser) {
+    return this.financeService.listHandovers(query, user);
+  }
+
+  @Get('handovers/:id')
+  @RequireAnyPermissions('finance_handover.view_all', 'finance_handover.view_own')
+  findHandoverById(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    return this.financeService.findHandoverByIdAccessible(id, user);
+  }
+
+  @Post('invoices')
+  @RequirePermissions('finance.create_invoice')
+  createInvoice(@Body() dto: CreateInvoiceDto, @CurrentUser() user: RequestUser) {
+    return this.financeService.createInvoice(dto, user.id);
+  }
+
+  @Patch('invoices/:id')
+  @RequirePermissions('finance.create_invoice')
+  updateInvoice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateInvoiceDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.updateInvoice(id, dto, user.id);
+  }
+
+  @Post('payments')
+  @RequirePermissions('finance.record_payment')
+  recordPayment(@Body() dto: CreatePaymentDto, @CurrentUser() user: RequestUser) {
+    return this.financeService.recordPayment(dto, user.id);
+  }
+
+  @Post('handovers')
+  @RequirePermissions('finance_handover.create')
+  createHandover(@Body() dto: CreateFinanceHandoverDto, @CurrentUser() user: RequestUser) {
+    return this.financeService.createHandover(dto, user);
+  }
+
+  @Patch('handovers/:id')
+  @RequirePermissions('finance_handover.update_own')
+  updateHandover(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateFinanceHandoverDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.updateHandover(id, dto, user);
+  }
+
+  @Post('handovers/:id/review')
+  @RequirePermissions('finance_handover.review')
+  reviewHandover(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: FinanceHandoverReviewDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.reviewHandover(id, dto, user.id);
+  }
+
+  @Post('payments/:id/verify')
+  @RequirePermissions('finance.verify_payment')
+  verifyPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyPaymentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.verifyPayment(id, dto, user.id);
+  }
+
+  @Post('payments/:id/refund')
+  @RequirePermissions('finance.refund')
+  refundPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RefundPaymentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.refundPayment(id, dto, user.id);
+  }
+}

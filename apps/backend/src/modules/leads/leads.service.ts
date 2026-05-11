@@ -1,0 +1,458 @@
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { AuditAction, ClientStatus, LeadStatus, Prisma, TimelineEventType } from '@prisma/client';
+import { PrismaService } from '../../common/prisma/prisma.service';
+import { RequestUser } from '../../common/types/auth.types';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
+import { AssignLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
+
+@Injectable()
+export class LeadsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+    private readonly activityTimeline: ActivityTimelineService,
+  ) {}
+
+  async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
+    const canViewAll = user.permissions.includes('leads.view_all');
+
+    return this.prisma.lead.findMany({
+      where: {
+        deletedAt: null,
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
+        ...(query.branchId ? { branchId: query.branchId } : {}),
+        ...(query.sourceChannel ? { sourceChannel: query.sourceChannel } : {}),
+        ...(!canViewAll
+          ? {
+              OR: [
+                { assignedEmployee: { userId: user.id } },
+                { createdByUserId: user.id },
+              ],
+            }
+          : {}),
+        ...(query.search
+          ? {
+              OR: [
+                { firstName: { contains: query.search, mode: 'insensitive' } },
+                { lastName: { contains: query.search, mode: 'insensitive' } },
+                { email: { contains: query.search, mode: 'insensitive' } },
+                { phone: { contains: query.search, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        assignedEmployee: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        branch: { select: { id: true, name: true } },
+        referralPartner: {
+          select: { id: true, companyName: true, referralCode: true },
+        },
+        _count: { select: { appointments: true, invoices: true, timelineEvents: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findByIdAccessible(id: string, user: RequestUser) {
+    const canViewAll = user.permissions.includes('leads.view_all');
+
+    const lead = await this.prisma.lead.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        ...(!canViewAll
+          ? {
+              OR: [
+                { assignedEmployee: { userId: user.id } },
+                { createdByUserId: user.id },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        assignedEmployee: true,
+        branch: true,
+        referralPartner: true,
+        appointments: { orderBy: { scheduledAt: 'desc' }, take: 10 },
+        invoices: { orderBy: { createdAt: 'desc' }, take: 10 },
+        timelineEvents: { orderBy: { createdAt: 'desc' }, take: 20 },
+      },
+    });
+
+    if (!lead) throw new NotFoundException('Lead not found');
+
+    return lead;
+  }
+
+  async findAll(query: ListLeadsQueryDto) {
+    return this.prisma.lead.findMany({
+      where: {
+        deletedAt: null,
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
+        ...(query.branchId ? { branchId: query.branchId } : {}),
+        ...(query.sourceChannel ? { sourceChannel: query.sourceChannel } : {}),
+        ...(query.search
+          ? {
+              OR: [
+                { firstName: { contains: query.search, mode: 'insensitive' } },
+                { lastName: { contains: query.search, mode: 'insensitive' } },
+                { email: { contains: query.search, mode: 'insensitive' } },
+                { phone: { contains: query.search, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        assignedEmployee: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        branch: { select: { id: true, name: true } },
+        referralPartner: {
+          select: { id: true, companyName: true, referralCode: true },
+        },
+        _count: { select: { appointments: true, invoices: true, timelineEvents: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findById(id: string) {
+    const lead = await this.prisma.lead.findUnique({
+      where: { id, deletedAt: null },
+      include: {
+        assignedEmployee: true,
+        branch: true,
+        referralPartner: true,
+        appointments: { orderBy: { scheduledAt: 'desc' }, take: 10 },
+        invoices: { orderBy: { createdAt: 'desc' }, take: 10 },
+        timelineEvents: { orderBy: { createdAt: 'desc' }, take: 20 },
+      },
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+    return lead;
+  }
+
+  async create(dto: CreateLeadDto, actorUserId: string) {
+    await this.ensureUniqueLead(dto.phone, dto.email);
+    const fallbackAssignedEmployeeId = dto.assignedEmployeeId ?? await this.findEmployeeIdByUserId(actorUserId);
+
+    const lead = await this.prisma.lead.create({
+      data: {
+        branchId: dto.branchId,
+        assignedEmployeeId: fallbackAssignedEmployeeId,
+        createdByUserId: actorUserId,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        email: dto.email,
+        phone: dto.phone,
+        alternatePhone: dto.alternatePhone,
+        nationality: dto.nationality,
+        targetCountry: dto.targetCountry,
+        serviceInterest: dto.serviceInterest,
+        sourceChannel: dto.sourceChannel,
+        referralPartnerId: dto.referralPartnerId,
+        status: dto.status ?? LeadStatus.NEW,
+        priority: dto.priority,
+        notes: dto.notes,
+      },
+      include: {
+        assignedEmployee: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        branch: { select: { id: true, name: true } },
+        referralPartner: {
+          select: { id: true, companyName: true, referralCode: true },
+        },
+      },
+    });
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.LEAD_CREATED,
+      entityType: 'Lead',
+      entityId: lead.id,
+      newValues: {
+        firstName: lead.firstName,
+        lastName: lead.lastName,
+        phone: lead.phone,
+        serviceInterest: lead.serviceInterest,
+        targetCountry: lead.targetCountry,
+      },
+    });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: lead.id,
+      leadId: lead.id,
+      eventType: TimelineEventType.LEAD_CREATED,
+      description: `${lead.firstName} ${lead.lastName} created`,
+      actorUserId,
+      metadata: {
+        sourceChannel: lead.sourceChannel,
+        serviceInterest: lead.serviceInterest,
+        targetCountry: lead.targetCountry,
+      },
+    });
+
+    return lead;
+  }
+
+  async update(id: string, dto: UpdateLeadDto, actorUserId: string) {
+    const existing = await this.findById(id);
+
+    if (dto.phone || dto.email) {
+      await this.ensureUniqueLead(dto.phone, dto.email, id);
+    }
+
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data: {
+        ...dto,
+        convertedAt: dto.status === LeadStatus.CONVERTED ? new Date() : undefined,
+      },
+      include: {
+        assignedEmployee: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        branch: { select: { id: true, name: true } },
+        referralPartner: {
+          select: { id: true, companyName: true, referralCode: true },
+        },
+      },
+    });
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.LEAD_UPDATED,
+      entityType: 'Lead',
+      entityId: id,
+      oldValues: {
+        status: existing.status,
+        assignedEmployeeId: existing.assignedEmployeeId,
+        phone: existing.phone,
+        email: existing.email,
+      },
+      newValues: dto,
+    });
+
+    if (dto.status && dto.status !== existing.status) {
+      await this.activityTimeline.record({
+        entityType: 'Lead',
+        entityId: updated.id,
+        leadId: updated.id,
+        clientId: updated.convertedClientId ?? undefined,
+        eventType: dto.status === LeadStatus.CONVERTED ? TimelineEventType.LEAD_CONVERTED : TimelineEventType.NOTE_ADDED,
+        description: dto.status === LeadStatus.CONVERTED
+          ? 'Lead marked as converted'
+          : `Lead status changed from ${existing.status} to ${dto.status}`,
+        actorUserId,
+      });
+    }
+
+    return updated;
+  }
+
+  async assign(id: string, dto: AssignLeadDto, actorUserId: string) {
+    const existing = await this.findById(id);
+
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data: { assignedEmployeeId: dto.assignedEmployeeId },
+      include: {
+        assignedEmployee: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+      },
+    });
+
+    const action = existing.assignedEmployeeId ? AuditAction.LEAD_REASSIGNED : AuditAction.LEAD_ASSIGNED;
+    await this.auditLog.log({
+      actorUserId,
+      action,
+      entityType: 'Lead',
+      entityId: id,
+      oldValues: { assignedEmployeeId: existing.assignedEmployeeId },
+      newValues: { assignedEmployeeId: dto.assignedEmployeeId },
+    });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: id,
+      leadId: id,
+      eventType: TimelineEventType.LEAD_ASSIGNED,
+      description: existing.assignedEmployeeId ? 'Lead reassigned to another employee' : 'Lead assigned to an employee',
+      actorUserId,
+      metadata: {
+        assignedEmployeeId: dto.assignedEmployeeId,
+        assignedEmployeeName: updated.assignedEmployee ? `${updated.assignedEmployee.firstName} ${updated.assignedEmployee.lastName}` : null,
+      },
+    });
+
+    return this.findById(id);
+  }
+
+  async convertToClient(id: string, actorUserId: string, notes?: string, tx?: Prisma.TransactionClient) {
+    const prisma = tx ?? this.prisma;
+    const lead = await prisma.lead.findUnique({
+      where: { id, deletedAt: null },
+      include: {
+        branch: { select: { id: true, name: true } },
+        assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+
+    if (!lead) {
+      throw new NotFoundException('Lead not found');
+    }
+
+    if (lead.convertedClientId) {
+      const existingClient = await prisma.client.findUnique({ where: { id: lead.convertedClientId } });
+      if (!existingClient) {
+        throw new NotFoundException('Converted client not found');
+      }
+
+      return { lead, client: existingClient, wasExistingClient: false };
+    }
+
+    let client = await prisma.client.findFirst({
+      where: {
+        deletedAt: null,
+        OR: [
+          { phone: lead.phone },
+          ...(lead.email ? [{ email: lead.email }] : []),
+        ],
+      },
+    });
+
+    const wasExistingClient = Boolean(client);
+    if (!client) {
+      client = await prisma.client.create({
+        data: {
+          branchId: lead.branchId,
+          createdByUserId: actorUserId,
+          firstName: lead.firstName,
+          lastName: lead.lastName,
+          email: lead.email,
+          phone: lead.phone,
+          alternatePhone: lead.alternatePhone,
+          nationality: lead.nationality,
+          status: ClientStatus.ACTIVE,
+        },
+      });
+
+      await this.auditLog.log({
+        actorUserId,
+        action: AuditAction.CLIENT_CREATED,
+        entityType: 'Client',
+        entityId: client.id,
+        newValues: {
+          firstName: client.firstName,
+          lastName: client.lastName,
+          phone: client.phone,
+          email: client.email,
+          sourceLeadId: lead.id,
+        },
+      });
+    }
+
+    const updatedLead = await prisma.lead.update({
+      where: { id },
+      data: {
+        status: LeadStatus.CONVERTED,
+        convertedAt: new Date(),
+        convertedClientId: client.id,
+        notes: notes ? [lead.notes, notes].filter(Boolean).join('\n\n') : lead.notes,
+      },
+    });
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.LEAD_CONVERTED,
+      entityType: 'Lead',
+      entityId: lead.id,
+      oldValues: {
+        status: lead.status,
+        convertedClientId: lead.convertedClientId,
+      },
+      newValues: {
+        status: LeadStatus.CONVERTED,
+        convertedClientId: client.id,
+        notes,
+      },
+    });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: lead.id,
+      leadId: lead.id,
+      clientId: client.id,
+      eventType: TimelineEventType.LEAD_CONVERTED,
+      description: `${lead.firstName} ${lead.lastName} converted to client`,
+      actorUserId,
+      metadata: {
+        clientId: client.id,
+        clientExisted: wasExistingClient,
+      },
+    });
+
+    await this.activityTimeline.record({
+      entityType: 'Client',
+      entityId: client.id,
+      leadId: lead.id,
+      clientId: client.id,
+      eventType: TimelineEventType.LEAD_CONVERTED,
+      description: `Client record created from lead ${lead.firstName} ${lead.lastName}`,
+      actorUserId,
+      metadata: {
+        leadId: lead.id,
+        sourceChannel: lead.sourceChannel,
+        serviceInterest: lead.serviceInterest,
+        targetCountry: lead.targetCountry,
+      },
+    });
+
+    return { lead: updatedLead, client, wasExistingClient };
+  }
+
+  private async ensureUniqueLead(phone?: string, email?: string, excludeId?: string) {
+    if (!phone && !email) return;
+
+    const duplicateLead = await this.prisma.lead.findFirst({
+      where: {
+        deletedAt: null,
+        AND: [excludeId ? { id: { not: excludeId } } : {}],
+        OR: [
+          ...(phone ? [{ phone }] : []),
+          ...(email ? [{ email }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (duplicateLead) {
+      throw new ConflictException('A lead with the same phone or email already exists');
+    }
+  }
+
+  private async findEmployeeIdByUserId(userId: string) {
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        userId,
+        isActive: true,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    return employee?.id ?? null;
+  }
+}

@@ -1,0 +1,88 @@
+# Week 1 Start Action Plan - Tashfeen AI Platform
+
+Week 1 purpose: discovery, architecture, ERD, RBAC, design system, backlog, and staging planning. Week 1 is not full feature coding.
+
+## Day 1 - Kickoff And Commercial Lock
+
+Actions:
+- Confirm CAD 10,500 final amount.
+- Confirm corrected agreement wording and payment schedule.
+- Confirm project start date.
+- Confirm main client approver and backup approver.
+- Confirm communication channel.
+- Share DEVELOPMENT_STANDARDS.md with all dev/team members.
+
+Deliverables:
+- Commercial correction confirmed.
+- Approver confirmed.
+- Communication channel active.
+- Development standards approved.
+
+## Day 2 - Scope And Business Process Freeze
+
+Actions:
+- Review ai.txt, agreement.txt, plan.txt.
+- Confirm module list.
+- Confirm Phase 2 basic-only boundary.
+- Confirm services, countries, departments, roles.
+- Confirm lead statuses and case statuses.
+
+Deliverables:
+- Scope matrix draft.
+- Module list approved or issue list created.
+- Business process questions logged.
+
+## Day 3 - Architecture, ERD, RBAC
+
+Actions:
+- Prepare high-level architecture diagram.
+- Prepare ERD draft.
+- Prepare RBAC permission matrix.
+- Prepare API module map.
+
+Deliverables:
+- Architecture diagram v1.
+- ERD v1.
+- RBAC v1.
+- API module map v1.
+
+## Day 4 - Design System And UI Sitemap
+
+Actions:
+- Confirm temporary logo/color direction.
+- Create UI sitemap for admin, employee, client, partner, Flutter.
+- Create design tokens for light/dark theme.
+- Define shared components: Button, StatusBadge, DataTable, Modal, FileUpload, Timeline, PermissionGate.
+
+Deliverables:
+- UI sitemap v1.
+- Design system starter.
+- Light/dark theme token plan.
+
+## Day 5 - DevOps, Backlog, Week 2 Gate Review
+
+Actions:
+- Decide repository and staging approach.
+- Decide database, file storage, Redis/queue hosting.
+- Create project board.
+- Load Week 1-4 backlog.
+- Review blockers for Week 2 coding.
+
+Deliverables:
+- DevOps/staging plan.
+- Project board created.
+- Week 1-4 backlog ready.
+- Week 2 coding gate approved or blocker list created.
+
+## Week 2 Coding Gate
+
+Week 2 coding can start only if:
+- Architecture approved.
+- ERD draft approved.
+- RBAC matrix approved.
+- API module map approved.
+- Repository created.
+- Staging plan ready.
+- Database/storage/Redis choices made.
+- Week 2 backlog approved.
+- Development standards accepted by dev team.

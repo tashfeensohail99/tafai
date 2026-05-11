@@ -1,0 +1,2131 @@
+# Tashfeen AI Platform - Complete Project Start Documentation
+
+Prepared date: May 8, 2026
+Prepared for: Tashfeen Immigration Solutions
+Office address: Office No. 3029 A & B, 3rd Floor, Giga Mall, DHA Phase 2, Islamabad
+Project: AI-Powered Overseas Consultancy Management & Automation Platform
+Final project development amount: CAD 10,500
+Document status: Working start package before official development kickoff
+
+
+## 0. Purpose Of This Document
+
+This document completes the missing start-of-project documentation before coding begins. It combines the project start checklist, client information needed, technical architecture starter pack, business process map, design assumptions, access requirements, legal/compliance requirements, project management setup, and Week 1-4 execution backlog.
+
+This document should be used before official development starts to confirm what is ready, what can be assumed, what is blocking, and what must be approved before Week 2 coding begins.
+
+Important rule:
+- Week 1 can be discovery, design, architecture, ERD, backlog, and setup.
+- Week 2 coding should not begin until architecture, ERD draft, RBAC matrix, module list, repo, dev/staging setup, and Week 2 backlog are approved.
+
+
+## 1. Known Client Information
+
+Known company details:
+- Company name: Tashfeen Immigration Solutions
+- Office address: Office No. 3029 A & B, 3rd Floor, Giga Mall, DHA Phase 2, Islamabad
+- Current available logo: 1756288761781.jpg
+- Temporary vector logo created: tashfeen-temporary-logo.svg
+- Final project amount confirmed by client: CAD 10,500
+- Technical source document: ai.txt
+- Agreement/source legal document: agreement.txt / agreement.pdf / agreement.docx
+- Main master plan file: plan.txt
+- Independent technical proposal file: independent-technical-proposal.txt
+- Dev proposal revision package: dev-proposal-revision-package.txt
+- Project start requirements checklist: project-start-requirements-list.txt
+- Official development standards: DEVELOPMENT_STANDARDS.md
+- Copilot/project coding instructions: .github/copilot-instructions.md
+
+Still needed from client:
+- Company legal registration details, if required for agreement/invoices.
+- Main phone number.
+- Main WhatsApp number.
+- Main email address.
+- Website URL, if existing.
+- Main approver name and contact.
+- Backup approver name and contact.
+- Finance/payment contact.
+- UAT/sign-off contact.
+- Project start date.
+- Weekly meeting schedule.
+- Preferred communication channel.
+
+
+## 2. Project Start Gates
+
+### Gate A - Required Before Week 1 Kickoff
+
+Week 1 can start when these are confirmed:
+1. Final project amount: CAD 10,500.
+2. Currency is consistent across all final documents.
+3. Client confirms Week 1 is discovery/design/architecture/backlog/setup, not full feature coding.
+4. Main approver is named.
+5. Communication channel is created.
+6. Project start date is confirmed.
+7. Dev team or vendor team is assigned.
+8. Existing logo can be used or temporary logo is approved.
+9. Suggested color scheme can be used temporarily.
+10. Initial scope documents are available: ai.txt, agreement.txt, plan.txt.
+11. Client agrees external approvals may delay WhatsApp, social leads, app stores, telephony, AI/OCR, and payment gateway.
+
+### Gate B - Required Before Week 2 Coding
+
+Coding should not start until these are ready:
+1. Final agreement amount/currency corrected to CAD 10,500.
+2. Payment schedule confirmed.
+3. Advance payment process confirmed or received according to agreement.
+4. Architecture document approved.
+5. High-level architecture diagram approved.
+6. ERD draft approved.
+7. RBAC permission matrix approved.
+8. User roles confirmed.
+9. Department list confirmed.
+10. Module list confirmed.
+11. Git repository created.
+12. Dev/staging environment ready.
+13. Database hosting selected.
+14. File storage selected.
+15. Redis/queue approach selected.
+16. Backend/frontend/mobile stack confirmed.
+17. Week 2 backlog approved.
+
+### Gate C - Required Before External Integration Work
+
+External integration work needs:
+1. Meta Business Manager access.
+2. WhatsApp Business number.
+3. Facebook/Instagram page access.
+4. Website form access.
+5. Email/SMTP access.
+6. AI/OCR provider account and billing keys.
+7. SIP/telephony account if calls are required.
+8. Firebase account.
+9. Google Play Console account.
+10. Apple Developer account.
+11. Payment gateway account if online payments are required.
+
+### Gate D - Required Before Go-Live
+
+Go-live needs:
+1. Signed final agreement.
+2. Commercial terms/currency corrected everywhere.
+3. UAT sign-off or acceptance window completed.
+4. Production domain and hosting ready.
+5. Database backup configured and restore process tested.
+6. File storage private access verified.
+7. Admin accounts created securely.
+8. Privacy policy ready.
+9. Call recording consent ready if calls are recorded.
+10. WhatsApp opt-in wording ready.
+11. Employee monitoring/device/attendance policies ready if those modules are activated.
+12. Security/RBAC tests passed.
+13. Production deployment checklist completed.
+14. Final payment/handover condition handled according to agreement.
+
+
+## 3. Legal And Commercial Finalization
+
+Required legal/commercial items:
+
+| Item | Required Decision | Current Status |
+| --- | --- | --- |
+| Final amount | CAD 10,500 | Confirmed by client |
+| Currency | CAD everywhere | Must update all old USD references |
+| Payment schedule | Advance + milestone payments | Needs final confirmation in agreement |
+| Agreement signed | Yes | Must be confirmed |
+| Advance received | Ideally before Week 1/Week 2 | Must be confirmed |
+| Project start date | Confirm in writing | Needed |
+| Main approver | One person from client side | Needed |
+| Change request process | Written approval required | Recommended below |
+| Acceptance process | UAT/sign-off after each milestone | Recommended below |
+
+Critical commercial correction:
+- Do not start official development if the agreement still says USD 8,000 while the final amount is CAD 10,500.
+- Update Agreement Clause 3, Clause 9 Payment Terms, Annexure C, master plan, proposal, invoices, and milestone/payment references.
+
+Recommended agreement wording:
+The total agreed project development fee shall be CAD 10,500/- Canadian Dollars Ten Thousand Five Hundred Only.
+
+Recommended payment structure to confirm:
+- Advance payment before project kickoff.
+- Milestone payment after Month 1 acceptance.
+- Milestone payment after Month 2 acceptance.
+- Milestone payment after Month 3 acceptance.
+- Final payment before final production deployment/source code handover, if this matches the agreement.
+
+Change request rule:
+- Any new module, new report, new integration, major redesign, business logic change, advanced Phase 2 feature, or post-approval workflow change requires written change request approval.
+
+Acceptance rule:
+- Each milestone should have written UAT checklist.
+- Client tests milestone on staging.
+- Bugs are logged with role, screen, record ID, steps, expected result, actual result, screenshot/video.
+- Approved by email/WhatsApp/written sign-off.
+- No feedback within the agreed review window follows the agreement's acceptance clause.
+
+
+## 4. Scope Documents Required
+
+The following scope documents should exist before final roadmap approval:
+
+| Document | Purpose | Status |
+| --- | --- | --- |
+| Final Scope of Work | What is included | Existing plan.txt is base, needs final approval |
+| Out-of-Scope List | What is not included | Included in plan.txt, should be approved |
+| Phase 2 Boundary | Basic rollout only | Included, must remain clear |
+| Module List | All modules to be built | Included in plan.txt |
+| Weekly Delivery Plan | Week 1-16 roadmap | Included in plan.txt |
+| Acceptance Checklist | How milestones are approved | Included, can be expanded per screen |
+| Change Request Form | For extra work | Process defined, form can be created later |
+| ERD Draft | Database structure | Starter included in this document |
+| API Module Map | API planning | Starter included in this document |
+| RBAC Matrix | Permissions per role | Starter included in this document |
+| UI Sitemap | Portal/screen structure | Starter included in this document |
+| DevOps Plan | Deployment/backups/monitoring | Starter included in this document |
+| Security Model | Access/data/file/privacy | Starter included in this document |
+| Risk Register | Main risks and controls | Included below |
+
+Phase 2 boundary:
+- Phase 2 in Month 4 is basic only.
+- It includes basic attendance, basic device registry, basic activity monitoring, basic social automation/content, and basic enterprise operations screens.
+- It does not include full ERP, advanced MDM, endpoint control, payroll/accounting, advanced biometric attendance, GPS enforcement, or full device security suite unless separately approved.
+
+
+## 5. Business Information Needed From Client
+
+### 5.1 Company Information
+
+Known:
+- Company name: Tashfeen Immigration Solutions
+- Address: Office No. 3029 A & B, 3rd Floor, Giga Mall, DHA Phase 2, Islamabad
+
+Needed:
+- Main phone number.
+- Main WhatsApp number.
+- Main email.
+- Website URL.
+- Company registration/tax details if needed.
+- Company profile/about text.
+- Business hours.
+- Branches, if any.
+- Official invoice/receipt header details.
+
+### 5.2 Logo And Brand
+
+Known:
+- Existing JPG logo is available: 1756288761781.jpg
+- Temporary vector logo created: tashfeen-temporary-logo.svg
+
+Needed:
+- Confirm if existing JPG logo is final.
+- Provide source logo file if available: SVG, AI, PDF, transparent PNG.
+- Approve temporary SVG for wireframes and early UI.
+- Confirm final color preference or approve suggested color scheme.
+
+Suggested color scheme:
+- Primary navy: #0B1F3A
+- Deep navy: #07182D
+- Teal action: #0E7C86
+- Gold accent: #D6A84F
+- Light background: #F7FAFC
+- Light surface: #FFFFFF
+- Dark background: #07111F
+- Dark surface: #0F2238
+- Text dark: #111827
+- Text light: #F8FAFC
+- Muted text: #64748B
+- Success: #15803D
+- Warning: #B7791F
+- Error: #B91C1C
+- Info: #2563EB
+
+Theme requirement:
+- Light and dark theme must be supported from day 1.
+- All UI components must use design tokens.
+- No feature component should hard-code colors.
+- Theme preference should be saved per user if possible.
+- Default can follow system/browser theme.
+
+### 5.3 Services List
+
+Recommended initial services to confirm:
+- Work Permit
+- Business Visa
+- Visit Visa
+- Study Visa
+- Job Abroad
+- PR/Immigration
+- Consultation
+- Document Processing
+- Interview Preparation
+- Business Plan Support
+
+Needed from client:
+- Final service list.
+- Which services need document checklists.
+- Which services need appointments.
+- Which services need business plan generation.
+- Which services need AI interview support.
+
+### 5.4 Countries And Categories
+
+Recommended initial countries/categories to confirm:
+- Canada
+- UK
+- USA
+- Australia
+- Europe/Schengen
+- UAE
+- Saudi Arabia
+- Other countries
+
+Needed from client:
+- Final country list.
+- Which services apply to each country.
+- Which documents are required by service/country.
+- Which processing stages apply by country.
+
+### 5.5 Departments
+
+Recommended final departments:
+- Sales / Consultants
+- Documentation
+- Processing
+- Finance
+- Support / Call Center
+- Marketing
+- Admin / Operations
+- Management
+- Partner / Referral
+
+Needed from client:
+- Confirm departments.
+- Confirm department managers.
+- Confirm which department owns each workflow stage.
+- Confirm handover rules between departments.
+
+### 5.6 Employee List
+
+Prepare employee import in this format:
+
+| Name | Email | Phone | Department | Role | Access Level | Manager | Branch | Login Required |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Sample Employee | name@example.com | +92... | Sales | Sales/Consultant | Assigned leads only | Manager name | Islamabad | Yes |
+
+Needed fields:
+- Full name.
+- Email.
+- Phone/WhatsApp.
+- Department.
+- Designation.
+- Role.
+- Access level.
+- Reporting manager.
+- Branch/location.
+- Active/inactive.
+- Login required yes/no.
+
+### 5.7 User Roles
+
+Required roles:
+- Super Admin
+- Admin/Manager
+- Sales/Consultant
+- Documentation Officer
+- Processing Officer
+- Finance Officer
+- Support/Call Center
+- Marketing
+- Client
+- Partner/Referral
+
+
+## 6. Business Statuses And Checklists
+
+### 6.1 Lead Statuses
+
+Recommended lead statuses:
+- New
+- Duplicate Review
+- Assigned
+- Contacted
+- No Response
+- Follow-Up
+- Appointment Booked
+- Hot
+- Warm
+- Cold
+- Converted
+- Rejected
+- Closed
+
+Needed from client:
+- Final lead status names.
+- Who can move each status.
+- Which statuses are visible to admins only.
+- Follow-up rules by status.
+
+### 6.2 Case Statuses
+
+Recommended case statuses:
+- New Case
+- Documents Pending
+- Documents Received
+- Documentation Review
+- Missing Documents
+- Ready For Processing
+- In Processing
+- Submitted
+- Under Review
+- Approved
+- Rejected
+- On Hold
+- Closed
+
+Needed from client:
+- Final case statuses.
+- Which statuses client can see.
+- Which statuses are internal only.
+- Which status triggers notifications.
+- Which status triggers finance or processing actions.
+
+### 6.3 Document Checklist
+
+Document checklist template:
+
+| Document Name | Service | Country | Required | Expiry Needed | Upload By | Verify By | Replacement Allowed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Passport | All | All | Yes | Yes | Client/Staff | Documentation | Yes |
+| CNIC/National ID | All | Pakistan-based clients | Yes | If applicable | Client/Staff | Documentation | Yes |
+| Photo | Visa services | Country specific | Yes | No | Client/Staff | Documentation | Yes |
+| Bank Statement | Study/Visit/Business | Country specific | Maybe | Statement date | Client/Staff | Documentation | Yes |
+| Education Documents | Study/Work | Country specific | Maybe | No | Client/Staff | Documentation | Yes |
+| Experience Letters | Work/Job | Country specific | Maybe | No | Client/Staff | Documentation | Yes |
+| Business Documents | Business Visa | Country specific | Maybe | If applicable | Client/Staff | Documentation | Yes |
+
+Needed from client:
+- Final checklist by service/country.
+- Allowed file types.
+- Max file size.
+- Expiry rules.
+- Manual override rules.
+- Which documents AI/OCR should analyze first.
+
+### 6.4 Payment And Invoice Formats
+
+Needed from client:
+- Invoice header.
+- Receipt header.
+- Currency: CAD.
+- Invoice numbering format.
+- Receipt numbering format.
+- Payment methods.
+- Installment rules.
+- Refund rules.
+- Partial payment rules.
+- Late payment rules if any.
+- Tax/registration details if applicable.
+- Authorized finance approver.
+
+### 6.5 Appointment Types
+
+Recommended appointment types:
+- Initial Consultation
+- Document Review
+- Follow-Up Call
+- Office Visit
+- Online Meeting
+- Payment Discussion
+- Case Update
+- Interview Preparation
+
+Needed from client:
+- Appointment duration by type.
+- Which roles can create appointments.
+- Reminder timing.
+- Reschedule/cancel rules.
+- Online meeting link requirements.
+
+### 6.6 Message Templates
+
+Templates needed:
+- New lead greeting.
+- Appointment confirmation.
+- Appointment reminder.
+- Missed call/follow-up.
+- Document request.
+- Missing document request.
+- Payment reminder.
+- Case status update.
+- Client portal invitation.
+- Partner referral received.
+- Internal handover note.
+- Escalation note.
+
+WhatsApp note:
+- All WhatsApp templates must follow Meta rules and may need approval.
+- Template approval is not guaranteed by the developer.
+
+
+## 7. Business Workflow Documentation
+
+### 7.1 Lead Flow
+
+Flow:
+Lead source -> CRM entry -> duplicate check -> auto/manual assignment -> sales follow-up -> screening -> appointment -> document request -> conversion/rejection.
+
+Detailed steps:
+1. Lead enters from website, Facebook, Instagram, WhatsApp, manual entry, or partner referral.
+2. CRM normalizes phone, email, name, country, service interest, source, and campaign.
+3. System checks duplicates by phone, email, and fuzzy name match.
+4. If duplicate is likely, lead goes to Duplicate Review.
+5. If unique, assignment engine assigns by service, country, branch, workload, employee availability, and priority.
+6. Sales receives notification.
+7. Sales contacts lead through WhatsApp/call/manual note.
+8. Sales completes screening.
+9. Sales books appointment if needed.
+10. Sales sends document request.
+11. Lead is converted to client/case or rejected/closed.
+12. Audit and timeline are updated.
+
+Needed decisions:
+- Final duplicate matching rules.
+- Assignment rules.
+- Hot/warm/cold definitions.
+- Lead rejection reasons.
+- Lead reopen rules.
+
+### 7.2 Case Flow
+
+Flow:
+Sales converts lead -> case created -> documentation review -> processing department -> finance verification -> case status update -> closure.
+
+Detailed steps:
+1. Sales converts qualified lead.
+2. System creates client profile and case.
+3. Documentation receives task/checklist.
+4. Client uploads documents via portal/mobile or staff uploads on behalf of client.
+5. Documentation verifies documents.
+6. Approved file set moves to Processing.
+7. Processing updates case stage and proof attachments.
+8. Finance verifies payment milestones where required.
+9. Case status updates are shown to client where appropriate.
+10. Case closes when final outcome/action is complete.
+
+Needed decisions:
+- Case stages by service/country.
+- Which statuses client can see.
+- Which handovers require finance check.
+- Who can close/reopen cases.
+
+### 7.3 Document Flow
+
+Flow:
+Client uploads/sends document -> system stores private file -> AI/OCR checks document -> documentation officer reviews -> verified/rejected/replacement requested -> client notified.
+
+Detailed steps:
+1. Document is uploaded through client portal/mobile/admin/employee.
+2. File is stored privately in S3-compatible storage.
+3. Metadata is saved in database.
+4. OCR/classification job is queued.
+5. AI/OCR extracts possible document type, expiry, and visible fields.
+6. Low-confidence result is marked Manual Review Required.
+7. Documentation officer reviews preview and AI/OCR result.
+8. Officer verifies, rejects, or requests replacement.
+9. Client is notified.
+10. Timeline and audit log are updated.
+
+Needed decisions:
+- Which documents require expiry validation.
+- Which documents can be uploaded by client.
+- Which documents require staff-only upload.
+- Who can delete/replace files.
+
+### 7.4 Finance Flow
+
+Flow:
+Payment requested -> payment received -> finance verifies -> receipt/invoice generated -> installment/refund tracked -> case updated.
+
+Detailed steps:
+1. Finance/payment requirement is added to client/case.
+2. Invoice is created if needed.
+3. Client pays through approved method.
+4. Finance records and verifies payment.
+5. Receipt is generated/uploaded.
+6. Installment or refund status is tracked if applicable.
+7. Case/payment status is updated.
+8. Reports and audit logs update.
+
+Needed decisions:
+- Who can create invoice.
+- Who can verify payment.
+- Who can reverse/correct payment.
+- Required receipt/invoice format.
+
+### 7.5 Client Portal Flow
+
+Flow:
+Client logs in -> sees case status -> uploads documents -> checks appointments -> sees payment status -> receives notifications.
+
+Detailed steps:
+1. Client receives portal invite.
+2. Client logs in through password/OTP process.
+3. Client dashboard shows case status, pending documents, appointments, payment status, notifications.
+4. Client uploads documents.
+5. Client receives replacement/missing document requests.
+6. Client sees receipts/payment status.
+7. Client receives appointment/case updates.
+
+Needed decisions:
+- Client login method.
+- Which case statuses are shown externally.
+- Whether client can send messages from portal.
+- Whether client can download documents/receipts.
+
+### 7.6 Partner/Referral Flow
+
+Flow:
+Partner logs in -> submits referral -> admin/sales reviews lead -> partner sees limited status.
+
+Detailed steps:
+1. Admin creates partner account or partner is invited.
+2. Partner submits referral form.
+3. Referral enters CRM as lead with partner attribution.
+4. Duplicate check runs.
+5. Admin/sales assigns lead.
+6. Partner sees limited status only.
+7. Commission visibility is optional and must be approved by business.
+
+Needed decisions:
+- Who can become partner.
+- Referral form fields.
+- Status visible to partner.
+- Commission rules if any.
+
+### 7.7 Department Handover Rules
+
+Recommended handovers:
+- Sales -> Documentation: after lead conversion and initial client data captured.
+- Documentation -> Processing: after required documents are verified or exceptions approved.
+- Processing -> Finance: when payment verification is needed.
+- Finance -> Processing/Admin: after payment is verified or issue found.
+- Processing -> Support: for follow-up or client query.
+- Any department -> Admin: for escalation.
+
+Every handover should require:
+- Source department.
+- Target department.
+- Target owner or queue.
+- Reason.
+- Notes.
+- Attachments if needed.
+- Current status.
+- Due date/priority.
+- Audit log.
+
+
+## 8. High-Level Technical Architecture
+
+Recommended architecture:
+- Frontend: Next.js/React/TypeScript.
+- Mobile: Flutter for Android and iOS.
+- Backend: NestJS/Node.js modular monolith.
+- AI worker: Python FastAPI.
+- Database: PostgreSQL.
+- Queue: Redis + BullMQ.
+- File storage: S3-compatible private object storage.
+- Auth: JWT/refresh token, HttpOnly cookie for web, secure storage for mobile.
+- Deployment: Dockerized services with staging and production.
+
+High-level architecture diagram:
+
+Users/Admin/Employees/Clients/Partners
+        |
+        v
+Next.js Web Portals  <---->  NestJS Backend API  <---->  PostgreSQL
+        |                         |                    
+Flutter Mobile App  <------------ |                     -> Redis/BullMQ Queue
+                                  |                           |
+                                  |                           v
+                                  |                    Python FastAPI AI Worker
+                                  |                           |
+                                  v                           v
+                           S3 File Storage             AI/OCR/Transcription Providers
+                                  |
+                                  v
+                 Meta WhatsApp, Social Leads, Email, SIP Telephony, Firebase
+
+Backend module boundaries:
+- auth
+- users
+- roles/permissions
+- departments/branches
+- leads
+- referrals
+- communications/WhatsApp
+- appointments
+- clients
+- cases
+- documents
+- processing
+- finance
+- reports
+- AI jobs
+- devices
+- attendance
+- audit/timeline
+- integrations
+- notifications
+
+AI worker flow:
+1. Backend creates AI job.
+2. Job is placed in Redis/BullMQ.
+3. Python worker processes OCR/transcription/summary/interview/business plan.
+4. Worker stores result through backend or protected internal API.
+5. Employee reviews output before use.
+
+
+## 9. ERD Draft - Initial Database Design
+
+Global field convention:
+- id UUID primary key.
+- created_at timestamp.
+- updated_at timestamp.
+- deleted_at timestamp nullable where soft delete is needed.
+- created_by_user_id nullable FK users.id where applicable.
+- updated_by_user_id nullable FK users.id where applicable.
+- organization_id FK where multi-branch/multi-org separation is needed.
+
+### 9.1 Identity And RBAC
+
+users:
+- id PK
+- email unique index
+- phone index
+- password_hash
+- full_name
+- status
+- last_login_at
+- created_at, updated_at, deleted_at
+
+roles:
+- id PK
+- name unique
+- description
+- is_system_role
+
+permissions:
+- id PK
+- key unique
+- module
+- description
+
+user_roles:
+- id PK
+- user_id FK users.id
+- role_id FK roles.id
+- unique(user_id, role_id)
+
+role_permissions:
+- id PK
+- role_id FK roles.id
+- permission_id FK permissions.id
+- unique(role_id, permission_id)
+
+login_sessions:
+- id PK
+- user_id FK users.id
+- refresh_token_hash
+- device_info
+- ip_address
+- expires_at
+- revoked_at
+
+consent_records:
+- id PK
+- user_id FK users.id nullable
+- client_id FK client_profiles.id nullable
+- consent_type
+- wording_version
+- accepted_at
+- ip_address
+
+### 9.2 Organization And Employees
+
+branches:
+- id PK
+- name
+- address
+- phone
+- status
+
+departments:
+- id PK
+- name unique
+- manager_user_id FK users.id nullable
+- status
+
+employee_profiles:
+- id PK
+- user_id FK users.id unique
+- department_id FK departments.id
+- branch_id FK branches.id nullable
+- designation
+- manager_employee_id FK employee_profiles.id nullable
+- access_level
+- status
+
+partner_profiles:
+- id PK
+- user_id FK users.id unique
+- referral_code unique
+- company_name
+- contact_person
+- phone
+- status
+- commission_visible boolean
+
+client_profiles:
+- id PK
+- user_id FK users.id nullable
+- full_name
+- phone index
+- email index
+- address
+- country_interest
+- service_interest
+- assigned_employee_id FK employee_profiles.id nullable
+- status
+
+### 9.3 Leads And Referrals
+
+leads:
+- id PK
+- full_name
+- phone index
+- email index
+- source_id FK lead_sources.id
+- campaign_id FK campaigns.id nullable
+- service_interest
+- country_interest
+- status index
+- priority
+- assigned_employee_id FK employee_profiles.id nullable index
+- partner_id FK partner_profiles.id nullable
+- duplicate_status
+- created_at, updated_at
+
+lead_sources:
+- id PK
+- name
+- type
+- is_active
+
+campaigns:
+- id PK
+- name
+- source_id FK lead_sources.id
+- start_date
+- end_date
+- status
+
+lead_assignments:
+- id PK
+- lead_id FK leads.id
+- assigned_to_employee_id FK employee_profiles.id
+- assigned_by_user_id FK users.id nullable
+- reason
+- assigned_at
+
+lead_duplicate_matches:
+- id PK
+- lead_id FK leads.id
+- matched_lead_id FK leads.id
+- match_type
+- confidence_score
+- status
+
+lead_status_history:
+- id PK
+- lead_id FK leads.id
+- old_status
+- new_status
+- changed_by_user_id FK users.id
+- reason
+- changed_at
+
+referral_submissions:
+- id PK
+- partner_id FK partner_profiles.id
+- lead_id FK leads.id nullable
+- client_name
+- client_phone
+- client_email
+- service_interest
+- country_interest
+- notes
+- status
+
+### 9.4 Cases And Processing
+
+cases:
+- id PK
+- client_id FK client_profiles.id
+- lead_id FK leads.id nullable
+- service_type
+- country
+- current_stage_id FK case_stages.id nullable
+- status index
+- assigned_processing_employee_id FK employee_profiles.id nullable
+- opened_at
+- closed_at nullable
+
+case_stages:
+- id PK
+- service_type
+- country nullable
+- name
+- sort_order
+- is_client_visible
+
+case_status_history:
+- id PK
+- case_id FK cases.id
+- old_status
+- new_status
+- changed_by_user_id FK users.id
+- reason
+- changed_at
+
+case_notes:
+- id PK
+- case_id FK cases.id
+- note_text
+- visibility internal/client_visible
+- created_by_user_id FK users.id
+
+handovers:
+- id PK
+- case_id FK cases.id nullable
+- lead_id FK leads.id nullable
+- from_department_id FK departments.id
+- to_department_id FK departments.id
+- assigned_to_employee_id FK employee_profiles.id nullable
+- reason
+- notes
+- status
+- created_by_user_id FK users.id
+
+escalations:
+- id PK
+- case_id FK cases.id nullable
+- lead_id FK leads.id nullable
+- priority
+- reason
+- assigned_to_user_id FK users.id nullable
+- status
+
+### 9.5 Communications And WhatsApp
+
+conversations:
+- id PK
+- channel whatsapp/email/call/manual
+- lead_id FK leads.id nullable
+- client_id FK client_profiles.id nullable
+- assigned_employee_id FK employee_profiles.id nullable
+- status
+- last_message_at index
+
+messages:
+- id PK
+- conversation_id FK conversations.id
+- direction inbound/outbound
+- sender_type client/employee/bot/system
+- body
+- template_id FK whatsapp_templates.id nullable
+- provider_message_id
+- status
+- sent_at
+
+whatsapp_templates:
+- id PK
+- name
+- category
+- language
+- body
+- meta_status
+- provider_template_id
+
+bot_flows:
+- id PK
+- name
+- status
+- service_type nullable
+
+bot_steps:
+- id PK
+- flow_id FK bot_flows.id
+- step_key
+- prompt_text
+- response_type
+- next_step_key
+
+bot_sessions:
+- id PK
+- conversation_id FK conversations.id
+- flow_id FK bot_flows.id
+- current_step_key
+- state_json
+- status
+
+### 9.6 Appointments
+
+appointments:
+- id PK
+- client_id FK client_profiles.id nullable
+- lead_id FK leads.id nullable
+- assigned_employee_id FK employee_profiles.id
+- appointment_type_id FK appointment_types.id
+- starts_at index
+- ends_at
+- status
+- location_or_link
+- notes
+
+appointment_types:
+- id PK
+- name
+- default_duration_minutes
+- is_active
+
+calendar_slots:
+- id PK
+- employee_id FK employee_profiles.id
+- starts_at
+- ends_at
+- status
+
+reminder_jobs:
+- id PK
+- appointment_id FK appointments.id
+- channel
+- scheduled_at
+- status
+
+### 9.7 Documents
+
+document_requirements:
+- id PK
+- service_type
+- country nullable
+- document_name
+- is_required
+- expiry_required
+- sort_order
+
+ documents:
+- id PK
+- client_id FK client_profiles.id
+- case_id FK cases.id nullable
+- requirement_id FK document_requirements.id nullable
+- uploaded_by_user_id FK users.id
+- storage_key
+- file_name
+- mime_type
+- size_bytes
+- status index
+- expiry_date nullable
+
+ document_versions:
+- id PK
+- document_id FK documents.id
+- storage_key
+- version_number
+- uploaded_by_user_id FK users.id
+
+ document_verifications:
+- id PK
+- document_id FK documents.id
+- reviewed_by_user_id FK users.id
+- decision verified/rejected/replacement_requested/manual_review
+- notes
+- reviewed_at
+
+ ocr_results:
+- id PK
+- document_id FK documents.id
+- provider
+- confidence_score
+- extracted_json
+- status
+
+ missing_document_requests:
+- id PK
+- client_id FK client_profiles.id
+- case_id FK cases.id nullable
+- requirement_id FK document_requirements.id
+- message
+- status
+
+### 9.8 Finance
+
+invoices:
+- id PK
+- client_id FK client_profiles.id
+- case_id FK cases.id nullable
+- invoice_number unique
+- amount
+- currency CAD
+- status
+- issued_at
+- due_at
+
+payments:
+- id PK
+- client_id FK client_profiles.id
+- case_id FK cases.id nullable
+- invoice_id FK invoices.id nullable
+- amount
+- currency CAD
+- method
+- status
+- verified_by_user_id FK users.id nullable
+- verified_at nullable
+
+receipts:
+- id PK
+- payment_id FK payments.id
+- receipt_number unique
+- storage_key nullable
+- issued_at
+
+installments:
+- id PK
+- client_id FK client_profiles.id
+- case_id FK cases.id nullable
+- amount
+- due_date
+- status
+
+refunds:
+- id PK
+- payment_id FK payments.id
+- amount
+- status
+- reason
+
+### 9.9 Reports, AI, Devices, Attendance, Audit
+
+report_runs:
+- id PK
+- report_key
+- requested_by_user_id FK users.id
+- filters_json
+- status
+- storage_key nullable
+
+ai_jobs:
+- id PK
+- job_type
+- status
+- related_document_id FK documents.id nullable
+- related_case_id FK cases.id nullable
+- requested_by_user_id FK users.id
+- input_json
+- output_id FK ai_outputs.id nullable
+- error_message nullable
+
+ai_outputs:
+- id PK
+- job_id FK ai_jobs.id
+- output_type
+- content_json
+- reviewed_by_user_id FK users.id nullable
+- review_status
+
+attendance_records:
+- id PK
+- employee_id FK employee_profiles.id
+- check_in_at
+- check_out_at
+- source web/mobile/manual
+- status
+
+devices:
+- id PK
+- employee_id FK employee_profiles.id nullable
+- device_type
+- device_name
+- platform
+- status
+
+audit_logs:
+- id PK
+- actor_user_id FK users.id nullable
+- action
+- entity_type
+- entity_id
+- old_values_json nullable
+- new_values_json nullable
+- ip_address
+- created_at index
+
+activity_timeline_events:
+- id PK
+- client_id FK client_profiles.id nullable
+- lead_id FK leads.id nullable
+- case_id FK cases.id nullable
+- event_type
+- title
+- description
+- created_by_user_id FK users.id nullable
+- created_at index
+
+
+## 10. RBAC Permission Matrix Draft
+
+Permission keys:
+- users.view
+- users.manage
+- roles.view
+- roles.manage
+- permissions.manage
+- departments.view
+- departments.manage
+- leads.view_all
+- leads.view_assigned
+- leads.create
+- leads.edit
+- leads.assign
+- leads.reassign
+- leads.convert
+- leads.reject
+- leads.merge_duplicates
+- referrals.view_all
+- referrals.view_own
+- referrals.create
+- referrals.manage
+- referrals.status_update
+- referrals.commission_view
+- conversations.view_all
+- conversations.view_assigned
+- conversations.reply
+- conversations.handover
+- whatsapp.templates_manage
+- bot_flows.manage
+- appointments.view_all
+- appointments.view_assigned
+- appointments.create
+- appointments.reschedule
+- appointments.cancel
+- clients.view_all
+- clients.view_assigned
+- clients.view_own
+- clients.edit
+- cases.view_all
+- cases.view_assigned
+- cases.update_stage
+- cases.handover
+- cases.escalate
+- documents.view_all
+- documents.view_assigned
+- documents.view_own
+- documents.upload
+- documents.verify
+- documents.reject
+- documents.request_replacement
+- document_requirements.manage
+- finance.view
+- finance.create_invoice
+- finance.verify_payment
+- finance.issue_receipt
+- finance.manage_refund
+- finance.view_reports
+- reports.view_dashboard
+- reports.view_leads
+- reports.view_finance
+- reports.view_employee
+- reports.export
+- ai_jobs.create
+- ai_jobs.view
+- ai_outputs.review
+- business_plans.create
+- business_plans.export
+- devices.view
+- devices.manage
+- attendance.check_in
+- attendance.manage
+- attendance.reports_view
+- audit.view
+- security_events.view
+- settings.manage
+- integrations.manage
+- backups.view
+
+Role mapping:
+
+Super Admin:
+- All permissions.
+
+Admin/Manager:
+- All operational permissions.
+- Cannot perform destructive system-level actions unless explicitly granted.
+- Can view reports, audit logs, escalations, assignments, department activity.
+
+Sales/Consultant:
+- leads.view_assigned
+- leads.edit
+- leads.convert
+- leads.reject
+- conversations.view_assigned
+- conversations.reply
+- appointments.view_assigned
+- appointments.create
+- appointments.reschedule
+- clients.view_assigned
+- documents.upload
+- documents.request_replacement
+- cases.handover
+- reports.view_leads limited to own data
+
+Documentation Officer:
+- documents.view_assigned
+- documents.verify
+- documents.reject
+- documents.request_replacement
+- clients.view_assigned
+- cases.view_assigned
+- cases.handover
+- reports.view_dashboard limited to document metrics
+
+Processing Officer:
+- cases.view_assigned
+- cases.update_stage
+- cases.handover
+- cases.escalate
+- clients.view_assigned
+- documents.view_assigned
+- reports.view_dashboard limited to processing metrics
+
+Finance Officer:
+- finance.view
+- finance.create_invoice
+- finance.verify_payment
+- finance.issue_receipt
+- finance.manage_refund
+- finance.view_reports
+- clients.view_assigned or limited finance view
+- reports.view_finance
+
+Support/Call Center:
+- conversations.view_assigned
+- conversations.reply
+- appointments.view_assigned
+- appointments.reschedule if allowed
+- clients.view_assigned limited
+- cases.view_assigned limited
+- cases.escalate
+
+Marketing:
+- leads.view_all limited to marketing/campaign fields
+- leads.create
+- referrals.view_all limited if required
+- reports.view_leads
+- ai_jobs.create for content only if enabled
+
+Client:
+- clients.view_own
+- documents.view_own
+- documents.upload
+- appointments.view_assigned limited to own appointments
+- finance.view limited to own invoices/receipts
+
+Partner/Referral:
+- referrals.create
+- referrals.view_own
+- referrals.commission_view only if approved
+
+
+## 11. API Module Map Draft
+
+Auth:
+- POST /auth/login
+- POST /auth/logout
+- POST /auth/refresh
+- POST /auth/forgot-password
+- POST /auth/reset-password
+- GET /auth/me
+
+Users/RBAC:
+- GET /users
+- POST /users
+- GET /users/:id
+- PATCH /users/:id
+- DELETE /users/:id
+- GET /roles
+- POST /roles
+- PATCH /roles/:id
+- GET /permissions
+- POST /roles/:id/permissions
+
+Organization:
+- GET /departments
+- POST /departments
+- PATCH /departments/:id
+- GET /branches
+- POST /branches
+- GET /designations
+- POST /designations
+
+Leads:
+- GET /leads
+- POST /leads
+- GET /leads/:id
+- PATCH /leads/:id
+- POST /leads/check-duplicate
+- POST /leads/:id/assign
+- POST /leads/:id/reassign
+- POST /leads/:id/convert
+- POST /leads/:id/reject
+- GET /leads/:id/timeline
+
+Partners/Referrals:
+- GET /partners
+- POST /partners
+- PATCH /partners/:id
+- POST /referrals
+- GET /referrals
+- GET /referrals/:id
+- PATCH /referrals/:id/status
+
+WhatsApp/Communications:
+- POST /webhooks/meta/whatsapp
+- GET /conversations
+- GET /conversations/:id/messages
+- POST /conversations/:id/messages
+- POST /conversations/:id/handover
+- GET /whatsapp/templates
+- POST /whatsapp/templates
+- GET /bot-flows
+- POST /bot-flows
+
+Appointments:
+- GET /appointments
+- POST /appointments
+- GET /appointments/:id
+- PATCH /appointments/:id
+- POST /appointments/:id/cancel
+- POST /appointments/:id/reschedule
+- GET /calendar/slots
+
+Clients/Cases:
+- GET /clients
+- GET /clients/:id
+- PATCH /clients/:id
+- GET /clients/:id/timeline
+- GET /cases
+- POST /cases
+- GET /cases/:id
+- PATCH /cases/:id/status
+- POST /cases/:id/handover
+- POST /cases/:id/escalate
+
+Documents:
+- GET /documents
+- GET /documents/:id
+- POST /documents/upload
+- POST /documents/:id/review
+- POST /documents/:id/request-replacement
+- GET /clients/:id/document-checklist
+- POST /document-requirements
+
+Finance:
+- GET /invoices
+- POST /invoices
+- GET /payments
+- POST /payments
+- POST /payments/:id/verify
+- GET /receipts
+- POST /receipts
+- GET /installments
+- POST /installments
+- POST /refunds
+- GET /finance/reports
+
+Reports:
+- GET /reports/daily-operations
+- GET /reports/leads
+- GET /reports/appointments
+- GET /reports/revenue
+- GET /reports/employees
+- POST /reports/export
+
+AI Jobs:
+- POST /ai/jobs
+- GET /ai/jobs/:id
+- POST /ai/documents/:documentId/classify
+- POST /ai/audio/transcribe
+- POST /ai/interviews
+- POST /ai/business-plans
+
+Devices/Attendance:
+- GET /devices
+- POST /devices
+- PATCH /devices/:id
+- POST /attendance/check-in
+- POST /attendance/check-out
+- GET /attendance/reports
+
+Audit:
+- GET /audit-logs
+- GET /activity-timeline
+- GET /security-events
+
+Mobile:
+- GET /mobile/dashboard
+- GET /mobile/tasks
+- GET /mobile/case-status
+- POST /mobile/documents/upload
+- POST /mobile/push-token
+
+
+## 12. UI Sitemap And Minimum Wireframes
+
+Minimum screens before coding:
+- Login.
+- Admin dashboard.
+- Employee dashboard.
+- Lead inbox.
+- Lead detail.
+- WhatsApp inbox.
+- Client profile.
+- Document review.
+- Finance dashboard.
+- Client portal dashboard.
+- Mobile employee dashboard.
+- Mobile client dashboard.
+
+Admin portal sitemap:
+- Dashboard
+- Leads
+- Assignments
+- Clients
+- Cases
+- WhatsApp Inbox
+- Appointments
+- Documents
+- Processing
+- Finance
+- Support
+- Marketing
+- Partners/Referrals
+- Reports
+- Audit Logs
+- Employees
+- Roles/Permissions
+- Departments/Branches
+- Settings/Integrations
+- Security/Privacy
+- Device Registry
+- Attendance
+
+Employee portal sitemap:
+- My Dashboard
+- My Queue
+- Lead/Client Profile
+- Conversations
+- Appointments
+- Documents
+- Department Actions
+- Handover
+- Notifications
+- Daily Report
+
+Client portal sitemap:
+- Dashboard
+- Case Status
+- Timeline
+- Documents
+- Missing Requests
+- Appointments
+- Payments/Receipts
+- Notifications
+- Profile
+
+Partner portal sitemap:
+- Dashboard
+- New Referral
+- Referral List
+- Referral Detail
+- Optional Commission View
+- Notifications
+- Support Contact
+
+Flutter sitemap:
+- Splash/Login
+- Employee Dashboard
+- Client Dashboard
+- Tasks/Leads
+- Case Status
+- Document Upload
+- Appointments
+- Notifications
+- Attendance Check-In/Out
+- Optional Admin Summary
+
+Shared components:
+- AppShell with role-based sidebar.
+- ThemeToggle with light/dark/system.
+- PermissionGate.
+- DataTable.
+- FilterBar.
+- StatusBadge.
+- Timeline.
+- FileUpload.
+- DocumentPreview.
+- NotesPanel.
+- AssignmentModal.
+- HandoverModal.
+- ConfirmationDialog.
+- NotificationCenter.
+- ReportFilterBar.
+- ExportButton.
+- EmptyState.
+- LoadingState.
+- ErrorState.
+
+
+## 13. Security Model Draft
+
+Authentication:
+- Passwords hashed using Argon2id or bcrypt with strong cost factor.
+- JWT access token with short expiry.
+- Refresh token rotation.
+- HttpOnly secure cookies for web where possible.
+- Secure token storage for Flutter.
+- Password reset token expiry.
+- Optional MFA-ready design for admins.
+
+Authorization:
+- Server-side RBAC on every API.
+- Ownership guards for client, partner, employee, department, branch, and assignment-scoped data.
+- No frontend-only permission enforcement.
+
+File/document security:
+- Private object storage only.
+- Signed URLs with short expiry.
+- Permission check before URL generation.
+- Document access audit log.
+- No public document links.
+
+Audit events:
+- Login/logout.
+- Failed login.
+- User/role/permission changes.
+- Lead assignment/reassignment.
+- Status changes.
+- Document upload/view/review/reject/replacement.
+- Payment/invoice/receipt changes.
+- Case handover/escalation.
+- Report export.
+- Integration webhook failure.
+- Admin settings changes.
+
+Data privacy:
+- Collect only needed PII.
+- Limit AI provider payloads where possible.
+- Human review required for AI outputs.
+- Data retention policy required.
+- Document deletion/archival policy required.
+
+Monitoring/legal-sensitive features:
+- Call recording requires consent wording.
+- Employee monitoring requires policy and consent.
+- Device tracking requires device usage policy.
+- Attendance checks require attendance policy.
+- Face/GPS/liveness checks are not included unless separately approved.
+
+
+## 14. DevOps And Deployment Plan Draft
+
+Recommended environments:
+- Local development.
+- Staging/UAT.
+- Production.
+
+Recommended services:
+- Backend API: Dockerized NestJS app.
+- Web frontend: Next.js app.
+- AI worker: Dockerized Python FastAPI service.
+- Queue worker: BullMQ worker.
+- Database: managed PostgreSQL if possible.
+- Redis: managed Redis or secure Redis on private network.
+- Storage: S3-compatible object storage.
+- Monitoring: error logging, uptime checks, queue failure alerts.
+
+Suggested subdomains:
+- admin.[domain]
+- client.[domain]
+- api.[domain]
+- webhooks.[domain] if separated
+
+CI/CD:
+1. Pull request created.
+2. Lint and tests run.
+3. Build web/backend/worker.
+4. Migration check.
+5. Deploy to staging automatically or manually.
+6. UAT testing.
+7. Manual production approval.
+8. Backup production database before migration.
+9. Deploy production.
+10. Smoke test after deployment.
+
+Backups:
+- Daily database backup.
+- Object storage retention.
+- Backup access limited to authorized technical admins.
+- Restore test before handover.
+
+Rollback:
+- Keep previous release artifact/image.
+- Backup before production migration.
+- Roll back app first if migration not destructive.
+- For destructive migrations, use restore plan.
+
+Monthly hosting estimate:
+- Depends on provider and traffic.
+- Prepare low/medium/high estimate after hosting provider is selected.
+- Third-party fees are outside CAD 10,500.
+
+
+## 15. Access And Credentials Required
+
+Required early:
+- GitHub/GitLab access.
+- Domain/DNS access.
+- Hosting/cloud account or hosting recommendation approval.
+- Email/SMTP access.
+- Meta Business Manager access.
+- Facebook page access.
+- Instagram page access.
+- WhatsApp Business number.
+- Firebase account.
+- AI provider account.
+- OCR provider account.
+- SIP/telephony account if calls are required.
+- Google Play Console account.
+- Apple Developer account.
+- Payment gateway access if needed.
+
+Credential handling rule:
+- Do not share secrets in plain chat if avoidable.
+- Use password manager, temporary accounts, or secure handoff.
+- Use separate staging and production keys.
+- Enable 2FA where possible.
+
+
+## 16. Policies And Compliance Needed
+
+Required policies:
+- Client Privacy Policy.
+- Employee Monitoring Policy.
+- Device Usage Policy.
+- Attendance Policy.
+- Call Recording Consent.
+- WhatsApp Consent / Opt-In.
+- AI Disclaimer.
+- Data Retention Policy.
+- Document Storage/Deletion Policy.
+
+Do not activate these without policy/consent:
+- Call recording.
+- Face attendance.
+- Employee monitoring.
+- Device tracking.
+- Sensitive document automation beyond manual review.
+
+AI disclaimer baseline:
+AI-generated summaries, eligibility notes, interviews, document checks, and business plans are assistive only and must be reviewed by authorized staff before use. AI output must not be treated as final legal, immigration, financial, or business advice.
+
+WhatsApp opt-in baseline:
+By sharing your number and continuing this conversation, you agree to receive WhatsApp messages from Tashfeen Immigration Solutions regarding your inquiry, appointments, documents, payments, and case updates. You may request to stop receiving messages where applicable.
+
+Call recording consent baseline:
+This call may be recorded and transcribed for service quality, case tracking, training, and record-keeping. By continuing the call, you consent to recording and transcription according to the company's privacy policy.
+
+
+## 17. Project Management Setup
+
+Recommended tool:
+- GitHub Projects, ClickUp, Trello, Jira, Linear, or similar.
+
+Required boards/statuses:
+- Backlog
+- Ready for Development
+- In Progress
+- Code Review
+- Testing
+- UAT
+- Approved
+- Blocked
+- Change Request
+
+Each task should include:
+- Title.
+- Module.
+- Description.
+- Acceptance criteria.
+- Owner.
+- Dependency.
+- Priority.
+- Status.
+- Due week.
+- Related milestone.
+- Screens/APIs affected.
+
+Recommended labels:
+- module:auth
+- module:leads
+- module:whatsapp
+- module:documents
+- module:finance
+- module:mobile
+- module:reports
+- type:bug
+- type:feature
+- type:change-request
+- priority:critical
+- priority:high
+- priority:medium
+- priority:low
+- blocked:client-input
+- blocked:third-party
+
+Weekly rhythm:
+- Monday: planning and blocker review.
+- Mid-week: progress check.
+- Friday/Saturday: demo/UAT review where applicable.
+- Monthly: milestone acceptance.
+
+
+## 18. Week 1 To Week 4 Detailed Backlog
+
+### Week 1 - Discovery, Architecture, ERD, RBAC, Design System, Backlog
+
+Tasks:
+1. Finalize commercial/legal correction to CAD 10,500.
+   - Owner: Client + project lead.
+   - Dependency: agreement update.
+   - Acceptance: no old USD 8,000 references remain in final project documents.
+
+2. Confirm company/start information.
+   - Owner: Client.
+   - Dependency: client data.
+   - Acceptance: company name, address, contacts, approver, start date, communication channel confirmed.
+
+3. Create final module/scope matrix.
+   - Owner: Business analyst/project lead.
+   - Dependency: ai.txt, agreement.txt, plan.txt.
+   - Acceptance: every module mapped to milestone/week and in-scope/out-of-scope status.
+
+4. Prepare high-level architecture diagram.
+   - Owner: Solution architect.
+   - Dependency: stack approval.
+   - Acceptance: web/backend/mobile/AI/db/queue/storage/integrations shown.
+
+5. Prepare ERD draft.
+   - Owner: Database lead.
+   - Dependency: module list and roles.
+   - Acceptance: tables, PK/FK, indexes, audit fields, ownership fields documented.
+
+6. Prepare RBAC matrix draft.
+   - Owner: Backend lead + project lead.
+   - Dependency: roles confirmed.
+   - Acceptance: permission keys mapped to roles.
+
+7. Prepare UI sitemap and design system draft.
+   - Owner: UX/UI lead.
+   - Dependency: logo/color approval or temporary assumptions.
+   - Acceptance: sitemap for admin/employee/client/partner/mobile and color/theme tokens ready.
+
+8. Create project board.
+   - Owner: Project manager.
+   - Dependency: project management tool selected.
+   - Acceptance: board columns, labels, milestones, Week 1-4 tasks created.
+
+9. Prepare provider/access dependency register.
+   - Owner: Project manager + technical lead.
+   - Dependency: client credentials/access decisions.
+   - Acceptance: each external dependency has owner, status, due date, risk.
+
+Risks:
+- Client delays legal correction.
+- Departments/services/statuses not finalized.
+- Missing provider access.
+
+Deliverables:
+- Scope matrix.
+- Architecture diagram.
+- ERD draft.
+- RBAC draft.
+- UI sitemap.
+- Design tokens.
+- Project board.
+- Risk/access register.
+
+### Week 2 - Backend Foundation, Auth, RBAC, Audit, File Storage, DevOps
+
+Tasks:
+1. Create repository and branch strategy.
+   - Owner: DevOps/backend lead.
+   - Acceptance: repo exists with branch rules.
+
+2. Create NestJS backend foundation.
+   - Owner: Backend lead.
+   - Acceptance: app runs locally and in staging.
+
+3. Create database migrations for identity/RBAC/org foundation.
+   - Owner: Backend/database lead.
+   - Acceptance: users, roles, permissions, departments, employees tables created.
+
+4. Implement auth baseline.
+   - Owner: Backend lead.
+   - Acceptance: login, logout, refresh/me routes work.
+
+5. Implement RBAC guard.
+   - Owner: Backend lead.
+   - Acceptance: protected route blocks unauthorized user.
+
+6. Implement audit foundation.
+   - Owner: Backend lead.
+   - Acceptance: login/create/update/role change audit events saved.
+
+7. Implement private file storage connection.
+   - Owner: Backend/devops.
+   - Acceptance: signed upload/download test works in staging.
+
+8. Create Next.js frontend shell.
+   - Owner: Frontend lead.
+   - Acceptance: login page, layout, theme toggle, route shell.
+
+9. Create Flutter API contract and app shell plan.
+   - Owner: Mobile lead.
+   - Acceptance: mobile login API contract documented.
+
+10. Setup staging CI/CD baseline.
+   - Owner: DevOps lead.
+   - Acceptance: staging deploy process works.
+
+Risks:
+- Hosting not selected.
+- Database/storage provider not ready.
+- Secrets not provided securely.
+
+Deliverables:
+- Backend foundation.
+- DB migrations.
+- Auth/RBAC.
+- Audit baseline.
+- File storage test.
+- Frontend shell.
+- DevOps staging baseline.
+
+### Week 3 - Admin Core, User Management, Departments, Roles
+
+Tasks:
+1. Build admin dashboard shell.
+   - Owner: Frontend lead.
+   - Acceptance: admin can access dashboard after login.
+
+2. Build employee/user management.
+   - Owner: Frontend + backend.
+   - Acceptance: admin can create/edit/deactivate user.
+
+3. Build role/permission management.
+   - Owner: Frontend + backend.
+   - Acceptance: admin can assign roles/permissions.
+
+4. Build departments/branches setup.
+   - Owner: Frontend + backend.
+   - Acceptance: admin can create departments and assign employee.
+
+5. Build partner/referral setup base.
+   - Owner: Frontend + backend.
+   - Acceptance: admin can create partner profile.
+
+6. Build audit/report skeleton dashboard.
+   - Owner: Frontend + backend.
+   - Acceptance: dashboard shows user/lead/client counts and audit event list.
+
+7. Prepare backup/monitoring baseline.
+   - Owner: DevOps.
+   - Acceptance: backup plan and health checks documented.
+
+Risks:
+- Employee list not ready.
+- Role mapping not approved.
+
+Deliverables:
+- Admin core.
+- User/role/department management.
+- Partner setup base.
+- Report/audit skeleton.
+
+### Week 4 - Employee Portal Core, Work Queues, Flutter Shell, Month 1 UAT
+
+Tasks:
+1. Build employee portal shell.
+   - Owner: Frontend lead.
+   - Acceptance: employee logs in and sees role-based menu.
+
+2. Build work queue baseline.
+   - Owner: Frontend + backend.
+   - Acceptance: employee sees assigned/department queue placeholder.
+
+3. Build lead/client profile shell.
+   - Owner: Frontend + backend.
+   - Acceptance: profile page displays basic data and timeline.
+
+4. Build notes and timeline foundation.
+   - Owner: Backend + frontend.
+   - Acceptance: note creates timeline event.
+
+5. Build Flutter shell/login.
+   - Owner: Mobile lead.
+   - Acceptance: Flutter app connects to staging auth on emulator/device.
+
+6. Prepare Month 1 UAT checklist.
+   - Owner: QA/project manager.
+   - Acceptance: Super Admin/Admin/Employee/Partner roles tested.
+
+7. Conduct Month 1 review.
+   - Owner: Project manager + client approver.
+   - Acceptance: sign-off or issue list created.
+
+Risks:
+- Client does not test on time.
+- Mobile accounts not ready, but emulator testing can continue.
+
+Deliverables:
+- Employee portal core.
+- Work queue baseline.
+- Profile/timeline foundation.
+- Flutter shell.
+- Month 1 UAT checklist.
+
+
+## 19. Access/Credential Dependency Map
+
+| Access | Needed For | Due By | If Delayed |
+| --- | --- | --- | --- |
+| GitHub/GitLab | Code repository | Week 1 | Use temporary dev repo |
+| Domain/DNS | URLs, SSL, email records | Week 1-2 | Use temporary staging URL |
+| Hosting/cloud | Deploy backend/frontend | Week 1-2 | Use developer staging |
+| PostgreSQL provider | Database | Week 2 | Use local/dev DB temporarily |
+| Object storage | Documents/files | Week 2 | Use dev bucket temporarily |
+| Redis | Jobs/queues | Week 2 | Use local/dev Redis temporarily |
+| Email/SMTP | Email notifications | Week 5-8 | Use mock/manual email |
+| Meta Business Manager | WhatsApp/social | Week 5-7 | Use mock flows |
+| WhatsApp number | WhatsApp API | Week 7 | Use test/manual WhatsApp |
+| Facebook/Instagram | Social leads | Week 5 | Use manual/test leads |
+| Firebase | Mobile push | Week 9-15 | Build app without push first |
+| AI/OCR provider | AI/document features | Week 10-14 | Use mock/manual review |
+| SIP/telephony | Calls/transcripts | Week 13 | Use manual call log fallback |
+| Google Play | Android publish | Week 15-16 | APK/internal testing only |
+| Apple Developer | iOS publish | Week 15-16 | Simulator/TestFlight delay |
+
+
+## 20. Risk Register
+
+| Risk | Impact | Control |
+| --- | --- | --- |
+| Agreement still says USD 8,000 | Commercial/legal confusion | Correct to CAD 10,500 before start |
+| Scope creep | Budget/timeline overrun | Written change request process |
+| Meta approval delay | WhatsApp/social features delayed | Submit early, use mock/manual fallback |
+| WhatsApp template rejection | Messaging automation delayed | Compliant templates, manual fallback |
+| App store delays | Mobile publishing delayed | Start accounts early, use staging/internal builds |
+| AI accuracy | Wrong recommendations | Human review required |
+| OCR errors | Document mistakes | Manual review fallback |
+| Telephony limitations | AI calls delayed | Provider evaluation and manual fallback |
+| Document privacy | Sensitive data risk | Signed URLs, RBAC, audit logs |
+| Employee monitoring consent | Legal/HR risk | Policies before activation |
+| Mobile timeline pressure | Month 4 pressure | Start Flutter shell Week 4 |
+| Client delays credentials | Delivery delays | Dependency register with due dates |
+| Data security | Breach/access risk | RBAC, audit, backups, secrets policy |
+
+
+## 21. What Can Be Assumed For Now
+
+Safe to assume for design/development start:
+- Temporary logo.
+- Suggested navy/teal/gold color scheme.
+- Dark and light theme.
+- Sample services.
+- Sample countries.
+- Dummy employees.
+- Dummy document checklist.
+- Mock WhatsApp flow.
+- Mock social leads.
+- Mock AI responses.
+- Mock payment data.
+- Staging placeholders.
+
+Do not assume:
+- Legal amount/currency beyond confirmed CAD 10,500 until agreement updated.
+- Payment schedule.
+- Final approver.
+- Final departments if client has changes.
+- Real Meta approval.
+- Real WhatsApp template approval.
+- App store approval.
+- Call recording legality/consent.
+- Employee monitoring consent.
+- Production hosting credentials.
+- Payment gateway approval.
+
+
+## 22. Message To Send To Developer/Team
+
+Before we start development, please prepare the final project start checklist and confirm what is blocking us.
+
+We are ready to assume temporary logo, color scheme, sample services, sample users, and sample workflows for design purposes.
+
+However, before coding starts, we need you to confirm and prepare:
+
+1. Final architecture document.
+2. High-level architecture diagram.
+3. Database ERD draft.
+4. RBAC permission matrix.
+5. API module map.
+6. UI sitemap and first design screens.
+7. DevOps/deployment plan.
+8. Security model.
+9. Week 1-4 detailed backlog.
+10. List of credentials/access needed.
+11. List of client business information needed.
+12. List of blockers that can delay development.
+13. Confirmation that all final documents use CAD 10,500 and do not mix USD/CAD.
+14. Confirmation that the system supports light and dark theme from day 1.
+
+Once these are submitted and reviewed, we can approve the final development roadmap and begin Week 2 coding work.
+
+
+## 23. Final Start Recommendation
+
+The project can begin with Week 1 discovery/design/architecture activities now, using the known company details and temporary branding direction. Full coding should begin only after the Week 2 start gate is satisfied.
+
+Highest-priority actions before coding:
+1. Fix commercial currency in agreement and final documents to CAD 10,500.
+2. Confirm main approver and project start date.
+3. Approve scope/module list and Phase 2 basic-only boundary.
+4. Approve ERD draft.
+5. Approve RBAC matrix.
+6. Approve API module map.
+7. Create repository and staging environment.
+8. Confirm database, storage, Redis, and deployment approach.
+9. Create project board with Week 1-4 backlog.
+10. Confirm dark/light theme implementation from the first frontend/mobile foundation.
+11. Approve DEVELOPMENT_STANDARDS.md as mandatory coding, security, UI, theme, audit, and project-management rules.
+
+This documentation is enough to begin project setup properly and to prevent confusion before development starts.

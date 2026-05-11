@@ -1,0 +1,780 @@
+AI-Powered Overseas Consultancy Management & Automation Platform 
+Phase 1 — Core CRM, Communication & Client Operations Platform 
+1. WhatsApp Business Automation System 
+Clean name: WhatsApp Meta API Bot & Automation Engine 
+What we will build: 
+• Company WhatsApp Business API integration  
+• Automated replies for client inquiries  
+• Interactive buttons and list menus  
+• Service selection flows such as Work Permit, Business Visa, Visit Visa, Study/Job Abroad  
+• Client information collection  
+• Human handover to employee  
+• WhatsApp conversation history inside CRM  
+• Document request messages  
+• Appointment links and reminders  
+2. Social Media Lead Management System 
+Clean name: Social Media Lead Capture & CRM Intake System 
+What we will build: 
+• Lead capture from Facebook, Instagram, website forms, and manual entry  
+• Store all leads in one centralized CRM  
+• Auto-create client/lead profiles  
+• Track lead source, campaign, service interest, and inquiry type  
+• Admin view for all incoming leads  
+• Employee assignment status  
+3. Lead Distribution System 
+Clean name: Intelligent Lead Assignment & Distribution Engine 
+What we will build: 
+• Auto-assign leads to employees  
+• Assignment based on service type, country, employee availability, and workload  
+• Hot/warm/cold lead priority  
+• Manual reassignment by admin  
+• Employee notifications for new leads  
+• Lead ownership tracking  
+• Lead reassignment audit log  
+4. AI Chatbot for Messaging 
+Clean name: AI Messaging Assistant & Client Screening Chatbot 
+What we will build: 
+• AI-assisted chat replies  
+• Guided screening questions  
+• Client intent detection  
+• Client service selection  
+• Voice note transcript understanding  
+• Auto-reply in text  
+• Basic eligibility checking  
+• Escalation to human employee when needed  
+The chatbot will not be a random free-chat bot. It will follow controlled business flows and 
+collect structured data. 
+5. AI Voice & Call Agent 
+Clean name: AI Voice Calling & Client Screening Agent 
+What we will build: 
+• AI voice agent for client calls  
+• SIM/SIP/telephony-based calling integration  
+• AI screening calls  
+• Appointment booking through calls  
+• Call recording where supported by telephony provider  
+• Call transcript  
+• AI call summary  
+• Call outcome saved in CRM  
+Important technical note: 
+WhatsApp app calls should not be treated as reliably recordable. For proper recording and 
+reporting, calls should go through SIM/SIP/telephony provider. WhatsApp calling can only be 
+considered if official provider support is confirmed. 
+6. AI Appointment Booking System 
+Clean name: AI Appointment Scheduling & Reminder System 
+What we will build: 
+• Appointment booking through WhatsApp bot  
+• Appointment booking through AI voice call  
+• Employee calendar  
+• Admin calendar view  
+• Appointment status tracking  
+• Reschedule and cancel options  
+• WhatsApp reminders  
+• Appointment types such as office visit, phone consultation, document submission, 
+payment follow-up, and case review  
+7. AI-Based Interview System 
+Clean name: AI Audio Interview & Candidate Evaluation System 
+What we will build: 
+• Audio-based client/candidate interview  
+• Predefined interview questions  
+• Voice response recording  
+• Speech-to-text transcription  
+• AI-generated interview summary  
+• Suitability/eligibility notes  
+• Interview result saved in client profile  
+• Admin and employee review screen  
+8. Admin Portal 
+Clean name: Central Admin Control Dashboard 
+What we will build: 
+• Full admin dashboard  
+• View all leads, clients, employees, appointments, conversations, and call logs  
+• Assign and reassign leads  
+• Monitor employee activity  
+• View WhatsApp conversations  
+• Listen to call recordings where available  
+• View AI summaries  
+• Manage services and bot flows  
+• Manage roles and permissions  
+• View daily operations reports  
+• View revenue and conversion reports  
+• Emergency employee access control  
+• 9. Employee Portal 
+o Clean name: Multi-Department Employee Operations Portal 
+• Explanation: 
+o This portal is for all company employees, not only the sales team. Each employee 
+will see work according to their department, role, and permissions. 
+o The system will support different departments such as: 
+o Sales / Consultants  
+o Processing Department  
+o Documentation Department  
+o Finance Department  
+o Call Center / Support Team  
+o Marketing Team  
+o Admin / Operations Team  
+Each department will have its own work queue, tasks, client access level, reports, and 
+workflow actions. 
+• What we will build: 
+o Employee dashboard  
+o Department-based dashboard  
+o Assigned leads/tasks list  
+o Client profile view  
+o WhatsApp CRM inbox access based on role  
+o Voice note transcript view  
+o Call button / call logs  
+o Appointment management  
+o Document checklist  
+o Processing workflow  
+o Finance/payment workflow  
+o Follow-up tasks  
+o Internal notes  
+o Status updates  
+o Daily work report  
+o Department performance summary  
+o Employee performance summary  
+o Task handover between departments  
+• Department-Based Employee Access 
+•  Sales / Consultant Team 
+• Purpose: 
+Handle new leads, communicate with clients, screen clients, book appointments, and 
+convert leads. 
+o Sales team can: 
+o View assigned leads  
+o Reply to client messages  
+o Call clients  
+o View voice note transcripts  
+o Book appointments  
+o Collect basic information  
+o Mark lead as hot/warm/cold  
+o Request documents  
+o Add follow-up notes  
+o Mark lead converted/rejected  
+o Handover client to processing team  
+• Sales Flow: 
+Lead assigned to sales employee 
+↓ 
+Sales employee contacts client 
+↓ 
+Client is screened 
+↓ 
+Appointment is booked 
+↓ 
+Required documents are requested 
+↓ 
+Lead is converted 
+↓ 
+Case is handed over to processing department 
+2. Processing Department 
+Purpose: 
+Handle client case processing after the lead is converted. 
+o Processing team can: 
+o View converted client cases  
+o Check case status  
+o Review required documents  
+o Verify application details  
+o Update processing stages  
+o Add case notes  
+o Request missing information  
+o Coordinate with documentation team  
+o Mark application as submitted / under review / completed  
+o Upload processing proofs or receipts  
+• Processing Flow: 
+o Converted client received from sales team 
+↓ 
+Processing officer reviews case 
+↓ 
+Checks required documents and data 
+↓ 
+Requests missing items if needed 
+↓ 
+Updates case stage 
+↓ 
+Submits application / tracks progress 
+↓ 
+Marks case completed or escalates issue 
+• Processing statuses: 
+Case received 
+Documents under review 
+Missing documents requested 
+Application preparation 
+Application submitted 
+Under embassy/company review 
+Additional information required 
+Approved 
+Rejected 
+Closed 
+3. Documentation Department 
+Purpose: 
+Manage all client documents, detect missing documents, sort documents, check 
+expiry, and verify document quality. 
+o Documentation team can: 
+o View uploaded documents  
+o Sort documents into categories  
+o Check missing documents  
+o Check missing client data  
+o Check expiry dates  
+o Mark documents verified/rejected  
+o Request replacement documents  
+o Add document notes  
+o Upload scanned documents  
+o Generate document checklist  
+o Notify client through WhatsApp/email  
+• Documentation Flow: 
+o Client uploads/sends documents 
+↓ 
+System classifies and sorts documents 
+↓ 
+Documentation officer reviews documents 
+↓ 
+Missing/expired/wrong documents are flagged 
+↓ 
+System sends WhatsApp/email request 
+↓ 
+Client submits corrected documents 
+↓ 
+Documents are verified 
+↓ 
+Case moves to processing department 
+Document statuses: 
+o Uploaded 
+Under review 
+Verified 
+Rejected 
+Expired 
+Missing 
+Replacement requested 
+Manual review required 
+4. Finance Department 
+• Purpose: 
+Manage payments, receipts, invoices, refunds, installments, commissions, and payroll
+related financial records. 
+o Finance team can: 
+o View payment status  
+o Add payment received  
+o Upload payment receipt  
+o Generate invoice  
+o Track pending payments  
+o Track installments  
+o Mark payment verified  
+o Manage refunds  
+o View revenue reports  
+o View employee commission  
+o Manage salary/payroll records where allowed  
+• Finance Flow: 
+Client payment is requested 
+↓ 
+Client pays amount 
+↓ 
+Finance verifies payment 
+↓ 
+Receipt is uploaded/generated 
+↓ 
+Payment status is updated 
+↓ 
+Admin and employee are notified 
+↓ 
+Case moves forward 
+Payment statuses: 
+o Payment pending 
+Partial payment received 
+Payment under verification 
+Payment verified 
+Invoice generated 
+Refund requested 
+Refund completed 
+Payment overdue 
+5. Call Center / Support Team 
+Purpose: 
+Handle incoming inquiries, follow-ups, reminders, appointment confirmations, 
+and support calls. 
+o Support team can: 
+o View assigned support tickets  
+o Reply to client queries  
+o Make follow-up calls  
+o Confirm appointments  
+o Handle missed calls  
+o Create support notes  
+o Escalate to sales/processing/admin  
+o Mark ticket resolved  
+• Support Flow: 
+o Client asks question or needs help 
+↓ 
+Support team receives task/ticket 
+↓ 
+Support replies or calls client 
+↓ 
+Issue is resolved or escalated 
+↓ 
+System records support activity 
+6. Marketing Team 
+• Purpose: 
+Manage social media leads, campaigns, social media automation, and content 
+posting. 
+o Marketing team can: 
+o View social media leads  
+o Track campaign performance  
+o Create social media posts  
+o Generate AI captions/hashtags  
+o Schedule posts  
+o Review social media content  
+o Send campaign leads to sales team  
+o View lead source reports  
+• Marketing Flow: 
+o Marketing creates campaign 
+↓ 
+Leads are generated from social media 
+↓ 
+System captures leads 
+↓ 
+Marketing reviews campaign performance 
+↓ 
+Qualified leads are routed to sales team 
+7. Admin / Operations Team 
+• Purpose: 
+Manage internal operations, employee access, departments, approvals, and escalations. 
+• Operations team can: 
+• Manage departments  
+• Assign tasks  
+• Monitor workflow  
+• View escalations  
+• Manage employee workload  
+• Approve changes  
+• Review daily reports  
+• Monitor pending work  
+• Coordinate between departments  
+• Employee Flow 
+• Employee logs in 
+↓ 
+System checks employee role and department 
+↓ 
+Employee sees department-specific dashboard 
+↓ 
+Employee views assigned work 
+↓ 
+Employee performs allowed actions 
+↓ 
+Employee updates status / adds notes 
+↓ 
+System records activity 
+↓ 
+Work moves to next department if needed 
+• Department Handover Flow 
+• Sales converts lead 
+↓ 
+Handover to documentation department 
+↓ 
+Documentation verifies documents 
+↓ 
+Handover to processing department 
+↓ 
+Processing prepares/submits case 
+↓ 
+Finance verifies payments 
+↓ 
+Admin monitors full case lifecycle 
+Role-Based Employee Actions 
+Department 
+Sales / Consultant 
+Documentation 
+Processing 
+Finance 
+Support / Call Center 
+Marketing 
+Operations/Admin 
+Main Actions 
+Leads, calls, appointments, conversion 
+Document sorting, missing docs, expiry checks 
+Case stages, application submission, case updates 
+Payments, invoices, receipts, refunds 
+Follow-ups, tickets, appointment confirmations 
+Campaigns, social media leads, posting 
+Task control, escalations, employee management 
+10. Client Portal 
+Clean name: Client Case Tracking, Document Verification & Missing Data Retrieval Portal 
+What we will build: 
+• Client login  
+• Case status view  
+• Required documents list  
+• Document upload  
+• Appointment history  
+• Payment/status visibility  
+• Assigned consultant details  
+• Notifications and updates  
+• Timeline of case progress  
+Document Detection & Verification System 
+The client portal will include an intelligent document management system that can: 
+• Detect which required documents are uploaded  
+• Detect which required documents are missing  
+• Identify missing client data/information  
+• Sort uploaded documents into correct categories  
+• Check document expiry dates  
+• Mark expired or near-expiry documents  
+• Flag unclear, duplicate, wrong, or incomplete documents  
+• Notify employee/admin when documents need review  
+Missing Documents & Missing Data Retrieval 
+When the system detects that a client has not provided required documents or required 
+information, it will automatically generate follow-up messages. 
+The system will generate: 
+• WhatsApp message to client  
+• Email to client  
+• Employee task/reminder  
+• Client portal notification  
+Example: 
+Dear [Client Name], 
+Your application is pending because the following items are missing: 
+1. Passport copy 
+2. CNIC front side 
+3. Employment experience letter 
+4. Updated phone number 
+Please upload the missing documents through your client portal or send them on WhatsApp. 
+Document Sorting 
+Uploaded documents will be automatically sorted into categories such as: 
+• Passport  
+• CNIC / National ID  
+• Photo  
+• Educational documents  
+• Experience certificates  
+• Police clearance certificate  
+• Medical certificate  
+• Bank statement  
+• Business documents  
+• Visa refusal documents  
+• Payment receipts  
+• Other supporting documents  
+Expiry & Validity Checking 
+The system will check document expiry where applicable. 
+Examples: 
+• Passport expiry  
+• CNIC expiry  
+• Police clearance validity  
+• Medical certificate validity  
+• Visa document validity  
+• Business registration expiry  
+• License/certificate expiry  
+The system will flag: 
+• Valid documents  
+• Expired documents  
+• Near-expiry documents  
+• Documents requiring manual review  
+Admin/Employee Review 
+Employees/admin can: 
+• View uploaded documents  
+• Approve or reject documents  
+• Request replacement document  
+• Add document notes  
+• Mark document as verified  
+• Send missing document request manually  
+• See document status inside client profile  
+Example Case Statuses: 
+• Inquiry received  
+• Screening completed  
+• Documents pending  
+• Missing data requested  
+• Documents under review  
+• Expired document detected  
+• Replacement document requested  
+• Appointment booked  
+• Application under review  
+• Payment pending  
+• Submitted  
+• Approved  
+• Rejected  
+• Closed  
+11. Tracking System 
+Clean name: Client Lifecycle Tracking & Activity Timeline 
+What we will build: 
+• Full activity log for every client  
+• Track bot replies, employee replies, calls, appointments, documents, payments, and 
+status changes  
+• Employee action history  
+• Lead movement tracking  
+• Audit trail for admin  
+• Candidate/client timeline view  
+This is important because the owner wants full visibility over what employees are doing with 
+each client. 
+12. Web Platform 
+Clean name: Web Application, Domain & Hosting Setup 
+What we will build: 
+• Web-based admin portal  
+• Web-based employee portal  
+• Web-based client portal  
+• Domain setup  
+• Hosting setup  
+• Backend API deployment  
+• Database setup  
+• Secure file storage  
+• SSL/security configuration  
+• Backup and monitoring basics  
+13. Android Application 
+Clean name: Android Mobile Application 
+What we will build: 
+• Android app for employees  
+• Android app for clients  
+• Optional admin mobile view  
+• Push notifications  
+• Lead alerts  
+• Client updates  
+• Appointment alerts  
+• Mobile document upload  
+14. iOS Application 
+Clean name: iOS Mobile Application
+What we will build: 
+• iOS app for employees  
+• iOS app for clients  
+• Optional admin mobile view  
+• Push notifications  
+• Case updates  
+• Appointment reminders  
+• Mobile CRM access  
+15. Daily Operations Reporting System 
+Clean name: Daily Operations, Employee Performance & Management Reports 
+What we will build: 
+• Daily employee work report  
+• Leads assigned  
+• Leads contacted  
+• Calls made  
+• Appointments booked  
+• Cases converted  
+• Missed follow-ups  
+• Average response time  
+• Revenue generated  
+• Export reports as PDF/Excel  
+• Admin summary dashboard  
+16. Role-Based Access Control 
+Clean name: Secure Role-Based Access & Permission System 
+What we will build: 
+• Super Admin role  
+• Admin/Manager role  
+• Employee/Consultant role  
+• Call Agent role  
+• Document Officer role  
+• Finance Officer role  
+• Client role  
+• Partner/Referral role  
+Access rules: 
+• Admin sees everything  
+• Employee sees assigned clients only  
+• Client sees own case only  
+• Finance sees payment data  
+• Document officer sees document workflow  
+• Partner sees referred leads only  
+17. AI-Based Business Plan Generation System 
+Clean name: AI Business Plan Generator for Visa & Investment Clients 
+Explanation: 
+This module is for clients applying for business visas, investor visas, startup visas, or overseas 
+business opportunities. Many such cases require a professional business plan. Instead of 
+preparing every business plan manually, the employee will enter the client’s details, investment 
+amount, target country, business type, and business goals. The AI system will generate a 
+structured business plan that the employee can review, edit, and export as PDF. 
+What we will build: 
+• Business plan dashboard  
+• Create new business plan  
+• Client details input  
+• Business type selection  
+• Country and market selection  
+• Investment and financial input  
+• AI-generated executive summary  
+• AI-generated market analysis  
+• AI-generated business model  
+• AI-generated financial projections  
+• Risk and opportunity section  
+• Editable business plan draft  
+• Version history  
+• PDF export  
+• Save business plan inside client profile  
+Example business plan types: 
+• Restaurant/cafe business plan  
+• Import/export business plan  
+• Construction services business plan  
+• IT services business plan  
+• Retail store business plan  
+• Transport/logistics business plan  
+• Small trading business plan  
+Phase 2 — Enterprise, Device Control & Automation Expansion 
+18. Enterprise Solutions 
+Clean name: Enterprise Operations Management System 
+What we will build: 
+• Company departments  
+• Branch management  
+• Team hierarchy  
+• Designations  
+• Internal tasks  
+• Internal approvals  
+• SOP and policy library  
+• Asset management  
+• Vendor/service provider records  
+• Internal audit logs  
+• Management dashboard  
+19. Employee Surveillance System 
+Clean name: Employee Activity Monitoring & Compliance Oversight System 
+What we will build: 
+• Monitor employee CRM activity  
+• Track messages sent  
+• Track calls made  
+• Track lead status changes  
+• Track missed follow-ups  
+• Track login/logout activity  
+• Track daily work output  
+• Detect inactive employees  
+• Alert admin for suspicious activity  
+• Full employee audit trail  
+This should be presented as activity monitoring and compliance oversight, not hidden 
+surveillance. Since devices are company-provided, monitoring should be disclosed in company 
+policy. 
+20. Mobile Device Management System 
+Clean name: Company Mobile Device Control System 
+What we will build: 
+• Register company-provided Android phones  
+• Link each phone to employee profile  
+• Remote lock device  
+• Disable employee access  
+• Remove company app/data  
+• Device status tracking  
+• Lost/stolen phone action  
+• Emergency suspend workflow  
+• Device audit log  
+21. PC/Laptop Management System 
+Clean name: Company PC & Laptop Access Control System** 
+What we will build: 
+• Register company laptops/PCs  
+• Link device to employee profile  
+• Remote access disable workflow  
+• Force logout from company systems  
+• Revoke device trust  
+• Disable employee CRM access  
+• Lock or restrict company device through endpoint management integration  
+• Laptop/PC audit logs  
+• Emergency employee suspension workflow  
+22. Social Media Automation System 
+Clean name: AI Social Media Content Creation, Scheduling & Posting Engine 
+Explanation: 
+This module will help the company create and publish marketing content automatically. The 
+system will use AI to generate social media posts, captions, hashtags, video scripts, voice 
+narration, subtitles, background music suggestions, and posting schedules. It will support 
+content creation for Facebook, Instagram, YouTube, and TikTok, depending on available platform 
+APIs and posting permissions. 
+What we will build: 
+• Social media dashboard  
+• Connect Facebook, Instagram, YouTube, and TikTok accounts  
+• AI post idea generation  
+• AI caption generation  
+• AI hashtag generation  
+• AI video script generation  
+• AI voice narration generation  
+• Subtitle generation  
+• Background music selection/suggestion  
+• Content calendar  
+• Post scheduling  
+• Auto-posting where API permissions allow  
+• Manual approval before posting  
+• Campaign management  
+• Post performance analytics  
+Content types: 
+• Facebook posts  
+• Instagram reels/posts  
+• YouTube shorts  
+• TikTok videos  
+• Promotional visa posts  
+• Success story posts  
+• Country-specific offer posts  
+• Educational content posts  
+Final Unified System Summary 
+This project will be delivered as an: 
+AI-Powered Overseas Consultancy Management & Automation Platform 
+It includes: 
+• WhatsApp automation  
+• AI messaging chatbot  
+• Voice note reading  
+• AI call agent  
+• Appointment booking  
+• AI audio interviews  
+• Social media lead management  
+• Lead distribution  
+• Admin portal  
+• Employee portal  
+• Client portal  
+• Client case tracking  
+• Daily operations reports  
+• Role-based access  
+• Web platform  
+• Android app  
+• iOS app  
+• AI business plan generation  
+• Enterprise operations management  
+• Employee activity monitoring  
+• Mobile device control  
+• PC/laptop access control  
+• AI social media automation 
+23. Employee Attendance System 
+Clean name: AI Face-Based Employee Attendance & Time Tracking System 
+Explanation: 
+This module will allow the company to track employee attendance using face detection / face 
+verification. Employees will mark attendance from the company mobile app or office device. 
+The system will verify the employee’s face, record check-in/check-out time, and generate 
+attendance reports for payroll and management. 
+This module should be linked with the Payroll System, Employee Monitoring System, and Daily 
+Operations Reporting System. 
+What we will build: 
+• Employee face registration/enrollment  
+• Face-based check-in  
+• Face-based check-out  
+• Attendance dashboard  
+• Late arrival tracking  
+• Early leave tracking  
+• Break time tracking  
+• Overtime tracking  
+• Leave/absence tracking  
+• Location-based attendance validation  
+• Device-based attendance validation  
+• Attendance approval/rejection by admin  
+• Monthly attendance reports  
+• Payroll attendance sync  
+• Suspicious attendance alerts  
+Face Verification Flow: 
+Employee opens company app 
+↓ 
+Clicks Check-in 
+↓ 
+Camera opens 
+↓ 
+System verifies face 
+↓ 
+System checks device/location rules 
+↓ 
+Attendance is marked 
+↓ 
+Admin can see attendance in dashboard 
+↓ 
+Payroll uses attendance for salary calculation 
+Attendance Rules: 
+The system can support: 
+• Office check-in  
+• Remote check-in  
+• Field employee check-in  
+• Branch-wise attendance  
+• Shift-based attendance  
+• Grace time rules  
+• Late deduction rules  
+• Overtime rules  
+• Leave adjustment rules  
+Security & Anti-Fraud Features: 
+• Face verification  
+• Liveness check where supported  
+• GPS/location verification  
+• Company device verification  
+• Time and date validation  
+• Duplicate check-in prevention  
+• Manual override approval by admin  
+• Attendance audit log  
+Reports: 
+Admin can generate: 
+• Daily attendance report  
+• Monthly attendance report  
+• Late arrival report  
+• Absentee report  
+• Overtime report  
+• Branch-wise attendance report  
+• Employee-wise attendance report  
+• Payroll attendance report  
+Important Note: 
+Since this uses face detection/verification, the company should clearly inform employees and 
+include it in the employment/device policy. Face data should be stored securely and used only 
+for attendance and company security purposes.

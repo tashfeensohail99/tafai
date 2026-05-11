@@ -1,0 +1,129 @@
+# Project Board Setup Guide - Tashfeen AI Platform
+
+Date: May 8, 2026
+
+## Tool Choice
+
+Import the backlog into one of:
+
+- GitHub Projects
+- ClickUp
+- Trello
+- Jira
+- Linear
+- Google Sheets / Excel if no project tool is set up yet
+
+## Source File
+
+Import from:
+
+week-1-technical-outputs/09-week-1-4-backlog.csv
+
+## Board Columns
+
+Create these columns in this order:
+
+1. Backlog
+2. Ready for Development
+3. In Progress
+4. Code Review
+5. Testing
+6. UAT
+7. Approved
+8. Blocked
+9. Change Request
+
+## Task Fields
+
+Each task card must have:
+
+- Week
+- Module
+- Task title
+- Owner
+- Priority
+- Dependency
+- Acceptance criteria
+- Status
+- Notes (optional)
+
+## Import Steps
+
+### GitHub Projects
+
+1. Create new project.
+2. Select board view.
+3. Add the columns above.
+4. Add custom fields: Week, Module, Priority, Dependency, Acceptance Criteria.
+5. Import CSV rows as items manually or use GitHub CLI import if available.
+6. Assign owners and set initial statuses to Backlog.
+
+### ClickUp
+
+1. Create a new Space: Tashfeen AI Platform.
+2. Create a List: Week 1-4 Backlog.
+3. Import CSV using the ClickUp import tool.
+4. Map CSV columns to ClickUp fields.
+5. Set Status column to the board column names above.
+
+### Trello
+
+1. Create a board: Tashfeen AI Platform.
+2. Add the columns above as lists.
+3. Import CSV using a Trello CSV import add-on.
+4. Or create cards manually from the CSV grouped by Week.
+
+### Jira
+
+1. Create a project: Tashfeen AI Platform.
+2. Use Scrum board type.
+3. Create epics by Module.
+4. Import stories from CSV using Jira CSV importer.
+5. Map fields as: Summary=Task, Labels=Module, Priority=Priority, Component=Owner, Description=Acceptance Criteria.
+
+### Linear
+
+1. Create a workspace: Tashfeen AI Platform.
+2. Create teams: Backend, Frontend, DevOps, Mobile, AI, QA.
+3. Create cycles for Week 1, Week 2, Week 3, Week 4.
+4. Import issues from CSV.
+
+## Priority Definitions
+
+- Critical: Blocks Week 2 start gate. Must be resolved before coding.
+- High: Required for milestone acceptance. Should not be deferred.
+- Medium: Required for scope. Can be done in order within the sprint.
+- Low: Enhancement or optional improvement.
+
+## Initial Board Population
+
+After import, set these statuses:
+
+- All Week 1 tasks: Backlog or In Progress depending on who owns it.
+- All Week 2 tasks: Backlog.
+- All Week 3-4 tasks: Backlog.
+- Any task with an unresolved blocker: move to Blocked and note the blocker.
+
+## Ongoing Board Rules
+
+- A task moves to In Progress only when one owner picks it up.
+- No more than 2-3 tasks In Progress per person at one time.
+- A task moves to Code Review only when implementation is done and self-tested.
+- A task moves to UAT only after internal QA passes.
+- A task moves to Approved only after milestone sign-off.
+- A task in Blocked must have a blocker note and an owner responsible for resolving it.
+- A Change Request task comes from a written scope change. It does not start without approval.
+
+## Week 1-4 Module Grouping
+
+Week 1 tasks:
+- Legal/Commercial, Project Management, Scope, Business Setup, Architecture, Security/RBAC, Database, Backend API, UI/UX, DevOps.
+
+Week 2 tasks:
+- Repository/DevOps, Backend Foundation, Database Migrations, Auth, RBAC, Audit Log, Storage, Frontend Shell, Design System, Flutter Contract, Staging.
+
+Week 3 tasks:
+- Lead CRM, Assignment, Client/Case, Partner/Referral, Appointments, Notifications, Reports Foundation, Employee Portal Shell, Tests.
+
+Week 4 tasks:
+- WhatsApp Webhook, Communications, Documents, AI Jobs, Finance Foundation, Client Portal, Partner Portal, UAT Checkpoint 1.

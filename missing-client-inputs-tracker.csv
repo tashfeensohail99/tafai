@@ -1,0 +1,58 @@
+Category,Item,Status,Owner,Due Week,Notes
+Legal/Commercial,Final amount CAD 10500,Confirmed,Client,Week 1,agreement.txt updated; regenerate DOCX/PDF before signing
+Legal/Commercial,Currency consistent everywhere,In Progress,Client/Project Lead,Week 1,Check final agreement DOCX/PDF before signing
+Legal/Commercial,Payment schedule confirmation,Needs Confirmation,Client,Week 1,Current proposed schedule: 2000/2000/2000/2500/2000 CAD
+Legal/Commercial,Agreement signed,Pending,Client/Service Provider,Week 1,Sign corrected agreement
+Legal/Commercial,Advance received,Pending,Client,Week 1,Required before official kickoff if agreement says so
+Legal/Commercial,Project start date,Missing,Client,Week 1,Confirm in writing
+Legal/Commercial,Main approver,Missing,Client,Week 1,One decision maker required
+Legal/Commercial,Change request approval process,Prepared,Project Lead,Week 1,Needs client approval
+Legal/Commercial,UAT/sign-off process,Prepared,Project Lead,Week 1,Needs client approval
+Company Info,Company legal name,Known,Client,Week 1,Tashfeen Immigration Solutions
+Company Info,Office address,Known,Client,Week 1,"Office No. 3029 A & B, 3rd Floor, Giga Mall, DHA Phase 2, Islamabad"
+Company Info,Main phone number,Missing,Client,Week 1,
+Company Info,Main WhatsApp number,Missing,Client,Week 1,
+Company Info,Main email,Missing,Client,Week 1,
+Company Info,Website URL,Missing,Client,Week 1,
+Branding,Existing logo,Available,Client,Week 1,1756288761781.jpg
+Branding,Temporary vector logo,Created,Project Lead,Week 1,tashfeen-temporary-logo.svg
+Branding,Brand colors,Proposed,Project Lead,Week 1,Navy/teal/gold theme proposed
+Branding,Logo approval,Missing,Client,Week 1,Approve existing/temporary logo direction
+Business Setup,Services list,Missing,Client,Week 1,Work Permit/Business Visa/Visit/Study/etc. to confirm
+Business Setup,Countries handled,Missing,Client,Week 1,Canada/UK/USA/Australia/etc. to confirm
+Business Setup,Departments,Proposed,Client,Week 1,Sales/Documentation/Processing/Finance/Support/Marketing/Admin/Management/Partner
+Business Setup,Employee list,Missing,Client,Week 1,Name/email/phone/department/role/access level
+Business Setup,User roles,Proposed,Client,Week 1,Super Admin/Admin/Sales/Documentation/Processing/Finance/Support/Marketing/Client/Partner
+Workflow,Lead statuses,Proposed,Client,Week 1,Needs final approval
+Workflow,Case statuses,Proposed,Client,Week 1,Needs final approval
+Workflow,Document checklist,Missing,Client,Week 1,By service and country
+Workflow,Payment/invoice format,Missing,Client/Finance,Week 1,Invoice/receipt numbering and wording
+Workflow,Appointment types,Proposed,Client,Week 1,Needs final approval
+Workflow,Message templates,Missing,Client,Week 1,WhatsApp/email/SMS templates
+Access,GitHub/GitLab,Missing,Client/Dev Team,Week 1,Repo decision required
+Access,Domain/DNS,Missing,Client,Week 1,
+Access,Hosting/cloud,Missing,Client/DevOps,Week 1,Approve provider/recommendation
+Access,Email/SMTP,Missing,Client,Week 2,
+Access,Meta Business Manager,Missing,Client,Week 5,Needed for WhatsApp/social leads
+Access,WhatsApp Business number,Missing,Client,Week 7,
+Access,Facebook page access,Missing,Client,Week 5,
+Access,Instagram page access,Missing,Client,Week 5,
+Access,Website form access,Missing,Client,Week 5,
+Access,Firebase account,Missing,Client/Dev Team,Week 9,
+Access,Google Play Console,Missing,Client,Week 15,
+Access,Apple Developer account,Missing,Client,Week 15,
+Access,AI provider account,Missing,Client/Dev Team,Week 10,
+Access,OCR provider account,Missing,Client/Dev Team,Week 10,
+Access,SIP/telephony provider,Optional/If Required,Client,Week 13,Needed only if AI calls/recording required
+Compliance,Privacy policy,Missing,Client/Legal,Before Go-Live,
+Compliance,Employee monitoring policy,Missing,Client/Legal,Before Activation,Required before monitoring
+Compliance,Device usage policy,Missing,Client/Legal,Before Activation,Required before device registry/control
+Compliance,Attendance policy,Missing,Client/Legal,Before Activation,Required before attendance module
+Compliance,Call recording consent,Missing,Client/Legal,Before Calls,Required before call recording/transcription
+Compliance,WhatsApp opt-in wording,Missing,Client/Legal,Before WhatsApp Automation,Required before templates/go-live
+Compliance,AI disclaimer,Prepared Draft,Project Lead,Before Go-Live,Needs legal/client approval
+Compliance,Data retention policy,Missing,Client/Legal,Before Go-Live,
+Project Mgmt,Project board,Prepared Template,Project Lead,Week 1,project-board-template.csv
+Project Mgmt,Weekly meeting schedule,Missing,Client,Week 1,
+Project Mgmt,Communication channel,Missing,Client,Week 1,
+Project Mgmt,Week 1-4 backlog,Prepared Draft,Project Lead/Dev Team,Week 1,Needs dev confirmation

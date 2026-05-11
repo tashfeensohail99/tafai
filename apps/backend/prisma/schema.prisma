@@ -1,0 +1,1612 @@
+// =============================================================================
+// Tashfeen Immigration Solutions AI Platform
+// Database Schema — Prisma
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL_SENT
+  FOLLOW_UP
+  CONVERTED
+  LOST
+  DUPLICATE
+  UNQUALIFIED
+}
+
+enum FollowUpStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
+enum FollowUpPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  COMPLETED
+  BLOCKED
+}
+
+enum CaseStatus {
+  OPEN
+  IN_PROGRESS
+  DOCUMENTATION
+  PROCESSING
+  SUBMITTED
+  APPROVED
+  REJECTED
+  WITHDRAWN
+  COMPLETED
+  ON_HOLD
+}
+
+enum DocumentStatus {
+  PENDING
+  UPLOADED
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+  REPLACEMENT_REQUIRED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  RESCHEDULED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+  REFUNDED
+  CANCELLED
+  DISPUTED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum FinanceHandoverStatus {
+  SUBMITTED
+  IN_REVIEW
+  PAYMENT_RECORDED
+  PAYMENT_VERIFIED
+  REJECTED
+  CANCELLED
+  SENT_TO_PROCESSING
+}
+
+enum AuditAction {
+  // Auth
+  USER_LOGIN
+  USER_LOGOUT
+  USER_LOGIN_FAILED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  // Users & roles
+  USER_CREATED
+  USER_UPDATED
+  USER_DEACTIVATED
+  USER_REACTIVATED
+  ROLE_CREATED
+  ROLE_UPDATED
+  ROLE_DELETED
+  PERMISSION_CHANGED
+  USER_ROLE_ASSIGNED
+  USER_ROLE_REMOVED
+  // Departments
+  DEPARTMENT_CREATED
+  DEPARTMENT_UPDATED
+  DEPARTMENT_DELETED
+  // Branches
+  BRANCH_CREATED
+  BRANCH_UPDATED
+  BRANCH_DELETED
+  // Leads
+  LEAD_CREATED
+  LEAD_UPDATED
+  LEAD_ASSIGNED
+  LEAD_REASSIGNED
+  LEAD_CONVERTED
+  LEAD_LOST
+  LEAD_DUPLICATE_MARKED
+  FOLLOW_UP_CREATED
+  FOLLOW_UP_UPDATED
+  FOLLOW_UP_COMPLETED
+  FINANCE_HANDOVER_CREATED
+  FINANCE_HANDOVER_UPDATED
+  FINANCE_HANDOVER_REVIEWED
+  // Clients & cases
+  CLIENT_CREATED
+  CLIENT_UPDATED
+  CASE_CREATED
+  CASE_UPDATED
+  CASE_STATUS_CHANGED
+  CASE_HANDOVER
+  // Documents
+  DOCUMENT_UPLOADED
+  DOCUMENT_VIEWED
+  DOCUMENT_REVIEWED
+  DOCUMENT_VERIFIED
+  DOCUMENT_REJECTED
+  DOCUMENT_REPLACED
+  // Finance
+  INVOICE_CREATED
+  INVOICE_UPDATED
+  PAYMENT_RECORDED
+  PAYMENT_VERIFIED
+  PAYMENT_REFUNDED
+  // Appointments
+  APPOINTMENT_CREATED
+  APPOINTMENT_UPDATED
+  APPOINTMENT_CANCELLED
+  // Communications
+  WHATSAPP_MESSAGE_SENT
+  EMAIL_SENT
+  // Partners
+  PARTNER_CREATED
+  PARTNER_UPDATED
+  PARTNER_DELETED
+  // Config
+  SERVICE_CREATED
+  SERVICE_UPDATED
+  COUNTRY_CREATED
+  COUNTRY_UPDATED
+  // AI
+  AI_JOB_SUBMITTED
+  AI_OUTPUT_REVIEWED
+  // Admin
+  SETTING_CHANGED
+  DEVICE_ACCESS_CHANGED
+  ATTENDANCE_OVERRIDDEN
+  REPORT_EXPORTED
+  // Processing
+  PROCESSING_CASE_CREATED
+  PROCESSING_CASE_ASSIGNED
+  PROCESSING_STAGE_CHANGED
+  PROCESSING_DOCUMENT_REVIEWED
+  PROCESSING_DOCUMENT_WAIVED
+  PROCESSING_NOTE_ADDED
+  PROCESSING_TASK_CREATED
+  PROCESSING_CASE_COMPLETED
+  PROCESSING_CASE_CANCELLED
+}
+
+enum TimelineEventType {
+  LEAD_CREATED
+  LEAD_CONTACTED
+  LEAD_QUALIFIED
+  LEAD_ASSIGNED
+  LEAD_CONVERTED
+  FOLLOW_UP_CREATED
+  FOLLOW_UP_COMPLETED
+  CLIENT_PROFILE_UPDATED
+  CASE_OPENED
+  CASE_STATUS_CHANGED
+  CASE_HANDOVER
+  DOCUMENT_UPLOADED
+  DOCUMENT_VERIFIED
+  DOCUMENT_REJECTED
+  APPOINTMENT_SCHEDULED
+  APPOINTMENT_COMPLETED
+  PAYMENT_RECEIVED
+  FINANCE_HANDOVER_SUBMITTED
+  FINANCE_HANDOVER_REVIEWED
+  MESSAGE_SENT
+  NOTE_ADDED
+  AI_DOCUMENT_PROCESSED
+  PROCESSING_CASE_CREATED
+  PROCESSING_STAGE_CHANGED
+  PROCESSING_DOCUMENT_SUBMITTED
+  PROCESSING_DOCUMENT_ACCEPTED
+  PROCESSING_DOCUMENT_REJECTED
+  PROCESSING_MESSAGE_SENT
+  PROCESSING_SUBMISSION_FILED
+  PROCESSING_DECISION_RECEIVED
+  PROCESSING_CASE_COMPLETED
+}
+
+enum AiJobType {
+  OCR
+  DOCUMENT_CLASSIFICATION
+  DOCUMENT_EXPIRY_DETECTION
+  TRANSCRIPTION
+  CALL_SUMMARY
+  INTERVIEW_SUMMARY
+  SUGGESTED_REPLY
+  BUSINESS_PLAN_DRAFT
+}
+
+enum AiJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVIEW_PENDING
+  REVIEWED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LATE
+  ON_LEAVE
+}
+
+enum PartnerStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+// =============================================================================
+// ORGANIZATION
+// =============================================================================
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  legalName String?
+  email     String?
+  phone     String?
+  address   String?
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches    Branch[]
+  departments Department[]
+  partners    Partner[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  city           String?
+  country        String?
+  phone          String?
+  email          String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  employees       Employee[]
+  leads           Lead[]
+  clients         Client[]
+  partners        Partner[]
+  processingCases ProcessingCase[]
+
+  @@index([organizationId])
+  @@map("branches")
+}
+
+model Service {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("services")
+}
+
+model Country {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  isoCode     String?  @unique
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("countries")
+}
+
+model Department {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  employees    Employee[]
+  cases        Case[]
+
+  @@index([organizationId])
+  @@map("departments")
+}
+
+model Designation {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employees Employee[]
+
+  @@map("designations")
+}
+
+// =============================================================================
+// USERS, ROLES, PERMISSIONS
+// =============================================================================
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  displayName String
+  description String?
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  module      String
+  description String?
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserAccount {
+  id                      String     @id @default(uuid())
+  email                   String     @unique
+  phone                   String?    @unique
+  passwordHash            String
+  status                  UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt         DateTime?
+  phoneVerifiedAt         DateTime?
+  lastLoginAt             DateTime?
+  failedLoginAttempts     Int        @default(0)
+  lockedUntil             DateTime?
+  passwordChangedAt       DateTime?
+  mustChangePassword      Boolean    @default(false)
+  twoFactorEnabled        Boolean    @default(false)
+  twoFactorSecret         String?
+  createdAt               DateTime   @default(now())
+  updatedAt               DateTime   @updatedAt
+  deletedAt               DateTime?
+
+  userRoles         UserRole[]
+  loginSessions     LoginSession[]
+  passwordResets    PasswordResetToken[]
+  employee          Employee?
+  partnerProfile    Partner?
+  auditActorLogs    AuditLog[]           @relation("AuditActor")
+  createdLeads      Lead[]               @relation("LeadCreatedBy")
+  createdClients    Client[]             @relation("ClientCreatedBy")
+  // Processing
+  assignedProcessingCases      ProcessingCase[]             @relation("ProcessingCaseOfficer")
+  createdProcessingCases       ProcessingCase[]             @relation("ProcessingCaseCreatedBy")
+  updatedProcessingCases       ProcessingCase[]             @relation("ProcessingCaseUpdatedBy")
+  processingStageChanges       ProcessingCaseStageHistory[] @relation("StageChangedBy")
+  createdDocTemplates          DocumentRequirementTemplate[] @relation("DocTemplateCreatedBy")
+  waivedDocItems               CaseDocumentItem[]           @relation("DocItemWaivedBy")
+  uploadedDocVersions          ClientDocumentVersion[]      @relation("DocVersionUploadedBy")
+  reviewedDocDecisions         DocumentReviewDecision[]     @relation("DocReviewedBy")
+  docAccessLogs                DocumentAccessLog[]          @relation("DocAccessedBy")
+  raisedCorrectionRequests     CorrectionRequest[]          @relation("CorrectionRaisedBy")
+  resolvedCorrectionRequests   CorrectionRequest[]          @relation("CorrectionResolvedBy")
+  sentCaseCommunications       CaseCommunication[]          @relation("CaseCommunicationSentBy")
+  processingNotes              ProcessingNote[]             @relation("ProcessingNoteCreatedBy")
+  assignedProcessingTasks      ProcessingTask[]             @relation("TaskAssignedTo")
+  createdProcessingTasks       ProcessingTask[]             @relation("TaskCreatedBy")
+  completedProcessingTasks     ProcessingTask[]             @relation("TaskCompletedBy")
+  authoritySubmissions         AuthoritySubmission[]        @relation("AuthoritySubmittedBy")
+  processingAuditLogs          ProcessingAuditLog[]         @relation("ProcessingAuditActor")
+
+  @@index([email])
+  @@index([phone])
+  @@index([status])
+  @@map("user_accounts")
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  grantedAt DateTime @default(now())
+  grantedBy String?
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model LoginSession {
+  id           String    @id @default(uuid())
+  userId       String
+  refreshToken String    @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshToken])
+  @@map("login_sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("password_reset_tokens")
+}
+
+// =============================================================================
+// EMPLOYEES
+// =============================================================================
+
+model Employee {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  departmentId    String?
+  branchId        String?
+  designationId   String?
+  employeeCode    String?   @unique
+  firstName       String
+  lastName        String
+  gender          Gender?
+  dateOfBirth     DateTime?
+  nationalId      String?
+  passportNumber  String?
+  nationality     String?
+  joiningDate     DateTime?
+  profilePhotoKey String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  user        UserAccount  @relation(fields: [userId], references: [id])
+  department  Department?  @relation(fields: [departmentId], references: [id])
+  branch      Branch?      @relation(fields: [branchId], references: [id])
+  designation Designation? @relation(fields: [designationId], references: [id])
+  assignedLeads    Lead[]   @relation("LeadEmployee")
+  assignedCases    Case[]   @relation("CaseAssignedEmployee")
+  assignedFollowUps FollowUp[] @relation("FollowUpAssignedEmployee")
+
+  @@index([departmentId])
+  @@index([branchId])
+  @@map("employees")
+}
+
+model Partner {
+  id              String        @id @default(uuid())
+  organizationId  String
+  branchId        String?
+  userId          String?       @unique
+  companyName     String
+  contactName     String
+  email           String?
+  phone           String?
+  referralCode    String        @unique
+  status          PartnerStatus @default(ACTIVE)
+  notes           String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  branch       Branch?      @relation(fields: [branchId], references: [id])
+  user         UserAccount? @relation(fields: [userId], references: [id])
+  leads        Lead[]
+
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([status])
+  @@index([email])
+  @@index([phone])
+  @@map("partners")
+}
+
+// =============================================================================
+// LEADS
+// =============================================================================
+
+model Lead {
+  id                 String     @id @default(uuid())
+  branchId           String?
+  assignedEmployeeId String?
+  createdByUserId    String?
+  firstName          String
+  lastName           String
+  email              String?
+  phone              String
+  alternatePhone     String?
+  nationality        String?
+  targetCountry      String?
+  serviceInterest    String?
+  sourceChannel      String?
+  referralPartnerId  String?
+  status             LeadStatus @default(NEW)
+  priority           String?
+  notes              String?
+  lostReason         String?
+  convertedAt        DateTime?
+  convertedClientId  String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  deletedAt          DateTime?
+
+  branch           Branch?      @relation(fields: [branchId], references: [id])
+  assignedEmployee Employee?    @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
+  createdBy        UserAccount? @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
+  referralPartner  Partner?     @relation(fields: [referralPartnerId], references: [id])
+  appointments     Appointment[] @relation("LeadAppointments")
+  invoices         Invoice[]     @relation("LeadInvoices")
+  followUps        FollowUp[]
+  financeHandovers FinanceHandover[]
+  timelineEvents   ActivityTimeline[]
+  processingCases  ProcessingCase[]
+
+  @@index([phone])
+  @@index([email])
+  @@index([status])
+  @@index([assignedEmployeeId])
+  @@index([branchId])
+  @@index([referralPartnerId])
+  @@map("leads")
+}
+
+model FollowUp {
+  id                 String           @id @default(uuid())
+  leadId             String
+  assignedEmployeeId String?
+  createdByUserId    String
+  completedByUserId  String?
+  title              String
+  description        String?
+  contactMethod      String?
+  dueAt              DateTime
+  status             FollowUpStatus   @default(OPEN)
+  priority           FollowUpPriority @default(MEDIUM)
+  outcomeNotes       String?
+  completedAt        DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  lead             Lead      @relation(fields: [leadId], references: [id])
+  assignedEmployee Employee? @relation("FollowUpAssignedEmployee", fields: [assignedEmployeeId], references: [id])
+
+  @@index([leadId])
+  @@index([assignedEmployeeId])
+  @@index([status])
+  @@index([dueAt])
+  @@map("follow_ups")
+}
+
+// =============================================================================
+// CLIENTS
+// =============================================================================
+
+model Client {
+  id                String       @id @default(uuid())
+  branchId          String?
+  createdByUserId   String?
+  firstName         String
+  lastName          String
+  email             String?      @unique
+  phone             String       @unique
+  alternatePhone    String?
+  nationality       String?
+  dateOfBirth       DateTime?
+  gender            Gender?
+  passportNumber    String?
+  passportExpiry    DateTime?
+  nationalId        String?
+  address           String?
+  status            ClientStatus @default(ACTIVE)
+  portalAccessEnabled Boolean   @default(false)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  branch          Branch?      @relation(fields: [branchId], references: [id])
+  createdBy       UserAccount? @relation("ClientCreatedBy", fields: [createdByUserId], references: [id])
+  cases           Case[]
+  documents       ClientDocument[]
+  appointments    Appointment[] @relation("ClientAppointments")
+  invoices        Invoice[]     @relation("ClientInvoices")
+  timelineEvents  ActivityTimeline[]
+  processingCases ProcessingCase[]
+  reminders       ClientReminder[]
+
+  @@index([phone])
+  @@index([email])
+  @@index([status])
+  @@index([branchId])
+  @@map("clients")
+}
+
+// =============================================================================
+// CASES
+// =============================================================================
+
+model Case {
+  id                 String     @id @default(uuid())
+  clientId           String
+  departmentId       String?
+  assignedEmployeeId String?
+  caseNumber         String     @unique
+  serviceType        String
+  targetCountry      String
+  status             CaseStatus @default(OPEN)
+  priority           String?
+  notes              String?
+  submissionDeadline DateTime?
+  submittedAt        DateTime?
+  decidedAt          DateTime?
+  decisionNotes      String?
+  createdByUserId    String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  deletedAt          DateTime?
+
+  client           Client     @relation(fields: [clientId], references: [id])
+  department       Department? @relation(fields: [departmentId], references: [id])
+  assignedEmployee Employee?   @relation("CaseAssignedEmployee", fields: [assignedEmployeeId], references: [id])
+  documents        ClientDocument[]
+  appointments     Appointment[]
+  timelineEvents   ActivityTimeline[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([assignedEmployeeId])
+  @@index([departmentId])
+  @@map("cases")
+}
+
+// =============================================================================
+// DOCUMENTS
+// =============================================================================
+
+model DocumentRequirement {
+  id            String  @id @default(uuid())
+  serviceType   String
+  targetCountry String?
+  name          String
+  description   String?
+  isRequired    Boolean @default(true)
+  isActive      Boolean @default(true)
+  sortOrder     Int     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  clientDocuments ClientDocument[]
+
+  @@index([serviceType])
+  @@map("document_requirements")
+}
+
+model ClientDocument {
+  id                    String         @id @default(uuid())
+  clientId              String
+  caseId                String?
+  documentRequirementId String?
+  uploadedByUserId      String?
+  reviewedByUserId      String?
+  name                  String
+  description           String?
+  fileKey               String
+  fileMimeType          String?
+  fileSizeBytes         Int?
+  status                DocumentStatus @default(PENDING)
+  expiryDate            DateTime?
+  rejectionReason       String?
+  reviewedAt            DateTime?
+  isConfidential        Boolean        @default(true)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  client              Client               @relation(fields: [clientId], references: [id])
+  case                Case?                @relation(fields: [caseId], references: [id])
+  documentRequirement DocumentRequirement? @relation(fields: [documentRequirementId], references: [id])
+  aiJobs              AiJob[]
+
+  @@index([clientId])
+  @@index([caseId])
+  @@index([status])
+  @@map("client_documents")
+}
+
+// =============================================================================
+// APPOINTMENTS
+// =============================================================================
+
+model Appointment {
+  id               String            @id @default(uuid())
+  leadId           String?
+  clientId         String?
+  caseId           String?
+  assignedEmployeeId String?
+  createdByUserId  String?
+  title            String
+  appointmentType  String
+  status           AppointmentStatus @default(SCHEDULED)
+  scheduledAt      DateTime
+  durationMinutes  Int               @default(30)
+  location         String?
+  meetingLink      String?
+  notes            String?
+  reminderSentAt   DateTime?
+  completedAt      DateTime?
+  cancellationReason String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  lead   Lead?   @relation("LeadAppointments", fields: [leadId], references: [id])
+  client Client? @relation("ClientAppointments", fields: [clientId], references: [id])
+  case   Case?   @relation(fields: [caseId], references: [id])
+
+  @@index([leadId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@map("appointments")
+}
+
+// =============================================================================
+// FINANCE
+// =============================================================================
+
+model Invoice {
+  id              String        @id @default(uuid())
+  leadId          String?
+  clientId        String?
+  caseId          String?
+  invoiceNumber   String        @unique
+  status          InvoiceStatus @default(DRAFT)
+  currency        String        @default("CAD")
+  subtotal        Decimal       @db.Decimal(12, 2)
+  taxAmount       Decimal       @db.Decimal(12, 2) @default(0)
+  discountAmount  Decimal       @db.Decimal(12, 2) @default(0)
+  totalAmount     Decimal       @db.Decimal(12, 2)
+  paidAmount      Decimal       @db.Decimal(12, 2) @default(0)
+  dueDate         DateTime?
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  lead     Lead?     @relation("LeadInvoices", fields: [leadId], references: [id])
+  client   Client?   @relation("ClientInvoices", fields: [clientId], references: [id])
+  payments Payment[]
+  financeHandovers FinanceHandover[]
+
+  @@index([leadId])
+  @@index([clientId])
+  @@index([status])
+  @@map("invoices")
+}
+
+model Payment {
+  id               String        @id @default(uuid())
+  invoiceId        String
+  amount           Decimal       @db.Decimal(12, 2)
+  currency         String        @default("CAD")
+  status           PaymentStatus @default(PENDING)
+  paymentMethod    String?
+  transactionRef   String?
+  paidAt           DateTime?
+  verifiedByUserId String?
+  verifiedAt       DateTime?
+  notes            String?
+  receiptKey       String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+  financeHandover FinanceHandover?
+
+  @@index([invoiceId])
+  @@index([status])
+  @@map("payments")
+}
+
+model FinanceHandover {
+  id               String                @id @default(uuid())
+  leadId           String
+  invoiceId        String?
+  paymentId        String?               @unique
+  createdByUserId  String
+  reviewedByUserId String?
+  status           FinanceHandoverStatus @default(SUBMITTED)
+  submittedAmount  Decimal               @db.Decimal(12, 2)
+  currency         String                @default("CAD")
+  paymentMethod    String?
+  transactionRef   String?
+  notes            String?
+  financeNotes     String?
+  receiptKey       String
+  receiptFileName  String
+  receiptMimeType  String?
+  receiptSizeBytes Int?
+  submittedAt      DateTime              @default(now())
+  reviewedAt       DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  lead           Lead           @relation(fields: [leadId], references: [id])
+  invoice        Invoice?       @relation(fields: [invoiceId], references: [id])
+  payment        Payment?       @relation(fields: [paymentId], references: [id])
+  processingCase ProcessingCase?
+
+  @@index([leadId])
+  @@index([invoiceId])
+  @@index([status])
+  @@index([createdByUserId])
+  @@map("finance_handovers")
+}
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+
+model AuditLog {
+  id           String      @id @default(uuid())
+  actorUserId  String?
+  action       AuditAction
+  entityType   String
+  entityId     String?
+  oldValues    Json?
+  newValues    Json?
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json?
+  createdAt    DateTime    @default(now())
+
+  actor UserAccount? @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// ACTIVITY TIMELINE
+// =============================================================================
+
+model ActivityTimeline {
+  id          String            @id @default(uuid())
+  entityType  String
+  entityId    String
+  leadId      String?
+  clientId    String?
+  caseId      String?
+  eventType   TimelineEventType
+  description String
+  actorUserId String?
+  metadata    Json?
+  createdAt   DateTime          @default(now())
+
+  lead   Lead?   @relation(fields: [leadId], references: [id])
+  client Client? @relation(fields: [clientId], references: [id])
+  case   Case?   @relation(fields: [caseId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([createdAt])
+  @@map("activity_timeline")
+}
+
+// =============================================================================
+// AI JOBS
+// =============================================================================
+
+model AiJob {
+  id               String      @id @default(uuid())
+  jobType          AiJobType
+  status           AiJobStatus @default(QUEUED)
+  inputReference   String?
+  documentId       String?
+  promptVersion    String?
+  provider         String?
+  model            String?
+  inputPayload     Json?
+  outputPayload    Json?
+  errorMessage     String?
+  reviewedByUserId String?
+  reviewStatus     String?
+  reviewedAt       DateTime?
+  processingStart  DateTime?
+  processingEnd    DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  document ClientDocument? @relation(fields: [documentId], references: [id])
+
+  @@index([status])
+  @@index([jobType])
+  @@index([documentId])
+  @@map("ai_jobs")
+}
+
+// =============================================================================
+// ATTENDANCE
+// =============================================================================
+
+model AttendanceRecord {
+  id          String           @id @default(uuid())
+  employeeId  String
+  date        DateTime         @db.Date
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  status      AttendanceStatus @default(PRESENT)
+  notes       String?
+  isOverride  Boolean          @default(false)
+  overriddenByUserId String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([date])
+  @@map("attendance_records")
+}
+
+// =============================================================================
+// PROCESSING MODULE — ENUMS
+// =============================================================================
+
+enum ProcessingCaseStage {
+  INTAKE_PENDING
+  DOCUMENTS_COLLECTION
+  DOCUMENTS_UNDER_REVIEW
+  DOCUMENTS_INCOMPLETE
+  DOCUMENTS_COMPLETE
+  READY_FOR_SUBMISSION
+  SUBMITTED
+  UNDER_AUTHORITY_REVIEW
+  ADDITIONAL_INFO_REQUESTED
+  DECISION_RECEIVED
+  APPROVED
+  REJECTED
+  APPEAL_IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ProcessingCasePriority {
+  LOW
+  NORMAL
+  URGENT
+  CRITICAL
+}
+
+enum ProcessingSlaStatus {
+  ACTIVE
+  APPROACHING
+  BREACHED
+  EXTENDED
+  COMPLETED
+}
+
+enum AuthorityDecision {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum DocumentCriticality {
+  CRITICAL
+  REQUIRED
+  CONDITIONAL
+  SUPPORTING
+  OPTIONAL
+}
+
+enum DocumentItemStatus {
+  NOT_SUBMITTED
+  SUBMITTED
+  UNDER_REVIEW
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  EXPIRING_SOON
+  WAIVED
+  NOT_APPLICABLE
+}
+
+enum DocumentValidityRule {
+  NONE
+  MUST_NOT_EXPIRE
+  MUST_BE_VALID_FOR_N_MONTHS
+}
+
+enum VirusScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+}
+
+enum DocReviewDecisionType {
+  ACCEPTED
+  REJECTED
+}
+
+enum DocAccessType {
+  VIEW
+  DOWNLOAD
+}
+
+enum CorrectionType {
+  DOCUMENT
+  INFORMATION
+}
+
+enum CorrectionRequiredAction {
+  REUPLOAD
+  CONFIRM
+  CORRECT
+  CALL_BACK
+}
+
+enum CorrectionStatus {
+  SENT
+  IN_PROGRESS
+  RESOLVED
+  ESCALATED
+}
+
+enum CommunicationDirection {
+  OFFICER_TO_CLIENT
+  CLIENT_TO_OFFICER
+  SYSTEM_TO_CLIENT
+}
+
+enum CommunicationMessageType {
+  WELCOME
+  DOCS_REQUEST
+  DOCS_REJECTED_NOTICE
+  GENERAL_UPDATE
+  STAGE_UPDATE
+  INFORMATION_REQUEST
+  SUBMISSION_NOTICE
+  DECISION_NOTICE
+  APPOINTMENT_REQUEST
+  REMINDER
+}
+
+enum ProcessingNoteType {
+  GENERAL
+  ESCALATION
+  STRATEGY
+  CLIENT_INSIGHT
+  AUTHORITY_NOTE
+  MANAGER_ONLY
+}
+
+enum ProcessingTaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ProcessingTaskStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  DONE
+  CANCELLED
+}
+
+enum AuthoritySubmissionStatus {
+  SUBMITTED
+  ACKNOWLEDGED
+  UNDER_REVIEW
+  RESPONDED
+  WITHDRAWN
+}
+
+enum AuthorityResponseType {
+  APPROVAL
+  REJECTION
+  INFO_REQUEST
+  BIOMETRICS_REQUEST
+  OTHER
+}
+
+enum ReminderType {
+  WELCOME
+  DOCS_REQUEST
+  DOCS_DEADLINE_7D
+  DOCS_DEADLINE_1D
+  DOCS_OVERDUE
+  DOC_REJECTED
+  EXPIRY_30D
+  EXPIRY_7D
+  STAGE_UPDATE
+  SUBMISSION_CONFIRMED
+  DECISION_RECEIVED
+}
+
+enum ReminderChannel {
+  PORTAL
+  WHATSAPP
+  EMAIL
+  SMS
+}
+
+enum ReminderDeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+}
+
+// =============================================================================
+// PROCESSING MODULE — MODELS
+// =============================================================================
+
+model DocumentRequirementTemplate {
+  id                 String               @id @default(uuid())
+  service            String
+  targetCountry      String
+  documentName       String
+  description        String?
+  instructions       String?
+  criticality        DocumentCriticality  @default(REQUIRED)
+  conditionRule      Json?
+  expectedFormats    String[]             @default(["PDF"])
+  maxFileSizeMb      Int                  @default(10)
+  validityRule       DocumentValidityRule @default(NONE)
+  validityMonths     Int?
+  validityBufferDays Int                  @default(30)
+  guidanceUrl        String?
+  sortOrder          Int                  @default(0)
+  isActive           Boolean              @default(true)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  createdByUserId    String?
+
+  createdBy         UserAccount?       @relation("DocTemplateCreatedBy", fields: [createdByUserId], references: [id])
+  caseDocumentItems CaseDocumentItem[]
+
+  @@index([service, targetCountry])
+  @@index([isActive])
+  @@map("document_requirement_templates")
+}
+
+model ProcessingCase {
+  id                      String                 @id @default(uuid())
+  financeHandoverId       String                 @unique
+  leadId                  String
+  clientId                String?
+  branchId                String?
+  assignedOfficerId       String?
+  priority                ProcessingCasePriority @default(NORMAL)
+  stage                   ProcessingCaseStage    @default(INTAKE_PENDING)
+  slaStatus               ProcessingSlaStatus    @default(ACTIVE)
+  slaDueAt                DateTime?
+  service                 String
+  targetCountry           String
+  financeHandoverNote     String?
+  processingNote          String?
+  estimatedSubmissionDate DateTime?              @db.Date
+  actualSubmissionDate    DateTime?              @db.Date
+  authorityTrackingRef    String?
+  authorityDecision       AuthorityDecision      @default(PENDING)
+  authorityDecisionDate   DateTime?              @db.Date
+  completedAt             DateTime?
+  cancelledAt             DateTime?
+  cancellationReason      String?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  createdByUserId         String
+  updatedByUserId         String?
+
+  financeHandover  FinanceHandover                @relation(fields: [financeHandoverId], references: [id])
+  lead             Lead                           @relation(fields: [leadId], references: [id])
+  client           Client?                        @relation(fields: [clientId], references: [id])
+  branch           Branch?                        @relation(fields: [branchId], references: [id])
+  assignedOfficer  UserAccount?                   @relation("ProcessingCaseOfficer", fields: [assignedOfficerId], references: [id])
+  createdBy        UserAccount                    @relation("ProcessingCaseCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy        UserAccount?                   @relation("ProcessingCaseUpdatedBy", fields: [updatedByUserId], references: [id])
+  stageHistory        ProcessingCaseStageHistory[]
+  documentItems       CaseDocumentItem[]
+  correctionRequests  CorrectionRequest[]
+  communications      CaseCommunication[]
+  reminders           ClientReminder[]
+  notes               ProcessingNote[]
+  tasks               ProcessingTask[]
+  submissions         AuthoritySubmission[]
+  auditLogs           ProcessingAuditLog[]
+
+  @@index([assignedOfficerId])
+  @@index([stage])
+  @@index([clientId])
+  @@index([leadId])
+  @@index([priority, stage])
+  @@map("processing_cases")
+}
+
+model ProcessingCaseStageHistory {
+  id              String               @id @default(uuid())
+  caseId          String
+  fromStage       ProcessingCaseStage?
+  toStage         ProcessingCaseStage
+  changedByUserId String
+  reason          String?
+  notes           String?
+  gateCheckResult Json?
+  createdAt       DateTime             @default(now())
+
+  case      ProcessingCase @relation(fields: [caseId], references: [id])
+  changedBy UserAccount    @relation("StageChangedBy", fields: [changedByUserId], references: [id])
+
+  @@index([caseId])
+  @@map("processing_case_stage_history")
+}
+
+model CaseDocumentItem {
+  id                 String               @id @default(uuid())
+  caseId             String
+  templateId         String?
+  documentName       String
+  description        String?
+  criticality        DocumentCriticality  @default(REQUIRED)
+  expectedFormats    String[]             @default(["PDF"])
+  maxFileSizeMb      Int                  @default(10)
+  validityRule       DocumentValidityRule @default(NONE)
+  validityMonths     Int?
+  validityBufferDays Int                  @default(30)
+  status             DocumentItemStatus   @default(NOT_SUBMITTED)
+  latestVersionId    String?              @unique
+  validityExpiryDate DateTime?            @db.Date
+  expiryAlertSentAt  DateTime?
+  lastRequestedAt    DateTime?
+  requestDeadline    DateTime?            @db.Date
+  waivedByUserId     String?
+  waiveReason        String?
+  sortOrder          Int                  @default(0)
+  isAddedManually    Boolean              @default(false)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  case               ProcessingCase                  @relation(fields: [caseId], references: [id])
+  template           DocumentRequirementTemplate?    @relation(fields: [templateId], references: [id])
+  waivedBy           UserAccount?                    @relation("DocItemWaivedBy", fields: [waivedByUserId], references: [id])
+  latestVersion      ClientDocumentVersion?          @relation("LatestDocVersion", fields: [latestVersionId], references: [id])
+  versions           ClientDocumentVersion[]         @relation("DocItemVersions")
+  reviewDecisions    DocumentReviewDecision[]
+  correctionRequests CorrectionRequest[]
+
+  @@index([caseId])
+  @@index([status, caseId])
+  @@index([validityExpiryDate])
+  @@map("case_document_items")
+}
+
+model ClientDocumentVersion {
+  id               String          @id @default(uuid())
+  documentItemId   String
+  caseId           String
+  clientId         String?
+  storageKey       String
+  fileName         String
+  fileSizeBytes    Int?
+  mimeType         String?
+  versionNumber    Int
+  uploadedAt       DateTime        @default(now())
+  uploadedByUserId String?
+  virusScanStatus  VirusScanStatus @default(PENDING)
+  virusScanAt      DateTime?
+  isCurrent        Boolean         @default(true)
+
+  documentItem    CaseDocumentItem              @relation("DocItemVersions", fields: [documentItemId], references: [id])
+  isLatestFor     CaseDocumentItem?             @relation("LatestDocVersion")
+  uploadedBy      UserAccount?                  @relation("DocVersionUploadedBy", fields: [uploadedByUserId], references: [id])
+  reviewDecisions DocumentReviewDecision[]
+  accessLogs      DocumentAccessLog[]
+
+  @@index([documentItemId])
+  @@index([caseId])
+  @@map("client_document_versions")
+}
+
+model DocumentReviewDecision {
+  id                   String                @id @default(uuid())
+  documentItemId       String
+  versionId            String
+  decision             DocReviewDecisionType
+  rejectionReasonCodes String[]
+  rejectionNote        String?
+  reviewedByUserId     String
+  createdAt            DateTime              @default(now())
+
+  documentItem CaseDocumentItem      @relation(fields: [documentItemId], references: [id])
+  version      ClientDocumentVersion @relation(fields: [versionId], references: [id])
+  reviewedBy   UserAccount           @relation("DocReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([documentItemId])
+  @@map("document_review_decisions")
+}
+
+model DocumentAccessLog {
+  id                String        @id @default(uuid())
+  documentVersionId String
+  accessedByUserId  String
+  accessType        DocAccessType
+  ipAddress         String?
+  userAgent         String?
+  signedUrlIssuedAt DateTime      @default(now())
+  createdAt         DateTime      @default(now())
+
+  documentVersion ClientDocumentVersion @relation(fields: [documentVersionId], references: [id])
+  accessedBy      UserAccount           @relation("DocAccessedBy", fields: [accessedByUserId], references: [id])
+
+  @@index([documentVersionId])
+  @@index([accessedByUserId])
+  @@map("document_access_logs")
+}
+
+model CorrectionRequest {
+  id                String                   @id @default(uuid())
+  caseId            String
+  documentItemId    String?
+  raisedByOfficerId String
+  correctionType    CorrectionType
+  subject           String
+  reasonCodes       String[]
+  officerNote       String?
+  clientMessage     String
+  requiredAction    CorrectionRequiredAction
+  slaHours          Int                      @default(120)
+  slaDueAt          DateTime?
+  status            CorrectionStatus         @default(SENT)
+  resolvedAt        DateTime?
+  resolvedByUserId  String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  case         ProcessingCase    @relation(fields: [caseId], references: [id])
+  documentItem CaseDocumentItem? @relation(fields: [documentItemId], references: [id])
+  raisedBy     UserAccount       @relation("CorrectionRaisedBy", fields: [raisedByOfficerId], references: [id])
+  resolvedBy   UserAccount?      @relation("CorrectionResolvedBy", fields: [resolvedByUserId], references: [id])
+
+  @@index([caseId])
+  @@index([status])
+  @@map("correction_requests")
+}
+
+model CaseCommunication {
+  id                String                   @id @default(uuid())
+  caseId            String
+  direction         CommunicationDirection
+  messageType       CommunicationMessageType
+  subject           String?
+  content           String
+  channelsSent      String[]
+  sentByUserId      String?
+  readByClientAt    DateTime?
+  whatsappMessageId String?
+  emailMessageId    String?
+  createdAt         DateTime                 @default(now())
+
+  case   ProcessingCase @relation(fields: [caseId], references: [id])
+  sentBy UserAccount?   @relation("CaseCommunicationSentBy", fields: [sentByUserId], references: [id])
+
+  @@index([caseId, createdAt(sort: Desc)])
+  @@map("case_communications")
+}
+
+model ClientReminder {
+  id              String                 @id @default(uuid())
+  caseId          String
+  clientId        String?
+  reminderType    ReminderType
+  channel         ReminderChannel
+  scheduledAt     DateTime
+  sentAt          DateTime?
+  deliveryStatus  ReminderDeliveryStatus @default(PENDING)
+  templateId      String?
+  renderedContent String?
+  retryCount      Int                    @default(0)
+  errorMessage    String?
+  createdAt       DateTime               @default(now())
+
+  case   ProcessingCase @relation(fields: [caseId], references: [id])
+  client Client?        @relation(fields: [clientId], references: [id])
+
+  @@index([caseId])
+  @@index([scheduledAt])
+  @@map("client_reminders")
+}
+
+model ProcessingNote {
+  id              String             @id @default(uuid())
+  caseId          String
+  content         String
+  noteType        ProcessingNoteType @default(GENERAL)
+  isPinned        Boolean            @default(false)
+  mentions        String[]
+  createdByUserId String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  case      ProcessingCase @relation(fields: [caseId], references: [id])
+  createdBy UserAccount    @relation("ProcessingNoteCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([caseId])
+  @@map("processing_notes")
+}
+
+model ProcessingTask {
+  id                String               @id @default(uuid())
+  caseId            String
+  title             String               @db.VarChar(120)
+  description       String?
+  assignedToUserId  String?
+  createdByUserId   String
+  dueDate           DateTime?            @db.Date
+  priority          ProcessingTaskPriority @default(NORMAL)
+  status            ProcessingTaskStatus @default(OPEN)
+  completedAt       DateTime?
+  completedByUserId String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  case        ProcessingCase @relation(fields: [caseId], references: [id])
+  assignedTo  UserAccount?   @relation("TaskAssignedTo", fields: [assignedToUserId], references: [id])
+  createdBy   UserAccount    @relation("TaskCreatedBy", fields: [createdByUserId], references: [id])
+  completedBy UserAccount?   @relation("TaskCompletedBy", fields: [completedByUserId], references: [id])
+
+  @@index([caseId])
+  @@index([assignedToUserId, status])
+  @@map("processing_tasks")
+}
+
+model AuthoritySubmission {
+  id                  String                    @id @default(uuid())
+  caseId              String
+  submissionNumber    Int
+  submittedByUserId   String
+  submissionDate      DateTime                  @db.Date
+  submissionReference String?
+  authority           String
+  documentsIncluded   String[]
+  trackingNumber      String?
+  status              AuthoritySubmissionStatus @default(SUBMITTED)
+  responseReceivedAt  DateTime?
+  responseType        AuthorityResponseType?
+  responseNotes       String?
+  nextAction          String?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  case        ProcessingCase @relation(fields: [caseId], references: [id])
+  submittedBy UserAccount    @relation("AuthoritySubmittedBy", fields: [submittedByUserId], references: [id])
+
+  @@index([caseId])
+  @@map("authority_submissions")
+}
+
+model ProcessingAuditLog {
+  id          String   @id @default(uuid())
+  caseId      String?
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  case  ProcessingCase? @relation(fields: [caseId], references: [id])
+  actor UserAccount?    @relation("ProcessingAuditActor", fields: [actorUserId], references: [id])
+
+  @@index([caseId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@map("processing_audit_logs")
+}

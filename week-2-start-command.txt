@@ -1,0 +1,218 @@
+# Week 2 Start Command - Tashfeen AI Platform
+
+Date: May 8, 2026
+
+This document is the official start instruction for Week 2 coding.
+It is sent to the dev team only after the Week 2 gate is approved.
+
+## Prerequisite
+
+Week 2 coding may only begin after all of these are approved:
+
+- Architecture document
+- ERD draft
+- RBAC permission matrix
+- API module map
+- Design system starter
+- DevOps/staging plan
+- Project board created and backlog imported
+- Week 2 backlog confirmed
+- Risk/blocker register reviewed
+- DEVELOPMENT_STANDARDS.md accepted by all team members
+
+If any approval is missing, do not begin feature coding. Continue Week 1 review until the gate is cleared.
+
+## Week 2 Task List - Foundation Only
+
+Begin only with these 12 tasks in order of dependency:
+
+### 1. Create Repository And Branch Strategy
+
+- Create GitHub/GitLab repository.
+- Set up main, develop, and feature/* branch strategy.
+- Enable branch protection rules: no direct push to main or develop.
+- Create README with project overview, stack, and how to run locally.
+- Add .env.example with all expected variable names and placeholder values.
+- Add .gitignore covering node_modules, .env, build outputs, OS files.
+
+### 2. Setup NestJS Backend Foundation
+
+- Initialize NestJS project with strict TypeScript.
+- Set up linting and formatting rules.
+- Configure environment config module with validation.
+- Add health check endpoint at GET /health.
+- Add global error handler and standard error response format.
+- Add request validation pipe.
+
+### 3. Setup PostgreSQL Migrations
+
+- Connect Prisma or approved ORM to the PostgreSQL database.
+- Create initial migration file for auth, org, RBAC, audit, and activity timeline foundation.
+- Tables in first migration:
+  - user_account
+  - organization
+  - branch
+  - department
+  - designation
+  - role
+  - permission
+  - role_permission
+  - user_role
+  - login_session
+  - password_reset_token
+  - audit_log
+  - activity_timeline
+- Every table must include: id, created_at, updated_at.
+- Add created_by_user_id and updated_by_user_id where useful.
+- Add deleted_at for soft delete where useful.
+- Add ownership/status fields per table as per ERD draft.
+- All migrations must run cleanly in local and staging.
+
+### 4. Create Users, Roles, Permissions, Departments, Employees Base
+
+- Implement users module: controller, service, repository, DTOs, validators.
+- Implement roles module: controller, service, repository, DTOs, validators.
+- Implement permissions module: service and repository.
+- Implement departments module: controller, service, repository, DTOs.
+- Implement employee_profile table and basic management.
+- Every module must have permission guards and audit events attached.
+- Do not seed test data in a way that pollutes production migrations.
+
+### 5. Implement Auth Module
+
+- Implement login endpoint: POST /auth/login.
+- Implement logout endpoint: POST /auth/logout.
+- Implement refresh endpoint: POST /auth/refresh.
+- Implement me endpoint: GET /auth/me.
+- Implement password reset request: POST /auth/password-reset/request.
+- Implement password reset complete: POST /auth/password-reset/complete.
+- Use hashed passwords.
+- Use JWT tokens or approved session management.
+- Implement session timeout pattern.
+- Rate-limit login and password reset endpoints.
+- Audit login, logout, and failed login events.
+
+### 6. Implement RBAC Module
+
+- Create PermissionGuard that reads the current user's roles and permission keys.
+- Create OwnershipGuard pattern that checks record ownership or department scope.
+- Apply guards to all protected routes.
+- Never rely on frontend hiding as a security control.
+- Test: unauthenticated request returns 401. Authenticated request without permission returns 403.
+
+### 7. Implement Audit Log Foundation
+
+- Create audit log service that writes to audit_log table.
+- Define AuditAction enum:
+  - user_login
+  - user_logout
+  - user_login_failed
+  - user_created
+  - user_updated
+  - user_deactivated
+  - role_created
+  - role_updated
+  - role_deleted
+  - permission_changed
+  - department_created
+  - department_updated
+  - (more to be added as modules are built)
+- Audit event fields: actor_user_id, action, entity_type, entity_id, old_values, new_values, ip_address, user_agent, created_at.
+- Write audit events for all auth and user/role/department actions.
+- Audit logs are immutable. Do not allow audit log edit or delete through any API.
+
+### 8. Implement Activity Timeline Foundation
+
+- Create activity timeline service that writes to activity_timeline table.
+- Timeline events are readable business summaries shown to staff on lead/client/case screens.
+- Timeline events are separate from audit logs.
+- Timeline event fields: entity_type, entity_id, event_type, description, actor_user_id, created_at.
+- Wire up timeline events for: user actions that are visible to the team on client/lead/case screens.
+- Timeline is not audit. Do not expose audit log details through the timeline to client or partner portals.
+
+### 9. Connect Private File Storage Foundation
+
+- Connect S3-compatible storage provider or MinIO for local development.
+- Implement file upload service: stores files privately.
+- Implement signed URL service: returns short-lived URL after backend permission check.
+- No file is publicly accessible without a signed URL request.
+- Test: upload a file and verify it returns only via signed URL, not a direct public URL.
+
+### 10. Setup Next.js Frontend Shell
+
+- Initialize Next.js app with TypeScript and strict mode.
+- Set up route groups by portal: (auth), (admin), (employee), (client), (partner).
+- Set up layout files for each portal.
+- Implement light/dark theme provider using design tokens from 07-design-system-starter.md.
+- Build AppShell, Sidebar, Topbar, and Breadcrumbs as shared components.
+- Implement login screen using shared components.
+- Add route protection: unauthenticated users are redirected to login.
+- Add role-aware navigation: sidebar links vary by user role/permission.
+- Add LoadingState, EmptyState, ErrorState, PermissionDeniedState shared components.
+
+### 11. Setup Design Tokens And Shared UI Foundation
+
+- Create design token file with all colors, spacing, radius, typography from 07-design-system-starter.md.
+- Implement light and dark theme switch on Topbar.
+- Save theme preference to localStorage or user profile.
+- Create central StatusBadge component reading from status config.
+- Create DataTable component.
+- Create Button, Input, Select shared components.
+- Create FilterBar component.
+- Do not create one-off styled components in feature screens.
+
+### 12. Setup Staging Deployment Baseline And Flutter Shell/Auth Contract
+
+- Deploy NestJS backend skeleton to staging.
+- Deploy Next.js frontend skeleton to staging.
+- Staging health check must pass on HTTPS URL.
+- Verify environment variables are correctly separated from local.
+- Verify login smoke test works on staging.
+- Document staging URL, login, and smoke test steps for the team.
+- Define Flutter app folder structure and API authentication contract.
+- Document Flutter API endpoints that need to be ready for the mobile team.
+
+## What NOT To Start In Week 2
+
+Do not start any of the following in Week 2:
+
+- WhatsApp integration.
+- AI or OCR features.
+- Flutter full app screens beyond auth contract.
+- Finance module screens.
+- Document AI/classification.
+- Reporting dashboards beyond health check.
+- Social media automation.
+- Attendance module.
+- Device control module.
+- Partner commission workflows.
+- Any Phase 2 module.
+- Any screen that requires a module not yet implemented.
+
+These will be scoped in Weeks 3-4 and beyond after the foundation is stable.
+
+## Week 2 Definition Of Done
+
+Week 2 is complete when:
+
+- Repository exists with branch strategy.
+- Docker Compose local stack starts successfully.
+- Staging deploys successfully.
+- Auth login/logout/refresh/me/password-reset pass smoke tests.
+- RBAC guard blocks unauthenticated and unauthorized requests.
+- Audit log writes on auth and user/role/department events.
+- Activity timeline service is wired and working.
+- File upload and signed URL return correctly via permission check.
+- Next.js frontend shell opens with light/dark theme working.
+- Sidebar is role-aware.
+- Login screen is functional.
+- Design tokens and StatusBadge are in place.
+- Staging URL is accessible and team can log in.
+- Flutter shell and auth contract are documented.
+- Week 3 backlog is confirmed and project board is updated.
+
+## Week 2 Coding Gate
+
+All output above must be reviewed before Week 3 lead CRM, appointment, and communication coding begins.
+
+If Week 2 items are not complete, extend Week 2 rather than starting Week 3 features on an unstable foundation.

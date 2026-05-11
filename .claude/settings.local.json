@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sort -k6)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/sales/create-lead)",
+      "Bash(npx tsc *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/sales/follow-ups)",
+      "Bash(curl -s -o /dev/null -w \"leads: %{http_code}\\\\n\" http://localhost:3000/sales/leads/L-1042)",
+      "Bash(curl -s -o /dev/null -w \"follow-up: %{http_code}\\\\n\" http://localhost:3000/sales/follow-ups/F-2031)",
+      "Bash(curl -s -o /dev/null -w \"dashboard: %{http_code}\\\\n\" http://localhost:3000/sales)",
+      "Bash(curl -s -o /dev/null -w \"leads:     %{http_code}\\\\n\" http://localhost:3000/sales/leads)",
+      "Bash(curl -s -o /dev/null -w \"lead:      %{http_code}\\\\n\" http://localhost:3000/sales/leads/L-1042)",
+      "Bash(curl -s -o /dev/null -w \"create:    %{http_code}\\\\n\" http://localhost:3000/sales/create-lead)",
+      "Bash(curl -s -o /dev/null -w \"follow:    %{http_code}\\\\n\" http://localhost:3000/sales/follow-ups)",
+      "Bash(curl -s http://localhost:3000/sales)",
+      "Bash(curl -s -o /dev/null -w \"appts: %{http_code}\\\\n\" http://localhost:3000/sales/appointments)",
+      "Bash(curl -s -o /dev/null -w \"dashboard:    %{http_code}\\\\n\" http://localhost:3000/sales)",
+      "Bash(curl -s -o /dev/null -w \"leads:        %{http_code}\\\\n\" http://localhost:3000/sales/leads)",
+      "Bash(curl -s -o /dev/null -w \"lead detail:  %{http_code}\\\\n\" http://localhost:3000/sales/leads/L-1042)",
+      "Bash(curl -s -o /dev/null -w \"create-lead:  %{http_code}\\\\n\" http://localhost:3000/sales/create-lead)",
+      "Bash(curl -s -o /dev/null -w \"follow-ups:   %{http_code}\\\\n\" http://localhost:3000/sales/follow-ups)",
+      "Bash(curl -s -o /dev/null -w \"dashboard:    %{http_code}\\\\nleads:        %{http_code}\\\\nlead detail:  %{http_code}\\\\ncreate-lead:  %{http_code}\\\\nfollow-ups:   %{http_code}\\\\nfollow-up:    %{http_code}\\\\nappointments: %{http_code}\\\\ndecisions:    %{http_code}\\\\n\" -o /dev/null http://localhost:3000/sales http://localhost:3000/sales/leads http://localhost:3000/sales/leads/L-1042 http://localhost:3000/sales/create-lead http://localhost:3000/sales/follow-ups http://localhost:3000/sales/follow-ups/F-2031 http://localhost:3000/sales/appointments http://localhost:3000/sales/decisions)",
+      "Bash(curl -s http://localhost:3000/admin)",
+      "Bash(awk ' *)",
+      "Bash(awk '{print $2 \" \" $1}')",
+      "Bash(npx next *)",
+      "PowerShell(Stop-Process -Id 18144 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Process -Id 18144 -ErrorAction SilentlyContinue)"
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+# Project Board Columns
+
+Use these columns in GitHub Projects, ClickUp, Trello, Jira, Linear, or similar:
+
+1. Backlog
+2. Ready for Development
+3. In Progress
+4. Code Review
+5. Testing
+6. UAT
+7. Approved
+8. Blocked
+9. Change Request
+
+Task fields required:
+- Title
+- Module
+- Description
+- Owner
+- Priority
+- Dependency
+- Status
+- Due Week
+- Acceptance Criteria
+
+Import starter tasks from:
+- project-board-template.csv

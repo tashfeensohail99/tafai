@@ -1,0 +1,549 @@
+## Plan: Tashfeen AI Platform Master Delivery Plan
+
+This is the corrected master delivery plan for the AI-Powered Overseas Consultancy Management & Automation Platform. It uses `D:\tafsheen\ai.txt` as the technical bible and `D:\tafsheen\agreement.txt` as the delivery, acceptance, and legal frame, with user-confirmed commercial correction that the final project amount is CAD 10,500. Target workspace file for execution handoff: `D:\tafsheen\plan.txt`.
+
+**Correction Notes Before Final Use**
+- Final project amount: CAD 10,500 software development only.
+- Previous USD 8,000 references are replaced by CAD 10,500.
+- Blank legal fields in the agreement are intentionally not filled in this planning document.
+- Flutter work is moved earlier: planning/API contract starts Week 2, Flutter shell starts Week 4, active mobile development starts Week 9, and Week 15 becomes completion/stabilization rather than first start.
+- Reporting and audit foundation starts Week 2, with usable management reporting expanded through Weeks 3, 4, 12, and 14.
+- Phase 2 is clearly marked as basic only throughout this plan.
+- Strong dependency disclaimers are included for WhatsApp, telephony, AI, app stores, and social media APIs.
+- Post-handover support severity rules are included.
+
+**Plan Boundaries**
+- Duration: 16 active delivery weeks plus 8 grace/stabilization weeks.
+- Agreement amount: CAD 10,500 software development only.
+- Third-party costs: client pays separately and are not included in CAD 10,500.
+- Mobile stack: Flutter for Android and iOS, as required by agreement.
+- Web stack: Next.js/React/TypeScript for admin, employee, partner/referral, and client portals.
+- Backend stack: NestJS/Node.js modular monolith for CRM, RBAC, workflows, integrations, APIs.
+- AI worker stack: Python FastAPI for OCR, speech-to-text, AI summaries, document classification, interviews, and business plan generation.
+- Database/storage: PostgreSQL, Redis/BullMQ, S3-compatible object storage.
+- AI rule: AI assists only; human staff must review all legal, immigration, eligibility, document, financial, interview, call summary, and business plan outputs.
+- Call rule: recordable calls require SIP/telephony provider support and consent policy; WhatsApp app calls are not treated as reliably recordable.
+- Phase 2 rule: Month 4 Phase 2 items are basic rollout only, not full enterprise-grade MDM, ERP, biometric, endpoint security, HRMS, accounting, payroll, or device-control software.
+- Legal-field rule: blank legal fields in the agreement should be completed by authorized parties separately if needed; this plan does not fill legal blanks.
+
+**Core Users And Departments**
+- Super Admin: total system control, settings, users, reports, audit, emergency access.
+- Admin/Manager: operations oversight, assignment, reporting, monitoring, approvals.
+- Sales/Consultant: assigned leads, screening, WhatsApp, calls, appointments, conversion, handover.
+- Documentation Officer: document checklist, upload review, missing docs, expiry, replacement requests.
+- Processing Officer: converted cases, application stages, submissions, case notes, escalations.
+- Finance Officer: payments, invoices, receipts, installments, refunds, revenue reports.
+- Support/Call Center: tickets, follow-ups, missed calls, appointment confirmations, escalations.
+- Marketing: campaigns, social leads, content generation, scheduling, performance.
+- Operations/Admin: departments, tasks, escalations, workload, internal approvals.
+- Client: own case status, documents, appointments, notifications, payment status.
+- Partner/Referral: referred leads, referral client status, referral commissions/notes where approved, limited reporting only.
+
+**Recommended System Modules**
+1. Identity, authentication, RBAC, departments, roles, permissions.
+2. Organization setup: branches, teams, designations, employees, partner/referral accounts.
+3. Lead CRM: lead capture, source tracking, campaign tracking, inquiry/service/country tracking.
+4. Lead distribution: auto assignment, manual reassignment, priority, workload, audit.
+5. Partner/referral portal: partner login, referral submission, referral tracking, status visibility, limited commission/notes where approved.
+6. WhatsApp communication hub: Meta API, templates, bot flows, inbox, conversation history, handover.
+7. AI messaging assistant: controlled screening, intent detection, suggested replies, basic eligibility notes.
+8. Appointment system: employee calendar, admin calendar, booking links, reminders, reschedule/cancel.
+9. Admin portal: full control, reports, settings, monitoring.
+10. Employee portal: department queues, tasks, client profile, actions, notes, handovers.
+11. Client portal: case status, documents, payments, appointments, consultant, notifications, timeline.
+12. Document management: checklist, upload, categories, verification, expiry, missing data, replacement.
+13. Document AI: OCR, classification, expiry extraction, duplicate/unclear/wrong/incomplete flags.
+14. Case processing: application stages, notes, proofs/receipts, status transitions.
+15. Finance workflow: payments, invoices, receipts, installments, refunds, commissions/payroll links where allowed.
+16. Support workflow: tickets, follow-ups, confirmations, escalations.
+17. Marketing workflow: social leads, campaigns, AI content, approvals, scheduling, analytics basic.
+18. Activity timeline and audit: client lifecycle, employee action history, audit logs, reportable events from Week 2 onward.
+19. Reports: daily operations, employee performance, lead source, appointments, revenue, exports.
+20. AI voice/call: SIP provider calls, transcript, summary, outcome, CRM save.
+21. AI interview: predefined questions, audio capture, transcript, summary, suitability notes.
+22. AI business plan: input form, generated sections, editing, versions, PDF export.
+23. Flutter mobile app: employee app, client app, optional admin summary, started earlier and completed by Month 4.
+24. Phase 2 basic only: enterprise operations, activity monitoring, device registry, PC/laptop registry, social automation, attendance.
+
+**Screen Inventory - Admin Portal**
+- Login / forgot password.
+- Admin dashboard: lead count, open cases, pending docs, appointments, overdue payments, employee activity.
+- Employee management: create/edit/deactivate employees, assign department, role, status.
+- Role and permission matrix: role CRUD, permission toggles, test user access.
+- Department and branch setup: departments, branches, hierarchy, designations.
+- Partner/referral management: create partner, assign referral code, view referrals, disable partner access.
+- Lead inbox: all leads, filters by source/campaign/service/country/status/priority/owner.
+- Lead assignment screen: auto rules, manual reassignment, audit history.
+- Client database: client list, profile, case summary, documents, payments, timeline.
+- WhatsApp supervisor inbox: conversations by client/employee, handover status, templates.
+- Services and bot flows: service list, countries, screening questions, flow steps.
+- Appointment calendar: all employee calendars, appointment status, override/reschedule.
+- Document review overview: pending, missing, expired, rejected, replacement requested.
+- Processing overview: stages, bottlenecks, assigned officers, escalations.
+- Finance dashboard: pending payments, partial payments, invoices, receipts, refunds, revenue.
+- Support dashboard: open tickets, escalations, missed calls, follow-ups.
+- Marketing dashboard: campaigns, lead sources, AI content calendar, analytics basic.
+- Reports: daily operations, employee performance, lead conversion, revenue, appointment, exports.
+- Audit logs: login/logout, changes, handovers, status updates, role changes, file access, exports.
+- Security/privacy settings: password policy, session timeout, MFA-ready configuration, data retention settings, access review.
+- Device registry: mobile devices, PCs/laptops, assigned employee, status, access disable.
+- Attendance dashboard: check-in/out, late, early leave, overtime, leave, monthly reports.
+- Enterprise settings: internal tasks, approvals, SOP/policy library, vendors basic.
+- System settings: integrations, email, WhatsApp templates, AI provider, OCR, telephony, backups.
+
+**Screen Inventory - Employee Portal Common**
+- Employee login.
+- My dashboard: assigned tasks, today appointments, unread messages, pending follow-ups.
+- My work queue: department-specific tasks with priority and due date.
+- Client/lead profile: contact info, service, country, source, owner, notes, status, timeline.
+- Communication panel: WhatsApp messages, email, call logs, AI suggestions, templates.
+- Notes and internal comments: private/internal/client-visible flags.
+- Task handover screen: handover to next department, reason, attachments, notes.
+- Notifications: new lead, missing docs, payment update, appointment reminder, escalation.
+- Daily work report: actions completed, leads contacted, calls, appointments, pending tasks.
+
+**Screen Inventory - Sales/Consultant**
+- Assigned leads list.
+- Lead detail and screening form.
+- Hot/warm/cold lead priority selector.
+- WhatsApp reply and AI suggested reply screen.
+- Voice note transcript viewer.
+- Appointment booking screen.
+- Document request screen.
+- Lead conversion/rejection screen.
+- Sales to documentation handover screen.
+- Sales performance summary.
+
+**Screen Inventory - Documentation**
+- Document queue by status.
+- Client document checklist.
+- Document preview and category editor.
+- Missing document detector results.
+- Expiry and validity review screen.
+- Verify/reject/replacement request actions.
+- Missing document WhatsApp/email template sender.
+- Documentation to processing handover screen.
+- Document performance report.
+
+**Screen Inventory - Processing**
+- Converted cases queue.
+- Case stage board.
+- Application details review.
+- Processing notes and proofs upload.
+- Missing info request screen.
+- Submitted/under review/approved/rejected/closed status actions.
+- Escalation to admin screen.
+- Processing performance report.
+
+**Screen Inventory - Finance**
+- Payment queue.
+- Client payment profile.
+- Add payment received screen.
+- Payment verification screen.
+- Invoice generator.
+- Receipt upload/generation.
+- Installment tracker.
+- Refund request/complete screen.
+- Partner/referral commission visibility where approved.
+- Revenue and overdue payment reports.
+
+**Screen Inventory - Support/Call Center**
+- Support ticket queue.
+- Follow-up task list.
+- Missed call list.
+- Appointment confirmation screen.
+- Client query reply screen.
+- Escalation screen.
+- Ticket resolved/closed screen.
+
+**Screen Inventory - Marketing**
+- Social lead dashboard.
+- Campaign list and performance.
+- Lead qualification/routing screen.
+- AI content idea generator.
+- Caption/hashtag/script generator.
+- Content calendar.
+- Manual approval before posting.
+- Basic analytics.
+
+**Screen Inventory - Partner/Referral Portal**
+- Partner login / password reset.
+- Partner dashboard: total referred leads, active referrals, converted referrals, rejected referrals.
+- New referral submission form: client contact, interested service, country, notes, consent confirmation.
+- Referral list: filter by status, service, date, assigned consultant.
+- Referral detail: safe limited view of current lead/case stage, next action, assigned contact if allowed.
+- Commission/earning summary: optional, only if business rules are approved.
+- Partner profile/settings.
+- Partner notification center.
+- Referral terms acknowledgement screen.
+- Support/contact admin screen.
+
+**Screen Inventory - Client Web Portal**
+- Client login / password reset or OTP.
+- Client dashboard: case status, pending items, next appointment, payment status.
+- Case timeline.
+- Required document checklist.
+- Document upload and file status.
+- Missing data form.
+- Appointment history and upcoming appointments.
+- Payment and receipt view.
+- Assigned consultant details.
+- Notifications.
+- Profile settings.
+
+**Screen Inventory - Flutter Mobile App**
+- Splash/onboarding.
+- Employee login.
+- Client login.
+- Employee dashboard.
+- Client dashboard.
+- Assigned leads/tasks list.
+- Case status view.
+- Appointment alerts.
+- Push notifications.
+- Mobile document upload using camera/file picker.
+- Mobile CRM access by role.
+- Attendance check-in/check-out basic.
+- Optional admin summary dashboard.
+- Mobile build starts early: API contract and design in Weeks 2-4, core development in Weeks 9-12, completion/stabilization in Week 15.
+
+**Core Data Entities**
+- Organization, branch, department, designation, role, permission, employee, client user, partner user.
+- Lead, client, referral, campaign, lead source, service type, country, inquiry type, priority, assignment.
+- Partner profile, referral code, referral submission, referral status, referral commission/notes where approved.
+- Conversation, message, WhatsApp template, bot flow, screening question, AI response, voice note transcript.
+- Appointment, calendar slot, reminder, appointment type, appointment status.
+- Case/application, case stage, case status, handover, escalation, case note, proof/receipt attachment.
+- Document, document category, document requirement, expiry date, verification status, missing item, replacement request.
+- Payment, invoice, receipt, installment, refund, commission, payroll attendance link.
+- Call record, call transcript, call summary, call recording URL, call outcome.
+- Interview session, interview question, audio response, transcript, AI summary, suitability notes.
+- Business plan, business plan version, generated section, PDF export.
+- Task, ticket, notification, activity log, audit log, export log.
+- Security event, login session, password reset, access review, consent record, privacy acknowledgement.
+- Device, PC/laptop, attendance record, leave request, overtime record.
+- Social campaign, social content draft, approval, scheduled post, analytics.
+
+**Security And Privacy Architecture**
+- Authentication: secure login for admin, employee, partner, and client users; hashed passwords; password reset; session timeout; MFA-ready design for future activation.
+- Authorization: server-side RBAC for every route and API; no frontend-only permission enforcement; department-level and ownership-level record scoping.
+- Data isolation: clients see only their own cases/documents; partners see only limited referral data; employees see only assigned/department-permitted data.
+- Audit logging: record logins, failed logins, user creation, role changes, lead assignment, status changes, document access, payment changes, exports, handovers, integration events.
+- File privacy: documents stored in private object storage; access through signed URLs; no public document links; virus scanning/provider scanning if available.
+- PII handling: collect only necessary immigration/client data; restrict sensitive fields; use consent and privacy acknowledgement where needed.
+- AI privacy: do not send unnecessary PII to AI providers; mask or reduce data where possible; store prompt/output logs only where needed for audit and improvement.
+- Call/voice privacy: call recording and transcription require provider support and client/employee consent policy.
+- Employee monitoring privacy: attendance, device registry, activity monitoring, and any face/GPS/device checks require disclosed policy and consent.
+- Backup privacy: backups encrypted or provider-secured; access limited to authorized technical administrators.
+- Incident handling: define who is notified, severity, containment, audit review, and fix timeline.
+
+**DevOps, Deployment, Backup, And Environments**
+- Environments: local development, staging/UAT, production.
+- Deployment: Dockerized backend, web app, AI worker, queue worker; managed PostgreSQL where possible; Redis; object storage bucket.
+- CI/CD: automated build, lint, test, migration check, deployment to staging, manual approval for production.
+- Secrets: environment variables/secrets manager; no secrets in source code; separate staging and production credentials.
+- Database migrations: reviewed migration files; backup before production migration; rollback plan for high-risk changes.
+- Backups: daily database backup, object storage retention, periodic restore test, backup access audit.
+- Monitoring: application logs, error alerts, API health checks, queue failure alerts, disk/storage monitoring, integration webhook failure alerts.
+- SSL/domain: HTTPS for all portals and APIs; domain/subdomain plan for admin, client, API, and mobile API.
+- Release process: versioned releases, release notes, deployment checklist, rollback steps, post-deploy smoke test.
+- Handover: deployment docs, environment inventory, provider account list, backup/restore instructions after full payment.
+
+**Week 1 - Kickoff, Discovery, Scope Freeze, Risk Register**
+- Objective: turn documents into an executable backlog and remove unknowns before development starts.
+- Actions: run kickoff meeting with owner/admin and department leads; confirm services, countries, case statuses, departments, employee roles, payment rules, referral rules, document checklists, templates, appointment types; confirm Phase 2 items are basic only; collect all required credentials; create risk register; choose providers.
+- How to do it: create a requirements traceability sheet mapping every item in `ai.txt` and `agreement.txt` to module, week, owner, dependency, and acceptance criteria. Create client input checklist and assign due dates.
+- Screens planned: no production screens yet; produce sitemap/wireframe list for admin, employee, partner/referral, client, and mobile portals.
+- Technical tasks: select hosting, domain strategy, SSL, database, object storage, email provider, WhatsApp provider, telephony provider, AI/OCR provider, push provider, app store accounts.
+- Deliverables: kickoff minutes, finalized scope matrix, client input checklist, provider selection sheet, sitemap, module backlog, DB/entity draft, milestone acceptance template, risk register.
+- Acceptance: client confirms scope, roles, referral rules, services, delivery milestones, and pending credentials.
+
+**Week 2 - Backend Foundation, Database, Auth, RBAC, Audit, Mobile API Contract**
+- Objective: build the technical foundation all modules depend on and start reporting/audit/mobile foundations early.
+- Actions: create backend project, API conventions, auth module, role/permission module, organization/department module, employee/client/partner user models, referral models, database migrations, seed data, secure file storage connection, audit logging, reporting event model, Flutter API contract.
+- How to do it: implement database first with normalized entities; protect all API routes with permission middleware; make every create/update/status/export action write an audit event; define mobile response schemas before mobile UI starts.
+- Screens built: login, role test page/internal admin access check, initial admin shell.
+- APIs/jobs: auth login/logout/password reset, user CRUD, role CRUD, department CRUD, partner CRUD skeleton, audit write/read, report event write, file upload signed URL, mobile auth contract.
+- Deliverables: working staging API, PostgreSQL schema, auth/RBAC working, file storage baseline, audit/reporting foundation, seed users, mobile API contract v1.
+- Acceptance: admin can log in, create employee, assign role/department, create partner record, see audit log, and see a basic daily event count.
+
+**Week 3 - Admin Portal Core, Partner Setup, Reporting Skeleton, DevOps Baseline**
+- Objective: give admins the control center for users, CRM setup, referral setup, reporting skeleton, and deployment pipeline.
+- Actions: build admin dashboard, employee management, role assignment, departments, branches, partner/referral management, lead/client list shells, service/country/status configuration, activity log viewer, first report dashboard widgets, CI/CD staging pipeline.
+- How to do it: use permission-controlled admin pages; keep configuration tables generic so services/countries/statuses are not hard-coded; generate report widgets from audit/report events.
+- Screens built: admin dashboard, employees, roles, departments, branches, services/countries, partner management, lead list, client list, audit log, report skeleton.
+- APIs/jobs: employee CRUD, department/branch CRUD, partner CRUD, service/country/status CRUD, lead/client list queries, audit filters, report summary query.
+- Deliverables: admin portal core on staging, partner setup base, first reporting widgets, staging deployment pipeline.
+- Acceptance: admin can manage staff, roles, departments, services, partners, view basic CRM records, view audit events, and see early dashboard metrics.
+
+**Week 4 - Employee Portal Core, Flutter Shell, Work Queues, Month 1 UAT**
+- Objective: create department-specific employee access, begin Flutter shell early, and prove Month 1 foundation.
+- Actions: build employee dashboard framework, common work queue, client/lead profile view, internal notes, basic status update, activity timeline, notification shell, Flutter app shell with login screen connected to staging auth, basic daily report view.
+- How to do it: create shared employee components, then show/hide cards and actions by department permissions. Flutter app should reuse auth/mobile contract and not duplicate business rules.
+- Screens built: employee dashboard, my work queue, profile view, notes, basic timeline, notifications, Flutter splash/login shell.
+- APIs/jobs: assigned work query, note create/read, status update, activity timeline read, notification read, mobile login test.
+- Deliverables: Month 1 deliverable: web CRM foundation with admin login, employee login, roles, partner setup base, client/lead database, permissions, audit/reporting foundation, basic tracking, Flutter shell started.
+- Acceptance: Super Admin, Admin, Sales, Documentation, Processing, Finance, Support, Marketing, Client, Partner role can log in or be configured according to current scope and see correct access. Month 1 sign-off triggers Milestone 1.
+
+**Week 5 - Lead Capture, CRM Intake, Campaign Tracking, Referral Submission**
+- Objective: bring all leads into one CRM intake pipeline, including partner referrals.
+- Actions: integrate Facebook/Instagram lead capture where access is ready; build website form endpoint; build manual lead entry; build partner referral submission; standardize lead fields; auto-create client/lead profile; store source, campaign, service interest, country, inquiry type, priority, partner source.
+- How to do it: use webhook receiver for Meta leads and a secure public form endpoint for website leads; every lead/referral enters the same normalization pipeline with duplicate checking.
+- Screens built: manual lead entry, lead inbox, lead detail, campaign/source filters, partner referral submission.
+- APIs/jobs: lead create, referral create, lead normalize, Meta webhook, website form endpoint, duplicate phone/email check.
+- Deliverables: leads from Facebook, Instagram, website, manual entry, and partner referral appear in CRM with source and campaign/referral data.
+- Acceptance: test lead from each source appears in CRM and is searchable/filterable; partner-submitted referral appears with partner attribution.
+
+**Week 6 - Intelligent Lead Assignment, Partner Tracking, Notifications**
+- Objective: route leads to the right employee with full tracking and limited partner visibility.
+- Actions: implement auto-assignment by service type, country, employee availability, workload, hot/warm/cold priority; implement manual reassignment; create ownership history; notify employee; update partner referral status safely; log all assignment changes.
+- How to do it: create assignment rule service with fallback to least-loaded eligible sales employee; allow admin override with reason required; partner sees limited status, not private CRM notes.
+- Screens built: assignment rules, reassignment modal, employee assigned leads, lead ownership history, partner referral list/status.
+- APIs/jobs: assignment engine, reassignment endpoint, workload query, employee notification job, assignment audit log, partner referral status query.
+- Deliverables: auto/manual lead assignment and partner tracking working.
+- Acceptance: new test leads auto-assign correctly; admin can reassign; employee sees notification; audit shows who/when/why; partner sees limited referral status.
+
+**Week 7 - WhatsApp Meta Bot, CRM Inbox, AI Messaging Basic**
+- Objective: automate WhatsApp inquiries and connect conversations to CRM.
+- Actions: configure WhatsApp Cloud API, webhooks, templates, automated replies, buttons/lists, service selection flows, client information collection, conversation history, employee handover, document request templates, AI suggested replies, intent detection, guided screening, basic eligibility notes.
+- How to do it: store every inbound/outbound WhatsApp event as a conversation message; route bot state through controlled flow tables; avoid free-chat AI for final decisions; all WhatsApp templates must follow Meta rules and may require approval.
+- Screens built: WhatsApp inbox, conversation detail, template library, bot flow editor basic, AI suggestion panel, handover queue.
+- APIs/jobs: WhatsApp webhook, send message, send template, bot state machine, AI suggestion endpoint, handover endpoint, conversation sync.
+- Deliverables: WhatsApp inquiry -> bot service selection -> client info saved -> employee handover works where Meta access/templates are approved.
+- Acceptance: client selects Work Permit/Business Visa/Visit Visa/Study/Job Abroad; info is saved; employee can reply in CRM; blocked templates/provider issues are logged as third-party dependency items.
+
+**Week 8 - Sales Workflow, Appointment System, Month 2 UAT**
+- Objective: complete sales lead handling and booking loop.
+- Actions: build sales dashboard, screening form, hot/warm/cold status, follow-up task, appointment calendar, appointment types, booking links, reschedule/cancel, WhatsApp reminders where approved, lead conversion/rejection, sales-to-documentation handover trigger.
+- How to do it: make lead status transitions explicit; require conversion details before handover; create appointment reminders as queue jobs; record sales actions in audit/reporting events.
+- Screens built: sales dashboard, lead detail, screening form, appointment calendar, booking modal, follow-up list, conversion/handover modal.
+- APIs/jobs: appointment CRUD, availability check, reminder job, lead status update, conversion endpoint, handover task create, sales report counters.
+- Deliverables: Month 2 deliverable: lead capture, assignment, partner tracking, WhatsApp bot, AI messaging basic, sales workflow, appointments.
+- Acceptance: sales employee receives lead, chats, screens, books appointment, requests docs, converts or rejects. Month 2 sign-off triggers Milestone 2.
+
+**Week 9 - Client Portal, Mobile Client/Employee Core, Document Upload Foundation**
+- Objective: give clients self-service access and begin active Flutter mobile development with real workflows.
+- Actions: build client login, dashboard, case status, assigned consultant details, appointment history, payment status placeholder, notifications, timeline, document checklist, secure upload, file preview/download, document versioning; build Flutter employee/client dashboard basics and mobile document upload prototype.
+- How to do it: client access must be scoped by client ID; all file links must use signed URLs; document requirements come from service/country checklist; mobile reuses backend upload APIs.
+- Screens built: client dashboard, case status, timeline, document checklist, upload screen, appointment history, payment status, notifications, Flutter employee/client dashboards, mobile upload prototype.
+- APIs/jobs: client auth, case read, checklist read, document upload, file signed URL, timeline read, notification read, mobile dashboard query.
+- Deliverables: client portal and mobile core started with document upload foundation.
+- Acceptance: client logs in, sees own case only, uploads passport/CNIC/etc.; mobile can log in and display dashboard/test upload on staging.
+
+**Week 10 - Document Intelligence And Documentation Department Workflow**
+- Objective: help documentation team detect, review, and request missing/expired documents.
+- Actions: integrate OCR/classification or manual fallback; detect uploaded/missing documents; detect missing client data; extract/check expiry where feasible; flag expired/near-expiry/unclear/duplicate/wrong/incomplete; build documentation queue and statuses; send missing document requests by WhatsApp/email/portal; include mobile upload status.
+- How to do it: use AI/OCR only as first pass; always route low-confidence results to Manual Review Required; log document access and status changes.
+- Screens built: documentation queue, document preview, category editor, verification action panel, missing item list, replacement request sender, mobile document status.
+- APIs/jobs: OCR job, document classify job, expiry extraction, checklist compare, verification update, missing request notification job, document audit event.
+- Deliverables: document review and missing document retrieval workflow.
+- Acceptance: uploaded document is categorized or marked manual review; officer can verify/reject/request replacement; client receives missing doc notification; audit shows document review history.
+
+**Week 11 - Processing, Finance, Support, Marketing, Operations Workflows**
+- Objective: complete department-specific workflows after lead conversion.
+- Actions: build processing case stages; build finance payment statuses, invoices, receipts, installments, refunds, revenue; build support tickets and escalations; build marketing campaign/lead routing; build operations workload and escalation monitoring; continue Flutter case/status/notifications.
+- How to do it: every department gets queue, permitted actions, status transitions, notes, task completion, and audit logging.
+- Screens built: processing queue/stage board, finance payment dashboard, invoice generator, receipt upload, support ticket queue, marketing campaign view, operations dashboard, Flutter case/status and notifications.
+- APIs/jobs: case stage update, payment CRUD, invoice PDF, receipt upload, refund update, ticket CRUD, campaign stats, escalation create, mobile case query.
+- Deliverables: all department workflows basic complete with mobile case/status progress.
+- Acceptance: each department can perform its main workflow on a test client without admin access leakage; mobile shows current case/status and notifications.
+
+**Week 12 - Department Handover, Lifecycle Timeline, Reports, Month 3 UAT**
+- Objective: connect all department workflows into one lifecycle and make reports measurable before final AI/reporting polish.
+- Actions: implement Sales -> Documentation -> Processing -> Finance handover; create tasks/notifications at each handover; update client timeline from case/document/payment events; expand daily operations, lead conversion, appointment, finance, department performance reports; run full lifecycle test; fix critical bugs; prepare user guides.
+- How to do it: each handover requires current stage completion, target department, assigned owner or queue, notes, and audit record; reports use event and transactional tables.
+- Screens built: handover modal, handover history, lifecycle timeline, department UAT checklist, report dashboard v1, Flutter lifecycle view.
+- APIs/jobs: handover endpoint, handover notification, lifecycle event builder, status sync, report aggregates, export job.
+- Deliverables: Month 3 deliverable: client portal, mobile core progress, document verification, documentation, processing, finance, support, marketing, operations, department handover, reporting v1.
+- Acceptance: full test client moves from lead to documents to processing to payment to case update; reports show counts and totals matching test data. Month 3 sign-off triggers Milestone 3.
+
+**Week 13 - AI Voice/Call Agent And AI Interview Basic**
+- Objective: add provider-dependent AI call and interview capabilities.
+- Actions: connect SIP/telephony provider if ready; build call log, recording URL, transcript, summary, outcome; implement AI screening script; build appointment booking through call where supported; build interview session, predefined questions, audio response, transcript, AI summary, suitability notes, review screen.
+- How to do it: keep calls provider-driven; store transcript/summary in CRM; show disclaimer that AI output is for staff review; if telephony provider is not ready, deliver UI/API with mock/manual call log fallback and mark provider dependency.
+- Screens built: call log, call detail, transcript/summary viewer, AI call setup, interview template, interview result review.
+- APIs/jobs: call initiate, call webhook, transcript job, summary job, interview create, interview response upload, suitability summary.
+- Deliverables: AI call/interview basic workflow.
+- Acceptance: test call/interview creates transcript, AI summary, outcome, and profile timeline event where provider supports it; provider limitations are documented.
+
+**Week 14 - AI Business Plan, Reporting Finalization, Audit Trail Completion**
+- Objective: add client-facing AI documents and finalize management reporting/audit.
+- Actions: build business plan dashboard, create plan form, generate executive summary, market analysis, business model, financial projections, risk/opportunity, editable draft, version history, PDF export; finalize daily operations, employee performance, lead, appointment, revenue reports; complete audit trail coverage.
+- How to do it: use structured prompts and templates; employees must review and edit before export/use; reports query source-of-truth tables; exports write export audit events.
+- Screens built: business plan list/create/edit/export, reports dashboard, export filters, audit trail viewer.
+- APIs/jobs: business plan generate, version save, PDF export, reports aggregation, Excel/PDF export, daily report job, audit completeness check.
+- Deliverables: AI business plan generator, reporting, exports, full tracking.
+- Acceptance: employee generates editable business plan PDF; admin exports daily/employee/revenue/lead reports; audit trail shows key actions and exports.
+
+**Week 15 - Flutter Completion And Phase 2 Basic Rollout**
+- Objective: complete/stabilize mobile core and deliver initial Phase 2 basic modules per agreement.
+- Actions: complete Flutter employee/client login, dashboards, assigned leads/tasks, case status, appointment alerts, mobile document upload, push notifications where supported, optional admin summary; build enterprise basic, activity monitoring basic, mobile/PC device registry, social content basic, attendance basic.
+- How to do it: reuse backend APIs; mobile must enforce server-side RBAC; Phase 2 screens are basic operational setup, not advanced automation or full device control.
+- Screens built: Flutter login, employee dashboard, client dashboard, leads/tasks, case status, upload, notifications, attendance check-in/out, admin summary; enterprise hierarchy, device registry, social content, attendance dashboard web screens.
+- APIs/jobs: mobile auth, push token register, mobile upload, device register, activity monitoring report, attendance CRUD, social content generate/schedule.
+- Deliverables: Flutter core app and Phase 2 basic modules on staging.
+- Acceptance: employee/client login on mobile; mobile upload works; attendance check-in works; admin sees device registry, activity monitoring, social content basic; Phase 2 limitations are visible in handover notes.
+
+**Week 16 - Final Testing, Production Deployment, Training, Handover**
+- Objective: close active delivery, deploy, train, and start support.
+- Actions: run full regression, RBAC/security tests, privacy tests, mobile tests, integration tests, performance smoke tests; fix critical bugs; prepare deployment/rollback; submit apps if accounts ready; deploy production after final payment; deliver credentials/source/technical docs after full payment; train all departments; start 90-day bug support.
+- How to do it: use written UAT checklist per department; no production handover before final payment; classify any new feature request as change request; app store approval delays remain third-party dependencies.
+- Screens tested: all admin, employee, partner/referral, client, mobile, Phase 2 basic screens.
+- Deliverables: production deployment, handover documentation, training recordings/notes, source code handover, support start.
+- Acceptance: Month 4 accepted after AI/report/mobile/Phase 2 basic/testing/handover. Final payment is required before final deployment/handover.
+
+**Grace Week 17 - Production Stabilization 1**
+- Actions: fix urgent production issues, tune roles/menus, clean seed/config data, monitor logs.
+- Deliverable: stabilization patch 1.
+- Boundary: no new features.
+
+**Grace Week 18 - Production Stabilization 2**
+- Actions: fix workflow edge cases, improve status wording, refine document checklist, validate backup restore.
+- Deliverable: stabilization patch 2.
+- Boundary: no major redesign.
+
+**Grace Week 19 - Third-Party Approval Follow-Up**
+- Actions: handle WhatsApp template/API approval issues, Play Store/App Store review feedback, telephony provider alternatives, social media API permissions.
+- Deliverable: third-party dependency status report and fixes.
+- Boundary: provider rejection/delay does not equal custom new integration unless agreed.
+
+**Grace Week 20 - AI And Reporting Tuning**
+- Actions: tune prompts for screening, summaries, business plans, social content; validate report totals; adjust low-confidence document review handling.
+- Deliverable: AI/reporting tuning patch.
+- Boundary: new AI module requests are change requests.
+
+**Grace Week 21 - Mobile Stabilization**
+- Actions: fix Flutter device-specific issues, upload retry behavior, push token handling, app store resubmissions if needed.
+- Deliverable: mobile stabilization patch.
+- Boundary: app store approval is not guaranteed by developer.
+
+**Grace Week 22 - Security And Operations Hardening**
+- Actions: review audit log completeness, emergency access disable, force logout, role leakage, file access isolation, monitoring alerts, backup restore evidence.
+- Deliverable: operations/security hardening patch.
+
+**Grace Week 23 - Final UAT Closure**
+- Actions: re-run end-to-end UAT with Admin, Sales, Documentation, Processing, Finance, Support, Marketing, Partner, Client; classify defects as bug/support/change request.
+- Deliverable: final UAT closure report.
+
+**Grace Week 24 - Project Closure And Support Handoff**
+- Actions: update docs, confirm 90-day support scope, define maintenance needs, hand off support channels, confirm severity rules.
+- Deliverable: project closure note and support handoff.
+
+**Milestone Deliverables**
+- Month 1: web platform setup, backend, database, storage, SSL/security, hosting support, backups/monitoring basic, RBAC, admin core, employee core, partner setup base, department access, client/lead database, audit/reporting foundation, Flutter shell, basic timeline/status tracking.
+- Month 2: social leads, partner referrals, lead distribution, WhatsApp Meta bot, service flows, client info collection, human handover, WhatsApp CRM history, document request messages, appointment links/reminders, AI messaging basic, sales workflow, appointment system.
+- Month 3: client portal, mobile core progress, document upload/checklist, missing document detection, document verification, documentation workflow, processing workflow, finance/payment workflow, support workflow, marketing workflow, operations workflow, department handover, reporting v1, payment/document/processing statuses, receipts, invoices, installments, refunds, revenue basic.
+- Month 4: AI voice/call basic, AI interview, AI business plan, finalized reports, exports, full lifecycle tracking, complete audit trail, Flutter core app completion, enterprise basic, employee monitoring basic, mobile/PC registry, social automation basic, attendance basic, final testing, deployment, training, handover.
+
+**Measurable Milestone Acceptance Checklists**
+- Month 1 checklist: Super Admin can log in; at least 5 roles can be configured; at least 3 departments can be created; employee can be created/deactivated; partner record can be created; sample lead/client record can be created; audit log records login, create, update, role change; daily dashboard shows at least lead/client/user counts; staging deployment is accessible over HTTPS or approved temporary URL; backup plan documented; Flutter login shell connects to staging auth.
+- Month 2 checklist: at least one manual lead, one website/test lead, one social/test lead, and one partner referral enter CRM; lead source/campaign/referral attribution is stored; auto-assignment works for at least 3 assignment rules; manual reassignment requires reason; WhatsApp webhook receives test message where Meta access is ready; at least 3 WhatsApp templates/flows are configured or pending Meta approval; employee can hand over WhatsApp conversation; sales can book/reschedule/cancel appointment; reminder job works in test; sales can convert/reject lead; Month 2 report shows leads by source and employee.
+- Month 3 checklist: client can log in and see only own case; client can upload at least 3 document types; documentation officer can verify/reject/request replacement; OCR/classification runs or marks manual review; processing officer can move case through at least 4 stages; finance can create invoice, receipt, installment, and refund record; support can create/close ticket; marketing can view campaign leads; lifecycle timeline records each department action; report totals match test records; Flutter mobile can log in, show dashboard, and show/upload document status.
+- Month 4 checklist: AI call/interview workflow works where provider is ready or documented as provider-blocked with fallback; interview transcript/summary is stored; AI business plan generates editable version and PDF export; admin exports lead, employee, appointment, revenue, and daily reports; audit trail includes exports and sensitive access; Flutter app supports employee/client login, dashboard, case status, document upload, notifications where push provider is ready; Phase 2 basic screens for device registry, attendance, activity monitoring, social content, enterprise settings are available; security/RBAC regression passes; training/handover docs delivered after final payment.
+
+**Formal Change Request Workflow**
+- Step 1: client submits change request in writing by email/WhatsApp/document, describing desired change, reason, users affected, urgency, and expected output.
+- Step 2: development team classifies it as bug, clarification, small adjustment within approved scope, or new change request.
+- Step 3: for change requests, team prepares impact note covering cost, timeline, affected modules, third-party dependency, testing effort, and risk.
+- Step 4: client approves or rejects impact note in writing before work starts.
+- Step 5: approved change is added to backlog with separate acceptance criteria and delivery date.
+- Step 6: unapproved requests are not included in current milestones.
+- Bug definition: agreed feature does not work as accepted or described.
+- Change request definition: new feature, new workflow, new screen, major wording/business logic change, new integration, new report/export, advanced Phase 2 capability, or redesign after approval.
+
+**Third-Party Dependency Disclaimers**
+- WhatsApp/Meta: WhatsApp Cloud API requires Meta Business setup, phone number availability, verification, template approval, rate limits, policy compliance, and message charges. Meta may reject templates, restrict categories, delay approval, or change API rules. Developer can integrate and troubleshoot but cannot guarantee Meta approval or delivery outside provider limits.
+- Social media APIs: Facebook/Instagram lead access depends on page/admin permissions, business verification, app review, lead form permissions, account health, API limits, and Meta policy. Social posting automation may require additional permissions and may be restricted by platform rules.
+- Telephony/calls: AI calls, call recording, transcripts, and call routing depend on SIP/Twilio/Vonage/local provider features, number availability, recording laws, consent policy, call quality, country restrictions, and API reliability. WhatsApp app calls are not promised as recordable CRM calls.
+- AI/LLM: AI accuracy is not guaranteed. AI outputs can be incomplete, incorrect, biased, or provider-limited. All AI outputs require human review. Provider downtime, token limits, content filters, rate limits, model changes, and API costs are outside fixed project fee.
+- OCR/document intelligence: OCR confidence depends on scan quality, language, format, document type, and provider capability. Low-confidence results must go to manual review.
+- App stores: Google Play and Apple App Store approval depends on developer accounts, policy compliance, privacy declarations, screenshots, test credentials, review timelines, and reviewer decisions. Developer cannot guarantee approval date.
+- Push notifications: FCM/APNs require valid accounts, certificates/keys, OS permissions, and device settings; delivery is not guaranteed on all devices.
+- Email/SMS: deliverability depends on sender reputation, DNS configuration, provider limits, spam filters, and recipient settings.
+- Payment gateway: any gateway integration depends on merchant approval, KYC, API readiness, charges, settlement rules, and country availability.
+
+**Testing Plan**
+- Unit/API tests: auth, RBAC, leads, referrals, assignment, documents, appointments, cases, payments, reports.
+- Integration tests: WhatsApp, Meta leads, email, storage, OCR, AI, telephony, push notifications, social media permissions.
+- UI tests: admin, employee, partner/referral, client, mobile workflows.
+- RBAC tests: each role sees only permitted data/actions.
+- End-to-end tests: lead/referral -> assignment -> WhatsApp -> appointment -> documents -> processing -> payment -> case closure.
+- Security tests: file access isolation, audit logging, credential handling, backup restore, PII access, partner/client isolation, export logging.
+- UAT: separate sessions for Admin, Sales, Documentation, Processing, Finance, Support, Marketing, Partner, Client.
+
+**Client Inputs Needed By Week**
+- Week 1: credentials, branding, employee list, departments, services, statuses, document checklists, referral rules, templates, policy direction.
+- Week 2: hosting/domain decision, staging access approval, user role approval, privacy/security policy direction.
+- Week 5: Meta/Facebook/Instagram access, website form details, campaign/source definitions, partner/referral rules.
+- Week 7: WhatsApp number, template wording, bot flow approvals, Meta business access.
+- Week 8: appointment types, calendar availability, reminder wording.
+- Week 9: client portal fields, document checklist finalization, mobile app branding assets.
+- Week 11: finance invoice/receipt/payment/refund/installment rules.
+- Week 13: telephony provider account and call recording consent policy.
+- Week 15: Apple/Google developer accounts, attendance/device/monitoring policy approval.
+
+**Third-Party Costs Not Included In CAD 10,500**
+- Meta WhatsApp API and message/template charges.
+- Meta business verification charges if any.
+- SMS charges.
+- SIP/telephony/call recording charges.
+- AI/LLM API charges.
+- OCR/document intelligence charges.
+- Domain, hosting, VPS/cloud, storage.
+- Email/SMTP/workspace charges.
+- Payment gateway charges.
+- Google Play Console and Apple Developer fees.
+- Social media API usage/approval charges.
+- Face verification/liveness API charges.
+- MDM/endpoint management software charges.
+- Legal, stamp paper, notarization, government, hardware, subscriptions.
+
+**Risks And Controls**
+- Meta/WhatsApp approval delay: submit early, develop with mock/test mode, use grace period.
+- App Store/Play Store delay: prepare accounts/privacy details early, submit Week 16, use grace period.
+- Telephony limitations: evaluate SIP provider early; do not promise WhatsApp call recording.
+- AI accuracy: human review required, low-confidence results go to manual review.
+- Document classification errors: manual review and status correction built in.
+- Client credential/feedback delays: timeline extends per agreement/change control.
+- Scope creep: out-of-scope items require formal change request.
+- Employee monitoring/biometric risk: require disclosed policy and consent before use.
+- Data/privacy risk: enforce RBAC, signed file URLs, audit logs, and secure backups.
+
+**Out Of Scope Unless Approved Change Request**
+- Advanced MDM remote wipe/lock beyond provider-supported basic registry/access disable.
+- Advanced endpoint management beyond CRM access revoke/force logout where supported.
+- Advanced biometric face verification/liveness/GPS/device validation beyond basic attendance unless policy/provider ready.
+- Full ERP, accounting, HR, payroll, asset management, or inventory system beyond basic rollout.
+- Guaranteed visa/immigration/client conversion/business result.
+- Guaranteed Meta, Apple, Google, social media, telecom, payment gateway approval.
+- New modules, major redesigns, new reports, new integrations, or changed business logic after approval.
+- Advanced Phase 2 enterprise suite beyond the explicitly listed basic screens.
+
+**Post-Handover Support Severity Rules**
+- Support period: 90 days free bug-fix support after final handover, as defined in agreement.
+- Severity 1 critical: production system unavailable for all users, login down for all users, severe data access/security issue, or payment/document upload completely blocked. Target response: same business day where possible. Target workaround/fix: urgent patch or rollback depending on cause.
+- Severity 2 high: major workflow blocked for a department, integration failing where provider is operational, major report/payment/case status error. Target response: 1 business day. Target fix/workaround: 2-3 business days depending on complexity.
+- Severity 3 medium: non-critical bug with workaround, UI issue affecting work speed, incorrect label/status wording, partial report mismatch. Target response: 2 business days. Target fix: next maintenance patch.
+- Severity 4 low: cosmetic issue, minor text change, non-blocking improvement, training/help clarification. Target response: 3-5 business days. Target fix: scheduled patch if within bug scope.
+- Exclusions: new features, new modules, new integrations, design redesign, business logic changes, third-party downtime, third-party billing, provider policy changes, client-side operational mistakes, data entry mistakes, AI usage charges, and post-handover enhancements.
+- Support process: client reports issue with screen name, user role, steps to reproduce, expected result, actual result, screenshot/video if possible, and sample record ID.
+
+**Handover Package**
+- Source code repository after full payment.
+- Deployment credentials after full payment.
+- Environment variable and provider key inventory.
+- Database schema and backup/restore notes.
+- Security/privacy architecture notes.
+- DevOps/deployment/rollback/backup guide.
+- Admin user guide.
+- Employee guide by department.
+- Partner/referral portal guide.
+- Client portal guide.
+- Mobile app guide.
+- API/integration documentation.
+- Known limitations and provider dependency report.
+- Phase 2 basic limitation note.
+- 90-day bug-fix support start date and support severity rules.
+
+**Final Recommendation**
+Use this plan as the corrected master implementation roadmap. The client-facing plan should stay aligned to the 4 monthly milestones in the agreement, with the corrected project amount of CAD 10,500. The internal delivery team should execute by the weekly tasks above. Flutter starts early and completes in Month 4. Reporting/audit starts from the foundation stage and matures by Month 4. Phase 2 must remain basic only, with advanced expansion quoted separately through the formal change request workflow.

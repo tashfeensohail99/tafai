@@ -1,0 +1,172 @@
+# Week 1 Handoff And Process - Tashfeen AI Platform
+
+Date: May 8, 2026
+
+INTERNAL STATUS:
+Week 1 documentation and review package is complete.
+The project is now ready for technical review and board setup.
+Week 2 coding will start only after review sign-off and readiness confirmation.
+
+---
+
+## STEP 1 — SEND TO DEV TEAM
+
+Send these files to the dev/tech team now:
+
+- message-to-dev-team-week-1.txt (main review message)
+- week-1-technical-outputs/ (entire folder, all 11 files)
+- DEVELOPMENT_STANDARDS.md (mandatory standards document)
+
+Tell them clearly:
+
+"Please review the package in week-1-technical-outputs. Reply using the required format in the message.
+Do not start Week 2 coding until all key reviewers confirm readiness."
+
+Required reply format from each reviewer:
+
+Approved items:
+Required changes:
+Missing items:
+Blockers:
+Week 2 coding readiness: Yes / No / Conditional on [item]
+
+---
+
+## STEP 2 — IMPORT THE BACKLOG
+
+Use these two files:
+
+- week-1-technical-outputs/09-week-1-4-backlog.csv (source data)
+- project-board-setup-guide.txt (import instructions per tool)
+
+Supported tools: GitHub Projects, ClickUp, Trello, Jira, Linear.
+
+Board columns to create:
+
+Backlog / Ready for Development / In Progress / Code Review / Testing / UAT / Approved / Blocked / Change Request
+
+All Week 1-4 tasks from the CSV go into the board as Backlog initially.
+Assign owners and update statuses as Week 2 begins.
+
+---
+
+## STEP 3 — TRACK REVIEW RESPONSES
+
+Use week-1-review-ownership.txt to track each reviewer.
+
+Required reviewers and their files:
+
+| Reviewer | Files To Review |
+|---|---|
+| Tech Lead | 01-architecture-document.md, 02-architecture-diagram.mmd |
+| Backend/Database Lead | 03-erd-draft.md |
+| Backend Lead | 04-rbac-permission-matrix.csv, 05-api-module-map.md |
+| Frontend Lead + UX | 06-ui-sitemap.md, 07-design-system-starter.md |
+| DevOps/Backend Lead | 08-devops-staging-plan.md |
+| Project Manager | 09-week-1-4-backlog.csv, 10-risk-and-blocker-register.csv |
+| All Team Members | DEVELOPMENT_STANDARDS.md |
+
+Every reviewer must reply with the 5-point format above.
+Every reviewer must give a "Week 2 coding readiness: Yes/No" answer.
+No reviewer is optional.
+
+---
+
+## STEP 4 — RELEASE WEEK 2 START COMMAND
+
+Only after ALL key reviewers say "Week 2 coding readiness: Yes" or "Conditional" with the conditions resolved:
+
+Send: week-2-start-command.txt
+
+That file is the official start signal for coding.
+
+---
+
+## VERY IMPORTANT — DO NOT LET WEEK 2 START WITH THESE
+
+The dev team must NOT start any of the following in Week 2:
+
+- WhatsApp integration
+- AI or OCR features
+- Flutter full app screens
+- Finance module
+- Document AI or classification
+- Attendance module
+- Device control module
+- Social media automation
+- Fancy reporting dashboards
+- Any Phase 2 feature
+
+---
+
+## WEEK 2 APPROVED TASKS ONLY
+
+Week 2 must only cover:
+
+1. Repository and branch strategy
+2. NestJS backend foundation (TypeScript strict, health check, error handler, validation)
+3. PostgreSQL database migrations (auth, org, RBAC, audit, timeline tables)
+4. Users, roles, permissions, departments, employees base
+5. Auth module (login, logout, refresh, me, password reset)
+6. RBAC guard (permission check + ownership check on every protected route)
+7. Audit log foundation (immutable, all auth and user/role/department events)
+8. Activity timeline foundation (separate from audit, business-readable events)
+9. Private file storage foundation (no public URLs, signed URLs only after permission check)
+10. Next.js frontend shell (role-aware sidebar, light/dark theme, shared layout)
+11. Design tokens and shared UI components (StatusBadge, DataTable, Button, Input, FilterBar)
+12. Staging deployment baseline and Flutter shell/auth contract
+
+Nothing else. No feature screens on top of an incomplete foundation.
+
+---
+
+## COMPLETE FILE REFERENCE
+
+All files now in D:\tafsheen:
+
+Planning and standards:
+- DEVELOPMENT_STANDARDS.md
+- .github/copilot-instructions.md
+- plan.txt
+- ai.txt
+
+Week 1 technical review package (in week-1-technical-outputs/):
+- 00-week-1-technical-output-index.md
+- 01-architecture-document.md
+- 02-architecture-diagram.mmd
+- 03-erd-draft.md
+- 04-rbac-permission-matrix.csv
+- 05-api-module-map.md
+- 06-ui-sitemap.md
+- 07-design-system-starter.md
+- 08-devops-staging-plan.md
+- 09-week-1-4-backlog.csv
+- 10-risk-and-blocker-register.csv
+
+Process and handoff files:
+- message-to-dev-team-week-1.txt
+- week-1-review-ownership.txt
+- project-board-setup-guide.txt
+- week-2-start-command.txt
+- week-2-coding-gate-checklist.txt
+- week-1-handoff-and-process.txt (this file)
+
+Commercial:
+- agreement.txt (corrected to CAD 10,500)
+- agreement-cad-correction-note.txt
+
+---
+
+## COMMERCIAL NOTE
+
+Project total: CAD 10,500
+
+Payment schedule:
+- Advance: CAD 2,000
+- Milestone 1: CAD 2,000
+- Milestone 2: CAD 2,000
+- Milestone 3: CAD 2,500
+- Final: CAD 2,000
+
+Regenerate agreement.docx and agreement.pdf from agreement.txt before client signing.
+The .docx and .pdf originals are stale binary files that may still show old figures.

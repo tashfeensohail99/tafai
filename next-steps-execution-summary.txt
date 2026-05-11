@@ -1,0 +1,42 @@
+# Next Steps Execution Summary
+
+Date: May 8, 2026
+
+Completed now:
+1. agreement.txt updated from USD 8,000 to CAD 10,500.
+2. Payment terms and Annexure C updated to CAD milestone schedule totaling CAD 10,500.
+3. DEVELOPMENT_STANDARDS.md already approved as mandatory rulebook.
+4. .github/copilot-instructions.md already created for project-level coding instructions.
+5. Missing client inputs tracker created: missing-client-inputs-tracker.csv.
+6. Dev/team Week 1 request created: message-to-dev-team-week-1.txt.
+7. Project board import template created: project-board-template.csv.
+8. Week 1 start action plan created: week-1-start-action-plan.txt.
+9. Agreement correction note created: agreement-cad-correction-note.txt.
+10. Week 1 technical output package created: week-1-technical-outputs.
+
+New Week 1 technical outputs:
+- week-1-technical-outputs/00-week-1-technical-output-index.md
+- week-1-technical-outputs/01-architecture-document.md
+- week-1-technical-outputs/02-architecture-diagram.mmd
+- week-1-technical-outputs/03-erd-draft.md
+- week-1-technical-outputs/04-rbac-permission-matrix.csv
+- week-1-technical-outputs/05-api-module-map.md
+- week-1-technical-outputs/06-ui-sitemap.md
+- week-1-technical-outputs/07-design-system-starter.md
+- week-1-technical-outputs/08-devops-staging-plan.md
+- week-1-technical-outputs/09-week-1-4-backlog.csv
+- week-1-technical-outputs/10-risk-and-blocker-register.csv
+
+Still needs client/team confirmation:
+- Regenerate agreement.docx and agreement.pdf from corrected agreement.txt before signing.
+- Confirm payment schedule CAD 2,000 / 2,000 / 2,000 / 2,500 / 2,000.
+- Confirm main approver and project start date.
+- Confirm services, countries, departments, employees, statuses, document checklist, payment format, message templates, and credentials.
+- Create real project board in GitHub Projects, ClickUp, Trello, Jira, or Linear using project-board-template.csv.
+- Import week-1-technical-outputs/09-week-1-4-backlog.csv into the chosen project board if using the expanded Week 1-4 backlog.
+- Send message-to-dev-team-week-1.txt plus DEVELOPMENT_STANDARDS.md to dev/team.
+- Dev/team must return ERD, API map, RBAC matrix, architecture diagram, UI sitemap, design system starter, DevOps/staging plan, and Week 1-4 backlog.
+	Draft versions of these outputs are now available in week-1-technical-outputs for review and revision.
+
+Recommended immediate next action:
+Send message-to-dev-team-week-1.txt, DEVELOPMENT_STANDARDS.md, and the week-1-technical-outputs folder to the dev/team, then schedule Week 1 kickoff/review.

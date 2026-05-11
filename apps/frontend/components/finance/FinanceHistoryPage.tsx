@@ -1,0 +1,957 @@
+'use client';
+// Finance Payment History — Screen 6 of 7.
+// Searchable, filterable, read-only record of every payment record.
+// Scope: all statuses (including SENT_TO_PROCESSING, VERIFIED, REJECTED).
+//
+// Phase 1: mock data, client-side filter/sort, stub row actions.
+// Phase 2: real pagination, CSV/XLSX/PDF export, refund initiation.
+
+import { useMemo, useState } from 'react';
+import {
+  ArrowUpDown,
+  Calendar,
+  Download,
+  Eye,
+  FileText,
+  Filter,
+  Search,
+  X,
+} from 'lucide-react';
+import {
+  EmptyState,
+  GlassCard,
+  GhostButton,
+  PageHeader,
+  SecondaryButton,
+  StatusBadge,
+  type BadgeTone,
+} from '@/components/sales-v2/ui';
+import {
+  MOCK_PAYMENTS,
+  METHOD_LABEL,
+  STATUS_LABEL,
+  fmtAmount,
+  fmtDateTime,
+  fmtRelative,
+  type PaymentMethod,
+  type PaymentRecord,
+  type PaymentStatus,
+} from '@/components/finance-v1/mockData';
+
+// ---------- Config -------------------------------------------------------
+
+const STATUS_TONE: Record<PaymentStatus, BadgeTone> = {
+  NEW_FROM_SALES: 'neutral',
+  UNDER_VERIFICATION: 'info',
+  ON_HOLD: 'warning',
+  CORRECTION_REQUIRED: 'warning',
+  REJECTED: 'danger',
+  VERIFIED: 'accent',
+  RECEIPT_CONFIRMED: 'success',
+  AWAITING_BALANCE: 'warm',
+  SENT_TO_PROCESSING: 'violet',
+};
+
+const ALL_STATUSES: PaymentStatus[] = [
+  'NEW_FROM_SALES',
+  'UNDER_VERIFICATION',
+  'ON_HOLD',
+  'CORRECTION_REQUIRED',
+  'REJECTED',
+  'VERIFIED',
+  'RECEIPT_CONFIRMED',
+  'AWAITING_BALANCE',
+  'SENT_TO_PROCESSING',
+];
+
+const ALL_METHODS: PaymentMethod[] = [
+  'CASH', 'BANK', 'CARD', 'CHEQUE', 'MOBILE', 'WIRE', 'ONLINE', 'OTHER',
+];
+
+type SortField = 'date' | 'amount' | 'client' | 'status';
+type SortDir = 'asc' | 'desc';
+
+// ---------- Filter state -------------------------------------------------
+
+interface FilterState {
+  search: string;
+  status: PaymentStatus | '';
+  method: PaymentMethod | '';
+  branch: string;
+  salesUser: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
+const EMPTY_FILTER: FilterState = {
+  search: '',
+  status: '',
+  method: '',
+  branch: '',
+  salesUser: '',
+  dateFrom: '',
+  dateTo: '',
+};
+
+// ---------- Helpers ------------------------------------------------------
+
+function applyFilters(
+  records: PaymentRecord[],
+  f: FilterState,
+): PaymentRecord[] {
+  const q = f.search.toLowerCase();
+  return records.filter((p) => {
+    if (
+      q &&
+      !p.clientName.toLowerCase().includes(q) &&
+      !p.id.toLowerCase().includes(q) &&
+      !(p.receiptNumber ?? '').toLowerCase().includes(q) &&
+      !(p.transactionReference ?? '').toLowerCase().includes(q)
+    )
+      return false;
+    if (f.status && p.status !== f.status) return false;
+    if (f.method && p.paymentMethod !== f.method) return false;
+    if (f.branch && p.branch !== f.branch) return false;
+    if (f.salesUser && p.salesUserName !== f.salesUser) return false;
+    if (f.dateFrom && new Date(p.sentToFinanceAt) < new Date(f.dateFrom))
+      return false;
+    if (f.dateTo) {
+      const to = new Date(f.dateTo);
+      to.setHours(23, 59, 59, 999);
+      if (new Date(p.sentToFinanceAt) > to) return false;
+    }
+    return true;
+  });
+}
+
+function sortRecords(
+  records: PaymentRecord[],
+  field: SortField,
+  dir: SortDir,
+): PaymentRecord[] {
+  const sign = dir === 'asc' ? 1 : -1;
+  return [...records].sort((a, b) => {
+    switch (field) {
+      case 'date':
+        return sign * (+new Date(a.sentToFinanceAt) - +new Date(b.sentToFinanceAt));
+      case 'amount':
+        return sign * (a.receivedAmount - b.receivedAmount);
+      case 'client':
+        return sign * a.clientName.localeCompare(b.clientName);
+      case 'status':
+        return sign * a.status.localeCompare(b.status);
+    }
+  });
+}
+
+// Derive unique branches + sales users from mock data
+const UNIQUE_BRANCHES = [...new Set(MOCK_PAYMENTS.map((p) => p.branch))].sort();
+const UNIQUE_SALES = [
+  ...new Set(MOCK_PAYMENTS.map((p) => p.salesUserName)),
+].sort();
+
+// ---------- Sub-components -----------------------------------------------
+
+function FilterPill({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        background: 'var(--sos-accent-muted)',
+        border: '1px solid var(--sos-accent)',
+        borderRadius: 99,
+        padding: '2px 10px',
+        fontSize: 'var(--sos-text-xs)',
+        color: 'var(--sos-accent)',
+        fontWeight: 500,
+      }}
+    >
+      {label}
+      <button
+        onClick={onClear}
+        style={{
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          color: 'var(--sos-accent)',
+          display: 'flex',
+          alignItems: 'center',
+          padding: 0,
+        }}
+      >
+        <X size={11} />
+      </button>
+    </span>
+  );
+}
+
+interface SelectFilterProps {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (v: string) => void;
+}
+
+function SelectFilter({ label, value, options, onChange }: SelectFilterProps) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label
+        style={{
+          fontSize: 'var(--sos-text-xs)',
+          color: 'var(--sos-muted)',
+          fontWeight: 500,
+        }}
+      >
+        {label}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          padding: '6px 10px',
+          borderRadius: 'var(--sos-radius-sm)',
+          border: '1px solid var(--sos-border)',
+          background: 'var(--sos-input-bg)',
+          color: 'var(--sos-text)',
+          fontSize: 'var(--sos-text-sm)',
+          minWidth: 140,
+        }}
+      >
+        <option value="">All</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+interface DateFilterProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}
+
+function DateFilter({ label, value, onChange }: DateFilterProps) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label
+        style={{
+          fontSize: 'var(--sos-text-xs)',
+          color: 'var(--sos-muted)',
+          fontWeight: 500,
+        }}
+      >
+        {label}
+      </label>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          padding: '6px 10px',
+          borderRadius: 'var(--sos-radius-sm)',
+          border: '1px solid var(--sos-border)',
+          background: 'var(--sos-input-bg)',
+          color: 'var(--sos-text)',
+          fontSize: 'var(--sos-text-sm)',
+        }}
+      />
+    </div>
+  );
+}
+
+// ---------- Table row ----------------------------------------------------
+
+function HistoryRow({
+  payment,
+  index,
+}: {
+  payment: PaymentRecord;
+  index: number;
+}) {
+  const tone = STATUS_TONE[payment.status];
+  const isEven = index % 2 === 0;
+
+  return (
+    <tr
+      style={{
+        background: isEven ? 'var(--sos-surface)' : 'var(--sos-surface-2)',
+        transition: 'background 0.12s',
+      }}
+    >
+      {/* Receipt / ID */}
+      <td
+        style={{
+          padding: '10px 12px',
+          fontSize: 'var(--sos-text-xs)',
+          fontFamily: 'monospace',
+          color: payment.receiptNumber ? 'var(--sos-accent)' : 'var(--sos-muted)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {payment.receiptNumber ?? (
+          <span style={{ fontStyle: 'italic' }}>—</span>
+        )}
+        <div style={{ color: 'var(--sos-muted)', marginTop: 1 }}>{payment.id}</div>
+      </td>
+
+      {/* Date */}
+      <td
+        style={{
+          padding: '10px 12px',
+          fontSize: 'var(--sos-text-xs)',
+          color: 'var(--sos-muted)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {payment.verifiedAt
+          ? fmtDateTime(payment.verifiedAt)
+          : fmtRelative(payment.sentToFinanceAt)}
+        <div style={{ fontSize: 10, marginTop: 1, color: 'var(--sos-border)' }}>
+          {payment.verifiedAt ? 'verified' : 'received'}
+        </div>
+      </td>
+
+      {/* Client */}
+      <td style={{ padding: '10px 12px' }}>
+        <div
+          style={{
+            fontSize: 'var(--sos-text-sm)',
+            fontWeight: 600,
+            color: 'var(--sos-text)',
+          }}
+        >
+          {payment.clientName}
+        </div>
+        <div
+          style={{
+            fontSize: 'var(--sos-text-xs)',
+            color: 'var(--sos-muted)',
+            marginTop: 2,
+          }}
+        >
+          {payment.service} · {payment.targetCountry}
+        </div>
+      </td>
+
+      {/* Amount */}
+      <td
+        style={{
+          padding: '10px 12px',
+          textAlign: 'right',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 'var(--sos-text-sm)',
+            fontWeight: 700,
+            color: 'var(--sos-text)',
+          }}
+        >
+          {fmtAmount(payment.receivedAmount, payment.currency)}
+        </div>
+        {payment.receivedAmount !== payment.expectedAmount && (
+          <div
+            style={{
+              fontSize: 'var(--sos-text-xs)',
+              color: 'var(--sos-warning)',
+              marginTop: 2,
+            }}
+          >
+            exp. {fmtAmount(payment.expectedAmount, payment.currency)}
+          </div>
+        )}
+      </td>
+
+      {/* Method */}
+      <td
+        style={{
+          padding: '10px 12px',
+          fontSize: 'var(--sos-text-xs)',
+          color: 'var(--sos-muted)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <div>{METHOD_LABEL[payment.paymentMethod]}</div>
+        {payment.transactionReference && (
+          <div
+            style={{
+              fontFamily: 'monospace',
+              marginTop: 2,
+              color: 'var(--sos-text)',
+            }}
+          >
+            {payment.transactionReference}
+          </div>
+        )}
+      </td>
+
+      {/* Status */}
+      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+        <StatusBadge tone={tone} size="sm">
+          {STATUS_LABEL[payment.status]}
+        </StatusBadge>
+      </td>
+
+      {/* Sales / Finance */}
+      <td
+        style={{
+          padding: '10px 12px',
+          fontSize: 'var(--sos-text-xs)',
+          color: 'var(--sos-muted)',
+        }}
+      >
+        <div>{payment.salesUserName}</div>
+        {payment.financeUserName && (
+          <div style={{ marginTop: 2 }}>{payment.financeUserName}</div>
+        )}
+      </td>
+
+      {/* Branch */}
+      <td
+        style={{
+          padding: '10px 12px',
+          fontSize: 'var(--sos-text-xs)',
+          color: 'var(--sos-muted)',
+          textAlign: 'center',
+        }}
+      >
+        {payment.branch}
+      </td>
+
+      {/* Actions */}
+      <td style={{ padding: '10px 8px', whiteSpace: 'nowrap' }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            title="View detail"
+            style={{
+              background: 'var(--sos-surface-hover)',
+              border: '1px solid var(--sos-border)',
+              borderRadius: 'var(--sos-radius-sm)',
+              padding: '4px 8px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              color: 'var(--sos-muted)',
+            }}
+          >
+            <Eye size={13} />
+          </button>
+          {payment.receiptNumber && (
+            <button
+              title="View receipt"
+              style={{
+                background: 'var(--sos-surface-hover)',
+                border: '1px solid var(--sos-border)',
+                borderRadius: 'var(--sos-radius-sm)',
+                padding: '4px 8px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                color: 'var(--sos-muted)',
+              }}
+            >
+              <FileText size={13} />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ---------- Sort header cell ---------------------------------------------
+
+function SortTh({
+  label,
+  field,
+  current,
+  dir,
+  onSort,
+  align = 'left',
+}: {
+  label: string;
+  field: SortField;
+  current: SortField;
+  dir: SortDir;
+  onSort: (f: SortField) => void;
+  align?: 'left' | 'right' | 'center';
+}) {
+  const active = current === field;
+  return (
+    <th
+      onClick={() => onSort(field)}
+      style={{
+        padding: '10px 12px',
+        fontSize: 'var(--sos-text-xs)',
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        color: active ? 'var(--sos-accent)' : 'var(--sos-muted)',
+        cursor: 'pointer',
+        userSelect: 'none',
+        textAlign: align,
+        whiteSpace: 'nowrap',
+        background: 'var(--sos-surface-2)',
+        borderBottom: '1px solid var(--sos-border)',
+      }}
+    >
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        {label}
+        <ArrowUpDown
+          size={11}
+          style={{
+            opacity: active ? 1 : 0.4,
+            transform:
+              active && dir === 'asc' ? 'scaleY(-1)' : 'scaleY(1)',
+          }}
+        />
+      </span>
+    </th>
+  );
+}
+
+// ---------- Main page ----------------------------------------------------
+
+export function FinanceHistoryPage() {
+  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTER);
+  const [showFilters, setShowFilters] = useState(false);
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  const set = <K extends keyof FilterState>(key: K) =>
+    (value: FilterState[K]) =>
+      setFilters((prev) => ({ ...prev, [key]: value }));
+
+  function handleSort(field: SortField) {
+    if (field === sortField) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDir('desc');
+    }
+  }
+
+  const filtered = useMemo(
+    () => applyFilters(MOCK_PAYMENTS, filters),
+    [filters],
+  );
+
+  const sorted = useMemo(
+    () => sortRecords(filtered, sortField, sortDir),
+    [filtered, sortField, sortDir],
+  );
+
+  // Active filter pills
+  const activePills: Array<{ label: string; clear: () => void }> = [];
+  if (filters.status)
+    activePills.push({ label: STATUS_LABEL[filters.status], clear: () => set('status')('') });
+  if (filters.method)
+    activePills.push({ label: METHOD_LABEL[filters.method], clear: () => set('method')('') });
+  if (filters.branch)
+    activePills.push({ label: `Branch: ${filters.branch}`, clear: () => set('branch')('') });
+  if (filters.salesUser)
+    activePills.push({ label: `Sales: ${filters.salesUser}`, clear: () => set('salesUser')('') });
+  if (filters.dateFrom)
+    activePills.push({ label: `From: ${filters.dateFrom}`, clear: () => set('dateFrom')('') });
+  if (filters.dateTo)
+    activePills.push({ label: `To: ${filters.dateTo}`, clear: () => set('dateTo')('') });
+
+  const hasFilters =
+    filters.search ||
+    filters.status ||
+    filters.method ||
+    filters.branch ||
+    filters.salesUser ||
+    filters.dateFrom ||
+    filters.dateTo;
+
+  // Summary totals from filtered set
+  const totalFiltered = filtered.reduce((s, p) => s + p.receivedAmount, 0);
+  const verifiedCount = filtered.filter(
+    (p) =>
+      p.status === 'VERIFIED' ||
+      p.status === 'RECEIPT_CONFIRMED' ||
+      p.status === 'SENT_TO_PROCESSING',
+  ).length;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--sos-space-5)',
+        maxWidth: 1280,
+        margin: '0 auto',
+      }}
+    >
+      {/* Page header */}
+      <PageHeader
+        eyebrow="Finance"
+        title="Payment History"
+        description="Searchable audit log of all payment records"
+        actions={
+          <div style={{ display: 'flex', gap: 'var(--sos-space-2)' }}>
+            <GhostButton>
+              <Download size={15} /> Export CSV
+            </GhostButton>
+            <GhostButton>
+              <Download size={15} /> Export PDF
+            </GhostButton>
+          </div>
+        }
+      />
+
+      {/* Search + filter bar */}
+      <GlassCard>
+        <div
+          style={{
+            padding: 'var(--sos-space-4) var(--sos-space-5)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--sos-space-3)',
+          }}
+        >
+          {/* Search row */}
+          <div style={{ display: 'flex', gap: 'var(--sos-space-3)', alignItems: 'center' }}>
+            <div
+              style={{
+                flex: 1,
+                position: 'relative',
+              }}
+            >
+              <Search
+                size={15}
+                style={{
+                  position: 'absolute',
+                  left: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--sos-muted)',
+                  pointerEvents: 'none',
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Search by client name, payment ID, receipt number, reference…"
+                value={filters.search}
+                onChange={(e) => set('search')(e.target.value)}
+                style={{
+                  width: '100%',
+                  paddingLeft: 36,
+                  paddingRight: 12,
+                  paddingTop: 8,
+                  paddingBottom: 8,
+                  borderRadius: 'var(--sos-radius-md)',
+                  border: '1px solid var(--sos-border)',
+                  background: 'var(--sos-input-bg)',
+                  color: 'var(--sos-text)',
+                  fontSize: 'var(--sos-text-sm)',
+                  boxSizing: 'border-box',
+                }}
+              />
+              {filters.search && (
+                <button
+                  onClick={() => set('search')('')}
+                  style={{
+                    position: 'absolute',
+                    right: 10,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--sos-muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            <SecondaryButton onClick={() => setShowFilters((v) => !v)}>
+              <Filter size={14} />
+              Filters
+              {activePills.length > 0 && (
+                <span
+                  style={{
+                    background: 'var(--sos-accent)',
+                    color: '#fff',
+                    borderRadius: 99,
+                    padding: '0 5px',
+                    fontSize: 'var(--sos-text-xs)',
+                    fontWeight: 700,
+                  }}
+                >
+                  {activePills.length}
+                </span>
+              )}
+            </SecondaryButton>
+
+            {hasFilters && (
+              <GhostButton
+                onClick={() => setFilters(EMPTY_FILTER)}
+              >
+                <X size={14} /> Clear all
+              </GhostButton>
+            )}
+          </div>
+
+          {/* Active pills */}
+          {activePills.length > 0 && (
+            <div style={{ display: 'flex', gap: 'var(--sos-space-2)', flexWrap: 'wrap' }}>
+              {activePills.map((p) => (
+                <FilterPill key={p.label} label={p.label} onClear={p.clear} />
+              ))}
+            </div>
+          )}
+
+          {/* Expanded filter panel */}
+          {showFilters && (
+            <div
+              style={{
+                display: 'flex',
+                gap: 'var(--sos-space-4)',
+                flexWrap: 'wrap',
+                paddingTop: 'var(--sos-space-3)',
+                borderTop: '1px solid var(--sos-border)',
+              }}
+            >
+              <SelectFilter
+                label="Status"
+                value={filters.status}
+                options={ALL_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
+                onChange={(v) => set('status')(v as PaymentStatus | '')}
+              />
+              <SelectFilter
+                label="Payment method"
+                value={filters.method}
+                options={ALL_METHODS.map((m) => ({ value: m, label: METHOD_LABEL[m] }))}
+                onChange={(v) => set('method')(v as PaymentMethod | '')}
+              />
+              <SelectFilter
+                label="Branch"
+                value={filters.branch}
+                options={UNIQUE_BRANCHES.map((b) => ({ value: b, label: b }))}
+                onChange={(v) => set('branch')(v)}
+              />
+              <SelectFilter
+                label="Sales person"
+                value={filters.salesUser}
+                options={UNIQUE_SALES.map((s) => ({ value: s, label: s }))}
+                onChange={(v) => set('salesUser')(v)}
+              />
+              <DateFilter
+                label="Date from"
+                value={filters.dateFrom}
+                onChange={(v) => set('dateFrom')(v)}
+              />
+              <DateFilter
+                label="Date to"
+                value={filters.dateTo}
+                onChange={(v) => set('dateTo')(v)}
+              />
+            </div>
+          )}
+        </div>
+      </GlassCard>
+
+      {/* Results summary */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 'var(--sos-space-4)',
+          flexWrap: 'wrap',
+        }}
+      >
+        <p
+          style={{
+            fontSize: 'var(--sos-text-sm)',
+            color: 'var(--sos-muted)',
+          }}
+        >
+          Showing{' '}
+          <strong style={{ color: 'var(--sos-text)' }}>{sorted.length}</strong>{' '}
+          of {MOCK_PAYMENTS.length} records
+          {hasFilters && ' (filtered)'}
+        </p>
+        <div style={{ display: 'flex', gap: 'var(--sos-space-4)', flexWrap: 'wrap' }}>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)' }}>
+              Total (filtered)
+            </p>
+            <p style={{ fontSize: 'var(--sos-text-sm)', fontWeight: 700, color: 'var(--sos-text)' }}>
+              CAD {totalFiltered.toLocaleString()}
+            </p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)' }}>
+              Verified / Confirmed
+            </p>
+            <p style={{ fontSize: 'var(--sos-text-sm)', fontWeight: 700, color: 'var(--sos-text)' }}>
+              {verifiedCount} records
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      {sorted.length === 0 ? (
+        <EmptyState
+          Icon={Calendar}
+          title="No records match your filters"
+          description="Try adjusting the search or clearing filters to see more results."
+          action={
+            <GhostButton onClick={() => setFilters(EMPTY_FILTER)}>
+              Clear all filters
+            </GhostButton>
+          }
+        />
+      ) : (
+        <GlassCard>
+          <div style={{ overflowX: 'auto' }}>
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: 'var(--sos-text-sm)',
+              }}
+            >
+              <thead>
+                <tr>
+                  <SortTh label="Receipt / ID" field="date" current={sortField} dir={sortDir} onSort={handleSort} />
+                  <SortTh label="Date" field="date" current={sortField} dir={sortDir} onSort={handleSort} />
+                  <SortTh label="Client" field="client" current={sortField} dir={sortDir} onSort={handleSort} />
+                  <SortTh label="Amount" field="amount" current={sortField} dir={sortDir} onSort={handleSort} align="right" />
+                  <th
+                    style={{
+                      padding: '10px 12px',
+                      fontSize: 'var(--sos-text-xs)',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--sos-muted)',
+                      textAlign: 'left',
+                      background: 'var(--sos-surface-2)',
+                      borderBottom: '1px solid var(--sos-border)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Method / Ref
+                  </th>
+                  <SortTh label="Status" field="status" current={sortField} dir={sortDir} onSort={handleSort} />
+                  <th
+                    style={{
+                      padding: '10px 12px',
+                      fontSize: 'var(--sos-text-xs)',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--sos-muted)',
+                      textAlign: 'left',
+                      background: 'var(--sos-surface-2)',
+                      borderBottom: '1px solid var(--sos-border)',
+                    }}
+                  >
+                    Sales / Finance
+                  </th>
+                  <th
+                    style={{
+                      padding: '10px 12px',
+                      fontSize: 'var(--sos-text-xs)',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--sos-muted)',
+                      textAlign: 'center',
+                      background: 'var(--sos-surface-2)',
+                      borderBottom: '1px solid var(--sos-border)',
+                    }}
+                  >
+                    Branch
+                  </th>
+                  <th
+                    style={{
+                      padding: '10px 12px',
+                      fontSize: 'var(--sos-text-xs)',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--sos-muted)',
+                      background: 'var(--sos-surface-2)',
+                      borderBottom: '1px solid var(--sos-border)',
+                    }}
+                  >
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((p, i) => (
+                  <HistoryRow key={p.id} payment={p} index={i} />
+                ))}
+              </tbody>
+              {/* Footer totals row */}
+              <tfoot>
+                <tr>
+                  <td
+                    colSpan={3}
+                    style={{
+                      padding: '10px 12px',
+                      fontSize: 'var(--sos-text-xs)',
+                      fontWeight: 600,
+                      color: 'var(--sos-muted)',
+                      background: 'var(--sos-surface-2)',
+                      borderTop: '2px solid var(--sos-border)',
+                    }}
+                  >
+                    {sorted.length} record{sorted.length !== 1 ? 's' : ''}
+                  </td>
+                  <td
+                    style={{
+                      padding: '10px 12px',
+                      fontSize: 'var(--sos-text-sm)',
+                      fontWeight: 700,
+                      color: 'var(--sos-text)',
+                      textAlign: 'right',
+                      background: 'var(--sos-surface-2)',
+                      borderTop: '2px solid var(--sos-border)',
+                    }}
+                  >
+                    CAD{' '}
+                    {sorted
+                      .reduce((s, p) => s + p.receivedAmount, 0)
+                      .toLocaleString()}
+                  </td>
+                  <td
+                    colSpan={5}
+                    style={{
+                      background: 'var(--sos-surface-2)',
+                      borderTop: '2px solid var(--sos-border)',
+                    }}
+                  />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </GlassCard>
+      )}
+    </div>
+  );
+}

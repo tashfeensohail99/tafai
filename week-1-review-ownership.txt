@@ -1,0 +1,196 @@
+# Week 1 Review Ownership Assignments - Tashfeen AI Platform
+
+Date: May 8, 2026
+
+Each Week 1 technical output has an assigned reviewer. The reviewer reads the document, confirms or requests changes, and signs off before Week 2 coding begins.
+
+## Review Assignments
+
+| Item | File | Primary Reviewer | Secondary Reviewer | Due |
+| --- | --- | --- | --- | --- |
+| Architecture document | 01-architecture-document.md | Tech Lead | Project Lead | Week 1 |
+| Architecture diagram | 02-architecture-diagram.mmd | Tech Lead | Project Lead | Week 1 |
+| ERD draft | 03-erd-draft.md | Backend/Database Lead | Tech Lead | Week 1 |
+| RBAC permission matrix | 04-rbac-permission-matrix.csv | Backend Lead | Project Lead | Week 1 |
+| API module map | 05-api-module-map.md | Backend Lead | Tech Lead | Week 1 |
+| UI sitemap | 06-ui-sitemap.md | Frontend Lead | UX/Designer | Week 1 |
+| Design system starter | 07-design-system-starter.md | Frontend Lead | UX/Designer | Week 1 |
+| DevOps staging plan | 08-devops-staging-plan.md | DevOps/Backend Lead | Tech Lead | Week 1 |
+| Week 1-4 backlog | 09-week-1-4-backlog.csv | Project Manager | Tech Lead | Week 1 |
+| Risk/blocker register | 10-risk-and-blocker-register.csv | Project Manager | Tech Lead | Week 1 |
+| Development standards | DEVELOPMENT_STANDARDS.md | All team members | Project Lead | Week 1 |
+
+## Review Instructions For Each Reviewer
+
+### Tech Lead
+
+Review:
+- 01-architecture-document.md
+- 02-architecture-diagram.mmd
+
+Confirm:
+- Stack matches approved Version 1 direction.
+- No microservices introduced without approval.
+- AI worker is a separate Python FastAPI process.
+- All components are Dockerized.
+- Security model is sufficient.
+
+Flag:
+- Any stack deviation.
+- Any missing component.
+- Any security concern.
+
+### Backend/Database Lead
+
+Review:
+- 03-erd-draft.md
+
+Confirm:
+- All required entities are present.
+- Ownership fields exist on tables that need them.
+- Audit and soft delete fields are included.
+- Required indexes are listed.
+- Schema open questions are noted.
+
+Flag:
+- Missing entities.
+- Missing ownership or audit fields.
+- Index gaps.
+- Schema changes needed before coding.
+
+### Backend Lead
+
+Review:
+- 04-rbac-permission-matrix.csv
+- 05-api-module-map.md
+
+Confirm (RBAC):
+- All permission keys are present.
+- Role columns cover Super Admin, Admin, Sales, Documentation, Processing, Finance, Support, Marketing, Client, Partner.
+- Conditions/ownership rules are correct.
+- No permission is missing for a needed action.
+
+Confirm (API):
+- All modules are mapped.
+- Routes follow predictable REST-style naming.
+- Every route shows permission key, audit behavior, and ownership notes.
+- No route exposes internal structure unsafely.
+
+Flag:
+- Missing permission keys.
+- Missing routes.
+- Incorrect role access.
+- Security gaps.
+
+### Frontend Lead and UX/Designer
+
+Review:
+- 06-ui-sitemap.md
+- 07-design-system-starter.md
+
+Confirm (Sitemap):
+- Admin, employee, client, partner, and Flutter mobile screens are covered.
+- No screen requires data the user is not allowed to see.
+- Common layout and shared component patterns are defined.
+- All required UI states are listed.
+- Tashfeen terminology is used correctly.
+
+Confirm (Design System):
+- Tokens cover colors, spacing, radius, typography.
+- Light and dark theme is explicitly required.
+- Status badge config is centralized.
+- Required shared components are listed.
+- No one-off color or badge instructions exist.
+
+Flag:
+- Missing portal screens.
+- Missing UI states.
+- Token gaps.
+- Missing shared components.
+
+### DevOps/Backend Lead
+
+Review:
+- 08-devops-staging-plan.md
+
+Confirm:
+- Local development Docker approach is workable.
+- Staging environment plan is achievable with chosen hosting.
+- CI/CD pipeline steps are correct.
+- Secrets management approach is safe.
+- Backup plan is present.
+- Monitoring/alert plan is present.
+
+Flag:
+- Any step that requires a provider decision not yet made.
+- Any security gap in the deployment approach.
+- Missing environment variable categories.
+
+### Project Manager
+
+Review:
+- 09-week-1-4-backlog.csv
+- 10-risk-and-blocker-register.csv
+
+Confirm (Backlog):
+- All Week 1 tasks have owners.
+- All Week 2-4 tasks are meaningful development tasks.
+- Acceptance criteria are testable.
+- Dependencies are noted.
+- No task is ambiguous.
+
+Confirm (Risk Register):
+- All open risks have owners.
+- Critical risks have a Week 1 resolution path.
+- No critical risk is unassigned.
+
+Flag:
+- Missing Week 1 tasks.
+- Unclear acceptance criteria.
+- Unassigned critical risks.
+- Risks not yet added.
+
+### All Team Members
+
+Review:
+- DEVELOPMENT_STANDARDS.md
+
+Confirm:
+- Standards are understood.
+- All rules can be followed.
+- No existing tooling conflicts with the approved stack.
+
+Reply with:
+- Approved items.
+- Required changes.
+- Missing items.
+- Blockers.
+- Week 2 coding readiness: Yes/No.
+
+## Review Response Format
+
+Use this format when responding:
+
+Reviewer: [name/role]
+Date reviewed: [date]
+File reviewed: [file name]
+
+Approved items:
+[list what is acceptable as-is]
+
+Required changes:
+[list what must change before approval]
+
+Missing items:
+[list what is not covered but should be]
+
+Blockers:
+[list any item that blocks Week 2 start]
+
+Week 2 coding readiness: Yes / No / Conditional on [specific items]
+
+## Review Deadline
+
+All Week 1 review responses must be received before Week 2 coding begins.
+
+If a reviewer cannot complete their review, the Project Manager must assign a substitute or accept the draft as provisional with a written note.

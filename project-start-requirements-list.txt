@@ -1,0 +1,765 @@
+# Project Start Requirements List - Tashfeen AI Platform
+
+Purpose: This document lists exactly what is needed from the client side before development starts properly. It also records initial design, shared component, architecture, and theme decisions so the team can begin with fewer assumptions.
+
+Mandatory development instruction source:
+- DEVELOPMENT_STANDARDS.md contains the official coding, architecture, security, UI component, theme, audit, RBAC, testing, and project-management rules.
+- .github/copilot-instructions.md makes those standards available as project-level Copilot instructions for future coding work.
+
+Commercial baseline:
+- Final project development amount: CAD 10,500.
+- Currency must stay CAD in all final project documents.
+- Any old USD 8,000 references must be removed from the final agreement, payment schedule, annexures, proposal, and plan.
+
+Theme baseline:
+- The system must support both light theme and dark theme from day 1.
+- Theme should be implemented through design tokens/CSS variables, not hard-coded colors.
+- User preference should be saved per user profile where possible.
+- System default can follow device/browser preference if user has not selected a theme.
+
+
+## 1. Immediate Start Package Needed From Client
+
+These items should be collected before Week 1 kickoff or during Week 1 at the latest.
+
+[ ] Company legal name.
+[ ] Company trading/brand name.
+[ ] Company profile/about text.
+[ ] Office address.
+[ ] Main phone number.
+[ ] Main WhatsApp number.
+[ ] Main email address.
+[ ] Website URL, if existing.
+[ ] Primary approver name, phone, email, and WhatsApp.
+[ ] Backup approver name, phone, email, and WhatsApp.
+[ ] Final project start date.
+[ ] Preferred weekly meeting day/time.
+[ ] Main communication channel.
+[ ] UAT/sign-off contact.
+[ ] Finance/payment contact.
+
+
+## 2. Branding And Design Inputs
+
+Required from client:
+[ ] Confirm whether existing JPG logo is final or temporary.
+[ ] Provide high-resolution logo files if available: SVG, AI, PDF, PNG transparent.
+[ ] Confirm whether the temporary vector logo can be used for planning/wireframes.
+[ ] Provide brand color codes if already decided.
+[ ] Provide brand fonts if already decided.
+[ ] Provide any reference websites/apps the client likes.
+[ ] Provide any UI/UX preferences or restrictions.
+
+Suggested temporary logo direction:
+- Use the existing Tashfeen Immigration Solutions mark direction.
+- Keep a bold stylized T symbol.
+- Use navy as primary background.
+- Use silver/white wordmark.
+- Keep the logo professional, corporate, and immigration/consultancy focused.
+- Temporary vector file created separately as: tashfeen-temporary-logo.svg.
+
+Suggested color scheme:
+- Primary navy: #0B1F3A.
+- Deep navy surface: #07182D.
+- Teal action color: #0E7C86.
+- Gold accent: #D6A84F.
+- Light background: #F7FAFC.
+- Light surface: #FFFFFF.
+- Dark background: #07111F.
+- Dark surface: #0F2238.
+- Text dark: #111827.
+- Text light: #F8FAFC.
+- Muted text: #64748B.
+- Success: #15803D.
+- Warning: #B7791F.
+- Error: #B91C1C.
+- Info: #2563EB.
+
+Light theme token draft:
+- --color-bg: #F7FAFC
+- --color-surface: #FFFFFF
+- --color-surface-muted: #EEF2F7
+- --color-text: #111827
+- --color-text-muted: #64748B
+- --color-border: #D8DEE8
+- --color-primary: #0B1F3A
+- --color-action: #0E7C86
+- --color-accent: #D6A84F
+
+Dark theme token draft:
+- --color-bg: #07111F
+- --color-surface: #0F2238
+- --color-surface-muted: #142B45
+- --color-text: #F8FAFC
+- --color-text-muted: #B6C2D1
+- --color-border: #29415F
+- --color-primary: #D6E4F0
+- --color-action: #2CB7C3
+- --color-accent: #E6BE68
+
+Design direction:
+- Build a professional CRM/operations UI, not a landing page.
+- Prioritize dense, scannable screens for repeated office work.
+- Use clear status badges for leads, cases, documents, payments, appointments, and approvals.
+- Keep dashboards calm, structured, and fast to scan.
+- Use consistent navigation by role.
+- Avoid decorative UI that slows daily operations.
+
+
+## 3. Company And Business Information Needed
+
+[ ] Final services list.
+Examples: Work Permit, Business Visa, Visit Visa, Study Visa, Job Abroad, PR/Immigration, Consultation, Document Processing.
+
+[ ] Countries handled.
+Examples: Canada, UK, USA, Australia, Europe/Schengen, UAE, Saudi Arabia, other countries.
+
+[ ] Service categories.
+Examples: immigration, study, visit, work, business, job placement, consultancy, documentation.
+
+[ ] Case categories.
+Examples: new inquiry, consultation booked, documents pending, documents received, under review, submitted, approved, rejected, closed.
+
+[ ] Departments.
+Recommended baseline:
+- Admin/Management
+- Sales/Consultants
+- Documentation
+- Processing
+- Finance
+- Support/Call Center
+- Marketing
+- Operations
+- Partner/Referral
+
+[ ] Employee list.
+Required fields:
+- Full name
+- Email
+- Phone/WhatsApp
+- Department
+- Designation
+- Role
+- Branch/location
+- Reporting manager
+- Active/inactive status
+- Login required: yes/no
+
+[ ] User roles.
+Recommended baseline:
+- Super Admin
+- Admin/Manager
+- Sales/Consultant
+- Documentation Officer
+- Processing Officer
+- Finance Officer
+- Support/Call Center
+- Marketing
+- Client
+- Partner/Referral
+
+[ ] Lead statuses.
+Recommended baseline:
+- New
+- Duplicate Review
+- Assigned
+- Contacted
+- No Response
+- Follow-Up
+- Appointment Booked
+- Hot
+- Warm
+- Cold
+- Converted
+- Rejected
+- Closed
+
+[ ] Case statuses.
+Recommended baseline:
+- New Case
+- Documents Pending
+- Documents Received
+- Documentation Review
+- Missing Documents
+- Ready For Processing
+- In Processing
+- Submitted
+- Under Review
+- Approved
+- Rejected
+- On Hold
+- Closed
+
+[ ] Document checklist by service and country.
+Required fields per document:
+- Document name
+- Required/optional
+- Service/country applicable
+- Expiry required: yes/no
+- File type allowed
+- Max file size
+- Who can upload
+- Who can verify
+- Replacement allowed: yes/no
+
+[ ] Payment/invoice formats.
+Needed:
+- Company billing name
+- Tax/registration number if any
+- Invoice numbering pattern
+- Receipt numbering pattern
+- Currency: CAD
+- Payment methods
+- Installment rules
+- Refund rules
+- Partial payment rules
+- Late payment rules if any
+- Logo/header/footer wording for invoice/receipt
+
+[ ] Appointment types.
+Recommended baseline:
+- Initial Consultation
+- Document Review
+- Follow-Up Call
+- Office Visit
+- Online Meeting
+- Payment Discussion
+- Case Update
+- Interview Preparation
+
+[ ] Message templates.
+Needed for:
+- New lead greeting
+- Appointment confirmation
+- Appointment reminder
+- Missed call/follow-up
+- Document request
+- Missing document request
+- Payment reminder
+- Case status update
+- Client portal invitation
+- Partner referral received
+- Handover/escalation internal note
+
+
+## 4. Access And Credentials Needed
+
+Security rule:
+- Do not send passwords in plain WhatsApp/chat if avoidable.
+- Use a password manager, temporary credentials, or screen-share setup.
+- Enable 2FA where providers support it.
+
+[ ] Domain/DNS access.
+Needed for:
+- main domain
+- admin subdomain
+- client portal subdomain
+- API subdomain
+- webhook endpoints
+- email DNS records
+
+[ ] Hosting/cloud access or approval for hosting recommendation.
+Options to decide:
+- Client-owned cloud account
+- Developer-managed deployment account
+- Managed VPS/cloud provider
+- Managed database provider
+
+[ ] Email/SMTP/Gmail Workspace access.
+Needed:
+- SMTP host
+- SMTP port
+- sender email
+- DNS SPF/DKIM/DMARC access
+- app password/API key if needed
+
+[ ] Meta Business Manager access.
+Needed:
+- business manager admin access
+- business verification status
+- app access if required
+- page access
+- WhatsApp account access
+
+[ ] WhatsApp Business number.
+Needed:
+- phone number
+- current WhatsApp status
+- whether number is already in WhatsApp app
+- display name
+- template approval access
+- message category decisions
+
+[ ] Facebook page access.
+Needed:
+- page admin access
+- lead forms access
+- ad account if lead ads are used
+
+[ ] Instagram page access.
+Needed:
+- linked business/creator account
+- page connection
+- message/lead permissions where available
+
+[ ] Website form access.
+Needed:
+- existing website admin or code access
+- form fields
+- webhook/API integration option
+- thank-you page/redirect requirement
+
+[ ] Google Play Console account.
+Needed for Android publishing.
+
+[ ] Apple Developer account.
+Needed for iOS publishing.
+
+[ ] Firebase account.
+Needed for push notifications, Android/iOS app setup, and app configuration.
+
+[ ] AI/OCR provider account.
+Needed options:
+- OpenAI/Claude-compatible LLM provider
+- Azure Document Intelligence
+- Google Document AI
+- AWS Textract
+- Azure Speech/Whisper/Deepgram for transcription
+
+[ ] SIP/telephony provider account, if AI calls/call recording are required.
+Needed:
+- Twilio/Vonage/local SIP provider
+- number availability
+- call recording support
+- transcription support
+- legal consent wording
+- country calling restrictions
+
+[ ] Payment gateway access, if online payment is required.
+Needed:
+- merchant account
+- API keys
+- webhook credentials
+- settlement/currency rules
+
+
+## 5. Technical Setup Needed
+
+[ ] GitHub/GitLab repository access.
+Decision needed:
+- Client-owned repository or developer-owned repository during development.
+- Who has admin access.
+- Branch protection rules.
+- Who approves merges.
+
+[ ] Preferred deployment environment.
+Recommended baseline:
+- Staging/UAT environment
+- Production environment
+- Separate secrets for each
+- Separate database/storage for each
+
+[ ] Database hosting decision.
+Recommended: managed PostgreSQL where budget allows.
+Needed:
+- host/provider
+- backup support
+- region
+- storage size
+- access policy
+
+[ ] File storage decision.
+Recommended: S3-compatible private object storage.
+Needed:
+- provider
+- bucket names
+- region
+- retention policy
+- backup/replication decision
+
+[ ] Redis/queue hosting decision.
+Recommended: managed Redis or secure Redis on same private network.
+Needed for:
+- background jobs
+- reminders
+- WhatsApp webhook retries
+- AI/OCR jobs
+- report exports
+
+[ ] Staging and production details.
+Needed:
+- staging URL
+- production URL
+- admin URL
+- client portal URL
+- API URL
+- webhook URL
+- SSL certificate approach
+
+[ ] CI/CD preference.
+Recommended:
+- GitHub Actions or GitLab CI
+- automatic staging deploy
+- manual production approval
+- migration check before production
+
+[ ] Backup and monitoring preference.
+Recommended:
+- daily database backup
+- object storage retention
+- restore test once before handover
+- app error monitoring
+- uptime checks
+- queue failure alerts
+
+
+## 6. Business Process Details Needed
+
+[ ] Lead capture process.
+Questions:
+- Which sources are active on day 1?
+- Website form fields?
+- Facebook/Instagram lead form fields?
+- WhatsApp inquiry flow?
+- Manual lead entry fields?
+- Partner referral fields?
+
+[ ] Duplicate check rules.
+Recommended:
+- match by phone number
+- match by email
+- fuzzy match by name + phone/country
+- duplicate review queue for uncertain matches
+
+[ ] Lead assignment rules.
+Questions:
+- Assign by country?
+- Assign by service?
+- Assign by branch?
+- Assign by employee workload?
+- Assign by availability?
+- Hot leads to senior staff?
+- Manual override allowed by whom?
+
+[ ] Sales workflow.
+Questions:
+- Required screening questions?
+- Hot/warm/cold definitions?
+- Follow-up frequency?
+- When is a lead converted?
+- When is a lead rejected/closed?
+- Who can reopen closed leads?
+
+[ ] Documentation workflow.
+Questions:
+- Who sends checklist?
+- Who verifies documents?
+- What counts as incomplete/wrong/expired?
+- How are replacements requested?
+- Who can override document rejection?
+
+[ ] Processing workflow.
+Questions:
+- Case stages by service/country?
+- Required proofs/receipts by stage?
+- Who can change status?
+- Who approves submission?
+- Escalation rules?
+
+[ ] Finance workflow.
+Questions:
+- Payment stages?
+- Installment rules?
+- Receipt format?
+- Refund rules?
+- Who verifies payment?
+- Who can reverse/correct payment entry?
+
+[ ] Support workflow.
+Questions:
+- Ticket categories?
+- Priority levels?
+- Escalation timing?
+- Missed call process?
+- Appointment confirmation process?
+
+[ ] Marketing workflow.
+Questions:
+- Campaign names/sources?
+- Social content approval process?
+- Who can publish/schedule?
+- What analytics matter?
+
+[ ] Client portal workflow.
+Questions:
+- How does client receive login?
+- OTP or password?
+- What status should client see?
+- What status should be hidden internally?
+- Can client message staff?
+
+[ ] Partner/referral workflow.
+Questions:
+- Who can become partner?
+- Referral form fields?
+- What status can partner see?
+- Is commission shown?
+- How is referral attribution locked?
+
+[ ] Department handover rules.
+Questions:
+- Sales to Documentation trigger?
+- Documentation to Processing trigger?
+- Processing to Finance trigger?
+- Finance to Processing trigger?
+- Required notes/attachments at each handover?
+- Who can reject handover back to previous department?
+
+
+## 7. Policies And Legal/Compliance Documents Needed
+
+[ ] Client privacy policy.
+Must cover:
+- personal data collected
+- document data collected
+- purpose of processing
+- third-party providers
+- storage and retention
+- client rights/contact
+
+[ ] Employee monitoring policy.
+Needed before activity monitoring/device/attendance rollout.
+
+[ ] Device usage policy.
+Needed for company devices, device registry, and access disable rules.
+
+[ ] Attendance policy.
+Needed for check-in/out, late, leave, overtime, location/device checks if any.
+
+[ ] Call recording consent wording.
+Needed before call recording/transcription.
+
+[ ] WhatsApp opt-in wording.
+Needed before automated WhatsApp messaging and templates.
+
+[ ] Data retention policy.
+Needed for leads, clients, documents, call recordings, AI outputs, logs, backups.
+
+[ ] AI disclaimer wording.
+Recommended baseline:
+- AI-generated summaries, eligibility notes, interviews, document checks, and business plans are assistive only and must be reviewed by authorized staff before use.
+
+[ ] Document storage/deletion policy.
+Needed:
+- how long documents are stored
+- when deletion is allowed
+- who can delete
+- backup retention
+- audit trail for deletion
+
+
+## 8. Design Requirements Needed
+
+[ ] Logo direction.
+Current assumption: use existing Tashfeen JPG direction and temporary vector SVG.
+
+[ ] Color/theme preference.
+Current recommendation: navy, teal, gold, slate neutrals, with full light/dark theme.
+
+[ ] Admin dashboard layout preference.
+Recommended:
+- KPI cards top row
+- priority queues
+- today appointments
+- lead source chart
+- revenue/payment summary
+- recent activity/audit
+- escalations
+
+[ ] Portal style preference.
+Recommended:
+- CRM/operations focused
+- compact tables
+- quick filters
+- clear status badges
+- role-based sidebar
+
+[ ] Mobile app style preference.
+Recommended:
+- fast dashboard
+- large touch targets
+- bottom navigation for main areas
+- simple document upload
+- clear case status timeline
+
+[ ] Reference websites/apps.
+Client can provide examples for CRM/dashboard/mobile UI.
+
+[ ] Must-have UI/UX requirements.
+Examples:
+- bilingual support later if required
+- dark/light theme from day 1
+- responsive admin portal
+- printable invoices/receipts
+- accessible contrast
+- fast filtering/search
+
+
+## 9. Shared Component Decisions From Day 1
+
+Frontend shared components:
+- AppShell with role-based sidebar and topbar.
+- ThemeToggle for light/dark/system theme.
+- PermissionGate for hiding/disabling actions by permission key.
+- DataTable with filters, saved views, pagination, export action.
+- StatusBadge for lead/case/document/payment/appointment statuses.
+- Timeline for lead/client/case activity.
+- FileUpload with progress, preview, retry, and validation.
+- DocumentPreview modal.
+- NotesPanel for internal/client-visible notes.
+- AssignmentModal with reason required.
+- HandoverModal with target department, owner, notes, attachments.
+- ConfirmationDialog for risky actions.
+- NotificationCenter.
+- ReportFilterBar and ExportButton.
+- EmptyState, LoadingState, ErrorState.
+
+Backend shared modules:
+- AuthModule.
+- RbacModule.
+- AuditModule.
+- FileStorageModule.
+- NotificationModule.
+- QueueModule.
+- IntegrationWebhookModule.
+- ReportModule.
+- AiJobModule.
+
+Mobile shared components:
+- MobileAppShell.
+- MobileThemeProvider.
+- DashboardCard.
+- TaskListItem.
+- CaseStatusTimeline.
+- MobileFileUpload.
+- NotificationList.
+- AttendanceActionButton.
+
+Design token requirement:
+- All components must use tokens for color, radius, spacing, typography, shadow, and status colors.
+- No hard-coded color values inside feature components except through token definitions.
+
+
+## 10. Architecture Start Decisions
+
+Recommended architecture:
+- Web frontend: Next.js/React/TypeScript.
+- Mobile: Flutter for Android and iOS.
+- Backend: NestJS/Node.js modular monolith.
+- AI worker: Python FastAPI.
+- Database: PostgreSQL.
+- ORM/query: Prisma, with raw SQL/views for heavy reports if required.
+- Queue: Redis + BullMQ.
+- Storage: S3-compatible private object storage.
+- Auth: JWT/refresh token, HttpOnly cookies for web, secure token storage for mobile.
+- Deployment: Dockerized services, staging and production environments.
+
+Suggested high-level system flow:
+Lead sources -> API/Webhooks -> Duplicate check -> Assignment engine -> Sales/WhatsApp -> Appointment -> Client portal/mobile -> Document upload -> Documentation review/OCR -> Processing -> Finance -> Case lifecycle -> Reports/Audit.
+
+Suggested environments:
+- Local development.
+- Staging/UAT.
+- Production.
+
+Suggested domains/subdomains:
+- admin.tashfeen-domain.com
+- client.tashfeen-domain.com
+- api.tashfeen-domain.com
+- webhooks.tashfeen-domain.com if separated
+
+
+## 11. Commercial And Project Management Details Needed
+
+[ ] Final amount confirmation: CAD 10,500.
+[ ] Payment schedule confirmation.
+[ ] Project start date.
+[ ] Main approver from client side.
+[ ] Backup approver from client side.
+[ ] Communication channel.
+[ ] Weekly meeting schedule.
+[ ] UAT/sign-off process.
+[ ] Change request approval process.
+[ ] Who can approve design?
+[ ] Who can approve milestones?
+[ ] Who can approve production deployment?
+[ ] Who can approve app store submissions?
+
+Recommended UAT/sign-off process:
+1. Developer deploys milestone to staging.
+2. Client receives checklist and test accounts.
+3. Client tests within agreed review window.
+4. Bugs are logged with screen, role, steps, expected result, actual result, screenshot/video, sample record.
+5. Fixes are deployed.
+6. Client approves by email/WhatsApp/written milestone approval.
+7. No feedback within agreed acceptance period means milestone is treated according to agreement acceptance terms.
+
+Recommended change request process:
+1. Request submitted in writing.
+2. Team classifies as bug, clarification, small in-scope adjustment, or change request.
+3. Change request gets cost/timeline/module/testing impact.
+4. Client approves impact before work starts.
+5. Approved change enters backlog.
+
+
+## 12. What Is Blocking Vs Non-Blocking
+
+Blocking before real development:
+- Final CAD 10,500 confirmation in project documents.
+- Main approver and communication channel.
+- Services/countries/departments/roles.
+- Lead and case statuses.
+- Document checklist baseline.
+- Hosting/domain decision or approval for recommendation.
+- Git repository decision.
+- Meta/WhatsApp access if WhatsApp is expected in Month 2.
+- App store/Firebase setup if mobile publishing is expected by Month 4.
+- Employee monitoring/call recording/privacy policies before those features are activated.
+
+Can start with assumptions:
+- Temporary logo SVG.
+- Suggested navy/teal/gold color scheme.
+- Initial UI wireframes.
+- Initial ERD.
+- Initial RBAC matrix.
+- Backend/frontend/mobile project setup.
+- Staging deployment skeleton.
+
+
+## 13. First Week Client Checklist
+
+By end of Week 1, client should provide or approve:
+[ ] Company details.
+[ ] Logo direction or temporary logo approval.
+[ ] Color/theme direction.
+[ ] Services list.
+[ ] Countries list.
+[ ] Department list.
+[ ] Employee list.
+[ ] Role list.
+[ ] Lead statuses.
+[ ] Case statuses.
+[ ] Document checklist v1.
+[ ] Appointment types.
+[ ] Message templates v1.
+[ ] Domain/hosting direction.
+[ ] Git repository decision.
+[ ] Main approver.
+[ ] Weekly meeting schedule.
+[ ] UAT/sign-off process.
+[ ] Change request approval process.
+
+
+## 14. Final Recommendation
+
+Start the project only after the Week 1 client checklist is mostly complete. Development can begin with reasonable assumptions for logo, colors, UI components, ERD, and architecture, but external integrations and legal-sensitive modules depend on client-provided access, credentials, and policies. Dark and light theme support must be implemented from the first UI foundation, not added at the end.

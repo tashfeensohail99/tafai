@@ -1,0 +1,515 @@
+SOFTWARE DEVELOPMENT, AUTOMATION PLATFORM & DIGITAL SERVICES AGREEMENT
+This Software Development, Automation Platform & Digital Services Agreement (“Agreement”) is made and executed on this ___ day of __________ 2026, at __________________, Pakistan.
+BETWEEN
+Summit Systems (PVT Ltd), a private limited company, having its registered/principal office at ____________________________________________, through its authorized representative, hereinafter referred to as the “Service Provider”, which expression shall, where the context permits, include its successors, legal representatives, administrators, and permitted assigns;
+AND
+Tashfeen Immigration Solutions, having its office at Office No. 3029 A & B, 3rd Floor, Giga Mall, DHA Phase 2, Islamabad, through its authorized representative, hereinafter referred to as the “Client”, which expression shall, where the context permits, include its successors, legal representatives, administrators, and permitted assigns.
+The Service Provider and the Client shall hereinafter individually be referred to as a “Party” and collectively as the “Parties.”
+________________________________________
+1. PURPOSE OF AGREEMENT
+The Client has engaged the Service Provider to design, develop, configure, deploy, and hand over an AI-Powered Overseas Consultancy Management & Automation Platform for the Client’s immigration consultancy operations.
+The platform shall include, among other items, CRM, admin portal, employee portal, client portal, WhatsApp automation, lead management, lead distribution, AI chatbot, appointment system, document management, processing workflow, finance workflow, reporting, tracking, AI business plan generation, AI interview system, Flutter-based Android/iOS mobile application, and Phase 2 basic enterprise modules, as more particularly described in Annexure A — Technical Scope of Work and Annexure B — Delivery Schedule.
+________________________________________
+2. SCOPE OF WORK
+The Service Provider shall develop and deliver the project in accordance with the scope attached as:
+Annexure A: Technical Scope of Work
+Annexure B: Four-Month Delivery Schedule
+Annexure C: Payment Schedule
+The Parties agree that Annexure A forms an integral part of this Agreement. The technical scope document titled “AI-Powered Overseas Consultancy Management & Automation Platform” shall be treated as the main technical reference document for this Agreement.
+The Parties further acknowledge that the project is a large multi-module software platform. Therefore, modules shall be delivered in a practical phase-wise manner over the agreed project period.
+________________________________________
+3. PROJECT VALUE
+The total agreed project development fee shall be:
+CAD 10,500/-
+Canadian Dollars Ten Thousand Five Hundred Only
+This amount is the agreed software development fee payable by the Client to the Service Provider, subject to the payment schedule set out in Annexure C.
+________________________________________
+4. PROJECT DURATION
+The estimated project duration shall be four months from the date of execution of this Agreement and receipt of the advance payment by the Service Provider.
+The Parties further agree to a grace period of two additional months after the estimated four-month delivery period. This grace period may be used for completion of pending development items, third-party approval delays, testing, bug fixing, client-requested review, deployment adjustments, app store delays, Meta/WhatsApp approval delays, hosting/API dependencies, or any other reasonable project-related delay.
+The existence of the grace period shall not reduce the Client’s payment obligations under this Agreement. The grace period shall also not be treated as an additional free development period for new features, new modules, major redesigns, or work outside the agreed scope.
+The project timeline shall be subject to timely provision of required information, approvals, third-party accounts, credentials, content, business process details, and feedback by the Client.
+Any delay caused by the Client, third-party providers, API approvals, app store approvals, Meta/WhatsApp approvals, telecom providers, hosting providers, or any other external dependency shall extend the project timeline accordingly.
+________________________________________
+5. DELIVERY STRUCTURE
+The project shall be delivered in the following four-month structure, subject to the two-month grace period mentioned in Clause 4.
+Month 1: Foundation, Web Platform, CRM Core, Admin & Employee Base
+The Service Provider shall develop the core foundation of the platform, including:
+1.	Web platform setup 
+2.	Backend API setup 
+3.	Database setup 
+4.	Secure file storage setup 
+5.	SSL/security configuration 
+6.	Hosting deployment support 
+7.	Basic backup and monitoring setup 
+8.	Role-Based Access Control 
+9.	Super Admin role 
+10.	Admin/Manager role 
+11.	Employee/Consultant role 
+12.	Call Agent role 
+13.	Document Officer role 
+14.	Finance Officer role 
+15.	Client role 
+16.	Partner/Referral role 
+17.	Admin Portal core version 
+18.	Employee Portal core version 
+19.	Department-based employee access 
+20.	Client/lead database 
+21.	Basic activity timeline 
+22.	Basic employee/task/client status tracking 
+Month 1 Deliverable:
+A working web-based CRM foundation with admin login, employee login, department roles, client/lead database, permission system, and basic activity tracking.
+________________________________________
+Month 2: Lead Capture, Lead Distribution, WhatsApp, Sales & Appointment Workflows
+The Service Provider shall develop lead intake, sales, WhatsApp, and appointment-related workflows, including:
+1.	Social Media Lead Management System 
+2.	Lead capture from Facebook 
+3.	Lead capture from Instagram 
+4.	Website form lead capture 
+5.	Manual lead entry 
+6.	Centralized CRM lead storage 
+7.	Lead source tracking 
+8.	Campaign tracking 
+9.	Service interest tracking 
+10.	Inquiry type tracking 
+11.	Lead Distribution System 
+12.	Auto-assignment of leads to employees 
+13.	Manual reassignment by admin 
+14.	Hot/warm/cold lead priority 
+15.	Employee notifications for assigned leads 
+16.	Lead ownership tracking 
+17.	Lead reassignment audit log 
+18.	WhatsApp Business Automation System 
+19.	WhatsApp Meta API integration 
+20.	Automated replies for client inquiries 
+21.	Interactive buttons and list menus 
+22.	Service selection flows including Work Permit, Business Visa, Visit Visa, Study Abroad, and Job Abroad 
+23.	Client information collection 
+24.	Human handover to employee 
+25.	WhatsApp conversation history inside CRM 
+26.	Document request messages 
+27.	Appointment links and reminders 
+28.	AI Messaging Assistant basic version 
+29.	Guided screening questions 
+30.	Client intent detection 
+31.	Basic eligibility checking 
+32.	Escalation to human employee 
+33.	Sales/Consultant workflow 
+34.	AI Appointment Scheduling & Reminder System basic version 
+Month 2 Deliverable:
+A working lead capture, lead assignment, WhatsApp communication, AI-assisted screening, sales workflow, and appointment booking system.
+________________________________________
+Month 3: Client Portal, Documents, Processing, Finance & Case Lifecycle
+The Service Provider shall develop client case management, document handling, processing, finance, and department handover workflows, including:
+1.	Client Portal 
+2.	Client login 
+3.	Case status view 
+4.	Required document list 
+5.	Document upload 
+6.	Appointment history 
+7.	Payment/status visibility 
+8.	Assigned consultant details 
+9.	Client notifications and updates 
+10.	Timeline of case progress 
+11.	Document Detection & Verification System 
+12.	Detection of uploaded documents 
+13.	Detection of missing documents 
+14.	Identification of missing client data 
+15.	Document category sorting 
+16.	Expiry date checking 
+17.	Expired/near-expiry document flagging 
+18.	Unclear, duplicate, wrong, or incomplete document flagging 
+19.	Admin/employee document review 
+20.	Missing document and missing data retrieval workflow 
+21.	WhatsApp/email/client portal notification for missing documents 
+22.	Documentation Department workflow 
+23.	Processing Department workflow 
+24.	Finance Department workflow 
+25.	Call Center/Support Team workflow 
+26.	Marketing Team lead workflow 
+27.	Admin/Operations Team workflow 
+28.	Department handover flow from Sales to Documentation to Processing to Finance 
+29.	Payment statuses 
+30.	Processing statuses 
+31.	Document statuses 
+32.	Payment receipt upload/generation 
+33.	Invoice generation 
+34.	Installment tracking 
+35.	Refund status tracking 
+36.	Basic revenue reporting 
+Month 3 Deliverable:
+A working client portal, document verification system, documentation workflow, processing workflow, finance workflow, support workflow, marketing lead workflow, operations workflow, and department handover system.
+________________________________________
+Month 4: AI Modules, Reports, Flutter App, Phase 2 Basic Rollout, Testing & Handover
+The Service Provider shall develop and/or roll out the advanced AI layer, reporting, mobile app, Phase 2 basic modules, and final deployment items, including:
+1.	AI Voice & Call Agent basic/provider-dependent version 
+2.	SIM/SIP/telephony-based calling integration where supported 
+3.	AI screening call structure 
+4.	Appointment booking through calls where supported 
+5.	Call transcript where supported 
+6.	AI call summary 
+7.	Call outcome saved in CRM 
+8.	AI-Based Interview System 
+9.	Audio-based client/candidate interview 
+10.	Predefined interview questions 
+11.	Speech-to-text transcription 
+12.	AI-generated interview summary 
+13.	Suitability/eligibility notes 
+14.	Interview result saved in client profile 
+15.	AI Business Plan Generator 
+16.	Business plan dashboard 
+17.	Business type/country/investment input 
+18.	AI-generated executive summary 
+19.	AI-generated market analysis 
+20.	AI-generated business model 
+21.	AI-generated financial projections 
+22.	Risk and opportunity section 
+23.	Editable business plan draft 
+24.	Version history 
+25.	PDF export 
+26.	Daily Operations Reporting System 
+27.	Employee performance reports 
+28.	Lead reports 
+29.	Appointment reports 
+30.	Revenue reports 
+31.	Export reports as PDF/Excel 
+32.	Full Client Lifecycle Tracking & Activity Timeline 
+33.	Full audit trail 
+34.	Flutter-based Android and iOS mobile application core version 
+35.	Employee mobile login 
+36.	Client mobile login 
+37.	Mobile dashboard 
+38.	Case status view 
+39.	Assigned task/lead view 
+40.	Appointment alerts 
+41.	Mobile document upload 
+42.	Push notifications where supported 
+43.	Phase 2 basic enterprise rollout 
+44.	Enterprise Operations Management basic version 
+45.	Employee Activity Monitoring and Compliance Oversight basic version 
+46.	Mobile Device Management basic register/access disable workflow 
+47.	PC/Laptop Management basic register/access disable workflow 
+48.	AI Social Media Content Creation, Scheduling & Posting Engine basic version 
+49.	Employee Attendance System basic version 
+50.	Final testing 
+51.	Deployment 
+52.	Client training 
+53.	Handover documentation 
+Month 4 Deliverable:
+AI chatbot enhancement, AI voice/call basic workflow, AI interview system, AI business plan generator, reporting, full tracking, Flutter Android/iOS core app, Phase 2 basic enterprise modules, attendance basic, device registry, testing, deployment, training, and handover.
+________________________________________
+6. PHASE 2 BASIC ROLLOUT
+The Parties agree that Phase 2 modules mentioned in Annexure A shall be included in Month 4 as basic rollout / initial setup only, unless otherwise agreed in writing.
+The Phase 2 basic rollout shall include:
+6.1 Enterprise Operations Management System — Basic
+This shall include basic setup for departments, branches, team hierarchy, designations, internal tasks, basic approvals, SOP/policy library basic, vendor/service provider records basic, internal audit logs, and management dashboard basic.
+6.2 Employee Activity Monitoring & Compliance Oversight — CRM-Based
+This shall include tracking of CRM activity, messages sent from CRM, calls logged in CRM, lead status changes, missed follow-ups, login/logout activity, daily work output, inactive employee detection based on CRM activity, and employee audit trail.
+This shall be used as disclosed activity monitoring and compliance oversight, not hidden surveillance.
+6.3 Company Mobile Device Control System — Basic Register
+This shall include registering company-provided mobile devices, linking devices with employee profiles, device status tracking, lost/stolen device notes, emergency CRM access suspension, and device audit logs.
+6.4 Company PC & Laptop Access Control System — Basic Register
+This shall include registering company laptops/PCs, linking devices with employee profiles, disabling CRM access, force logout from company systems where supported, and laptop/PC audit logs.
+6.5 AI Social Media Content Creation, Scheduling & Posting Engine — Basic
+This shall include AI post ideas, AI captions, AI hashtags, basic AI video script generation, content calendar, manual approval before posting, campaign management basic, and analytics basic where APIs allow.
+Auto-posting shall depend on the relevant platform’s API permissions and approvals.
+6.6 Employee Attendance System — Basic
+This shall include employee check-in/check-out, attendance dashboard, late arrival tracking, early leave tracking, break time tracking basic, overtime tracking basic, leave/absence tracking basic, attendance approval/rejection, monthly attendance reports, payroll attendance report basic, manual override approval, and attendance audit log.
+Face verification, liveness check, GPS/location validation, company device verification, branch-wise attendance, and advanced biometric attendance features shall depend on final policy approval, technical feasibility, hardware support, and third-party services.
+________________________________________
+7. FLUTTER MOBILE APPLICATION
+The Android and iOS mobile applications shall be developed using Flutter as a single cross-platform mobile application.
+The Flutter mobile app shall include core employee and client functions, including:
+1.	Employee login 
+2.	Client login 
+3.	Employee dashboard 
+4.	Client dashboard 
+5.	Assigned leads/tasks view 
+6.	Case status view 
+7.	Appointment alerts 
+8.	Client updates 
+9.	Mobile document upload 
+10.	Mobile CRM access based on role 
+11.	Push notifications where supported 
+12.	Optional basic admin mobile summary view 
+The Parties agree that Google Play Store and Apple App Store approvals, developer accounts, publication fees, rejection delays, compliance reviews, and platform policies are controlled by third parties and are not guaranteed by the Service Provider.
+________________________________________
+8. THIRD-PARTY SERVICES AND COSTS
+The project fee of CAD 10,500 does not include third-party costs.
+The Client shall separately bear all third-party costs, including but not limited to:
+1.	Meta WhatsApp API charges 
+2.	Meta business verification charges, if any 
+3.	WhatsApp message/template charges 
+4.	SMS charges 
+5.	SIM/SIP/telephony charges 
+6.	Call recording provider charges 
+7.	AI API charges 
+8.	OpenAI or other LLM usage charges 
+9.	Domain charges 
+10.	Hosting/VPS/cloud server charges 
+11.	Email/SMTP/Gmail Workspace/Hostinger email charges 
+12.	Payment gateway charges 
+13.	Google Play Console account fee 
+14.	Apple Developer account fee 
+15.	Social media API approval or usage charges 
+16.	Face verification/liveness API charges 
+17.	MDM/endpoint management software charges 
+18.	Any government, legal, stamp paper, notarization, or registration cost 
+19.	Any other external service, subscription, API, hardware, software, or infrastructure cost 
+The Service Provider shall not be responsible for third-party pricing, approval delays, rejection, suspension, downtime, policy changes, API limitations, or service discontinuation.
+________________________________________
+9. PAYMENT TERMS
+The Client shall pay the total project amount of CAD 10,500 to the Service Provider as follows:
+Milestone	Amount	Payment Trigger
+Advance Payment	CAD 2,000	At the time of signing this Agreement
+Milestone 1	CAD 2,000	After Month 1 foundation delivery
+Milestone 2	CAD 2,000	After Month 2 lead/WhatsApp/sales workflow delivery
+Milestone 3	CAD 2,500	After Month 3 client portal/document/processing/finance delivery
+Final Payment	CAD 2,000	Before final deployment/handover in Month 4
+Total	CAD 10,500	
+All payments shall be made through bank transfer, cash, cheque, or any other mutually agreed payment method.
+Final deployment, production credentials handover, source code handover, and final project handover shall be subject to clearance of all outstanding payments.
+________________________________________
+10. LATE PAYMENT
+If any payment is delayed by the Client beyond the agreed milestone due date, the Service Provider may pause development, deployment, support, or handover until the outstanding payment is cleared.
+Any delay caused by late payment shall automatically extend the project timeline.
+________________________________________
+11. CLIENT RESPONSIBILITIES
+The Client shall provide the Service Provider with all required information, content, credentials, approvals, and cooperation necessary for project development.
+The Client shall provide, where applicable:
+1.	Company logo and branding material 
+2.	Domain access 
+3.	Hosting/cloud access, if client-owned 
+4.	WhatsApp Business number 
+5.	Meta Business Manager access 
+6.	Facebook/Instagram page access 
+7.	Email/SMTP access 
+8.	List of services 
+9.	Department names 
+10.	Employee list 
+11.	User roles and permissions 
+12.	Visa/case statuses 
+13.	Required document checklists 
+14.	Message templates 
+15.	Business process approvals 
+16.	Payment/invoice formats 
+17.	Privacy policy and employee policy requirements 
+18.	App Store/Play Store developer accounts, if required 
+19.	Timely feedback and approvals 
+Any delay caused by non-provision of the above items shall extend the project timeline accordingly.
+________________________________________
+12. CHANGE REQUESTS
+Any feature, workflow, design change, integration, automation, report, mobile feature, AI workflow, third-party integration, or department process not expressly included in Annexure A and the approved delivery schedule shall be treated as a change request.
+A change request may require additional cost and additional timeline.
+Repeated redesign of approved screens, changes in approved business logic, additional custom reports, new integrations, new modules, or major changes after approval shall not be considered a bug and shall be billed separately.
+________________________________________
+13. ACCEPTANCE OF DELIVERABLES
+A module shall be considered delivered when:
+1.	The feature is deployed on staging or production; 
+2.	The Client is able to log in and test the feature; 
+3.	The feature performs the agreed workflow; 
+4.	Any reported bugs are reviewed by the Service Provider; and 
+5.	The Client provides written approval, email approval, WhatsApp approval, or milestone confirmation. 
+If the Client does not provide written feedback within seven working days of delivery of a module or milestone, such module or milestone shall be deemed accepted.
+________________________________________
+14. BUG FIXING AND SUPPORT
+The Service Provider shall provide ninety days of free bug-fix support after final handover.
+This free support shall cover only errors or bugs in the delivered features that are within the agreed scope of this Agreement.
+The free support shall not include:
+1.	New features 
+2.	New modules 
+3.	New integrations 
+4.	Design changes 
+5.	Business logic changes 
+6.	Third-party API issues 
+7.	Hosting/server upgrades 
+8.	Data entry work 
+9.	App store policy issues 
+10.	WhatsApp/Meta approval issues 
+11.	Social media API approval issues 
+12.	Client-side operational support 
+13.	AI API usage charges 
+14.	Any post-handover enhancement 
+After the free support period, maintenance, monitoring, hosting management, AI tuning, API updates, WhatsApp template changes, server maintenance, and new improvements shall be handled under a separate monthly maintenance agreement.
+________________________________________
+15. SOURCE CODE, OWNERSHIP AND LICENSE
+Upon receipt of full and final payment, the Client shall receive usage rights to the delivered platform for its internal business operations.
+Source code, production deployment credentials, and technical handover shall be provided only after full and final payment, unless otherwise agreed in writing.
+The Service Provider may retain ownership of its reusable libraries, generic components, development methods, internal tools, AI workflow patterns, frameworks, and non-client-specific intellectual property used in the development of the platform.
+The Client shall not resell, redistribute, sublicense, or commercially provide the platform to any third party unless specifically agreed in writing.
+________________________________________
+16. CONFIDENTIALITY
+Both Parties agree to keep confidential all business information, technical information, client data, employee data, financial data, credentials, source code, trade secrets, documents, and other sensitive information exchanged during the project.
+Neither Party shall disclose confidential information to any third party without prior written consent, except where required by law.
+This clause shall survive termination or completion of this Agreement.
+________________________________________
+17. DATA PRIVACY AND USER CONSENT
+The Client shall be responsible for obtaining all required consents from its clients, employees, candidates, users, and relevant persons for collection, storage, processing, and use of personal data, identity documents, contact details, payment records, call records, attendance records, device records, and biometric/face data where applicable.
+The Client shall be responsible for ensuring that employee activity monitoring, device registration, attendance tracking, call recording, and face verification features are disclosed in the Client’s employment policy, device policy, privacy policy, and/or relevant consent forms before use.
+The Service Provider shall develop the software system but shall not be responsible for the Client’s legal compliance in relation to employee monitoring, client consent, immigration documents, biometric usage, or data collection practices.
+________________________________________
+18. EMPLOYEE MONITORING AND DEVICE CONTROL DISCLAIMER
+The Parties agree that employee monitoring and device control features shall be used only for lawful business, security, compliance, and operational purposes.
+The Client shall not use the system for hidden surveillance, illegal tracking, unauthorized monitoring, or any unlawful purpose.
+The Service Provider shall not be responsible for misuse of monitoring, attendance, device, call, or data features by the Client or its employees.
+________________________________________
+19. AI SYSTEM DISCLAIMER
+The AI features in the platform, including chatbot, screening, voice/call summary, interview summary, business plan generation, document suggestions, and reporting assistance, are designed to assist users and employees.
+The AI system shall not be treated as a final legal, immigration, financial, or professional decision-maker.
+The Client shall review and verify all AI-generated outputs before using them for any official, legal, immigration, business, financial, or client-facing purpose.
+The Service Provider shall not be responsible for decisions made solely on the basis of AI-generated content.
+________________________________________
+20. IMMIGRATION AND BUSINESS RESULT DISCLAIMER
+The Service Provider is responsible for software development services only.
+The Service Provider does not guarantee:
+1.	Visa approval 
+2.	Immigration approval 
+3.	Work permit approval 
+4.	Client conversion 
+5.	Lead conversion 
+6.	Revenue increase 
+7.	Business success 
+8.	Meta/WhatsApp approval 
+9.	Telecom provider approval 
+10.	App Store or Play Store approval 
+11.	Social media API approval 
+12.	Payment gateway approval 
+13.	Third-party service uptime 
+The Client shall remain solely responsible for its immigration consultancy services, client handling, case filing, legal compliance, and business operations.
+________________________________________
+21. LIMITATION OF LIABILITY
+The Service Provider shall not be liable for indirect, incidental, special, consequential, punitive, or business loss damages, including loss of profit, loss of business, loss of data due to third-party services, immigration case rejection, employee misuse, third-party platform suspension, API pricing changes, government policy changes, or downtime caused by external providers.
+The maximum liability of the Service Provider under this Agreement shall not exceed the amount actually paid by the Client to the Service Provider under this Agreement.
+________________________________________
+22. FORCE MAJEURE
+Neither Party shall be liable for delay or failure in performance caused by events beyond reasonable control, including but not limited to natural disasters, war, strikes, government restrictions, internet failure, cyberattacks, hosting outage, third-party API outage, telecom outage, platform suspension, policy changes by Meta/Google/Apple/social media platforms, or any other event beyond the reasonable control of the affected Party.
+________________________________________
+23. TERMINATION
+Either Party may terminate this Agreement by giving written notice if the other Party materially breaches the Agreement and fails to cure such breach within fifteen days of written notice.
+If the Client terminates the Agreement after work has started, all payments made shall be non-refundable against work already performed, resources allocated, planning, development, deployment, and project reservation.
+The Client shall be liable to pay for all completed work, partially completed milestones, third-party costs, and approved change requests up to the date of termination.
+The Service Provider may suspend or terminate the project if the Client fails to make payments, fails to provide required information, misuses the platform, or demands work outside the agreed scope without approved change request.
+________________________________________
+24. DISPUTE RESOLUTION
+The Parties shall first attempt to resolve any dispute through mutual discussion and good faith negotiation.
+If the dispute is not resolved within fifteen days, the matter may be referred to mediation or arbitration by mutual consent.
+Subject to applicable law, the courts of __________________, Pakistan shall have jurisdiction over disputes arising from this Agreement.
+________________________________________
+25. GOVERNING LAW
+This Agreement shall be governed by and interpreted in accordance with the laws applicable in Pakistan.
+________________________________________
+26. NOTICES
+Any notice under this Agreement shall be given in writing through physical delivery, courier, registered post, email, or official WhatsApp communication to the addresses/contact details provided by the Parties.
+________________________________________
+27. ENTIRE AGREEMENT
+This Agreement, together with Annexure A, Annexure B, and Annexure C, constitutes the entire agreement between the Parties and supersedes all prior discussions, messages, proposals, representations, or understandings relating to the project.
+Any amendment to this Agreement shall be valid only if made in writing and signed or approved by both Parties.
+________________________________________
+28. SEVERABILITY
+If any provision of this Agreement is found to be invalid or unenforceable, the remaining provisions shall continue to remain valid and enforceable.
+________________________________________
+29. NO PARTNERSHIP
+Nothing in this Agreement shall be deemed to create any partnership, joint venture, employment relationship, franchise, or agency relationship between the Parties.
+The Service Provider is an independent contractor.
+________________________________________
+30. SIGNATURES
+IN WITNESS WHEREOF, the Parties have signed this Agreement on the date and place first mentioned above.
+________________________________________
+
+
+
+
+
+
+
+
+FOR AND ON BEHALF OF
+SUMMIT SYSTEMS (PVT LTD)
+Authorized Signatory: ___________________________
+Name: ___________________________
+Designation: ___________________________
+CNIC: ___________________________
+Signature: ___________________________
+Date: ___________________________
+Company Stamp: ___________________________
+
+FOR AND ON BEHALF OF
+TASHFEEN IMMIGRATION SOLUTIONS
+Authorized Signatory: ___________________________
+Name: ___________________________
+Designation: ___________________________
+CNIC: ___________________________
+Signature: ___________________________
+Date: ___________________________
+Company Stamp: ___________________________
+
+ 
+WITNESSES
+Witness No. 1
+Name: ___________________________
+CNIC: ___________________________
+Address: ___________________________
+Signature: ___________________________
+________________________________________
+Witness No. 2
+Name: ___________________________
+CNIC: ___________________________
+Address: ___________________________
+Signature: ___________________________
+ 
+
+ANNEXURE A
+TECHNICAL SCOPE OF WORK
+The document titled “AI-Powered Overseas Consultancy Management & Automation Platform” shall be attached here and shall form part of this Agreement.
+The scope includes the following modules:
+1.	WhatsApp Business Automation System 
+2.	Social Media Lead Management System 
+3.	Lead Distribution System 
+4.	AI Chatbot for Messaging 
+5.	AI Voice & Call Agent 
+6.	AI Appointment Booking System 
+7.	AI-Based Interview System 
+8.	Admin Portal 
+9.	Employee Portal 
+10.	Client Portal 
+11.	Tracking System 
+12.	Web Platform 
+13.	Android Application 
+14.	iOS Application 
+15.	Daily Operations Reporting System 
+16.	Role-Based Access Control 
+17.	AI-Based Business Plan Generation System 
+18.	Enterprise Solutions 
+19.	Employee Activity Monitoring & Compliance Oversight System 
+20.	Mobile Device Management System 
+21.	PC/Laptop Management System 
+22.	Social Media Automation System 
+23.	Employee Attendance System 
+________________________________________
+ANNEXURE B
+FOUR-MONTH DELIVERY SCHEDULE WITH TWO-MONTH GRACE PERIOD
+Month 1
+Web platform, backend, database, secure storage, admin portal core, employee portal core, client/lead database, role-based access control, departments, employee roles, and basic activity timeline.
+Month 2
+Social media lead management, lead distribution, WhatsApp Meta API bot, service selection flows, human handover, WhatsApp CRM history, AI messaging assistant basic, sales/consultant workflow, and appointment booking system.
+Month 3
+Client portal, document upload, document checklist, missing document detection, document verification, documentation workflow, processing workflow, finance/payment workflow, support workflow, marketing lead workflow, operations workflow, and department handover flow.
+Month 4
+AI voice/call workflow basic, AI interview system, AI business plan generator, daily operations reports, employee performance reports, full client lifecycle tracking, Flutter Android/iOS mobile app core version, enterprise operations basic rollout, employee activity monitoring, mobile device registry, PC/laptop registry, social media automation basic, employee attendance basic, testing, deployment, training, and handover.
+Grace Period
+The Parties agree to a two-month grace period after the four-month delivery schedule for pending development items, third-party approval delays, testing, bug fixing, deployment adjustments, client review, and other reasonable project-related completion requirements. The grace period shall not include new features, new modules, major redesigns, or work outside the agreed scope unless separately approved in writing.
+________________________________________
+ANNEXURE C
+PAYMENT SCHEDULE
+Milestone	Amount	Payment Trigger
+Advance Payment	CAD 2,000	At the time of signing this Agreement
+Milestone 1	CAD 2,000	After Month 1 foundation delivery
+Milestone 2	CAD 2,000	After Month 2 lead/WhatsApp/sales workflow delivery
+Milestone 3	CAD 2,500	After Month 3 client portal/document/processing/finance delivery
+Final Payment	CAD 2,000	Before final deployment/handover in Month 4
+Total	CAD 10,500	
+________________________________________
+SPECIAL SCOPE CLARIFICATION
+The Parties acknowledge that this is a large multi-module automation platform. The CAD 10,500 fixed project fee covers the agreed phase-wise development and basic rollout of advanced modules within the four-month delivery schedule, subject to the two-month grace period.
+Any enterprise-grade expansion, advanced hardware/device control, advanced biometric verification, additional mobile features, complex third-party integrations, custom reports beyond agreed scope, post-handover enhancements, or features requiring additional third-party tools, approvals, APIs, or subscriptions shall be subject to separate quotation and timeline.
+

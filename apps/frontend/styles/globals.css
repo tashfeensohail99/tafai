@@ -1,0 +1,46 @@
+@import 'tailwindcss';
+@import './tokens.css';
+@import './sales-os.css';
+
+/* =========================================================
+   Tafsheen — global resets and base typography.
+   Component styling lives in:
+     - tokens.css   (legacy --color-* admin/auth tokens)
+     - sales-os.css (canonical --sos-* design system tokens
+                      + .sos-* utility classes)
+   See styles/THEME.md for the contract.
+   ========================================================= */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--color-text-primary);
+  background-color: var(--color-surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100vh;
+  line-height: 1.6;
+  background-color: var(--color-surface-muted);
+}
+
+a {
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}

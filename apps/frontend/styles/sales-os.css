@@ -1,0 +1,1470 @@
+/* =========================================================
+   TAFSHEEN DESIGN SYSTEM — premium glass tokens (--sos-*)
+   ---------------------------------------------------------
+  The CENTRAL theme system. Used by every workspace module
+  (sales, finance, admin, partner, client, auth) — not sales-only.
+   The "sos" prefix is the design-system namespace, treat
+   it as opaque.
+
+   Tokens flip via the standard project attribute:
+     :root                        → light values (SSR fallback)
+     :root[data-theme='dark']     → dark overrides (extra specificity
+                                    so source-order does not matter)
+
+   The same `data-theme` attribute on <html> drives the legacy
+   `--color-*` and `--status-*` tokens in tokens.css, so admin and
+   sales workspaces theme together with one toggle.
+
+   Pages and components MUST consume these tokens via CSS
+   variables or `.sos-*` utility classes — never hardcode colors,
+   radii, or shadows. See SALES_OS_TOKENS.md for the contract.
+   ========================================================= */
+
+/* =========================================================
+   STRUCTURAL TOKENS — theme-agnostic
+   ---------------------------------------------------------
+   Radii, spacing, typography, layout. These NEVER change
+   between themes — putting them outside the theme blocks
+   guarantees the page layout stays identical when the user
+   toggles dark/light. (Theme toggling must never cause a
+   layout shift.)
+   ========================================================= */
+:root {
+  /* ---------- Radii ---------- */
+  --sos-radius-xs: 8px;
+  --sos-radius-sm: 12px;
+  --sos-radius-button: 14px;
+  --sos-radius-input: 14px;
+  --sos-radius-pill: 999px;
+  --sos-radius-card: 22px;
+  --sos-radius-panel: 28px;
+  --sos-radius-hero: 32px;
+
+  /* ---------- Spacing ---------- */
+  --sos-space-1: 4px;
+  --sos-space-2: 8px;
+  --sos-space-3: 12px;
+  --sos-space-4: 16px;
+  --sos-space-5: 20px;
+  --sos-space-6: 24px;
+  --sos-space-7: 28px;
+  --sos-space-8: 32px;
+  --sos-space-10: 40px;
+  --sos-space-12: 48px;
+  --sos-space-16: 64px;
+
+  /* ---------- Typography ---------- */
+  --sos-font-display: 'Iowan Old Style', 'Palatino Linotype', 'URW Palladio L',
+    Baskerville, Georgia, serif;
+  --sos-font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
+
+  --sos-text-xs: 11px;
+  --sos-text-sm: 12.5px;
+  --sos-text-base: 14px;
+  --sos-text-md: 15px;
+  --sos-text-lg: 17px;
+  --sos-text-xl: 20px;
+  --sos-text-2xl: 26px;
+  --sos-text-3xl: 34px;
+  --sos-text-display: clamp(2.2rem, 4vw, 3.6rem);
+
+  --sos-letter-eyebrow: 0.18em;
+  --sos-letter-tight: -0.04em;
+
+  /* ---------- Layout ---------- */
+  --sos-sidebar-width: 280px;
+  --sos-sidebar-collapsed: 72px;
+  --sos-topbar-height: 72px;
+  --sos-content-max: 1500px;
+}
+
+:root[data-theme='dark'] {
+  /* ---------- Surfaces (page backdrop) ---------- */
+  --sos-bg-app: #050b1e;
+  --sos-bg-deep: #02060f;
+  --sos-bg-elevated: #0a1530;
+  --sos-bg-glass-top: rgb(18 32 66 / 0.72);
+  --sos-bg-glass-bottom: rgb(10 21 48 / 0.46);
+  --sos-bg-glass-strong-top: rgb(24 40 78 / 0.86);
+  --sos-bg-glass-strong-bottom: rgb(12 24 56 / 0.62);
+  --sos-bg-glass-soft-top: rgb(255 255 255 / 0.06);
+  --sos-bg-glass-soft-bottom: rgb(255 255 255 / 0.02);
+  --sos-bg-input: rgb(8 18 42 / 0.72);
+  --sos-bg-input-focus: rgb(8 18 42 / 0.86);
+  --sos-bg-overlay: rgb(2 6 15 / 0.56);
+  --sos-bg-banner: rgb(18 32 66 / 0.6);
+  --sos-bg-dropzone: rgb(18 32 66 / 0.4);
+  --sos-bg-secondary-hover: rgb(18 32 66 / 0.78);
+  --sos-bg-topbar-icon-hover: rgb(18 32 66 / 0.7);
+  --sos-bg-row-top: rgb(18 32 66 / 0.62);
+  --sos-bg-row-bottom: rgb(10 21 48 / 0.42);
+  --sos-bg-row-hover-top: rgb(24 40 78 / 0.7);
+  --sos-bg-row-hover-bottom: rgb(12 24 56 / 0.5);
+  --sos-bg-actionbar-top: rgb(18 32 66 / 0.86);
+  --sos-bg-actionbar-bottom: rgb(10 21 48 / 0.74);
+
+  /* ---------- Inset surface tiers ----------
+     For sub-tiles, list rows, file rows, hover targets INSIDE glass cards.
+     surface-1 < surface-2 < surface-3 < surface-4 in elevation/contrast.   */
+  --sos-surface-1: rgb(255 255 255 / 0.03);
+  --sos-surface-2: rgb(255 255 255 / 0.04);
+  --sos-surface-3: rgb(255 255 255 / 0.06);
+  --sos-surface-4: rgb(255 255 255 / 0.08);
+  --sos-surface-tint-on-accent: rgb(255 255 255 / 0.16);
+  --sos-surface-progress-track: rgb(255 255 255 / 0.06);
+  --sos-surface-tab-count: rgb(255 255 255 / 0.08);
+  --sos-surface-tab-count-on: rgb(0 0 0 / 0.18);
+
+  /* ---------- Text ---------- */
+  --sos-text-primary: #f5f9ff;
+  --sos-text-secondary: rgb(228 238 255 / 0.78);
+  --sos-text-muted: rgb(196 214 246 / 0.58);
+  --sos-text-faint: rgb(180 200 235 / 0.42);
+  --sos-text-inverse: #061226;
+  --sos-text-on-accent: #061226;
+  --sos-text-on-success: #042b1d;
+  --sos-text-on-danger: #1a0606;
+  --sos-text-on-warm: #2a1c00;
+
+  /* ---------- Brand / Accent ---------- */
+  --sos-brand-primary: #38c3e8;
+  --sos-brand-primary-strong: #5dd4f2;
+  --sos-brand-primary-soft: rgb(56 195 232 / 0.14);
+  --sos-brand-primary-border: rgb(56 195 232 / 0.32);
+  --sos-brand-accent: #f0c87a;
+  --sos-brand-accent-soft: rgb(240 200 122 / 0.16);
+  --sos-brand-accent-border: rgb(240 200 122 / 0.32);
+  --sos-brand-deep: #0c2155;
+  --sos-brand-gradient: linear-gradient(135deg, #38c3e8 0%, #2492c4 60%, #0c2155 100%);
+  --sos-brand-gradient-soft: linear-gradient(135deg, rgb(56 195 232 / 0.18) 0%, rgb(12 33 85 / 0.18) 100%);
+  --sos-brand-warm-gradient: linear-gradient(135deg, #f0c87a 0%, #c98e3b 100%);
+
+  /* ---------- Status ---------- */
+  --sos-status-success: #34d399;
+  --sos-status-success-soft: rgb(52 211 153 / 0.14);
+  --sos-status-success-border: rgb(52 211 153 / 0.32);
+  --sos-status-warning: #fbbf24;
+  --sos-status-warning-soft: rgb(251 191 36 / 0.14);
+  --sos-status-warning-border: rgb(251 191 36 / 0.32);
+  --sos-status-danger: #f87171;
+  --sos-status-danger-soft: rgb(248 113 113 / 0.16);
+  --sos-status-danger-border: rgb(248 113 113 / 0.32);
+  --sos-status-info: #60a5fa;
+  --sos-status-info-soft: rgb(96 165 250 / 0.16);
+  --sos-status-info-border: rgb(96 165 250 / 0.32);
+  --sos-status-violet: #a78bfa;
+  --sos-status-violet-soft: rgb(167 139 250 / 0.16);
+  --sos-status-violet-border: rgb(167 139 250 / 0.32);
+  --sos-status-cyan: #22d3ee;
+  --sos-status-cyan-soft: rgb(34 211 238 / 0.16);
+  --sos-status-cyan-border: rgb(34 211 238 / 0.32);
+  --sos-status-pink: #f472b6;
+  --sos-status-pink-soft: rgb(244 114 182 / 0.18);
+  --sos-status-pink-border: rgb(244 114 182 / 0.32);
+  --sos-status-neutral: rgb(196 214 246 / 0.62);
+  --sos-status-neutral-soft: rgb(196 214 246 / 0.1);
+
+  /* ---------- Borders ---------- */
+  --sos-border-subtle: rgb(170 200 246 / 0.12);
+  --sos-border: rgb(170 200 246 / 0.18);
+  --sos-border-strong: rgb(170 200 246 / 0.28);
+  --sos-border-accent: rgb(56 195 232 / 0.42);
+  --sos-divider: rgb(170 200 246 / 0.1);
+
+  /* ---------- Decorative blurred glows ----------
+     Used by PageHeader / GlassCard radial decoration spans.
+     Higher alpha than `*-soft` because blur(60-90px) dilutes the colour.
+     Distinct from badge/button soft tints so we can boost glow visibility
+     in light mode without over-saturating chips and pills.            */
+  --sos-glow-primary: rgb(56 195 232 / 0.18);
+  --sos-glow-warm: rgb(240 200 122 / 0.16);
+
+  /* ---------- Shadows ---------- */
+  --sos-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.32);
+  --sos-shadow-sm: 0 12px 28px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.18);
+  --sos-shadow-md: 0 22px 52px rgb(0 0 0 / 0.34), 0 6px 18px rgb(0 0 0 / 0.22);
+  --sos-shadow-lg: 0 30px 80px rgb(0 0 0 / 0.42);
+  --sos-shadow-glass: 0 28px 60px rgb(2 6 15 / 0.5),
+                      inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --sos-shadow-glass-hover: 0 30px 64px rgb(0 0 0 / 0.42), 0 0 0 1px rgb(56 195 232 / 0.16);
+  --sos-shadow-glow: 0 18px 38px rgb(56 195 232 / 0.22);
+  --sos-shadow-glow-hover: 0 22px 44px rgb(56 195 232 / 0.32);
+  --sos-shadow-warm: 0 18px 38px rgb(240 200 122 / 0.22);
+  --sos-shadow-button-danger: 0 14px 28px rgb(248 113 113 / 0.32);
+  --sos-shadow-button-success: 0 14px 28px rgb(52 211 153 / 0.32);
+  --sos-shadow-nav-active: 0 12px 24px rgb(56 195 232 / 0.16);
+  --sos-shadow-nav-glow: 0 8px 18px rgb(56 195 232 / 0.4);
+
+  /* ---------- Scrollbar ---------- */
+  --sos-scrollbar-thumb: rgb(170 200 246 / 0.18);
+  --sos-scrollbar-thumb-hover: rgb(170 200 246 / 0.28);
+
+  /* ---------- Avatar gradients ----------
+     "muted" → past/inactive avatars (slate). "danger" → overdue/alarm.
+     Standard "active" avatar uses --sos-brand-gradient.                  */
+  --sos-avatar-muted-gradient: linear-gradient(135deg, #475569, #1e293b);
+  --sos-avatar-danger-gradient: linear-gradient(135deg, #f87171, #b91c1c);
+
+  /* ---------- Sidebar / Drawer ---------- */
+  --sos-sidebar-bg-top: #060f25;
+  --sos-sidebar-bg-bottom: #03081a;
+  --sos-sidebar-line: rgb(170 200 246 / 0.08);
+  --sos-sidebar-text: rgb(228 238 255 / 0.74);
+  --sos-sidebar-text-strong: #ffffff;
+  --sos-sidebar-text-muted: rgb(255 255 255 / 0.55);
+  --sos-sidebar-text-faint: rgb(255 255 255 / 0.42);
+  --sos-sidebar-text-section: rgb(255 255 255 / 0.36);
+  --sos-sidebar-active-bg: rgb(56 195 232 / 0.14);
+  --sos-sidebar-active-bg-strong: rgb(56 195 232 / 0.18);
+  --sos-sidebar-active-edge: var(--sos-brand-primary);
+  --sos-sidebar-hover: rgb(255 255 255 / 0.04);
+  --sos-sidebar-icon-bg: rgb(255 255 255 / 0.04);
+  --sos-sidebar-progress-bg: rgb(255 255 255 / 0.06);
+  --sos-sidebar-panel-top: rgb(255 255 255 / 0.06);
+  --sos-sidebar-panel-bottom: rgb(255 255 255 / 0.02);
+  --sos-sidebar-glow-1: rgb(56 195 232 / 0.1);
+  --sos-sidebar-glow-2: rgb(240 200 122 / 0.06);
+
+  /* ---------- Topbar ---------- */
+  --sos-topbar-bg: linear-gradient(180deg, rgb(18 32 66 / 0.78) 0%, rgb(10 21 48 / 0.62) 100%);
+  --sos-topbar-border: var(--sos-border);
+
+  /* ---------- Backdrops ---------- */
+  --sos-backdrop-1: radial-gradient(circle at 0% 0%, rgb(56 195 232 / 0.18), transparent 32%);
+  --sos-backdrop-2: radial-gradient(circle at 100% 0%, rgb(240 200 122 / 0.14), transparent 28%);
+  --sos-backdrop-3: radial-gradient(circle at 50% 100%, rgb(12 33 85 / 0.4), transparent 36%);
+  --sos-backdrop-base: linear-gradient(180deg, var(--sos-bg-app) 0%, var(--sos-bg-deep) 100%);
+  --sos-backdrop-glow-1: rgb(56 195 232 / 0.12);
+  --sos-backdrop-glow-2: rgb(240 200 122 / 0.08);
+}
+
+/* =========================================================
+   LIGHT (default) — frosted white glass on warm slate-tinted bg
+   ---------------------------------------------------------
+   This block is `:root` so it applies as the SSR fallback before
+   client hydration. The dark block above wins via specificity
+   when <html data-theme='dark'> is set.
+
+   Light-mode glassmorphism uses:
+     • White surfaces at 86%/64% with subtle tints showing through
+     • Slate borders at 8-18% (instead of blue-white 18%)
+     • Much softer shadows (slate at 6-14% instead of black 32-50%)
+     • Faint or removed radial backdrops
+     • Deeper status hex codes for AAA-ish contrast on white
+   ========================================================= */
+:root {
+  /* ---------- Surfaces (page backdrop) ----------
+     Page bg is intentionally a touch darker than pure white so the white
+     glass cards have something to elevate against — the depth comes from
+     the contrast between the cool-tinted page and the bright glass. */
+  --sos-bg-app: #e9eef7;
+  --sos-bg-deep: #dde4f0;
+  --sos-bg-elevated: #ffffff;
+  --sos-bg-glass-top: rgb(255 255 255 / 0.94);
+  --sos-bg-glass-bottom: rgb(255 255 255 / 0.78);
+  --sos-bg-glass-strong-top: rgb(255 255 255 / 0.98);
+  --sos-bg-glass-strong-bottom: rgb(255 255 255 / 0.86);
+  --sos-bg-glass-soft-top: rgb(15 23 42 / 0.025);
+  --sos-bg-glass-soft-bottom: rgb(15 23 42 / 0.01);
+  --sos-bg-input: #ffffff;
+  --sos-bg-input-focus: #ffffff;
+  --sos-bg-overlay: rgb(15 23 42 / 0.32);
+  --sos-bg-banner: rgb(255 255 255 / 0.86);
+  --sos-bg-dropzone: rgb(255 255 255 / 0.6);
+  --sos-bg-secondary-hover: rgb(15 23 42 / 0.04);
+  --sos-bg-topbar-icon-hover: rgb(15 23 42 / 0.04);
+  --sos-bg-row-top: rgb(255 255 255 / 0.78);
+  --sos-bg-row-bottom: rgb(255 255 255 / 0.5);
+  --sos-bg-row-hover-top: rgb(255 255 255 / 0.92);
+  --sos-bg-row-hover-bottom: rgb(255 255 255 / 0.7);
+  --sos-bg-actionbar-top: rgb(255 255 255 / 0.92);
+  --sos-bg-actionbar-bottom: rgb(255 255 255 / 0.78);
+
+  /* ---------- Inset surface tiers ---------- */
+  --sos-surface-1: rgb(15 23 42 / 0.025);
+  --sos-surface-2: rgb(15 23 42 / 0.04);
+  --sos-surface-3: rgb(15 23 42 / 0.06);
+  --sos-surface-4: rgb(15 23 42 / 0.08);
+  --sos-surface-tint-on-accent: rgb(255 255 255 / 0.32);
+  --sos-surface-progress-track: rgb(15 23 42 / 0.06);
+  --sos-surface-tab-count: rgb(15 23 42 / 0.06);
+  --sos-surface-tab-count-on: rgb(255 255 255 / 0.28);
+
+  /* ---------- Text ---------- */
+  --sos-text-primary: #0f172a;
+  --sos-text-secondary: #334155;
+  --sos-text-muted: #64748b;
+  --sos-text-faint: #94a3b8;
+  --sos-text-inverse: #ffffff;
+  --sos-text-on-accent: #ffffff;
+  --sos-text-on-success: #ffffff;
+  --sos-text-on-danger: #ffffff;
+  --sos-text-on-warm: #2a1c00;
+
+  /* ---------- Brand / Accent ---------- */
+  --sos-brand-primary: #0891b2;
+  --sos-brand-primary-strong: #0e7490;
+  --sos-brand-primary-soft: rgb(56 195 232 / 0.12);
+  --sos-brand-primary-border: rgb(56 195 232 / 0.4);
+  --sos-brand-accent: #c98e3b;
+  --sos-brand-accent-soft: rgb(240 200 122 / 0.18);
+  --sos-brand-accent-border: rgb(240 200 122 / 0.45);
+  --sos-brand-deep: #0c2155;
+  --sos-brand-gradient: linear-gradient(135deg, #38c3e8 0%, #2492c4 60%, #0c2155 100%);
+  --sos-brand-gradient-soft: linear-gradient(135deg, rgb(56 195 232 / 0.16) 0%, rgb(12 33 85 / 0.08) 100%);
+  --sos-brand-warm-gradient: linear-gradient(135deg, #f0c87a 0%, #c98e3b 100%);
+
+  /* ---------- Status (deeper hex for white-bg contrast) ---------- */
+  --sos-status-success: #059669;
+  --sos-status-success-soft: rgb(52 211 153 / 0.16);
+  --sos-status-success-border: rgb(5 150 105 / 0.32);
+  --sos-status-warning: #d97706;
+  --sos-status-warning-soft: rgb(251 191 36 / 0.18);
+  --sos-status-warning-border: rgb(217 119 6 / 0.32);
+  --sos-status-danger: #dc2626;
+  --sos-status-danger-soft: rgb(248 113 113 / 0.14);
+  --sos-status-danger-border: rgb(220 38 38 / 0.32);
+  --sos-status-info: #2563eb;
+  --sos-status-info-soft: rgb(96 165 250 / 0.16);
+  --sos-status-info-border: rgb(37 99 235 / 0.32);
+  --sos-status-violet: #7c3aed;
+  --sos-status-violet-soft: rgb(167 139 250 / 0.16);
+  --sos-status-violet-border: rgb(124 58 237 / 0.32);
+  --sos-status-cyan: #0891b2;
+  --sos-status-cyan-soft: rgb(34 211 238 / 0.16);
+  --sos-status-cyan-border: rgb(8 145 178 / 0.32);
+  --sos-status-pink: #db2777;
+  --sos-status-pink-soft: rgb(244 114 182 / 0.16);
+  --sos-status-pink-border: rgb(219 39 119 / 0.32);
+  --sos-status-neutral: #475569;
+  --sos-status-neutral-soft: rgb(15 23 42 / 0.06);
+
+  /* ---------- Borders ---------- */
+  --sos-border-subtle: rgb(15 23 42 / 0.07);
+  --sos-border: rgb(15 23 42 / 0.12);
+  --sos-border-strong: rgb(15 23 42 / 0.2);
+  --sos-border-accent: rgb(8 145 178 / 0.55);
+  --sos-divider: rgb(15 23 42 / 0.07);
+
+  /* ---------- Decorative blurred glows (light) ----------
+     Higher alpha than the dark equivalent because light mode loses more
+     colour to the bright background — the blurred span needs more saturation
+     to register as a glow rather than a smudge.                            */
+  --sos-glow-primary: rgb(56 195 232 / 0.28);
+  --sos-glow-warm: rgb(240 200 122 / 0.24);
+
+  /* ---------- Shadows (light) ----------
+     Stronger than the original v1 light shadows so cards feel elevated,
+     but still slate-tinted (not black) so they don't bruise the page.    */
+  --sos-shadow-xs: 0 1px 2px rgb(15 23 42 / 0.06);
+  --sos-shadow-sm: 0 8px 18px rgb(15 23 42 / 0.08), 0 2px 6px rgb(15 23 42 / 0.05);
+  --sos-shadow-md: 0 18px 44px rgb(15 23 42 / 0.1), 0 6px 16px rgb(15 23 42 / 0.07);
+  --sos-shadow-lg: 0 28px 70px rgb(15 23 42 / 0.14);
+  --sos-shadow-glass: 0 24px 60px rgb(15 23 42 / 0.1),
+                      inset 0 1px 0 rgb(255 255 255 / 0.7);
+  --sos-shadow-glass-hover: 0 28px 64px rgb(15 23 42 / 0.14), 0 0 0 1px rgb(8 145 178 / 0.22);
+  --sos-shadow-glow: 0 18px 38px rgb(8 145 178 / 0.24);
+  --sos-shadow-glow-hover: 0 24px 48px rgb(8 145 178 / 0.34);
+  --sos-shadow-warm: 0 18px 38px rgb(201 142 59 / 0.22);
+  --sos-shadow-button-danger: 0 14px 28px rgb(220 38 38 / 0.28);
+  --sos-shadow-button-success: 0 14px 28px rgb(5 150 105 / 0.28);
+  --sos-shadow-nav-active: 0 10px 20px rgb(8 145 178 / 0.18);
+  --sos-shadow-nav-glow: 0 8px 18px rgb(8 145 178 / 0.4);
+
+  /* ---------- Scrollbar ---------- */
+  --sos-scrollbar-thumb: rgb(15 23 42 / 0.16);
+  --sos-scrollbar-thumb-hover: rgb(15 23 42 / 0.28);
+
+  /* ---------- Avatar gradients (lighter slate for white-bg contrast) ---------- */
+  --sos-avatar-muted-gradient: linear-gradient(135deg, #94a3b8, #64748b);
+  --sos-avatar-danger-gradient: linear-gradient(135deg, #f87171, #b91c1c);
+
+  /* ---------- Sidebar / Drawer (cream gradient, slate text) ---------- */
+  --sos-sidebar-bg-top: #ffffff;
+  --sos-sidebar-bg-bottom: #eef1f8;
+  --sos-sidebar-line: rgb(15 23 42 / 0.06);
+  --sos-sidebar-text: #334155;
+  --sos-sidebar-text-strong: #0f172a;
+  --sos-sidebar-text-muted: rgb(15 23 42 / 0.62);
+  --sos-sidebar-text-faint: rgb(15 23 42 / 0.46);
+  --sos-sidebar-text-section: rgb(15 23 42 / 0.5);
+  --sos-sidebar-active-bg: rgb(56 195 232 / 0.12);
+  --sos-sidebar-active-bg-strong: rgb(56 195 232 / 0.16);
+  --sos-sidebar-active-edge: var(--sos-brand-primary);
+  --sos-sidebar-hover: rgb(15 23 42 / 0.04);
+  --sos-sidebar-icon-bg: rgb(15 23 42 / 0.04);
+  --sos-sidebar-progress-bg: rgb(15 23 42 / 0.06);
+  --sos-sidebar-panel-top: rgb(255 255 255 / 0.7);
+  --sos-sidebar-panel-bottom: rgb(15 23 42 / 0.02);
+  --sos-sidebar-glow-1: rgb(56 195 232 / 0.06);
+  --sos-sidebar-glow-2: rgb(240 200 122 / 0.04);
+
+  /* ---------- Topbar ---------- */
+  --sos-topbar-bg: linear-gradient(180deg, rgb(255 255 255 / 0.86) 0%, rgb(255 255 255 / 0.62) 100%);
+  --sos-topbar-border: var(--sos-border);
+
+  /* ---------- Backdrops (faint in light mode — strong glows wash out white) ---------- */
+  --sos-backdrop-1: radial-gradient(circle at 0% 0%, rgb(56 195 232 / 0.12), transparent 32%);
+  --sos-backdrop-2: radial-gradient(circle at 100% 0%, rgb(240 200 122 / 0.1), transparent 28%);
+  --sos-backdrop-3: radial-gradient(circle at 50% 100%, rgb(56 195 232 / 0.07), transparent 36%);
+  --sos-backdrop-base: linear-gradient(180deg, var(--sos-bg-app) 0%, var(--sos-bg-deep) 100%);
+  --sos-backdrop-glow-1: rgb(56 195 232 / 0.1);
+  --sos-backdrop-glow-2: rgb(240 200 122 / 0.07);
+}
+
+/* =========================================================
+   Base shell + backdrops
+   ========================================================= */
+.sos-shell {
+  background:
+    var(--sos-backdrop-1),
+    var(--sos-backdrop-2),
+    var(--sos-backdrop-3),
+    var(--sos-backdrop-base);
+  color: var(--sos-text-primary);
+  min-height: 100vh;
+  display: flex;
+  font-family: var(--sos-font-sans);
+}
+
+.sos-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(800px circle at 12% 8%, var(--sos-backdrop-glow-1), transparent 40%),
+    radial-gradient(700px circle at 92% 6%, var(--sos-backdrop-glow-2), transparent 40%);
+  z-index: 0;
+}
+
+.sos-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+
+.sos-page {
+  padding: var(--sos-space-7) var(--sos-space-8) var(--sos-space-12);
+  max-width: var(--sos-content-max);
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (max-width: 1023px) {
+  .sos-page {
+    padding: var(--sos-space-5) var(--sos-space-4) var(--sos-space-10);
+  }
+}
+
+/* =========================================================
+   Sidebar / Drawer
+   ========================================================= */
+.sos-sidebar {
+  width: var(--sos-sidebar-width);
+  background: linear-gradient(180deg, var(--sos-sidebar-bg-top) 0%, var(--sos-sidebar-bg-bottom) 100%);
+  color: var(--sos-sidebar-text);
+  border-right: 1px solid var(--sos-sidebar-line);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 30;
+  position: relative;
+}
+
+.sos-sidebar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(400px circle at 0% 0%, var(--sos-sidebar-glow-1), transparent 60%),
+    radial-gradient(360px circle at 100% 100%, var(--sos-sidebar-glow-2), transparent 60%);
+}
+
+.sos-sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+
+.sos-sidebar__brand {
+  padding: var(--sos-space-7) var(--sos-space-6) var(--sos-space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-3);
+  border-bottom: 1px solid var(--sos-sidebar-line);
+}
+
+.sos-sidebar__brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--sos-radius-button);
+  display: grid;
+  place-items: center;
+  background: var(--sos-brand-gradient);
+  color: var(--sos-text-on-accent);
+  box-shadow: var(--sos-shadow-glow);
+  flex-shrink: 0;
+}
+
+.sos-sidebar__brand-text {
+  min-width: 0;
+}
+
+.sos-sidebar__brand-name {
+  color: var(--sos-sidebar-text-strong);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.sos-sidebar__brand-tagline {
+  font-size: 10.5px;
+  color: var(--sos-sidebar-text-muted);
+  letter-spacing: var(--sos-letter-eyebrow);
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.sos-sidebar__nav {
+  flex: 1;
+  padding: var(--sos-space-4) var(--sos-space-3) var(--sos-space-4);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sos-space-2);
+}
+
+.sos-nav-section {
+  padding: var(--sos-space-3) var(--sos-space-3) 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--sos-letter-eyebrow);
+  text-transform: uppercase;
+  color: var(--sos-sidebar-text-section);
+}
+
+.sos-nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-3);
+  padding: 10px var(--sos-space-3);
+  margin: 0 var(--sos-space-1);
+  border-radius: var(--sos-radius-sm);
+  font-size: var(--sos-text-base);
+  font-weight: 500;
+  color: var(--sos-sidebar-text);
+  position: relative;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+  border: 1px solid transparent;
+}
+
+.sos-nav-link:hover {
+  background: var(--sos-sidebar-hover);
+  color: var(--sos-sidebar-text-strong);
+}
+
+.sos-nav-link__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--sos-sidebar-icon-bg);
+  color: var(--sos-sidebar-text);
+  border: 1px solid var(--sos-border-subtle);
+  flex-shrink: 0;
+  transition: all 160ms ease;
+}
+
+.sos-nav-link__body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.sos-nav-link__label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: inherit;
+  letter-spacing: -0.005em;
+}
+
+.sos-nav-link__caption {
+  font-size: 11px;
+  color: var(--sos-sidebar-text-faint);
+  margin-top: 1px;
+  letter-spacing: 0.01em;
+}
+
+.sos-nav-link[aria-current='page'] {
+  background: linear-gradient(135deg, var(--sos-sidebar-active-bg-strong), var(--sos-sidebar-active-bg));
+  color: var(--sos-sidebar-text-strong);
+  border-color: var(--sos-brand-primary-border);
+  box-shadow: var(--sos-shadow-nav-active);
+}
+
+.sos-nav-link[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--sos-brand-gradient);
+}
+
+.sos-nav-link[aria-current='page'] .sos-nav-link__icon {
+  background: var(--sos-brand-gradient);
+  color: var(--sos-text-on-accent);
+  border-color: transparent;
+  box-shadow: var(--sos-shadow-nav-glow);
+}
+
+.sos-nav-link__badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--sos-radius-pill);
+  background: var(--sos-sidebar-active-bg-strong);
+  color: var(--sos-brand-primary-strong);
+  border: 1px solid var(--sos-brand-primary-border);
+}
+
+.sos-sidebar__panel {
+  margin: var(--sos-space-3);
+  padding: var(--sos-space-4);
+  border-radius: var(--sos-radius-sm);
+  background: linear-gradient(180deg, var(--sos-sidebar-panel-top), var(--sos-sidebar-panel-bottom));
+  border: 1px solid var(--sos-border-subtle);
+  backdrop-filter: blur(18px);
+}
+
+.sos-sidebar__user {
+  border-top: 1px solid var(--sos-sidebar-line);
+  padding: var(--sos-space-4) var(--sos-space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-3);
+}
+
+.sos-sidebar__user-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--sos-brand-gradient);
+  color: var(--sos-text-on-accent);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  box-shadow: var(--sos-shadow-glow);
+}
+
+@media (max-width: 1023px) {
+  .sos-sidebar {
+    position: fixed;
+    transform: translateX(-100%);
+    transition: transform 240ms ease;
+  }
+  .sos-sidebar.is-open {
+    transform: translateX(0);
+  }
+}
+
+/* =========================================================
+   Topbar
+   ========================================================= */
+.sos-topbar {
+  margin: var(--sos-space-5) var(--sos-space-7) 0;
+  padding: 12px var(--sos-space-5);
+  background: var(--sos-topbar-bg);
+  border: 1px solid var(--sos-topbar-border);
+  border-radius: var(--sos-radius-card);
+  box-shadow: var(--sos-shadow-md);
+  backdrop-filter: blur(24px) saturate(160%);
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-4);
+  position: sticky;
+  top: var(--sos-space-4);
+  z-index: 20;
+  min-height: 64px;
+}
+
+@media (max-width: 1023px) {
+  .sos-topbar {
+    margin: var(--sos-space-3) var(--sos-space-3) 0;
+    padding: 10px var(--sos-space-4);
+    top: var(--sos-space-3);
+  }
+}
+
+.sos-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--sos-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--sos-letter-eyebrow);
+  font-weight: 600;
+}
+
+.sos-breadcrumb__current {
+  color: var(--sos-text-primary);
+}
+
+.sos-topbar__title {
+  font-size: var(--sos-text-lg);
+  font-weight: 700;
+  color: var(--sos-text-primary);
+  letter-spacing: -0.01em;
+  margin-top: 2px;
+}
+
+.sos-topbar__search {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-2);
+  background: var(--sos-bg-input);
+  border: 1px solid var(--sos-border);
+  border-radius: var(--sos-radius-input);
+  padding: 8px 12px;
+  min-width: 280px;
+  color: var(--sos-text-secondary);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.sos-topbar__search:focus-within {
+  border-color: var(--sos-border-accent);
+  background: var(--sos-bg-input-focus);
+}
+
+.sos-topbar__search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--sos-text-primary);
+  font-size: var(--sos-text-base);
+}
+
+.sos-topbar__search input::placeholder {
+  color: var(--sos-text-faint);
+}
+
+.sos-topbar__icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--sos-bg-input);
+  border: 1px solid var(--sos-border-subtle);
+  color: var(--sos-text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+
+.sos-topbar__icon-btn:hover {
+  border-color: var(--sos-border-strong);
+  color: var(--sos-text-primary);
+  background: var(--sos-bg-topbar-icon-hover);
+}
+
+.sos-topbar__user {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-3);
+  padding: 4px 12px 4px 4px;
+  border-radius: var(--sos-radius-pill);
+  background: var(--sos-bg-input);
+  border: 1px solid var(--sos-border-subtle);
+}
+
+/* =========================================================
+   Glass surfaces — building blocks for cards/panels
+   ========================================================= */
+.sos-glass {
+  position: relative;
+  background: linear-gradient(180deg, var(--sos-bg-glass-top) 0%, var(--sos-bg-glass-bottom) 100%);
+  border: 1px solid var(--sos-border);
+  border-radius: var(--sos-radius-card);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  box-shadow: var(--sos-shadow-glass);
+  color: var(--sos-text-primary);
+}
+
+.sos-glass--strong {
+  background: linear-gradient(180deg, var(--sos-bg-glass-strong-top) 0%, var(--sos-bg-glass-strong-bottom) 100%);
+  border-color: var(--sos-border-strong);
+}
+
+.sos-glass--soft {
+  background: linear-gradient(180deg, var(--sos-bg-glass-soft-top) 0%, var(--sos-bg-glass-soft-bottom) 100%);
+  border-color: var(--sos-border-subtle);
+  box-shadow: var(--sos-shadow-sm);
+}
+
+.sos-glass--panel {
+  border-radius: var(--sos-radius-panel);
+}
+
+.sos-glass--hero {
+  border-radius: var(--sos-radius-hero);
+}
+
+.sos-glass-hover {
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.sos-glass-hover:hover {
+  transform: translateY(-2px);
+  border-color: var(--sos-border-strong);
+  box-shadow: var(--sos-shadow-glass-hover);
+}
+
+/* =========================================================
+   Typography helpers
+   ========================================================= */
+.sos-eyebrow {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--sos-letter-eyebrow);
+  text-transform: uppercase;
+  color: var(--sos-text-faint);
+}
+
+.sos-display {
+  font-family: var(--sos-font-display);
+  font-weight: 600;
+  letter-spacing: var(--sos-letter-tight);
+  line-height: 0.96;
+  color: var(--sos-text-primary);
+}
+
+.sos-title {
+  color: var(--sos-text-primary);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.sos-text-secondary { color: var(--sos-text-secondary); }
+.sos-text-muted { color: var(--sos-text-muted); }
+.sos-text-faint { color: var(--sos-text-faint); }
+
+/* =========================================================
+   Buttons
+   ========================================================= */
+.sos-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sos-space-2);
+  padding: 10px 18px;
+  border-radius: var(--sos-radius-button);
+  font-size: var(--sos-text-base);
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  white-space: nowrap;
+  user-select: none;
+  font-family: inherit;
+}
+
+.sos-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sos-btn--sm { padding: 7px 12px; font-size: 12.5px; border-radius: 11px; gap: 6px; }
+.sos-btn--lg { padding: 12px 22px; font-size: 14.5px; border-radius: 16px; }
+
+.sos-btn--primary {
+  background: var(--sos-brand-gradient);
+  color: var(--sos-text-on-accent);
+  box-shadow: var(--sos-shadow-glow);
+  border-color: var(--sos-surface-tint-on-accent);
+}
+
+.sos-btn--primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--sos-shadow-glow-hover);
+}
+
+.sos-btn--secondary {
+  background: var(--sos-bg-input);
+  color: var(--sos-text-primary);
+  border-color: var(--sos-border);
+}
+
+.sos-btn--secondary:hover:not(:disabled) {
+  border-color: var(--sos-border-strong);
+  background: var(--sos-bg-secondary-hover);
+}
+
+.sos-btn--ghost {
+  background: transparent;
+  color: var(--sos-text-secondary);
+  border-color: transparent;
+}
+
+.sos-btn--ghost:hover:not(:disabled) {
+  background: var(--sos-surface-3);
+  color: var(--sos-text-primary);
+}
+
+.sos-btn--danger {
+  background: var(--sos-status-danger);
+  color: var(--sos-text-on-danger);
+  border-color: var(--sos-surface-tint-on-accent);
+  box-shadow: var(--sos-shadow-button-danger);
+}
+
+.sos-btn--success {
+  background: var(--sos-status-success);
+  color: var(--sos-text-on-success);
+  border-color: var(--sos-surface-tint-on-accent);
+  box-shadow: var(--sos-shadow-button-success);
+}
+
+.sos-btn--warm {
+  background: var(--sos-brand-warm-gradient);
+  color: var(--sos-text-on-warm);
+  border-color: var(--sos-surface-tint-on-accent);
+  box-shadow: var(--sos-shadow-warm);
+}
+
+/* =========================================================
+   Inputs
+   ========================================================= */
+.sos-input,
+.sos-select,
+.sos-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--sos-radius-input);
+  background: var(--sos-bg-input);
+  border: 1px solid var(--sos-border);
+  color: var(--sos-text-primary);
+  font-size: var(--sos-text-base);
+  font-family: inherit;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.sos-input::placeholder,
+.sos-textarea::placeholder {
+  color: var(--sos-text-faint);
+}
+
+.sos-input:focus,
+.sos-select:focus,
+.sos-textarea:focus {
+  outline: none;
+  border-color: var(--sos-border-accent);
+  box-shadow: 0 0 0 3px var(--sos-brand-primary-soft);
+  background: var(--sos-bg-input-focus);
+}
+
+.sos-textarea {
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.sos-input--lg,
+.sos-textarea--lg {
+  padding: 14px 16px;
+  font-size: 15px;
+  border-radius: 16px;
+}
+
+.sos-input-group {
+  position: relative;
+}
+
+.sos-input-group__icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--sos-text-faint);
+  pointer-events: none;
+}
+
+.sos-input-group .sos-input,
+.sos-input-group .sos-select {
+  padding-left: 42px;
+}
+
+.sos-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--sos-text-secondary);
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sos-help {
+  font-size: 11.5px;
+  color: var(--sos-text-faint);
+  margin-top: 6px;
+}
+
+.sos-help--error { color: var(--sos-status-danger); }
+
+/* =========================================================
+   Badges / Pills
+   ========================================================= */
+.sos-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--sos-radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  background: var(--sos-status-neutral-soft);
+  color: var(--sos-status-neutral);
+  border-color: var(--sos-border-subtle);
+}
+
+.sos-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.sos-badge--plain::before { display: none; }
+
+.sos-badge--success { background: var(--sos-status-success-soft); color: var(--sos-status-success); border-color: var(--sos-status-success-border); }
+.sos-badge--warning { background: var(--sos-status-warning-soft); color: var(--sos-status-warning); border-color: var(--sos-status-warning-border); }
+.sos-badge--danger  { background: var(--sos-status-danger-soft);  color: var(--sos-status-danger);  border-color: var(--sos-status-danger-border); }
+.sos-badge--info    { background: var(--sos-status-info-soft);    color: var(--sos-status-info);    border-color: var(--sos-status-info-border); }
+.sos-badge--violet  { background: var(--sos-status-violet-soft);  color: var(--sos-status-violet);  border-color: var(--sos-status-violet-border); }
+.sos-badge--cyan    { background: var(--sos-status-cyan-soft);    color: var(--sos-status-cyan);    border-color: var(--sos-status-cyan-border); }
+.sos-badge--pink    { background: var(--sos-status-pink-soft);    color: var(--sos-status-pink);    border-color: var(--sos-status-pink-border); }
+.sos-badge--neutral { background: var(--sos-status-neutral-soft); color: var(--sos-status-neutral); border-color: var(--sos-border-subtle); }
+.sos-badge--accent  { background: var(--sos-brand-primary-soft);  color: var(--sos-brand-primary-strong); border-color: var(--sos-brand-primary-border); }
+.sos-badge--warm    { background: var(--sos-brand-accent-soft);   color: var(--sos-brand-accent);   border-color: var(--sos-brand-accent-border); }
+
+.sos-badge--lg {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* =========================================================
+   Metric / KPI card
+   ========================================================= */
+.sos-metric {
+  position: relative;
+  overflow: hidden;
+  padding: var(--sos-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sos-space-3);
+  border-radius: var(--sos-radius-card);
+  background: linear-gradient(180deg, var(--sos-bg-glass-top) 0%, var(--sos-bg-glass-bottom) 100%);
+  border: 1px solid var(--sos-border);
+  backdrop-filter: blur(24px) saturate(160%);
+  box-shadow: var(--sos-shadow-glass);
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.sos-metric:hover {
+  transform: translateY(-2px);
+  border-color: var(--sos-border-strong);
+}
+
+.sos-metric__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--sos-brand-primary-soft);
+  color: var(--sos-brand-primary-strong);
+  border: 1px solid var(--sos-brand-primary-border);
+}
+
+.sos-metric__value {
+  font-size: clamp(2rem, 3.5vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: var(--sos-letter-tight);
+  color: var(--sos-text-primary);
+  line-height: 1;
+}
+
+.sos-metric__label {
+  font-size: var(--sos-text-md);
+  font-weight: 600;
+  color: var(--sos-text-primary);
+}
+
+.sos-metric__hint {
+  font-size: var(--sos-text-sm);
+  color: var(--sos-text-muted);
+  line-height: 1.55;
+}
+
+.sos-metric__glow {
+  position: absolute;
+  inset: -30% -30% auto auto;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: var(--sos-brand-primary-soft);
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+/* =========================================================
+   Tabs / segmented
+   ========================================================= */
+.sos-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--sos-bg-input);
+  border: 1px solid var(--sos-border);
+  border-radius: var(--sos-radius-button);
+}
+
+.sos-tab {
+  padding: 8px 14px;
+  border-radius: 11px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sos-text-muted);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 160ms ease;
+  font-family: inherit;
+}
+
+.sos-tab[aria-pressed='true'] {
+  background: var(--sos-brand-gradient);
+  color: var(--sos-text-on-accent);
+  box-shadow: var(--sos-shadow-glow);
+}
+
+.sos-tab:hover:not([aria-pressed='true']) {
+  color: var(--sos-text-primary);
+  background: var(--sos-surface-2);
+}
+
+.sos-tab__count {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--sos-surface-tab-count);
+  color: inherit;
+}
+
+.sos-tab[aria-pressed='true'] .sos-tab__count {
+  background: var(--sos-surface-tab-count-on);
+  color: var(--sos-text-on-accent);
+}
+
+/* =========================================================
+   Action bar (sticky footer)
+   ========================================================= */
+.sos-actionbar {
+  position: sticky;
+  bottom: var(--sos-space-4);
+  margin-top: var(--sos-space-6);
+  padding: 12px 18px;
+  background: linear-gradient(180deg, var(--sos-bg-actionbar-top) 0%, var(--sos-bg-actionbar-bottom) 100%);
+  border: 1px solid var(--sos-border);
+  border-radius: var(--sos-radius-card);
+  box-shadow: var(--sos-shadow-md);
+  backdrop-filter: blur(24px) saturate(160%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sos-space-3);
+  z-index: 18;
+}
+
+/* =========================================================
+   Avatar
+   ========================================================= */
+.sos-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: var(--sos-text-on-accent);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  background: var(--sos-brand-gradient);
+  box-shadow: var(--sos-shadow-glow);
+  flex-shrink: 0;
+}
+
+.sos-avatar--lg {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  font-size: 22px;
+}
+
+.sos-avatar--xl {
+  width: 88px;
+  height: 88px;
+  border-radius: 22px;
+  font-size: 28px;
+}
+
+.sos-avatar--ring {
+  border: 2px solid var(--sos-border-strong);
+}
+
+/* =========================================================
+   Progress bar
+   ========================================================= */
+.sos-progress {
+  width: 100%;
+  height: 6px;
+  background: var(--sos-surface-progress-track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.sos-progress__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--sos-brand-gradient);
+}
+
+/* =========================================================
+   Banner / inline notice
+   ========================================================= */
+.sos-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-3);
+  padding: 12px 16px;
+  border-radius: var(--sos-radius-sm);
+  border: 1px solid var(--sos-border);
+  background: var(--sos-bg-banner);
+  font-size: 13px;
+  color: var(--sos-text-primary);
+  backdrop-filter: blur(14px);
+}
+
+.sos-banner--success { background: var(--sos-status-success-soft); border-color: var(--sos-status-success-border); color: var(--sos-status-success); }
+.sos-banner--warning { background: var(--sos-status-warning-soft); border-color: var(--sos-status-warning-border); color: var(--sos-status-warning); }
+.sos-banner--danger  { background: var(--sos-status-danger-soft);  border-color: var(--sos-status-danger-border);  color: var(--sos-status-danger); }
+.sos-banner--info    { background: var(--sos-status-info-soft);    border-color: var(--sos-status-info-border);   color: var(--sos-status-info); }
+
+/* =========================================================
+   Timeline
+   ========================================================= */
+.sos-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.sos-timeline-item {
+  position: relative;
+  padding-left: 32px;
+  padding-bottom: 22px;
+}
+
+.sos-timeline-item::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 16px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--sos-border);
+}
+
+.sos-timeline-item:last-child::before { display: none; }
+
+.sos-timeline-item__bullet {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--sos-bg-elevated);
+  border: 3px solid var(--sos-brand-primary);
+  box-shadow: 0 0 0 4px var(--sos-brand-primary-soft);
+}
+
+.sos-timeline-item--done .sos-timeline-item__bullet {
+  background: var(--sos-status-success);
+  border-color: var(--sos-status-success);
+  box-shadow: 0 0 0 4px var(--sos-status-success-soft);
+}
+
+/* =========================================================
+   Drop zone
+   ========================================================= */
+.sos-dropzone {
+  border: 2px dashed var(--sos-border-strong);
+  border-radius: var(--sos-radius-sm);
+  padding: 28px 18px;
+  text-align: center;
+  background: var(--sos-bg-dropzone);
+  color: var(--sos-text-muted);
+  transition: all 200ms ease;
+  cursor: pointer;
+}
+
+.sos-dropzone:hover {
+  border-color: var(--sos-brand-primary);
+  background: var(--sos-brand-primary-soft);
+  color: var(--sos-text-primary);
+}
+
+/* =========================================================
+   Pill (compact label)
+   ========================================================= */
+.sos-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: var(--sos-radius-pill);
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--sos-surface-3);
+  color: var(--sos-text-secondary);
+  border: 1px solid var(--sos-border-subtle);
+}
+
+.sos-pill--accent {
+  background: var(--sos-brand-primary-soft);
+  color: var(--sos-brand-primary-strong);
+  border-color: var(--sos-brand-primary-border);
+}
+
+/* =========================================================
+   Lead/list rows
+   ========================================================= */
+.sos-row {
+  display: grid;
+  align-items: center;
+  gap: var(--sos-space-4);
+  padding: 16px 18px;
+  border-radius: var(--sos-radius-sm);
+  background: linear-gradient(180deg, var(--sos-bg-row-top) 0%, var(--sos-bg-row-bottom) 100%);
+  border: 1px solid var(--sos-border-subtle);
+  transition: all 200ms ease;
+  backdrop-filter: blur(18px);
+}
+
+.sos-row:hover {
+  border-color: var(--sos-border-strong);
+  background: linear-gradient(180deg, var(--sos-bg-row-hover-top) 0%, var(--sos-bg-row-hover-bottom) 100%);
+  transform: translateY(-1px);
+}
+
+/* =========================================================
+   Scrollbar
+   ========================================================= */
+.sos-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.sos-scroll::-webkit-scrollbar-thumb {
+  background: var(--sos-scrollbar-thumb);
+  border-radius: 999px;
+}
+.sos-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--sos-scrollbar-thumb-hover);
+}
+.sos-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* =========================================================
+   Stat chip — small inline KPI inside hero / cards
+   ========================================================= */
+.sos-stat-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: var(--sos-radius-sm);
+  background: var(--sos-surface-2);
+  border: 1px solid var(--sos-border-subtle);
+  backdrop-filter: blur(12px);
+}
+
+.sos-stat-chip__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--sos-letter-eyebrow);
+  text-transform: uppercase;
+  color: var(--sos-text-muted);
+}
+
+.sos-stat-chip__value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: var(--sos-letter-tight);
+  color: var(--sos-text-primary);
+  line-height: 1;
+}
+
+/* Mobile backdrop for drawer */
+.sos-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--sos-bg-overlay);
+  backdrop-filter: blur(6px);
+  z-index: 25;
+}
+
+/* Hide scrollbar utility */
+.sos-no-scrollbar::-webkit-scrollbar { display: none; }
+.sos-no-scrollbar { scrollbar-width: none; }
+
+/* =========================================================
+   Workspace split layout — case workspaces with left sidebar
+   + main content. Collapses to column on ≤ 900px.
+   ========================================================= */
+.sos-workspace-split {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+@media (max-width: 900px) {
+  .sos-workspace-split {
+    flex-direction: column;
+  }
+
+  .sos-workspace-split > aside {
+    width: 100% !important;
+  }
+}

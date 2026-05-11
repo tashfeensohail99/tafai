@@ -1,0 +1,44 @@
+# Development Standards Approval - Tashfeen AI Platform
+
+Date: May 8, 2026
+Project: Tashfeen Immigration Solutions AI Platform
+Approved rulebook: DEVELOPMENT_STANDARDS.md
+Copilot/project instruction file: .github/copilot-instructions.md
+
+## Approval Statement
+
+DEVELOPMENT_STANDARDS.md is approved as the mandatory development rulebook for the Tashfeen AI Platform.
+
+No development work should be accepted if it violates the approved standards for:
+
+- clean architecture
+- approved terminology
+- backend module structure
+- reusable frontend components
+- strict TypeScript
+- PostgreSQL data ownership and audit fields
+- predictable REST APIs
+- RBAC and permission keys
+- server-side security
+- audit logging
+- activity timelines
+- private document storage
+- AI assistive-only behavior
+- WhatsApp/Meta limitations
+- queue/job handling
+- light and dark theme from day 1
+- design system and shared component library
+- Flutter mobile scope
+- DevOps and deployment process
+- testing and UAT
+- Definition of Done
+
+## Mandatory Instruction To Dev Team
+
+Build this system as the operational backbone of Tashfeen Immigration Solutions, not as a demo or quick website.
+
+Every sensitive action must be logged. Every user must only see what they are allowed to see. Every module must be maintainable. Every repeated UI element must come from the shared design system. No frontend-only permissions. No public document URLs. No AI final decisions. No shortcuts.
+
+## Approval Usage
+
+Attach this file together with DEVELOPMENT_STANDARDS.md when sending instructions to any developer, designer, QA member, DevOps engineer, or AI assistant working on this project.

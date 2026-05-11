@@ -40,4 +40,5 @@ USER appuser
 EXPOSE 3001
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "dist/main"]
+# Run migrations then start — migrate deploy is idempotent and safe on every boot
+CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node dist/main"]

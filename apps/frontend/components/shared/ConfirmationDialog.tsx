@@ -27,11 +27,11 @@ export function ConfirmationDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl border p-6 shadow-lg" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
-        <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+      <div className="w-full max-w-md rounded-xl border p-6 shadow-lg" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+        <h3 className="text-lg font-semibold" style={{ color: 'var(--sos-text-primary)' }}>
           {title}
         </h3>
-        <p className="mt-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+        <p className="mt-2 text-sm" style={{ color: 'var(--sos-text-muted)' }}>
           {message}
         </p>
         {children ? <div className="mt-4">{children}</div> : null}
@@ -39,14 +39,14 @@ export function ConfirmationDialog({
           <button
             onClick={onCancel}
             className="rounded-md border px-4 py-2 text-sm font-medium"
-            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+            style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
           >
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
             className="rounded-md px-4 py-2 text-sm font-medium"
-            style={{ backgroundColor: 'var(--color-status-danger)', color: 'var(--color-text-inverse)' }}
+            style={{ backgroundColor: 'var(--sos-status-danger)', color: 'var(--sos-text-inverse)' }}
           >
             {confirmLabel}
           </button>

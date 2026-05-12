@@ -21,16 +21,16 @@ export function EmptyState({
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
         <div
           className="flex h-14 w-14 items-center justify-center rounded-full"
-          style={{ backgroundColor: 'var(--color-surface-subtle)' }}
+          style={{ backgroundColor: 'var(--sos-surface-1)' }}
         >
-          <Icon className="h-7 w-7" style={{ color: 'var(--color-text-disabled)' }} />
+          <Icon className="h-7 w-7" style={{ color: 'var(--sos-text-faint)' }} />
         </div>
         <div className="flex flex-col gap-1">
-          <p className="font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
+          <p className="font-semibold" style={{ color: 'var(--sos-text-secondary)' }}>
             {title}
           </p>
           {description && (
-            <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
+            <p style={{ color: 'var(--sos-text-muted)', fontSize: 'var(--text-sm)' }}>
               {description}
             </p>
           )}
@@ -40,8 +40,8 @@ export function EmptyState({
             onClick={action.onClick}
             className="rounded-md px-4 py-2 text-sm font-medium transition-opacity hover:opacity-80"
             style={{
-              backgroundColor: 'var(--color-primary-600)',
-              color: 'var(--color-text-inverse)',
+              backgroundColor: 'var(--sos-brand-primary)',
+              color: 'var(--sos-text-inverse)',
             }}
           >
             {action.label}

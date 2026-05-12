@@ -277,22 +277,22 @@ export function EmployeesAdminPage() {
     {
       key: 'email',
       header: 'Email',
-      render: (row) => row.user?.email ?? '—',
+      render: (row) => row.user?.email ?? 'â€”',
     },
     {
       key: 'department',
       header: 'Department',
-      render: (row) => row.department?.name ?? '—',
+      render: (row) => row.department?.name ?? 'â€”',
     },
     {
       key: 'branch',
       header: 'Branch',
-      render: (row) => row.branch?.name ?? '—',
+      render: (row) => row.branch?.name ?? 'â€”',
     },
     {
       key: 'status',
       header: 'Status',
-      render: (row) => row.user?.status ?? '—',
+      render: (row) => row.user?.status ?? 'â€”',
     },
     {
       key: 'actions',
@@ -302,14 +302,14 @@ export function EmployeesAdminPage() {
           <button
             onClick={() => void handleEdit(row.id)}
             className="rounded-md border px-3 py-1 text-xs font-medium"
-            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+            style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
           >
             Edit
           </button>
           <button
             onClick={() => void handleDeactivateClick(row)}
             className="rounded-md border px-3 py-1 text-xs font-medium"
-            style={{ borderColor: 'var(--color-status-danger)', color: 'var(--color-status-danger)' }}
+            style={{ borderColor: 'var(--sos-status-danger)', color: 'var(--sos-status-danger)' }}
           >
             Deactivate
           </button>
@@ -335,67 +335,67 @@ export function EmployeesAdminPage() {
           <button
             onClick={resetForm}
             className="rounded-md px-4 py-2 text-sm font-medium"
-            style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}
+            style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}
           >
             {editing ? 'Create Another Employee' : 'New Employee'}
           </button>
         }
       />
 
-      <form onSubmit={handleSubmit} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+      <form onSubmit={handleSubmit} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
         <div className="mb-4">
-          <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+          <h3 className="text-lg font-semibold" style={{ color: 'var(--sos-text-primary)' }}>
             {editing ? 'Edit Employee' : 'Create Employee'}
           </h3>
-          <p className="mt-1 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+          <p className="mt-1 text-sm" style={{ color: 'var(--sos-text-muted)' }}>
             Keep employee access, branch ownership, and operational assignment aligned from one form.
           </p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Email
-            <input required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+            <input required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Phone
-            <input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+            <input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
           </label>
           {!editing ? (
-            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Temporary Password
-              <input required type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <input required type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
           ) : null}
-          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             First Name
-            <input required value={form.firstName} onChange={(event) => setForm((current) => ({ ...current, firstName: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+            <input required value={form.firstName} onChange={(event) => setForm((current) => ({ ...current, firstName: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Last Name
-            <input required value={form.lastName} onChange={(event) => setForm((current) => ({ ...current, lastName: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+            <input required value={form.lastName} onChange={(event) => setForm((current) => ({ ...current, lastName: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Role
-            <select required value={form.roleId} onChange={(event) => setForm((current) => ({ ...current, roleId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+            <select required value={form.roleId} onChange={(event) => setForm((current) => ({ ...current, roleId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
               <option value="">Select role</option>
               {roles.map((role) => (
                 <option key={role.id} value={role.id}>{role.displayName}</option>
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Department
-            <select value={form.departmentId} onChange={(event) => setForm((current) => ({ ...current, departmentId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+            <select value={form.departmentId} onChange={(event) => setForm((current) => ({ ...current, departmentId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
               <option value="">Unassigned</option>
               {departments.map((department) => (
                 <option key={department.id} value={department.id}>{department.name}</option>
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Branch
-            <select value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+            <select value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
               <option value="">Unassigned</option>
               {branches.map((branch) => (
                 <option key={branch.id} value={branch.id}>{branch.name}</option>
@@ -410,15 +410,15 @@ export function EmployeesAdminPage() {
         {editing ? (
           <fieldset
             className="mt-6 rounded-md border px-4 py-4"
-            style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface-muted)' }}
+            style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-app)' }}
           >
-            <legend className="px-2 text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+            <legend className="px-2 text-sm font-semibold" style={{ color: 'var(--sos-text-primary)' }}>
               WhatsApp Inbox
             </legend>
 
             <label
               className="flex cursor-pointer items-start gap-3 text-sm"
-              style={{ color: 'var(--color-text-secondary)' }}
+              style={{ color: 'var(--sos-text-secondary)' }}
             >
               <input
                 type="checkbox"
@@ -429,10 +429,10 @@ export function EmployeesAdminPage() {
                 className="mt-1 h-4 w-4"
               />
               <span>
-                <span className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                <span className="font-medium" style={{ color: 'var(--sos-text-primary)' }}>
                   WhatsApp Inbox Member
                 </span>
-                <span className="block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                <span className="block text-xs" style={{ color: 'var(--sos-text-muted)' }}>
                   When on, this employee enters the round-robin pool that receives WhatsApp leads.
                 </span>
               </span>
@@ -441,10 +441,10 @@ export function EmployeesAdminPage() {
             <div className="mt-4">
               <div
                 className="mb-2 text-sm font-medium"
-                style={{ color: 'var(--color-text-primary)' }}
+                style={{ color: 'var(--sos-text-primary)' }}
               >
-                Skills <span className="text-xs font-normal" style={{ color: 'var(--color-text-muted)' }}>
-                  (soft routing preference — engine prefers but doesn't require a match)
+                Skills <span className="text-xs font-normal" style={{ color: 'var(--sos-text-muted)' }}>
+                  (soft routing preference â€” engine prefers but doesn't require a match)
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -465,14 +465,14 @@ export function EmployeesAdminPage() {
                       className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
                       style={{
                         borderColor: selected
-                          ? 'var(--color-primary-600)'
-                          : 'var(--color-border)',
+                          ? 'var(--sos-brand-primary)'
+                          : 'var(--sos-border-subtle)',
                         backgroundColor: selected
                           ? 'var(--color-primary-50)'
-                          : 'var(--color-surface)',
+                          : 'var(--sos-bg-elevated)',
                         color: selected
                           ? 'var(--color-primary-700)'
-                          : 'var(--color-text-secondary)',
+                          : 'var(--sos-text-secondary)',
                       }}
                     >
                       {skill}
@@ -481,7 +481,7 @@ export function EmployeesAdminPage() {
                 })}
               </div>
               {form.skills.some((s) => !SKILL_OPTIONS.includes(s)) ? (
-                <div className="mt-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                <div className="mt-2 text-xs" style={{ color: 'var(--sos-text-muted)' }}>
                   Custom (legacy): {form.skills.filter((s) => !SKILL_OPTIONS.includes(s)).join(', ')}
                 </div>
               ) : null}
@@ -489,15 +489,15 @@ export function EmployeesAdminPage() {
           </fieldset>
         ) : null}
 
-        {error ? <p className="mt-4 text-sm" style={{ color: 'var(--color-status-danger)' }}>{error}</p> : null}
+        {error ? <p className="mt-4 text-sm" style={{ color: 'var(--sos-status-danger)' }}>{error}</p> : null}
 
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           {editing ? (
-            <button type="button" onClick={resetForm} className="w-full rounded-md border px-4 py-2 text-sm font-medium sm:w-auto" style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}>
+            <button type="button" onClick={resetForm} className="w-full rounded-md border px-4 py-2 text-sm font-medium sm:w-auto" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
               Cancel
             </button>
           ) : null}
-          <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}>
+          <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
             {submitting ? 'Saving...' : editing ? 'Save Changes' : 'Create Employee'}
           </button>
         </div>

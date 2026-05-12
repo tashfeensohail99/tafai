@@ -10,11 +10,11 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
     <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
       <div className="min-w-0">
-        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl" style={{ color: 'var(--color-text-primary)' }}>
+        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl" style={{ color: 'var(--sos-text-primary)' }}>
           {title}
         </h2>
         {description ? (
-          <p className="mt-2 max-w-3xl text-sm sm:text-base" style={{ color: 'var(--color-text-muted)' }}>
+          <p className="mt-2 max-w-3xl text-sm sm:text-base" style={{ color: 'var(--sos-text-muted)' }}>
             {description}
           </p>
         ) : null}

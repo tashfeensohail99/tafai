@@ -123,7 +123,7 @@ const initialPaymentForm: PaymentFormState = {
 
 const invoiceColumns: DataTableColumn<InvoiceRow>[] = [
   { key: 'invoice', header: 'Invoice', render: (row) => row.invoiceNumber },
-  { key: 'owner', header: 'Owner', render: (row) => row.lead ? `${row.lead.firstName} ${row.lead.lastName}` : row.client ? `${row.client.firstName} ${row.client.lastName}` : '—' },
+  { key: 'owner', header: 'Owner', render: (row) => row.lead ? `${row.lead.firstName} ${row.lead.lastName}` : row.client ? `${row.client.firstName} ${row.client.lastName}` : 'â€”' },
   { key: 'total', header: 'Total', render: (row) => `${row.currency} ${row.totalAmount}` },
   { key: 'paid', header: 'Paid', render: (row) => `${row.currency} ${row.paidAmount}` },
   { key: 'payments', header: 'Payments', render: (row) => `${row.payments?.length ?? 0}` },
@@ -161,12 +161,12 @@ export default function FinancePage() {
       setHandovers(handoverRows);
       setLeadOptions(leadRows.filter((lead) => lead.status !== 'CONVERTED'));
       setClientOptions(clientRows);
-      // Module-wise revenue rollup — non-fatal if it fails.
+      // Module-wise revenue rollup â€” non-fatal if it fails.
       try {
         const r = await apiFetch<RevenueRollup>('/finance/revenue/by-service');
         setRevenue(r);
       } catch {
-        // surface ignored — the page still works without the rollup
+        // surface ignored â€” the page still works without the rollup
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load finance page');
@@ -295,7 +295,7 @@ export default function FinancePage() {
                   }
                 }}
                 className="rounded-md border px-4 py-2 text-sm font-medium"
-                style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+                style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
               >
                 Export invoices CSV
               </button>
@@ -303,7 +303,7 @@ export default function FinancePage() {
             <button
               onClick={() => void loadData()}
               className="rounded-md px-4 py-2 text-sm font-medium"
-              style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}
+              style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}
             >
               Refresh Finance
             </button>
@@ -311,85 +311,85 @@ export default function FinancePage() {
         }
       />
 
-      {error ? <p className="mb-4 text-sm" style={{ color: 'var(--color-status-danger)' }}>{error}</p> : null}
+      {error ? <p className="mb-4 text-sm" style={{ color: 'var(--sos-status-danger)' }}>{error}</p> : null}
 
       {revenue ? <RevenueRollupCard data={revenue} /> : null}
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <form onSubmit={createInvoice} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
-          <h3 className="mb-3 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>Create Invoice</h3>
+        <form onSubmit={createInvoice} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+          <h3 className="mb-3 text-lg font-semibold" style={{ color: 'var(--sos-text-primary)' }}>Create Invoice</h3>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Owner Type
-              <select value={invoiceForm.ownerType} onChange={(event) => setInvoiceForm((current) => ({ ...current, ownerType: event.target.value as 'lead' | 'client', ownerId: '' }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+              <select value={invoiceForm.ownerType} onChange={(event) => setInvoiceForm((current) => ({ ...current, ownerType: event.target.value as 'lead' | 'client', ownerId: '' }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
                 <option value="lead">Lead</option>
                 <option value="client">Client</option>
               </select>
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Owner
-              <select value={invoiceForm.ownerId} onChange={(event) => setInvoiceForm((current) => ({ ...current, ownerId: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+              <select value={invoiceForm.ownerId} onChange={(event) => setInvoiceForm((current) => ({ ...current, ownerId: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
                 <option value="">Select owner</option>
                 {(invoiceForm.ownerType === 'lead' ? leadOptions : clientOptions).map((record) => (
                   <option key={record.id} value={record.id}>{record.firstName} {record.lastName} - {record.phone}</option>
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Subtotal
-              <input value={invoiceForm.subtotal} onChange={(event) => setInvoiceForm((current) => ({ ...current, subtotal: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <input value={invoiceForm.subtotal} onChange={(event) => setInvoiceForm((current) => ({ ...current, subtotal: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Tax Amount
-              <input value={invoiceForm.taxAmount} onChange={(event) => setInvoiceForm((current) => ({ ...current, taxAmount: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <input value={invoiceForm.taxAmount} onChange={(event) => setInvoiceForm((current) => ({ ...current, taxAmount: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--sos-text-secondary)' }}>
               Discount Amount
-              <input value={invoiceForm.discountAmount} onChange={(event) => setInvoiceForm((current) => ({ ...current, discountAmount: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <input value={invoiceForm.discountAmount} onChange={(event) => setInvoiceForm((current) => ({ ...current, discountAmount: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--sos-text-secondary)' }}>
               Notes
-              <textarea value={invoiceForm.notes} onChange={(event) => setInvoiceForm((current) => ({ ...current, notes: event.target.value }))} className="min-h-[96px] rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <textarea value={invoiceForm.notes} onChange={(event) => setInvoiceForm((current) => ({ ...current, notes: event.target.value }))} className="min-h-[96px] rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
           </div>
           <div className="mt-6 flex justify-end">
-            <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}>
+            <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
               {submitting ? 'Saving...' : 'Create Invoice'}
             </button>
           </div>
         </form>
 
-        <form onSubmit={recordPayment} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
-          <h3 className="mb-3 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>Record Payment</h3>
+        <form onSubmit={recordPayment} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+          <h3 className="mb-3 text-lg font-semibold" style={{ color: 'var(--sos-text-primary)' }}>Record Payment</h3>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--sos-text-secondary)' }}>
               Invoice
-              <select value={paymentForm.invoiceId} onChange={(event) => setPaymentForm((current) => ({ ...current, invoiceId: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+              <select value={paymentForm.invoiceId} onChange={(event) => setPaymentForm((current) => ({ ...current, invoiceId: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
                 <option value="">Select invoice</option>
                 {invoices.map((invoice) => (
                   <option key={invoice.id} value={invoice.id}>{invoice.invoiceNumber} - {invoice.lead ? `${invoice.lead.firstName} ${invoice.lead.lastName}` : invoice.client ? `${invoice.client.firstName} ${invoice.client.lastName}` : 'No owner'}</option>
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Amount
-              <input value={paymentForm.amount} onChange={(event) => setPaymentForm((current) => ({ ...current, amount: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <input value={paymentForm.amount} onChange={(event) => setPaymentForm((current) => ({ ...current, amount: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Payment Method
-              <input value={paymentForm.paymentMethod} onChange={(event) => setPaymentForm((current) => ({ ...current, paymentMethod: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <input value={paymentForm.paymentMethod} onChange={(event) => setPaymentForm((current) => ({ ...current, paymentMethod: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--sos-text-secondary)' }}>
               Transaction Reference
-              <input value={paymentForm.transactionRef} onChange={(event) => setPaymentForm((current) => ({ ...current, transactionRef: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <input value={paymentForm.transactionRef} onChange={(event) => setPaymentForm((current) => ({ ...current, transactionRef: event.target.value }))} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--color-text-secondary)' }}>
+            <label className="flex flex-col gap-1 text-sm font-medium md:col-span-2" style={{ color: 'var(--sos-text-secondary)' }}>
               Notes
-              <textarea value={paymentForm.notes} onChange={(event) => setPaymentForm((current) => ({ ...current, notes: event.target.value }))} className="min-h-[96px] rounded-md border px-3 py-2" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }} />
+              <textarea value={paymentForm.notes} onChange={(event) => setPaymentForm((current) => ({ ...current, notes: event.target.value }))} className="min-h-[96px] rounded-md border px-3 py-2" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
             </label>
           </div>
           <div className="mt-6 flex justify-end">
-            <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}>
+            <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
               {submitting ? 'Saving...' : 'Record Payment'}
             </button>
           </div>
@@ -397,34 +397,34 @@ export default function FinancePage() {
       </div>
 
       <div className="space-y-6">
-        <section className="rounded-[28px] border p-4 shadow-sm sm:p-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+        <section className="rounded-[28px] border p-4 shadow-sm sm:p-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
           <PageHeader title="Sales Handovers" description="Receipts submitted by sales before finance records and verifies the payment." />
           <DataTable
             columns={[
               { key: 'lead', header: 'Lead', render: (row: HandoverRow) => `${row.lead.firstName} ${row.lead.lastName}` },
               { key: 'amount', header: 'Amount', render: (row: HandoverRow) => `${row.currency} ${row.submittedAmount}` },
-              { key: 'method', header: 'Method', render: (row: HandoverRow) => row.paymentMethod ?? '—' },
-              { key: 'receipt', header: 'Receipt', render: (row: HandoverRow) => row.receiptDownloadUrl ? <a href={row.receiptDownloadUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--color-primary-600)' }}>{row.receiptFileName}</a> : row.receiptFileName },
+              { key: 'method', header: 'Method', render: (row: HandoverRow) => row.paymentMethod ?? 'â€”' },
+              { key: 'receipt', header: 'Receipt', render: (row: HandoverRow) => row.receiptDownloadUrl ? <a href={row.receiptDownloadUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--sos-brand-primary)' }}>{row.receiptFileName}</a> : row.receiptFileName },
               { key: 'invoice', header: 'Invoice', render: (row: HandoverRow) => row.invoice?.invoiceNumber ?? 'Create on review' },
               { key: 'status', header: 'Status', render: (row: HandoverRow) => <StatusBadge type="finance_handover" status={row.status} /> },
-              { key: 'notes', header: 'Finance Notes', render: (row: HandoverRow) => row.financeNotes ?? '—' },
+              { key: 'notes', header: 'Finance Notes', render: (row: HandoverRow) => row.financeNotes ?? 'â€”' },
               {
                 key: 'actions',
                 header: 'Actions',
                 render: (row: HandoverRow) => (
                   <div className="flex flex-wrap gap-2">
                     {['SUBMITTED', 'REJECTED'].includes(row.status) ? (
-                      <button onClick={() => void reviewHandover(row.id, 'MARK_IN_REVIEW')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--color-border-strong)', color: 'var(--color-text-primary)' }}>
+                      <button onClick={() => void reviewHandover(row.id, 'MARK_IN_REVIEW')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--color-border-strong)', color: 'var(--sos-text-primary)' }}>
                         Review
                       </button>
                     ) : null}
                     {!['PAYMENT_RECORDED', 'PAYMENT_VERIFIED', 'CANCELLED'].includes(row.status) ? (
-                      <button onClick={() => void reviewHandover(row.id, 'RECORD_PAYMENT')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--color-primary-600)', color: 'var(--color-primary-600)' }}>
+                      <button onClick={() => void reviewHandover(row.id, 'RECORD_PAYMENT')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--sos-brand-primary)', color: 'var(--sos-brand-primary)' }}>
                         Record Payment
                       </button>
                     ) : null}
                     {!['PAYMENT_RECORDED', 'PAYMENT_VERIFIED', 'CANCELLED'].includes(row.status) ? (
-                      <button onClick={() => void reviewHandover(row.id, 'REJECT')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--color-status-danger)', color: 'var(--color-status-danger)' }}>
+                      <button onClick={() => void reviewHandover(row.id, 'REJECT')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--sos-status-danger)', color: 'var(--sos-status-danger)' }}>
                         Reject
                       </button>
                     ) : null}
@@ -438,20 +438,20 @@ export default function FinancePage() {
           />
         </section>
 
-        <section className="rounded-[28px] border p-4 shadow-sm sm:p-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+        <section className="rounded-[28px] border p-4 shadow-sm sm:p-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
           <PageHeader title="Pending Verification" description="Payments waiting for finance verification before the lead is converted and a case is created." />
           <DataTable
             columns={[
               { key: 'invoice', header: 'Invoice', render: (row: QueueRow) => row.invoice.invoiceNumber },
-              { key: 'owner', header: 'Owner', render: (row: QueueRow) => row.invoice.lead ? `${row.invoice.lead.firstName} ${row.invoice.lead.lastName}` : row.invoice.client ? `${row.invoice.client.firstName} ${row.invoice.client.lastName}` : '—' },
+              { key: 'owner', header: 'Owner', render: (row: QueueRow) => row.invoice.lead ? `${row.invoice.lead.firstName} ${row.invoice.lead.lastName}` : row.invoice.client ? `${row.invoice.client.firstName} ${row.invoice.client.lastName}` : 'â€”' },
               { key: 'amount', header: 'Amount', render: (row: QueueRow) => row.amount },
-              { key: 'method', header: 'Method', render: (row: QueueRow) => row.paymentMethod ?? '—' },
+              { key: 'method', header: 'Method', render: (row: QueueRow) => row.paymentMethod ?? 'â€”' },
               { key: 'status', header: 'Status', render: (row: QueueRow) => <StatusBadge type="payment" status={row.status} /> },
               {
                 key: 'actions',
                 header: 'Actions',
                 render: (row: QueueRow) => (
-                  <button onClick={() => void verifyPayment(row.id)} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--color-primary-600)', color: 'var(--color-primary-600)' }}>
+                  <button onClick={() => void verifyPayment(row.id)} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--sos-brand-primary)', color: 'var(--sos-brand-primary)' }}>
                     Verify Payment
                   </button>
                 ),
@@ -463,7 +463,7 @@ export default function FinancePage() {
           />
         </section>
 
-        <section className="rounded-[28px] border p-4 shadow-sm sm:p-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+        <section className="rounded-[28px] border p-4 shadow-sm sm:p-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
           <PageHeader title="Invoices" description="Track invoice totals, paid amounts, and conversion progress across leads and clients." />
           <DataTable columns={invoiceColumns} data={invoices} rowKey={(row) => row.id} emptyMessage="No invoices found." />
         </section>
@@ -484,7 +484,7 @@ function RevenueRollupCard({ data }: { data: RevenueRollup }) {
   return (
     <section
       className="rounded-[28px] border p-4 shadow-sm sm:p-6"
-      style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
+      style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}
     >
       <PageHeader
         title="Revenue by service"
@@ -499,7 +499,7 @@ function RevenueRollupCard({ data }: { data: RevenueRollup }) {
         <div
           style={{
             fontSize: 13,
-            color: 'var(--color-text-muted)',
+            color: 'var(--sos-text-muted)',
             textAlign: 'center',
             padding: 16,
           }}
@@ -541,8 +541,8 @@ function RevenueRollupCard({ data }: { data: RevenueRollup }) {
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{formatCAD(row.allTime)}</div>
-                <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                  YTD {formatCAD(row.ytd)} · {formatCAD(row.month)} this month
+                <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+                  YTD {formatCAD(row.ytd)} Â· {formatCAD(row.month)} this month
                 </div>
               </div>
             </div>
@@ -567,7 +567,7 @@ function RollupTotal({ label, value }: { label: string; value: string }) {
         style={{
           fontSize: 11,
           fontWeight: 700,
-          color: 'var(--color-text-muted)',
+          color: 'var(--sos-text-muted)',
           textTransform: 'uppercase',
           letterSpacing: '0.06em',
           marginBottom: 4,

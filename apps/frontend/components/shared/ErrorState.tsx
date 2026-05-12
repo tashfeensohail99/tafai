@@ -18,14 +18,14 @@ export function ErrorState({
           className="flex h-12 w-12 items-center justify-center rounded-full"
           style={{ backgroundColor: 'var(--color-status-danger-bg)' }}
         >
-          <AlertCircle className="h-6 w-6" style={{ color: 'var(--color-status-danger)' }} />
+          <AlertCircle className="h-6 w-6" style={{ color: 'var(--sos-status-danger)' }} />
         </div>
         <div className="flex flex-col gap-1">
-          <p className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+          <p className="font-semibold" style={{ color: 'var(--sos-text-primary)' }}>
             {message}
           </p>
           {details && (
-            <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>{details}</p>
+            <p style={{ color: 'var(--sos-text-muted)', fontSize: 'var(--text-sm)' }}>{details}</p>
           )}
         </div>
         {onRetry && (
@@ -33,8 +33,8 @@ export function ErrorState({
             onClick={onRetry}
             className="rounded-md px-4 py-2 text-sm font-medium transition-opacity hover:opacity-80"
             style={{
-              backgroundColor: 'var(--color-primary-600)',
-              color: 'var(--color-text-inverse)',
+              backgroundColor: 'var(--sos-brand-primary)',
+              color: 'var(--sos-text-inverse)',
             }}
           >
             Try again

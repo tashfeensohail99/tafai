@@ -22,7 +22,7 @@ interface AuditLogRecord {
 const columns: DataTableColumn<AuditLogRecord>[] = [
   { key: 'action', header: 'Action', render: (row) => row.action.replace(/_/g, ' ') },
   { key: 'entityType', header: 'Entity Type', render: (row) => row.entityType },
-  { key: 'entityId', header: 'Entity ID', render: (row) => row.entityId ?? '—' },
+  { key: 'entityId', header: 'Entity ID', render: (row) => row.entityId ?? 'â€”' },
   { key: 'actor', header: 'Actor', render: (row) => row.actor?.email ?? 'System' },
   { key: 'createdAt', header: 'Created At', render: (row) => new Date(row.createdAt).toLocaleString() },
 ];
@@ -116,7 +116,7 @@ export function AuditLogPage() {
         }}
       />
 
-      {error ? <p className="mb-4 text-sm" style={{ color: 'var(--color-status-danger)' }}>{error}</p> : null}
+      {error ? <p className="mb-4 text-sm" style={{ color: 'var(--sos-status-danger)' }}>{error}</p> : null}
 
       <DataTable columns={columns} data={auditLogs} rowKey={(row) => row.id} emptyMessage="No audit events found." />
     </div>

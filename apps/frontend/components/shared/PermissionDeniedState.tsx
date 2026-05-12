@@ -14,13 +14,13 @@ export function PermissionDeniedState({
           className="flex h-14 w-14 items-center justify-center rounded-full"
           style={{ backgroundColor: 'var(--color-status-danger-bg)' }}
         >
-          <ShieldOff className="h-7 w-7" style={{ color: 'var(--color-status-danger)' }} />
+          <ShieldOff className="h-7 w-7" style={{ color: 'var(--sos-status-danger)' }} />
         </div>
         <div className="flex flex-col gap-1">
-          <p className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+          <p className="text-lg font-semibold" style={{ color: 'var(--sos-text-primary)' }}>
             Access Denied
           </p>
-          <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
+          <p style={{ color: 'var(--sos-text-muted)', fontSize: 'var(--text-sm)' }}>
             {message}
           </p>
         </div>

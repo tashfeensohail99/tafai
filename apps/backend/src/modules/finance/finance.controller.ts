@@ -57,14 +57,16 @@ export class FinanceController {
     @Query() query: ListInvoicesQueryDto,
     @Res() res: Response,
   ): Promise<void> {
-    const rows = (await this.financeService.listInvoices(query)) as Array<{
+    // Prisma's full row type leaks the relations; for CSV we only need a few
+    // fields, so cast through unknown and narrow to what rowsToCsv needs.
+    const rows = (await this.financeService.listInvoices(query)) as unknown as Array<{
       id: string;
       invoiceNumber: string;
       status: string;
       currency: string;
       totalAmount: { toString(): string } | number | string;
       paidAmount: { toString(): string } | number | string;
-      issueDate: Date;
+      createdAt: Date;
       dueDate: Date | null;
       lead?: { firstName: string; lastName: string; phone: string } | null;
       client?: { firstName: string; lastName: string; phone: string } | null;
@@ -75,7 +77,7 @@ export class FinanceController {
       { header: 'Currency', value: (r) => r.currency },
       { header: 'Total', value: (r) => String(r.totalAmount) },
       { header: 'Paid', value: (r) => String(r.paidAmount) },
-      { header: 'Issued', value: (r) => r.issueDate },
+      { header: 'Issued', value: (r) => r.createdAt },
       { header: 'Due', value: (r) => r.dueDate },
       {
         header: 'Customer',

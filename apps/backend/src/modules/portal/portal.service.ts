@@ -17,6 +17,29 @@ import { RequestUser } from '../../common/types/auth.types';
 import { PortalSendMessageDto } from './portal.dto';
 import { describeRejections } from './rejection-messages';
 
+// ---- Notification feed types -----------------------------------------------
+// Declared at module scope (not inside getNotifications) so the controller
+// can re-export the return shape without TypeScript complaining about
+// "private name from external module".
+export type PortalNotificationKind =
+  | 'UNREAD_MESSAGE'
+  | 'MISSING_DOCUMENT'
+  | 'REJECTED_DOCUMENT'
+  | 'EXPIRING_DOCUMENT'
+  | 'UPCOMING_APPOINTMENT'
+  | 'STAGE_CHANGE';
+
+export interface PortalNotification {
+  id: string;
+  kind: PortalNotificationKind;
+  title: string;
+  body: string;
+  createdAt: Date;
+  caseId: string | null;
+  severity: 'info' | 'warning' | 'danger' | 'success';
+  href: string;
+}
+
 // Accepted MIME types for document uploads
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
@@ -740,7 +763,7 @@ export class PortalService {
    * table when we want push / read-state across devices. For now, the UI
    * recomputes on each visit.
    */
-  async getNotifications(user: RequestUser) {
+  async getNotifications(user: RequestUser): Promise<PortalNotification[]> {
     const clientId = await this.resolveClientId(user);
     const now = new Date();
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -772,7 +795,7 @@ export class PortalService {
         this.prisma.caseDocumentItem.findMany({
           where: {
             caseId: { in: caseIds },
-            status: { in: [DocumentItemStatus.REJECTED, DocumentItemStatus.REPLACEMENT_REQUIRED] },
+            status: DocumentItemStatus.REJECTED,
           },
           select: { id: true, caseId: true, documentName: true, updatedAt: true },
         }),
@@ -808,26 +831,7 @@ export class PortalService {
         }),
       ]);
 
-    type NotificationKind =
-      | 'UNREAD_MESSAGE'
-      | 'MISSING_DOCUMENT'
-      | 'REJECTED_DOCUMENT'
-      | 'EXPIRING_DOCUMENT'
-      | 'UPCOMING_APPOINTMENT'
-      | 'STAGE_CHANGE';
-
-    interface Notification {
-      id: string;
-      kind: NotificationKind;
-      title: string;
-      body: string;
-      createdAt: Date;
-      caseId: string | null;
-      severity: 'info' | 'warning' | 'danger' | 'success';
-      href: string;
-    }
-
-    const out: Notification[] = [];
+    const out: PortalNotification[] = [];
 
     for (const m of unreadMessages) {
       out.push({

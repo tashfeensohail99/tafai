@@ -129,7 +129,8 @@ export function SalesAppointmentsPage() {
     Promise.all([fetchLeads(), fetchAppointments()]).then(([l, a]) => {
       setLeads(l);
       setAllAppointments(a);
-      if (l.length > 0) setClientId(l[0].id);
+      const eligible = l.find((x) => x.stage !== 'SENT_TO_FINANCE' && x.stage !== 'NO_RESPONSE') ?? l[0];
+      if (eligible) setClientId(eligible.id);
     }).finally(() => setLoading(false));
   }, []);
 

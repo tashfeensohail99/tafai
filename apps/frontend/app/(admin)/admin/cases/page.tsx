@@ -79,6 +79,8 @@ export default function CasesPage() {
       title="Cases"
       description="Track case ownership, processing stage, and department handovers after finance verification."
       endpoint="/cases"
+      exportPath="/cases/export.csv"
+      exportFilename="cases.csv"
       columns={columns}
       searchPlaceholder="Search cases, client names, services, or case numbers..."
       filters={[

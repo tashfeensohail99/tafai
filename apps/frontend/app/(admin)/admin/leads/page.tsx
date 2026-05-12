@@ -80,6 +80,8 @@ export default function LeadsPage() {
       title="Leads"
       description="Create and review the Week 3 lead CRM base with assignment and partner attribution."
       endpoint="/leads"
+      exportPath="/leads/export.csv"
+      exportFilename="leads.csv"
       columns={columns}
       searchPlaceholder="Search lead name, email, or phone..."
       filters={[

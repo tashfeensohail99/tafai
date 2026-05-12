@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
@@ -22,6 +24,7 @@ import {
   ListCasesQueryDto,
   UpdateCaseDto,
 } from './cases.dto';
+import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 
 @Controller('cases')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -32,6 +35,46 @@ export class CasesController {
   @RequirePermissions('cases.view_all')
   findAll(@Query() query: ListCasesQueryDto) {
     return this.casesService.findAll(query);
+  }
+
+  @Get('export.csv')
+  @RequirePermissions('reports.export')
+  async exportCsv(@Query() query: ListCasesQueryDto, @Res() res: Response): Promise<void> {
+    const rows = (await this.casesService.findAll(query)) as Array<{
+      id: string;
+      caseNumber: string;
+      status: string;
+      service?: { name: string } | null;
+      country?: { name: string } | null;
+      client?: { firstName: string; lastName: string; phone: string } | null;
+      assignedEmployee?: { firstName: string; lastName: string } | null;
+      department?: { name: string } | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>;
+    const csv = rowsToCsv(rows, [
+      { header: 'Case number', value: (r) => r.caseNumber },
+      { header: 'Status', value: (r) => r.status },
+      { header: 'Service', value: (r) => r.service?.name ?? null },
+      { header: 'Country', value: (r) => r.country?.name ?? null },
+      {
+        header: 'Client',
+        value: (r) =>
+          r.client ? `${r.client.firstName} ${r.client.lastName}`.trim() : null,
+      },
+      { header: 'Client phone', value: (r) => r.client?.phone ?? null },
+      {
+        header: 'Officer',
+        value: (r) =>
+          r.assignedEmployee
+            ? `${r.assignedEmployee.firstName} ${r.assignedEmployee.lastName}`.trim()
+            : null,
+      },
+      { header: 'Department', value: (r) => r.department?.name ?? null },
+      { header: 'Created at', value: (r) => r.createdAt },
+      { header: 'Updated at', value: (r) => r.updatedAt },
+    ]);
+    sendCsvDownload(res, `cases-${todayStamp()}.csv`, csv);
   }
 
   @Get(':id')

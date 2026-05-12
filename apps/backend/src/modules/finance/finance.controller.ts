@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import {
@@ -18,6 +20,7 @@ import {
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { FinanceService } from './finance.service';
+import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 import {
   CreateFinanceHandoverDto,
   CreateInvoiceDto,
@@ -41,6 +44,49 @@ export class FinanceController {
   @RequirePermissions('finance.view_all')
   listInvoices(@Query() query: ListInvoicesQueryDto) {
     return this.financeService.listInvoices(query);
+  }
+
+  /**
+   * CSV export of every invoice that matches the same filter set as
+   * GET /finance/invoices. Useful for the admin Finance page and for
+   * monthly book closings.
+   */
+  @Get('invoices/export.csv')
+  @RequirePermissions('reports.export')
+  async exportInvoicesCsv(
+    @Query() query: ListInvoicesQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const rows = (await this.financeService.listInvoices(query)) as Array<{
+      id: string;
+      invoiceNumber: string;
+      status: string;
+      currency: string;
+      totalAmount: { toString(): string } | number | string;
+      paidAmount: { toString(): string } | number | string;
+      issueDate: Date;
+      dueDate: Date | null;
+      lead?: { firstName: string; lastName: string; phone: string } | null;
+      client?: { firstName: string; lastName: string; phone: string } | null;
+    }>;
+    const csv = rowsToCsv(rows, [
+      { header: 'Invoice #', value: (r) => r.invoiceNumber },
+      { header: 'Status', value: (r) => r.status },
+      { header: 'Currency', value: (r) => r.currency },
+      { header: 'Total', value: (r) => String(r.totalAmount) },
+      { header: 'Paid', value: (r) => String(r.paidAmount) },
+      { header: 'Issued', value: (r) => r.issueDate },
+      { header: 'Due', value: (r) => r.dueDate },
+      {
+        header: 'Customer',
+        value: (r) => {
+          const c = r.client ?? r.lead;
+          return c ? `${c.firstName} ${c.lastName}`.trim() : null;
+        },
+      },
+      { header: 'Customer phone', value: (r) => r.client?.phone ?? r.lead?.phone ?? null },
+    ]);
+    sendCsvDownload(res, `invoices-${todayStamp()}.csv`, csv);
   }
 
   @Get('invoices/:id')

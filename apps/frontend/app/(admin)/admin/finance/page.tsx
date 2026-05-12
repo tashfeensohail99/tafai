@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-client';
+import { downloadCsv } from '@/lib/csv-download';
 import { useAdminSession } from '@/components/layout/AdminShell';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { LoadingState } from '@/components/shared/LoadingState';
@@ -269,13 +270,30 @@ export default function FinancePage() {
         title="Finance"
         description="Create invoices, record payments, and verify finance activity that moves leads into clients and cases."
         actions={
-          <button
-            onClick={() => void loadData()}
-            className="rounded-md px-4 py-2 text-sm font-medium"
-            style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}
-          >
-            Refresh Finance
-          </button>
+          <>
+            {user.permissions.includes('reports.export') ? (
+              <button
+                onClick={async () => {
+                  try {
+                    await downloadCsv('/finance/invoices/export.csv', 'invoices.csv');
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Export failed');
+                  }
+                }}
+                className="rounded-md border px-4 py-2 text-sm font-medium"
+                style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+              >
+                Export invoices CSV
+              </button>
+            ) : null}
+            <button
+              onClick={() => void loadData()}
+              className="rounded-md px-4 py-2 text-sm font-medium"
+              style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}
+            >
+              Refresh Finance
+            </button>
+          </>
         }
       />
 

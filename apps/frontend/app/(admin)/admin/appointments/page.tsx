@@ -89,6 +89,8 @@ export default function AppointmentsPage() {
       title="Appointments"
       description="Schedule and track meetings for leads before payment and for clients after conversion."
       endpoint="/appointments"
+      exportPath="/appointments/export.csv"
+      exportFilename="appointments.csv"
       columns={columns}
       searchPlaceholder="Search appointments, lead names, or client names..."
       filters={[

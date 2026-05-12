@@ -8,6 +8,7 @@ import { LoadingState } from '../shared/LoadingState';
 import { PageHeader } from '../shared/PageHeader';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { apiFetch, buildQuery } from '@/lib/api-client';
+import { downloadCsv } from '@/lib/csv-download';
 import { useAdminSession } from '../layout/AdminShell';
 
 type FormValue = string | boolean;
@@ -47,6 +48,15 @@ interface ResourceManagerProps<TRecord extends { id: string }> {
   transformRecordToForm?: (record: TRecord) => Record<string, FormValue>;
   transformFormToPayload?: (form: Record<string, FormValue>) => Record<string, unknown>;
   loadEditFormValues?: (record: TRecord) => Promise<Record<string, FormValue>>;
+  /**
+   * Path to a CSV-export endpoint. When set, an "Export CSV" button appears
+   * next to "Refresh" and triggers a download. The current filter + search
+   * values are appended as query parameters so the export mirrors what the
+   * user is looking at. Gated on the `reports.export` permission.
+   */
+  exportPath?: string;
+  /** Default filename to suggest if the server doesn't send one. */
+  exportFilename?: string;
 }
 
 export function ResourceManager<TRecord extends { id: string }>({
@@ -64,6 +74,8 @@ export function ResourceManager<TRecord extends { id: string }>({
   transformRecordToForm,
   transformFormToPayload,
   loadEditFormValues,
+  exportPath,
+  exportFilename,
 }: ResourceManagerProps<TRecord>) {
   const { user } = useAdminSession();
   const [records, setRecords] = useState<TRecord[]>([]);
@@ -205,6 +217,26 @@ export function ResourceManager<TRecord extends { id: string }>({
             >
               Refresh
             </button>
+            {exportPath && user.permissions.includes('reports.export') ? (
+              <button
+                onClick={async () => {
+                  const query = buildQuery({
+                    search,
+                    ...filterValues,
+                    ...(staticQuery ?? {}),
+                  });
+                  try {
+                    await downloadCsv(`${exportPath}${query}`, exportFilename ?? 'export.csv');
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Export failed');
+                  }
+                }}
+                className="rounded-md border px-4 py-2 text-sm font-medium"
+                style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+              >
+                Export CSV
+              </button>
+            ) : null}
             <button
               onClick={openCreateForm}
               className="rounded-md px-4 py-2 text-sm font-medium"

@@ -58,6 +58,8 @@ export default function ClientsPage() {
       title="Clients"
       description="Build the Week 3 client base with searchable profiles and branch grouping."
       endpoint="/clients"
+      exportPath="/clients/export.csv"
+      exportFilename="clients.csv"
       columns={columns}
       searchPlaceholder="Search client name, email, or phone..."
       filters={[

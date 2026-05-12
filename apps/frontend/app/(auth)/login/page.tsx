@@ -6,6 +6,7 @@ import {
   EyeOff,
   Loader2,
   ArrowRight,
+  Sparkles,
   ShieldCheck,
   Users,
   Wallet,

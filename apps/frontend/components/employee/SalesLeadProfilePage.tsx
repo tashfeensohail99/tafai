@@ -82,6 +82,7 @@ import {
   TimelineStep,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
 
 const STAGES: LeadStage[] = [
   'NEW',
@@ -105,10 +106,11 @@ const STAGE_PROGRESS: LeadStage[] = [
   'SENT_TO_FINANCE',
 ];
 
-type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES';
+type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'OVERVIEW', label: 'Overview', Icon: ClipboardList },
+  { key: 'WHATSAPP', label: 'WhatsApp', Icon: MessageSquare },
   { key: 'ACTIVITY', label: 'Activity', Icon: History },
   { key: 'FOLLOWUPS', label: 'Follow-ups', Icon: Phone },
   { key: 'APPOINTMENTS', label: 'Appointments', Icon: CalendarClock },
@@ -323,6 +325,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
 
       <Tabs tab={tab} setTab={setTab} counts={{
         OVERVIEW: 0,
+        WHATSAPP: 0,
         ACTIVITY: 4,
         FOLLOWUPS: leadFollowUps.length,
         APPOINTMENTS: leadAppointments.length,
@@ -357,6 +360,10 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
 
       {tab === 'NOTES' ? (
         <NotesTab salesNote={salesNote} setSalesNote={setSalesNote} />
+      ) : null}
+
+      {tab === 'WHATSAPP' ? (
+        <WhatsAppLeadTab leadId={lead.id} leadPhone={lead.phone ?? null} />
       ) : null}
 
       <ActionBar

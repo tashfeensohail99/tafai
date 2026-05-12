@@ -5,7 +5,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Eye,
   FileText,
+  Loader2,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -14,6 +16,7 @@ import {
   fmtDate,
   fmtRelative,
   getDocumentChecklist,
+  getDocumentSignedUrl,
   uploadDocument,
   type PortalDocumentItem,
 } from '@/lib/portal';
@@ -276,13 +279,33 @@ function UploadModal({
 
 function DocumentRow({
   doc,
+  caseId,
   onUpload,
 }: {
   doc: PortalDocumentItem;
+  caseId: string;
   onUpload: (d: PortalDocumentItem) => void;
 }) {
   const statusTone = DOC_STATUS_TONE[doc.status] ?? 'neutral';
   const critTone = CRITICALITY_TONE[doc.criticality] ?? 'neutral';
+  const [viewing, setViewing] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
+
+  async function handleView() {
+    if (!doc.latestVersion) return;
+    setViewing(true);
+    setViewError(null);
+    try {
+      const { url } = await getDocumentSignedUrl(caseId, doc.id);
+      // Signed URL is short-lived; open in a new tab so the client can save
+      // or print it without losing the portal page.
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setViewError(err instanceof Error ? err.message : 'Could not open document');
+    } finally {
+      setViewing(false);
+    }
+  }
 
   return (
     <div style={{ padding: '14px 0', borderBottom: '1px solid var(--sos-border-subtle)' }}>
@@ -313,6 +336,31 @@ function DocumentRow({
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <StatusBadge tone={statusTone} size="sm">{DOC_STATUS_LABEL[doc.status] ?? doc.status}</StatusBadge>
             {doc.latestVersion ? (
+              <button
+                type="button"
+                onClick={() => void handleView()}
+                disabled={viewing}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  cursor: viewing ? 'wait' : 'pointer',
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  color: 'var(--sos-brand-primary-strong)',
+                  textDecoration: 'underline',
+                }}
+                title={`View ${doc.latestVersion.fileName}`}
+              >
+                {viewing ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Eye size={11} />}
+                View
+              </button>
+            ) : null}
+            {doc.latestVersion ? (
               <span style={{ fontSize: '11.5px', color: 'var(--sos-text-muted)' }}>
                 {doc.latestVersion.versionNumber > 1 ? `v${doc.latestVersion.versionNumber} · ` : ''}
                 Uploaded {fmtRelative(doc.latestVersion.uploadedAt)}
@@ -324,6 +372,11 @@ function DocumentRow({
               </span>
             ) : null}
           </div>
+          {viewError ? (
+            <div className="sos-banner sos-banner--danger" style={{ marginTop: 6, fontSize: 12 }}>
+              {viewError}
+            </div>
+          ) : null}
         </div>
 
         {doc.canUpload ? (
@@ -571,7 +624,7 @@ export function ClientDocumentPage() {
           filtered.map((doc) => (
             <div key={doc.id}>
               {filter === 'EXPIRED' || isExpiredOrExpiring(doc) ? <ExpiryBanner doc={doc} /> : null}
-              <DocumentRow doc={doc} onUpload={setUploadTarget} />
+              <DocumentRow doc={doc} caseId={activeCase.id} onUpload={setUploadTarget} />
             </div>
           ))
         )}

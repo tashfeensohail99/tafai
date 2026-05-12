@@ -60,7 +60,7 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
-import { fetchFollowUps, fetchLead } from '@/lib/sales-api';
+import { fetchFollowUps, fetchLead, completeFollowUp, patchFollowUp } from '@/lib/sales-api';
 
 const STATUSES: FollowUpStatus[] = [
   'PENDING',
@@ -145,6 +145,8 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
   const [dueAt, setDueAt] = useState<string>('');
   const [outcome, setOutcome] = useState('');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     // Fetch by looking up in the full list (no GET /follow-ups/:id endpoint known)
@@ -244,9 +246,27 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
     setSla(followUp.slaStatus);
     setDueAt(new Date(followUp.dueAt).toISOString().slice(0, 16));
     setOutcome(followUp.outcome ?? '');
+    setSaveError('');
   }
-  function handleSave() {
-    setSavedAt(new Date());
+  async function handleSave() {
+    if (!followUp || saving) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      if (status === 'COMPLETED') {
+        await completeFollowUp(followUp.id, outcome || undefined);
+      } else {
+        await patchFollowUp(followUp.id, {
+          status,
+          dueAt: new Date(dueAt).toISOString(),
+        });
+      }
+      setSavedAt(new Date());
+    } catch {
+      setSaveError('Save failed. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   const [first, last] = followUp.clientName.split(' ');
@@ -527,6 +547,13 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
                 Save to update the queue and notify finance if needed.
               </span>
             </span>
+          ) : saveError ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              <X size={14} style={{ color: 'var(--sos-status-danger)' }} />
+              <span style={{ color: 'var(--sos-status-danger)', fontWeight: 600 }}>
+                {saveError}
+              </span>
+            </span>
           ) : savedAt ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               <CheckCircle2 size={14} style={{ color: 'var(--sos-status-success)' }} />
@@ -551,10 +578,10 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
             </SecondaryButton>
             <PrimaryButton
               onClick={handleSave}
-              disabled={!dirty}
-              iconLeft={<Save size={15} />}
+              disabled={!dirty || saving}
+              iconLeft={saving ? <Loader2 size={15} className="sos-spin" /> : <Save size={15} />}
             >
-              Save follow-up
+              {saving ? 'Saving…' : 'Save follow-up'}
             </PrimaryButton>
           </>
         }

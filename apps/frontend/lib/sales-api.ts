@@ -332,6 +332,16 @@ export async function completeFollowUp(id: string, outcomeNotes?: string): Promi
   });
 }
 
+export async function patchFollowUp(id: string, payload: {
+  status?: string;
+  dueAt?: string;
+}): Promise<void> {
+  await apiFetch(`/follow-ups/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function createFinanceHandover(payload: {
   leadId: string;
   submittedAmount: string;

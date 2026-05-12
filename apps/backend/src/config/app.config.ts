@@ -36,4 +36,27 @@ export default registerAs('app', () => ({
     loginLimit: parseInt(process.env.LOGIN_THROTTLE_LIMIT ?? '5', 10),
     loginTtl: parseInt(process.env.LOGIN_THROTTLE_TTL_SECONDS ?? '300', 10),
   },
+
+  // ---------------- Redis (BullMQ + realtime pub/sub) -----------------------
+  redis: {
+    url: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  },
+
+  // ---------------- WhatsApp Cloud API integration -------------------------
+  whatsapp: {
+    metaAppId: process.env.META_APP_ID ?? '',
+    metaAppSecret: process.env.META_APP_SECRET ?? '',
+    metaGraphApiVersion: process.env.META_GRAPH_API_VERSION ?? 'v21.0',
+    // Token YOU choose; given to Meta when subscribing webhooks. Meta echoes
+    // it back on the GET handshake.
+    webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN ?? '',
+    // AES-256-GCM key for encrypting stored access tokens. Must be 64 hex
+    // chars (32 bytes). Generate with:
+    //   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+    encryptionKey: process.env.WHATSAPP_ENCRYPTION_KEY ?? '',
+    // Optional R2/S3 bucket for re-hosted inbound media. Falls back to the
+    // shared `storage.*` config if unset.
+    mediaBucket: process.env.WHATSAPP_MEDIA_BUCKET ?? '',
+    mediaPublicBaseUrl: process.env.WHATSAPP_MEDIA_PUBLIC_BASE_URL ?? '',
+  },
 }));

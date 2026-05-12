@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageSquare,
   PhoneCall,
   Search,
   Sparkles,
@@ -27,6 +28,7 @@ import {
 import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/DrawerMenu';
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
+import { PresencePill } from '@/components/whatsapp/PresencePill';
 
 export interface EmployeeUser {
   id: string;
@@ -45,6 +47,7 @@ const EmployeeSessionContext = createContext<EmployeeSessionContextValue | null>
 
 const SALES_NAV: DrawerMenuItem[] = [
   { label: 'Dashboard', href: '/sales', icon: LayoutDashboard, caption: 'Workspace overview' },
+  { label: 'WhatsApp Inbox', href: '/sales/inbox', icon: MessageSquare, caption: 'Your assigned chats' },
   { label: 'Assigned Leads', href: '/sales/leads', icon: Users, caption: 'CRM & social media', badge: 12 },
   { label: 'Create New Lead', href: '/sales/create-lead', icon: CirclePlus, caption: 'Walk-in client' },
   { label: 'Follow Ups', href: '/sales/follow-ups', icon: PhoneCall, caption: 'Calls, WhatsApp, reminders', badge: 7 },
@@ -54,6 +57,7 @@ const SALES_NAV: DrawerMenuItem[] = [
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/sales') return { title: 'Sales Dashboard', subtitle: 'Your daily command center' };
+  if (pathname.startsWith('/sales/inbox')) return { title: 'WhatsApp Inbox', subtitle: 'Your assigned conversations' };
   if (pathname.startsWith('/sales/leads/')) return { title: 'Lead Profile', subtitle: 'Edit progress, priority, and next action' };
   if (pathname === '/sales/leads') return { title: 'Assigned Leads', subtitle: 'Admin assigned and auto CRM leads' };
   if (pathname === '/sales/create-lead') return { title: 'Create New Lead', subtitle: 'Walk-in client intake' };
@@ -299,6 +303,8 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
               </div>
 
               <ThemeToggle />
+
+              <PresencePill />
 
               <button type="button" className="sos-topbar__icon-btn" aria-label="Notifications">
                 <Bell size={15} />

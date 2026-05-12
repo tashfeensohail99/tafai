@@ -4,13 +4,28 @@
 // =============================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  // Modular schemas. Each top-level domain lives in its own Postgres schema
+  // for clear ownership, scoped permissions, and easier future extraction.
+  //   core         organization, identity, RBAC, employees, partners
+  //   audit        compliance-grade tamper-evident audit trail
+  //   crm          customer relationship: leads, clients, follow-ups,
+  //                appointments, activity timeline, reminders
+  //   processing   immigration case pipeline, documents, authority submissions
+  //   finance      invoices, payments, finance handovers
+  //   ai           AI document-processing jobs
+  //   whatsapp     WhatsApp Business Cloud API integration
+  //   sales        (reserved) commissions, quotas, sales-specific analytics
+  //   client_portal (reserved) future client self-service tables
+  //   public       Prisma's _prisma_migrations only
+  schemas   = ["public", "core", "audit", "crm", "processing", "finance", "ai", "sales", "client_portal", "whatsapp"]
 }
 
 // =============================================================================
@@ -22,12 +37,14 @@ enum UserStatus {
   INACTIVE
   SUSPENDED
   PENDING_VERIFICATION
+  @@schema("core")
 }
 
 enum Gender {
   MALE
   FEMALE
   OTHER
+  @@schema("core")
 }
 
 enum LeadStatus {
@@ -40,12 +57,14 @@ enum LeadStatus {
   LOST
   DUPLICATE
   UNQUALIFIED
+  @@schema("crm")
 }
 
 enum FollowUpStatus {
   OPEN
   COMPLETED
   CANCELLED
+  @@schema("crm")
 }
 
 enum FollowUpPriority {
@@ -53,6 +72,7 @@ enum FollowUpPriority {
   MEDIUM
   HIGH
   URGENT
+  @@schema("crm")
 }
 
 enum ClientStatus {
@@ -60,6 +80,7 @@ enum ClientStatus {
   INACTIVE
   COMPLETED
   BLOCKED
+  @@schema("crm")
 }
 
 enum CaseStatus {
@@ -73,6 +94,7 @@ enum CaseStatus {
   WITHDRAWN
   COMPLETED
   ON_HOLD
+  @@schema("processing")
 }
 
 enum DocumentStatus {
@@ -83,6 +105,7 @@ enum DocumentStatus {
   REJECTED
   EXPIRED
   REPLACEMENT_REQUIRED
+  @@schema("processing")
 }
 
 enum AppointmentStatus {
@@ -92,6 +115,7 @@ enum AppointmentStatus {
   CANCELLED
   NO_SHOW
   RESCHEDULED
+  @@schema("crm")
 }
 
 enum PaymentStatus {
@@ -102,6 +126,7 @@ enum PaymentStatus {
   REFUNDED
   CANCELLED
   DISPUTED
+  @@schema("finance")
 }
 
 enum InvoiceStatus {
@@ -111,6 +136,7 @@ enum InvoiceStatus {
   PAID
   OVERDUE
   CANCELLED
+  @@schema("finance")
 }
 
 enum FinanceHandoverStatus {
@@ -121,6 +147,7 @@ enum FinanceHandoverStatus {
   REJECTED
   CANCELLED
   SENT_TO_PROCESSING
+  @@schema("finance")
 }
 
 enum AuditAction {
@@ -217,6 +244,7 @@ enum AuditAction {
   PROCESSING_TASK_CREATED
   PROCESSING_CASE_COMPLETED
   PROCESSING_CASE_CANCELLED
+  @@schema("audit")
 }
 
 enum TimelineEventType {
@@ -251,6 +279,23 @@ enum TimelineEventType {
   PROCESSING_SUBMISSION_FILED
   PROCESSING_DECISION_RECEIVED
   PROCESSING_CASE_COMPLETED
+  // --- WhatsApp module additions ---
+  WHATSAPP_MESSAGE_RECEIVED
+  WHATSAPP_MESSAGE_SENT
+  WHATSAPP_LEAD_CREATED
+  WHATSAPP_ASSIGNED
+  WHATSAPP_CONVERSATION_RESOLVED
+  WHATSAPP_OPTED_OUT
+  @@schema("crm")
+}
+
+// Effective per-user availability for WhatsApp routing. Explicit toggle
+// combined with WebSocket heartbeat + business-hours produces effective state.
+enum PresenceStatus {
+  ONLINE
+  AWAY
+  OFFLINE
+  @@schema("core")
 }
 
 enum AiJobType {
@@ -262,6 +307,7 @@ enum AiJobType {
   INTERVIEW_SUMMARY
   SUGGESTED_REPLY
   BUSINESS_PLAN_DRAFT
+  @@schema("ai")
 }
 
 enum AiJobStatus {
@@ -271,6 +317,7 @@ enum AiJobStatus {
   FAILED
   REVIEW_PENDING
   REVIEWED
+  @@schema("ai")
 }
 
 enum AttendanceStatus {
@@ -279,12 +326,14 @@ enum AttendanceStatus {
   HALF_DAY
   LATE
   ON_LEAVE
+  @@schema("core")
 }
 
 enum PartnerStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
+  @@schema("core")
 }
 
 // =============================================================================
@@ -302,11 +351,29 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // --- WhatsApp routing + SLA configuration --------------------------------
+  // IANA timezone for business-hours math. Tashfeen defaults to Asia/Karachi.
+  timezone                String  @default("Asia/Karachi")
+  // Local-time business-hours window (24h "HH:MM").
+  hoursOpen               String  @default("09:00")
+  hoursClose              String  @default("18:00")
+  // Days of the week the team works. 0 = Sunday .. 6 = Saturday. Default Mon-Sat.
+  workingDays             Int[]   @default([1, 2, 3, 4, 5, 6])
+  // First-response SLA target in seconds (Tashfeen: 60s).
+  slaFirstResponseSeconds Int     @default(60)
+  // Strict round-robin cursor — last Employee id picked. Engine selects the
+  // next eligible employee with id > cursor (wrapping). Null = no cursor yet.
+  rrCursorEmployeeId      String?
+  // Approved template to auto-send to leads who message outside business hours.
+  afterHoursTemplate      String?
+  afterHoursTemplateLang  String? @default("en")
+
   branches    Branch[]
   departments Department[]
   partners    Partner[]
 
   @@map("organizations")
+  @@schema("core")
 }
 
 model Branch {
@@ -330,6 +397,7 @@ model Branch {
 
   @@index([organizationId])
   @@map("branches")
+  @@schema("core")
 }
 
 model Service {
@@ -344,6 +412,7 @@ model Service {
 
   @@index([isActive, sortOrder])
   @@map("services")
+  @@schema("core")
 }
 
 model Country {
@@ -359,6 +428,7 @@ model Country {
 
   @@index([isActive, sortOrder])
   @@map("countries")
+  @@schema("core")
 }
 
 model Department {
@@ -376,6 +446,7 @@ model Department {
 
   @@index([organizationId])
   @@map("departments")
+  @@schema("core")
 }
 
 model Designation {
@@ -389,6 +460,7 @@ model Designation {
   employees Employee[]
 
   @@map("designations")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -409,6 +481,7 @@ model Role {
   userRoles       UserRole[]
 
   @@map("roles")
+  @@schema("core")
 }
 
 model Permission {
@@ -422,6 +495,7 @@ model Permission {
 
   @@index([module])
   @@map("permissions")
+  @@schema("core")
 }
 
 model RolePermission {
@@ -434,6 +508,7 @@ model RolePermission {
 
   @@unique([roleId, permissionId])
   @@map("role_permissions")
+  @@schema("core")
 }
 
 model UserAccount {
@@ -487,6 +562,7 @@ model UserAccount {
   @@index([phone])
   @@index([status])
   @@map("user_accounts")
+  @@schema("core")
 }
 
 model UserRole {
@@ -501,6 +577,7 @@ model UserRole {
 
   @@unique([userId, roleId])
   @@map("user_roles")
+  @@schema("core")
 }
 
 model LoginSession {
@@ -518,6 +595,7 @@ model LoginSession {
   @@index([userId])
   @@index([refreshToken])
   @@map("login_sessions")
+  @@schema("core")
 }
 
 model PasswordResetToken {
@@ -532,6 +610,7 @@ model PasswordResetToken {
 
   @@index([token])
   @@map("password_reset_tokens")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -559,17 +638,35 @@ model Employee {
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
 
+  // --- WhatsApp inbox membership + presence + skills -----------------------
+  // True if this employee participates in WhatsApp round-robin assignment.
+  whatsappInboxMember Boolean        @default(false)
+  // Explicit toggle set by the agent. Effective presence is computed by
+  // combining this with lastActivityAt + business-hours.
+  presenceStatus      PresenceStatus @default(OFFLINE)
+  // Last WebSocket / REST heartbeat. >5min idle => effectively AWAY.
+  lastActivityAt      DateTime?
+  // Last time the user explicitly flipped their presence.
+  presenceChangedAt   DateTime?
+  // Skill tags used as a soft preference by the routing engine. Examples:
+  // ["UK","Canada","StudentVisa","WorkPermit"].
+  skills              String[]       @default([])
+
   user        UserAccount  @relation(fields: [userId], references: [id])
   department  Department?  @relation(fields: [departmentId], references: [id])
   branch      Branch?      @relation(fields: [branchId], references: [id])
   designation Designation? @relation(fields: [designationId], references: [id])
-  assignedLeads    Lead[]   @relation("LeadEmployee")
-  assignedCases    Case[]   @relation("CaseAssignedEmployee")
+  assignedLeads     Lead[]    @relation("LeadEmployee")
+  preferredByLeads  Lead[]    @relation("LeadPreferredEmployee")
+  assignedCases     Case[]    @relation("CaseAssignedEmployee")
   assignedFollowUps FollowUp[] @relation("FollowUpAssignedEmployee")
+  whatsappSentMessages WhatsAppMessage[] @relation("WhatsAppMessageSentBy")
 
   @@index([departmentId])
   @@index([branchId])
+  @@index([whatsappInboxMember, presenceStatus])
   @@map("employees")
+  @@schema("core")
 }
 
 model Partner {
@@ -600,6 +697,7 @@ model Partner {
   @@index([email])
   @@index([phone])
   @@map("partners")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -631,16 +729,25 @@ model Lead {
   updatedAt          DateTime   @updatedAt
   deletedAt          DateTime?
 
-  branch           Branch?      @relation(fields: [branchId], references: [id])
-  assignedEmployee Employee?    @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
-  createdBy        UserAccount? @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
-  referralPartner  Partner?     @relation(fields: [referralPartnerId], references: [id])
-  appointments     Appointment[] @relation("LeadAppointments")
-  invoices         Invoice[]     @relation("LeadInvoices")
-  followUps        FollowUp[]
-  financeHandovers FinanceHandover[]
-  timelineEvents   ActivityTimeline[]
-  processingCases  ProcessingCase[]
+  // --- WhatsApp routing -----------------------------------------------------
+  // Sticky routing: lifetime preferred employee for this lead. Set on first
+  // assignment. Future inbound on the same lead returns to this employee when
+  // they're available; otherwise round-robin fallback.
+  preferredEmployeeId String?
+
+  branch              Branch?      @relation(fields: [branchId], references: [id])
+  assignedEmployee    Employee?    @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
+  preferredEmployee   Employee?    @relation("LeadPreferredEmployee", fields: [preferredEmployeeId], references: [id])
+  createdBy           UserAccount? @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
+  referralPartner     Partner?     @relation(fields: [referralPartnerId], references: [id])
+  appointments        Appointment[] @relation("LeadAppointments")
+  invoices            Invoice[]     @relation("LeadInvoices")
+  followUps           FollowUp[]
+  financeHandovers    FinanceHandover[]
+  timelineEvents      ActivityTimeline[]
+  processingCases     ProcessingCase[]
+  whatsappThread      WhatsAppThread? @relation("LeadWhatsAppThread")
+  whatsappMessages    WhatsAppMessage[] @relation("LeadWhatsAppMessages")
 
   @@index([phone])
   @@index([email])
@@ -648,7 +755,9 @@ model Lead {
   @@index([assignedEmployeeId])
   @@index([branchId])
   @@index([referralPartnerId])
+  @@index([preferredEmployeeId])
   @@map("leads")
+  @@schema("crm")
 }
 
 model FollowUp {
@@ -676,6 +785,7 @@ model FollowUp {
   @@index([status])
   @@index([dueAt])
   @@map("follow_ups")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -713,12 +823,16 @@ model Client {
   timelineEvents  ActivityTimeline[]
   processingCases ProcessingCase[]
   reminders       ClientReminder[]
+  // WhatsApp chat history follows the client after lead-to-client conversion.
+  whatsappThreads  WhatsAppThread[]  @relation("ClientWhatsAppThreads")
+  whatsappMessages WhatsAppMessage[] @relation("ClientWhatsAppMessages")
 
   @@index([phone])
   @@index([email])
   @@index([status])
   @@index([branchId])
   @@map("clients")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -757,6 +871,7 @@ model Case {
   @@index([assignedEmployeeId])
   @@index([departmentId])
   @@map("cases")
+  @@schema("processing")
 }
 
 // =============================================================================
@@ -779,6 +894,7 @@ model DocumentRequirement {
 
   @@index([serviceType])
   @@map("document_requirements")
+  @@schema("processing")
 }
 
 model ClientDocument {
@@ -810,6 +926,7 @@ model ClientDocument {
   @@index([caseId])
   @@index([status])
   @@map("client_documents")
+  @@schema("processing")
 }
 
 // =============================================================================
@@ -847,6 +964,7 @@ model Appointment {
   @@index([scheduledAt])
   @@index([status])
   @@map("appointments")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -881,6 +999,7 @@ model Invoice {
   @@index([clientId])
   @@index([status])
   @@map("invoices")
+  @@schema("finance")
 }
 
 model Payment {
@@ -905,6 +1024,7 @@ model Payment {
   @@index([invoiceId])
   @@index([status])
   @@map("payments")
+  @@schema("finance")
 }
 
 model FinanceHandover {
@@ -940,6 +1060,7 @@ model FinanceHandover {
   @@index([status])
   @@index([createdByUserId])
   @@map("finance_handovers")
+  @@schema("finance")
 }
 
 // =============================================================================
@@ -966,6 +1087,7 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
   @@map("audit_logs")
+  @@schema("audit")
 }
 
 // =============================================================================
@@ -995,6 +1117,7 @@ model ActivityTimeline {
   @@index([caseId])
   @@index([createdAt])
   @@map("activity_timeline")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -1027,6 +1150,7 @@ model AiJob {
   @@index([jobType])
   @@index([documentId])
   @@map("ai_jobs")
+  @@schema("ai")
 }
 
 // =============================================================================
@@ -1050,6 +1174,7 @@ model AttendanceRecord {
   @@index([employeeId])
   @@index([date])
   @@map("attendance_records")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -1072,6 +1197,7 @@ enum ProcessingCaseStage {
   APPEAL_IN_PROGRESS
   COMPLETED
   CANCELLED
+  @@schema("processing")
 }
 
 enum ProcessingCasePriority {
@@ -1079,6 +1205,7 @@ enum ProcessingCasePriority {
   NORMAL
   URGENT
   CRITICAL
+  @@schema("processing")
 }
 
 enum ProcessingSlaStatus {
@@ -1087,6 +1214,7 @@ enum ProcessingSlaStatus {
   BREACHED
   EXTENDED
   COMPLETED
+  @@schema("processing")
 }
 
 enum AuthorityDecision {
@@ -1094,6 +1222,7 @@ enum AuthorityDecision {
   APPROVED
   REJECTED
   WITHDRAWN
+  @@schema("processing")
 }
 
 enum DocumentCriticality {
@@ -1102,6 +1231,7 @@ enum DocumentCriticality {
   CONDITIONAL
   SUPPORTING
   OPTIONAL
+  @@schema("processing")
 }
 
 enum DocumentItemStatus {
@@ -1114,33 +1244,39 @@ enum DocumentItemStatus {
   EXPIRING_SOON
   WAIVED
   NOT_APPLICABLE
+  @@schema("processing")
 }
 
 enum DocumentValidityRule {
   NONE
   MUST_NOT_EXPIRE
   MUST_BE_VALID_FOR_N_MONTHS
+  @@schema("processing")
 }
 
 enum VirusScanStatus {
   PENDING
   CLEAN
   INFECTED
+  @@schema("processing")
 }
 
 enum DocReviewDecisionType {
   ACCEPTED
   REJECTED
+  @@schema("processing")
 }
 
 enum DocAccessType {
   VIEW
   DOWNLOAD
+  @@schema("processing")
 }
 
 enum CorrectionType {
   DOCUMENT
   INFORMATION
+  @@schema("processing")
 }
 
 enum CorrectionRequiredAction {
@@ -1148,6 +1284,7 @@ enum CorrectionRequiredAction {
   CONFIRM
   CORRECT
   CALL_BACK
+  @@schema("processing")
 }
 
 enum CorrectionStatus {
@@ -1155,12 +1292,14 @@ enum CorrectionStatus {
   IN_PROGRESS
   RESOLVED
   ESCALATED
+  @@schema("processing")
 }
 
 enum CommunicationDirection {
   OFFICER_TO_CLIENT
   CLIENT_TO_OFFICER
   SYSTEM_TO_CLIENT
+  @@schema("processing")
 }
 
 enum CommunicationMessageType {
@@ -1174,6 +1313,7 @@ enum CommunicationMessageType {
   DECISION_NOTICE
   APPOINTMENT_REQUEST
   REMINDER
+  @@schema("processing")
 }
 
 enum ProcessingNoteType {
@@ -1183,6 +1323,7 @@ enum ProcessingNoteType {
   CLIENT_INSIGHT
   AUTHORITY_NOTE
   MANAGER_ONLY
+  @@schema("processing")
 }
 
 enum ProcessingTaskPriority {
@@ -1190,6 +1331,7 @@ enum ProcessingTaskPriority {
   NORMAL
   HIGH
   URGENT
+  @@schema("processing")
 }
 
 enum ProcessingTaskStatus {
@@ -1198,6 +1340,7 @@ enum ProcessingTaskStatus {
   BLOCKED
   DONE
   CANCELLED
+  @@schema("processing")
 }
 
 enum AuthoritySubmissionStatus {
@@ -1206,6 +1349,7 @@ enum AuthoritySubmissionStatus {
   UNDER_REVIEW
   RESPONDED
   WITHDRAWN
+  @@schema("processing")
 }
 
 enum AuthorityResponseType {
@@ -1214,6 +1358,7 @@ enum AuthorityResponseType {
   INFO_REQUEST
   BIOMETRICS_REQUEST
   OTHER
+  @@schema("processing")
 }
 
 enum ReminderType {
@@ -1228,6 +1373,7 @@ enum ReminderType {
   STAGE_UPDATE
   SUBMISSION_CONFIRMED
   DECISION_RECEIVED
+  @@schema("crm")
 }
 
 enum ReminderChannel {
@@ -1235,6 +1381,7 @@ enum ReminderChannel {
   WHATSAPP
   EMAIL
   SMS
+  @@schema("crm")
 }
 
 enum ReminderDeliveryStatus {
@@ -1242,6 +1389,7 @@ enum ReminderDeliveryStatus {
   SENT
   DELIVERED
   FAILED
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -1275,6 +1423,7 @@ model DocumentRequirementTemplate {
   @@index([service, targetCountry])
   @@index([isActive])
   @@map("document_requirement_templates")
+  @@schema("processing")
 }
 
 model ProcessingCase {
@@ -1328,6 +1477,7 @@ model ProcessingCase {
   @@index([leadId])
   @@index([priority, stage])
   @@map("processing_cases")
+  @@schema("processing")
 }
 
 model ProcessingCaseStageHistory {
@@ -1346,6 +1496,7 @@ model ProcessingCaseStageHistory {
 
   @@index([caseId])
   @@map("processing_case_stage_history")
+  @@schema("processing")
 }
 
 model CaseDocumentItem {
@@ -1385,6 +1536,7 @@ model CaseDocumentItem {
   @@index([status, caseId])
   @@index([validityExpiryDate])
   @@map("case_document_items")
+  @@schema("processing")
 }
 
 model ClientDocumentVersion {
@@ -1412,6 +1564,7 @@ model ClientDocumentVersion {
   @@index([documentItemId])
   @@index([caseId])
   @@map("client_document_versions")
+  @@schema("processing")
 }
 
 model DocumentReviewDecision {
@@ -1430,6 +1583,7 @@ model DocumentReviewDecision {
 
   @@index([documentItemId])
   @@map("document_review_decisions")
+  @@schema("processing")
 }
 
 model DocumentAccessLog {
@@ -1448,6 +1602,7 @@ model DocumentAccessLog {
   @@index([documentVersionId])
   @@index([accessedByUserId])
   @@map("document_access_logs")
+  @@schema("processing")
 }
 
 model CorrectionRequest {
@@ -1477,6 +1632,7 @@ model CorrectionRequest {
   @@index([caseId])
   @@index([status])
   @@map("correction_requests")
+  @@schema("processing")
 }
 
 model CaseCommunication {
@@ -1498,6 +1654,7 @@ model CaseCommunication {
 
   @@index([caseId, createdAt(sort: Desc)])
   @@map("case_communications")
+  @@schema("processing")
 }
 
 model ClientReminder {
@@ -1521,6 +1678,7 @@ model ClientReminder {
   @@index([caseId])
   @@index([scheduledAt])
   @@map("client_reminders")
+  @@schema("crm")
 }
 
 model ProcessingNote {
@@ -1539,6 +1697,7 @@ model ProcessingNote {
 
   @@index([caseId])
   @@map("processing_notes")
+  @@schema("processing")
 }
 
 model ProcessingTask {
@@ -1564,6 +1723,7 @@ model ProcessingTask {
   @@index([caseId])
   @@index([assignedToUserId, status])
   @@map("processing_tasks")
+  @@schema("processing")
 }
 
 model AuthoritySubmission {
@@ -1589,6 +1749,7 @@ model AuthoritySubmission {
 
   @@index([caseId])
   @@map("authority_submissions")
+  @@schema("processing")
 }
 
 model ProcessingAuditLog {
@@ -1610,4 +1771,329 @@ model ProcessingAuditLog {
   @@index([caseId, createdAt(sort: Desc)])
   @@index([entityType, entityId])
   @@map("processing_audit_logs")
+  @@schema("processing")
+}
+
+// =============================================================================
+// WHATSAPP MODULE
+// Lives in the dedicated `whatsapp` schema for isolation from the immigration
+// CRM core. Linked to public.leads and public.clients via foreign keys.
+// =============================================================================
+
+enum WhatsAppChannelTier {
+  TIER_1K
+  TIER_10K
+  TIER_100K
+  TIER_UNLIMITED
+  @@schema("whatsapp")
+}
+
+enum WhatsAppChannelStatus {
+  ACTIVE
+  PAUSED
+  REVOKED
+  @@schema("whatsapp")
+}
+
+enum WhatsAppMessageDirection {
+  INBOUND
+  OUTBOUND
+  @@schema("whatsapp")
+}
+
+enum WhatsAppMessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  STICKER
+  LOCATION
+  CONTACTS
+  INTERACTIVE
+  TEMPLATE
+  REACTION
+  SYSTEM
+  UNSUPPORTED
+  @@schema("whatsapp")
+}
+
+enum WhatsAppMessageStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  RECEIVED
+  @@schema("whatsapp")
+}
+
+enum WhatsAppThreadStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  ARCHIVED
+  @@schema("whatsapp")
+}
+
+enum WhatsAppAssignmentReason {
+  STICKY
+  ROUND_ROBIN
+  MANUAL
+  REASSIGN
+  TAKEOVER
+  UNASSIGN
+  AUTO_RESOLVE
+  @@schema("whatsapp")
+}
+
+enum WhatsAppTemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+  @@schema("whatsapp")
+}
+
+enum WhatsAppTemplateStatus {
+  APPROVED
+  PENDING
+  REJECTED
+  PAUSED
+  DISABLED
+  @@schema("whatsapp")
+}
+
+enum WhatsAppCampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  COMPLETED
+  PAUSED
+  CANCELLED
+  FAILED
+  @@schema("whatsapp")
+}
+
+// One row per WABA phone number. Tashfeen runs a single channel today; the
+// schema supports more (per-branch, per-product).
+model WhatsAppChannel {
+  id              String                @id @default(uuid())
+  label           String
+  wabaId          String
+  phoneNumberId   String                @unique
+  displayNumber   String
+  // AES-256-GCM ciphertext of the access token. Format: iv:ciphertext:tag (base64).
+  accessTokenEnc  String
+  // Optional per-channel webhook verify token (overrides org default).
+  webhookVerifyToken String?
+  tier            WhatsAppChannelTier   @default(TIER_1K)
+  status          WhatsAppChannelStatus @default(ACTIVE)
+  lastSyncAt      DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  threads   WhatsAppThread[]
+  messages  WhatsAppMessage[]
+  templates WhatsAppTemplate[]
+  campaigns WhatsAppCampaign[]
+
+  @@index([status])
+  @@map("channels")
+  @@schema("whatsapp")
+}
+
+// One thread per (channel, contact) tuple. Lead-rooted while in sales pipeline;
+// re-rooted onto Client after `POST /leads/:id/convert` runs.
+model WhatsAppThread {
+  id                String   @id @default(uuid())
+  channelId         String
+  // The thread belongs to a Lead until conversion, then a Client. Always one
+  // of these two is non-null; both may be set during conversion.
+  leadId            String?  @unique
+  clientId          String?
+  // WhatsApp's wa_id (E.164 without leading +). Indexed for fast inbound lookup.
+  waContactId       String
+  // 24-hour customer-service window. Outbound outside this window MUST be a
+  // template message. Set/refreshed on every inbound.
+  windowExpiresAt   DateTime?
+  status            WhatsAppThreadStatus @default(OPEN)
+  // --- SLA tracking ---
+  firstInboundAt    DateTime?
+  firstAgentReplyAt DateTime?
+  slaDeadlineAt     DateTime?
+  slaBreached       Boolean  @default(false)
+  // --- Denormalized for inbox list ordering ---
+  lastMessageAt     DateTime?
+  lastMessagePreview String?
+  unreadCount       Int      @default(0)
+  // Why the current assignment was made (sticky / round-robin / manual).
+  lastAssignmentReason WhatsAppAssignmentReason?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  channel  WhatsAppChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  lead     Lead?              @relation("LeadWhatsAppThread", fields: [leadId], references: [id], onDelete: SetNull)
+  client   Client?            @relation("ClientWhatsAppThreads", fields: [clientId], references: [id], onDelete: SetNull)
+  messages WhatsAppMessage[]
+
+  @@unique([channelId, waContactId])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([status, lastMessageAt(sort: Desc)])
+  @@index([slaDeadlineAt])
+  @@map("threads")
+  @@schema("whatsapp")
+}
+
+// Every inbound + outbound message.
+model WhatsAppMessage {
+  id                 String   @id @default(uuid())
+  threadId           String
+  channelId          String
+  // Denormalized lead/client foreign keys for fast filtering without joining
+  // through thread. Kept in sync by the worker.
+  leadId             String?
+  clientId           String?
+  // Meta's wa_message_id (wamid.xxx). Unique per channel. NULL until accepted.
+  waMessageId        String?  @unique
+  // Idempotency key generated on outbound enqueue. Prevents double-send.
+  idempotencyKey     String?  @unique
+
+  direction          WhatsAppMessageDirection
+  type               WhatsAppMessageType
+  status             WhatsAppMessageStatus @default(QUEUED)
+
+  body               String?
+  payload            Json?
+  mediaUrl           String?
+  mediaMimeType      String?
+  mediaSizeBytes     Int?
+  mediaSha256        String?
+
+  templateName       String?
+  templateLanguage   String?
+
+  // Employee who hit send (NULL for system/campaign/inbound).
+  sentByEmployeeId   String?
+  campaignId         String?
+  pricingCategory    String?
+
+  errorCode          String?
+  errorTitle         String?
+  errorDetails       Json?
+
+  sentAt             DateTime?
+  deliveredAt        DateTime?
+  readAt             DateTime?
+  failedAt           DateTime?
+
+  // For inbound replies that quote another message.
+  repliedToWaMessageId String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  thread         WhatsAppThread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  channel        WhatsAppChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  lead           Lead?             @relation("LeadWhatsAppMessages", fields: [leadId], references: [id], onDelete: SetNull)
+  client         Client?           @relation("ClientWhatsAppMessages", fields: [clientId], references: [id], onDelete: SetNull)
+  sentByEmployee Employee?         @relation("WhatsAppMessageSentBy", fields: [sentByEmployeeId], references: [id], onDelete: SetNull)
+  campaign       WhatsAppCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([threadId, createdAt(sort: Desc)])
+  @@index([direction, status])
+  @@index([campaignId])
+  @@index([createdAt(sort: Desc)])
+  @@map("messages")
+  @@schema("whatsapp")
+}
+
+// Mirror of Meta's approved templates per WABA. Required to send outbound
+// messages outside the 24-hour window.
+model WhatsAppTemplate {
+  id              String                  @id @default(uuid())
+  channelId       String
+  name            String
+  language        String
+  category        WhatsAppTemplateCategory
+  status          WhatsAppTemplateStatus
+  components      Json
+  qualityRating   String?
+  rejectedReason  String?
+  lastSyncAt      DateTime
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  channel   WhatsAppChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  campaigns WhatsAppCampaign[]
+
+  @@unique([channelId, name, language])
+  @@index([status])
+  @@map("templates")
+  @@schema("whatsapp")
+}
+
+// Template broadcast to a list of contacts (Phase 4 feature).
+model WhatsAppCampaign {
+  id              String                 @id @default(uuid())
+  channelId       String
+  templateId      String
+  createdByUserId String
+
+  name            String
+  description     String?
+  variableMap     Json                   @default("{}")
+  scheduledFor    DateTime?
+  status          WhatsAppCampaignStatus @default(DRAFT)
+
+  totalAudience   Int                    @default(0)
+  totalQueued     Int                    @default(0)
+  totalSent       Int                    @default(0)
+  totalDelivered  Int                    @default(0)
+  totalRead       Int                    @default(0)
+  totalFailed     Int                    @default(0)
+
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  channel  WhatsAppChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  template WhatsAppTemplate  @relation(fields: [templateId], references: [id])
+  messages WhatsAppMessage[]
+
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("campaigns")
+  @@schema("whatsapp")
+}
+
+// Customers who have opted out of WhatsApp marketing. Honored on every send.
+model WhatsAppOptOut {
+  id        String   @id @default(uuid())
+  waId      String   @unique
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@map("opt_outs")
+  @@schema("whatsapp")
+}
+
+// Raw webhook payload log. Kept for forensics + replay. Older entries are
+// pruned by a scheduled cleanup job.
+model WhatsAppWebhookEvent {
+  id              String   @id @default(uuid())
+  signature       String
+  signatureValid  Boolean
+  objectType      String?
+  rawPayload      Json
+  processedAt     DateTime?
+  processingError String?
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([processedAt])
+  @@map("webhook_events")
+  @@schema("whatsapp")
 }

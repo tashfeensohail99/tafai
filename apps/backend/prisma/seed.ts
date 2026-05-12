@@ -92,6 +92,16 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'attendance.view_all', module: 'attendance', description: 'View all attendance' },
   { key: 'attendance.view_own', module: 'attendance', description: 'View own attendance' },
   { key: 'attendance.override', module: 'attendance', description: 'Override attendance manually' },
+  // WhatsApp
+  { key: 'whatsapp.view_inbox', module: 'whatsapp', description: 'View the WhatsApp inbox (own assigned threads)' },
+  { key: 'whatsapp.view_all_inboxes', module: 'whatsapp', description: 'View all WhatsApp threads across agents (manager / admin)' },
+  { key: 'whatsapp.send_message', module: 'whatsapp', description: 'Send WhatsApp messages to assigned threads' },
+  { key: 'whatsapp.reassign', module: 'whatsapp', description: 'Manually reassign WhatsApp threads to other agents' },
+  { key: 'whatsapp.manage_channels', module: 'whatsapp', description: 'Connect / pause / rotate-token on WhatsApp Business numbers' },
+  { key: 'whatsapp.manage_templates', module: 'whatsapp', description: 'Sync and review WhatsApp approved templates' },
+  { key: 'whatsapp.send_campaign', module: 'whatsapp', description: 'Send WhatsApp template broadcasts (campaigns)' },
+  { key: 'whatsapp.view_team_dashboard', module: 'whatsapp', description: 'View manager dashboard (agent load, presence, SLA breaches)' },
+  { key: 'whatsapp.manage_settings', module: 'whatsapp', description: 'Configure working hours, SLA target, after-hours template' },
 ];
 
 const SYSTEM_ROLES: {
@@ -123,6 +133,7 @@ const SYSTEM_ROLES: {
       'clients.view_assigned', 'clients.create', 'clients.update',
       'appointments.view_assigned', 'appointments.create', 'appointments.update',
       'communications.view', 'communications.send',
+      'whatsapp.view_inbox', 'whatsapp.send_message',
     ],
   },
   {

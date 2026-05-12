@@ -1,9 +1,14 @@
 import {
+  CommunicationDirection,
+  CommunicationMessageType,
+  DocumentCriticality,
+  DocumentItemStatus,
   FinanceHandoverStatus,
   FollowUpPriority,
   FollowUpStatus,
   LeadStatus,
   PrismaClient,
+  ProcessingCaseStage,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -102,6 +107,32 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'whatsapp.send_campaign', module: 'whatsapp', description: 'Send WhatsApp template broadcasts (campaigns)' },
   { key: 'whatsapp.view_team_dashboard', module: 'whatsapp', description: 'View manager dashboard (agent load, presence, SLA breaches)' },
   { key: 'whatsapp.manage_settings', module: 'whatsapp', description: 'Configure working hours, SLA target, after-hours template' },
+  // Processing (granular — used by ProcessingController)
+  { key: 'processing.intake.view', module: 'processing', description: 'View the processing intake queue' },
+  { key: 'processing.intake.acknowledge', module: 'processing', description: 'Acknowledge a finance handover into processing' },
+  { key: 'processing.case.view_assigned', module: 'processing', description: 'View own assigned processing cases' },
+  { key: 'processing.case.view_all', module: 'processing', description: 'View all processing cases (manager / admin)' },
+  { key: 'processing.case.assign', module: 'processing', description: 'Assign / reassign processing cases to officers' },
+  { key: 'processing.case.update_stage', module: 'processing', description: 'Advance a case through its processing stages' },
+  { key: 'processing.document.request', module: 'processing', description: 'Request a document or document correction from the client' },
+  { key: 'processing.document.review', module: 'processing', description: 'Review and accept / reject submitted documents' },
+  { key: 'processing.document.upload', module: 'processing', description: 'Upload a document on the client\'s behalf' },
+  { key: 'processing.document.waive', module: 'processing', description: 'Waive a document checklist item' },
+  { key: 'processing.note.create', module: 'processing', description: 'Add a processing note (internal or client-facing)' },
+  { key: 'processing.note.view_all', module: 'processing', description: 'View all processing notes including internal' },
+  { key: 'processing.task.create', module: 'processing', description: 'Create a processing task' },
+  { key: 'processing.communication.send', module: 'processing', description: 'Send a case communication to the client or officer' },
+  { key: 'processing.checklist.manage', module: 'processing', description: 'Manage the document checklist templates' },
+  { key: 'processing.report.view', module: 'processing', description: 'View processing reports + dashboards' },
+  { key: 'processing.report.export', module: 'processing', description: 'Export processing reports as CSV' },
+  // Candidates (module reserved for future build — permissions seeded so admin
+  // role automatically covers it once the module ships)
+  { key: 'candidates.view_all', module: 'candidates', description: 'View all candidate profiles' },
+  { key: 'candidates.view_assigned', module: 'candidates', description: 'View assigned candidate profiles' },
+  { key: 'candidates.create', module: 'candidates', description: 'Create candidate profiles' },
+  { key: 'candidates.update', module: 'candidates', description: 'Update candidate profiles' },
+  { key: 'candidates.assign', module: 'candidates', description: 'Assign candidates to staff' },
+  { key: 'candidates.delete', module: 'candidates', description: 'Delete / archive candidate profiles' },
 ];
 
 const SYSTEM_ROLES: {
@@ -123,9 +154,26 @@ const SYSTEM_ROLES: {
     permissionKeys: PERMISSIONS.filter((p) => p.module !== 'audit').map((p) => p.key),
   },
   {
+    name: 'sales_manager',
+    displayName: 'Sales Manager',
+    description: 'Oversee the sales team — see every lead, every agent, every pipeline metric',
+    permissionKeys: [
+      'leads.view_all', 'leads.create', 'leads.update', 'leads.assign', 'leads.convert',
+      'follow_ups.view_all', 'follow_ups.create', 'follow_ups.update', 'follow_ups.complete',
+      'finance_handover.view_all', 'finance_handover.create',
+      'clients.view_all', 'clients.create', 'clients.update',
+      'appointments.view_all', 'appointments.create', 'appointments.update', 'appointments.cancel',
+      'communications.view', 'communications.send',
+      'whatsapp.view_inbox', 'whatsapp.view_all_inboxes', 'whatsapp.send_message',
+      'whatsapp.reassign', 'whatsapp.view_team_dashboard',
+      'reports.view', 'reports.export',
+      'employees.view_all',
+    ],
+  },
+  {
     name: 'sales',
-    displayName: 'Sales',
-    description: 'Lead and client management',
+    displayName: 'Sales Agent',
+    description: 'Lead and client management — own assigned book only',
     permissionKeys: [
       'leads.view_assigned', 'leads.create', 'leads.update', 'leads.assign',
       'follow_ups.view_assigned', 'follow_ups.create', 'follow_ups.update', 'follow_ups.complete',
@@ -148,25 +196,85 @@ const SYSTEM_ROLES: {
     ],
   },
   {
+    name: 'processing_manager',
+    displayName: 'Processing Manager',
+    description: 'Oversee processing officers — assign cases, see team workload, manage checklists',
+    permissionKeys: [
+      'clients.view_all', 'cases.view_all', 'cases.update', 'cases.change_status', 'cases.handover',
+      'documents.view_all', 'documents.upload', 'documents.verify',
+      'appointments.view_all', 'appointments.create',
+      'communications.view', 'communications.send',
+      'processing.intake.view', 'processing.intake.acknowledge',
+      'processing.case.view_all', 'processing.case.assign', 'processing.case.update_stage',
+      'processing.document.request', 'processing.document.review', 'processing.document.upload', 'processing.document.waive',
+      'processing.note.create', 'processing.note.view_all',
+      'processing.task.create',
+      'processing.communication.send',
+      'processing.checklist.manage',
+      'processing.report.view', 'processing.report.export',
+      'reports.view', 'reports.export',
+      'employees.view_all',
+    ],
+  },
+  {
     name: 'processing',
-    displayName: 'Processing',
-    description: 'Case processing and submission',
+    displayName: 'Processing Officer',
+    description: 'Case processing — work assigned cases through their stages',
     permissionKeys: [
       'clients.view_assigned', 'cases.view_assigned', 'cases.update', 'cases.change_status',
       'documents.view_assigned', 'documents.upload',
       'appointments.view_assigned',
       'communications.view',
+      'processing.intake.view',
+      'processing.case.view_assigned', 'processing.case.update_stage',
+      'processing.document.request', 'processing.document.review', 'processing.document.upload',
+      'processing.note.create',
+      'processing.task.create',
+      'processing.communication.send',
+    ],
+  },
+  {
+    name: 'finance_manager',
+    displayName: 'Finance Manager',
+    description: 'Oversee the finance team — verify payments, run revenue reports',
+    permissionKeys: [
+      'clients.view_all',
+      'finance_handover.view_all', 'finance_handover.review',
+      'finance.view_all', 'finance.create_invoice', 'finance.record_payment',
+      'finance.verify_payment', 'finance.refund',
+      'reports.view', 'reports.export',
+      'employees.view_all',
     ],
   },
   {
     name: 'finance',
-    displayName: 'Finance',
-    description: 'Finance and payment management',
+    displayName: 'Finance Officer',
+    description: 'Finance and payment management — verify own queue',
     permissionKeys: [
       'clients.view_assigned',
       'finance_handover.view_all', 'finance_handover.review',
       'finance.view_all', 'finance.create_invoice', 'finance.record_payment',
       'finance.verify_payment', 'finance.refund',
+    ],
+  },
+  {
+    name: 'candidate_manager',
+    displayName: 'Candidate Manager',
+    description: 'Manage the candidate roster (reserved for the upcoming candidates module)',
+    permissionKeys: [
+      'candidates.view_all', 'candidates.create', 'candidates.update',
+      'candidates.assign', 'candidates.delete',
+      'documents.view_all', 'documents.upload', 'documents.verify',
+      'reports.view',
+    ],
+  },
+  {
+    name: 'candidate_officer',
+    displayName: 'Candidate Officer',
+    description: 'Day-to-day candidate handling (reserved for the upcoming candidates module)',
+    permissionKeys: [
+      'candidates.view_assigned', 'candidates.create', 'candidates.update',
+      'documents.view_assigned', 'documents.upload',
     ],
   },
   {
@@ -609,6 +717,199 @@ async function main() {
         priority: FollowUpPriority.MEDIUM,
       },
     });
+  }
+
+  // -----------------------------------------------------------------------
+  // Client-portal demo: a converted lead → client with a processing case
+  // -----------------------------------------------------------------------
+  // Lets a developer log in as `ali.hassan@example.com / client123` and see
+  // the four portal pages backed by real data. Re-runnable: every step is
+  // guarded by a findUnique/findFirst check.
+
+  const clientRole = await prisma.role.findUnique({ where: { name: 'client' } });
+  if (clientRole && mainBranch) {
+    const CLIENT_EMAIL = 'ali.hassan@example.com';
+    const CLIENT_PASSWORD = 'client123';
+    const CLIENT_PHONE = '+923001234567';
+
+    let clientUser = await prisma.userAccount.findUnique({ where: { email: CLIENT_EMAIL } });
+    if (!clientUser) {
+      const hash = await bcrypt.hash(CLIENT_PASSWORD, 12);
+      clientUser = await prisma.userAccount.create({
+        data: {
+          email: CLIENT_EMAIL,
+          passwordHash: hash,
+          status: 'ACTIVE',
+          emailVerifiedAt: new Date(),
+          userRoles: { create: [{ roleId: clientRole.id }] },
+        },
+      });
+      console.log(`Created demo client user: ${CLIENT_EMAIL}`);
+    }
+
+    let demoLead = await prisma.lead.findFirst({
+      where: { phone: CLIENT_PHONE, deletedAt: null },
+    });
+    if (!demoLead) {
+      demoLead = await prisma.lead.create({
+        data: {
+          assignedEmployeeId: salesEmployee.id,
+          createdByUserId: salesUser.id,
+          branchId: mainBranch.id,
+          firstName: 'Ali',
+          lastName: 'Hassan',
+          email: CLIENT_EMAIL,
+          phone: CLIENT_PHONE,
+          nationality: 'Pakistan',
+          targetCountry: 'Canada',
+          serviceInterest: 'Work Permit',
+          sourceChannel: 'Client Portal Demo Seed',
+          status: LeadStatus.CONVERTED,
+          notes: 'Demo lead for the client-portal walkthrough.',
+        },
+      });
+    }
+
+    let demoClient = await prisma.client.findUnique({ where: { email: CLIENT_EMAIL } });
+    if (!demoClient) {
+      demoClient = await prisma.client.create({
+        data: {
+          branchId: mainBranch.id,
+          createdByUserId: salesUser.id,
+          firstName: 'Ali',
+          lastName: 'Hassan',
+          email: CLIENT_EMAIL,
+          phone: CLIENT_PHONE,
+          nationality: 'Pakistan',
+          status: 'ACTIVE',
+          portalAccessEnabled: true,
+        },
+      });
+      console.log('Created demo client record (portal access enabled)');
+    } else if (!demoClient.portalAccessEnabled) {
+      await prisma.client.update({
+        where: { id: demoClient.id },
+        data: { portalAccessEnabled: true },
+      });
+    }
+
+    // FinanceHandover requires a verified-style status to link to ProcessingCase.
+    let demoHandover = await prisma.financeHandover.findFirst({
+      where: { leadId: demoLead.id },
+    });
+    if (!demoHandover) {
+      demoHandover = await prisma.financeHandover.create({
+        data: {
+          leadId: demoLead.id,
+          createdByUserId: salesUser.id,
+          status: FinanceHandoverStatus.SENT_TO_PROCESSING,
+          submittedAmount: '5000.00',
+          currency: 'CAD',
+          paymentMethod: 'BANK_TRANSFER',
+          transactionRef: 'PORTAL-DEMO-001',
+          receiptKey: 'demo/receipts/portal-demo-001.pdf',
+          receiptFileName: 'receipt.pdf',
+          receiptMimeType: 'application/pdf',
+          notes: 'Seeded for the client portal walkthrough.',
+        },
+      });
+    }
+
+    // ProcessingCase is the heart of the portal — link it to client + handover.
+    let demoCase = await prisma.processingCase.findUnique({
+      where: { financeHandoverId: demoHandover.id },
+    });
+    if (!demoCase) {
+      demoCase = await prisma.processingCase.create({
+        data: {
+          financeHandoverId: demoHandover.id,
+          leadId: demoLead.id,
+          clientId: demoClient.id,
+          branchId: mainBranch.id,
+          createdByUserId: salesUser.id,
+          assignedOfficerId: salesUser.id, // re-use sales as the assigned officer for demo
+          stage: ProcessingCaseStage.DOCUMENTS_UNDER_REVIEW,
+          service: 'Work Permit',
+          targetCountry: 'Canada',
+        },
+      });
+      console.log('Created demo processing case');
+    }
+
+    // Document checklist for the case.
+    const existingDocs = await prisma.caseDocumentItem.count({ where: { caseId: demoCase.id } });
+    if (existingDocs === 0) {
+      const docs: Array<{
+        name: string;
+        description: string;
+        criticality: DocumentCriticality;
+        status: DocumentItemStatus;
+      }> = [
+        {
+          name: 'Valid Passport',
+          description: 'Must have minimum 6 months validity remaining',
+          criticality: DocumentCriticality.CRITICAL,
+          status: DocumentItemStatus.ACCEPTED,
+        },
+        {
+          name: 'IELTS Certificate',
+          description: 'English proficiency test — Band 6.0 or higher',
+          criticality: DocumentCriticality.CRITICAL,
+          status: DocumentItemStatus.UNDER_REVIEW,
+        },
+        {
+          name: 'Educational Degree',
+          description: 'HEC-attested copy required',
+          criticality: DocumentCriticality.REQUIRED,
+          status: DocumentItemStatus.REJECTED,
+        },
+        {
+          name: 'Police Clearance Certificate',
+          description: 'From your country of residence, within the last 6 months',
+          criticality: DocumentCriticality.REQUIRED,
+          status: DocumentItemStatus.NOT_SUBMITTED,
+        },
+        {
+          name: 'Medical Certificate',
+          description: 'From an approved physician — immigration medical exam',
+          criticality: DocumentCriticality.REQUIRED,
+          status: DocumentItemStatus.NOT_SUBMITTED,
+        },
+      ];
+      for (const [i, d] of docs.entries()) {
+        await prisma.caseDocumentItem.create({
+          data: {
+            caseId: demoCase.id,
+            documentName: d.name,
+            description: d.description,
+            criticality: d.criticality,
+            status: d.status,
+            sortOrder: i,
+            expectedFormats: ['PDF'],
+          },
+        });
+      }
+      console.log(`Created ${docs.length} demo document checklist items`);
+    }
+
+    // One officer-to-client message so the messages tab is not empty.
+    const existingMsg = await prisma.caseCommunication.count({ where: { caseId: demoCase.id } });
+    if (existingMsg === 0) {
+      await prisma.caseCommunication.create({
+        data: {
+          caseId: demoCase.id,
+          direction: CommunicationDirection.OFFICER_TO_CLIENT,
+          messageType: CommunicationMessageType.DOCS_REQUEST,
+          subject: 'Documents required — please upload',
+          content:
+            'Dear Ali, please upload your Police Clearance Certificate and Medical Certificate at your earliest convenience. For your Educational Degree, we need the HEC-attested copy — a plain photocopy is not accepted.',
+          channelsSent: ['PORTAL'],
+          sentByUserId: salesUser.id,
+        },
+      });
+    }
+  } else if (!clientRole) {
+    console.warn('No `client` role found — skipping client-portal demo seed.');
   }
 
   console.log('Seed complete');

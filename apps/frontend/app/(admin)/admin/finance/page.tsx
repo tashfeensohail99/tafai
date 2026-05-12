@@ -90,6 +90,12 @@ interface InvoiceFormState {
   notes: string;
 }
 
+interface RevenueRollup {
+  asOf: string;
+  totals: { month: number; ytd: number; allTime: number };
+  byService: Array<{ service: string; month: number; ytd: number; allTime: number }>;
+}
+
 interface PaymentFormState {
   invoiceId: string;
   amount: string;
@@ -126,6 +132,7 @@ const invoiceColumns: DataTableColumn<InvoiceRow>[] = [
 
 export default function FinancePage() {
   const { user } = useAdminSession();
+  const [revenue, setRevenue] = useState<RevenueRollup | null>(null);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [handovers, setHandovers] = useState<HandoverRow[]>([]);
@@ -154,6 +161,13 @@ export default function FinancePage() {
       setHandovers(handoverRows);
       setLeadOptions(leadRows.filter((lead) => lead.status !== 'CONVERTED'));
       setClientOptions(clientRows);
+      // Module-wise revenue rollup — non-fatal if it fails.
+      try {
+        const r = await apiFetch<RevenueRollup>('/finance/revenue/by-service');
+        setRevenue(r);
+      } catch {
+        // surface ignored — the page still works without the rollup
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load finance page');
     } finally {
@@ -298,6 +312,8 @@ export default function FinancePage() {
       />
 
       {error ? <p className="mb-4 text-sm" style={{ color: 'var(--color-status-danger)' }}>{error}</p> : null}
+
+      {revenue ? <RevenueRollupCard data={revenue} /> : null}
 
       <div className="grid gap-6 xl:grid-cols-2">
         <form onSubmit={createInvoice} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
@@ -451,6 +467,116 @@ export default function FinancePage() {
           <PageHeader title="Invoices" description="Track invoice totals, paid amounts, and conversion progress across leads and clients." />
           <DataTable columns={invoiceColumns} data={invoices} rowKey={(row) => row.id} emptyMessage="No invoices found." />
         </section>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Revenue rollup card ----------------------------------------------
+
+function formatCAD(amount: number): string {
+  if (!amount) return 'CAD 0';
+  return `CAD ${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function RevenueRollupCard({ data }: { data: RevenueRollup }) {
+  const maxAllTime = data.byService[0]?.allTime || 1;
+  return (
+    <section
+      className="rounded-[28px] border p-4 shadow-sm sm:p-6"
+      style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
+    >
+      <PageHeader
+        title="Revenue by service"
+        description="Verified payments grouped by the immigration service line"
+      />
+      <div className="grid gap-4 sm:grid-cols-3" style={{ marginBottom: 14 }}>
+        <RollupTotal label="This month" value={formatCAD(data.totals.month)} />
+        <RollupTotal label="Year to date" value={formatCAD(data.totals.ytd)} />
+        <RollupTotal label="All time" value={formatCAD(data.totals.allTime)} />
+      </div>
+      {data.byService.length === 0 ? (
+        <div
+          style={{
+            fontSize: 13,
+            color: 'var(--color-text-muted)',
+            textAlign: 'center',
+            padding: 16,
+          }}
+        >
+          No verified payments recorded yet.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {data.byService.map((row) => (
+            <div
+              key={row.service}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(180px, 1.6fr) 1fr minmax(120px, 0.7fr)',
+                gap: 12,
+                alignItems: 'center',
+                padding: '10px 12px',
+                background: 'var(--sos-surface-1)',
+                border: '1px solid var(--sos-border-subtle)',
+                borderRadius: 'var(--sos-radius-sm)',
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{row.service}</span>
+              <div
+                style={{
+                  height: 6,
+                  borderRadius: 999,
+                  background: 'var(--sos-surface-hover)',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${(row.allTime / maxAllTime) * 100}%`,
+                    height: '100%',
+                    background: 'var(--sos-brand-gradient)',
+                  }}
+                />
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{formatCAD(row.allTime)}</div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                  YTD {formatCAD(row.ytd)} · {formatCAD(row.month)} this month
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RollupTotal({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        background: 'var(--sos-surface-1)',
+        border: '1px solid var(--sos-border-subtle)',
+        borderRadius: 'var(--sos-radius-md)',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: 'var(--color-text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--sos-brand-primary-strong)' }}>
+        {value}
       </div>
     </div>
   );

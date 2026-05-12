@@ -143,6 +143,81 @@ export class FinanceService {
     return invoice;
   }
 
+  /**
+   * Revenue grouped by service (immigration service line). Joins through
+   * the Lead/Client on each Invoice to pick up `serviceInterest` /
+   * `serviceType`. Returns totals for this month, year-to-date, and
+   * all-time so the admin Finance page can show a quick rollup card.
+   */
+  async getRevenueByService(): Promise<{
+    asOf: Date;
+    totals: { month: number; ytd: number; allTime: number };
+    byService: Array<{ service: string; month: number; ytd: number; allTime: number }>;
+  }> {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+
+    // Pull every verified payment with the invoice + lead/client joined so we
+    // can derive the service. Dataset is small enough (months × hundreds of
+    // payments) that an in-process group is fine; if it ever grows we'd
+    // switch to a $queryRaw with COALESCE on the service columns.
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
+        verifiedAt: { not: null },
+      },
+      select: {
+        amount: true,
+        verifiedAt: true,
+        invoice: {
+          select: {
+            lead: { select: { serviceInterest: true } },
+            client: { select: { serviceType: true } },
+          },
+        },
+      },
+    });
+
+    const buckets = new Map<
+      string,
+      { service: string; month: number; ytd: number; allTime: number }
+    >();
+    let totalMonth = 0;
+    let totalYtd = 0;
+    let totalAll = 0;
+
+    for (const p of payments) {
+      const amount = Number(p.amount);
+      const service =
+        p.invoice.client?.serviceType ??
+        p.invoice.lead?.serviceInterest ??
+        'Unclassified';
+
+      const bucket =
+        buckets.get(service) ?? { service, month: 0, ytd: 0, allTime: 0 };
+      bucket.allTime += amount;
+      totalAll += amount;
+
+      const verifiedAt = p.verifiedAt!;
+      if (verifiedAt >= yearStart) {
+        bucket.ytd += amount;
+        totalYtd += amount;
+      }
+      if (verifiedAt >= monthStart) {
+        bucket.month += amount;
+        totalMonth += amount;
+      }
+      buckets.set(service, bucket);
+    }
+
+    return {
+      asOf: now,
+      totals: { month: totalMonth, ytd: totalYtd, allTime: totalAll },
+      byService: Array.from(buckets.values()).sort((a, b) => b.allTime - a.allTime),
+    };
+  }
+
   async getQueue(query: ListFinanceQueueQueryDto) {
     return this.prisma.payment.findMany({
       where: {

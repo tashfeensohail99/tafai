@@ -101,6 +101,17 @@ export class FinanceController {
     return this.financeService.getQueue(query);
   }
 
+  /**
+   * Module-wise revenue rollup — totals verified payments grouped by the
+   * service the lead/client was on, plus an "all-time" total. Reads from
+   * the same Payment rows the queue uses, so numbers always agree.
+   */
+  @Get('revenue/by-service')
+  @RequirePermissions('finance.view_all')
+  getRevenueByService() {
+    return this.financeService.getRevenueByService();
+  }
+
   @Get('handovers')
   @RequireAnyPermissions('finance_handover.view_all', 'finance_handover.view_own')
   listHandovers(@Query() query: ListFinanceHandoversQueryDto, @CurrentUser() user: RequestUser) {

@@ -100,6 +100,18 @@ export class ProcessingController {
     return this.processingService.getDashboardMetrics(user);
   }
 
+  /**
+   * Admin processing overview — totals, stage breakdown, officer workload,
+   * recent intake, and SLA-breached cases. Surfaced inside the admin shell
+   * so admins don't leave /admin to see the full processing picture.
+   * Permission: processing.case.view_all (manager / admin only).
+   */
+  @Get('admin-overview')
+  @RequirePermissions('processing.case.view_all')
+  getAdminOverview() {
+    return this.processingService.getAdminOverview();
+  }
+
   @Get('cases')
   @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
   listCases(

@@ -78,6 +78,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
       { label: 'Appointments', href: '/admin/appointments', icon: CalendarDays, permissionKey: 'appointments.view_all' },
       { label: 'Finance', href: '/admin/finance', icon: BadgeDollarSign, permissionKey: 'finance.view_all' },
       { label: 'Cases', href: '/admin/cases', icon: BriefcaseBusiness, permissionKey: 'cases.view_all' },
+      { label: 'Processing', href: '/admin/processing', icon: ClipboardList, permissionKey: 'processing.case.view_all' },
       { label: 'Documents', href: '/admin/documents', icon: FileText, permissionKey: 'documents.view_all' },
       { label: 'Workflow Board', href: '/admin/workflow', icon: ClipboardList, permissionKey: 'reports.view' },
     ],

@@ -2206,6 +2206,152 @@ export class ProcessingService {
   // DASHBOARD
   // -------------------------------------------------------------------------
 
+  /**
+   * Admin-only processing overview — surfaces the manager dashboard inside
+   * the admin shell so an admin doesn't have to leave /admin to see the
+   * full processing picture. Permission gate (processing.case.view_all)
+   * is enforced at the controller.
+   *
+   * Returns: totals, stage breakdown, per-officer workload, recent intake
+   * (last 5), and SLA-breached cases (top 10 oldest).
+   */
+  async getAdminOverview() {
+    const activeStages: ProcessingCaseStage[] = [
+      ProcessingCaseStage.INTAKE_PENDING,
+      ProcessingCaseStage.DOCUMENTS_COLLECTION,
+      ProcessingCaseStage.DOCUMENTS_UNDER_REVIEW,
+      ProcessingCaseStage.DOCUMENTS_INCOMPLETE,
+      ProcessingCaseStage.DOCUMENTS_COMPLETE,
+      ProcessingCaseStage.READY_FOR_SUBMISSION,
+      ProcessingCaseStage.SUBMITTED,
+      ProcessingCaseStage.UNDER_AUTHORITY_REVIEW,
+      ProcessingCaseStage.ADDITIONAL_INFO_REQUESTED,
+      ProcessingCaseStage.DECISION_RECEIVED,
+    ];
+
+    const [
+      activeCount,
+      newIntakeCount,
+      slaBreachedCount,
+      stageBreakdownRaw,
+      officerWorkloadRaw,
+      recentIntake,
+      breachedCases,
+    ] = await this.prisma.$transaction([
+      this.prisma.processingCase.count({
+        where: { stage: { in: activeStages }, cancelledAt: null },
+      }),
+      this.prisma.processingCase.count({
+        where: { stage: ProcessingCaseStage.INTAKE_PENDING },
+      }),
+      this.prisma.processingCase.count({
+        where: { slaStatus: 'BREACHED', cancelledAt: null },
+      }),
+      this.prisma.processingCase.groupBy({
+        by: ['stage'],
+        where: { cancelledAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.processingCase.groupBy({
+        by: ['assignedOfficerId'],
+        where: {
+          stage: { in: activeStages },
+          cancelledAt: null,
+          assignedOfficerId: { not: null },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.processingCase.findMany({
+        where: { stage: ProcessingCaseStage.INTAKE_PENDING },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          service: true,
+          targetCountry: true,
+          createdAt: true,
+          priority: true,
+          client: { select: { firstName: true, lastName: true, phone: true } },
+        },
+      }),
+      this.prisma.processingCase.findMany({
+        where: { slaStatus: 'BREACHED', cancelledAt: null },
+        orderBy: { slaDueAt: 'asc' },
+        take: 10,
+        select: {
+          id: true,
+          stage: true,
+          service: true,
+          targetCountry: true,
+          slaDueAt: true,
+          assignedOfficer: {
+            select: { employee: { select: { firstName: true, lastName: true } } },
+          },
+          client: { select: { firstName: true, lastName: true, phone: true } },
+        },
+      }),
+    ]);
+
+    const officerIds = officerWorkloadRaw.map((r) => r.assignedOfficerId!).filter(Boolean);
+    const officers = officerIds.length
+      ? await this.prisma.userAccount.findMany({
+          where: { id: { in: officerIds } },
+          select: {
+            id: true,
+            email: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+        })
+      : [];
+    const officerById = new Map(officers.map((o) => [o.id, o]));
+
+    const officerWorkload = officerWorkloadRaw.map((r) => {
+      const u = officerById.get(r.assignedOfficerId!);
+      const employee = u?.employee;
+      return {
+        officerId: r.assignedOfficerId,
+        name: employee
+          ? `${employee.firstName} ${employee.lastName}`.trim()
+          : (u?.email ?? 'Unknown'),
+        activeCases: r._count._all,
+      };
+    }).sort((a, b) => b.activeCases - a.activeCases);
+
+    const stageBreakdown = stageBreakdownRaw
+      .map((r) => ({ stage: r.stage, count: r._count._all }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      totals: {
+        active: activeCount,
+        newIntake: newIntakeCount,
+        slaBreached: slaBreachedCount,
+      },
+      stageBreakdown,
+      officerWorkload,
+      recentIntake: recentIntake.map((c) => ({
+        id: c.id,
+        service: c.service,
+        targetCountry: c.targetCountry,
+        priority: c.priority,
+        createdAt: c.createdAt,
+        clientName: c.client ? `${c.client.firstName} ${c.client.lastName}`.trim() : null,
+        clientPhone: c.client?.phone ?? null,
+      })),
+      breachedCases: breachedCases.map((c) => ({
+        id: c.id,
+        stage: c.stage,
+        service: c.service,
+        targetCountry: c.targetCountry,
+        slaDueAt: c.slaDueAt,
+        officerName: c.assignedOfficer?.employee
+          ? `${c.assignedOfficer.employee.firstName} ${c.assignedOfficer.employee.lastName}`.trim()
+          : null,
+        clientName: c.client ? `${c.client.firstName} ${c.client.lastName}`.trim() : null,
+      })),
+    };
+  }
+
   async getDashboardMetrics(user: RequestUser) {
     const canViewAll = user.permissions.includes('processing.case.view_all');
     const officerFilter = canViewAll ? {} : { assignedOfficerId: user.id };

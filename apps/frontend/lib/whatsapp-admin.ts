@@ -47,6 +47,12 @@ export function setChannelStatus(
   });
 }
 
+export function syncChannelTemplates(
+  id: string,
+): Promise<{ jobId: string; channelId: string; queuedAt: string }> {
+  return apiFetch(`/whatsapp/channels/${id}/sync-templates`, { method: 'POST' });
+}
+
 // ---- Team / presence dashboard ------------------------------------------
 
 export interface TeamPresenceRow {

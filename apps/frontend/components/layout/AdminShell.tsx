@@ -54,7 +54,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
     label: 'Overview',
     items: [
       { label: 'Dashboard', href: '/admin', icon: LayoutDashboard, permissionKey: 'reports.view' },
-      { label: 'Audit Log', href: '/admin/audit', icon: NotebookTabs, permissionKey: 'audit.view' },
+      { label: 'Activity Logs', href: '/admin/audit', icon: NotebookTabs, permissionKey: 'audit.view' },
     ],
   },
   {

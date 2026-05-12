@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, MessageSquare, Pause, Phone, Play, Plus, RotateCw } from 'lucide-react';
+import { Download, Loader2, MessageSquare, Pause, Phone, Play, Plus, RotateCw } from 'lucide-react';
 import {
   EmptyState,
   Field,
@@ -16,6 +16,7 @@ import {
   connectChannel,
   listChannels,
   setChannelStatus,
+  syncChannelTemplates,
   type AdminChannel,
 } from '@/lib/whatsapp-admin';
 import { Modal } from '@/components/whatsapp/Modal';
@@ -104,6 +105,8 @@ function ChannelRow({
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
   const tone = channel.status === 'ACTIVE' ? 'success' : channel.status === 'PAUSED' ? 'warning' : 'danger';
   const flip = useMemo(
     () => async (next: AdminChannel['status']) => {
@@ -117,6 +120,20 @@ function ChannelRow({
     },
     [channel.id, onChanged],
   );
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncNote(null);
+    try {
+      await syncChannelTemplates(channel.id);
+      setSyncNote('Sync queued — refresh in a moment to see updated templates.');
+      setTimeout(() => setSyncNote(null), 5000);
+    } catch (err) {
+      setSyncNote(err instanceof Error ? err.message : 'Failed to queue sync');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   return (
     <div
@@ -156,6 +173,15 @@ function ChannelRow({
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <StatusBadge tone={tone} size="sm" dot>{channel.status.toLowerCase()}</StatusBadge>
         <StatusBadge tone="info" size="sm">{channel.tier.replace('TIER_', '').toLowerCase()}</StatusBadge>
+        <GhostButton
+          size="sm"
+          disabled={syncing}
+          iconLeft={syncing ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={12} />}
+          onClick={() => void handleSync()}
+          title="Pull the latest approved-template list from Meta"
+        >
+          {syncing ? 'Queuing…' : 'Sync templates'}
+        </GhostButton>
         {channel.status === 'ACTIVE' ? (
           <GhostButton
             size="sm"
@@ -176,6 +202,18 @@ function ChannelRow({
           </GhostButton>
         )}
       </div>
+      {syncNote ? (
+        <div
+          style={{
+            flexBasis: '100%',
+            fontSize: 12,
+            color: 'var(--sos-text-muted)',
+            marginTop: 4,
+          }}
+        >
+          {syncNote}
+        </div>
+      ) : null}
     </div>
   );
 }

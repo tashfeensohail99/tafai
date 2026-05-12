@@ -24,7 +24,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Tell Next.js to produce a standalone output bundle
+# Bake backend URL into the Next.js bundle at build time
+# Set NEXT_PUBLIC_API_URL as a Railway build variable on this service
+ARG NEXT_PUBLIC_API_URL=https://backend-production-5a89.up.railway.app
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

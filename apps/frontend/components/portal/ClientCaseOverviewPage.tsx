@@ -1,42 +1,47 @@
 'use client';
-// Client Portal — Case Overview page — Phase 1C.
-// Client sees: stage, assigned officer, document progress, action items, key dates.
 
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
   AlertTriangle,
   ArrowRight,
-  CheckCircle2,
   Clock,
   FileText,
   MessageSquare,
-  User,
 } from 'lucide-react';
 import { GlassCard, StatusBadge, type BadgeTone } from '@/components/sales-v2/ui';
 import {
-  MOCK_CLIENT,
-  MOCK_CLIENT_CASE,
-  MOCK_CLIENT_MESSAGES,
   CLIENT_STAGE_LABEL,
   CLIENT_STAGE_TONE,
   CLIENT_NEXT_ACTION,
-  getDocActionRequired,
   fmtDate,
-} from '@/components/portal/clientMockData';
-
-// ---------- Info row helper -----------------------------------------------
+  type ProcessingCaseStage,
+} from '@/lib/portal';
+import { useClientSession } from '@/components/layout/ClientPortalShell';
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: '12px',
+        padding: '10px 0',
+        borderBottom: '1px solid var(--sos-border-subtle)',
+      }}
+    >
       <span style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', flexShrink: 0 }}>{label}</span>
       <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--sos-text-primary)', textAlign: 'right' }}>{value}</span>
     </div>
   );
 }
 
-// ---------- Action card ---------------------------------------------------
+function initialsFromName(name: string | null): string {
+  if (!name) return '—';
+  const parts = name.trim().split(/\s+/);
+  return (parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '');
+}
 
 interface ActionCardProps {
   tone: BadgeTone;
@@ -76,7 +81,18 @@ function ActionCard({ tone, icon, title, description, href, cta }: ActionCardPro
   return (
     <GlassCard variant="panel" padded="md" style={{ borderLeft: `3px solid ${borderColors[tone]}` }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-        <div style={{ flexShrink: 0, width: '36px', height: '36px', borderRadius: '10px', background: bgColors[tone], display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div
+          style={{
+            flexShrink: 0,
+            width: '36px',
+            height: '36px',
+            borderRadius: '10px',
+            background: bgColors[tone],
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           {icon}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -84,7 +100,15 @@ function ActionCard({ tone, icon, title, description, href, cta }: ActionCardPro
           <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginBottom: '12px' }}>{description}</div>
           <Link
             href={href as Route}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '13px', fontWeight: 600, color: borderColors[tone], textDecoration: 'none' }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: borderColors[tone],
+              textDecoration: 'none',
+            }}
           >
             {cta} <ArrowRight size={13} />
           </Link>
@@ -94,35 +118,52 @@ function ActionCard({ tone, icon, title, description, href, cta }: ActionCardPro
   );
 }
 
-// ---------- Case Overview page -------------------------------------------
-
 export function ClientCaseOverviewPage() {
-  const c = MOCK_CLIENT_CASE;
-  const stageTone = CLIENT_STAGE_TONE[c.stage] as BadgeTone;
-  const stageLabel = CLIENT_STAGE_LABEL[c.stage];
-  const nextAction = CLIENT_NEXT_ACTION[c.stage];
-  const actionRequired = getDocActionRequired();
-  const unreadMessages = MOCK_CLIENT_MESSAGES.filter((m) => m.direction !== 'FROM_CLIENT' && !m.readAt).length;
-  const docPct = Math.round((c.docsAccepted / c.docsTotal) * 100);
+  const { user, activeCase } = useClientSession();
+
+  if (!activeCase) {
+    return (
+      <GlassCard variant="panel" padded="lg">
+        <div className="sos-text-muted" style={{ textAlign: 'center', padding: 24 }}>
+          No active case yet. We'll let you know as soon as your file moves into processing.
+        </div>
+      </GlassCard>
+    );
+  }
+
+  const stage = activeCase.stage as ProcessingCaseStage;
+  const stageTone = CLIENT_STAGE_TONE[stage] as BadgeTone;
+  const stageLabel = CLIENT_STAGE_LABEL[stage];
+  const nextAction = CLIENT_NEXT_ACTION[stage];
+  const docPct = activeCase.docsTotal === 0
+    ? 0
+    : Math.round((activeCase.docsAccepted / activeCase.docsTotal) * 100);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Welcome header */}
       <div>
         <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--sos-brand-primary-strong)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '4px' }}>
           Welcome back
         </div>
         <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--sos-text-primary)', margin: 0 }}>
-          {MOCK_CLIENT.name}
+          {user.email}
         </h1>
         <div style={{ fontSize: '14px', color: 'var(--sos-text-muted)', marginTop: '4px' }}>
-          {c.service} · {c.targetCountry}
+          {activeCase.service} · {activeCase.targetCountry ?? '—'}
         </div>
       </div>
 
-      {/* Status card */}
       <GlassCard variant="strong" padded="lg">
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: '16px',
+            flexWrap: 'wrap',
+            marginBottom: '16px',
+          }}
+        >
           <div>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
               Application status
@@ -132,13 +173,12 @@ export function ClientCaseOverviewPage() {
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginBottom: '4px' }}>Documents</div>
             <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>
-              {c.docsAccepted}/{c.docsTotal}
+              {activeCase.docsAccepted}/{activeCase.docsTotal}
             </div>
             <div style={{ fontSize: '11px', color: 'var(--sos-text-muted)' }}>accepted</div>
           </div>
         </div>
 
-        {/* Progress bar */}
         <div style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
             <div style={{ flex: 1, height: '8px', background: 'var(--sos-surface-hover)', borderRadius: '999px', overflow: 'hidden' }}>
@@ -156,80 +196,107 @@ export function ClientCaseOverviewPage() {
           </div>
         </div>
 
-        {/* Next action */}
         {nextAction ? (
-          <div style={{ padding: '12px 14px', borderRadius: 'var(--sos-radius-md)', background: stageTone === 'warning' || stageTone === 'danger' ? 'var(--sos-status-warning-soft)' : 'var(--sos-status-info-soft)', border: `1px solid ${stageTone === 'warning' || stageTone === 'danger' ? 'var(--sos-status-warning-border)' : 'var(--sos-status-info-border)'}`, fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: 1.55 }}>
+          <div
+            style={{
+              padding: '12px 14px',
+              borderRadius: 'var(--sos-radius-md)',
+              background:
+                stageTone === 'warning' || stageTone === 'danger'
+                  ? 'var(--sos-status-warning-soft)'
+                  : 'var(--sos-status-info-soft)',
+              border: `1px solid ${
+                stageTone === 'warning' || stageTone === 'danger'
+                  ? 'var(--sos-status-warning-border)'
+                  : 'var(--sos-status-info-border)'
+              }`,
+              fontSize: '13px',
+              color: 'var(--sos-text-primary)',
+              lineHeight: 1.55,
+            }}
+          >
             {nextAction}
           </div>
         ) : null}
       </GlassCard>
 
-      {/* Action items — shown when there's something to do */}
-      {(actionRequired.length > 0 || unreadMessages > 0) ? (
+      {(activeCase.docsActionRequired > 0 || activeCase.unreadMessages > 0) && (
         <div>
           <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>
             Action required
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {actionRequired.length > 0 ? (
+            {activeCase.docsActionRequired > 0 && (
               <ActionCard
                 tone="warning"
                 icon={<AlertTriangle size={16} style={{ color: 'var(--sos-status-warning)' }} />}
-                title={`${actionRequired.length} document${actionRequired.length !== 1 ? 's' : ''} need${actionRequired.length === 1 ? 's' : ''} your attention`}
-                description={actionRequired.map((d) => d.documentName).join(', ')}
+                title={`${activeCase.docsActionRequired} document${activeCase.docsActionRequired !== 1 ? 's' : ''} need${activeCase.docsActionRequired === 1 ? 's' : ''} your attention`}
+                description="Review the Documents tab to upload or correct"
                 href="/portal/case/documents"
                 cta="Go to Documents"
               />
-            ) : null}
-            {unreadMessages > 0 ? (
+            )}
+            {activeCase.unreadMessages > 0 && (
               <ActionCard
                 tone="info"
                 icon={<MessageSquare size={16} style={{ color: 'var(--sos-status-info)' }} />}
-                title={`${unreadMessages} unread message${unreadMessages !== 1 ? 's' : ''} from your officer`}
+                title={`${activeCase.unreadMessages} unread message${activeCase.unreadMessages !== 1 ? 's' : ''} from your officer`}
                 description="Your processing officer has sent you a message"
                 href="/portal/case/messages"
                 cta="View messages"
               />
-            ) : null}
+            )}
           </div>
         </div>
-      ) : null}
+      )}
 
-      {/* Case details grid */}
       <GlassCard variant="panel" padded="md">
         <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>
           Case details
         </div>
         <div>
-          <InfoRow label="Service" value={c.service} />
-          <InfoRow label="Country" value={c.targetCountry} />
-          <InfoRow label="Case opened" value={fmtDate(c.createdAt)} />
+          <InfoRow label="Service" value={activeCase.service} />
+          <InfoRow label="Country" value={activeCase.targetCountry ?? '—'} />
+          <InfoRow label="Case opened" value={fmtDate(activeCase.createdAt)} />
           <InfoRow
             label="Assigned officer"
             value={
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--sos-brand-primary-soft)', border: '1px solid var(--sos-brand-primary-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 700, color: 'var(--sos-brand-primary-strong)' }}>
-                  {c.assignedOfficerInitials}
+              activeCase.assignedOfficerName ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div
+                    style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      background: 'var(--sos-brand-primary-soft)',
+                      border: '1px solid var(--sos-brand-primary-border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      color: 'var(--sos-brand-primary-strong)',
+                    }}
+                  >
+                    {initialsFromName(activeCase.assignedOfficerName)}
+                  </div>
+                  {activeCase.assignedOfficerName}
                 </div>
-                {c.assignedOfficerName}
-              </div>
+              ) : (
+                <span className="sos-text-muted">Not yet assigned</span>
+              )
             }
           />
         </div>
       </GlassCard>
 
-      {/* Quick links */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px' }}>
         {[
-          { href: '/portal/case/documents', icon: <FileText size={18} />, label: 'Documents', count: `${c.docsAccepted}/${c.docsTotal}` },
-          { href: '/portal/case/messages', icon: <MessageSquare size={18} />, label: 'Messages', count: `${MOCK_CLIENT_MESSAGES.length}` },
+          { href: '/portal/case/documents', icon: <FileText size={18} />, label: 'Documents', count: `${activeCase.docsAccepted}/${activeCase.docsTotal}` },
+          { href: '/portal/case/messages', icon: <MessageSquare size={18} />, label: 'Messages', count: activeCase.unreadMessages > 0 ? `${activeCase.unreadMessages} unread` : '' },
           { href: '/portal/case/timeline', icon: <Clock size={18} />, label: 'Timeline', count: '' },
         ].map((q) => (
-          <Link
-            key={q.href}
-            href={q.href as Route}
-            style={{ textDecoration: 'none' }}
-          >
+          <Link key={q.href} href={q.href as Route} style={{ textDecoration: 'none' }}>
             <GlassCard variant="soft" padded="md" style={{ cursor: 'pointer', transition: 'all 150ms', display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ color: 'var(--sos-brand-primary-strong)' }}>{q.icon}</div>
               <div>

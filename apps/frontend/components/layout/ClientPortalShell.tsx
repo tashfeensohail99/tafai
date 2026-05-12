@@ -1,7 +1,4 @@
 'use client';
-// Client Portal Shell — Phase 1C.
-// Lighter, client-facing shell. Same glass tokens as Sales/Finance/Processing.
-// Sidebar shows case summary and simple navigation.
 
 import {
   CheckCircle2,
@@ -14,63 +11,94 @@ import {
   X,
 } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ThemeToggle } from './ThemeToggle';
+import { StatusBadge, type BadgeTone } from '@/components/sales-v2/ui';
 import {
-  MOCK_CLIENT,
-  MOCK_CLIENT_CASE,
   CLIENT_STAGE_LABEL,
   CLIENT_STAGE_TONE,
-  getDocActionRequired,
-} from '@/components/portal/clientMockData';
-import { StatusBadge, type BadgeTone } from '@/components/sales-v2/ui';
+  getMyCases,
+  type PortalCaseSummary,
+} from '@/lib/portal';
+import { logout, useSession, type SessionUser } from '@/lib/session';
 
-// ---------- Nav items -------------------------------------------------------
+// ---------- Session context exposed to portal pages -----------------------
 
-interface PortalNavItem {
-  label: string;
-  href: string;
-  icon: React.ElementType;
-  caption: string;
-  badge?: number;
+interface ClientSessionShape {
+  user: SessionUser;
+  cases: PortalCaseSummary[];
+  activeCase: PortalCaseSummary | null;
+  refreshCases: () => Promise<void>;
 }
 
-function usePortalNav(): PortalNavItem[] {
-  const actionRequired = getDocActionRequired().length;
-  return [
-    { label: 'My Case', href: '/portal/case', icon: LayoutDashboard, caption: 'Overview and status' },
-    { label: 'Documents', href: '/portal/case/documents', icon: FileText, caption: 'Upload and check status', badge: actionRequired > 0 ? actionRequired : undefined },
-    { label: 'Messages', href: '/portal/case/messages', icon: MessageSquare, caption: 'Your officer and updates' },
-    { label: 'Timeline', href: '/portal/case/timeline', icon: Clock, caption: 'Case history' },
-  ];
+const ClientSessionContext = createContext<ClientSessionShape | null>(null);
+
+export function useClientSession(): ClientSessionShape {
+  const ctx = useContext(ClientSessionContext);
+  if (!ctx) {
+    throw new Error('useClientSession must be used inside <ClientPortalShell>');
+  }
+  return ctx;
 }
 
-// ---------- Sidebar ---------------------------------------------------------
+// ---------- Sidebar -------------------------------------------------------
 
-function PortalSidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function PortalSidebar({
+  open,
+  onClose,
+  user,
+  activeCase,
+}: {
+  open: boolean;
+  onClose: () => void;
+  user: SessionUser;
+  activeCase: PortalCaseSummary | null;
+}) {
   const pathname = usePathname();
   const router = useRouter();
-  const navItems = usePortalNav();
-  const stageTone = CLIENT_STAGE_TONE[MOCK_CLIENT_CASE.stage] as BadgeTone;
-  const stageLabel = CLIENT_STAGE_LABEL[MOCK_CLIENT_CASE.stage];
+
+  const navItems = useMemo(
+    () => [
+      { label: 'My Case', href: '/portal/case', icon: LayoutDashboard, caption: 'Overview and status' },
+      {
+        label: 'Documents',
+        href: '/portal/case/documents',
+        icon: FileText,
+        caption: 'Upload and check status',
+        badge: activeCase && activeCase.docsActionRequired > 0 ? activeCase.docsActionRequired : undefined,
+      },
+      {
+        label: 'Messages',
+        href: '/portal/case/messages',
+        icon: MessageSquare,
+        caption: 'Your officer and updates',
+        badge: activeCase && activeCase.unreadMessages > 0 ? activeCase.unreadMessages : undefined,
+      },
+      { label: 'Timeline', href: '/portal/case/timeline', icon: Clock, caption: 'Case history' },
+    ],
+    [activeCase],
+  );
+
+  const stageTone = activeCase ? (CLIENT_STAGE_TONE[activeCase.stage] as BadgeTone) : 'neutral';
+  const stageLabel = activeCase ? CLIENT_STAGE_LABEL[activeCase.stage] : '—';
 
   function handleLogout() {
+    logout();
     router.push('/login');
   }
 
+  const initials = user.email
+    .split('@')[0]
+    ?.split(/[._-]/)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .slice(0, 2)
+    .join('') ?? 'C';
+
   return (
     <>
-      {/* Mobile overlay */}
-      {open ? (
-        <div
-          className="sos-drawer-backdrop"
-          onClick={onClose}
-          aria-hidden
-        />
-      ) : null}
+      {open ? <div className="sos-drawer-backdrop" onClick={onClose} aria-hidden /> : null}
 
       <nav className={`sos-sidebar${open ? ' is-open' : ''}`} aria-label="Client portal navigation" style={{ width: '260px' }}>
-        {/* Brand */}
         <div className="sos-sidebar__brand">
           <div className="sos-sidebar__brand-logo">
             <CheckCircle2 size={22} />
@@ -90,37 +118,37 @@ function PortalSidebar({ open, onClose }: { open: boolean; onClose: () => void }
           </button>
         </div>
 
-        {/* Case summary panel */}
-        <div className="sos-sidebar__panel" style={{ margin: '12px 12px 4px' }}>
-          <div style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--sos-sidebar-text-muted)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '8px' }}>
-            Your application
-          </div>
-          <div style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--sos-sidebar-text-strong)', marginBottom: '4px' }}>
-            {MOCK_CLIENT_CASE.service}
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--sos-sidebar-text-muted)', marginBottom: '10px' }}>
-            {MOCK_CLIENT_CASE.targetCountry}
-          </div>
-          <StatusBadge tone={stageTone} size="sm">{stageLabel}</StatusBadge>
-          <div style={{ marginTop: '10px' }}>
-            <div style={{ fontSize: '11px', color: 'var(--sos-sidebar-text-muted)', marginBottom: '5px' }}>
-              Documents: {MOCK_CLIENT_CASE.docsAccepted} / {MOCK_CLIENT_CASE.docsTotal} accepted
+        {activeCase ? (
+          <div className="sos-sidebar__panel" style={{ margin: '12px 12px 4px' }}>
+            <div style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--sos-sidebar-text-muted)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '8px' }}>
+              Your application
             </div>
-            <div style={{ height: '5px', background: 'var(--sos-sidebar-progress-bg)', borderRadius: '999px', overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${Math.round((MOCK_CLIENT_CASE.docsAccepted / MOCK_CLIENT_CASE.docsTotal) * 100)}%`,
-                  height: '100%',
-                  background: 'var(--sos-brand-gradient)',
-                  borderRadius: '999px',
-                  transition: 'width 400ms',
-                }}
-              />
+            <div style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--sos-sidebar-text-strong)', marginBottom: '4px' }}>
+              {activeCase.service}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--sos-sidebar-text-muted)', marginBottom: '10px' }}>
+              {activeCase.targetCountry ?? '—'}
+            </div>
+            <StatusBadge tone={stageTone} size="sm">{stageLabel}</StatusBadge>
+            <div style={{ marginTop: '10px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--sos-sidebar-text-muted)', marginBottom: '5px' }}>
+                Documents: {activeCase.docsAccepted} / {activeCase.docsTotal} accepted
+              </div>
+              <div style={{ height: '5px', background: 'var(--sos-sidebar-progress-bg)', borderRadius: '999px', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${activeCase.docsTotal === 0 ? 0 : Math.round((activeCase.docsAccepted / activeCase.docsTotal) * 100)}%`,
+                    height: '100%',
+                    background: 'var(--sos-brand-gradient)',
+                    borderRadius: '999px',
+                    transition: 'width 400ms',
+                  }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
-        {/* Nav */}
         <div className="sos-sidebar__nav">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -138,20 +166,17 @@ function PortalSidebar({ open, onClose }: { open: boolean; onClose: () => void }
                   <span className="sos-nav-link__label">{item.label}</span>
                   <span className="sos-nav-link__caption">{item.caption}</span>
                 </span>
-                {item.badge ? (
-                  <span className="sos-nav-link__badge">{item.badge}</span>
-                ) : null}
+                {item.badge ? <span className="sos-nav-link__badge">{item.badge}</span> : null}
               </a>
             );
           })}
         </div>
 
-        {/* User footer */}
         <div className="sos-sidebar__user">
-          <div className="sos-sidebar__user-avatar">{MOCK_CLIENT.initials}</div>
+          <div className="sos-sidebar__user-avatar">{initials}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--sos-sidebar-text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {MOCK_CLIENT.name}
+              {user.email}
             </div>
             <div style={{ fontSize: '11px', color: 'var(--sos-sidebar-text-muted)' }}>Client</div>
           </div>
@@ -169,7 +194,7 @@ function PortalSidebar({ open, onClose }: { open: boolean; onClose: () => void }
   );
 }
 
-// ---------- Topbar ----------------------------------------------------------
+// ---------- Topbar --------------------------------------------------------
 
 function PortalTopbar({ onMenuClick }: { onMenuClick: () => void }) {
   const pathname = usePathname();
@@ -208,22 +233,91 @@ function PortalTopbar({ onMenuClick }: { onMenuClick: () => void }) {
   );
 }
 
-// ---------- Shell -----------------------------------------------------------
+// ---------- Shell ---------------------------------------------------------
 
-interface ClientPortalShellProps {
-  children: ReactNode;
-}
-
-export function ClientPortalShell({ children }: ClientPortalShellProps) {
+export function ClientPortalShell({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const session = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [cases, setCases] = useState<PortalCaseSummary[]>([]);
+  const [casesLoading, setCasesLoading] = useState(true);
+  const [casesError, setCasesError] = useState<string | null>(null);
+
+  // Redirect non-clients away from the portal.
+  useEffect(() => {
+    if (session.status === 'unauthed') {
+      router.replace('/login');
+      return;
+    }
+    if (session.status === 'authed' && !session.user.roles.includes('client')) {
+      router.replace('/login');
+    }
+  }, [session, router]);
+
+  // Load this client's cases once the session is ready.
+  const refreshCases = useMemo(
+    () => async () => {
+      setCasesLoading(true);
+      setCasesError(null);
+      try {
+        const rows = await getMyCases();
+        setCases(rows);
+      } catch (err) {
+        setCasesError(err instanceof Error ? err.message : 'Failed to load your case');
+      } finally {
+        setCasesLoading(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (session.status !== 'authed') return;
+    if (!session.user.roles.includes('client')) return;
+    void refreshCases();
+  }, [session, refreshCases]);
+
+  if (session.status === 'loading' || (session.status === 'authed' && casesLoading)) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: 'var(--sos-text-muted)' }}>
+        Loading your portal…
+      </div>
+    );
+  }
+  if (session.status !== 'authed') return null;
+
+  if (casesError) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center' }}>
+        <div className="sos-banner sos-banner--danger" style={{ maxWidth: 480, margin: '0 auto' }}>
+          {casesError}
+        </div>
+      </div>
+    );
+  }
+
+  const activeCase = cases[0] ?? null;
+  const ctx: ClientSessionShape = {
+    user: session.user,
+    cases,
+    activeCase,
+    refreshCases,
+  };
 
   return (
-    <div className="sos-shell">
-      <PortalSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <div className="sos-content">
-        <PortalTopbar onMenuClick={() => setSidebarOpen(true)} />
-        <main className="sos-page">{children}</main>
+    <ClientSessionContext.Provider value={ctx}>
+      <div className="sos-shell">
+        <PortalSidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          user={session.user}
+          activeCase={activeCase}
+        />
+        <div className="sos-content">
+          <PortalTopbar onMenuClick={() => setSidebarOpen(true)} />
+          <main className="sos-page">{children}</main>
+        </div>
       </div>
-    </div>
+    </ClientSessionContext.Provider>
   );
 }

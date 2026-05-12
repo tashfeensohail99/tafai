@@ -11,12 +11,14 @@ import {
   Users,
   Wallet,
   ClipboardList,
+  User,
 } from 'lucide-react';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
+import { destinationForUser, login } from '@/lib/session';
 
-type Role = 'ADMIN' | 'SALES' | 'FINANCE' | 'PROCESSING';
+type Role = 'ADMIN' | 'SALES' | 'FINANCE' | 'PROCESSING' | 'CLIENT';
 
 const ROLES: Array<{
   key: Role;
@@ -29,26 +31,18 @@ const ROLES: Array<{
   { key: 'FINANCE', label: 'Finance', caption: 'Verify payments and review receipts', Icon: Wallet, accent: '#10b981' },
   { key: 'PROCESSING', label: 'Processing', caption: 'Handle case documents and submissions', Icon: ClipboardList, accent: '#0ea5e9' },
   { key: 'ADMIN', label: 'Admin', caption: 'System control & assignments', Icon: ShieldCheck, accent: '#ef4444' },
+  { key: 'CLIENT', label: 'Client', caption: 'Track your case, upload documents', Icon: User, accent: '#8b5cf6' },
 ];
 
-// Mock test credentials for the staging environment.
-// In production these come from real auth + RBAC; for the moment any
-// email/password under the matching role lets you in.
+// Staging convenience: clicking a role tile auto-fills these. They MUST match
+// rows seeded in prisma/seed.ts. Real login still goes through /auth/login.
 const TEST_CREDENTIALS: Record<Role, { email: string; password: string; name: string }> = {
   SALES:      { email: 'awais.q@tafsheen.com',  password: 'sales123',     name: 'Awais Q.' },
   FINANCE:    { email: 'hassan.f@tafsheen.com', password: 'finance123',   name: 'Hassan F.' },
   PROCESSING: { email: 'sara.p@tafsheen.com',   password: 'processing123', name: 'Sara P.' },
   ADMIN:      { email: 'admin@tafsheen.com',    password: 'admin123',     name: 'Admin' },
+  CLIENT:     { email: 'ali.hassan@example.com', password: 'client123',   name: 'Ali Hassan' },
 };
-
-function destinationFor(role: Role): Route {
-  switch (role) {
-    case 'ADMIN':      return '/admin' as Route;
-    case 'FINANCE':    return '/finance' as Route;
-    case 'PROCESSING': return '/processing' as Route;
-    case 'SALES':      return '/sales' as Route;
-  }
-}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -72,11 +66,13 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
 
-    // Mock auth — go straight to the selected portal
-    setTimeout(() => {
+    try {
+      const user = await login(email, password);
+      router.replace(destinationForUser(user) as Route);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed');
       setLoading(false);
-      router.replace(destinationFor(role));
-    }, 600);
+    }
   }
 
   return (
@@ -257,6 +253,10 @@ export default function LoginPage() {
                 <div>
                   <strong style={{ color: 'var(--sos-text-primary)' }}>Admin:</strong>{' '}
                   admin@tafsheen.com / admin123
+                </div>
+                <div>
+                  <strong style={{ color: 'var(--sos-text-primary)' }}>Client:</strong>{' '}
+                  ali.hassan@example.com / client123
                 </div>
               </div>
             </div>

@@ -29,6 +29,8 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL=https://backend-production-5a89.up.railway.app
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
+# Ensure public dir exists even if empty (required by Next.js standalone COPY)
+RUN mkdir -p public
 RUN npm run build
 
 

@@ -15,8 +15,6 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@tashfeen/shared-types": "*",
-    "@tashfeen/shared-utils": "*",
     "@types/node": "^25.6.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

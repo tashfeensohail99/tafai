@@ -222,6 +222,94 @@ export function getDocumentSignedUrl(
   );
 }
 
+// ---------- Appointments --------------------------------------------------
+
+export type AppointmentStatus =
+  | 'SCHEDULED'
+  | 'CONFIRMED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'NO_SHOW'
+  | 'RESCHEDULED';
+
+export interface PortalAppointment {
+  id: string;
+  title: string;
+  appointmentType: string;
+  scheduledAt: string;
+  durationMinutes: number;
+  location: string | null;
+  meetingLink: string | null;
+  instructions: string | null;
+  status: AppointmentStatus;
+  reminderSent: boolean;
+  completedAt: string | null;
+  cancellationReason: string | null;
+}
+
+export function getAppointments(): Promise<PortalAppointment[]> {
+  return apiFetch<PortalAppointment[]>('/portal/appointments');
+}
+
+// ---------- Notifications -------------------------------------------------
+
+export type NotificationKind =
+  | 'UNREAD_MESSAGE'
+  | 'MISSING_DOCUMENT'
+  | 'REJECTED_DOCUMENT'
+  | 'EXPIRING_DOCUMENT'
+  | 'UPCOMING_APPOINTMENT'
+  | 'STAGE_CHANGE';
+
+export interface PortalNotification {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  createdAt: string;
+  caseId: string | null;
+  severity: 'info' | 'warning' | 'danger' | 'success';
+  href: string;
+}
+
+export function getNotifications(): Promise<PortalNotification[]> {
+  return apiFetch<PortalNotification[]>('/portal/notifications');
+}
+
+// ---------- Profile -------------------------------------------------------
+
+export interface PortalProfile {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string;
+  alternatePhone: string | null;
+  nationality: string | null;
+  dateOfBirth: string | null;
+  passportNumberMasked: string | null;
+  cnicMasked: string | null;
+  address: string | null;
+  status: string;
+  serviceType: string | null;
+  targetCountry: string | null;
+  assignedSalesPersonName: string | null;
+}
+
+export function getProfile(): Promise<PortalProfile> {
+  return apiFetch<PortalProfile>('/portal/profile');
+}
+
+export function requestProfileUpdate(input: {
+  subject?: string;
+  content: string;
+}): Promise<unknown> {
+  return apiFetch<unknown>('/portal/profile/update-request', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 // ---------- Presentation helpers (client-friendly labels) ------------------
 
 export const CLIENT_STAGE_LABEL: Record<ProcessingCaseStage, string> = {

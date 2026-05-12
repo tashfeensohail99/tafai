@@ -1,6 +1,8 @@
 'use client';
 
 import {
+  Bell,
+  CalendarClock,
   CheckCircle2,
   Clock,
   FileText,
@@ -8,6 +10,7 @@ import {
   LogOut,
   MessageSquare,
   Menu,
+  User,
   X,
 } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
@@ -74,7 +77,10 @@ function PortalSidebar({
         caption: 'Your officer and updates',
         badge: activeCase && activeCase.unreadMessages > 0 ? activeCase.unreadMessages : undefined,
       },
+      { label: 'Appointments', href: '/portal/case/appointments', icon: CalendarClock, caption: 'Biometrics, medical, interview' },
       { label: 'Timeline', href: '/portal/case/timeline', icon: Clock, caption: 'Case history' },
+      { label: 'Notifications', href: '/portal/notifications', icon: Bell, caption: 'Everything that needs attention' },
+      { label: 'Profile', href: '/portal/profile', icon: User, caption: 'Your information' },
     ],
     [activeCase],
   );
@@ -203,7 +209,10 @@ function PortalTopbar({ onMenuClick }: { onMenuClick: () => void }) {
     if (path === '/portal/case') return { title: 'My Case', subtitle: 'Your application overview' };
     if (path.startsWith('/portal/case/documents')) return { title: 'Documents', subtitle: 'Upload and track your documents' };
     if (path.startsWith('/portal/case/messages')) return { title: 'Messages', subtitle: 'Communication with your officer' };
+    if (path.startsWith('/portal/case/appointments')) return { title: 'Appointments', subtitle: 'Biometrics, medical, interview, office visits' };
     if (path.startsWith('/portal/case/timeline')) return { title: 'Case Timeline', subtitle: 'History of your application' };
+    if (path.startsWith('/portal/notifications')) return { title: 'Notifications', subtitle: 'Everything that needs your attention' };
+    if (path.startsWith('/portal/profile')) return { title: 'Profile', subtitle: 'Your personal information' };
     return { title: 'Client Portal', subtitle: '' };
   }
 

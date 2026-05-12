@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AppointmentStatus,
   CommunicationDirection,
   CommunicationMessageType,
   DocumentItemStatus,
@@ -673,5 +674,337 @@ export class PortalService {
 
     events.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     return events;
+  }
+
+  // -------------------------------------------------------------------------
+  // APPOINTMENTS
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /portal/appointments
+   * Every appointment for this client. Read-only — clients can't schedule
+   * from the portal in Phase 1. Returns past + upcoming so the page can
+   * group them.
+   */
+  async getAppointments(user: RequestUser) {
+    const clientId = await this.resolveClientId(user);
+    const rows = await this.prisma.appointment.findMany({
+      where: { clientId },
+      orderBy: { scheduledAt: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        appointmentType: true,
+        scheduledAt: true,
+        durationMinutes: true,
+        location: true,
+        meetingLink: true,
+        notes: true,
+        status: true,
+        reminderSentAt: true,
+        completedAt: true,
+        cancellationReason: true,
+      },
+    });
+    return rows.map((a) => ({
+      id: a.id,
+      title: a.title,
+      appointmentType: a.appointmentType,
+      scheduledAt: a.scheduledAt,
+      durationMinutes: a.durationMinutes,
+      location: a.location,
+      meetingLink: a.meetingLink,
+      instructions: a.notes,
+      status: a.status,
+      reminderSent: a.reminderSentAt !== null,
+      completedAt: a.completedAt,
+      cancellationReason: a.cancellationReason,
+    }));
+  }
+
+  // -------------------------------------------------------------------------
+  // NOTIFICATIONS (derived)
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /portal/notifications
+   * Aggregates several existing signals into a single feed:
+   *  - unread officer messages
+   *  - missing documents
+   *  - rejected documents
+   *  - documents expiring within 60 days (or already expired)
+   *  - upcoming appointments (next 30 days)
+   *  - recent stage changes (last 14 days)
+   *
+   * No persistence layer yet — we'll upgrade to a real ClientNotification
+   * table when we want push / read-state across devices. For now, the UI
+   * recomputes on each visit.
+   */
+  async getNotifications(user: RequestUser) {
+    const clientId = await this.resolveClientId(user);
+    const now = new Date();
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const in60Days = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+    const cases = await this.prisma.processingCase.findMany({
+      where: { clientId, cancelledAt: null },
+      select: { id: true, service: true, targetCountry: true },
+    });
+    const caseIds = cases.map((c) => c.id);
+
+    const [unreadMessages, missingDocs, rejectedDocs, expiringDocs, upcomingAppts, recentStages] =
+      await Promise.all([
+        this.prisma.caseCommunication.findMany({
+          where: {
+            caseId: { in: caseIds },
+            direction: CommunicationDirection.OFFICER_TO_CLIENT,
+            readByClientAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          select: { id: true, caseId: true, subject: true, createdAt: true },
+        }),
+        this.prisma.caseDocumentItem.findMany({
+          where: { caseId: { in: caseIds }, status: DocumentItemStatus.NOT_SUBMITTED },
+          select: { id: true, caseId: true, documentName: true, requestDeadline: true },
+        }),
+        this.prisma.caseDocumentItem.findMany({
+          where: {
+            caseId: { in: caseIds },
+            status: { in: [DocumentItemStatus.REJECTED, DocumentItemStatus.REPLACEMENT_REQUIRED] },
+          },
+          select: { id: true, caseId: true, documentName: true, updatedAt: true },
+        }),
+        this.prisma.caseDocumentItem.findMany({
+          where: {
+            caseId: { in: caseIds },
+            validityExpiryDate: { not: null, lte: in60Days },
+            status: { notIn: [DocumentItemStatus.WAIVED] },
+          },
+          select: { id: true, caseId: true, documentName: true, validityExpiryDate: true },
+        }),
+        this.prisma.appointment.findMany({
+          where: {
+            clientId,
+            scheduledAt: { gte: now, lte: in30Days },
+            status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+          },
+          orderBy: { scheduledAt: 'asc' },
+          take: 10,
+          select: {
+            id: true,
+            title: true,
+            appointmentType: true,
+            scheduledAt: true,
+            location: true,
+          },
+        }),
+        this.prisma.processingCaseStageHistory.findMany({
+          where: { caseId: { in: caseIds }, createdAt: { gte: fourteenDaysAgo } },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+          select: { id: true, caseId: true, toStage: true, createdAt: true },
+        }),
+      ]);
+
+    type NotificationKind =
+      | 'UNREAD_MESSAGE'
+      | 'MISSING_DOCUMENT'
+      | 'REJECTED_DOCUMENT'
+      | 'EXPIRING_DOCUMENT'
+      | 'UPCOMING_APPOINTMENT'
+      | 'STAGE_CHANGE';
+
+    interface Notification {
+      id: string;
+      kind: NotificationKind;
+      title: string;
+      body: string;
+      createdAt: Date;
+      caseId: string | null;
+      severity: 'info' | 'warning' | 'danger' | 'success';
+      href: string;
+    }
+
+    const out: Notification[] = [];
+
+    for (const m of unreadMessages) {
+      out.push({
+        id: `msg-${m.id}`,
+        kind: 'UNREAD_MESSAGE',
+        title: 'New message from your officer',
+        body: m.subject ?? 'Open the messages tab to read it.',
+        createdAt: m.createdAt,
+        caseId: m.caseId,
+        severity: 'info',
+        href: '/portal/case/messages',
+      });
+    }
+
+    for (const d of missingDocs) {
+      out.push({
+        id: `miss-${d.id}`,
+        kind: 'MISSING_DOCUMENT',
+        title: `Please upload: ${d.documentName}`,
+        body: d.requestDeadline
+          ? `Deadline: ${d.requestDeadline.toISOString().slice(0, 10)}`
+          : 'This document is required to move your case forward.',
+        createdAt: now,
+        caseId: d.caseId,
+        severity: 'warning',
+        href: '/portal/case/documents',
+      });
+    }
+
+    for (const d of rejectedDocs) {
+      out.push({
+        id: `rej-${d.id}`,
+        kind: 'REJECTED_DOCUMENT',
+        title: `Re-upload required: ${d.documentName}`,
+        body: 'See the documents tab for the correction reason and re-upload a fresh copy.',
+        createdAt: d.updatedAt,
+        caseId: d.caseId,
+        severity: 'danger',
+        href: '/portal/case/documents',
+      });
+    }
+
+    for (const d of expiringDocs) {
+      const expiry = d.validityExpiryDate!;
+      const expired = expiry.getTime() < now.getTime();
+      out.push({
+        id: `exp-${d.id}`,
+        kind: 'EXPIRING_DOCUMENT',
+        title: expired
+          ? `${d.documentName} has expired`
+          : `${d.documentName} expires on ${expiry.toISOString().slice(0, 10)}`,
+        body: expired
+          ? 'Please upload a renewed copy as soon as possible.'
+          : 'Please upload a renewed copy before submission.',
+        createdAt: now,
+        caseId: d.caseId,
+        severity: expired ? 'danger' : 'warning',
+        href: '/portal/case/documents',
+      });
+    }
+
+    for (const a of upcomingAppts) {
+      out.push({
+        id: `appt-${a.id}`,
+        kind: 'UPCOMING_APPOINTMENT',
+        title: a.title,
+        body: `${a.appointmentType.replace(/_/g, ' ').toLowerCase()} on ${a.scheduledAt.toISOString().slice(0, 16).replace('T', ' ')}${a.location ? ` — ${a.location}` : ''}`,
+        createdAt: a.scheduledAt,
+        caseId: null,
+        severity: 'info',
+        href: '/portal/case/appointments',
+      });
+    }
+
+    for (const s of recentStages) {
+      out.push({
+        id: `stage-${s.id}`,
+        kind: 'STAGE_CHANGE',
+        title: `Case moved to ${s.toStage.replace(/_/g, ' ').toLowerCase()}`,
+        body: 'See the case timeline for details.',
+        createdAt: s.createdAt,
+        caseId: s.caseId,
+        severity: 'success',
+        href: '/portal/case/timeline',
+      });
+    }
+
+    out.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
+  // PROFILE
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /portal/profile
+   * Read-only profile fields. Sensitive identifiers like passportNumber and
+   * cnic are returned masked so they don't leak into screenshots/dev tools
+   * if the client is on a shared device.
+   */
+  async getProfile(user: RequestUser) {
+    const clientId = await this.resolveClientId(user);
+    const client = await this.prisma.client.findUnique({
+      where: { id: clientId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        alternatePhone: true,
+        nationality: true,
+        dateOfBirth: true,
+        passportNumber: true,
+        cnic: true,
+        address: true,
+        status: true,
+        serviceType: true,
+        targetCountry: true,
+        assignedEmployee: {
+          select: { firstName: true, lastName: true },
+        },
+      },
+    });
+    if (!client) throw new NotFoundException('Profile not found');
+
+    const mask = (v: string | null) =>
+      v && v.length > 4 ? `••••${v.slice(-4)}` : v ?? null;
+
+    return {
+      id: client.id,
+      firstName: client.firstName,
+      lastName: client.lastName,
+      email: client.email,
+      phone: client.phone,
+      alternatePhone: client.alternatePhone,
+      nationality: client.nationality,
+      dateOfBirth: client.dateOfBirth,
+      passportNumberMasked: mask(client.passportNumber),
+      cnicMasked: mask(client.cnic),
+      address: client.address,
+      status: client.status,
+      serviceType: client.serviceType,
+      targetCountry: client.targetCountry,
+      assignedSalesPersonName: client.assignedEmployee
+        ? `${client.assignedEmployee.firstName} ${client.assignedEmployee.lastName}`.trim()
+        : null,
+    };
+  }
+
+  /**
+   * POST /portal/profile/update-request
+   * Phase 1 implementation: sends a CLIENT_TO_OFFICER message describing
+   * the requested change. Phase 2 will introduce a structured
+   * ClientProfileUpdateRequest table with explicit approve/reject states.
+   */
+  async requestProfileUpdate(dto: PortalSendMessageDto, user: RequestUser) {
+    const clientId = await this.resolveClientId(user);
+    // Pick the most recent active case to attach the message to.
+    const activeCase = await this.prisma.processingCase.findFirst({
+      where: { clientId, cancelledAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!activeCase) {
+      throw new BadRequestException(
+        'No active case found. Profile change requests can only be raised against an active case.',
+      );
+    }
+    return this.sendMessage(
+      activeCase.id,
+      {
+        subject: dto.subject ?? 'Profile update request',
+        content: dto.content,
+      },
+      user,
+    );
   }
 }

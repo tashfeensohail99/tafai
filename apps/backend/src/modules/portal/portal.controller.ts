@@ -181,4 +181,60 @@ export class PortalController {
   ) {
     return this.portalService.getTimeline(caseId, user);
   }
+
+  // -------------------------------------------------------------------------
+  // APPOINTMENTS
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /portal/appointments
+   * All appointments belonging to this client across all their cases.
+   * Read-only: clients can't schedule from the portal in Phase 1.
+   */
+  @Get('appointments')
+  getAppointments(@CurrentUser() user: RequestUser) {
+    return this.portalService.getAppointments(user);
+  }
+
+  // -------------------------------------------------------------------------
+  // NOTIFICATIONS (derived)
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /portal/notifications
+   * Aggregated feed — unread messages, missing docs, rejected docs, expiring
+   * docs, upcoming appointments, recent stage changes. No new table; this is
+   * computed from existing data on each request.
+   */
+  @Get('notifications')
+  getNotifications(@CurrentUser() user: RequestUser) {
+    return this.portalService.getNotifications(user);
+  }
+
+  // -------------------------------------------------------------------------
+  // PROFILE
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /portal/profile
+   * Read-only client profile.
+   */
+  @Get('profile')
+  getProfile(@CurrentUser() user: RequestUser) {
+    return this.portalService.getProfile(user);
+  }
+
+  /**
+   * POST /portal/profile/update-request
+   * Sends a free-form update request as a CLIENT_TO_OFFICER message on the
+   * client's active case. Phase 1 stand-in for a structured
+   * ClientProfileUpdateRequest table.
+   */
+  @Post('profile/update-request')
+  requestProfileUpdate(
+    @Body() dto: PortalSendMessageDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.portalService.requestProfileUpdate(dto, user);
+  }
 }

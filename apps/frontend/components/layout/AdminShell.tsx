@@ -60,6 +60,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
   {
     label: 'People',
     items: [
+      { label: 'Users', href: '/admin/users', icon: UserRoundCog, permissionKey: 'users.view_all' },
       { label: 'Employees', href: '/admin/employees', icon: UserRoundCog, permissionKey: 'employees.view_all' },
       { label: 'Roles', href: '/admin/roles', icon: ShieldCheck, permissionKey: 'settings.manage' },
       { label: 'Departments', href: '/admin/departments', icon: Building2, permissionKey: 'settings.manage' },

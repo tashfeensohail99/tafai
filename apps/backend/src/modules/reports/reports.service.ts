@@ -1,5 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { AppointmentStatus, AuditAction, CaseStatus, DocumentStatus, InvoiceStatus, LeadStatus, PaymentStatus } from '@prisma/client';
+import {
+  AppointmentStatus,
+  AuditAction,
+  CaseStatus,
+  DocumentStatus,
+  FollowUpStatus,
+  InvoiceStatus,
+  LeadStatus,
+  PaymentStatus,
+  ProcessingCaseStage,
+  WhatsAppThreadStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 @Injectable()
@@ -7,32 +18,58 @@ export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getDashboardSummary() {
+    const now = new Date();
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
     const tomorrowStart = new Date(todayStart);
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
 
+    const monthStart = new Date(todayStart);
+    monthStart.setDate(1);
+
+    // Single $transaction keeps every count consistent with the same snapshot
+    // and minimises round-trips against the pooled Supabase connection.
     const [
       totalLeads,
-      newLeads,
+      newLeadsStatus,
       leadsToday,
+      assignedLeads,
+      unassignedLeads,
       activeClients,
       openCases,
+      pendingProcessingCases,
       pendingDocuments,
       activeEmployees,
       overdueInvoices,
       appointmentsToday,
+      overdueFollowUps,
       auditEventsToday,
+      activeWhatsAppThreads,
+      whatsappUnassigned,
+      paymentsToday,
+      paymentsThisMonth,
     ] = await this.prisma.$transaction([
       this.prisma.lead.count({ where: { deletedAt: null } }),
       this.prisma.lead.count({ where: { deletedAt: null, status: LeadStatus.NEW } }),
       this.prisma.lead.count({
         where: { deletedAt: null, createdAt: { gte: todayStart, lt: tomorrowStart } },
       }),
+      this.prisma.lead.count({
+        where: { deletedAt: null, assignedEmployeeId: { not: null } },
+      }),
+      this.prisma.lead.count({
+        where: { deletedAt: null, assignedEmployeeId: null },
+      }),
       this.prisma.client.count({ where: { deletedAt: null } }),
       this.prisma.case.count({
         where: { deletedAt: null, status: { in: [CaseStatus.OPEN, CaseStatus.IN_PROGRESS, CaseStatus.DOCUMENTATION, CaseStatus.PROCESSING, CaseStatus.SUBMITTED, CaseStatus.ON_HOLD] } },
+      }),
+      this.prisma.processingCase.count({
+        where: {
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          cancelledAt: null,
+        },
       }),
       this.prisma.clientDocument.count({
         where: {
@@ -47,12 +84,68 @@ export class ReportsService {
           status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
         },
       }),
+      this.prisma.followUp.count({
+        where: { status: FollowUpStatus.OPEN, dueAt: { lt: now } },
+      }),
       this.prisma.auditLog.count({ where: { createdAt: { gte: todayStart, lt: tomorrowStart } } }),
+      this.prisma.whatsAppThread.count({
+        where: { status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] } },
+      }),
+      this.prisma.whatsAppThread.count({
+        where: {
+          status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
+          lead: { assignedEmployeeId: null },
+        },
+      }),
+      this.prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: {
+          status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
+          verifiedAt: { gte: todayStart, lt: tomorrowStart },
+        },
+      }),
+      this.prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: {
+          status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
+          verifiedAt: { gte: monthStart },
+        },
+      }),
     ]);
 
+    // Sales team performance — top 5 agents by lead count (last 30 days)
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const topAgentsRaw = await this.prisma.lead.groupBy({
+      by: ['assignedEmployeeId'],
+      where: {
+        deletedAt: null,
+        assignedEmployeeId: { not: null },
+        createdAt: { gte: thirtyDaysAgo },
+      },
+      _count: { _all: true },
+      orderBy: { _count: { assignedEmployeeId: 'desc' } },
+      take: 5,
+    });
+    const employees = topAgentsRaw.length
+      ? await this.prisma.employee.findMany({
+          where: { id: { in: topAgentsRaw.map((r) => r.assignedEmployeeId!) } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const employeeById = new Map(employees.map((e) => [e.id, e]));
+    const topAgents = topAgentsRaw.map((r) => {
+      const e = employeeById.get(r.assignedEmployeeId!);
+      return {
+        employeeId: r.assignedEmployeeId,
+        name: e ? `${e.firstName} ${e.lastName}`.trim() : 'Unknown',
+        leadCount: r._count._all,
+      };
+    });
+
     return {
+      // Legacy fields — keep so existing UI doesn't break.
       totalLeads,
-      newLeads,
+      newLeads: newLeadsStatus,
       leadsToday,
       activeClients,
       openCases,
@@ -61,6 +154,19 @@ export class ReportsService {
       overdueInvoices,
       appointmentsToday,
       auditEventsToday,
+      // New widgets per the admin spec.
+      assignedLeads,
+      unassignedLeads,
+      activeWhatsAppThreads,
+      whatsappUnassigned,
+      pendingProcessingCases,
+      overdueFollowUps,
+      paymentsTodayAmount: Number(paymentsToday._sum.amount ?? 0),
+      paymentsThisMonthAmount: Number(paymentsThisMonth._sum.amount ?? 0),
+      // Candidate records — module not yet built, surfaced as 0 so the
+      // dashboard widget renders the placeholder without a runtime error.
+      candidateRecords: 0,
+      topAgents,
     };
   }
 

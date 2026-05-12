@@ -164,7 +164,7 @@ export function UsersAdminPage() {
         body: JSON.stringify({ newPassword: resetPassword }),
       });
       setResetSuccess(
-        `Temporary password set for ${resetTarget.email}. Share it securely — they'll be forced to change it on next login.`,
+        `Temporary password set for ${resetTarget.email}. Share it securely â€” they'll be forced to change it on next login.`,
       );
       setResetTarget(null);
       setResetPassword('');
@@ -294,7 +294,7 @@ export function UsersAdminPage() {
     <div className="space-y-6">
       <PageHeader
         title="Users"
-        description="Manage every user account on the platform — admins, staff, partners, and client portal logins."
+        description="Manage every user account on the platform â€” admins, staff, partners, and client portal logins."
         actions={
           canCreate ? (
             <button
@@ -372,7 +372,7 @@ export function UsersAdminPage() {
                 Cancel
               </button>
               <button type="submit" className="sos-btn sos-btn--primary" disabled={submitting}>
-                {submitting ? 'Creating…' : 'Create user'}
+                {submitting ? 'Creatingâ€¦' : 'Create user'}
               </button>
             </div>
           </form>
@@ -433,7 +433,7 @@ export function UsersAdminPage() {
                 disabled={resetSaving}
                 onClick={() => void handleResetPassword()}
               >
-                {resetSaving ? 'Resetting…' : 'Reset password'}
+                {resetSaving ? 'Resettingâ€¦' : 'Reset password'}
               </button>
             </div>
           </div>
@@ -473,7 +473,7 @@ export function UsersAdminPage() {
                 disabled={rolesSaving}
                 onClick={() => void handleAssignRoles()}
               >
-                {rolesSaving ? 'Saving…' : 'Save roles'}
+                {rolesSaving ? 'Savingâ€¦' : 'Save roles'}
               </button>
             </div>
           </div>
@@ -487,7 +487,7 @@ export function UsersAdminPage() {
 
 function suggestPassword(): string {
   // 12-char readable-ish password: 2 short syllables + 4 digits + symbol.
-  // Not crypto-grade — just to save the admin the typing.
+  // Not crypto-grade â€” just to save the admin the typing.
   const syllables = ['Kara', 'Lior', 'Nimi', 'Soja', 'Veka', 'Ravi', 'Mosh', 'Tara', 'Yusu', 'Edra'];
   const a = syllables[Math.floor(Math.random() * syllables.length)];
   const b = syllables[Math.floor(Math.random() * syllables.length)];
@@ -615,7 +615,7 @@ function ModalShell({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.55)',
+        background: 'var(--sos-bg-overlay)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -651,7 +651,7 @@ function ModalShell({
             className="sos-btn sos-btn--ghost sos-btn--sm"
             aria-label="Close"
           >
-            ✕
+            âœ•
           </button>
         </header>
         <div style={{ padding: 18 }}>{children}</div>

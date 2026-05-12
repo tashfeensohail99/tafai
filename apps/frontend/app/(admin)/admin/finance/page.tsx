@@ -123,7 +123,7 @@ const initialPaymentForm: PaymentFormState = {
 
 const invoiceColumns: DataTableColumn<InvoiceRow>[] = [
   { key: 'invoice', header: 'Invoice', render: (row) => row.invoiceNumber },
-  { key: 'owner', header: 'Owner', render: (row) => row.lead ? `${row.lead.firstName} ${row.lead.lastName}` : row.client ? `${row.client.firstName} ${row.client.lastName}` : 'â€”' },
+  { key: 'owner', header: 'Owner', render: (row) => row.lead ? `${row.lead.firstName} ${row.lead.lastName}` : row.client ? `${row.client.firstName} ${row.client.lastName}` : 'Ã¢â‚¬â€' },
   { key: 'total', header: 'Total', render: (row) => `${row.currency} ${row.totalAmount}` },
   { key: 'paid', header: 'Paid', render: (row) => `${row.currency} ${row.paidAmount}` },
   { key: 'payments', header: 'Payments', render: (row) => `${row.payments?.length ?? 0}` },
@@ -161,12 +161,12 @@ export default function FinancePage() {
       setHandovers(handoverRows);
       setLeadOptions(leadRows.filter((lead) => lead.status !== 'CONVERTED'));
       setClientOptions(clientRows);
-      // Module-wise revenue rollup â€” non-fatal if it fails.
+      // Module-wise revenue rollup Ã¢â‚¬â€ non-fatal if it fails.
       try {
         const r = await apiFetch<RevenueRollup>('/finance/revenue/by-service');
         setRevenue(r);
       } catch {
-        // surface ignored â€” the page still works without the rollup
+        // surface ignored Ã¢â‚¬â€ the page still works without the rollup
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load finance page');
@@ -403,18 +403,18 @@ export default function FinancePage() {
             columns={[
               { key: 'lead', header: 'Lead', render: (row: HandoverRow) => `${row.lead.firstName} ${row.lead.lastName}` },
               { key: 'amount', header: 'Amount', render: (row: HandoverRow) => `${row.currency} ${row.submittedAmount}` },
-              { key: 'method', header: 'Method', render: (row: HandoverRow) => row.paymentMethod ?? 'â€”' },
+              { key: 'method', header: 'Method', render: (row: HandoverRow) => row.paymentMethod ?? 'Ã¢â‚¬â€' },
               { key: 'receipt', header: 'Receipt', render: (row: HandoverRow) => row.receiptDownloadUrl ? <a href={row.receiptDownloadUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--sos-brand-primary)' }}>{row.receiptFileName}</a> : row.receiptFileName },
               { key: 'invoice', header: 'Invoice', render: (row: HandoverRow) => row.invoice?.invoiceNumber ?? 'Create on review' },
               { key: 'status', header: 'Status', render: (row: HandoverRow) => <StatusBadge type="finance_handover" status={row.status} /> },
-              { key: 'notes', header: 'Finance Notes', render: (row: HandoverRow) => row.financeNotes ?? 'â€”' },
+              { key: 'notes', header: 'Finance Notes', render: (row: HandoverRow) => row.financeNotes ?? 'Ã¢â‚¬â€' },
               {
                 key: 'actions',
                 header: 'Actions',
                 render: (row: HandoverRow) => (
                   <div className="flex flex-wrap gap-2">
                     {['SUBMITTED', 'REJECTED'].includes(row.status) ? (
-                      <button onClick={() => void reviewHandover(row.id, 'MARK_IN_REVIEW')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--color-border-strong)', color: 'var(--sos-text-primary)' }}>
+                      <button onClick={() => void reviewHandover(row.id, 'MARK_IN_REVIEW')} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--sos-border-strong)', color: 'var(--sos-text-primary)' }}>
                         Review
                       </button>
                     ) : null}
@@ -443,9 +443,9 @@ export default function FinancePage() {
           <DataTable
             columns={[
               { key: 'invoice', header: 'Invoice', render: (row: QueueRow) => row.invoice.invoiceNumber },
-              { key: 'owner', header: 'Owner', render: (row: QueueRow) => row.invoice.lead ? `${row.invoice.lead.firstName} ${row.invoice.lead.lastName}` : row.invoice.client ? `${row.invoice.client.firstName} ${row.invoice.client.lastName}` : 'â€”' },
+              { key: 'owner', header: 'Owner', render: (row: QueueRow) => row.invoice.lead ? `${row.invoice.lead.firstName} ${row.invoice.lead.lastName}` : row.invoice.client ? `${row.invoice.client.firstName} ${row.invoice.client.lastName}` : 'Ã¢â‚¬â€' },
               { key: 'amount', header: 'Amount', render: (row: QueueRow) => row.amount },
-              { key: 'method', header: 'Method', render: (row: QueueRow) => row.paymentMethod ?? 'â€”' },
+              { key: 'method', header: 'Method', render: (row: QueueRow) => row.paymentMethod ?? 'Ã¢â‚¬â€' },
               { key: 'status', header: 'Status', render: (row: QueueRow) => <StatusBadge type="payment" status={row.status} /> },
               {
                 key: 'actions',
@@ -542,7 +542,7 @@ function RevenueRollupCard({ data }: { data: RevenueRollup }) {
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{formatCAD(row.allTime)}</div>
                 <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
-                  YTD {formatCAD(row.ytd)} Â· {formatCAD(row.month)} this month
+                  YTD {formatCAD(row.ytd)} Ã‚Â· {formatCAD(row.month)} this month
                 </div>
               </div>
             </div>

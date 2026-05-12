@@ -1,21 +1,27 @@
 /**
  * WhatsApp conversation → sales-employee assignment engine.
  *
- * Algorithm (priority order — see research notes):
+ * Algorithm (priority order):
  *   1. **Sticky.** If the lead's `preferredEmployeeId` is set AND that employee
- *      is currently eligible (whatsappInboxMember + ONLINE + heartbeat fresh
- *      + business is open), assign to them.
- *   2. **Strict round-robin.** Walk eligible employees in deterministic order
- *      (by id) starting after `Organization.rrCursorEmployeeId`. Update cursor.
- *   3. **After-hours / no agents.** Leave the lead unassigned. Caller may
- *      enqueue a retry for the next business open or send an auto-ack template.
+ *      is still in the eligible pool (whatsappInboxMember + isActive),
+ *      assign to them.
+ *   2. **Strict round-robin.** Walk eligible employees in deterministic id
+ *      order, starting after `Organization.rrCursorEmployeeId`. Update cursor.
  *
- * Eligibility for an Employee:
+ * **24/7 assignment — no business-hours or presence gate.** Tashfeen policy:
+ * "we will keep assigning chat to the sale team no stoppage; they will come
+ * back next morning and start the system where they left off." Threads that
+ * arrive after 6 PM are still distributed; agents pick them up in the
+ * morning. Presence (ONLINE / AWAY / OFFLINE) remains as a UI signal but
+ * does not gate routing.
+ *
+ * Business hours ARE still used to pause the first-response SLA clock so it
+ * doesn't tick to red at 11 PM — see `computeSlaDeadline()`.
+ *
+ * Eligibility for an Employee in the round-robin pool:
  *   - isActive = true
  *   - whatsappInboxMember = true
- *   - presenceStatus = ONLINE
- *   - lastActivityAt within HEARTBEAT_WINDOW_MS
- *   - the org's business hours are currently open
+ *   - deletedAt = null
  *
  * Idempotent: if the lead is already assigned, the engine returns without
  * changes. Manual reassignment via the API bypasses this engine entirely.
@@ -28,20 +34,12 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import {
-  PresenceStatus,
   WhatsAppAssignmentReason,
   type Lead,
   type Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
-import {
-  computeSlaDeadline,
-  isWithinBusinessHours,
-  nextBusinessOpen,
-  type BusinessHours,
-} from './business-hours';
-
-const HEARTBEAT_WINDOW_MS = 5 * 60 * 1000;
+import { computeSlaDeadline, type BusinessHours } from './business-hours';
 
 export interface AssignmentOutcome {
   leadId: string;
@@ -121,19 +119,21 @@ export class WhatsAppAssignmentService {
         };
       }
 
-      const open = isWithinBusinessHours(hours, now);
-      if (!open) {
-        const retryAt = nextBusinessOpen(hours, now);
-        this.log.log(
-          { leadId: lead.id, retryAt: retryAt.toISOString() },
-          'assignment: outside business hours; deferred to next open',
-        );
-        return { leadId: lead.id, threadId, assignedEmployeeId: null, reason: null, retryAt };
-      }
+      // Per Tashfeen policy: assignment runs 24/7. Threads received after 6 PM
+      // are still distributed to the team; agents pick them up next morning
+      // where they left off. Business hours are used ONLY for SLA-clock math
+      // (already applied above) and for the after-hours auto-ack template
+      // (separate worker, not gated here). NO business-hours gate here.
+      // Presence is a UI signal, not a routing filter — agents who marked
+      // themselves OFFLINE for the night still get round-robined into their
+      // queue so the morning hand-off works.
 
       const eligible = await this.loadEligibleEmployees(tx, org.organizationId);
       if (eligible.length === 0) {
-        this.log.log({ leadId: lead.id }, 'assignment: no eligible employees online');
+        this.log.log(
+          { leadId: lead.id },
+          'assignment: no eligible employees (no whatsappInboxMember=true active employees)',
+        );
         return { leadId: lead.id, threadId, assignedEmployeeId: null, reason: null, retryAt: null };
       }
 
@@ -226,17 +226,26 @@ export class WhatsAppAssignmentService {
     };
   }
 
+  /**
+   * Eligible-employee pool for round-robin.
+   *
+   * Tashfeen policy is "no stoppage": assignment runs 24/7. Presence is NOT a
+   * routing gate — agents who marked themselves OFFLINE for the night still
+   * receive threads into their queue so they can pick up where they left off
+   * the next morning. Eligibility is just the inbox-member toggle + the
+   * normal soft-delete + isActive flags.
+   *
+   * If you ever want to skip vacationing agents, add a separate
+   * `Employee.outOfOffice` field rather than overloading `presenceStatus`.
+   */
   private async loadEligibleEmployees(
     tx: Prisma.TransactionClient,
     _organizationId: string,
   ): Promise<{ id: string }[]> {
-    const heartbeatFloor = new Date(Date.now() - HEARTBEAT_WINDOW_MS);
     const rows = await tx.employee.findMany({
       where: {
         isActive: true,
         whatsappInboxMember: true,
-        presenceStatus: PresenceStatus.ONLINE,
-        lastActivityAt: { gte: heartbeatFloor },
         deletedAt: null,
       },
       orderBy: { id: 'asc' },

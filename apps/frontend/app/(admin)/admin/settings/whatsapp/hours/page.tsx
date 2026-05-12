@@ -15,7 +15,7 @@ export default function WhatsAppHoursAdminPage() {
       <PageHeader
         eyebrow="WhatsApp · Settings"
         title="Working hours & SLA"
-        description="The routing engine uses these settings to decide which agents can be assigned and when conversations queue for the next business day."
+        description="Working hours are used to pause the first-response SLA clock overnight so it doesn't go red at 11 PM. Assignment itself runs 24/7 — threads received after 6 PM are still distributed to the team; agents pick them up the next morning."
       />
       <GlassCard variant="default" padded="lg">
         <div
@@ -33,17 +33,22 @@ export default function WhatsAppHoursAdminPage() {
           <SettingTile
             label="Working hours"
             value="09:00 — 18:00"
-            hint="Inclusive open, exclusive close."
+            hint="SLA clock pauses outside this window."
           />
           <SettingTile
             label="Working days"
             value="Mon – Sat"
-            hint="Friday off can be added; talk to engineering."
+            hint="SLA pauses on Sundays."
           />
           <SettingTile
             label="First-response SLA"
             value="60 seconds"
-            hint="From inbound message to first agent reply."
+            hint="From inbound message to first agent reply, business-hours-aware."
+          />
+          <SettingTile
+            label="Assignment policy"
+            value="24/7"
+            hint="No business-hours gate. Round-robin runs continuously."
           />
         </div>
         <div

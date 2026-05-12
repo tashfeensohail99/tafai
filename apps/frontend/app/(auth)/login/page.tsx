@@ -6,7 +6,6 @@ import {
   EyeOff,
   Loader2,
   ArrowRight,
-  Sparkles,
   ShieldCheck,
   Users,
   Wallet,
@@ -34,16 +33,6 @@ const ROLES: Array<{
   { key: 'CLIENT', label: 'Client', caption: 'Track your case, upload documents', Icon: User, accent: '#8b5cf6' },
 ];
 
-// Staging convenience: clicking a role tile auto-fills these. They MUST match
-// rows seeded in prisma/seed.ts. Real login still goes through /auth/login.
-const TEST_CREDENTIALS: Record<Role, { email: string; password: string; name: string }> = {
-  SALES:      { email: 'awais.q@tafsheen.com',  password: 'sales123',     name: 'Awais Q.' },
-  FINANCE:    { email: 'hassan.f@tafsheen.com', password: 'finance123',   name: 'Hassan F.' },
-  PROCESSING: { email: 'sara.p@tafsheen.com',   password: 'processing123', name: 'Sara P.' },
-  ADMIN:      { email: 'admin@tafsheen.com',    password: 'admin123',     name: 'Admin' },
-  CLIENT:     { email: 'ali.hassan@example.com', password: 'client123',   name: 'Ali Hassan' },
-};
-
 export default function LoginPage() {
   const router = useRouter();
   const [role, setRole] = useState<Role>('SALES');
@@ -53,11 +42,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Auto-prefill credentials when role changes (staging only)
   function pickRole(next: Role) {
     setRole(next);
-    setEmail(TEST_CREDENTIALS[next].email);
-    setPassword(TEST_CREDENTIALS[next].password);
     setError('');
   }
 
@@ -198,69 +184,6 @@ export default function LoginPage() {
           <p style={{ color: 'var(--sos-text-muted)', fontSize: 14, marginTop: 6 }}>
             Choose your role and use your work credentials.
           </p>
-
-          {/* Staging credentials card — picks role auto-fills email + password */}
-          <div
-            style={{
-              marginTop: 18,
-              padding: '12px 14px',
-              borderRadius: 12,
-              background: 'var(--sos-brand-primary-soft)',
-              border: '1px solid var(--sos-brand-primary-border)',
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 10,
-            }}
-          >
-            <Sparkles
-              size={14}
-              style={{
-                color: 'var(--sos-brand-primary-strong)',
-                marginTop: 3,
-                flexShrink: 0,
-              }}
-            />
-            <div style={{ minWidth: 0, fontSize: 12, lineHeight: 1.55 }}>
-              <div style={{ fontWeight: 700, color: 'var(--sos-text-primary)' }}>
-                Staging — test credentials
-              </div>
-              <div style={{ color: 'var(--sos-text-secondary)', marginTop: 4 }}>
-                Click a role below and the email + password fill in for you.
-                Or use:
-              </div>
-              <div
-                style={{
-                  marginTop: 6,
-                  fontFamily: 'monospace',
-                  fontSize: 11.5,
-                  color: 'var(--sos-text-secondary)',
-                  display: 'grid',
-                  gap: 2,
-                }}
-              >
-                <div>
-                  <strong style={{ color: 'var(--sos-text-primary)' }}>Sales:</strong>{' '}
-                  awais.q@tafsheen.com / sales123
-                </div>
-                <div>
-                  <strong style={{ color: 'var(--sos-text-primary)' }}>Finance:</strong>{' '}
-                  hassan.f@tafsheen.com / finance123
-                </div>
-                <div>
-                  <strong style={{ color: 'var(--sos-text-primary)' }}>Processing:</strong>{' '}
-                  sara.p@tafsheen.com / processing123
-                </div>
-                <div>
-                  <strong style={{ color: 'var(--sos-text-primary)' }}>Admin:</strong>{' '}
-                  admin@tafsheen.com / admin123
-                </div>
-                <div>
-                  <strong style={{ color: 'var(--sos-text-primary)' }}>Client:</strong>{' '}
-                  ali.hassan@example.com / client123
-                </div>
-              </div>
-            </div>
-          </div>
 
           {/* Role grid */}
           <div className="mt-6 grid grid-cols-2 gap-3">

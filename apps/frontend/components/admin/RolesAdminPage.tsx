@@ -166,7 +166,7 @@ export function RolesAdminPage() {
         row.isSystem ? (
           <span style={{ color: 'var(--sos-text-muted)' }}>Locked</span>
         ) : (
-          <button onClick={() => handleEdit(row)} className="rounded-md border px-3 py-1 text-xs font-medium" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
+          <button onClick={() => handleEdit(row)} className="sos-btn sos-btn--ghost sos-btn--sm" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
             Edit
           </button>
         ),
@@ -187,25 +187,25 @@ export function RolesAdminPage() {
         title="Roles"
         description="Manage custom roles and permission matrices for the admin portal."
         actions={
-          <button onClick={resetForm} className="rounded-md px-4 py-2 text-sm font-medium" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
+          <button onClick={resetForm} className="sos-btn sos-btn--primary" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
             {editingRole ? 'Create New Role' : 'New Role'}
           </button>
         }
       />
 
-      <form onSubmit={handleSubmit} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+      <form onSubmit={handleSubmit} className="sos-glass sos-glass--panel" style={{ padding: 24 }}>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Role Key
-            <input required disabled={Boolean(editingRole)} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="rounded-md border px-3 py-2 outline-none disabled:opacity-60" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+            <input required disabled={Boolean(editingRole)} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="sos-input" />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Display Name
-            <input required value={form.displayName} onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+            <input required value={form.displayName} onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))} className="sos-input" />
           </label>
           <label className="md:col-span-2 flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Description
-            <textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} className="min-h-[100px] rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+            <textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} className="sos-textarea" style={{ minHeight: 100 }} />
           </label>
           <label className="flex items-center gap-3 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             <input type="checkbox" checked={form.isActive} onChange={(event) => setForm((current) => ({ ...current, isActive: event.target.checked }))} />
@@ -215,7 +215,7 @@ export function RolesAdminPage() {
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {Object.entries(permissionGroups).map(([moduleName, modulePermissions]) => (
-            <div key={moduleName} className="rounded-lg border p-4" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-app)' }}>
+            <div key={moduleName} className="sos-glass sos-glass--soft" style={{ padding: 16 }}>
               <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide" style={{ color: 'var(--sos-text-muted)' }}>
                 {moduleName}
               </h4>
@@ -239,11 +239,11 @@ export function RolesAdminPage() {
 
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           {editingRole ? (
-            <button type="button" onClick={resetForm} className="w-full rounded-md border px-4 py-2 text-sm font-medium sm:w-auto" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
+            <button type="button" onClick={resetForm} className="sos-btn sos-btn--ghost" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
               Cancel
             </button>
           ) : null}
-          <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
+          <button type="submit" disabled={submitting} className="sos-btn sos-btn--primary" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
             {submitting ? 'Saving...' : editingRole ? 'Save Changes' : 'Create Role'}
           </button>
         </div>

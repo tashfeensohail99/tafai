@@ -277,22 +277,22 @@ export function EmployeesAdminPage() {
     {
       key: 'email',
       header: 'Email',
-      render: (row) => row.user?.email ?? 'â€”',
+      render: (row) => row.user?.email ?? 'Ã¢â‚¬â€',
     },
     {
       key: 'department',
       header: 'Department',
-      render: (row) => row.department?.name ?? 'â€”',
+      render: (row) => row.department?.name ?? 'Ã¢â‚¬â€',
     },
     {
       key: 'branch',
       header: 'Branch',
-      render: (row) => row.branch?.name ?? 'â€”',
+      render: (row) => row.branch?.name ?? 'Ã¢â‚¬â€',
     },
     {
       key: 'status',
       header: 'Status',
-      render: (row) => row.user?.status ?? 'â€”',
+      render: (row) => row.user?.status ?? 'Ã¢â‚¬â€',
     },
     {
       key: 'actions',
@@ -301,14 +301,14 @@ export function EmployeesAdminPage() {
         <div className="flex gap-2">
           <button
             onClick={() => void handleEdit(row.id)}
-            className="rounded-md border px-3 py-1 text-xs font-medium"
+            className="sos-btn sos-btn--ghost sos-btn--sm"
             style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
           >
             Edit
           </button>
           <button
             onClick={() => void handleDeactivateClick(row)}
-            className="rounded-md border px-3 py-1 text-xs font-medium"
+            className="sos-btn sos-btn--ghost sos-btn--sm"
             style={{ borderColor: 'var(--sos-status-danger)', color: 'var(--sos-status-danger)' }}
           >
             Deactivate
@@ -334,7 +334,7 @@ export function EmployeesAdminPage() {
         actions={
           <button
             onClick={resetForm}
-            className="rounded-md px-4 py-2 text-sm font-medium"
+            className="sos-btn sos-btn--primary"
             style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}
           >
             {editing ? 'Create Another Employee' : 'New Employee'}
@@ -342,7 +342,7 @@ export function EmployeesAdminPage() {
         }
       />
 
-      <form onSubmit={handleSubmit} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+      <form onSubmit={handleSubmit} className="sos-glass sos-glass--panel" style={{ padding: 24 }}>
         <div className="mb-4">
           <h3 className="text-lg font-semibold" style={{ color: 'var(--sos-text-primary)' }}>
             {editing ? 'Edit Employee' : 'Create Employee'}
@@ -355,29 +355,29 @@ export function EmployeesAdminPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Email
-            <input required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+            <input required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="sos-input" />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Phone
-            <input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+            <input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className="sos-input" />
           </label>
           {!editing ? (
             <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
               Temporary Password
-              <input required type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+              <input required type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="sos-input" />
             </label>
           ) : null}
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             First Name
-            <input required value={form.firstName} onChange={(event) => setForm((current) => ({ ...current, firstName: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+            <input required value={form.firstName} onChange={(event) => setForm((current) => ({ ...current, firstName: event.target.value }))} className="sos-input" />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Last Name
-            <input required value={form.lastName} onChange={(event) => setForm((current) => ({ ...current, lastName: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }} />
+            <input required value={form.lastName} onChange={(event) => setForm((current) => ({ ...current, lastName: event.target.value }))} className="sos-input" />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Role
-            <select required value={form.roleId} onChange={(event) => setForm((current) => ({ ...current, roleId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+            <select required value={form.roleId} onChange={(event) => setForm((current) => ({ ...current, roleId: event.target.value }))} className="sos-input">
               <option value="">Select role</option>
               {roles.map((role) => (
                 <option key={role.id} value={role.id}>{role.displayName}</option>
@@ -386,7 +386,7 @@ export function EmployeesAdminPage() {
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Department
-            <select value={form.departmentId} onChange={(event) => setForm((current) => ({ ...current, departmentId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+            <select value={form.departmentId} onChange={(event) => setForm((current) => ({ ...current, departmentId: event.target.value }))} className="sos-input">
               <option value="">Unassigned</option>
               {departments.map((department) => (
                 <option key={department.id} value={department.id}>{department.name}</option>
@@ -395,7 +395,7 @@ export function EmployeesAdminPage() {
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
             Branch
-            <select value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))} className="rounded-md border px-3 py-2 outline-none" style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-elevated)' }}>
+            <select value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))} className="sos-input">
               <option value="">Unassigned</option>
               {branches.map((branch) => (
                 <option key={branch.id} value={branch.id}>{branch.name}</option>
@@ -410,7 +410,7 @@ export function EmployeesAdminPage() {
         {editing ? (
           <fieldset
             className="mt-6 rounded-md border px-4 py-4"
-            style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-app)' }}
+           
           >
             <legend className="px-2 text-sm font-semibold" style={{ color: 'var(--sos-text-primary)' }}>
               WhatsApp Inbox
@@ -444,7 +444,7 @@ export function EmployeesAdminPage() {
                 style={{ color: 'var(--sos-text-primary)' }}
               >
                 Skills <span className="text-xs font-normal" style={{ color: 'var(--sos-text-muted)' }}>
-                  (soft routing preference â€” engine prefers but doesn't require a match)
+                  (soft routing preference Ã¢â‚¬â€ engine prefers but doesn't require a match)
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -493,11 +493,11 @@ export function EmployeesAdminPage() {
 
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           {editing ? (
-            <button type="button" onClick={resetForm} className="w-full rounded-md border px-4 py-2 text-sm font-medium sm:w-auto" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
+            <button type="button" onClick={resetForm} className="sos-btn sos-btn--ghost" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
               Cancel
             </button>
           ) : null}
-          <button type="submit" disabled={submitting} className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
+          <button type="submit" disabled={submitting} className="sos-btn sos-btn--primary" style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}>
             {submitting ? 'Saving...' : editing ? 'Save Changes' : 'Create Employee'}
           </button>
         </div>

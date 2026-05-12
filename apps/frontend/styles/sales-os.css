@@ -836,6 +836,14 @@
   box-shadow: var(--sos-shadow-glass-hover);
 }
 
+/* DataTable row hover */
+.sos-data-row:hover {
+  background: var(--sos-surface-2);
+}
+.sos-data-row td {
+  vertical-align: middle;
+}
+
 /* =========================================================
    Typography helpers
    ========================================================= */

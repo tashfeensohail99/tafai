@@ -1,11 +1,14 @@
 import {
-  IsString,
-  IsNotEmpty,
-  IsOptional,
-  MaxLength,
-  IsUUID,
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
 } from 'class-validator';
 import { Gender } from '@prisma/client';
 
@@ -85,4 +88,19 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsUUID()
   designationId?: string;
+
+  // --- WhatsApp inbox membership ------------------------------------------
+  // When true, this employee enters the round-robin pool used by the WhatsApp
+  // assignment engine. Toggle from the Employee admin form.
+  @IsOptional()
+  @IsBoolean()
+  whatsappInboxMember?: boolean;
+
+  // Soft routing preference. Examples: ["UK","Canada","StudentVisa"].
+  // The routing engine prefers (but doesn't strictly require) a skill match.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(20)
+  skills?: string[];
 }

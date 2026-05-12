@@ -43,6 +43,8 @@ interface EmployeeDetail {
   lastName: string;
   departmentId?: string | null;
   branchId?: string | null;
+  whatsappInboxMember?: boolean;
+  skills?: string[];
   user: {
     email: string;
     phone?: string | null;
@@ -60,6 +62,8 @@ interface EmployeeFormState {
   roleId: string;
   departmentId: string;
   branchId: string;
+  whatsappInboxMember: boolean;
+  skills: string[];
 }
 
 const initialForm: EmployeeFormState = {
@@ -71,7 +75,27 @@ const initialForm: EmployeeFormState = {
   roleId: '',
   departmentId: '',
   branchId: '',
+  whatsappInboxMember: false,
+  skills: [],
 };
+
+/**
+ * Canonical list of routing skills offered to admins. Pulled from the
+ * services Tashfeen sells today. New entries can be appended; existing rows
+ * keep whatever value was set even if a skill is later removed from this list.
+ */
+const SKILL_OPTIONS: string[] = [
+  'UK',
+  'Canada',
+  'Australia',
+  'USA',
+  'Schengen',
+  'Student',
+  'Work permit',
+  'Family visa',
+  'Visit visa',
+  'Business immigration',
+];
 
 export function EmployeesAdminPage() {
   const { user } = useAdminSession();
@@ -134,6 +158,8 @@ export function EmployeesAdminPage() {
         roleId: selectedRole?.id ?? '',
         departmentId: detail.departmentId ?? '',
         branchId: detail.branchId ?? '',
+        whatsappInboxMember: detail.whatsappInboxMember ?? false,
+        skills: detail.skills ?? [],
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load employee details');
@@ -190,6 +216,8 @@ export function EmployeesAdminPage() {
             lastName: form.lastName,
             departmentId: form.departmentId || undefined,
             branchId: form.branchId || undefined,
+            whatsappInboxMember: form.whatsappInboxMember,
+            skills: form.skills,
           }),
         });
       } else {
@@ -375,6 +403,91 @@ export function EmployeesAdminPage() {
             </select>
           </label>
         </div>
+
+        {/* ---- WhatsApp Inbox membership + skills ----
+            Only editable in edit mode. On new-employee creation we keep the
+            form lean; admin can flip these on after the row exists. */}
+        {editing ? (
+          <fieldset
+            className="mt-6 rounded-md border px-4 py-4"
+            style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface-muted)' }}
+          >
+            <legend className="px-2 text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+              WhatsApp Inbox
+            </legend>
+
+            <label
+              className="flex cursor-pointer items-start gap-3 text-sm"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              <input
+                type="checkbox"
+                checked={form.whatsappInboxMember}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, whatsappInboxMember: event.target.checked }))
+                }
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                <span className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                  WhatsApp Inbox Member
+                </span>
+                <span className="block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  When on, this employee enters the round-robin pool that receives WhatsApp leads.
+                </span>
+              </span>
+            </label>
+
+            <div className="mt-4">
+              <div
+                className="mb-2 text-sm font-medium"
+                style={{ color: 'var(--color-text-primary)' }}
+              >
+                Skills <span className="text-xs font-normal" style={{ color: 'var(--color-text-muted)' }}>
+                  (soft routing preference — engine prefers but doesn't require a match)
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {SKILL_OPTIONS.map((skill) => {
+                  const selected = form.skills.includes(skill);
+                  return (
+                    <button
+                      type="button"
+                      key={skill}
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          skills: selected
+                            ? current.skills.filter((s) => s !== skill)
+                            : [...current.skills, skill],
+                        }))
+                      }
+                      className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+                      style={{
+                        borderColor: selected
+                          ? 'var(--color-primary-600)'
+                          : 'var(--color-border)',
+                        backgroundColor: selected
+                          ? 'var(--color-primary-50)'
+                          : 'var(--color-surface)',
+                        color: selected
+                          ? 'var(--color-primary-700)'
+                          : 'var(--color-text-secondary)',
+                      }}
+                    >
+                      {skill}
+                    </button>
+                  );
+                })}
+              </div>
+              {form.skills.some((s) => !SKILL_OPTIONS.includes(s)) ? (
+                <div className="mt-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  Custom (legacy): {form.skills.filter((s) => !SKILL_OPTIONS.includes(s)).join(', ')}
+                </div>
+              ) : null}
+            </div>
+          </fieldset>
+        ) : null}
 
         {error ? <p className="mt-4 text-sm" style={{ color: 'var(--color-status-danger)' }}>{error}</p> : null}
 

@@ -80,6 +80,15 @@ export interface PortalDocumentVersion {
   uploadedAt: string;
 }
 
+export interface FriendlyRejection {
+  /** Internal code (audit only — don't render). */
+  code: string;
+  /** Short internal label — admin/officer view. */
+  internalLabel: string;
+  /** Plain-English message for the client. */
+  clientMessage: string;
+}
+
 export interface PortalDocumentItem {
   id: string;
   documentName: string;
@@ -92,7 +101,10 @@ export interface PortalDocumentItem {
   requestDeadline: string | null;
   latestVersion: PortalDocumentVersion | null;
   canUpload: boolean;
+  /** Raw codes — kept for audit, never displayed verbatim. */
   latestRejectionReasonCodes: string[];
+  /** Backend-translated friendly messages. Render these. */
+  latestRejectionMessages: FriendlyRejection[];
 }
 
 export interface PortalMessage {

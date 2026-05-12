@@ -14,6 +14,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { PortalSendMessageDto } from './portal.dto';
+import { describeRejections } from './rejection-messages';
 
 // Accepted MIME types for document uploads
 const ALLOWED_MIME_TYPES = new Set([
@@ -264,12 +265,18 @@ export class PortalService {
       orderBy: [{ criticality: 'asc' }, { sortOrder: 'asc' }],
     });
 
-    return items.map((item) => ({
-      ...item,
-      canUpload: item.status === 'NOT_SUBMITTED' || item.status === 'REJECTED',
-      latestRejectionReasonCodes: item.reviewDecisions[0]?.rejectionReasonCodes ?? [],
-      reviewDecisions: undefined, // strip the raw relation, expose only the mapped field above
-    }));
+    return items.map((item) => {
+      const rawCodes = item.reviewDecisions[0]?.rejectionReasonCodes ?? [];
+      return {
+        ...item,
+        canUpload: item.status === 'NOT_SUBMITTED' || item.status === 'REJECTED',
+        latestRejectionReasonCodes: rawCodes,
+        // Backend-translated friendly messages — frontend renders these only
+        // so internal codes never leak into client-facing UI.
+        latestRejectionMessages: describeRejections(rawCodes),
+        reviewDecisions: undefined, // strip the raw relation
+      };
+    });
   }
 
   /**

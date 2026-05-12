@@ -181,11 +181,14 @@ function UploadModal({
           {doc.description ?? ''}
         </div>
 
-        {doc.latestRejectionReasonCodes.length > 0 ? (
+        {doc.latestRejectionMessages.length > 0 ? (
           <div style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-status-warning-soft)', border: '1px solid var(--sos-status-warning-border)', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
             <AlertTriangle size={15} style={{ color: 'var(--sos-status-warning)', flexShrink: 0, marginTop: '1px' }} />
-            <div style={{ fontSize: '12.5px', color: 'var(--sos-text-primary)' }}>
-              <strong>Correction needed:</strong> {doc.latestRejectionReasonCodes.join(', ')}
+            <div style={{ fontSize: '12.5px', color: 'var(--sos-text-primary)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <strong>Correction needed:</strong>
+              {doc.latestRejectionMessages.map((r) => (
+                <span key={r.code}>{r.clientMessage}</span>
+              ))}
             </div>
           </div>
         ) : null}
@@ -299,8 +302,10 @@ function DocumentRow({
           {doc.latestRejectionReasonCodes.length > 0 ? (
             <div style={{ marginBottom: '8px', padding: '8px 12px', borderRadius: 'var(--sos-radius-sm)', background: 'var(--sos-status-warning-soft)', border: '1px solid var(--sos-status-warning-border)', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
               <AlertTriangle size={14} style={{ color: 'var(--sos-status-warning)', flexShrink: 0, marginTop: '1px' }} />
-              <div style={{ fontSize: '12px', color: 'var(--sos-text-primary)' }}>
-                Reason: {doc.latestRejectionReasonCodes.join(', ')}
+              <div style={{ fontSize: '12px', color: 'var(--sos-text-primary)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {doc.latestRejectionMessages.map((r) => (
+                  <span key={r.code}>{r.clientMessage}</span>
+                ))}
               </div>
             </div>
           ) : null}
@@ -337,6 +342,156 @@ function DocumentRow({
   );
 }
 
+// ---------- Filter logic -------------------------------------------------
+
+type DocFilter = 'ALL' | 'MISSING' | 'REJECTED' | 'EXPIRED' | 'ACCEPTED';
+
+const EXPIRY_WARN_DAYS = 60;
+
+function daysUntil(iso: string | null): number | null {
+  if (!iso) return null;
+  const target = new Date(iso).getTime();
+  const now = Date.now();
+  return Math.ceil((target - now) / (1000 * 60 * 60 * 24));
+}
+
+function isExpiredOrExpiring(doc: PortalDocumentItem): boolean {
+  const days = daysUntil(doc.validityExpiryDate);
+  if (days === null) return false;
+  return days <= EXPIRY_WARN_DAYS;
+}
+
+function matchesFilter(doc: PortalDocumentItem, filter: DocFilter): boolean {
+  switch (filter) {
+    case 'ALL':
+      return true;
+    case 'MISSING':
+      return doc.status === 'NOT_SUBMITTED';
+    case 'REJECTED':
+      return doc.status === 'REJECTED' || doc.status === 'REPLACEMENT_REQUIRED';
+    case 'EXPIRED':
+      return isExpiredOrExpiring(doc);
+    case 'ACCEPTED':
+      return doc.status === 'ACCEPTED' || doc.status === 'CONDITIONAL_ACCEPT';
+  }
+}
+
+function countFor(docs: PortalDocumentItem[], filter: DocFilter): number {
+  return docs.filter((d) => matchesFilter(d, filter)).length;
+}
+
+// ---------- Tab strip ----------------------------------------------------
+
+function DocFilterTabs({
+  docs,
+  active,
+  onChange,
+}: {
+  docs: PortalDocumentItem[];
+  active: DocFilter;
+  onChange: (f: DocFilter) => void;
+}) {
+  const tabs: Array<{ key: DocFilter; label: string }> = [
+    { key: 'ALL', label: 'All' },
+    { key: 'MISSING', label: 'Missing' },
+    { key: 'REJECTED', label: 'Rejected' },
+    { key: 'EXPIRED', label: 'Expired / Expiring' },
+    { key: 'ACCEPTED', label: 'Accepted' },
+  ];
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 6,
+        overflowX: 'auto',
+        paddingBottom: 4,
+        borderBottom: '1px solid var(--sos-border-subtle)',
+      }}
+    >
+      {tabs.map((t) => {
+        const count = countFor(docs, t.key);
+        const isActive = active === t.key;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => onChange(t.key)}
+            style={{
+              padding: '8px 14px',
+              fontSize: 13,
+              fontWeight: 600,
+              border: 'none',
+              borderRadius: '8px 8px 0 0',
+              cursor: 'pointer',
+              background: isActive ? 'var(--sos-brand-primary-soft)' : 'transparent',
+              color: isActive
+                ? 'var(--sos-brand-primary-strong)'
+                : 'var(--sos-text-muted)',
+              borderBottom: isActive
+                ? '2px solid var(--sos-brand-primary)'
+                : '2px solid transparent',
+              whiteSpace: 'nowrap',
+              transition: 'all 150ms',
+            }}
+          >
+            {t.label}
+            <span
+              style={{
+                marginLeft: 6,
+                padding: '1px 7px',
+                borderRadius: 999,
+                background: isActive
+                  ? 'var(--sos-brand-primary)'
+                  : 'var(--sos-surface-hover)',
+                color: isActive ? '#fff' : 'var(--sos-text-muted)',
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              {count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- Expiry banner -----------------------------------------------
+
+function ExpiryBanner({ doc }: { doc: PortalDocumentItem }) {
+  const days = daysUntil(doc.validityExpiryDate);
+  if (days === null) return null;
+  if (days > EXPIRY_WARN_DAYS) return null;
+  const expired = days < 0;
+  return (
+    <div
+      style={{
+        marginBottom: 8,
+        padding: '8px 12px',
+        borderRadius: 'var(--sos-radius-sm)',
+        background: expired ? 'var(--sos-status-danger-soft)' : 'var(--sos-status-warning-soft)',
+        border: `1px solid ${expired ? 'var(--sos-status-danger-border)' : 'var(--sos-status-warning-border)'}`,
+        display: 'flex',
+        gap: 8,
+        alignItems: 'flex-start',
+        fontSize: 12,
+        color: 'var(--sos-text-primary)',
+      }}
+    >
+      <AlertTriangle
+        size={14}
+        style={{ color: expired ? 'var(--sos-status-danger)' : 'var(--sos-status-warning)', flexShrink: 0, marginTop: 1 }}
+      />
+      <span>
+        {expired
+          ? `This document expired ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago. Please upload a renewed copy.`
+          : `This document expires in ${days} day${days === 1 ? '' : 's'} (${fmtDate(doc.validityExpiryDate!)}). Please upload a renewed copy before submission.`}
+      </span>
+    </div>
+  );
+}
+
 // ---------- Page ---------------------------------------------------------
 
 export function ClientDocumentPage() {
@@ -345,6 +500,7 @@ export function ClientDocumentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadTarget, setUploadTarget] = useState<PortalDocumentItem | null>(null);
+  const [filter, setFilter] = useState<DocFilter>('ALL');
 
   const load = useCallback(async () => {
     if (!activeCase) return;
@@ -381,8 +537,7 @@ export function ClientDocumentPage() {
     return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error}</div>;
   }
 
-  const actionRequired = docs.filter((d) => d.canUpload);
-  const notActionRequired = docs.filter((d) => !d.canUpload);
+  const filtered = docs.filter((d) => matchesFilter(d, filter));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -397,31 +552,28 @@ export function ClientDocumentPage() {
 
       <DocProgressBar docs={docs} />
 
-      {actionRequired.length > 0 ? (
-        <GlassCard variant="soft" padded="md" style={{ borderLeft: '3px solid var(--sos-status-warning)' }}>
-          <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--sos-status-warning)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px' }}>
-            Action Required
-          </div>
-          <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginBottom: '8px' }}>
-            {actionRequired.length} document{actionRequired.length !== 1 ? 's' : ''} need
-            {actionRequired.length === 1 ? 's' : ''} your attention
-          </div>
-          {actionRequired.map((doc) => (
-            <DocumentRow key={doc.id} doc={doc} onUpload={setUploadTarget} />
-          ))}
-        </GlassCard>
-      ) : null}
+      <DocFilterTabs docs={docs} active={filter} onChange={setFilter} />
 
       <GlassCard variant="panel" padded="md">
-        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>
-          All documents
-        </div>
-        {notActionRequired.length === 0 ? (
-          <div className="sos-text-muted" style={{ padding: 12, fontSize: 13 }}>
-            No documents yet. Your officer will add the checklist shortly.
+        {filtered.length === 0 ? (
+          <div className="sos-text-muted" style={{ padding: 12, fontSize: 13, textAlign: 'center' }}>
+            {filter === 'MISSING'
+              ? 'No missing documents — every required item has been uploaded.'
+              : filter === 'REJECTED'
+                ? 'No documents need correction right now.'
+                : filter === 'EXPIRED'
+                  ? 'No documents are expired or expiring within 60 days.'
+                  : filter === 'ACCEPTED'
+                    ? 'No documents have been accepted yet.'
+                    : 'No documents yet. Your officer will add the checklist shortly.'}
           </div>
         ) : (
-          notActionRequired.map((doc) => <DocumentRow key={doc.id} doc={doc} onUpload={setUploadTarget} />)
+          filtered.map((doc) => (
+            <div key={doc.id}>
+              {filter === 'EXPIRED' || isExpiredOrExpiring(doc) ? <ExpiryBanner doc={doc} /> : null}
+              <DocumentRow doc={doc} onUpload={setUploadTarget} />
+            </div>
+          ))
         )}
       </GlassCard>
 

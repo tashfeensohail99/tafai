@@ -28,6 +28,7 @@ import {
   Check,
   CheckCheck,
   Clock4,
+  FileText,
   Phone,
   Send,
   Sparkles,
@@ -55,6 +56,7 @@ import {
 import { ConvertToClientModal } from './ConvertToClientModal';
 import { BookAppointmentModal } from './BookAppointmentModal';
 import { AddFollowUpModal } from './AddFollowUpModal';
+import { TemplatePickerModal } from './TemplatePickerModal';
 
 interface Props {
   threadId: string;
@@ -74,6 +76,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
   const [convertOpen, setConvertOpen] = useState(false);
   const [bookOpen, setBookOpen] = useState(false);
   const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -228,6 +231,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
           value={draft}
           onChange={setDraft}
           onSend={handleSend}
+          onOpenTemplate={() => setTemplateOpen(true)}
           disabled={!withinWindow}
           sending={sending}
         />
@@ -281,6 +285,16 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
         defaultAssigneeId={thread.lead?.assignedEmployeeId ?? null}
         onCreated={() => {
           setFollowUpOpen(false);
+          void reload();
+        }}
+      />
+      <TemplatePickerModal
+        open={templateOpen}
+        onClose={() => setTemplateOpen(false)}
+        threadId={thread.id}
+        channelId={thread.channelId}
+        onSent={() => {
+          setTemplateOpen(false);
           void reload();
         }}
       />
@@ -430,6 +444,7 @@ function ChatComposer(props: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
+  onOpenTemplate: () => void;
   disabled: boolean;
   sending: boolean;
 }) {
@@ -459,14 +474,36 @@ function ChatComposer(props: {
             }
           }}
         />
-        <PrimaryButton
-          type="button"
-          onClick={props.onSend}
-          disabled={props.disabled || !props.value.trim() || props.sending}
-          iconRight={<Send size={14} />}
-        >
-          {props.sending ? 'Sending…' : 'Send'}
-        </PrimaryButton>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {props.disabled ? (
+            <PrimaryButton
+              type="button"
+              onClick={props.onOpenTemplate}
+              iconLeft={<FileText size={14} />}
+            >
+              Send template
+            </PrimaryButton>
+          ) : (
+            <>
+              <PrimaryButton
+                type="button"
+                onClick={props.onSend}
+                disabled={!props.value.trim() || props.sending}
+                iconRight={<Send size={14} />}
+              >
+                {props.sending ? 'Sending…' : 'Send'}
+              </PrimaryButton>
+              <GhostButton
+                type="button"
+                onClick={props.onOpenTemplate}
+                size="sm"
+                iconLeft={<FileText size={12} />}
+              >
+                Template
+              </GhostButton>
+            </>
+          )}
+        </div>
       </div>
     </footer>
   );

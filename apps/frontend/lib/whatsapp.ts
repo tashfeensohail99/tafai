@@ -179,6 +179,70 @@ export function sendTemplate(threadId: string, input: {
   });
 }
 
+// ---- Templates catalog --------------------------------------------------
+
+export type WhatsAppTemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+
+/**
+ * Component as it comes from Meta. Each template's `components` field is an
+ * array of these — typically a HEADER, BODY, FOOTER, and optional BUTTONS.
+ */
+export interface WhatsAppTemplateComponent {
+  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS';
+  format?: 'TEXT' | 'IMAGE' | 'DOCUMENT' | 'VIDEO';
+  text?: string;
+  buttons?: Array<{ type: string; text: string; url?: string; phone_number?: string }>;
+  example?: { header_text?: string[]; body_text?: string[][] };
+}
+
+export interface WhatsAppTemplate {
+  id: string;
+  name: string;
+  language: string;
+  category: WhatsAppTemplateCategory;
+  components: WhatsAppTemplateComponent[];
+  qualityRating: string | null;
+}
+
+export function listTemplates(channelId: string): Promise<WhatsAppTemplate[]> {
+  return apiFetch<WhatsAppTemplate[]>(`/whatsapp/channels/${channelId}/templates`);
+}
+
+/**
+ * Extract `{{1}}, {{2}}, …` placeholders from a template body. Returns the
+ * highest index (1-based count) so the picker can render that many inputs.
+ * Meta templates can use placeholders in HEADER and BODY components; for
+ * MVP we render parameters for BODY only (most common).
+ */
+export function countTemplateBodyParams(template: WhatsAppTemplate): number {
+  const body = template.components.find((c) => c.type === 'BODY');
+  if (!body?.text) return 0;
+  const matches = body.text.match(/\{\{(\d+)\}\}/g);
+  if (!matches) return 0;
+  return matches.reduce((max, m) => {
+    const n = Number(m.replace(/[^\d]/g, ''));
+    return Number.isFinite(n) && n > max ? n : max;
+  }, 0);
+}
+
+/**
+ * Compose the Meta `components` payload for a template send given the agent's
+ * parameter inputs. Only emits the BODY component when params exist.
+ */
+export function buildTemplateComponents(
+  template: WhatsAppTemplate,
+  bodyParams: string[],
+): Array<Record<string, unknown>> | undefined {
+  const expected = countTemplateBodyParams(template);
+  if (expected === 0) return undefined;
+  return [
+    {
+      type: 'body',
+      parameters: bodyParams.slice(0, expected).map((text) => ({ type: 'text', text })),
+    },
+  ];
+}
+
 // ---- Presence -----------------------------------------------------------
 
 export function getMyPresence(): Promise<MyPresence> {

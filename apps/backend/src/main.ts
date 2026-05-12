@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { json, raw } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -7,6 +8,12 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug'],
   });
+
+  // Meta WhatsApp webhook signature verification requires the RAW request
+  // body. We mount a raw body parser for that path only; everything else
+  // continues to use JSON parsing.
+  app.use('/whatsapp/webhooks/meta', raw({ type: '*/*', limit: '4mb' }));
+  app.use(json({ limit: '2mb' }));
 
   // Global validation pipe — strips unknown fields, transforms types
   app.useGlobalPipes(

@@ -27,6 +27,7 @@ import { FollowUpsModule } from './modules/follow-ups/follow-ups.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { ProcessingModule } from './modules/processing/processing.module';
 import { PortalModule } from './modules/portal/portal.module';
+import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { PortalModule } from './modules/portal/portal.module';
     AuditLogModule,
     ActivityTimelineModule,
     StorageModule,
+    WhatsAppModule,
   ],
 })
 export class AppModule {}

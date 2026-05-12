@@ -1,10 +1,11 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { type Prisma } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { WhatsAppAssignmentReason, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 
 interface ThreadListOptions {
   status?: 'OPEN' | 'PENDING' | 'RESOLVED' | 'ARCHIVED';
   assignedToMe?: boolean;
+  unassigned?: boolean;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -50,6 +51,9 @@ export class WhatsAppThreadsService {
         return { items: [], nextCursor: null };
       }
       where.lead = { assignedEmployeeId: caller.employeeId };
+    } else if (opts.unassigned) {
+      // Admin-only filter — only meaningful when canViewAll is true.
+      where.lead = { assignedEmployeeId: null };
     }
 
     if (opts.search) {
@@ -149,5 +153,84 @@ export class WhatsAppThreadsService {
       where: { id: threadId },
       data: { unreadCount: 0 },
     });
+  }
+
+  /**
+   * Admin override — route this thread's Lead to a specific employee.
+   * Updates both `Lead.assignedEmployeeId` (current) and
+   * `Lead.preferredEmployeeId` (sticky) so any future inbound on the same
+   * lead returns to the same agent. Bypasses the round-robin engine, but
+   * the engine still applies when the next NEW lead arrives.
+   *
+   * Caller must have whatsapp.reassign (PermissionGuard already enforces).
+   */
+  async reassign(caller: CallerContext, threadId: string, employeeId: string) {
+    const t = await this.prisma.whatsAppThread.findUnique({
+      where: { id: threadId },
+      select: {
+        id: true,
+        leadId: true,
+        lead: { select: { id: true, assignedEmployeeId: true } },
+      },
+    });
+    if (!t || !t.leadId || !t.lead) throw new NotFoundException('Thread not found');
+
+    const target = await this.prisma.employee.findFirst({
+      where: {
+        id: employeeId,
+        isActive: true,
+        whatsappInboxMember: true,
+        deletedAt: null,
+      },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    if (!target) {
+      throw new BadRequestException(
+        'Target employee is not an active WhatsApp inbox member. Toggle WhatsApp Inbox on the employee profile first.',
+      );
+    }
+
+    const previousAssignee = t.lead.assignedEmployeeId;
+
+    await this.prisma.$transaction([
+      this.prisma.lead.update({
+        where: { id: t.leadId },
+        data: {
+          assignedEmployeeId: employeeId,
+          preferredEmployeeId: employeeId,
+        },
+      }),
+      this.prisma.whatsAppThread.update({
+        where: { id: threadId },
+        data: { lastAssignmentReason: WhatsAppAssignmentReason.REASSIGN },
+      }),
+      this.prisma.activityTimeline.create({
+        data: {
+          entityType: 'Lead',
+          entityId: t.leadId,
+          leadId: t.leadId,
+          // Existing WHATSAPP_ASSIGNED enum covers both initial assignment
+          // and admin overrides; metadata.via='admin_override' is how we
+          // tell them apart in audit views.
+          eventType: 'WHATSAPP_ASSIGNED',
+          description: `WhatsApp thread manually reassigned to ${target.firstName} ${target.lastName}`.trim(),
+          actorUserId: caller.userId,
+          metadata: {
+            threadId,
+            employeeId,
+            previousAssignee,
+            via: 'admin_override',
+          },
+        },
+      }),
+    ]);
+
+    return {
+      threadId,
+      leadId: t.leadId,
+      assignedEmployeeId: employeeId,
+      assignedEmployeeName: `${target.firstName} ${target.lastName}`.trim(),
+      previousAssignee,
+    };
   }
 }

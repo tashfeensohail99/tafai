@@ -72,6 +72,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
     label: 'CRM',
     items: [
       { label: 'Leads', href: '/admin/leads', icon: Users, permissionKey: 'leads.view_all' },
+      { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageSquare, permissionKey: 'whatsapp.view_all_inboxes' },
       { label: 'Clients', href: '/admin/clients', icon: Users, permissionKey: 'clients.view_all' },
       { label: 'Appointments', href: '/admin/appointments', icon: CalendarDays, permissionKey: 'appointments.view_all' },
       { label: 'Finance', href: '/admin/finance', icon: BadgeDollarSign, permissionKey: 'finance.view_all' },

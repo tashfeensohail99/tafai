@@ -138,10 +138,27 @@ export interface MyPresence {
 export function listThreads(opts: {
   status?: WhatsAppThreadStatus;
   assignedToMe?: boolean;
+  unassigned?: boolean;
   search?: string;
   cursor?: string;
 } = {}): Promise<ThreadListResponse> {
   return apiFetch<ThreadListResponse>(`/whatsapp/threads${buildQuery(opts)}`);
+}
+
+export function reassignThread(
+  threadId: string,
+  employeeId: string,
+): Promise<{
+  threadId: string;
+  leadId: string;
+  assignedEmployeeId: string;
+  assignedEmployeeName: string;
+  previousAssignee: string | null;
+}> {
+  return apiFetch(`/whatsapp/threads/${threadId}/reassign`, {
+    method: 'POST',
+    body: JSON.stringify({ employeeId }),
+  });
 }
 
 export function getThread(threadId: string): Promise<ThreadDetail> {

@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -8,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsBooleanString, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsBooleanString, IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
@@ -31,8 +32,20 @@ class ListThreadsDto {
   @Transform(({ value }) => value === 'true' || value === true)
   assignedToMe?: boolean;
 
+  /** Admin filter: "unassigned" returns only threads with no Lead.assignedEmployeeId. */
+  @IsOptional()
+  @IsBooleanString()
+  @Transform(({ value }) => value === 'true' || value === true)
+  unassigned?: boolean;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
+}
+
+class ReassignThreadDto {
+  /** The employee to route this thread's lead to. Must be an active WhatsApp inbox member. */
+  @IsUUID()
+  employeeId!: string;
 }
 
 @Controller('whatsapp/threads')
@@ -69,6 +82,23 @@ export class WhatsAppThreadsController {
   ) {
     const caller = await this.buildCallerContext(user);
     await this.threads.markRead(caller, id);
+  }
+
+  /**
+   * Admin override: reassign the thread's Lead to a specific employee. The
+   * round-robin engine still applies on the next unassigned inbound, but
+   * sticky routing (Lead.preferredEmployeeId) is updated so this becomes the
+   * new home for the contact. Permission: whatsapp.reassign.
+   */
+  @Post(':id/reassign')
+  @RequirePermissions('whatsapp.reassign')
+  async reassign(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReassignThreadDto,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.reassign(caller, id, dto.employeeId);
   }
 
   /**

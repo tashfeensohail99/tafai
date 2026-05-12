@@ -26,6 +26,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -34,11 +35,11 @@ import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/Drawer
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import {
-  MOCK_PROCESSING_OFFICER,
   MOCK_PROCESSING_CASES,
   getIntakePending,
   countByStage,
 } from '@/components/processing/mockData';
+import { logout as sessionLogout, useSession } from '@/lib/session';
 
 export interface ProcessingUser {
   id: string;
@@ -61,35 +62,18 @@ const ProcessingSessionContext = createContext<ProcessingSessionContextValue | n
 export function useProcessingSession(): ProcessingSessionContextValue {
   const ctx = useContext(ProcessingSessionContext);
   if (!ctx) {
-    return {
-      user: MOCK_USER,
-      refreshUser: async () => {},
-      logout: () => {},
-    };
+    throw new Error('useProcessingSession must be used inside <ProcessingShell>');
   }
   return ctx;
 }
 
-const MOCK_USER: ProcessingUser = {
-  id: MOCK_PROCESSING_OFFICER.id,
-  email: MOCK_PROCESSING_OFFICER.email,
-  name: MOCK_PROCESSING_OFFICER.name,
-  initials: MOCK_PROCESSING_OFFICER.initials,
-  role: MOCK_PROCESSING_OFFICER.role,
-  roles: ['PROCESSING'],
-  permissions: [
-    'processing.intake.acknowledge',
-    'processing.case.update_stage',
-    'processing.case.assign',
-    'processing.case.view_all',
-    'processing.document.review',
-    'processing.note.create',
-    'processing.task.create',
-    'processing.task.update',
-    'processing.report.export',
-    'processing.template.manage',
-  ],
-};
+const PROCESSING_ROLES = new Set([
+  'processing',
+  'processing_manager',
+  'documentation',
+  'super_admin',
+  'admin',
+]);
 
 const PROCESSING_NAV: DrawerMenuItem[] = [
   { label: 'Dashboard', href: '/processing', icon: LayoutDashboard, caption: 'Officer overview' },
@@ -123,29 +107,62 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
 export function ProcessingShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const user = MOCK_USER;
+  useEffect(() => {
+    if (session.status === 'unauthed') {
+      router.replace('/login');
+      return;
+    }
+    if (session.status === 'authed') {
+      const hasAccess = session.user.roles.some((r) => PROCESSING_ROLES.has(r));
+      if (!hasAccess) router.replace('/login');
+    }
+  }, [session, router]);
 
-  function logout() {
-    try { window.localStorage.removeItem('access_token'); } catch {}
-    router.replace('/login');
-  }
-
-  const { title, subtitle } = getPageTitle(pathname);
-
-  const activeCases = MOCK_PROCESSING_CASES.filter(
-    (c) => c.assignedOfficer?.id === user.id && c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED',
-  ).length;
+  // KPI bits (still backed by mock for now — the real numbers come from
+  // /processing/dashboard, wired separately at page level).
   const intakePending = getIntakePending().length;
   const underReview = countByStage('DOCUMENTS_UNDER_REVIEW');
   const readyToSubmit = countByStage('READY_FOR_SUBMISSION');
 
-  const sessionValue = useMemo<ProcessingSessionContextValue>(
-    () => ({ user, refreshUser: async () => {}, logout }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+  const sessionValue = useMemo<ProcessingSessionContextValue | null>(() => {
+    if (session.status !== 'authed') return null;
+    const emailHandle = session.user.email.split('@')[0] ?? 'officer';
+    return {
+      user: {
+        id: session.user.id,
+        email: session.user.email,
+        name: emailHandle,
+        initials: emailHandle.slice(0, 2).toUpperCase(),
+        role: session.user.roles[0] ?? 'PROCESSING',
+        roles: session.user.roles,
+        permissions: session.user.permissions,
+      },
+      refreshUser: async () => {},
+      logout: () => {
+        sessionLogout();
+        router.replace('/login');
+      },
+    };
+  }, [session, router]);
+
+  if (session.status === 'loading') {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: 'var(--sos-text-muted)' }}>
+        Loading workspace…
+      </div>
+    );
+  }
+  if (session.status !== 'authed' || !sessionValue) return null;
+
+  const user = sessionValue.user;
+  const logout = sessionValue.logout;
+  const { title, subtitle } = getPageTitle(pathname);
+  const activeCases = MOCK_PROCESSING_CASES.filter(
+    (c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED',
+  ).length;
 
   return (
     <ProcessingSessionContext.Provider value={sessionValue}>

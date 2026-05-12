@@ -24,7 +24,7 @@ import { usePathname } from 'next/navigation';
 import {
   createContext,
   useContext,
-  useMemo,
+  useEffect,
   useState,
   type ReactNode,
 } from 'react';
@@ -32,13 +32,13 @@ import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/Drawer
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import {
-  MOCK_FINANCE_USER,
   collectedToday,
   countByStatus,
   fmtAmount,
   readyForProcessingCount,
   verifiedTodayCount,
 } from '@/components/finance-v1/mockData';
+import { logout as sessionLogout, useSession } from '@/lib/session';
 
 export interface FinanceUser {
   id: string;
@@ -81,62 +81,60 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
 export function useFinanceSession(): FinanceSessionContextValue {
   const context = useContext(FinanceSessionContext);
   if (!context) {
-    return {
-      user: {
-        id: MOCK_FINANCE_USER.id,
-        email: MOCK_FINANCE_USER.email,
-        name: MOCK_FINANCE_USER.name,
-        roles: ['FINANCE'],
-        permissions: [
-          'finance.view_intake',
-          'finance.verify_payment',
-          'finance.request_correction',
-          'finance.reject_payment',
-          'finance.issue_receipt',
-          'finance.send_to_processing',
-          'finance.view_history',
-        ],
-      },
-      refreshUser: async () => {},
-      logout: () => {},
-    };
+    throw new Error('useFinanceSession must be used inside <FinanceShell>');
   }
   return context;
 }
 
+const FINANCE_ROLES = new Set([
+  'finance',
+  'finance_manager',
+  'super_admin',
+  'admin',
+]);
+
 export function FinanceShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const user: FinanceUser = useMemo(
-    () => ({
-      id: MOCK_FINANCE_USER.id,
-      email: MOCK_FINANCE_USER.email,
-      name: MOCK_FINANCE_USER.name,
-      roles: ['FINANCE'],
-      permissions: [
-        'finance.view_intake',
-        'finance.verify_payment',
-        'finance.request_correction',
-        'finance.reject_payment',
-        'finance.issue_receipt',
-        'finance.send_to_processing',
-        'finance.view_history',
-      ],
-    }),
-    [],
-  );
+  useEffect(() => {
+    if (session.status === 'unauthed') {
+      router.replace('/login');
+      return;
+    }
+    if (session.status === 'authed') {
+      const hasAccess = session.user.roles.some((r) => FINANCE_ROLES.has(r));
+      if (!hasAccess) router.replace('/login');
+    }
+  }, [session, router]);
+
+  if (session.status === 'loading') {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: 'var(--sos-text-muted)' }}>
+        Loading workspace…
+      </div>
+    );
+  }
+  if (session.status !== 'authed') return null;
+
+  const emailHandle = session.user.email.split('@')[0] ?? 'finance';
+  const user: FinanceUser = {
+    id: session.user.id,
+    email: session.user.email,
+    name: emailHandle,
+    roles: session.user.roles,
+    permissions: session.user.permissions,
+  };
 
   function logout() {
-    try {
-      window.localStorage.removeItem('access_token');
-    } catch {}
+    sessionLogout();
     router.replace('/login');
   }
 
   const { title, subtitle } = getPageTitle(pathname);
-  const initials = MOCK_FINANCE_USER.initials;
+  const initials = emailHandle.slice(0, 2).toUpperCase();
 
   // Mini-panel data for the sidebar
   const collected = collectedToday();

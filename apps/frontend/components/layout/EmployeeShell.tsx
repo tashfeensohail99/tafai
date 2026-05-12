@@ -21,7 +21,7 @@ import { usePathname } from 'next/navigation';
 import {
   createContext,
   useContext,
-  useMemo,
+  useEffect,
   useState,
   type ReactNode,
 } from 'react';
@@ -29,6 +29,7 @@ import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/Drawer
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { PresencePill } from '@/components/whatsapp/PresencePill';
+import { logout as sessionLogout, useSession } from '@/lib/session';
 
 export interface EmployeeUser {
   id: string;
@@ -71,51 +72,49 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
 export function useEmployeeSession(): EmployeeSessionContextValue {
   const context = useContext(EmployeeSessionContext);
   if (!context) {
-    return {
-      user: {
-        id: 'mock-user',
-        email: 'sales@tafsheen.com',
-        roles: ['SALES'],
-        permissions: [
-          'leads.view_assigned',
-          'leads.create',
-          'follow_ups.view_assigned',
-          'appointments.view_assigned',
-          'finance_handover.view_own',
-        ],
-      },
-      refreshUser: async () => {},
-      logout: () => {},
-    };
+    throw new Error('useEmployeeSession must be used inside <EmployeeShell>');
   }
   return context;
 }
 
+/** Roles that should land on /sales after login. */
+const SALES_ROLES = new Set([
+  'sales',
+  'sales_manager',
+  'super_admin',
+  'admin',
+]);
+
 export function EmployeeShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const user: EmployeeUser = useMemo(
-    () => ({
-      id: 'mock-user',
-      email: 'sales@tafsheen.com',
-      roles: ['SALES'],
-      permissions: [
-        'leads.view_assigned',
-        'leads.create',
-        'follow_ups.view_assigned',
-        'appointments.view_assigned',
-        'finance_handover.view_own',
-      ],
-    }),
-    [],
-  );
+  useEffect(() => {
+    if (session.status === 'unauthed') {
+      router.replace('/login');
+      return;
+    }
+    if (session.status === 'authed') {
+      const hasAccess = session.user.roles.some((r) => SALES_ROLES.has(r));
+      if (!hasAccess) router.replace('/login');
+    }
+  }, [session, router]);
+
+  if (session.status === 'loading') {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: 'var(--sos-text-muted)' }}>
+        Loading workspace…
+      </div>
+    );
+  }
+  if (session.status !== 'authed') return null;
+
+  const user: EmployeeUser = session.user;
 
   function logout() {
-    try {
-      window.localStorage.removeItem('access_token');
-    } catch {}
+    sessionLogout();
     router.replace('/login');
   }
 

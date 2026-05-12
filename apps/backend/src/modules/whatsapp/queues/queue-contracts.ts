@@ -3,13 +3,14 @@
  * truth — producers (services) and consumers (processors) both import here.
  */
 
+// BullMQ disallows `:` in queue names (uses it as a Redis key separator).
 export const WHATSAPP_QUEUE = {
-  WEBHOOK_INGEST: 'whatsapp:webhook-ingest',
-  OUTBOUND_MESSAGE: 'whatsapp:outbound-message',
-  MEDIA_DOWNLOAD: 'whatsapp:media-download',
-  TEMPLATE_SYNC: 'whatsapp:template-sync',
-  CAMPAIGN_DISPATCH: 'whatsapp:campaign-dispatch',
-  CAMPAIGN_RECIPIENT: 'whatsapp:campaign-recipient',
+  WEBHOOK_INGEST: 'whatsapp-webhook-ingest',
+  OUTBOUND_MESSAGE: 'whatsapp-outbound-message',
+  MEDIA_DOWNLOAD: 'whatsapp-media-download',
+  TEMPLATE_SYNC: 'whatsapp-template-sync',
+  CAMPAIGN_DISPATCH: 'whatsapp-campaign-dispatch',
+  CAMPAIGN_RECIPIENT: 'whatsapp-campaign-recipient',
 } as const;
 
 export type WhatsAppQueueName = (typeof WHATSAPP_QUEUE)[keyof typeof WHATSAPP_QUEUE];

@@ -2,28 +2,29 @@ import { Module } from '@nestjs/common';
 import { WhatsAppCryptoModule } from './crypto/crypto.module';
 import { WhatsAppMetaModule } from './meta/meta.module';
 import { WhatsAppQueuesModule } from './queues/queues.module';
+import { WhatsAppProcessorsModule } from './queues/processors/processors.module';
 import { WhatsAppRoutingModule } from './routing/routing.module';
+import { WhatsAppRealtimeModule } from './realtime/realtime.module';
 import { WhatsAppChannelsModule } from './channels/channels.module';
 import { WhatsAppWebhooksModule } from './webhooks/webhooks.module';
+import { WhatsAppPresenceModule } from './presence/presence.module';
+import { WhatsAppThreadsModule } from './threads/threads.module';
+import { WhatsAppMessagesModule } from './messages/messages.module';
 
 /**
- * Root WhatsApp module — composes every sub-module of the WhatsApp Business
- * Cloud API integration. Imported once in `app.module.ts`.
+ * Root WhatsApp module. Composes the entire integration.
  *
- * Sub-modules:
- *   crypto    — AES-256-GCM for stored access tokens
- *   meta      — Cloud API client + webhook HMAC verification
- *   queues    — BullMQ wiring for inbound ingest, outbound, media, templates
- *   routing   — sticky + round-robin assignment, business-hours math
- *   channels  — admin endpoints to connect / pause WABA numbers
- *   webhooks  — public webhook receiver
- *
- * Still TODO (Phase 3 follow-up):
- *   - queue processors (ingest / outbound) — they live in workers
- *   - threads.service / messages.service for sales-agent endpoints
- *   - presence module (heartbeat + auto-derive)
- *   - realtime gateway (Socket.IO) for inbox push
- *   - templates + campaigns admin
+ *   crypto      AES-256-GCM for stored Meta access tokens
+ *   meta        Cloud API client + HMAC signature verifier
+ *   queues      BullMQ wiring (6 queues registered)
+ *   processors  Worker implementations bound to the queues
+ *   routing     Sticky + round-robin assignment, business-hours math
+ *   realtime    Socket.IO gateway + Redis publisher (org-scoped pub/sub)
+ *   channels    Admin endpoints for WABA channels
+ *   webhooks    Public Meta webhook receiver
+ *   presence    Agent online/away/offline + heartbeat + manager view
+ *   threads     Agent inbox API (list / detail / mark-read)
+ *   messages    Agent send API (text within 24h window, templates always)
  */
 @Module({
   imports: [
@@ -31,8 +32,13 @@ import { WhatsAppWebhooksModule } from './webhooks/webhooks.module';
     WhatsAppMetaModule,
     WhatsAppQueuesModule,
     WhatsAppRoutingModule,
+    WhatsAppRealtimeModule,
+    WhatsAppProcessorsModule,
     WhatsAppChannelsModule,
     WhatsAppWebhooksModule,
+    WhatsAppPresenceModule,
+    WhatsAppThreadsModule,
+    WhatsAppMessagesModule,
   ],
 })
 export class WhatsAppModule {}

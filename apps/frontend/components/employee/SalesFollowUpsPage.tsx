@@ -1,7 +1,7 @@
 'use client';
 // Sales OS — Follow-ups (premium dark glass redesign).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
+  Loader2,
   MapPin,
   MessageSquare,
   Phone,
@@ -21,7 +22,6 @@ import {
   type FollowUp,
   type FollowUpStatus,
   FOLLOWUP_TYPE_LABEL,
-  MOCK_FOLLOWUPS,
   fmtDateTime,
   fmtRelative,
   initialsOf,
@@ -36,6 +36,7 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import { fetchFollowUps } from '@/lib/sales-api';
 
 type Tab =
   | 'TODAY'
@@ -129,11 +130,19 @@ function ChannelIcon({ channel }: { channel: FollowUp['channel'] }) {
 }
 
 export function SalesFollowUpsPage() {
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('TODAY');
   const [query, setQuery] = useState('');
 
+  useEffect(() => {
+    fetchFollowUps()
+      .then(setFollowUps)
+      .finally(() => setLoading(false));
+  }, []);
+
   const filtered = useMemo(() => {
-    let result = applyTab(MOCK_FOLLOWUPS, tab);
+    let result = applyTab(followUps, tab);
     if (query.trim()) {
       const q = query.toLowerCase();
       result = result.filter(
@@ -141,20 +150,29 @@ export function SalesFollowUpsPage() {
       );
     }
     return result.sort((a, b) => +new Date(a.dueAt) - +new Date(b.dueAt));
-  }, [tab, query]);
+  }, [followUps, tab, query]);
 
   const counts = useMemo(
     () => ({
-      TODAY: MOCK_FOLLOWUPS.filter((f) => f.status === 'DUE_TODAY').length,
-      OVERDUE: MOCK_FOLLOWUPS.filter((f) => f.status === 'OVERDUE').length,
-      UPCOMING: MOCK_FOLLOWUPS.filter((f) => f.status === 'PENDING' || f.status === 'RESCHEDULED').length,
-      NO_RESPONSE: MOCK_FOLLOWUPS.filter((f) => f.status === 'NO_RESPONSE').length,
-      PAYMENT: MOCK_FOLLOWUPS.filter((f) => f.type === 'PAYMENT_REMINDER').length,
-      APPOINTMENT: MOCK_FOLLOWUPS.filter((f) => f.type === 'APPOINTMENT_REMINDER').length,
-      COMPLETED: MOCK_FOLLOWUPS.filter((f) => f.status === 'COMPLETED').length,
+      TODAY: followUps.filter((f) => f.status === 'DUE_TODAY').length,
+      OVERDUE: followUps.filter((f) => f.status === 'OVERDUE').length,
+      UPCOMING: followUps.filter((f) => f.status === 'PENDING' || f.status === 'RESCHEDULED').length,
+      NO_RESPONSE: followUps.filter((f) => f.status === 'NO_RESPONSE').length,
+      PAYMENT: followUps.filter((f) => f.type === 'PAYMENT_REMINDER').length,
+      APPOINTMENT: followUps.filter((f) => f.type === 'APPOINTMENT_REMINDER').length,
+      COMPLETED: followUps.filter((f) => f.status === 'COMPLETED').length,
     }),
-    [],
+    [followUps],
   );
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={20} className="sos-spin" />
+        <span>Loading follow-ups…</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>

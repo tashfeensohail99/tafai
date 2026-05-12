@@ -9,7 +9,7 @@
 //   5. Live SLA / countdown so you always know what is bleeding.
 //   6. Sticky save bar so edits never get lost.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
@@ -31,6 +31,7 @@ import {
   Globe2,
   Handshake,
   History,
+  Loader2,
   Mail,
   MapPin,
   MessageSquare,
@@ -50,10 +51,11 @@ import {
   X,
 } from 'lucide-react';
 import {
+  type Lead,
+  type Appointment,
+  type FollowUp,
   type LeadStage,
   type Priority,
-  MOCK_APPOINTMENTS,
-  MOCK_FOLLOWUPS,
   PRIORITY_LABEL,
   SOURCE_LABEL,
   STAGE_LABEL,
@@ -61,7 +63,6 @@ import {
   fmtRelative,
   fmtRelativeToNow,
   fmtTimeOnly,
-  getLead,
   initialsOf,
   stageDotColor,
 } from '@/components/sales-v2/mockData';
@@ -83,6 +84,12 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
+import {
+  fetchLead,
+  fetchFollowUps,
+  fetchAppointments,
+  patchLead,
+} from '@/lib/sales-api';
 
 const STAGES: LeadStage[] = [
   'NEW',
@@ -146,18 +153,48 @@ function stageBadgeTone(stage: LeadStage): BadgeTone {
 
 export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   const router = useRouter();
-  const found = useMemo(() => getLead(leadId), [leadId]);
+  const [lead, setLead] = useState<Lead | null>(null);
+  const [leadFollowUps, setLeadFollowUps] = useState<FollowUp[]>([]);
+  const [leadAppointments, setLeadAppointments] = useState<Appointment[]>([]);
+  const [loadingLead, setLoadingLead] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const [stage, setStage] = useState<LeadStage>(found?.stage ?? 'NEW');
-  const [priority, setPriority] = useState<Priority>(found?.priority ?? 'MEDIUM');
-  const [nextAction, setNextAction] = useState(found?.nextAction ?? '');
-  const [salesNote, setSalesNote] = useState(found?.salesNote ?? '');
+  const [stage, setStage] = useState<LeadStage>('NEW');
+  const [priority, setPriority] = useState<Priority>('MEDIUM');
+  const [nextAction, setNextAction] = useState('');
+  const [salesNote, setSalesNote] = useState('');
   const [tab, setTab] = useState<TabKey>('OVERVIEW');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [pinned, setPinned] = useState(false);
   const [copyHint, setCopyHint] = useState<string | null>(null);
 
-  if (!found) {
+  // Load lead + related data
+  useEffect(() => {
+    setLoadingLead(true);
+    fetchLead(leadId).then((data) => {
+      if (data) {
+        setLead(data);
+        setStage(data.stage);
+        setPriority(data.priority);
+        setNextAction(data.nextAction);
+        setSalesNote(data.salesNote ?? '');
+      }
+      setLoadingLead(false);
+    });
+    fetchFollowUps(leadId).then(setLeadFollowUps).catch(() => {});
+    fetchAppointments(leadId).then(setLeadAppointments).catch(() => {});
+  }, [leadId]);
+
+  if (loadingLead) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={20} className="sos-spin" />
+        <span>Loading lead…</span>
+      </div>
+    );
+  }
+
+  if (!lead) {
     return (
       <GlassCard variant="strong" padded="lg">
         <div style={{ textAlign: 'center', padding: '36px 16px' }}>
@@ -181,7 +218,6 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
     );
   }
 
-  const lead = found;
   const dirty =
     stage !== lead.stage ||
     priority !== lead.priority ||
@@ -191,12 +227,17 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   const stageIdx = Math.max(0, STAGE_PROGRESS.indexOf(stage));
   const stagePct = Math.round(((stageIdx + 1) / STAGE_PROGRESS.length) * 100);
 
-  const leadFollowUps = MOCK_FOLLOWUPS.filter((f) => f.leadId === lead.id);
-  const leadAppointments = MOCK_APPOINTMENTS.filter((a) => a.leadId === lead.id);
   const phoneClean = lead.phone.replace(/[^+\d]/g, '');
 
-  function handleSave() {
-    setSavedAt(new Date());
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await patchLead(leadId, { stage, priority, notes: salesNote });
+      setLead((prev) => prev ? { ...prev, stage, priority, nextAction, salesNote } : prev);
+      setSavedAt(new Date());
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleReset() {
@@ -406,10 +447,10 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
             </SecondaryButton>
             <PrimaryButton
               onClick={handleSave}
-              disabled={!dirty}
-              iconLeft={<Save size={15} />}
+              disabled={!dirty || saving}
+              iconLeft={saving ? <Loader2 size={15} className="sos-spin" /> : <Save size={15} />}
             >
-              Save changes
+              {saving ? 'Saving…' : 'Save changes'}
             </PrimaryButton>
           </>
         }

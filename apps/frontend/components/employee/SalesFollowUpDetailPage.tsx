@@ -10,7 +10,7 @@
 //   6. History of prior touches on the same lead, side panel.
 //   7. Sticky save bar to commit changes.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -24,6 +24,7 @@ import {
   Clock,
   Clock4,
   History,
+  Loader2,
   MapPin,
   MessageSquare,
   Phone,
@@ -40,13 +41,10 @@ import {
   type FollowUpStatus,
   type SlaStatus,
   FOLLOWUP_TYPE_LABEL,
-  MOCK_FOLLOWUPS,
   STAGE_LABEL,
   fmtDateTime,
   fmtRelative,
   fmtRelativeToNow,
-  getFollowUp,
-  getLead,
   initialsOf,
 } from '@/components/sales-v2/mockData';
 import {
@@ -61,6 +59,7 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import { fetchFollowUps, fetchLead } from '@/lib/sales-api';
 
 const STATUSES: FollowUpStatus[] = [
   'PENDING',
@@ -134,17 +133,47 @@ function ChannelIcon({ channel, size = 14 }: { channel: FollowUp['channel']; siz
 }
 
 export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) {
-  const found = useMemo(() => getFollowUp(followUpId), [followUpId]);
+  const [followUp, setFollowUp] = useState<FollowUp | null>(null);
+  const [otherFollowUps, setOtherFollowUps] = useState<FollowUp[]>([]);
+  const [leadPhone, setLeadPhone] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const [status, setStatus] = useState<FollowUpStatus>(found?.status ?? 'PENDING');
-  const [sla, setSla] = useState<SlaStatus>(found?.slaStatus ?? 'ACTIVE');
-  const [dueAt, setDueAt] = useState<string>(
-    found ? new Date(found.dueAt).toISOString().slice(0, 16) : '',
-  );
-  const [outcome, setOutcome] = useState(found?.outcome ?? '');
+  const [status, setStatus] = useState<FollowUpStatus>('PENDING');
+  const [sla, setSla] = useState<SlaStatus>('ACTIVE');
+  const [dueAt, setDueAt] = useState<string>('');
+  const [outcome, setOutcome] = useState('');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
 
-  if (!found) {
+  useEffect(() => {
+    // Fetch by looking up in the full list (no GET /follow-ups/:id endpoint known)
+    fetchFollowUps().then(async (all) => {
+      const found = all.find((f) => f.id === followUpId) ?? null;
+      if (found) {
+        setFollowUp(found);
+        setStatus(found.status);
+        setSla(found.slaStatus);
+        setDueAt(new Date(found.dueAt).toISOString().slice(0, 16));
+        setOutcome(found.outcome ?? '');
+        // Load lead phone
+        const lead = await fetchLead(found.leadId);
+        if (lead) setLeadPhone(lead.phone.replace(/[^+\d]/g, ''));
+        // Other follow-ups for same lead
+        setOtherFollowUps(all.filter((f) => f.leadId === found.leadId && f.id !== followUpId));
+      }
+      setLoading(false);
+    });
+  }, [followUpId]);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={20} className="sos-spin" />
+        <span>Loading follow-up…</span>
+      </div>
+    );
+  }
+
+  if (!followUp) {
     return (
       <GlassCard variant="strong" padded="lg">
         <div style={{ textAlign: 'center', padding: '36px 16px' }}>
@@ -168,9 +197,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
     );
   }
 
-  const followUp = found;
-  const lead = getLead(followUp.leadId);
-  const phoneClean = lead?.phone.replace(/[^+\d]/g, '') ?? '';
+  const phoneClean = leadPhone;
 
   const dirty =
     status !== followUp.status ||
@@ -180,9 +207,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
 
   const isOverdue = status === 'OVERDUE';
 
-  const otherFollowUps = MOCK_FOLLOWUPS.filter(
-    (f) => f.leadId === followUp.leadId && f.id !== followUp.id,
-  ).sort((a, b) => +new Date(b.dueAt) - +new Date(a.dueAt));
+  // otherFollowUps comes from state (populated in useEffect above)
 
   function quickMarkDone() {
     setStatus('COMPLETED');

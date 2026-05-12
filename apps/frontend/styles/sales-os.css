@@ -1457,6 +1457,10 @@
 .sos-no-scrollbar::-webkit-scrollbar { display: none; }
 .sos-no-scrollbar { scrollbar-width: none; }
 
+/* Spinner animation */
+@keyframes sos-spin { to { transform: rotate(360deg); } }
+.sos-spin { animation: sos-spin 0.8s linear infinite; }
+
 /* =========================================================
    Workspace split layout — case workspaces with left sidebar
    + main content. Collapses to column on ≤ 900px.

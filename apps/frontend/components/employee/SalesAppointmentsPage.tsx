@@ -1,10 +1,7 @@
 'use client';
 // Sales OS — Appointments (premium dark glass redesign).
-//
-// Reps need: a fast booking form on the left, a live calendar of what's coming up
-// on the right, KPIs at a glance, and a clean way to see what's already been done.
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Briefcase,
   CalendarCheck,
@@ -13,6 +10,7 @@ import {
   CalendarX,
   CheckCircle2,
   Clock,
+  Loader2,
   MapPin,
   Phone,
   Sparkles,
@@ -24,9 +22,8 @@ import {
   type Appointment,
   type AppointmentStatus,
   type AppointmentType,
+  type Lead,
   APPT_TYPE_LABEL,
-  MOCK_APPOINTMENTS,
-  MOCK_LEADS,
   fmtDateTime,
   fmtRelative,
   fmtTimeOnly,
@@ -46,6 +43,7 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import { fetchLeads, fetchAppointments, createAppointment } from '@/lib/sales-api';
 
 const TYPES: AppointmentType[] = [
   'OFFICE_MEETING',
@@ -108,7 +106,12 @@ const PRESET_LOCATIONS = [
 ];
 
 export function SalesAppointmentsPage() {
-  const [clientId, setClientId] = useState(MOCK_LEADS[0]?.id ?? '');
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [allAppointments, setAllAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [booking, setBooking] = useState(false);
+
+  const [clientId, setClientId] = useState('');
   const [type, setType] = useState<AppointmentType>('OFFICE_MEETING');
   const [date, setDate] = useState(() => {
     const d = new Date();
@@ -118,24 +121,33 @@ export function SalesAppointmentsPage() {
   const [time, setTime] = useState('15:00');
   const [duration, setDuration] = useState(30);
   const [location, setLocation] = useState('Tafsheen HQ — Meeting Room 2');
-  const [note, setNote] = useState('Bring CNIC and academic transcripts.');
+  const [note, setNote] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [bookError, setBookError] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([fetchLeads(), fetchAppointments()]).then(([l, a]) => {
+      setLeads(l);
+      setAllAppointments(a);
+      if (l.length > 0) setClientId(l[0].id);
+    }).finally(() => setLoading(false));
+  }, []);
 
   const upcoming = useMemo(
     () =>
-      [...MOCK_APPOINTMENTS]
+      [...allAppointments]
         .filter((a) => a.status === 'BOOKED' || a.status === 'PENDING')
         .sort((a, b) => +new Date(a.scheduledAt) - +new Date(b.scheduledAt)),
-    [],
+    [allAppointments],
   );
   const past = useMemo(
     () =>
-      [...MOCK_APPOINTMENTS]
+      [...allAppointments]
         .filter((a) =>
           ['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(a.status),
         )
         .sort((a, b) => +new Date(b.scheduledAt) - +new Date(a.scheduledAt)),
-    [],
+    [allAppointments],
   );
 
   const todayCount = useMemo(() => {
@@ -150,24 +162,53 @@ export function SalesAppointmentsPage() {
     }).length;
   }, [upcoming]);
 
-  const completedCount = MOCK_APPOINTMENTS.filter(
-    (a) => a.status === 'COMPLETED',
-  ).length;
-  const cancelledCount = MOCK_APPOINTMENTS.filter(
-    (a) => a.status === 'CANCELLED' || a.status === 'NO_SHOW',
-  ).length;
+  const completedCount = allAppointments.filter((a) => a.status === 'COMPLETED').length;
+  const cancelledCount = allAppointments.filter((a) => a.status === 'CANCELLED' || a.status === 'NO_SHOW').length;
 
-  const selectedLead = MOCK_LEADS.find((l) => l.id === clientId);
+  const selectedLead = leads.find((l) => l.id === clientId);
   const requiresLocation = type === 'OFFICE_MEETING' || type === 'OFFICE_VISIT';
 
-  function handleBook(e: FormEvent) {
+  async function handleBook(e: FormEvent) {
     e.preventDefault();
-    setConfirmed(true);
-    setTimeout(() => setConfirmed(false), 3000);
+    if (!clientId) return;
+    setBooking(true);
+    setBookError(null);
+    try {
+      const scheduledAt = new Date(`${date}T${time}:00`).toISOString();
+      const title = `${selectedLead ? `${selectedLead.firstName} ${selectedLead.lastName}` : 'Lead'} — ${APPT_TYPE_LABEL[type]}`;
+      const created = await createAppointment({
+        leadId: clientId,
+        title,
+        appointmentType: type,
+        scheduledAt,
+        durationMinutes: duration,
+        location: requiresLocation ? location : undefined,
+        notes: note || undefined,
+      });
+      // Re-fetch appointments after creation
+      const updated = await fetchAppointments();
+      setAllAppointments(updated);
+      setConfirmed(true);
+      setTimeout(() => setConfirmed(false), 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to book appointment';
+      setBookError(msg);
+    } finally {
+      setBooking(false);
+    }
   }
 
   const scheduledDateTime =
     date && time ? new Date(`${date}T${time}:00`) : null;
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={20} className="sos-spin" />
+        <span>Loading appointments…</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -272,7 +313,7 @@ export function SalesAppointmentsPage() {
               hint="Pick the lead this meeting is for."
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
-              options={MOCK_LEADS.map((l) => ({
+              options={leads.map((l) => ({
                 value: l.id,
                 label: `${l.firstName} ${l.lastName} — ${l.service}, ${l.targetCountry}`,
               }))}
@@ -401,10 +442,17 @@ export function SalesAppointmentsPage() {
               type="submit"
               size="lg"
               fullWidth
-              iconLeft={<CalendarPlus size={16} />}
+              disabled={booking || !clientId}
+              iconLeft={booking ? <Loader2 size={16} className="sos-spin" /> : <CalendarPlus size={16} />}
             >
-              Book appointment
+              {booking ? 'Booking…' : 'Book appointment'}
             </PrimaryButton>
+
+            {bookError ? (
+              <p style={{ color: 'var(--sos-status-danger)', fontSize: '13px', margin: 0 }}>
+                {bookError}
+              </p>
+            ) : null}
 
             <div
               style={{

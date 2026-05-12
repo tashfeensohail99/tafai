@@ -14,7 +14,7 @@
 //   6. Sales note for finance + checklist of pre-flight items before send.
 //   7. Sticky-feeling success banner with stage transition explanation.
 
-import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -25,6 +25,7 @@ import {
   CreditCard,
   FileCheck2,
   FileImage,
+  Loader2,
   Receipt,
   Send,
   ShieldCheck,
@@ -35,7 +36,6 @@ import {
 } from 'lucide-react';
 import {
   type Lead,
-  MOCK_LEADS,
   PRIORITY_LABEL,
   STAGE_LABEL,
   initialsOf,
@@ -54,6 +54,7 @@ import {
   SuccessButton,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import { fetchLeads } from '@/lib/sales-api';
 
 type Path = 'BOOK' | 'PAY';
 
@@ -138,12 +139,20 @@ function stageBadgeTone(stage: Lead['stage']): BadgeTone {
 }
 
 export function SalesDecisionsPage() {
-  const defaultLead =
-    MOCK_LEADS.find((l) => l.stage === 'PAYMENT_INTERESTED') ?? MOCK_LEADS[0];
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [leadId, setLeadId] = useState(defaultLead?.id ?? '');
+  useEffect(() => {
+    fetchLeads().then((l) => {
+      setLeads(l);
+      const def = l.find((x) => x.stage === 'PAYMENT_INTERESTED') ?? l[0];
+      if (def) setLeadId(def.id);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  const [leadId, setLeadId] = useState('');
   const [path, setPath] = useState<Path>('PAY');
-  const lead = useMemo(() => MOCK_LEADS.find((l) => l.id === leadId), [leadId]);
+  const lead = useMemo(() => leads.find((l) => l.id === leadId), [leads, leadId]);
 
   // Payment state
   const [amount, setAmount] = useState('1500');
@@ -189,6 +198,15 @@ export function SalesDecisionsPage() {
   function onSendToFinance(e: FormEvent) {
     e.preventDefault();
     setSent(true);
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={20} className="sos-spin" />
+        <span>Loading leads…</span>
+      </div>
+    );
   }
 
   if (!lead) {
@@ -266,6 +284,7 @@ export function SalesDecisionsPage() {
 
       <ActiveLeadCard
         lead={lead}
+        leads={leads}
         leadId={leadId}
         setLeadId={setLeadId}
       />
@@ -312,10 +331,12 @@ export function SalesDecisionsPage() {
 
 function ActiveLeadCard({
   lead,
+  leads,
   leadId,
   setLeadId,
 }: {
   lead: Lead;
+  leads: Lead[];
   leadId: string;
   setLeadId: (id: string) => void;
 }) {
@@ -335,7 +356,7 @@ function ActiveLeadCard({
             label=""
             value={leadId}
             onChange={(e) => setLeadId(e.target.value)}
-            options={MOCK_LEADS.map((l) => ({
+            options={leads.map((l) => ({
               value: l.id,
               label: `${l.firstName} ${l.lastName} · ${l.service} · ${STAGE_LABEL[l.stage]}`,
             }))}

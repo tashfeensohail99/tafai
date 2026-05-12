@@ -1,7 +1,7 @@
 'use client';
 // Sales OS — Assigned Leads (premium dark glass redesign).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -10,6 +10,7 @@ import {
   CircleAlert,
   Flame,
   Globe2,
+  Loader2,
   MapPin,
   Phone,
   Plus,
@@ -24,7 +25,6 @@ import {
   type Lead,
   type LeadSource,
   type LeadStage,
-  MOCK_LEADS,
   PRIORITY_LABEL,
   SOURCE_LABEL,
   STAGE_LABEL,
@@ -43,6 +43,7 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import { fetchLeads } from '@/lib/sales-api';
 
 type FilterKey =
   | 'ALL'
@@ -127,11 +128,21 @@ function slaTone(s: string): BadgeTone {
 }
 
 export function SalesLeadsPage() {
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<FilterKey>('ALL');
   const [query, setQuery] = useState('');
 
+  useEffect(() => {
+    fetchLeads()
+      .then(setLeads)
+      .catch((e) => setError(e?.message ?? 'Failed to load leads'))
+      .finally(() => setLoading(false));
+  }, []);
+
   const filtered = useMemo(() => {
-    let result = applyFilter(MOCK_LEADS, tab);
+    let result = applyFilter(leads, tab);
     if (query.trim()) {
       const q = query.toLowerCase();
       result = result.filter(
@@ -143,21 +154,40 @@ export function SalesLeadsPage() {
       );
     }
     return result;
-  }, [tab, query]);
+  }, [leads, tab, query]);
 
   const counts = useMemo(
     () => ({
-      ALL: MOCK_LEADS.length,
-      ADMIN: MOCK_LEADS.filter((l) => l.assignmentType === 'ADMIN').length,
-      AUTO_CRM: MOCK_LEADS.filter((l) => l.assignmentType === 'AUTO_CRM').length,
-      OVERDUE: MOCK_LEADS.filter((l) => l.slaStatus === 'OVERDUE').length,
-      PAYMENT: MOCK_LEADS.filter((l) => l.stage === 'PAYMENT_INTERESTED' || l.stage === 'RECEIPT_UPLOADED').length,
-      APPOINTMENT: MOCK_LEADS.filter((l) => l.stage === 'MEETING_NEEDED' || l.stage === 'APPOINTMENT_BOOKED').length,
+      ALL: leads.length,
+      ADMIN: leads.filter((l) => l.assignmentType === 'ADMIN').length,
+      AUTO_CRM: leads.filter((l) => l.assignmentType === 'AUTO_CRM').length,
+      OVERDUE: leads.filter((l) => l.slaStatus === 'OVERDUE').length,
+      PAYMENT: leads.filter((l) => l.stage === 'PAYMENT_INTERESTED' || l.stage === 'RECEIPT_UPLOADED').length,
+      APPOINTMENT: leads.filter((l) => l.stage === 'MEETING_NEEDED' || l.stage === 'APPOINTMENT_BOOKED').length,
     }),
-    [],
+    [leads],
   );
 
-  const slaActive = MOCK_LEADS.filter((l) => l.slaStatus === 'ACTIVE').length;
+  const slaActive = leads.filter((l) => l.slaStatus === 'ACTIVE').length;
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={20} className="sos-spin" />
+        <span>Loading leads…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <EmptyState
+        title="Could not load leads"
+        description={error}
+        action={<PrimaryButton onClick={() => { setError(null); setLoading(true); fetchLeads().then(setLeads).catch((e) => setError(e?.message ?? 'Failed')).finally(() => setLoading(false)); }}>Retry</PrimaryButton>}
+      />
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>

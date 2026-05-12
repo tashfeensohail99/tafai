@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
+  Loader2,
   PhoneCall,
   Plus,
   Sparkles,
@@ -18,11 +19,7 @@ import {
 } from 'lucide-react';
 import { useEmployeeSession } from '@/components/layout/EmployeeShell';
 import {
-  MOCK_APPOINTMENTS,
-  MOCK_FOLLOWUPS,
-  MOCK_LEADS,
   STAGE_LABEL,
-  MOCK_REFERENCE_ISO,
   fmtDayOfMonth,
   fmtLongDate,
   fmtMonthShort,
@@ -32,6 +29,9 @@ import {
   stageDotColor,
   APPT_TYPE_LABEL,
   type LeadStage,
+  type Lead,
+  type FollowUp,
+  type Appointment,
 } from '@/components/sales-v2/mockData';
 import {
   ButtonLink,
@@ -41,6 +41,8 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import { fetchLeads, fetchFollowUps, fetchAppointments } from '@/lib/sales-api';
+import { useEffect, useState } from 'react';
 
 type StageKey = LeadStage;
 
@@ -89,27 +91,44 @@ export function SalesDashboardPage() {
   const { user } = useEmployeeSession();
   const firstName = user.email.split('@')[0] ?? 'there';
 
-  const activeLeads = MOCK_LEADS.filter((l) => !['SENT_TO_FINANCE'].includes(l.stage));
-  const adminAssigned = MOCK_LEADS.filter((l) => l.assignmentType === 'ADMIN').length;
-  const autoAssigned = MOCK_LEADS.filter((l) => l.assignmentType === 'AUTO_CRM').length;
-  const overdue = MOCK_LEADS.filter((l) => l.slaStatus === 'OVERDUE').length;
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const dueToday = MOCK_FOLLOWUPS.filter((f) => f.status === 'DUE_TODAY').length;
-  const followOverdue = MOCK_FOLLOWUPS.filter((f) => f.status === 'OVERDUE').length;
-  const handovers = MOCK_LEADS.filter((l) => l.stage === 'SENT_TO_FINANCE').length;
+  useEffect(() => {
+    Promise.all([
+      fetchLeads(),
+      fetchFollowUps(),
+      fetchAppointments(),
+    ]).then(([l, f, a]) => {
+      setLeads(l);
+      setFollowUps(f);
+      setAppointments(a);
+    }).finally(() => setLoading(false));
+  }, []);
 
-  const upcomingAppointments = MOCK_APPOINTMENTS
+  const activeLeads = leads.filter((l) => !['SENT_TO_FINANCE'].includes(l.stage));
+  const adminAssigned = leads.filter((l) => l.assignmentType === 'ADMIN').length;
+  const autoAssigned = leads.filter((l) => l.assignmentType === 'AUTO_CRM').length;
+  const overdue = leads.filter((l) => l.slaStatus === 'OVERDUE').length;
+
+  const dueToday = followUps.filter((f) => f.status === 'DUE_TODAY').length;
+  const followOverdue = followUps.filter((f) => f.status === 'OVERDUE').length;
+  const handovers = leads.filter((l) => l.stage === 'SENT_TO_FINANCE').length;
+
+  const upcomingAppointments = appointments
     .filter((a) => a.status === 'BOOKED' || a.status === 'PENDING')
     .sort((a, b) => +new Date(a.scheduledAt) - +new Date(b.scheduledAt))
     .slice(0, 4);
 
-  const recentLeads = [...MOCK_LEADS]
+  const recentLeads = [...leads]
     .sort((a, b) => +new Date(b.assignedAt) - +new Date(a.assignedAt))
     .slice(0, 5);
 
-  const totalPipeline = MOCK_LEADS.length;
+  const totalPipeline = leads.length;
   const pipeline = PIPELINE_STAGES.map((s) => {
-    const count = MOCK_LEADS.filter((l) => l.stage === s.key).length;
+    const count = leads.filter((l) => l.stage === s.key).length;
     return {
       ...s,
       count,
@@ -144,11 +163,20 @@ export function SalesDashboardPage() {
     },
   ];
 
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={20} className="sos-spin" />
+        <span>Loading dashboard…</span>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Hero */}
       <PageHeader
-        eyebrow={`${fmtLongDate(MOCK_REFERENCE_ISO)} · ${firstName}'s queue`}
+        eyebrow={`${fmtLongDate(new Date().toISOString())} · ${firstName}'s queue`}
         title={<>Keep today&rsquo;s lead queue<br />calm, fast, and under control.</>}
         description={
           <>

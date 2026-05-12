@@ -12,7 +12,20 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
-  schemas   = ["public", "whatsapp"]
+  // Modular schemas. Each top-level domain lives in its own Postgres schema
+  // for clear ownership, scoped permissions, and easier future extraction.
+  //   core         organization, identity, RBAC, employees, partners
+  //   audit        compliance-grade tamper-evident audit trail
+  //   crm          customer relationship: leads, clients, follow-ups,
+  //                appointments, activity timeline, reminders
+  //   processing   immigration case pipeline, documents, authority submissions
+  //   finance      invoices, payments, finance handovers
+  //   ai           AI document-processing jobs
+  //   whatsapp     WhatsApp Business Cloud API integration
+  //   sales        (reserved) commissions, quotas, sales-specific analytics
+  //   client_portal (reserved) future client self-service tables
+  //   public       Prisma's _prisma_migrations only
+  schemas   = ["public", "core", "audit", "crm", "processing", "finance", "ai", "sales", "client_portal", "whatsapp"]
 }
 
 // =============================================================================
@@ -24,14 +37,14 @@ enum UserStatus {
   INACTIVE
   SUSPENDED
   PENDING_VERIFICATION
-  @@schema("public")
+  @@schema("core")
 }
 
 enum Gender {
   MALE
   FEMALE
   OTHER
-  @@schema("public")
+  @@schema("core")
 }
 
 enum LeadStatus {
@@ -44,14 +57,14 @@ enum LeadStatus {
   LOST
   DUPLICATE
   UNQUALIFIED
-  @@schema("public")
+  @@schema("crm")
 }
 
 enum FollowUpStatus {
   OPEN
   COMPLETED
   CANCELLED
-  @@schema("public")
+  @@schema("crm")
 }
 
 enum FollowUpPriority {
@@ -59,7 +72,7 @@ enum FollowUpPriority {
   MEDIUM
   HIGH
   URGENT
-  @@schema("public")
+  @@schema("crm")
 }
 
 enum ClientStatus {
@@ -67,7 +80,7 @@ enum ClientStatus {
   INACTIVE
   COMPLETED
   BLOCKED
-  @@schema("public")
+  @@schema("crm")
 }
 
 enum CaseStatus {
@@ -81,7 +94,7 @@ enum CaseStatus {
   WITHDRAWN
   COMPLETED
   ON_HOLD
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum DocumentStatus {
@@ -92,7 +105,7 @@ enum DocumentStatus {
   REJECTED
   EXPIRED
   REPLACEMENT_REQUIRED
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum AppointmentStatus {
@@ -102,7 +115,7 @@ enum AppointmentStatus {
   CANCELLED
   NO_SHOW
   RESCHEDULED
-  @@schema("public")
+  @@schema("crm")
 }
 
 enum PaymentStatus {
@@ -113,7 +126,7 @@ enum PaymentStatus {
   REFUNDED
   CANCELLED
   DISPUTED
-  @@schema("public")
+  @@schema("finance")
 }
 
 enum InvoiceStatus {
@@ -123,7 +136,7 @@ enum InvoiceStatus {
   PAID
   OVERDUE
   CANCELLED
-  @@schema("public")
+  @@schema("finance")
 }
 
 enum FinanceHandoverStatus {
@@ -134,7 +147,7 @@ enum FinanceHandoverStatus {
   REJECTED
   CANCELLED
   SENT_TO_PROCESSING
-  @@schema("public")
+  @@schema("finance")
 }
 
 enum AuditAction {
@@ -231,7 +244,7 @@ enum AuditAction {
   PROCESSING_TASK_CREATED
   PROCESSING_CASE_COMPLETED
   PROCESSING_CASE_CANCELLED
-  @@schema("public")
+  @@schema("audit")
 }
 
 enum TimelineEventType {
@@ -273,7 +286,7 @@ enum TimelineEventType {
   WHATSAPP_ASSIGNED
   WHATSAPP_CONVERSATION_RESOLVED
   WHATSAPP_OPTED_OUT
-  @@schema("public")
+  @@schema("crm")
 }
 
 // Effective per-user availability for WhatsApp routing. Explicit toggle
@@ -282,7 +295,7 @@ enum PresenceStatus {
   ONLINE
   AWAY
   OFFLINE
-  @@schema("public")
+  @@schema("core")
 }
 
 enum AiJobType {
@@ -294,7 +307,7 @@ enum AiJobType {
   INTERVIEW_SUMMARY
   SUGGESTED_REPLY
   BUSINESS_PLAN_DRAFT
-  @@schema("public")
+  @@schema("ai")
 }
 
 enum AiJobStatus {
@@ -304,7 +317,7 @@ enum AiJobStatus {
   FAILED
   REVIEW_PENDING
   REVIEWED
-  @@schema("public")
+  @@schema("ai")
 }
 
 enum AttendanceStatus {
@@ -313,14 +326,14 @@ enum AttendanceStatus {
   HALF_DAY
   LATE
   ON_LEAVE
-  @@schema("public")
+  @@schema("core")
 }
 
 enum PartnerStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
-  @@schema("public")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -360,7 +373,7 @@ model Organization {
   partners    Partner[]
 
   @@map("organizations")
-  @@schema("public")
+  @@schema("core")
 }
 
 model Branch {
@@ -384,7 +397,7 @@ model Branch {
 
   @@index([organizationId])
   @@map("branches")
-  @@schema("public")
+  @@schema("core")
 }
 
 model Service {
@@ -399,7 +412,7 @@ model Service {
 
   @@index([isActive, sortOrder])
   @@map("services")
-  @@schema("public")
+  @@schema("core")
 }
 
 model Country {
@@ -415,7 +428,7 @@ model Country {
 
   @@index([isActive, sortOrder])
   @@map("countries")
-  @@schema("public")
+  @@schema("core")
 }
 
 model Department {
@@ -433,7 +446,7 @@ model Department {
 
   @@index([organizationId])
   @@map("departments")
-  @@schema("public")
+  @@schema("core")
 }
 
 model Designation {
@@ -447,7 +460,7 @@ model Designation {
   employees Employee[]
 
   @@map("designations")
-  @@schema("public")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -468,7 +481,7 @@ model Role {
   userRoles       UserRole[]
 
   @@map("roles")
-  @@schema("public")
+  @@schema("core")
 }
 
 model Permission {
@@ -482,7 +495,7 @@ model Permission {
 
   @@index([module])
   @@map("permissions")
-  @@schema("public")
+  @@schema("core")
 }
 
 model RolePermission {
@@ -495,7 +508,7 @@ model RolePermission {
 
   @@unique([roleId, permissionId])
   @@map("role_permissions")
-  @@schema("public")
+  @@schema("core")
 }
 
 model UserAccount {
@@ -549,7 +562,7 @@ model UserAccount {
   @@index([phone])
   @@index([status])
   @@map("user_accounts")
-  @@schema("public")
+  @@schema("core")
 }
 
 model UserRole {
@@ -564,7 +577,7 @@ model UserRole {
 
   @@unique([userId, roleId])
   @@map("user_roles")
-  @@schema("public")
+  @@schema("core")
 }
 
 model LoginSession {
@@ -582,7 +595,7 @@ model LoginSession {
   @@index([userId])
   @@index([refreshToken])
   @@map("login_sessions")
-  @@schema("public")
+  @@schema("core")
 }
 
 model PasswordResetToken {
@@ -597,7 +610,7 @@ model PasswordResetToken {
 
   @@index([token])
   @@map("password_reset_tokens")
-  @@schema("public")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -653,7 +666,7 @@ model Employee {
   @@index([branchId])
   @@index([whatsappInboxMember, presenceStatus])
   @@map("employees")
-  @@schema("public")
+  @@schema("core")
 }
 
 model Partner {
@@ -684,7 +697,7 @@ model Partner {
   @@index([email])
   @@index([phone])
   @@map("partners")
-  @@schema("public")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -744,7 +757,7 @@ model Lead {
   @@index([referralPartnerId])
   @@index([preferredEmployeeId])
   @@map("leads")
-  @@schema("public")
+  @@schema("crm")
 }
 
 model FollowUp {
@@ -772,7 +785,7 @@ model FollowUp {
   @@index([status])
   @@index([dueAt])
   @@map("follow_ups")
-  @@schema("public")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -819,7 +832,7 @@ model Client {
   @@index([status])
   @@index([branchId])
   @@map("clients")
-  @@schema("public")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -858,7 +871,7 @@ model Case {
   @@index([assignedEmployeeId])
   @@index([departmentId])
   @@map("cases")
-  @@schema("public")
+  @@schema("processing")
 }
 
 // =============================================================================
@@ -881,7 +894,7 @@ model DocumentRequirement {
 
   @@index([serviceType])
   @@map("document_requirements")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model ClientDocument {
@@ -913,7 +926,7 @@ model ClientDocument {
   @@index([caseId])
   @@index([status])
   @@map("client_documents")
-  @@schema("public")
+  @@schema("processing")
 }
 
 // =============================================================================
@@ -951,7 +964,7 @@ model Appointment {
   @@index([scheduledAt])
   @@index([status])
   @@map("appointments")
-  @@schema("public")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -986,7 +999,7 @@ model Invoice {
   @@index([clientId])
   @@index([status])
   @@map("invoices")
-  @@schema("public")
+  @@schema("finance")
 }
 
 model Payment {
@@ -1011,7 +1024,7 @@ model Payment {
   @@index([invoiceId])
   @@index([status])
   @@map("payments")
-  @@schema("public")
+  @@schema("finance")
 }
 
 model FinanceHandover {
@@ -1047,7 +1060,7 @@ model FinanceHandover {
   @@index([status])
   @@index([createdByUserId])
   @@map("finance_handovers")
-  @@schema("public")
+  @@schema("finance")
 }
 
 // =============================================================================
@@ -1074,7 +1087,7 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
   @@map("audit_logs")
-  @@schema("public")
+  @@schema("audit")
 }
 
 // =============================================================================
@@ -1104,7 +1117,7 @@ model ActivityTimeline {
   @@index([caseId])
   @@index([createdAt])
   @@map("activity_timeline")
-  @@schema("public")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -1137,7 +1150,7 @@ model AiJob {
   @@index([jobType])
   @@index([documentId])
   @@map("ai_jobs")
-  @@schema("public")
+  @@schema("ai")
 }
 
 // =============================================================================
@@ -1161,7 +1174,7 @@ model AttendanceRecord {
   @@index([employeeId])
   @@index([date])
   @@map("attendance_records")
-  @@schema("public")
+  @@schema("core")
 }
 
 // =============================================================================
@@ -1184,7 +1197,7 @@ enum ProcessingCaseStage {
   APPEAL_IN_PROGRESS
   COMPLETED
   CANCELLED
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum ProcessingCasePriority {
@@ -1192,7 +1205,7 @@ enum ProcessingCasePriority {
   NORMAL
   URGENT
   CRITICAL
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum ProcessingSlaStatus {
@@ -1201,7 +1214,7 @@ enum ProcessingSlaStatus {
   BREACHED
   EXTENDED
   COMPLETED
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum AuthorityDecision {
@@ -1209,7 +1222,7 @@ enum AuthorityDecision {
   APPROVED
   REJECTED
   WITHDRAWN
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum DocumentCriticality {
@@ -1218,7 +1231,7 @@ enum DocumentCriticality {
   CONDITIONAL
   SUPPORTING
   OPTIONAL
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum DocumentItemStatus {
@@ -1231,39 +1244,39 @@ enum DocumentItemStatus {
   EXPIRING_SOON
   WAIVED
   NOT_APPLICABLE
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum DocumentValidityRule {
   NONE
   MUST_NOT_EXPIRE
   MUST_BE_VALID_FOR_N_MONTHS
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum VirusScanStatus {
   PENDING
   CLEAN
   INFECTED
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum DocReviewDecisionType {
   ACCEPTED
   REJECTED
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum DocAccessType {
   VIEW
   DOWNLOAD
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum CorrectionType {
   DOCUMENT
   INFORMATION
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum CorrectionRequiredAction {
@@ -1271,7 +1284,7 @@ enum CorrectionRequiredAction {
   CONFIRM
   CORRECT
   CALL_BACK
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum CorrectionStatus {
@@ -1279,14 +1292,14 @@ enum CorrectionStatus {
   IN_PROGRESS
   RESOLVED
   ESCALATED
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum CommunicationDirection {
   OFFICER_TO_CLIENT
   CLIENT_TO_OFFICER
   SYSTEM_TO_CLIENT
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum CommunicationMessageType {
@@ -1300,7 +1313,7 @@ enum CommunicationMessageType {
   DECISION_NOTICE
   APPOINTMENT_REQUEST
   REMINDER
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum ProcessingNoteType {
@@ -1310,7 +1323,7 @@ enum ProcessingNoteType {
   CLIENT_INSIGHT
   AUTHORITY_NOTE
   MANAGER_ONLY
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum ProcessingTaskPriority {
@@ -1318,7 +1331,7 @@ enum ProcessingTaskPriority {
   NORMAL
   HIGH
   URGENT
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum ProcessingTaskStatus {
@@ -1327,7 +1340,7 @@ enum ProcessingTaskStatus {
   BLOCKED
   DONE
   CANCELLED
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum AuthoritySubmissionStatus {
@@ -1336,7 +1349,7 @@ enum AuthoritySubmissionStatus {
   UNDER_REVIEW
   RESPONDED
   WITHDRAWN
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum AuthorityResponseType {
@@ -1345,7 +1358,7 @@ enum AuthorityResponseType {
   INFO_REQUEST
   BIOMETRICS_REQUEST
   OTHER
-  @@schema("public")
+  @@schema("processing")
 }
 
 enum ReminderType {
@@ -1360,7 +1373,7 @@ enum ReminderType {
   STAGE_UPDATE
   SUBMISSION_CONFIRMED
   DECISION_RECEIVED
-  @@schema("public")
+  @@schema("crm")
 }
 
 enum ReminderChannel {
@@ -1368,7 +1381,7 @@ enum ReminderChannel {
   WHATSAPP
   EMAIL
   SMS
-  @@schema("public")
+  @@schema("crm")
 }
 
 enum ReminderDeliveryStatus {
@@ -1376,7 +1389,7 @@ enum ReminderDeliveryStatus {
   SENT
   DELIVERED
   FAILED
-  @@schema("public")
+  @@schema("crm")
 }
 
 // =============================================================================
@@ -1410,7 +1423,7 @@ model DocumentRequirementTemplate {
   @@index([service, targetCountry])
   @@index([isActive])
   @@map("document_requirement_templates")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model ProcessingCase {
@@ -1464,7 +1477,7 @@ model ProcessingCase {
   @@index([leadId])
   @@index([priority, stage])
   @@map("processing_cases")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model ProcessingCaseStageHistory {
@@ -1483,7 +1496,7 @@ model ProcessingCaseStageHistory {
 
   @@index([caseId])
   @@map("processing_case_stage_history")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model CaseDocumentItem {
@@ -1523,7 +1536,7 @@ model CaseDocumentItem {
   @@index([status, caseId])
   @@index([validityExpiryDate])
   @@map("case_document_items")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model ClientDocumentVersion {
@@ -1551,7 +1564,7 @@ model ClientDocumentVersion {
   @@index([documentItemId])
   @@index([caseId])
   @@map("client_document_versions")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model DocumentReviewDecision {
@@ -1570,7 +1583,7 @@ model DocumentReviewDecision {
 
   @@index([documentItemId])
   @@map("document_review_decisions")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model DocumentAccessLog {
@@ -1589,7 +1602,7 @@ model DocumentAccessLog {
   @@index([documentVersionId])
   @@index([accessedByUserId])
   @@map("document_access_logs")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model CorrectionRequest {
@@ -1619,7 +1632,7 @@ model CorrectionRequest {
   @@index([caseId])
   @@index([status])
   @@map("correction_requests")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model CaseCommunication {
@@ -1641,7 +1654,7 @@ model CaseCommunication {
 
   @@index([caseId, createdAt(sort: Desc)])
   @@map("case_communications")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model ClientReminder {
@@ -1665,7 +1678,7 @@ model ClientReminder {
   @@index([caseId])
   @@index([scheduledAt])
   @@map("client_reminders")
-  @@schema("public")
+  @@schema("crm")
 }
 
 model ProcessingNote {
@@ -1684,7 +1697,7 @@ model ProcessingNote {
 
   @@index([caseId])
   @@map("processing_notes")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model ProcessingTask {
@@ -1710,7 +1723,7 @@ model ProcessingTask {
   @@index([caseId])
   @@index([assignedToUserId, status])
   @@map("processing_tasks")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model AuthoritySubmission {
@@ -1736,7 +1749,7 @@ model AuthoritySubmission {
 
   @@index([caseId])
   @@map("authority_submissions")
-  @@schema("public")
+  @@schema("processing")
 }
 
 model ProcessingAuditLog {
@@ -1758,7 +1771,7 @@ model ProcessingAuditLog {
   @@index([caseId, createdAt(sort: Desc)])
   @@index([entityType, entityId])
   @@map("processing_audit_logs")
-  @@schema("public")
+  @@schema("processing")
 }
 
 // =============================================================================

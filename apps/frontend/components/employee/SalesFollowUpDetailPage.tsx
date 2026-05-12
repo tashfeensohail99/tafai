@@ -166,7 +166,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
         setOtherFollowUps(all.filter((f) => f.leadId === found.leadId && f.id !== followUpId));
       }
       setLoading(false);
-    });
+    }).catch(() => setLoading(false));
   }, [followUpId]);
 
   if (loading) {

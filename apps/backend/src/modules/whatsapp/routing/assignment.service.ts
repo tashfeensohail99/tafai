@@ -8,12 +8,14 @@
  *   2. **Strict round-robin.** Walk eligible employees in deterministic id
  *      order, starting after `Organization.rrCursorEmployeeId`. Update cursor.
  *
- * **24/7 assignment — no business-hours or presence gate.** Tashfeen policy:
- * "we will keep assigning chat to the sale team no stoppage; they will come
- * back next morning and start the system where they left off." Threads that
- * arrive after 6 PM are still distributed; agents pick them up in the
- * morning. Presence (ONLINE / AWAY / OFFLINE) remains as a UI signal but
- * does not gate routing.
+ * **24/7 assignment — no business-hours, no weekend, no presence gate.**
+ * Tashfeen policy: "we will keep assigning chat to the sale team no stoppage;
+ * they will come back next morning and start the system where they left off"
+ * and "nothing pauses on weekends .. system works 24/7 .. on monday they will
+ * come back and watch and then start working." Threads that arrive after 6
+ * PM, on Saturday, or on Sunday are still distributed; agents pick them up
+ * the next working morning. Presence (ONLINE / AWAY / OFFLINE) remains as a
+ * UI signal but does not gate routing.
  *
  * Business hours ARE still used to pause the first-response SLA clock so it
  * doesn't tick to red at 11 PM — see `computeSlaDeadline()`.
@@ -119,14 +121,15 @@ export class WhatsAppAssignmentService {
         };
       }
 
-      // Per Tashfeen policy: assignment runs 24/7. Threads received after 6 PM
-      // are still distributed to the team; agents pick them up next morning
-      // where they left off. Business hours are used ONLY for SLA-clock math
-      // (already applied above) and for the after-hours auto-ack template
-      // (separate worker, not gated here). NO business-hours gate here.
-      // Presence is a UI signal, not a routing filter — agents who marked
-      // themselves OFFLINE for the night still get round-robined into their
-      // queue so the morning hand-off works.
+      // Per Tashfeen policy: assignment runs 24/7 including weekends.
+      // Threads received after 6 PM, on Saturday, or on Sunday are still
+      // distributed to the team; agents pick them up the next working morning
+      // where they left off. Business hours + working-days are used ONLY for
+      // SLA-clock math (already applied above) and for the after-hours
+      // auto-ack template (separate worker, not gated here). NO business-
+      // hours or weekend gate here. Presence is a UI signal, not a routing
+      // filter — agents who marked themselves OFFLINE for the night/weekend
+      // still get round-robined so the Monday hand-off works.
 
       const eligible = await this.loadEligibleEmployees(tx, org.organizationId);
       if (eligible.length === 0) {

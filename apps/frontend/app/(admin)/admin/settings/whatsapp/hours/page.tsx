@@ -15,7 +15,7 @@ export default function WhatsAppHoursAdminPage() {
       <PageHeader
         eyebrow="WhatsApp · Settings"
         title="Working hours & SLA"
-        description="Working hours are used to pause the first-response SLA clock overnight so it doesn't go red at 11 PM. Assignment itself runs 24/7 — threads received after 6 PM are still distributed to the team; agents pick them up the next morning."
+        description="Working hours are used to pause the first-response SLA clock overnight and on Sundays so it doesn't go red while the office is closed. Assignment itself runs 24/7, including weekends — threads received after 6 PM or on Sunday are still distributed to the team; agents pick them up Monday morning."
       />
       <GlassCard variant="default" padded="lg">
         <div
@@ -47,8 +47,8 @@ export default function WhatsAppHoursAdminPage() {
           />
           <SettingTile
             label="Assignment policy"
-            value="24/7"
-            hint="No business-hours gate. Round-robin runs continuously."
+            value="24/7 incl. weekends"
+            hint="No business-hours or weekend gate. Round-robin runs continuously; agents catch up Monday."
           />
         </div>
         <div

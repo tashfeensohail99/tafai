@@ -20,4 +20,14 @@ export class ReportsController {
   getWorkflowBoard() {
     return this.reportsService.getWorkflowBoard();
   }
+
+  /**
+   * Per-agent sales KPIs for the admin sales overview page. Permission
+   * `reports.view` is sufficient — same gate as the dashboard.
+   */
+  @Get('sales-overview')
+  @RequirePermissions('reports.view')
+  getSalesOverview() {
+    return this.reportsService.getSalesOverview();
+  }
 }

@@ -170,6 +170,162 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Per-agent sales KPIs for the admin sales overview. Returns top-line
+   * totals plus one row per active employee with their assigned-lead count,
+   * recent activity, and a 30-day conversion rate.
+   *
+   * Scoped to employees regardless of WhatsApp inbox membership — sales
+   * managers want to see everyone they're responsible for, not just the
+   * WhatsApp roster.
+   */
+  async getSalesOverview() {
+    const now = new Date();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const tomorrowStart = new Date(todayStart);
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const monthStart = new Date(todayStart);
+    monthStart.setDate(1);
+    const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const [
+      activeAgents,
+      totalLeads,
+      convertedThisMonth,
+      overdueFollowUps,
+      appointmentsToday,
+      employees,
+      assignedCounts,
+      newLeadCounts,
+      convertedCounts,
+      openFollowUpCounts,
+      overdueFollowUpCounts,
+      upcomingApptCounts,
+    ] = await this.prisma.$transaction([
+      this.prisma.employee.count({ where: { deletedAt: null, isActive: true } }),
+      this.prisma.lead.count({ where: { deletedAt: null } }),
+      this.prisma.lead.count({
+        where: {
+          deletedAt: null,
+          status: LeadStatus.CONVERTED,
+          convertedAt: { gte: monthStart },
+        },
+      }),
+      this.prisma.followUp.count({
+        where: { status: FollowUpStatus.OPEN, dueAt: { lt: now } },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          scheduledAt: { gte: todayStart, lt: tomorrowStart },
+          status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+        },
+      }),
+      this.prisma.employee.findMany({
+        where: { deletedAt: null, isActive: true },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          whatsappInboxMember: true,
+          presenceStatus: true,
+          lastActivityAt: true,
+        },
+        orderBy: { firstName: 'asc' },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['assignedEmployeeId'],
+        where: { deletedAt: null, assignedEmployeeId: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['assignedEmployeeId'],
+        where: {
+          deletedAt: null,
+          assignedEmployeeId: { not: null },
+          createdAt: { gte: thirtyDaysAgo },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['assignedEmployeeId'],
+        where: {
+          deletedAt: null,
+          assignedEmployeeId: { not: null },
+          status: LeadStatus.CONVERTED,
+          convertedAt: { gte: thirtyDaysAgo },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.followUp.groupBy({
+        by: ['assignedEmployeeId'],
+        where: { status: FollowUpStatus.OPEN, assignedEmployeeId: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.followUp.groupBy({
+        by: ['assignedEmployeeId'],
+        where: {
+          status: FollowUpStatus.OPEN,
+          dueAt: { lt: now },
+          assignedEmployeeId: { not: null },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.appointment.groupBy({
+        by: ['assignedEmployeeId'],
+        where: {
+          assignedEmployeeId: { not: null },
+          scheduledAt: { gte: now, lt: weekEnd },
+          status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    // Build per-employeeId lookup tables once.
+    const idx = <T extends { assignedEmployeeId: string | null; _count: { _all: number } }>(
+      rows: T[],
+    ) => new Map(rows.filter((r) => r.assignedEmployeeId).map((r) => [r.assignedEmployeeId!, r._count._all]));
+    const assignedMap = idx(assignedCounts);
+    const newMap = idx(newLeadCounts);
+    const convertedMap = idx(convertedCounts);
+    const openFollowUpMap = idx(openFollowUpCounts);
+    const overdueFollowUpMap = idx(overdueFollowUpCounts);
+    const upcomingApptMap = idx(upcomingApptCounts);
+
+    const agents = employees.map((e) => {
+      const newLeads = newMap.get(e.id) ?? 0;
+      const converted = convertedMap.get(e.id) ?? 0;
+      return {
+        employeeId: e.id,
+        name: `${e.firstName} ${e.lastName}`.trim(),
+        avatarInitials: ((e.firstName[0] ?? '') + (e.lastName[0] ?? '')).toUpperCase(),
+        whatsappInboxMember: e.whatsappInboxMember,
+        presenceStatus: e.presenceStatus,
+        lastActivityAt: e.lastActivityAt,
+        assignedLeads: assignedMap.get(e.id) ?? 0,
+        newLeadsLast30d: newLeads,
+        converted30d: converted,
+        conversionRate: newLeads > 0 ? converted / newLeads : 0,
+        openFollowUps: openFollowUpMap.get(e.id) ?? 0,
+        overdueFollowUps: overdueFollowUpMap.get(e.id) ?? 0,
+        upcomingAppointments: upcomingApptMap.get(e.id) ?? 0,
+      };
+    });
+
+    return {
+      totals: {
+        activeAgents,
+        totalLeads,
+        convertedThisMonth,
+        overdueFollowUps,
+        appointmentsToday,
+      },
+      agents,
+    };
+  }
+
   async getWorkflowBoard() {
     const [salesQueue, financeQueue, processingQueue, pendingDocuments, handoverHistory] = await this.prisma.$transaction([
       this.prisma.lead.findMany({

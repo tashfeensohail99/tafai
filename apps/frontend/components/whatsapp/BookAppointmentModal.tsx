@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CalendarClock } from 'lucide-react';
+import { CalendarClock, MessageCircle } from 'lucide-react';
 import {
   Field,
   FormInput,
@@ -9,7 +9,7 @@ import {
   GhostButton,
   PrimaryButton,
 } from '@/components/sales-v2/ui';
-import { createAppointment } from '@/lib/whatsapp';
+import { createAppointment, type CreateAppointmentResult } from '@/lib/whatsapp';
 import { Modal } from './Modal';
 
 /**
@@ -36,8 +36,10 @@ export function BookAppointmentModal(props: {
   const [location, setLocation] = useState('');
   const [meetingLink, setMeetingLink] = useState('');
   const [notes, setNotes] = useState('');
+  const [sendWhatsApp, setSendWhatsApp] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmationNote, setConfirmationNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!props.open) return;
@@ -51,8 +53,10 @@ export function BookAppointmentModal(props: {
     setLocation('');
     setMeetingLink('');
     setNotes('');
+    setSendWhatsApp(true);
     setSubmitting(false);
     setError(null);
+    setConfirmationNote(null);
   }, [props.open]);
 
   const onSubmit = async () => {
@@ -63,8 +67,9 @@ export function BookAppointmentModal(props: {
     const scheduledAt = new Date(`${date}T${time}`).toISOString();
     setSubmitting(true);
     setError(null);
+    setConfirmationNote(null);
     try {
-      await createAppointment({
+      const result: CreateAppointmentResult = await createAppointment({
         ...(props.leadId ? { leadId: props.leadId } : {}),
         ...(props.clientId ? { clientId: props.clientId } : {}),
         ...(props.defaultAssigneeId ? { assignedEmployeeId: props.defaultAssigneeId } : {}),
@@ -75,7 +80,15 @@ export function BookAppointmentModal(props: {
         ...(location ? { location } : {}),
         ...(meetingLink ? { meetingLink } : {}),
         ...(notes ? { notes } : {}),
+        sendWhatsAppConfirmation: sendWhatsApp,
       });
+
+      if (sendWhatsApp && result.whatsappConfirmation && !result.whatsappConfirmation.sent) {
+        // Keep modal open with an informational note so the agent knows the
+        // appointment was booked but no WhatsApp message went out.
+        setConfirmationNote(describeSkipReason(result.whatsappConfirmation.reason));
+        return;
+      }
       props.onBooked();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to book appointment');
@@ -170,8 +183,48 @@ export function BookAppointmentModal(props: {
             placeholder="Anything to prepare for this appointment…"
           />
         </Field>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+            padding: '10px 12px',
+            borderRadius: 'var(--sos-radius-sm)',
+            background: 'var(--sos-surface-1)',
+            border: '1px solid var(--sos-border-subtle)',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={sendWhatsApp}
+            onChange={(e) => setSendWhatsApp(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 'var(--sos-text-sm)',
+                fontWeight: 600,
+              }}
+            >
+              <MessageCircle size={13} /> Send WhatsApp confirmation now
+            </span>
+            <span className="sos-text-muted" style={{ fontSize: 'var(--sos-text-xs)' }}>
+              Free-form message — only sends if the 24-hour conversation window is still open.
+            </span>
+          </div>
+        </label>
       </div>
 
+      {confirmationNote && (
+        <div className="sos-banner sos-banner--warning" style={{ marginTop: 12 }}>
+          <span>{confirmationNote}</span>
+        </div>
+      )}
       {error && (
         <div className="sos-banner sos-banner--danger" style={{ marginTop: 12 }}>
           <span>{error}</span>
@@ -179,4 +232,17 @@ export function BookAppointmentModal(props: {
       )}
     </Modal>
   );
+}
+
+function describeSkipReason(reason: 'no_thread' | 'window_expired' | 'no_phone' | 'no_channel'): string {
+  switch (reason) {
+    case 'window_expired':
+      return 'Appointment booked. The 24-hour WhatsApp window has expired, so the confirmation was not sent — send a template message from the chat instead.';
+    case 'no_thread':
+      return 'Appointment booked. No active WhatsApp conversation found for this contact, so no confirmation was sent.';
+    case 'no_phone':
+      return 'Appointment booked. No phone number on file, so no WhatsApp confirmation was sent.';
+    case 'no_channel':
+      return 'Appointment booked, but the WhatsApp channel is unavailable. Contact admin.';
+  }
 }

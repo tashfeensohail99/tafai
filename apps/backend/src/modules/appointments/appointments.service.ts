@@ -1,12 +1,17 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AppointmentStatus, AuditAction, LeadStatus, TimelineEventType } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
+import {
+  WhatsAppAppointmentNotifierService,
+  type AppointmentConfirmationResult,
+} from '../whatsapp/notifications/appointment-notifier.service';
 import {
   CancelAppointmentDto,
   CreateAppointmentDto,
@@ -17,10 +22,13 @@ import { RequestUser } from '../../common/types/auth.types';
 
 @Injectable()
 export class AppointmentsService {
+  private readonly log = new Logger(AppointmentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
     private readonly activityTimeline: ActivityTimelineService,
+    private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
   ) {}
 
   async findAllAccessible(query: ListAppointmentsQueryDto, user: RequestUser) {
@@ -234,7 +242,25 @@ export class AppointmentsService {
       actorUserId,
     );
 
-    return created;
+    let whatsappConfirmation: AppointmentConfirmationResult | null = null;
+    if (dto.sendWhatsAppConfirmation) {
+      try {
+        whatsappConfirmation = await this.whatsappNotifier.sendConfirmationFor(
+          created.id,
+          actorUserId,
+        );
+      } catch (err) {
+        // Notifier is best-effort — appointment creation must never fail
+        // because of WhatsApp send issues.
+        this.log.warn(
+          { appointmentId: created.id, err: (err as Error).message },
+          'whatsapp confirmation send failed',
+        );
+        whatsappConfirmation = { sent: false, reason: 'no_thread' };
+      }
+    }
+
+    return { ...created, whatsappConfirmation };
   }
 
   async update(id: string, dto: UpdateAppointmentDto, actorUserId: string) {

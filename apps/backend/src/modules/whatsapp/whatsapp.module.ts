@@ -10,6 +10,7 @@ import { WhatsAppWebhooksModule } from './webhooks/webhooks.module';
 import { WhatsAppPresenceModule } from './presence/presence.module';
 import { WhatsAppThreadsModule } from './threads/threads.module';
 import { WhatsAppMessagesModule } from './messages/messages.module';
+import { WhatsAppNotificationsModule } from './notifications/notifications.module';
 
 /**
  * Root WhatsApp module. Composes the entire integration.
@@ -39,6 +40,7 @@ import { WhatsAppMessagesModule } from './messages/messages.module';
     WhatsAppPresenceModule,
     WhatsAppThreadsModule,
     WhatsAppMessagesModule,
+    WhatsAppNotificationsModule,
   ],
 })
 export class WhatsAppModule {}

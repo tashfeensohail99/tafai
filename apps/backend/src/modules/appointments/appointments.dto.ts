@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
@@ -95,6 +96,14 @@ export class CreateAppointmentDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+
+  // When true, after creating the appointment we enqueue a free-form WhatsApp
+  // confirmation to the linked lead/client (only if their 24h customer-service
+  // window is still open). Best-effort; appointment creation never fails on
+  // this branch.
+  @IsOptional()
+  @IsBoolean()
+  sendWhatsAppConfirmation?: boolean;
 }
 
 export class UpdateAppointmentDto {

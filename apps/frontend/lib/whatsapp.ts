@@ -216,10 +216,22 @@ export interface CreateAppointmentInput {
   location?: string;
   meetingLink?: string;
   notes?: string;
+  /** Send a free-form WhatsApp confirmation to the linked lead/client. */
+  sendWhatsAppConfirmation?: boolean;
 }
 
-export function createAppointment(input: CreateAppointmentInput): Promise<unknown> {
-  return apiFetch<unknown>('/appointments', {
+export type AppointmentConfirmationOutcome =
+  | { sent: true; messageId: string; threadId: string }
+  | { sent: false; reason: 'no_thread' | 'window_expired' | 'no_phone' | 'no_channel' };
+
+export interface CreateAppointmentResult {
+  id: string;
+  whatsappConfirmation: AppointmentConfirmationOutcome | null;
+  [key: string]: unknown;
+}
+
+export function createAppointment(input: CreateAppointmentInput): Promise<CreateAppointmentResult> {
+  return apiFetch<CreateAppointmentResult>('/appointments', {
     method: 'POST',
     body: JSON.stringify(input),
   });

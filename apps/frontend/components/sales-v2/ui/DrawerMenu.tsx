@@ -29,9 +29,16 @@ export function DrawerMenu({ items, onNavigate }: DrawerMenuProps) {
     <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       {items.map((item) => {
         const Icon = item.icon;
+        // A "root" item (workspace dashboard like /admin, /sales, /finance,
+        // /processing) should only match on exact equality — otherwise
+        // /admin/users would also light up the /admin dashboard item.
+        // Deeper items (≥2 path segments) use prefix matching so detail
+        // pages keep the parent nav item active.
+        const segmentCount = item.href.split('/').filter(Boolean).length;
+        const isRoot = segmentCount <= 1;
         const isActive =
           pathname === item.href ||
-          (item.href !== '/sales' && pathname.startsWith(`${item.href}/`));
+          (!isRoot && pathname.startsWith(`${item.href}/`));
 
         return (
           <Link

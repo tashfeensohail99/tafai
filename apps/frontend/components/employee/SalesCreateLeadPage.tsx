@@ -3,6 +3,7 @@
 
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/lib/api-client';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import {
   ArrowLeft,
@@ -252,9 +253,30 @@ export function SalesCreateLeadPage() {
     setSavedDraft(true);
     setTimeout(() => setSavedDraft(false), 2400);
   }
-  function handleSubmit() {
+  async function handleSubmit() {
     setSubmitting(true);
-    setTimeout(() => router.push('/sales/decisions'), 600);
+    setError(null);
+    try {
+      await apiFetch('/leads', {
+        method: 'POST',
+        body: JSON.stringify({
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          phone: form.phone.trim(),
+          email: form.email.trim() || undefined,
+          sourceChannel: form.source ?? undefined,
+          serviceInterest: form.service || undefined,
+          targetCountry: form.country || undefined,
+          priority: form.temperature || undefined,
+          notes: form.note.trim() || undefined,
+        }),
+      });
+      router.push('/sales/decisions');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to create lead';
+      setError(msg);
+      setSubmitting(false);
+    }
   }
 
   return (

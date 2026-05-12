@@ -6,15 +6,18 @@ import {
   Building2,
   CalendarDays,
   ClipboardList,
+  Clock,
   FileText,
   Flag,
   Handshake,
   LayoutDashboard,
   MapPinned,
+  MessageSquare,
   NotebookTabs,
   ShieldCheck,
   UserRoundCog,
   Users,
+  UsersRound,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
@@ -81,6 +84,9 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Services', href: '/admin/settings/services', icon: BadgeDollarSign, permissionKey: 'settings.manage' },
       { label: 'Countries', href: '/admin/settings/countries', icon: Flag, permissionKey: 'settings.manage' },
+      { label: 'WhatsApp Channels', href: '/admin/settings/whatsapp/channels', icon: MessageSquare, permissionKey: 'whatsapp.manage_channels' },
+      { label: 'WhatsApp Hours & SLA', href: '/admin/settings/whatsapp/hours', icon: Clock, permissionKey: 'whatsapp.manage_settings' },
+      { label: 'WhatsApp Team', href: '/admin/settings/whatsapp/team', icon: UsersRound, permissionKey: 'whatsapp.view_team_dashboard' },
     ],
   },
 ];

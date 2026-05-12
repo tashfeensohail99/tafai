@@ -935,6 +935,251 @@ async function main() {
     console.warn('No `client` role found — skipping client-portal demo seed.');
   }
 
+  // -----------------------------------------------------------------------
+  // CRM admin demo dataset
+  // -----------------------------------------------------------------------
+  // Populates /admin/sales, /admin/leads, /admin/clients, /admin/appointments,
+  // /admin/finance with enough variety that the premium UI has something to
+  // render. Idempotent — every record is guarded by a uniqueness check.
+  if (mainBranch && salesRole) {
+    // 3 extra sales employees so the team table on /admin/sales isn't a
+    // single row. Each becomes a WhatsApp inbox member with rotating skills.
+    const DEMO_AGENTS: Array<{
+      email: string;
+      firstName: string;
+      lastName: string;
+      employeeCode: string;
+      skills: string[];
+    }> = [
+      { email: 'fatima.r@tashfeen.com', firstName: 'Fatima', lastName: 'Raza', employeeCode: 'SAL-002', skills: ['Canada', 'Student'] },
+      { email: 'omar.k@tashfeen.com', firstName: 'Omar', lastName: 'Khan', employeeCode: 'SAL-003', skills: ['UK', 'Work permit'] },
+      { email: 'zainab.a@tashfeen.com', firstName: 'Zainab', lastName: 'Ali', employeeCode: 'SAL-004', skills: ['Australia', 'Family visa'] },
+    ];
+    const agentEmployees: Array<{ id: string; firstName: string; lastName: string }> = [
+      { id: salesEmployee.id, firstName: salesEmployee.firstName, lastName: salesEmployee.lastName },
+    ];
+    for (const a of DEMO_AGENTS) {
+      let u = await prisma.userAccount.findUnique({ where: { email: a.email } });
+      if (!u) {
+        const hash = await bcrypt.hash('demo123!', 12);
+        u = await prisma.userAccount.create({
+          data: {
+            email: a.email,
+            passwordHash: hash,
+            status: 'ACTIVE',
+            emailVerifiedAt: new Date(),
+            userRoles: { create: [{ roleId: salesRole.id }] },
+          },
+        });
+      }
+      let emp = await prisma.employee.findUnique({ where: { userId: u.id } });
+      if (!emp) {
+        emp = await prisma.employee.create({
+          data: {
+            userId: u.id,
+            departmentId: salesDepartment.id,
+            branchId: mainBranch.id,
+            designationId: salesConsultantDesignation.id,
+            employeeCode: a.employeeCode,
+            firstName: a.firstName,
+            lastName: a.lastName,
+            nationality: 'Pakistan',
+            joiningDate: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
+            isActive: true,
+            whatsappInboxMember: true,
+            skills: a.skills,
+            presenceStatus: 'ONLINE',
+            lastActivityAt: new Date(),
+          },
+        });
+      }
+      agentEmployees.push({ id: emp.id, firstName: emp.firstName, lastName: emp.lastName });
+    }
+
+    // 18 demo leads spread across statuses + agents + sources. Phone is the
+    // uniqueness key so re-runs find existing rows.
+    const DEMO_LEADS: Array<{
+      first: string; last: string; phone: string; country: string; service: string; status: LeadStatus; source: string; agentIdx: number;
+    }> = [
+      { first: 'Hassan',  last: 'Iqbal',  phone: '+923331100201', country: 'Canada',    service: 'Study Visa',    status: LeadStatus.NEW,           source: 'WhatsApp',     agentIdx: 0 },
+      { first: 'Ayesha',  last: 'Sheikh', phone: '+923331100202', country: 'Australia', service: 'Work Permit',   status: LeadStatus.NEW,           source: 'Facebook',     agentIdx: 1 },
+      { first: 'Bilal',   last: 'Mahmood',phone: '+923331100203', country: 'UK',        service: 'Student Visa',  status: LeadStatus.CONTACTED,     source: 'Website',      agentIdx: 2 },
+      { first: 'Sana',    last: 'Khan',   phone: '+923331100204', country: 'Canada',    service: 'Work Permit',   status: LeadStatus.CONTACTED,     source: 'WhatsApp',     agentIdx: 3 },
+      { first: 'Imran',   last: 'Ahmad',  phone: '+923331100205', country: 'UK',        service: 'Family Visa',   status: LeadStatus.QUALIFIED,     source: 'Referral',     agentIdx: 0 },
+      { first: 'Kashif',  last: 'Hussain',phone: '+923331100206', country: 'Australia', service: 'Student Visa',  status: LeadStatus.QUALIFIED,     source: 'WhatsApp',     agentIdx: 1 },
+      { first: 'Maria',   last: 'Tariq',  phone: '+923331100207', country: 'Canada',    service: 'Visit Visa',    status: LeadStatus.PROPOSAL_SENT, source: 'Walk-in',      agentIdx: 2 },
+      { first: 'Usman',   last: 'Rashid', phone: '+923331100208', country: 'USA',       service: 'Work Permit',   status: LeadStatus.PROPOSAL_SENT, source: 'Website',      agentIdx: 3 },
+      { first: 'Nida',    last: 'Saeed',  phone: '+923331100209', country: 'UK',        service: 'Student Visa',  status: LeadStatus.FOLLOW_UP,     source: 'WhatsApp',     agentIdx: 0 },
+      { first: 'Adeel',   last: 'Naveed', phone: '+923331100210', country: 'Canada',    service: 'Work Permit',   status: LeadStatus.FOLLOW_UP,     source: 'Facebook',     agentIdx: 1 },
+      { first: 'Hira',    last: 'Mirza',  phone: '+923331100211', country: 'Australia', service: 'Family Visa',   status: LeadStatus.FOLLOW_UP,     source: 'Referral',     agentIdx: 2 },
+      { first: 'Saad',    last: 'Aslam',  phone: '+923331100212', country: 'Canada',    service: 'Student Visa',  status: LeadStatus.CONVERTED,     source: 'WhatsApp',     agentIdx: 0 },
+      { first: 'Hina',    last: 'Akbar',  phone: '+923331100213', country: 'UK',        service: 'Work Permit',   status: LeadStatus.CONVERTED,     source: 'Website',      agentIdx: 1 },
+      { first: 'Yasir',   last: 'Mustafa',phone: '+923331100214', country: 'Australia', service: 'Visit Visa',    status: LeadStatus.CONVERTED,     source: 'Walk-in',      agentIdx: 2 },
+      { first: 'Sara',    last: 'Hameed', phone: '+923331100215', country: 'USA',       service: 'Student Visa',  status: LeadStatus.LOST,          source: 'Facebook',     agentIdx: 3 },
+      { first: 'Asad',    last: 'Bashir', phone: '+923331100216', country: 'Canada',    service: 'Work Permit',   status: LeadStatus.LOST,          source: 'WhatsApp',     agentIdx: 0 },
+      { first: 'Komal',   last: 'Javed',  phone: '+923331100217', country: 'UK',        service: 'Family Visa',   status: LeadStatus.UNQUALIFIED,   source: 'Walk-in',      agentIdx: 1 },
+      { first: 'Faisal',  last: 'Anwar',  phone: '+923331100218', country: 'Canada',    service: 'Student Visa',  status: LeadStatus.NEW,           source: 'Website',      agentIdx: 2 },
+    ];
+
+    const createdLeads: Array<{ id: string; first: string; last: string; phone: string; country: string; service: string; status: LeadStatus; assignedEmployeeId: string }> = [];
+    for (const [i, d] of DEMO_LEADS.entries()) {
+      const existing = await prisma.lead.findFirst({ where: { phone: d.phone, deletedAt: null } });
+      const agent = agentEmployees[d.agentIdx % agentEmployees.length]!;
+      // Spread createdAt over the last 45 days so the dashboard "new today"
+      // and "30d" counts have variety.
+      const daysAgo = Math.floor((i * 45) / DEMO_LEADS.length);
+      const createdAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+      let leadId: string;
+      if (existing) {
+        leadId = existing.id;
+      } else {
+        const lead = await prisma.lead.create({
+          data: {
+            assignedEmployeeId: agent.id,
+            createdByUserId: salesUser.id,
+            branchId: mainBranch.id,
+            firstName: d.first,
+            lastName: d.last,
+            email: `${d.first.toLowerCase()}.${d.last.toLowerCase()}@example.com`,
+            phone: d.phone,
+            nationality: 'Pakistan',
+            targetCountry: d.country,
+            serviceInterest: d.service,
+            sourceChannel: d.source,
+            status: d.status,
+            createdAt,
+            convertedAt: d.status === LeadStatus.CONVERTED ? createdAt : null,
+          },
+        });
+        leadId = lead.id;
+      }
+      createdLeads.push({
+        id: leadId,
+        first: d.first,
+        last: d.last,
+        phone: d.phone,
+        country: d.country,
+        service: d.service,
+        status: d.status,
+        assignedEmployeeId: agent.id,
+      });
+    }
+
+    // 6 follow-ups, some overdue (the dashboard "overdue follow-ups" widget
+    // will pick these up).
+    const followUpTargets = createdLeads.filter((l) => l.status === LeadStatus.FOLLOW_UP || l.status === LeadStatus.QUALIFIED).slice(0, 6);
+    for (const [i, l] of followUpTargets.entries()) {
+      const existing = await prisma.followUp.findFirst({
+        where: { leadId: l.id, title: `Demo follow-up #${i + 1}` },
+      });
+      if (existing) continue;
+      const overdue = i < 3;
+      const dueAt = overdue
+        ? new Date(Date.now() - (i + 1) * 24 * 60 * 60 * 1000)
+        : new Date(Date.now() + (i + 1) * 24 * 60 * 60 * 1000);
+      await prisma.followUp.create({
+        data: {
+          leadId: l.id,
+          assignedEmployeeId: l.assignedEmployeeId,
+          createdByUserId: salesUser.id,
+          title: `Demo follow-up #${i + 1}`,
+          description: overdue ? 'Past-due demo task.' : 'Upcoming touchpoint.',
+          contactMethod: 'WhatsApp',
+          dueAt,
+          priority: FollowUpPriority.MEDIUM,
+          status: FollowUpStatus.OPEN,
+        },
+      });
+    }
+
+    // 6 appointments — 2 today, 4 over the next week. Mix of types.
+    const today = new Date();
+    today.setHours(10, 0, 0, 0);
+    const appointmentSpecs: Array<{ offsetDays: number; hour: number; title: string; type: string; leadIdx: number }> = [
+      { offsetDays: 0, hour: 10, title: 'Initial consultation', type: 'CONSULTATION', leadIdx: 0 },
+      { offsetDays: 0, hour: 14, title: 'Document review', type: 'DOCUMENT_REVIEW', leadIdx: 4 },
+      { offsetDays: 1, hour: 11, title: 'Visit visa briefing', type: 'CONSULTATION', leadIdx: 6 },
+      { offsetDays: 2, hour: 15, title: 'Biometrics walkthrough', type: 'BIOMETRICS', leadIdx: 5 },
+      { offsetDays: 3, hour: 12, title: 'IELTS prep meeting', type: 'IN_PERSON', leadIdx: 8 },
+      { offsetDays: 5, hour: 16, title: 'Embassy follow-up', type: 'OFFICE_VISIT', leadIdx: 10 },
+    ];
+    for (const spec of appointmentSpecs) {
+      const lead = createdLeads[spec.leadIdx];
+      if (!lead) continue;
+      const scheduledAt = new Date(today);
+      scheduledAt.setDate(scheduledAt.getDate() + spec.offsetDays);
+      scheduledAt.setHours(spec.hour, 0, 0, 0);
+      const existing = await prisma.appointment.findFirst({
+        where: { leadId: lead.id, scheduledAt },
+      });
+      if (existing) continue;
+      await prisma.appointment.create({
+        data: {
+          leadId: lead.id,
+          assignedEmployeeId: lead.assignedEmployeeId,
+          createdByUserId: salesUser.id,
+          title: spec.title,
+          appointmentType: spec.type,
+          scheduledAt,
+          durationMinutes: 30,
+          status: 'SCHEDULED',
+        },
+      });
+    }
+
+    // 5 invoices with verified payments — feeds the revenue rollup on
+    // /admin/finance. Amounts vary so the per-service breakdown is meaningful.
+    const invoiceSpecs: Array<{ leadIdx: number; amount: number; offsetDays: number }> = [
+      { leadIdx: 11, amount: 4500, offsetDays: 2 },
+      { leadIdx: 12, amount: 3200, offsetDays: 8 },
+      { leadIdx: 13, amount: 6800, offsetDays: 14 },
+      { leadIdx: 0,  amount: 2200, offsetDays: 1 },
+      { leadIdx: 4,  amount: 5100, offsetDays: 20 },
+    ];
+    let invoiceCounter = 1000;
+    for (const spec of invoiceSpecs) {
+      const lead = createdLeads[spec.leadIdx];
+      if (!lead) continue;
+      invoiceCounter += 1;
+      const invoiceNumber = `INV-DEMO-${invoiceCounter}`;
+      const existing = await prisma.invoice.findFirst({ where: { invoiceNumber } });
+      if (existing) continue;
+      const createdAt = new Date(Date.now() - spec.offsetDays * 24 * 60 * 60 * 1000);
+      const invoice = await prisma.invoice.create({
+        data: {
+          leadId: lead.id,
+          createdByUserId: salesUser.id,
+          invoiceNumber,
+          status: 'PAID',
+          currency: 'CAD',
+          subtotal: spec.amount.toString(),
+          taxAmount: '0',
+          discountAmount: '0',
+          totalAmount: spec.amount.toString(),
+          paidAmount: spec.amount.toString(),
+          createdAt,
+          notes: 'Demo seed invoice for the finance admin views.',
+        },
+      });
+      await prisma.payment.create({
+        data: {
+          invoiceId: invoice.id,
+          amount: spec.amount.toString(),
+          currency: 'CAD',
+          paymentMethod: 'BANK_TRANSFER',
+          transactionRef: `DEMO-PAY-${invoiceCounter}`,
+          status: 'PAID',
+          verifiedByUserId: salesUser.id,
+          verifiedAt: createdAt,
+          notes: 'Demo seed payment.',
+        },
+      });
+    }
+    console.log(
+      `CRM demo data: ${agentEmployees.length} agents, ${createdLeads.length} leads, ${followUpTargets.length} follow-ups, ${appointmentSpecs.length} appointments, ${invoiceSpecs.length} invoices.`,
+    );
+  }
+
   console.log('Seed complete');
 }
 

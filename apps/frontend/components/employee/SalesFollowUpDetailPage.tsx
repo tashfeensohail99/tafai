@@ -40,6 +40,7 @@ import {
   type FollowUp,
   type FollowUpStatus,
   type SlaStatus,
+  type Lead,
   FOLLOWUP_TYPE_LABEL,
   STAGE_LABEL,
   fmtDateTime,
@@ -135,6 +136,7 @@ function ChannelIcon({ channel, size = 14 }: { channel: FollowUp['channel']; siz
 export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) {
   const [followUp, setFollowUp] = useState<FollowUp | null>(null);
   const [otherFollowUps, setOtherFollowUps] = useState<FollowUp[]>([]);
+  const [lead, setLead] = useState<Lead | null>(null);
   const [leadPhone, setLeadPhone] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -155,8 +157,11 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
         setDueAt(new Date(found.dueAt).toISOString().slice(0, 16));
         setOutcome(found.outcome ?? '');
         // Load lead phone
-        const lead = await fetchLead(found.leadId);
-        if (lead) setLeadPhone(lead.phone.replace(/[^+\d]/g, ''));
+        const leadObj = await fetchLead(found.leadId);
+        if (leadObj) {
+          setLead(leadObj);
+          setLeadPhone(leadObj.phone.replace(/[^+\d]/g, ''));
+        }
         // Other follow-ups for same lead
         setOtherFollowUps(all.filter((f) => f.leadId === found.leadId && f.id !== followUpId));
       }

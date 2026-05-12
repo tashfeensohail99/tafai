@@ -163,9 +163,6 @@ export class ReportsService {
       overdueFollowUps,
       paymentsTodayAmount: Number(paymentsToday._sum.amount ?? 0),
       paymentsThisMonthAmount: Number(paymentsThisMonth._sum.amount ?? 0),
-      // Candidate records — module not yet built, surfaced as 0 so the
-      // dashboard widget renders the placeholder without a runtime error.
-      candidateRecords: 0,
       topAgents,
     };
   }

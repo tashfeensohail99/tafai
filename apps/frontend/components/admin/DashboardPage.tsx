@@ -8,7 +8,6 @@ import {
   CalendarDays,
   ClipboardList,
   FileText,
-  IdCard,
   MessageSquare,
   TrendingUp,
   UserCheck,
@@ -49,7 +48,6 @@ interface DashboardSummary {
   overdueFollowUps: number;
   paymentsTodayAmount: number;
   paymentsThisMonthAmount: number;
-  candidateRecords: number;
   topAgents: TopAgent[];
 }
 
@@ -285,16 +283,6 @@ export function DashboardPage() {
           value={summary.overdueInvoices}
           hint="Need finance attention"
           icon={<AlertTriangle className="h-5 w-5" />}
-        />
-      </DashboardSection>
-
-      {/* ---- Section: Candidates (placeholder) ---- */}
-      <DashboardSection title="Candidates (coming soon)">
-        <StatCard
-          label="Candidate records"
-          value={summary.candidateRecords}
-          hint="Candidates module not yet built"
-          icon={<IdCard className="h-5 w-5" />}
         />
       </DashboardSection>
 

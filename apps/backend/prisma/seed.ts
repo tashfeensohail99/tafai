@@ -125,14 +125,6 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'processing.checklist.manage', module: 'processing', description: 'Manage the document checklist templates' },
   { key: 'processing.report.view', module: 'processing', description: 'View processing reports + dashboards' },
   { key: 'processing.report.export', module: 'processing', description: 'Export processing reports as CSV' },
-  // Candidates (module reserved for future build — permissions seeded so admin
-  // role automatically covers it once the module ships)
-  { key: 'candidates.view_all', module: 'candidates', description: 'View all candidate profiles' },
-  { key: 'candidates.view_assigned', module: 'candidates', description: 'View assigned candidate profiles' },
-  { key: 'candidates.create', module: 'candidates', description: 'Create candidate profiles' },
-  { key: 'candidates.update', module: 'candidates', description: 'Update candidate profiles' },
-  { key: 'candidates.assign', module: 'candidates', description: 'Assign candidates to staff' },
-  { key: 'candidates.delete', module: 'candidates', description: 'Delete / archive candidate profiles' },
 ];
 
 const SYSTEM_ROLES: {
@@ -258,26 +250,6 @@ const SYSTEM_ROLES: {
     ],
   },
   {
-    name: 'candidate_manager',
-    displayName: 'Candidate Manager',
-    description: 'Manage the candidate roster (reserved for the upcoming candidates module)',
-    permissionKeys: [
-      'candidates.view_all', 'candidates.create', 'candidates.update',
-      'candidates.assign', 'candidates.delete',
-      'documents.view_all', 'documents.upload', 'documents.verify',
-      'reports.view',
-    ],
-  },
-  {
-    name: 'candidate_officer',
-    displayName: 'Candidate Officer',
-    description: 'Day-to-day candidate handling (reserved for the upcoming candidates module)',
-    permissionKeys: [
-      'candidates.view_assigned', 'candidates.create', 'candidates.update',
-      'documents.view_assigned', 'documents.upload',
-    ],
-  },
-  {
     name: 'support',
     displayName: 'Support',
     description: 'Client support and communications',
@@ -309,6 +281,44 @@ const SYSTEM_ROLES: {
 
 async function main() {
   console.log('Seeding database...');
+
+  // -----------------------------------------------------------------------
+  // Clean up legacy "candidate" scaffolding.
+  // Tashfeen's domain is Lead → Client only; there is no Candidate entity.
+  // Earlier seeds created candidate_manager / candidate_officer roles and
+  // a `candidates.*` permission set as a placeholder. Remove them so the
+  // permission catalog and roles list stays accurate. Safe to run repeatedly.
+  // -----------------------------------------------------------------------
+  const legacyCandidateRoleNames = ['candidate_manager', 'candidate_officer'];
+  const legacyCandidateRoles = await prisma.role.findMany({
+    where: { name: { in: legacyCandidateRoleNames } },
+    select: { id: true },
+  });
+  if (legacyCandidateRoles.length > 0) {
+    await prisma.rolePermission.deleteMany({
+      where: { roleId: { in: legacyCandidateRoles.map((r) => r.id) } },
+    });
+    await prisma.userRole.deleteMany({
+      where: { roleId: { in: legacyCandidateRoles.map((r) => r.id) } },
+    });
+    await prisma.role.deleteMany({
+      where: { id: { in: legacyCandidateRoles.map((r) => r.id) } },
+    });
+    console.log(`Removed ${legacyCandidateRoles.length} legacy candidate role(s)`);
+  }
+  const legacyCandidatePerms = await prisma.permission.findMany({
+    where: { module: 'candidates' },
+    select: { id: true },
+  });
+  if (legacyCandidatePerms.length > 0) {
+    await prisma.rolePermission.deleteMany({
+      where: { permissionId: { in: legacyCandidatePerms.map((p) => p.id) } },
+    });
+    await prisma.permission.deleteMany({
+      where: { id: { in: legacyCandidatePerms.map((p) => p.id) } },
+    });
+    console.log(`Removed ${legacyCandidatePerms.length} legacy candidate permission(s)`);
+  }
 
   // Upsert permissions
   for (const perm of PERMISSIONS) {

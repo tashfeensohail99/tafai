@@ -51,6 +51,7 @@ export function UsersAdminPage() {
   const canCreate = user.permissions.includes('users.create');
   const canAssignRoles = user.permissions.includes('users.assign_role');
   const canDeactivate = user.permissions.includes('users.deactivate');
+  const canResetPassword = user.permissions.includes('users.update');
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
@@ -66,6 +67,12 @@ export function UsersAdminPage() {
   const [roleDraft, setRoleDraft] = useState<string[]>([]);
   const [rolesSaving, setRolesSaving] = useState(false);
   const [rolesError, setRolesError] = useState<string | null>(null);
+
+  const [resetTarget, setResetTarget] = useState<UserRow | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetSaving, setResetSaving] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -140,6 +147,31 @@ export function UsersAdminPage() {
       setRolesError(err instanceof Error ? err.message : 'Unable to update roles');
     } finally {
       setRolesSaving(false);
+    }
+  }
+
+  async function handleResetPassword() {
+    if (!resetTarget) return;
+    if (resetPassword.length < 8) {
+      setResetError('Password must be at least 8 characters');
+      return;
+    }
+    setResetSaving(true);
+    setResetError(null);
+    try {
+      await apiFetch(`/users/${resetTarget.id}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ newPassword: resetPassword }),
+      });
+      setResetSuccess(
+        `Temporary password set for ${resetTarget.email}. Share it securely — they'll be forced to change it on next login.`,
+      );
+      setResetTarget(null);
+      setResetPassword('');
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : 'Unable to reset password');
+    } finally {
+      setResetSaving(false);
     }
   }
 
@@ -224,6 +256,20 @@ export function UsersAdminPage() {
               style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
             >
               Edit roles
+            </button>
+          ) : null}
+          {canResetPassword && row.id !== user.id ? (
+            <button
+              onClick={() => {
+                setResetTarget(row);
+                setResetPassword(suggestPassword());
+                setResetError(null);
+                setResetSuccess(null);
+              }}
+              className="rounded-md border px-3 py-1 text-xs font-medium"
+              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+            >
+              Reset password
             </button>
           ) : null}
           {canDeactivate && row.id !== user.id && row.status === 'ACTIVE' ? (
@@ -333,6 +379,67 @@ export function UsersAdminPage() {
         </ModalShell>
       ) : null}
 
+      {resetSuccess ? (
+        <div className="sos-banner sos-banner--success">{resetSuccess}</div>
+      ) : null}
+
+      {/* ---------- Reset password modal ---------- */}
+      {resetTarget ? (
+        <ModalShell
+          title={`Reset password for ${resetTarget.email}`}
+          onClose={() => setResetTarget(null)}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div
+              style={{
+                padding: '10px 12px',
+                fontSize: 12.5,
+                color: 'var(--sos-text-primary)',
+                background: 'var(--sos-status-warning-soft)',
+                border: '1px solid var(--sos-status-warning-border)',
+                borderRadius: 'var(--sos-radius-sm)',
+              }}
+            >
+              The user will be forced to change this password on next login.
+              All their existing sessions will be revoked immediately.
+            </div>
+            <FormField label="Temporary password" required>
+              <input
+                type="text"
+                className="sos-input"
+                minLength={8}
+                value={resetPassword}
+                onChange={(e) => setResetPassword(e.target.value)}
+                style={{ fontFamily: 'monospace' }}
+              />
+              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                Share this password through a secure channel (e.g. in person, encrypted message).
+              </div>
+            </FormField>
+            {resetError ? (
+              <div className="sos-banner sos-banner--danger">{resetError}</div>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                className="sos-btn sos-btn--ghost"
+                onClick={() => setResetTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="sos-btn sos-btn--primary"
+                disabled={resetSaving}
+                onClick={() => void handleResetPassword()}
+              >
+                {resetSaving ? 'Resetting…' : 'Reset password'}
+              </button>
+            </div>
+          </div>
+        </ModalShell>
+      ) : null}
+
       {/* ---------- Edit roles modal ---------- */}
       {editingRolesUser ? (
         <ModalShell
@@ -377,6 +484,16 @@ export function UsersAdminPage() {
 }
 
 // ---------- small helpers ------------------------------------------------
+
+function suggestPassword(): string {
+  // 12-char readable-ish password: 2 short syllables + 4 digits + symbol.
+  // Not crypto-grade — just to save the admin the typing.
+  const syllables = ['Kara', 'Lior', 'Nimi', 'Soja', 'Veka', 'Ravi', 'Mosh', 'Tara', 'Yusu', 'Edra'];
+  const a = syllables[Math.floor(Math.random() * syllables.length)];
+  const b = syllables[Math.floor(Math.random() * syllables.length)];
+  const n = Math.floor(1000 + Math.random() * 9000);
+  return `${a}-${b}-${n}!`;
+}
 
 function StatusPill({ status }: { status: UserRow['status'] }) {
   const map: Record<UserRow['status'], { label: string; bg: string; fg: string }> = {

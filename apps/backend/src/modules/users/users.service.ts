@@ -196,4 +196,41 @@ export class UsersService {
       newValues: { status: 'INACTIVE' },
     });
   }
+
+  /**
+   * Admin-set temp password. Forces a change on next login and revokes all
+   * current sessions so an attacker holding an old token can't keep working.
+   * The new password is never echoed in the audit log — only that a reset
+   * happened.
+   */
+  async resetPassword(id: string, newPassword: string, actorUserId: string) {
+    const user = await this.findById(id);
+    const passwordHash = await this.authService.hashPassword(newPassword);
+
+    await this.prisma.$transaction([
+      this.prisma.userAccount.update({
+        where: { id },
+        data: {
+          passwordHash,
+          mustChangePassword: true,
+          // Unlock the account if the previous owner had locked themselves
+          // out — the admin presumably wants them able to log in again.
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      }),
+      this.prisma.loginSession.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.PASSWORD_RESET_COMPLETED,
+      entityType: 'UserAccount',
+      entityId: id,
+      metadata: { targetEmail: user.email, byAdmin: true },
+    });
+  }
 }

@@ -16,7 +16,12 @@ import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
-import { CreateUserDto, UpdateUserDto, AssignRolesDto } from './users.dto';
+import {
+  AssignRolesDto,
+  CreateUserDto,
+  ResetPasswordDto,
+  UpdateUserDto,
+} from './users.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -69,5 +74,21 @@ export class UsersController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.usersService.deactivate(id, user.id);
+  }
+
+  /**
+   * Admin sets a temporary password. The target user is forced to change it
+   * on next login. Phase 1 stand-in for a real reset-via-email flow (which
+   * needs the email module wired). Permission: `users.update`.
+   */
+  @Post(':id/reset-password')
+  @RequirePermissions('users.update')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  resetPassword(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ResetPasswordDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.usersService.resetPassword(id, dto.newPassword, user.id);
   }
 }

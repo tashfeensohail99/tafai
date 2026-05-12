@@ -97,6 +97,34 @@ const TERMINAL_STAGES = new Set<ProcessingCaseStage>([
   ProcessingCaseStage.CANCELLED,
 ]);
 
+/**
+ * Map every operational ProcessingCase.stage to the coarse-grained
+ * Client.status it should reflect in admin/portal summary views.
+ *
+ * Per the rule the user laid down: "ProcessingCase.stage remains the
+ * operational truth. Client.status is the client-level summary."
+ *
+ * Stages absent from this map don't change the Client.status (e.g. the
+ * intermediate review stages stay summarized as UNDER_PROCESSING).
+ */
+const STAGE_TO_CLIENT_STATUS: Partial<Record<ProcessingCaseStage, string>> = {
+  [ProcessingCaseStage.INTAKE_PENDING]: 'UNDER_PROCESSING',
+  [ProcessingCaseStage.DOCUMENTS_COLLECTION]: 'DOCUMENTS_PENDING',
+  [ProcessingCaseStage.DOCUMENTS_UNDER_REVIEW]: 'UNDER_PROCESSING',
+  [ProcessingCaseStage.DOCUMENTS_INCOMPLETE]: 'DOCUMENTS_PENDING',
+  [ProcessingCaseStage.DOCUMENTS_COMPLETE]: 'UNDER_PROCESSING',
+  [ProcessingCaseStage.READY_FOR_SUBMISSION]: 'UNDER_PROCESSING',
+  [ProcessingCaseStage.SUBMITTED]: 'SUBMITTED',
+  [ProcessingCaseStage.UNDER_AUTHORITY_REVIEW]: 'SUBMITTED',
+  [ProcessingCaseStage.ADDITIONAL_INFO_REQUESTED]: 'SUBMITTED',
+  [ProcessingCaseStage.DECISION_RECEIVED]: 'SUBMITTED',
+  [ProcessingCaseStage.APPROVED]: 'APPROVED',
+  [ProcessingCaseStage.REJECTED]: 'REJECTED',
+  [ProcessingCaseStage.APPEAL_IN_PROGRESS]: 'SUBMITTED',
+  [ProcessingCaseStage.COMPLETED]: 'COMPLETED',
+  [ProcessingCaseStage.CANCELLED]: 'CANCELLED',
+};
+
 @Injectable()
 export class ProcessingService {
   constructor(
@@ -642,6 +670,17 @@ export class ProcessingService {
           newValues: { stage: toStage },
         },
       });
+
+      // Keep Client.status in sync with the case's stage so admin and portal
+      // dashboards reflect the summary truth without recomputing on every
+      // read. ProcessingCase.stage stays the operational source.
+      const mappedStatus = STAGE_TO_CLIENT_STATUS[toStage];
+      if (mappedStatus && processingCase.clientId) {
+        await tx.client.update({
+          where: { id: processingCase.clientId },
+          data: { status: mappedStatus as Prisma.ClientUpdateInput['status'] },
+        });
+      }
 
       return c;
     });

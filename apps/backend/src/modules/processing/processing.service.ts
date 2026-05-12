@@ -25,6 +25,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
+import { LeadsService } from '../leads/leads.service';
 import {
   AcknowledgeIntakeDto,
   AddDocumentItemDto,
@@ -103,6 +104,9 @@ export class ProcessingService {
     private readonly auditLog: AuditLogService,
     private readonly storage: StorageService,
     private readonly timeline: ActivityTimelineService,
+    // Used to auto-convert Lead → Client at the moment Finance sends a case
+    // into processing.
+    private readonly leadsService: LeadsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -144,12 +148,24 @@ export class ProcessingService {
     const targetCountry = handover.lead.targetCountry ?? 'Unknown';
 
     const processingCase = await this.prisma.$transaction(async (tx) => {
-      // Create the case
+      // RULE: "Lead becomes Client when Finance sends verified case to Processing."
+      // If the lead hasn't been converted yet, convert it now — same tx, so the
+      // whole intake either creates Client + Case + handover-status-change as a
+      // single atomic step or rolls back together.
+      const conversion = await this.leadsService.convertToClient(
+        handover.leadId,
+        user.id,
+        'Auto-converted on send-to-processing',
+        tx,
+      );
+      const clientId = conversion.client.id;
+
+      // Create the case — clientId is now non-null per the schema's required FK.
       const created = await tx.processingCase.create({
         data: {
           financeHandoverId: dto.financeHandoverId,
           leadId: handover.leadId,
-          clientId: handover.lead.convertedClientId ?? undefined,
+          clientId,
           branchId: handover.lead.branchId ?? undefined,
           service,
           targetCountry,
@@ -164,6 +180,14 @@ export class ProcessingService {
       await tx.financeHandover.update({
         where: { id: dto.financeHandoverId },
         data: { status: FinanceHandoverStatus.SENT_TO_PROCESSING },
+      });
+
+      // Bump client status to UNDER_PROCESSING — the operational truth lives on
+      // ProcessingCase.stage, but Client.status is the summary used by admin /
+      // portal dashboards.
+      await tx.client.update({
+        where: { id: clientId },
+        data: { status: 'UNDER_PROCESSING' },
       });
 
       // Audit log

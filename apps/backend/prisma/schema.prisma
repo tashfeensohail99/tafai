@@ -76,10 +76,25 @@ enum FollowUpPriority {
 }
 
 enum ClientStatus {
+  // Pre-processing
+  NEW_CLIENT
   ACTIVE
-  INACTIVE
+  // Mirrors ProcessingCase.stage at a coarser, client-portal-friendly level.
+  // ProcessingCase.stage remains the operational source of truth; Client.status
+  // is the summary value used by dashboards, admin tables, and the portal.
+  DOCUMENTS_PENDING
+  UNDER_PROCESSING
+  SUBMITTED
+  APPROVED
+  REJECTED
   COMPLETED
+  // Lifecycle exits
+  CLOSED
+  CANCELLED
+  REFUNDED
+  // Disabled states
   BLOCKED
+  INACTIVE
   @@schema("crm")
 }
 
@@ -661,6 +676,9 @@ model Employee {
   assignedCases     Case[]    @relation("CaseAssignedEmployee")
   assignedFollowUps FollowUp[] @relation("FollowUpAssignedEmployee")
   whatsappSentMessages WhatsAppMessage[] @relation("WhatsAppMessageSentBy")
+  // Sales rep that originally owned the lead and stays with the client
+  // after conversion. Used so processing can ping the original salesperson.
+  assignedClients   Client[]   @relation("ClientAssignedEmployee")
 
   @@index([departmentId])
   @@index([branchId])
@@ -748,6 +766,10 @@ model Lead {
   processingCases     ProcessingCase[]
   whatsappThread      WhatsAppThread? @relation("LeadWhatsAppThread")
   whatsappMessages    WhatsAppMessage[] @relation("LeadWhatsAppMessages")
+  // Reverse of Client.sourceLeadId. Typically 0..1 Client per Lead, but the
+  // relation is modelled as one-to-many to keep Prisma's type generation
+  // happy.
+  derivedClients      Client[]    @relation("ClientSourceLead")
 
   @@index([phone])
   @@index([email])
@@ -807,30 +829,47 @@ model Client {
   passportNumber    String?
   passportExpiry    DateTime?
   nationalId        String?
+  // CNIC is the Pakistani national-ID format. Stored separately from
+  // `nationalId` so the existing field can keep its generic meaning while
+  // forms that need a strict CNIC validate this column.
+  cnic              String?
   address           String?
-  status            ClientStatus @default(ACTIVE)
+  status            ClientStatus @default(NEW_CLIENT)
   portalAccessEnabled Boolean   @default(false)
+
+  // Provenance + ownership. Populated automatically when Finance sends a
+  // verified case to Processing (the moment Lead becomes Client). Existing
+  // rows were backfilled in the same migration.
+  sourceLeadId       String?
+  assignedEmployeeId String?
+  serviceType        String?
+  targetCountry      String?
+
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
   deletedAt         DateTime?
 
-  branch          Branch?      @relation(fields: [branchId], references: [id])
-  createdBy       UserAccount? @relation("ClientCreatedBy", fields: [createdByUserId], references: [id])
-  cases           Case[]
-  documents       ClientDocument[]
-  appointments    Appointment[] @relation("ClientAppointments")
-  invoices        Invoice[]     @relation("ClientInvoices")
-  timelineEvents  ActivityTimeline[]
-  processingCases ProcessingCase[]
-  reminders       ClientReminder[]
+  branch             Branch?      @relation(fields: [branchId], references: [id])
+  createdBy          UserAccount? @relation("ClientCreatedBy", fields: [createdByUserId], references: [id])
+  sourceLead         Lead?        @relation("ClientSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  assignedEmployee   Employee?    @relation("ClientAssignedEmployee", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  cases              Case[]
+  documents          ClientDocument[]
+  appointments       Appointment[] @relation("ClientAppointments")
+  invoices           Invoice[]     @relation("ClientInvoices")
+  timelineEvents     ActivityTimeline[]
+  processingCases    ProcessingCase[]
+  reminders          ClientReminder[]
   // WhatsApp chat history follows the client after lead-to-client conversion.
-  whatsappThreads  WhatsAppThread[]  @relation("ClientWhatsAppThreads")
-  whatsappMessages WhatsAppMessage[] @relation("ClientWhatsAppMessages")
+  whatsappThreads    WhatsAppThread[]  @relation("ClientWhatsAppThreads")
+  whatsappMessages   WhatsAppMessage[] @relation("ClientWhatsAppMessages")
 
   @@index([phone])
   @@index([email])
   @@index([status])
   @@index([branchId])
+  @@index([sourceLeadId])
+  @@index([assignedEmployeeId])
   @@map("clients")
   @@schema("crm")
 }
@@ -1430,7 +1469,10 @@ model ProcessingCase {
   id                      String                 @id @default(uuid())
   financeHandoverId       String                 @unique
   leadId                  String
-  clientId                String?
+  // Per the platform rule "No ProcessingCase without Client" — every case is
+  // owned by a Client. Lead→Client conversion happens automatically when
+  // Finance sends the case to Processing; see ProcessingService.createFromHandover.
+  clientId                String
   branchId                String?
   assignedOfficerId       String?
   priority                ProcessingCasePriority @default(NORMAL)
@@ -1456,7 +1498,7 @@ model ProcessingCase {
 
   financeHandover  FinanceHandover                @relation(fields: [financeHandoverId], references: [id])
   lead             Lead                           @relation(fields: [leadId], references: [id])
-  client           Client?                        @relation(fields: [clientId], references: [id])
+  client           Client                         @relation(fields: [clientId], references: [id])
   branch           Branch?                        @relation(fields: [branchId], references: [id])
   assignedOfficer  UserAccount?                   @relation("ProcessingCaseOfficer", fields: [assignedOfficerId], references: [id])
   createdBy        UserAccount                    @relation("ProcessingCaseCreatedBy", fields: [createdByUserId], references: [id])

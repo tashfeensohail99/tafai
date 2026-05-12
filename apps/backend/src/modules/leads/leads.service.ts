@@ -345,7 +345,14 @@ export class LeadsService {
           phone: lead.phone,
           alternatePhone: lead.alternatePhone,
           nationality: lead.nationality,
-          status: ClientStatus.ACTIVE,
+          // Provenance — preserves where this client came from so admin views,
+          // processing officers, and the original sales rep stay linked.
+          sourceLeadId: lead.id,
+          assignedEmployeeId: lead.assignedEmployeeId,
+          serviceType: lead.serviceInterest,
+          targetCountry: lead.targetCountry,
+          status: ClientStatus.NEW_CLIENT,
+          portalAccessEnabled: true,
         },
       });
 

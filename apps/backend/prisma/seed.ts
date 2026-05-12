@@ -781,8 +781,12 @@ async function main() {
           email: CLIENT_EMAIL,
           phone: CLIENT_PHONE,
           nationality: 'Pakistan',
-          status: 'ACTIVE',
+          status: 'UNDER_PROCESSING',
           portalAccessEnabled: true,
+          sourceLeadId: demoLead.id,
+          assignedEmployeeId: salesEmployee.id,
+          serviceType: 'Work Permit',
+          targetCountry: 'Canada',
         },
       });
       console.log('Created demo client record (portal access enabled)');
@@ -790,6 +794,15 @@ async function main() {
       await prisma.client.update({
         where: { id: demoClient.id },
         data: { portalAccessEnabled: true },
+      });
+    }
+
+    // Make sure the lead → client backlink is set (so the converted-from-lead
+    // flow stays consistent on re-runs).
+    if (!demoLead.convertedClientId) {
+      await prisma.lead.update({
+        where: { id: demoLead.id },
+        data: { convertedClientId: demoClient.id, convertedAt: new Date() },
       });
     }
 

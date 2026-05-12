@@ -331,3 +331,19 @@ export async function completeFollowUp(id: string, outcomeNotes?: string): Promi
     body: JSON.stringify({ outcomeNotes }),
   });
 }
+
+export async function createFinanceHandover(payload: {
+  leadId: string;
+  submittedAmount: string;
+  currency?: string;
+  paymentMethod?: string;
+  notes?: string;
+  receiptFileName: string;
+  receiptMimeType?: string;
+  receiptContentBase64: string;
+}): Promise<{ id: string }> {
+  return apiFetch<{ id: string }>('/finance/handovers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}

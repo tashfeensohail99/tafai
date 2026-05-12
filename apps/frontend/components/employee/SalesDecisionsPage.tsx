@@ -15,6 +15,7 @@
 //   7. Sticky-feeling success banner with stage transition explanation.
 
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -54,7 +55,7 @@ import {
   SuccessButton,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
-import { fetchLeads } from '@/lib/sales-api';
+import { createAppointment, createFinanceHandover, fetchLeads } from '@/lib/sales-api';
 
 type Path = 'BOOK' | 'PAY';
 
@@ -299,6 +300,8 @@ export function SalesDecisionsPage() {
           setMeetingDate={setMeetingDate}
           meetingTime={meetingTime}
           setMeetingTime={setMeetingTime}
+          onConfirmBooking={onConfirmBooking}
+          bookingLoading={bookingLoading}
         />
       ) : (
         <PayPath
@@ -320,6 +323,7 @@ export function SalesDecisionsPage() {
           removeFile={removeFile}
           onSendToFinance={onSendToFinance}
           sent={sent}
+          sendingToFinance={sendingToFinance}
           formattedAmount={formattedAmount}
           checklist={checklist}
           allReady={allReady}
@@ -648,6 +652,8 @@ function BookPath({
   setMeetingDate,
   meetingTime,
   setMeetingTime,
+  onConfirmBooking,
+  bookingLoading,
 }: {
   meetingType: string;
   setMeetingType: (s: string) => void;
@@ -655,6 +661,8 @@ function BookPath({
   setMeetingDate: (s: string) => void;
   meetingTime: string;
   setMeetingTime: (s: string) => void;
+  onConfirmBooking: () => void;
+  bookingLoading: boolean;
 }) {
   return (
     <GlassCard variant="strong" padded="lg" glow="accent">
@@ -747,14 +755,15 @@ function BookPath({
           flexWrap: 'wrap',
         }}
       >
-        <SecondaryButton>Save draft</SecondaryButton>
-        <ButtonLink
-          href={'/sales/appointments' as Route}
-          variant="primary"
-          iconLeft={<CalendarPlus size={15} />}
+        <SecondaryButton type="button">Save draft</SecondaryButton>
+        <SuccessButton
+          type="button"
+          onClick={onConfirmBooking}
+          disabled={bookingLoading}
+          iconLeft={bookingLoading ? <Loader2 size={15} className="sos-spin" /> : <CalendarPlus size={15} />}
         >
-          Confirm booking
-        </ButtonLink>
+          {bookingLoading ? 'Booking…' : 'Confirm booking'}
+        </SuccessButton>
       </div>
     </GlassCard>
   );
@@ -779,6 +788,7 @@ function PayPath({
   removeFile,
   onSendToFinance,
   sent,
+  sendingToFinance,
   formattedAmount,
   checklist,
   allReady,
@@ -796,11 +806,12 @@ function PayPath({
   setReceivedBy: (s: string) => void;
   financeNote: string;
   setFinanceNote: (s: string) => void;
-  files: Array<{ name: string; size: string }>;
+  files: Array<{ name: string; size: string; file?: File }>;
   onUpload: (e: ChangeEvent<HTMLInputElement>) => void;
   removeFile: (name: string) => void;
   onSendToFinance: (e: FormEvent) => void;
   sent: boolean;
+  sendingToFinance: boolean;
   formattedAmount: string;
   checklist: Array<{ label: string; done: boolean }>;
   allReady: boolean;
@@ -1105,10 +1116,10 @@ function PayPath({
               <SecondaryButton type="button">Save draft</SecondaryButton>
               <SuccessButton
                 type="submit"
-                disabled={!allReady || sent}
-                iconLeft={<Send size={15} />}
+                disabled={!allReady || sent || sendingToFinance}
+                iconLeft={sendingToFinance ? <Loader2 size={15} className="sos-spin" /> : <Send size={15} />}
               >
-                {sent ? 'Sent to Finance' : 'Send to Finance'}
+                {sent ? 'Sent to Finance' : sendingToFinance ? 'Sending…' : 'Send to Finance'}
               </SuccessButton>
             </div>
           </div>

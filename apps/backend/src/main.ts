@@ -48,8 +48,12 @@ async function bootstrap(): Promise<void> {
   const allowedOrigins = [...new Set([...DEFAULT_ALLOWED_ORIGINS, ...envOrigins])];
   app.enableCors({
     // Function form so unmatched origins get a clean error rather than
-    // express-cors throwing.
-    origin: (origin, callback) => {
+    // express-cors throwing. Callback params typed explicitly because
+    // strict mode otherwise infers `any` for them.
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
       // Same-origin / curl / Postman requests have no Origin header. Allow.
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);

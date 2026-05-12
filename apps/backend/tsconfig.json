@@ -24,7 +24,11 @@
     "paths": {
       "@modules/*": ["src/modules/*"],
       "@common/*": ["src/common/*"],
-      "@config/*": ["src/config/*"]
+      "@config/*": ["src/config/*"],
+      "@tashfeen/shared-types": ["../../packages/shared-types/src"],
+      "@tashfeen/shared-types/*": ["../../packages/shared-types/src/*"],
+      "@tashfeen/shared-utils": ["../../packages/shared-utils/src"],
+      "@tashfeen/shared-utils/*": ["../../packages/shared-utils/src/*"]
     }
   },
   "include": ["src/**/*"],

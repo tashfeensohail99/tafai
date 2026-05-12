@@ -27,6 +27,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@tashfeen/shared-types": "*",
+    "@tashfeen/shared-utils": "*",
     "@aws-sdk/client-s3": "^3.1045.0",
     "@aws-sdk/s3-request-presigner": "^3.1045.0",
     "@nestjs/bullmq": "^11.0.4",

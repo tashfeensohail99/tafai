@@ -1,0 +1,17 @@
+{
+  "name": "tashfeen-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tashfeen Immigration Solutions AI Platform — monorepo root",
+  "workspaces": [
+    "packages/*",
+    "apps/backend",
+    "apps/frontend"
+  ],
+  "scripts": {
+    "build:types":  "npm run build --workspace=packages/shared-types",
+    "build:utils":  "npm run build --workspace=packages/shared-utils",
+    "build:packages": "npm run build:types && npm run build:utils",
+    "typecheck":    "npm run typecheck --workspaces --if-present"
+  }
+}

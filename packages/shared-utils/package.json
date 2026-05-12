@@ -1,0 +1,49 @@
+{
+  "name": "@tashfeen/shared-utils",
+  "version": "1.0.0",
+  "description": "Shared utility functions for the Tashfeen AI Platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./status": {
+      "import": "./dist/status/index.js",
+      "require": "./dist/status/index.js",
+      "types": "./dist/status/index.d.ts"
+    },
+    "./format": {
+      "import": "./dist/format/index.js",
+      "require": "./dist/format/index.js",
+      "types": "./dist/format/index.d.ts"
+    },
+    "./pagination": {
+      "import": "./dist/pagination/index.js",
+      "require": "./dist/pagination/index.js",
+      "types": "./dist/pagination/index.d.ts"
+    },
+    "./validation": {
+      "import": "./dist/validation/index.js",
+      "require": "./dist/validation/index.js",
+      "types": "./dist/validation/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tashfeen/shared-types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ]
+}

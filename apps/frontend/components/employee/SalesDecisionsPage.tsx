@@ -140,6 +140,7 @@ function stageBadgeTone(stage: Lead['stage']): BadgeTone {
 }
 
 export function SalesDecisionsPage() {
+  const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -156,20 +157,17 @@ export function SalesDecisionsPage() {
   const lead = useMemo(() => leads.find((l) => l.id === leadId), [leads, leadId]);
 
   // Payment state
-  const [amount, setAmount] = useState('1500');
+  const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState<(typeof CURRENCIES)[number]>('CAD');
-  const [method, setMethod] = useState('CASH');
+  const [method, setMethod] = useState('');
   const [receivedDate, setReceivedDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
-  const [receivedBy, setReceivedBy] = useState('Awais Q.');
-  const [financeNote, setFinanceNote] = useState(
-    'Client paid full deposit in cash at the office. Receipt attached.',
-  );
-  const [files, setFiles] = useState<Array<{ name: string; size: string }>>([
-    { name: 'receipt-cash-1500cad.jpg', size: '184 KB' },
-  ]);
+  const [receivedBy, setReceivedBy] = useState('');
+  const [financeNote, setFinanceNote] = useState('');
+  const [files, setFiles] = useState<Array<{ name: string; size: string; file?: File }>>([]);
   const [sent, setSent] = useState(false);
+  const [sendingToFinance, setSendingToFinance] = useState(false);
 
   // Appointment state
   const [meetingType, setMeetingType] = useState('OFFICE_MEETING');
@@ -179,6 +177,7 @@ export function SalesDecisionsPage() {
     return d.toISOString().slice(0, 10);
   });
   const [meetingTime, setMeetingTime] = useState('15:00');
+  const [bookingLoading, setBookingLoading] = useState(false);
 
   function onUpload(e: ChangeEvent<HTMLInputElement>) {
     const list = Array.from(e.target.files ?? []);
@@ -188,6 +187,7 @@ export function SalesDecisionsPage() {
       ...list.map((f) => ({
         name: f.name,
         size: `${Math.max(1, Math.round(f.size / 1024))} KB`,
+        file: f,
       })),
     ]);
   }
@@ -196,9 +196,49 @@ export function SalesDecisionsPage() {
     setFiles((prev) => prev.filter((f) => f.name !== name));
   }
 
-  function onSendToFinance(e: FormEvent) {
+  async function onSendToFinance(e: FormEvent) {
     e.preventDefault();
-    setSent(true);
+    if (!lead || sendingToFinance) return;
+    const fileEntry = files[0];
+    if (!fileEntry?.file) return;
+    setSendingToFinance(true);
+    try {
+      const arrayBuffer = await fileEntry.file.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      await createFinanceHandover({
+        leadId: lead.id,
+        submittedAmount: amount,
+        currency,
+        paymentMethod: method,
+        notes: financeNote,
+        receiptFileName: fileEntry.name,
+        receiptMimeType: fileEntry.file.type || 'application/octet-stream',
+        receiptContentBase64: base64,
+      });
+      setSent(true);
+    } catch {
+      // keep form open so user can retry
+    } finally {
+      setSendingToFinance(false);
+    }
+  }
+
+  async function onConfirmBooking() {
+    if (!lead || bookingLoading) return;
+    setBookingLoading(true);
+    try {
+      await createAppointment({
+        leadId: lead.id,
+        title: `Consultation – ${lead.firstName} ${lead.lastName}`,
+        appointmentType: meetingType,
+        scheduledAt: new Date(`${meetingDate}T${meetingTime}:00`).toISOString(),
+      });
+      router.push('/sales/appointments');
+    } catch {
+      // keep form open
+    } finally {
+      setBookingLoading(false);
+    }
   }
 
   if (loading) {

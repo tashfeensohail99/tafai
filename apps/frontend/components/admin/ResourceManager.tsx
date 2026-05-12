@@ -5,11 +5,16 @@ import { DataTable, type DataTableColumn } from '../shared/DataTable';
 import { ErrorState } from '../shared/ErrorState';
 import { FilterBar } from '../shared/FilterBar';
 import { LoadingState } from '../shared/LoadingState';
-import { PageHeader } from '../shared/PageHeader';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { apiFetch, buildQuery } from '@/lib/api-client';
 import { downloadCsv } from '@/lib/csv-download';
 import { useAdminSession } from '../layout/AdminShell';
+import {
+  GhostButton,
+  GlassCard,
+  PageHeader,
+  PrimaryButton,
+} from '@/components/sales-v2/ui';
 
 type FormValue = string | boolean;
 
@@ -195,7 +200,7 @@ export function ResourceManager<TRecord extends { id: string }>({
         <button
           onClick={() => void openEditForm(record)}
           className="rounded-md border px-3 py-1 text-xs font-medium"
-          style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+          style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
         >
           Edit
         </button>
@@ -204,21 +209,18 @@ export function ResourceManager<TRecord extends { id: string }>({
   ];
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <PageHeader
+        eyebrow="Admin"
         title={title}
         description={description}
         actions={
           <>
-            <button
-              onClick={() => setRefreshKey((current) => current + 1)}
-              className="rounded-md border px-4 py-2 text-sm font-medium"
-              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
-            >
+            <GhostButton onClick={() => setRefreshKey((current) => current + 1)}>
               Refresh
-            </button>
+            </GhostButton>
             {exportPath && user.permissions.includes('reports.export') ? (
-              <button
+              <GhostButton
                 onClick={async () => {
                   const query = buildQuery({
                     search,
@@ -231,19 +233,11 @@ export function ResourceManager<TRecord extends { id: string }>({
                     setError(err instanceof Error ? err.message : 'Export failed');
                   }
                 }}
-                className="rounded-md border px-4 py-2 text-sm font-medium"
-                style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
               >
                 Export CSV
-              </button>
+              </GhostButton>
             ) : null}
-            <button
-              onClick={openCreateForm}
-              className="rounded-md px-4 py-2 text-sm font-medium"
-              style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}
-            >
-              New Record
-            </button>
+            <PrimaryButton onClick={openCreateForm}>New record</PrimaryButton>
           </>
         }
       />
@@ -266,28 +260,22 @@ export function ResourceManager<TRecord extends { id: string }>({
       />
 
       {isFormOpen ? (
-        <form onSubmit={handleSubmit} className="rounded-[28px] border px-4 py-5 shadow-sm sm:px-6" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
+        <GlassCard variant="panel" padded="lg">
+          <form onSubmit={handleSubmit}>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                {editingRecord ? 'Edit Record' : 'Create Record'}
+              <h3 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)' }}>
+                {editingRecord ? 'Edit record' : 'Create record'}
               </h3>
-              <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                Save the current form to update the Week 3 admin data.
+              <p className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)', marginTop: 4 }}>
+                Save the current form to update.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={resetForm}
-              className="w-full rounded-md border px-3 py-2 text-sm font-medium sm:w-auto"
-              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
-            >
-              Cancel
-            </button>
+            <GhostButton type="button" onClick={resetForm}>Cancel</GhostButton>
           </div>
 
           {loadingEditForm ? (
-            <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+            <p className="mb-4 text-sm" style={{ color: 'var(--sos-text-muted)' }}>
               Loading record details...
             </p>
           ) : null}
@@ -297,7 +285,7 @@ export function ResourceManager<TRecord extends { id: string }>({
               const value = formValues[field.name];
               if (field.type === 'textarea') {
                 return (
-                  <label key={field.name} className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+                  <label key={field.name} className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
                     {field.label}
                     <textarea
                       required={field.required}
@@ -306,7 +294,7 @@ export function ResourceManager<TRecord extends { id: string }>({
                       value={typeof value === 'string' ? value : ''}
                       onChange={(event) => setFormValues((current) => ({ ...current, [field.name]: event.target.value }))}
                       className="min-h-[120px] rounded-md border px-3 py-2 outline-none"
-                      style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
+                      style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-input)' }}
                     />
                   </label>
                 );
@@ -314,7 +302,7 @@ export function ResourceManager<TRecord extends { id: string }>({
 
               if (field.type === 'select') {
                 return (
-                  <label key={field.name} className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+                  <label key={field.name} className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
                     {field.label}
                     <select
                       required={field.required}
@@ -322,7 +310,7 @@ export function ResourceManager<TRecord extends { id: string }>({
                       value={typeof value === 'string' ? value : ''}
                       onChange={(event) => setFormValues((current) => ({ ...current, [field.name]: event.target.value }))}
                       className="rounded-md border px-3 py-2 outline-none"
-                      style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text-primary)' }}
+                      style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-input)', color: 'var(--sos-text-primary)' }}
                     >
                       <option value="">Select {field.label}</option>
                       {field.options?.map((option) => (
@@ -337,7 +325,7 @@ export function ResourceManager<TRecord extends { id: string }>({
 
               if (field.type === 'checkbox') {
                 return (
-                  <label key={field.name} className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm font-medium" style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                  <label key={field.name} className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm font-medium" style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
                     <input
                       type="checkbox"
                       disabled={loadingEditForm}
@@ -350,7 +338,7 @@ export function ResourceManager<TRecord extends { id: string }>({
               }
 
               return (
-                <label key={field.name} className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+                <label key={field.name} className="flex flex-col gap-1 text-sm font-medium" style={{ color: 'var(--sos-text-secondary)' }}>
                   {field.label}
                   <input
                     type={field.type ?? 'text'}
@@ -360,7 +348,7 @@ export function ResourceManager<TRecord extends { id: string }>({
                     value={typeof value === 'string' ? value : ''}
                     onChange={(event) => setFormValues((current) => ({ ...current, [field.name]: event.target.value }))}
                     className="rounded-md border px-3 py-2 outline-none"
-                    style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
+                    style={{ borderColor: 'var(--sos-border-subtle)', backgroundColor: 'var(--sos-bg-input)' }}
                   />
                 </label>
               );
@@ -368,7 +356,7 @@ export function ResourceManager<TRecord extends { id: string }>({
           </div>
 
           {error ? (
-            <p className="mt-4 text-sm" style={{ color: 'var(--color-status-danger)' }}>
+            <p className="mt-4 text-sm" style={{ color: 'var(--sos-status-danger)' }}>
               {error}
             </p>
           ) : null}
@@ -378,12 +366,13 @@ export function ResourceManager<TRecord extends { id: string }>({
               type="submit"
               disabled={submitting || loadingEditForm}
               className="w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-60 sm:w-auto"
-              style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}
+              style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}
             >
               {submitting ? 'Saving...' : editingRecord ? 'Save Changes' : 'Create Record'}
             </button>
           </div>
         </form>
+        </GlassCard>
       ) : null}
 
       {loading ? (

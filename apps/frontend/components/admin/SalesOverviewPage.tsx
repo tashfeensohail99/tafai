@@ -1,12 +1,25 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  BadgeCheck,
+  CalendarDays,
+  TrendingUp,
+  UserCheck,
+  Users,
+} from 'lucide-react';
 import { ErrorState } from '../shared/ErrorState';
 import { LoadingState } from '../shared/LoadingState';
-import { PageHeader } from '../shared/PageHeader';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { apiFetch } from '@/lib/api-client';
 import { useAdminSession } from '../layout/AdminShell';
+import {
+  GlassCard,
+  MetricCard,
+  PageHeader,
+  StatusBadge,
+} from '@/components/sales-v2/ui';
 
 interface AgentRow {
   employeeId: string;
@@ -123,39 +136,58 @@ export function SalesOverviewPage() {
   if (!data) return null;
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <PageHeader
+        eyebrow="Sales · Admin"
         title="Sales overview"
-        description="Per-agent KPIs across the full team. Use this view to balance workload, spot overdue follow-ups, and track 30-day conversion."
+        description="Per-agent KPIs across the full team. Balance workload, spot overdue follow-ups, track 30-day conversion."
       />
 
       {/* Top totals */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <TotalTile label="Active agents" value={data.totals.activeAgents} />
-        <TotalTile label="Total leads" value={data.totals.totalLeads} />
-        <TotalTile label="Converted this month" value={data.totals.convertedThisMonth} accent="success" />
-        <TotalTile label="Overdue follow-ups" value={data.totals.overdueFollowUps} accent="warning" />
-        <TotalTile label="Appointments today" value={data.totals.appointmentsToday} />
+      <div
+        style={{
+          display: 'grid',
+          gap: 16,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        }}
+      >
+        <MetricCard label="Active agents" value={data.totals.activeAgents} tone="accent" Icon={Users} />
+        <MetricCard label="Total leads" value={data.totals.totalLeads} tone="info" Icon={UserCheck} />
+        <MetricCard
+          label="Converted this month"
+          value={data.totals.convertedThisMonth}
+          tone="success"
+          Icon={BadgeCheck}
+        />
+        <MetricCard
+          label="Overdue follow-ups"
+          value={data.totals.overdueFollowUps}
+          tone={data.totals.overdueFollowUps > 0 ? 'warning' : 'neutral'}
+          Icon={AlertTriangle}
+        />
+        <MetricCard
+          label="Appointments today"
+          value={data.totals.appointmentsToday}
+          tone="accent"
+          Icon={CalendarDays}
+        />
       </div>
 
       {/* Controls */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 10,
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          padding: '12px 14px',
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--sos-radius-md)',
-        }}
-      >
+      <GlassCard variant="soft" padded="md">
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+          }}
+        >
         <span
           style={{
             fontSize: 12,
             fontWeight: 700,
-            color: 'var(--color-text-muted)',
+            color: 'var(--sos-text-muted)',
             textTransform: 'uppercase',
             letterSpacing: '0.06em',
           }}
@@ -182,16 +214,14 @@ export function SalesOverviewPage() {
           onChange={(e) => setSearch(e.target.value)}
           style={{ maxWidth: 220, marginLeft: 'auto' }}
         />
-      </div>
+        </div>
+      </GlassCard>
 
       {/* Agent table */}
-      <div
-        className="overflow-hidden rounded-[24px] border shadow-sm"
-        style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
-      >
-        <div className="overflow-x-auto">
+      <GlassCard variant="panel" padded={false}>
+        <div className="overflow-x-auto" style={{ borderRadius: 'var(--sos-radius-panel)' }}>
           <table className="min-w-[760px] w-full">
-            <thead style={{ backgroundColor: 'var(--color-surface-subtle)' }}>
+            <thead style={{ background: 'var(--sos-surface-1)' }}>
               <tr>
                 {[
                   'Agent',
@@ -206,7 +236,7 @@ export function SalesOverviewPage() {
                   <th
                     key={h}
                     className="whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide sm:px-4"
-                    style={{ color: 'var(--color-text-muted)' }}
+                    style={{ color: 'var(--sos-text-muted)', letterSpacing: 'var(--sos-letter-eyebrow)' }}
                   >
                     {h}
                   </th>
@@ -219,7 +249,7 @@ export function SalesOverviewPage() {
                   <td
                     colSpan={8}
                     className="px-4 py-10 text-center text-sm"
-                    style={{ color: 'var(--color-text-muted)' }}
+                    style={{ color: 'var(--sos-text-muted)' }}
                   >
                     No agents match your filters.
                   </td>
@@ -228,7 +258,7 @@ export function SalesOverviewPage() {
                 filteredAgents.map((a) => (
                   <tr
                     key={a.employeeId}
-                    style={{ borderTop: '1px solid var(--color-border)' }}
+                    style={{ borderTop: '1px solid var(--sos-border-subtle)' }}
                   >
                     <td className="px-3 py-3 sm:px-4">
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -256,29 +286,18 @@ export function SalesOverviewPage() {
                               height: 10,
                               borderRadius: '50%',
                               background: presenceColor(a.presenceStatus),
-                              border: '2px solid var(--color-surface)',
+                              border: '2px solid var(--sos-bg-elevated)',
                             }}
                             aria-label={`presence ${a.presenceStatus}`}
                           />
                         </div>
                         <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
                             {a.name}
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <div style={{ fontSize: 11, color: 'var(--sos-text-muted)', display: 'flex', gap: 6, alignItems: 'center' }}>
                             {a.whatsappInboxMember ? (
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  padding: '1px 6px',
-                                  borderRadius: 999,
-                                  background: 'var(--sos-status-info-soft)',
-                                  color: 'var(--sos-status-info)',
-                                  fontWeight: 700,
-                                }}
-                              >
-                                WA inbox
-                              </span>
+                              <StatusBadge tone="info" size="sm">WA inbox</StatusBadge>
                             ) : null}
                             <span>Active {fmtRelative(a.lastActivityAt)}</span>
                           </div>
@@ -319,48 +338,7 @@ export function SalesOverviewPage() {
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function TotalTile({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: number;
-  accent?: 'success' | 'warning';
-}) {
-  const color =
-    accent === 'success'
-      ? 'var(--sos-status-success)'
-      : accent === 'warning'
-        ? 'var(--sos-status-warning)'
-        : 'var(--sos-brand-primary-strong)';
-  return (
-    <div
-      style={{
-        padding: '14px 16px',
-        background: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--sos-radius-md)',
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 700,
-          color: 'var(--color-text-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 700, color }}>{value}</div>
+      </GlassCard>
     </div>
   );
 }
@@ -368,7 +346,7 @@ function TotalTile({
 function ConversionPill({ rate, sample }: { rate: number; sample: number }) {
   if (sample === 0) {
     return (
-      <span style={{ fontSize: 11, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+      <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', fontStyle: 'italic' }}>
         no new leads
       </span>
     );

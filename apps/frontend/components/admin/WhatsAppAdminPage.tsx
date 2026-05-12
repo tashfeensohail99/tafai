@@ -1,12 +1,23 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, MessageSquare, RefreshCw } from 'lucide-react';
 import { ErrorState } from '../shared/ErrorState';
 import { LoadingState } from '../shared/LoadingState';
-import { PageHeader } from '../shared/PageHeader';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
-import { apiFetch } from '@/lib/api-client';
 import { useAdminSession } from '../layout/AdminShell';
+import {
+  Field,
+  FormInput,
+  FormSelect,
+  GhostButton,
+  GlassCard,
+  MetricCard,
+  PageHeader,
+  PrimaryButton,
+  StatusBadge,
+  type BadgeTone,
+} from '@/components/sales-v2/ui';
 import {
   listThreads,
   reassignThread,
@@ -36,23 +47,17 @@ function fmtRelative(iso: string | null): string {
   return `${days}d ago`;
 }
 
-function statusPillStyle(status: WhatsAppThreadStatus): React.CSSProperties {
-  const map: Record<WhatsAppThreadStatus, { bg: string; fg: string }> = {
-    OPEN: { bg: 'var(--sos-status-info-soft)', fg: 'var(--sos-status-info)' },
-    PENDING: { bg: 'var(--sos-status-warning-soft)', fg: 'var(--sos-status-warning)' },
-    RESOLVED: { bg: 'var(--sos-status-success-soft)', fg: 'var(--sos-status-success)' },
-    ARCHIVED: { bg: 'var(--sos-surface-hover)', fg: 'var(--sos-text-muted)' },
-  };
-  const v = map[status];
-  return {
-    fontSize: 11,
-    fontWeight: 700,
-    padding: '3px 9px',
-    borderRadius: 999,
-    background: v.bg,
-    color: v.fg,
-    whiteSpace: 'nowrap',
-  };
+function statusTone(status: WhatsAppThreadStatus): BadgeTone {
+  switch (status) {
+    case 'OPEN':
+      return 'info';
+    case 'PENDING':
+      return 'warning';
+    case 'RESOLVED':
+      return 'success';
+    case 'ARCHIVED':
+      return 'neutral';
+  }
 }
 
 export function WhatsAppAdminPage() {
@@ -129,16 +134,46 @@ export function WhatsAppAdminPage() {
   const breachedCount = threads.filter((t) => t.slaBreached).length;
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <PageHeader
-        title="WhatsApp conversations"
-        description="Every conversation across the team. Filter, search, and reassign threads to specific agents."
+        eyebrow="WhatsApp · Admin"
+        title="All conversations"
+        description="Every WhatsApp thread across the team. Filter, search, and reassign to a specific agent."
+        actions={
+          <PrimaryButton iconLeft={<RefreshCw size={14} />} onClick={() => void load()}>
+            Refresh
+          </PrimaryButton>
+        }
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <SummaryTile label="Active threads" value={threads.length} />
-        <SummaryTile label="Unassigned" value={unassignedCount} accent="warning" />
-        <SummaryTile label="SLA breached" value={breachedCount} accent="danger" />
+      <div
+        style={{
+          display: 'grid',
+          gap: 16,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        }}
+      >
+        <MetricCard
+          label="Active threads"
+          value={threads.length}
+          hint="OPEN or PENDING in current view"
+          tone="accent"
+          Icon={MessageSquare}
+        />
+        <MetricCard
+          label="Unassigned"
+          value={unassignedCount}
+          hint="No sales rep yet"
+          tone={unassignedCount > 0 ? 'warning' : 'neutral'}
+          Icon={AlertTriangle}
+        />
+        <MetricCard
+          label="SLA breached"
+          value={breachedCount}
+          hint="Past first-response deadline"
+          tone={breachedCount > 0 ? 'danger' : 'neutral'}
+          Icon={AlertTriangle}
+        />
       </div>
 
       {confirmation ? (
@@ -146,18 +181,15 @@ export function WhatsAppAdminPage() {
       ) : null}
 
       {/* Filter strip */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 10,
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          padding: '12px 14px',
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--sos-radius-md)',
-        }}
-      >
+      <GlassCard variant="soft" padded="md">
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+          }}
+        >
         <div style={{ display: 'flex', gap: 4 }}>
           {STATUS_TABS.map((t) => (
             <button
@@ -213,121 +245,102 @@ export function WhatsAppAdminPage() {
           }}
           style={{ maxWidth: 280, marginLeft: 'auto' }}
         />
-        <button
-          type="button"
-          className="sos-btn sos-btn--ghost sos-btn--sm"
-          onClick={() => void load()}
-        >
-          Refresh
-        </button>
-      </div>
+        <GhostButton onClick={() => void load()} size="sm">Apply</GhostButton>
+        </div>
+      </GlassCard>
 
       {loading && threads.length === 0 ? (
         <LoadingState message="Loading conversations..." />
       ) : error && threads.length === 0 ? (
-        <ErrorState message="Unable to load conversations" details={error} onRetry={() => void load()} />
+        <ErrorState
+          message="Unable to load conversations"
+          details={error}
+          onRetry={() => void load()}
+        />
       ) : threads.length === 0 ? (
-        <div
-          style={{
-            padding: 48,
-            textAlign: 'center',
-            color: 'var(--sos-text-muted)',
-            background: 'var(--color-surface)',
-            border: '1px dashed var(--color-border)',
-            borderRadius: 'var(--sos-radius-md)',
-          }}
-        >
-          No conversations match these filters.
-        </div>
+        <GlassCard variant="soft" padded="lg">
+          <div className="sos-text-muted" style={{ textAlign: 'center', padding: 24, fontSize: 13 }}>
+            No conversations match these filters.
+          </div>
+        </GlassCard>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {threads.map((t) => {
-            const name = t.lead
-              ? `${t.lead.firstName} ${t.lead.lastName}`.trim()
-              : t.client
-                ? `${t.client.firstName} ${t.client.lastName}`.trim()
-                : t.waContactId;
-            const phone = t.lead?.phone ?? t.client?.phone ?? t.waContactId;
-            const assignedName = t.lead?.assignedEmployee
-              ? `${t.lead.assignedEmployee.firstName} ${t.lead.assignedEmployee.lastName}`.trim()
-              : null;
-            return (
-              <div
-                key={t.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '12px 14px',
-                  background: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--sos-radius-sm)',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      flexWrap: 'wrap',
-                      marginBottom: 4,
-                    }}
-                  >
-                    <strong style={{ fontSize: 14 }}>{name}</strong>
-                    <span style={statusPillStyle(t.status)}>{t.status.toLowerCase()}</span>
-                    {t.slaBreached ? (
-                      <span style={statusPillStyle('PENDING')}>SLA breached</span>
-                    ) : null}
-                    {!assignedName ? (
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          padding: '2px 8px',
-                          borderRadius: 999,
-                          background: 'var(--sos-status-warning-soft)',
-                          color: 'var(--sos-status-warning)',
-                        }}
-                      >
-                        Unassigned
-                      </span>
-                    ) : null}
+        <GlassCard variant="panel" padded="md">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {threads.map((t) => {
+              const name = t.lead
+                ? `${t.lead.firstName} ${t.lead.lastName}`.trim()
+                : t.client
+                  ? `${t.client.firstName} ${t.client.lastName}`.trim()
+                  : t.waContactId;
+              const phone = t.lead?.phone ?? t.client?.phone ?? t.waContactId;
+              const assignedName = t.lead?.assignedEmployee
+                ? `${t.lead.assignedEmployee.firstName} ${t.lead.assignedEmployee.lastName}`.trim()
+                : null;
+              return (
+                <div
+                  key={t.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '12px 14px',
+                    background: 'var(--sos-surface-1)',
+                    border: '1px solid var(--sos-border-subtle)',
+                    borderRadius: 'var(--sos-radius-sm)',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                        marginBottom: 4,
+                      }}
+                    >
+                      <strong style={{ fontSize: 14, color: 'var(--sos-text-primary)' }}>{name}</strong>
+                      <StatusBadge tone={statusTone(t.status)} size="sm">
+                        {t.status.toLowerCase()}
+                      </StatusBadge>
+                      {t.slaBreached ? (
+                        <StatusBadge tone="danger" size="sm">SLA breached</StatusBadge>
+                      ) : null}
+                      {!assignedName ? (
+                        <StatusBadge tone="warning" size="sm">Unassigned</StatusBadge>
+                      ) : null}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                      {phone} · via {t.channel.label} · last activity {fmtRelative(t.lastMessageAt)}
+                      {t.lastMessagePreview ? ` — ${t.lastMessagePreview.slice(0, 80)}` : ''}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--sos-text-secondary)', marginTop: 4 }}>
+                      {assignedName ? (
+                        <strong style={{ color: 'var(--sos-text-primary)' }}>{assignedName}</strong>
+                      ) : (
+                        <em style={{ color: 'var(--sos-text-muted)' }}>No agent assigned</em>
+                      )}
+                      {t.unreadCount > 0 ? ` · ${t.unreadCount} unread` : ''}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    {phone} · via {t.channel.label} · last activity {fmtRelative(t.lastMessageAt)}
-                    {t.lastMessagePreview ? ` — ${t.lastMessagePreview.slice(0, 80)}` : ''}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4 }}>
-                    {assignedName ? (
-                      <>
-                        <strong style={{ color: 'var(--color-text-primary)' }}>{assignedName}</strong>
-                      </>
-                    ) : (
-                      <em style={{ color: 'var(--sos-text-muted)' }}>No agent assigned</em>
-                    )}
-                    {t.unreadCount > 0 ? ` · ${t.unreadCount} unread` : ''}
-                  </div>
+                  {canReassign ? (
+                    <GhostButton
+                      size="sm"
+                      onClick={() => {
+                        setReassignTarget(t);
+                        setReassignEmployee('');
+                        setReassignError(null);
+                      }}
+                    >
+                      Reassign
+                    </GhostButton>
+                  ) : null}
                 </div>
-                {canReassign ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReassignTarget(t);
-                      setReassignEmployee('');
-                      setReassignError(null);
-                    }}
-                    className="rounded-md border px-3 py-1 text-xs font-medium"
-                    style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
-                  >
-                    Reassign
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </GlassCard>
       )}
 
       {/* ---- Reassign modal ---- */}
@@ -435,43 +448,3 @@ export function WhatsAppAdminPage() {
   );
 }
 
-function SummaryTile({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: number;
-  accent?: 'warning' | 'danger';
-}) {
-  const color =
-    accent === 'danger'
-      ? 'var(--sos-status-danger)'
-      : accent === 'warning'
-        ? 'var(--sos-status-warning)'
-        : 'var(--sos-brand-primary-strong)';
-  return (
-    <div
-      style={{
-        padding: '14px 16px',
-        background: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--sos-radius-md)',
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 700,
-          color: 'var(--color-text-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 700, color }}>{value}</div>
-    </div>
-  );
-}

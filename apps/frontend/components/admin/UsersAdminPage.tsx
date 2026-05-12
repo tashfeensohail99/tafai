@@ -194,7 +194,7 @@ export function UsersAdminPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span style={{ fontWeight: 600 }}>{row.email}</span>
           {row.phone ? (
-            <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{row.phone}</span>
+            <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>{row.phone}</span>
           ) : null}
         </div>
       ),
@@ -209,7 +209,7 @@ export function UsersAdminPage() {
       header: 'Roles',
       render: (row) =>
         row.userRoles.length === 0 ? (
-          <span style={{ color: 'var(--color-text-muted)' }}>None</span>
+          <span style={{ color: 'var(--sos-text-muted)' }}>None</span>
         ) : (
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {row.userRoles.map((ur) => (
@@ -237,7 +237,7 @@ export function UsersAdminPage() {
         row.lastLoginAt ? (
           new Date(row.lastLoginAt).toLocaleString()
         ) : (
-          <span style={{ color: 'var(--color-text-muted)' }}>Never</span>
+          <span style={{ color: 'var(--sos-text-muted)' }}>Never</span>
         ),
     },
     {
@@ -253,7 +253,7 @@ export function UsersAdminPage() {
                 setRolesError(null);
               }}
               className="rounded-md border px-3 py-1 text-xs font-medium"
-              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+              style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
             >
               Edit roles
             </button>
@@ -267,7 +267,7 @@ export function UsersAdminPage() {
                 setResetSuccess(null);
               }}
               className="rounded-md border px-3 py-1 text-xs font-medium"
-              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+              style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
             >
               Reset password
             </button>
@@ -304,7 +304,7 @@ export function UsersAdminPage() {
                 setCreateError(null);
               }}
               className="rounded-md px-4 py-2 text-sm font-medium"
-              style={{ backgroundColor: 'var(--color-primary-600)', color: 'var(--color-text-inverse)' }}
+              style={{ backgroundColor: 'var(--sos-brand-primary)', color: 'var(--sos-text-inverse)' }}
             >
               New user
             </button>
@@ -345,7 +345,7 @@ export function UsersAdminPage() {
                 className="sos-input"
                 placeholder="Min 8 characters"
               />
-              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginTop: 4 }}>
                 User will be forced to change this on first login.
               </div>
             </FormField>
@@ -412,7 +412,7 @@ export function UsersAdminPage() {
                 onChange={(e) => setResetPassword(e.target.value)}
                 style={{ fontFamily: 'monospace' }}
               />
-              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginTop: 4 }}>
                 Share this password through a secure channel (e.g. in person, encrypted message).
               </div>
             </FormField>

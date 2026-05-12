@@ -4,10 +4,15 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, Briefcase, Clock, FileWarning } from 'lucide-react';
 import { ErrorState } from '../shared/ErrorState';
 import { LoadingState } from '../shared/LoadingState';
-import { PageHeader } from '../shared/PageHeader';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { apiFetch } from '@/lib/api-client';
 import { useAdminSession } from '../layout/AdminShell';
+import {
+  GlassCard,
+  MetricCard,
+  PageHeader,
+  StatusBadge,
+} from '@/components/sales-v2/ui';
 
 interface OfficerWorkload {
   officerId: string | null;
@@ -133,25 +138,37 @@ export function ProcessingAdminPage() {
   const maxStage = Math.max(...data.stageBreakdown.map((s) => s.count), 1);
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <PageHeader
+        eyebrow="Processing · Admin"
         title="Processing overview"
         description="Manager view embedded inside the admin shell. Stage breakdown, officer workload, intake queue, SLA-breached cases."
       />
 
       {/* Totals */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <TotalTile label="Active cases" value={data.totals.active} icon={<Briefcase size={16} />} />
-        <TotalTile label="New intake" value={data.totals.newIntake} icon={<Clock size={16} />} accent="info" />
-        <TotalTile label="SLA breached" value={data.totals.slaBreached} icon={<AlertTriangle size={16} />} accent="danger" />
+      <div
+        style={{
+          display: 'grid',
+          gap: 16,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        }}
+      >
+        <MetricCard label="Active cases" value={data.totals.active} tone="accent" Icon={Briefcase} />
+        <MetricCard label="New intake" value={data.totals.newIntake} tone="info" Icon={Clock} />
+        <MetricCard
+          label="SLA breached"
+          value={data.totals.slaBreached}
+          tone={data.totals.slaBreached > 0 ? 'danger' : 'neutral'}
+          Icon={AlertTriangle}
+        />
       </div>
 
       {/* Stage breakdown */}
-      <section
-        className="rounded-[28px] border p-4 sm:p-6"
-        style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
-      >
-        <PageHeader title="Cases by stage" description="Where the active book of work sits right now" />
+      <GlassCard variant="panel" padded="lg">
+        <div className="sos-eyebrow">Stage breakdown</div>
+        <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', marginTop: 6, marginBottom: 14 }}>
+          Cases by stage
+        </h2>
         {data.stageBreakdown.length === 0 ? (
           <div className="sos-text-muted" style={{ padding: 12, fontSize: 13 }}>No active cases.</div>
         ) : (
@@ -177,7 +194,7 @@ export function ProcessingAdminPage() {
                     flex: 1,
                     height: 6,
                     borderRadius: 999,
-                    background: 'var(--sos-surface-hover)',
+                    background: 'var(--sos-surface-progress-track)',
                     overflow: 'hidden',
                   }}
                 >
@@ -196,14 +213,14 @@ export function ProcessingAdminPage() {
             ))}
           </div>
         )}
-      </section>
+      </GlassCard>
 
       {/* Officer workload */}
-      <section
-        className="rounded-[28px] border p-4 sm:p-6"
-        style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
-      >
-        <PageHeader title="Officer workload" description="Active cases assigned to each processing officer" />
+      <GlassCard variant="panel" padded="lg">
+        <div className="sos-eyebrow">Team</div>
+        <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', marginTop: 6, marginBottom: 14 }}>
+          Officer workload
+        </h2>
         {data.officerWorkload.length === 0 ? (
           <div className="sos-text-muted" style={{ padding: 12, fontSize: 13 }}>No active cases assigned yet.</div>
         ) : (
@@ -227,7 +244,7 @@ export function ProcessingAdminPage() {
                     flex: 1,
                     height: 6,
                     borderRadius: 999,
-                    background: 'var(--sos-surface-hover)',
+                    background: 'var(--sos-surface-progress-track)',
                     overflow: 'hidden',
                   }}
                 >
@@ -239,22 +256,20 @@ export function ProcessingAdminPage() {
                     }}
                   />
                 </div>
-                <span style={{ minWidth: 70, textAlign: 'right', fontSize: 13, fontWeight: 700 }}>
-                  {o.activeCases} cases
-                </span>
+                <StatusBadge tone="neutral" size="sm">{o.activeCases} cases</StatusBadge>
               </div>
             ))}
           </div>
         )}
-      </section>
+      </GlassCard>
 
       {/* Recent intake + SLA breached */}
       <div className="grid gap-6 xl:grid-cols-2">
-        <section
-          className="rounded-[28px] border p-4 sm:p-6"
-          style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
-        >
-          <PageHeader title="Recent intake" description="Newest cases waiting to be acknowledged" />
+        <GlassCard variant="panel" padded="lg">
+          <div className="sos-eyebrow">Queue</div>
+          <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', marginTop: 6, marginBottom: 14 }}>
+            Recent intake
+          </h2>
           {data.recentIntake.length === 0 ? (
             <div className="sos-text-muted" style={{ padding: 12, fontSize: 13 }}>Nothing waiting in intake.</div>
           ) : (
@@ -284,23 +299,20 @@ export function ProcessingAdminPage() {
                       {c.priority.toLowerCase()}
                     </span>
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
                     {c.service} · {c.targetCountry ?? '—'} · arrived {fmtDate(c.createdAt)}
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </section>
+        </GlassCard>
 
-        <section
-          className="rounded-[28px] border p-4 sm:p-6"
-          style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
-        >
-          <PageHeader
-            title="SLA breached"
-            description="Cases past their SLA deadline. Oldest first."
-          />
+        <GlassCard variant="panel" padded="lg">
+          <div className="sos-eyebrow">Urgent</div>
+          <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', marginTop: 6, marginBottom: 14 }}>
+            SLA breached
+          </h2>
           {data.breachedCases.length === 0 ? (
             <div className="sos-text-muted" style={{ padding: 12, fontSize: 13 }}>No SLA breaches. </div>
           ) : (
@@ -319,62 +331,15 @@ export function ProcessingAdminPage() {
                     <span style={{ fontSize: 13, fontWeight: 600 }}>{c.clientName ?? 'Unknown client'}</span>
                     <FileWarning size={14} style={{ color: 'var(--sos-status-danger)' }} />
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
                     {STAGE_LABEL[c.stage] ?? c.stage} · {c.officerName ?? 'Unassigned'} · due {fmtDateOnly(c.slaDueAt)}
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </section>
+        </GlassCard>
       </div>
-    </div>
-  );
-}
-
-function TotalTile({
-  label,
-  value,
-  icon,
-  accent,
-}: {
-  label: string;
-  value: number;
-  icon?: React.ReactNode;
-  accent?: 'info' | 'danger';
-}) {
-  const color =
-    accent === 'danger'
-      ? 'var(--sos-status-danger)'
-      : accent === 'info'
-        ? 'var(--sos-status-info)'
-        : 'var(--sos-brand-primary-strong)';
-  return (
-    <div
-      style={{
-        padding: '14px 16px',
-        background: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--sos-radius-md)',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          fontSize: 11,
-          fontWeight: 700,
-          color: 'var(--color-text-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          marginBottom: 6,
-        }}
-      >
-        {icon}
-        {label}
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 700, color }}>{value}</div>
     </div>
   );
 }

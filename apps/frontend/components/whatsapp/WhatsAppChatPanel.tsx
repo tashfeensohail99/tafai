@@ -156,16 +156,48 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
 
   if (loading && !thread) {
     return (
-      <div style={{ padding: 40, color: 'var(--sos-text-muted)', textAlign: 'center' }}>
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--wa-chat-bg, #0b141a)',
+          color: 'var(--sos-text-muted)',
+          fontSize: 14,
+        }}
+      >
         Loading conversation…
       </div>
     );
   }
   if (error && !thread) {
     return (
-      <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>
-        <AlertTriangle size={14} />
-        <span>{error}</span>
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--wa-chat-bg, #0b141a)',
+          padding: 24,
+        }}
+      >
+        <div
+          style={{
+            background: '#7f1d1d',
+            color: '#fca5a5',
+            borderRadius: 8,
+            padding: '10px 16px',
+            fontSize: 13,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <AlertTriangle size={14} />
+          {error}
+        </div>
       </div>
     );
   }
@@ -182,16 +214,13 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: hideSidePanel ? '1fr' : 'minmax(0, 1fr) minmax(280px, 320px)',
-        gap: 16,
-        minHeight: 480,
+        gridTemplateColumns: hideSidePanel ? '1fr' : 'minmax(0, 1fr) 300px',
+        height: '100%',
+        overflow: 'hidden',
       }}
     >
-      <GlassCard
-        variant="strong"
-        padded={false}
-        style={{ display: 'flex', flexDirection: 'column', minHeight: 480 }}
-      >
+      {/* ── Chat window ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <ChatHeader
           displayName={displayName}
           phone={thread.lead?.phone ?? thread.client?.phone ?? thread.waContactId}
@@ -203,25 +232,34 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
           slaBreached={thread.slaBreached}
           assignedTo={thread.lead?.assignedEmployee ?? null}
         />
+        {/* Messages */}
         <div
           ref={scrollRef}
-          className="sos-scroll"
           style={{
             flex: 1,
             minHeight: 0,
             overflowY: 'auto',
-            padding: '18px 18px 12px',
+            padding: '12px 5%',
             display: 'flex',
             flexDirection: 'column',
-            gap: 8,
+            gap: 2,
+            background: 'var(--wa-chat-bg, #0b141a)',
+            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.02'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
           }}
         >
           {messages.length === 0 ? (
             <div
-              className="sos-text-muted"
-              style={{ textAlign: 'center', padding: 32, fontSize: 'var(--sos-text-sm)' }}
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--sos-text-muted)',
+                fontSize: 13,
+                textAlign: 'center',
+              }}
             >
-              No messages yet. The first message will appear here.
+              No messages yet
             </div>
           ) : (
             messages.map((m) => <MessageBubble key={m.id} message={m} />)
@@ -235,8 +273,9 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
           disabled={!withinWindow}
           sending={sending}
         />
-      </GlassCard>
+      </div>
 
+      {/* ── Side panel (profile + CTAs) ── */}
       {!hideSidePanel && (
         <SidePanel
           thread={thread}
@@ -304,6 +343,13 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
 
 // ---- Header -------------------------------------------------------------
 
+const AVATAR_COLORS = ['#00a884', '#0099cc', '#9c27b0', '#e91e63', '#ff5722', '#607d8b'];
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]!;
+}
+
 function ChatHeader(props: {
   displayName: string;
   phone: string;
@@ -318,43 +364,87 @@ function ChatHeader(props: {
   return (
     <header
       style={{
-        padding: '14px 18px',
-        borderBottom: '1px solid var(--sos-border-subtle)',
+        padding: '10px 16px',
+        background: 'var(--wa-panel-header, #202c33)',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
         gap: 12,
-        flexWrap: 'wrap',
+        borderBottom: '1px solid var(--sos-border-subtle)',
+        flexShrink: 0,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-        <div className="sos-avatar sos-avatar--lg">{initialsOf(props.displayName)}</div>
-        <div style={{ minWidth: 0 }}>
-          <div className="sos-title" style={{ fontSize: 'var(--sos-text-md)' }}>
-            {props.displayName}
-          </div>
-          <div className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)' }}>
-            {props.phone} · via {props.channelLabel}
-          </div>
+      <div
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          background: avatarColor(props.displayName),
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 15,
+          fontWeight: 700,
+          color: '#fff',
+          flexShrink: 0,
+        }}
+      >
+        {initialsOf(props.displayName)}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--sos-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {props.displayName}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 1 }}>
+          {props.phone}
+          {props.assignedTo && (
+            <span style={{ color: '#00a884', marginLeft: 8 }}>
+              · {props.assignedTo.firstName}
+            </span>
+          )}
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <StatusBadge tone={props.withinWindow ? 'success' : 'warning'} size="sm" dot>
-          {props.withinWindow ? '24h window open' : 'Template only'}
-        </StatusBadge>
-        {props.firstAgentReplyAt ? (
-          <StatusBadge tone={props.slaBreached ? 'danger' : 'success'} size="sm">
-            {props.slaBreached ? 'SLA breached' : 'SLA met'}
-          </StatusBadge>
-        ) : props.slaDeadlineAt ? (
-          <StatusBadge tone={props.slaTone} size="sm">
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {props.slaDeadlineAt && !props.firstAgentReplyAt && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: '2px 8px',
+              borderRadius: 10,
+              fontWeight: 600,
+              background: props.slaBreached ? '#7f1d1d' : props.slaTone === 'warning' ? '#78350f' : '#064e3b',
+              color: props.slaBreached ? '#fca5a5' : props.slaTone === 'warning' ? '#fde68a' : '#6ee7b7',
+            }}
+          >
             SLA {formatRelativeShort(props.slaDeadlineAt)}
-          </StatusBadge>
-        ) : null}
-        {props.assignedTo && (
-          <StatusBadge tone="violet" size="sm">
-            {props.assignedTo.firstName} {props.assignedTo.lastName}
-          </StatusBadge>
+          </span>
+        )}
+        {props.firstAgentReplyAt && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: '2px 8px',
+              borderRadius: 10,
+              fontWeight: 600,
+              background: props.slaBreached ? '#7f1d1d' : '#064e3b',
+              color: props.slaBreached ? '#fca5a5' : '#6ee7b7',
+            }}
+          >
+            {props.slaBreached ? 'SLA breached' : 'SLA met'}
+          </span>
+        )}
+        {!props.withinWindow && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: '2px 8px',
+              borderRadius: 10,
+              fontWeight: 600,
+              background: '#78350f',
+              color: '#fde68a',
+            }}
+          >
+            Template only
+          </span>
         )}
       </div>
     </header>
@@ -371,26 +461,48 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         display: 'flex',
         flexDirection: 'column',
         alignItems: isOut ? 'flex-end' : 'flex-start',
+        marginBottom: 2,
       }}
     >
-      <div className={`sos-bubble ${isOut ? 'sos-bubble--out' : 'sos-bubble--in'}`}>
-        {message.body ??
-          (message.templateName
-            ? `Template: ${message.templateName}`
-            : `[${message.type.toLowerCase()}]`)}
-      </div>
       <div
-        className="sos-text-faint"
         style={{
-          fontSize: 'var(--sos-text-xs)',
-          marginTop: 4,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
+          maxWidth: '65%',
+          minWidth: 80,
+          padding: '6px 10px 4px',
+          borderRadius: isOut ? '8px 0 8px 8px' : '0 8px 8px 8px',
+          background: isOut ? 'var(--wa-bubble-out, #005c4b)' : 'var(--wa-bubble-in, #202c33)',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+          position: 'relative',
         }}
       >
-        <time>{formatTime(message.createdAt)}</time>
-        {isOut && <StatusIcon status={message.status} errorTitle={message.errorTitle} />}
+        <div
+          style={{
+            fontSize: 14,
+            color: 'var(--sos-text-primary)',
+            lineHeight: '1.5',
+            wordBreak: 'break-word',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {message.body ??
+            (message.templateName
+              ? `📋 Template: ${message.templateName}`
+              : `[${message.type.toLowerCase()}]`)}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 3,
+            marginTop: 3,
+          }}
+        >
+          <time style={{ fontSize: 11, color: 'var(--sos-text-faint)', lineHeight: 1 }}>
+            {formatTime(message.createdAt)}
+          </time>
+          {isOut && <StatusIcon status={message.status} errorTitle={message.errorTitle} />}
+        </div>
       </div>
     </div>
   );
@@ -449,63 +561,99 @@ function ChatComposer(props: {
   sending: boolean;
 }) {
   return (
-    <footer style={{ padding: 16, borderTop: '1px solid var(--sos-border-subtle)' }}>
-      {props.disabled && (
-        <div className="sos-banner sos-banner--warning" style={{ marginBottom: 12 }}>
-          <AlertTriangle size={14} />
-          <span>
-            <strong>24-hour window expired.</strong>&nbsp; Free-form replies are blocked. Use an
-            approved template message instead.
-          </span>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-        <textarea
-          value={props.value}
-          onChange={(e) => props.onChange(e.target.value)}
-          placeholder={props.disabled ? 'Send a template message…' : 'Type a reply…'}
-          disabled={props.disabled || props.sending}
-          className="sos-textarea"
-          style={{ flex: 1, minHeight: 60, resize: 'vertical' }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !props.disabled && !props.sending) {
-              e.preventDefault();
-              props.onSend();
-            }
-          }}
-        />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {props.disabled ? (
-            <PrimaryButton
-              type="button"
-              onClick={props.onOpenTemplate}
-              iconLeft={<FileText size={14} />}
-            >
-              Send template
-            </PrimaryButton>
-          ) : (
-            <>
-              <PrimaryButton
-                type="button"
-                onClick={props.onSend}
-                disabled={!props.value.trim() || props.sending}
-                iconRight={<Send size={14} />}
-              >
-                {props.sending ? 'Sending…' : 'Send'}
-              </PrimaryButton>
-              <GhostButton
-                type="button"
-                onClick={props.onOpenTemplate}
-                size="sm"
-                iconLeft={<FileText size={12} />}
-              >
-                Template
-              </GhostButton>
-            </>
-          )}
-        </div>
-      </div>
-    </footer>
+    <div
+      style={{
+        padding: '8px 12px',
+        background: 'var(--wa-panel-header, #202c33)',
+        borderTop: '1px solid var(--sos-border-subtle)',
+        display: 'flex',
+        alignItems: 'flex-end',
+        gap: 8,
+        flexShrink: 0,
+      }}
+    >
+      {/* Template button */}
+      <button
+        type="button"
+        title="Send a template message"
+        onClick={props.onOpenTemplate}
+        style={{
+          all: 'unset',
+          cursor: 'pointer',
+          color: props.disabled ? '#00a884' : 'var(--sos-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          borderRadius: '50%',
+          flexShrink: 0,
+          transition: 'background 0.15s',
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+      >
+        <FileText size={20} />
+      </button>
+
+      {/* Text input */}
+      <textarea
+        disabled={props.disabled}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (!props.sending && props.value.trim()) props.onSend();
+          }
+        }}
+        placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
+        rows={1}
+        style={{
+          flex: 1,
+          background: 'var(--sos-surface-3, #2a3942)',
+          color: 'var(--sos-text-primary)',
+          border: 'none',
+          borderRadius: 8,
+          padding: '9px 12px',
+          fontSize: 14,
+          lineHeight: '1.5',
+          resize: 'none',
+          outline: 'none',
+          maxHeight: 120,
+          fontFamily: 'inherit',
+          opacity: props.disabled ? 0.5 : 1,
+        }}
+        onInput={(e) => {
+          const el = e.target as HTMLTextAreaElement;
+          el.style.height = 'auto';
+          el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+        }}
+      />
+
+      {/* Send button */}
+      <button
+        type="button"
+        onClick={props.onSend}
+        disabled={props.disabled || props.sending || !props.value.trim()}
+        title="Send"
+        style={{
+          all: 'unset',
+          cursor: props.disabled || props.sending || !props.value.trim() ? 'not-allowed' : 'pointer',
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          background: props.disabled || !props.value.trim() ? '#374151' : '#00a884',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          transition: 'background 0.2s',
+        }}
+      >
+        <Send size={18} color="#fff" />
+      </button>
+    </div>
   );
 }
 

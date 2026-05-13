@@ -1,13 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Inbox as InboxIcon, MessageSquare, Search, Sparkles } from 'lucide-react';
-import {
-  EmptyState,
-  GlassCard,
-  PageHeader,
-  StatusBadge,
-} from '@/components/sales-v2/ui';
+import { Inbox as InboxIcon, MessageSquare, Search } from 'lucide-react';
 import { listThreads, type ThreadListItem, type WhatsAppThreadStatus } from '@/lib/whatsapp';
 import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
@@ -15,20 +9,18 @@ import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 type Filter = WhatsAppThreadStatus | 'ALL';
 
 const FILTERS: Array<{ key: Filter; label: string }> = [
+  { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
   { key: 'PENDING', label: 'Pending' },
   { key: 'RESOLVED', label: 'Resolved' },
-  { key: 'ALL', label: 'All' },
 ];
 
 /**
- * Unified WhatsApp inbox for the calling agent. Server scopes the list to
- * threads assigned to the caller's lead unless they hold whatsapp.view_all_inboxes.
- *
- * Layout: filter chips + search → list (left) + chat panel (right).
+ * WhatsApp-style unified inbox — full-height split layout matching WhatsApp Web.
+ * Left: contact list with search + filter tabs. Right: live chat panel.
  */
 export default function SalesInboxPage() {
-  const [filter, setFilter] = useState<Filter>('OPEN');
+  const [filter, setFilter] = useState<Filter>('ALL');
   const [search, setSearch] = useState('');
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,17 +44,11 @@ export default function SalesInboxPage() {
     [filter, search, activeId],
   );
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  useEffect(() => { void reload(); }, [reload]);
 
-  // Realtime: when a message arrives anywhere, refresh the list to bump order
-  // and update unread counts. The chat panel handles its own per-thread sync.
   useEffect(() => {
     if (!socket) return;
-    const onAny = () => {
-      void reload();
-    };
+    const onAny = () => { void reload(); };
     socket.on('whatsapp.message.new', onAny);
     socket.on('whatsapp.message.status', onAny);
     return () => {
@@ -71,122 +57,237 @@ export default function SalesInboxPage() {
     };
   }, [socket, reload]);
 
-  const counts = useMemo(() => {
-    return {
-      open: items.filter((t) => t.status === 'OPEN').length,
-      breached: items.filter((t) => t.slaBreached).length,
-      unread: items.reduce((acc, t) => acc + t.unreadCount, 0),
-    };
-  }, [items]);
+  const totalUnread = useMemo(() => items.reduce((acc, t) => acc + t.unreadCount, 0), [items]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <PageHeader
-        eyebrow="WhatsApp inbox"
-        title={
-          <>
-            Your assigned chats.<br />
-            One unified inbox.
-          </>
-        }
-        description="Every WhatsApp conversation routed to you. Filter by status, search by name or phone, and reply without leaving the page."
-        meta={
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <StatusBadge tone="info" dot>{counts.open} open</StatusBadge>
-            <StatusBadge tone="warning" dot>{counts.unread} unread</StatusBadge>
-            <StatusBadge tone="danger" dot>{counts.breached} SLA breaches</StatusBadge>
-          </div>
-        }
-        actions={
-          <StatusBadge tone="accent" size="lg" icon={<Sparkles size={12} />}>
-            Live
-          </StatusBadge>
-        }
-      />
-
-      <section
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '360px 1fr',
+        height: 'calc(100vh - 64px)',
+        overflow: 'hidden',
+        border: '1px solid var(--sos-border-subtle)',
+        borderRadius: 12,
+        background: 'var(--sos-surface-1)',
+      }}
+    >
+      {/* ── Left panel: contact list ── */}
+      <div
         style={{
-          display: 'grid',
-          gap: 16,
-          gridTemplateColumns: 'minmax(320px, 380px) minmax(0, 1fr)',
-          minHeight: 'calc(100vh - 280px)',
+          display: 'flex',
+          flexDirection: 'column',
+          borderRight: '1px solid var(--sos-border-subtle)',
+          overflow: 'hidden',
         }}
       >
-        <GlassCard variant="default" padded={false} style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <div
+          style={{
+            padding: '12px 16px',
+            background: 'var(--wa-panel-header, #202c33)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: '50%',
+                background: '#00a884',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 15,
+                fontWeight: 700,
+                color: '#fff',
+                flexShrink: 0,
+              }}
+            >
+              WA
+            </div>
+            <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--sos-text-primary)' }}>
+              Inbox
+            </span>
+            {totalUnread > 0 && (
+              <span
+                style={{
+                  background: '#00a884',
+                  color: '#fff',
+                  borderRadius: 10,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: '1px 7px',
+                  lineHeight: '18px',
+                }}
+              >
+                {totalUnread}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Search */}
+        <div
+          style={{
+            padding: '8px 12px',
+            background: 'var(--sos-surface-2, #111b21)',
+            flexShrink: 0,
+          }}
+        >
           <div
             style={{
               display: 'flex',
-              gap: 6,
-              padding: 10,
-              borderBottom: '1px solid var(--sos-border-subtle)',
+              alignItems: 'center',
+              gap: 8,
+              background: 'var(--sos-surface-3, #202c33)',
+              borderRadius: 8,
+              padding: '6px 12px',
             }}
           >
-            {FILTERS.map((f) => (
+            <Search size={15} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+            <input
+              type="search"
+              placeholder="Search or start new chat"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                flex: 1,
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                color: 'var(--sos-text-primary)',
+                fontSize: 14,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div
+          style={{
+            display: 'flex',
+            borderBottom: '1px solid var(--sos-border-subtle)',
+            background: 'var(--sos-surface-2, #111b21)',
+            flexShrink: 0,
+          }}
+        >
+          {FILTERS.map((f) => {
+            const active = filter === f.key;
+            const count = f.key === 'ALL' ? items.length : items.filter((t) => t.status === f.key).length;
+            return (
               <button
                 key={f.key}
                 type="button"
-                className="sos-tab"
-                aria-pressed={filter === f.key}
                 onClick={() => setFilter(f.key)}
-                style={{ flex: 1 }}
+                style={{
+                  flex: 1,
+                  padding: '8px 4px',
+                  border: 'none',
+                  borderBottom: active ? '2px solid #00a884' : '2px solid transparent',
+                  background: 'transparent',
+                  color: active ? '#00a884' : 'var(--sos-text-muted)',
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 400,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4,
+                }}
               >
                 {f.label}
+                {count > 0 && (
+                  <span
+                    style={{
+                      background: active ? '#00a884' : 'var(--sos-border-subtle)',
+                      color: active ? '#fff' : 'var(--sos-text-muted)',
+                      borderRadius: 8,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: '0 5px',
+                      lineHeight: '16px',
+                    }}
+                  >
+                    {count}
+                  </span>
+                )}
               </button>
-            ))}
-          </div>
-          <div style={{ padding: 10, borderBottom: '1px solid var(--sos-border-subtle)' }}>
-            <div className="sos-input-group">
-              <span className="sos-input-group__icon"><Search size={14} /></span>
-              <input
-                type="search"
-                className="sos-input"
-                placeholder="Name or phone"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-          <div
-            className="sos-scroll"
-            style={{ flex: 1, overflowY: 'auto', padding: 10 }}
-          >
-            {loading ? (
-              <div className="sos-text-muted" style={{ padding: 24, textAlign: 'center' }}>
-                Loading conversations…
-              </div>
-            ) : items.length === 0 ? (
-              <EmptyState
-                Icon={InboxIcon}
-                title="Nothing here yet"
-                description="When customers message your business on WhatsApp and the conversation routes to you, it appears here."
-              />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {items.map((t) => (
-                  <ThreadRow
-                    key={t.id}
-                    item={t}
-                    active={activeId === t.id}
-                    onClick={() => setActiveId(t.id)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </GlassCard>
+            );
+          })}
+        </div>
 
-        {activeId ? (
-          <WhatsAppChatPanel threadId={activeId} />
-        ) : (
-          <GlassCard variant="strong" padded={false} style={{ minHeight: 480 }}>
-            <EmptyState
-              Icon={MessageSquare}
-              title="Select a conversation"
-              description="Pick a chat from the list to view and reply."
-            />
-          </GlassCard>
-        )}
-      </section>
+        {/* Thread list */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            background: 'var(--sos-surface-1)',
+          }}
+        >
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
+              Loading chats…
+            </div>
+          ) : items.length === 0 ? (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+                gap: 12,
+                color: 'var(--sos-text-muted)',
+                padding: 32,
+                textAlign: 'center',
+              }}
+            >
+              <InboxIcon size={40} strokeWidth={1} />
+              <div style={{ fontSize: 14 }}>No chats assigned to you yet</div>
+            </div>
+          ) : (
+            items.map((t) => (
+              <ThreadRow
+                key={t.id}
+                item={t}
+                active={activeId === t.id}
+                onClick={() => setActiveId(t.id)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* ── Right panel: chat ── */}
+      {activeId ? (
+        <WhatsAppChatPanel threadId={activeId} hideSidePanel />
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 16,
+            background: 'var(--wa-chat-bg, #0b141a)',
+            color: 'var(--sos-text-muted)',
+          }}
+        >
+          <MessageSquare size={56} strokeWidth={0.8} />
+          <div style={{ fontSize: 18, fontWeight: 500, color: 'var(--sos-text-secondary)' }}>
+            WhatsApp Inbox
+          </div>
+          <div style={{ fontSize: 13, maxWidth: 280, textAlign: 'center' }}>
+            Select a conversation from the list to start messaging
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -215,59 +316,123 @@ function ThreadRow({
         all: 'unset',
         cursor: 'pointer',
         display: 'block',
+        width: '100%',
       }}
     >
-      <div className={`sos-conv-row ${active ? 'sos-conv-row--active' : ''}`}>
-        <div className="sos-avatar">{initials(displayName)}</div>
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-            }}
-          >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '10px 16px',
+          background: active ? 'var(--sos-surface-3, #2a3942)' : 'transparent',
+          borderBottom: '1px solid var(--sos-border-subtle)',
+          transition: 'background 0.1s',
+        }}
+        onMouseEnter={(e) => {
+          if (!active) (e.currentTarget as HTMLDivElement).style.background = 'var(--sos-surface-2, #202c33)';
+        }}
+        onMouseLeave={(e) => {
+          if (!active) (e.currentTarget as HTMLDivElement).style.background = 'transparent';
+        }}
+      >
+        {/* Avatar */}
+        <div
+          style={{
+            width: 46,
+            height: 46,
+            borderRadius: '50%',
+            background: avatarColor(displayName),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 16,
+            fontWeight: 700,
+            color: '#fff',
+            flexShrink: 0,
+          }}
+        >
+          {initials(displayName)}
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
             <span
-              className="sos-title"
               style={{
-                fontSize: 'var(--sos-text-base)',
-                whiteSpace: 'nowrap',
+                fontSize: 15,
+                fontWeight: item.unreadCount > 0 ? 600 : 400,
+                color: 'var(--sos-text-primary)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
                 maxWidth: 180,
               }}
             >
               {displayName}
             </span>
             {item.lastMessageAt && (
-              <span className="sos-text-faint" style={{ fontSize: 'var(--sos-text-xs)', whiteSpace: 'nowrap' }}>
+              <span
+                style={{
+                  fontSize: 11,
+                  color: item.unreadCount > 0 ? '#00a884' : 'var(--sos-text-faint)',
+                  flexShrink: 0,
+                }}
+              >
                 {formatRelativeShort(item.lastMessageAt)}
               </span>
             )}
           </div>
-          <div
-            className="sos-text-muted"
-            style={{
-              fontSize: 'var(--sos-text-sm)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              maxWidth: 240,
-              marginTop: 2,
-            }}
-          >
-            {item.lastMessagePreview ?? '(no messages yet)'}
-          </div>
-          <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <StatusBadge tone={tone(item.status)} size="sm">{item.status.toLowerCase()}</StatusBadge>
-            {item.slaBreached && <StatusBadge tone="danger" size="sm">SLA</StatusBadge>}
-            {item.unreadCount > 0 && (
-              <StatusBadge tone="accent" size="sm">{item.unreadCount} new</StatusBadge>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2, gap: 4 }}>
+            <span
+              style={{
+                fontSize: 13,
+                color: 'var(--sos-text-muted)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: 200,
+              }}
+            >
+              {item.lastMessagePreview ?? ''}
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              {item.slaBreached && (
+                <span
+                  style={{
+                    background: '#ef4444',
+                    color: '#fff',
+                    borderRadius: 6,
+                    fontSize: 9,
+                    fontWeight: 700,
+                    padding: '1px 5px',
+                  }}
+                >
+                  SLA
+                </span>
+              )}
+              {item.unreadCount > 0 && (
+                <span
+                  style={{
+                    background: '#00a884',
+                    color: '#fff',
+                    borderRadius: 10,
+                    minWidth: 18,
+                    height: 18,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: '0 5px',
+                  }}
+                >
+                  {item.unreadCount}
+                </span>
+              )}
+            </div>
           </div>
         </div>
-        <div />
       </div>
     </button>
   );
@@ -275,15 +440,18 @@ function ThreadRow({
 
 function tone(s: ThreadListItem['status']) {
   switch (s) {
-    case 'OPEN':
-      return 'info' as const;
-    case 'PENDING':
-      return 'warning' as const;
-    case 'RESOLVED':
-      return 'success' as const;
-    default:
-      return 'neutral' as const;
+    case 'OPEN': return 'info' as const;
+    case 'PENDING': return 'warning' as const;
+    case 'RESOLVED': return 'success' as const;
+    default: return 'neutral' as const;
   }
+}
+
+const AVATAR_COLORS = ['#00a884', '#0099cc', '#9c27b0', '#e91e63', '#ff5722', '#607d8b', '#795548'];
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]!;
 }
 
 function initials(name: string): string {

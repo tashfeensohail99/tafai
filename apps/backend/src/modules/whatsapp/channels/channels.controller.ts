@@ -10,6 +10,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
@@ -49,6 +50,7 @@ class UpdateChannelStatusDto {
 export class WhatsAppChannelsController {
   constructor(
     private readonly channels: WhatsAppChannelsService,
+    private readonly config: ConfigService,
     @InjectQueue(WHATSAPP_QUEUE.TEMPLATE_SYNC)
     private readonly templateSyncQueue: Queue<TemplateSyncJob>,
   ) {}
@@ -59,10 +61,56 @@ export class WhatsAppChannelsController {
     return this.channels.list();
   }
 
+  /**
+   * Admin Settings → Integrations page reads this on mount to render:
+   *   - the exact webhook callback URL to paste into Meta (server-side
+   *     truth, no hardcoded Railway hostnames in the frontend)
+   *   - whether the security-critical env vars are configured so the
+   *     admin sees red/green at a glance without exposing secret values
+   *   - the Graph API version pin so docs match runtime
+   */
+  @Get('integration-info')
+  @RequirePermissions('whatsapp.manage_channels')
+  async integrationInfo() {
+    const appUrl =
+      this.config.get<string>('app.appUrl')?.replace(/\/+$/, '') ?? '';
+    return {
+      webhookUrl: appUrl ? `${appUrl}/v1/whatsapp/webhooks/meta` : null,
+      apiVersion:
+        this.config.get<string>('app.whatsapp.metaGraphApiVersion') ?? 'v21.0',
+      metaAppId: this.config.get<string>('app.whatsapp.metaAppId') ?? null,
+      env: {
+        verifyTokenConfigured: Boolean(
+          this.config.get<string>('app.whatsapp.webhookVerifyToken'),
+        ),
+        appSecretConfigured: Boolean(
+          this.config.get<string>('app.whatsapp.metaAppSecret'),
+        ),
+        encryptionKeyConfigured: Boolean(
+          this.config.get<string>('app.whatsapp.encryptionKey'),
+        ),
+      },
+    };
+  }
+
   @Post()
   @RequirePermissions('whatsapp.manage_channels')
   async upsert(@CurrentUser() user: RequestUser, @Body() dto: UpsertChannelDto) {
     return this.channels.upsert(user.id, dto);
+  }
+
+  /**
+   * Test connection — admin clicks "Verify connection" in Settings →
+   * Integrations and we ping Meta's Graph API with the stored token to
+   * confirm the credentials still work. Returns the Meta-reported state
+   * of the phone number (verified name, quality rating, messaging tier)
+   * so the operator sees a definitive answer.
+   */
+  @Post(':id/verify')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('whatsapp.manage_channels')
+  async verify(@Param('id', ParseUUIDPipe) id: string) {
+    return this.channels.verify(id);
   }
 
   @Patch(':id/status')

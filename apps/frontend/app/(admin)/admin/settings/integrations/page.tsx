@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import type { Route } from 'next';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -8,13 +10,15 @@ import {
   Eye,
   EyeOff,
   Key,
+  Loader2,
   MessageSquare,
   RefreshCw,
   Save,
+  ShieldCheck,
+  Signal,
   Webhook,
 } from 'lucide-react';
 import {
-  EmptyState,
   Field,
   FormInput,
   GhostButton,
@@ -25,17 +29,15 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   connectChannel,
+  getIntegrationInfo,
   listChannels,
+  verifyChannel,
   type AdminChannel,
+  type ChannelVerification,
+  type IntegrationInfo,
 } from '@/lib/whatsapp-admin';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-
-function mask(s: string): string {
-  if (!s) return '';
-  if (s.length <= 12) return '••••••••';
-  return s.slice(0, 6) + '••••••••••••' + s.slice(-4);
-}
 
 function copyToClipboard(text: string, onDone: () => void) {
   void navigator.clipboard.writeText(text).then(() => {
@@ -44,43 +46,16 @@ function copyToClipboard(text: string, onDone: () => void) {
   });
 }
 
-// ─── RevealField — masked text with show/hide toggle ────────────────────────
+function formatTier(t: string | null | undefined): string {
+  if (!t) return '—';
+  return t.replace('TIER_', '').replace('UNLIMITED', '∞').toLowerCase();
+}
 
-function RevealField({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  const [show, setShow] = useState(false);
-  const [copied, setCopied] = useState(false);
-  return (
-    <Field label={label} hint={hint}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <div
-          className="sos-input"
-          style={{
-            flex: 1,
-            fontFamily: 'monospace',
-            fontSize: 13,
-            letterSpacing: show ? 'normal' : '0.12em',
-            color: 'var(--sos-text-secondary)',
-            cursor: 'default',
-            userSelect: show ? 'text' : 'none',
-          }}
-        >
-          {show ? value : mask(value)}
-        </div>
-        <GhostButton
-          size="sm"
-          title={show ? 'Hide' : 'Reveal'}
-          onClick={() => setShow((v) => !v)}
-          iconLeft={show ? <EyeOff size={13} /> : <Eye size={13} />}
-        />
-        <GhostButton
-          size="sm"
-          title="Copy"
-          onClick={() => copyToClipboard(value, () => setCopied(true))}
-          iconLeft={copied ? <CheckCircle2 size={13} /> : <Copy size={13} />}
-        />
-      </div>
-    </Field>
-  );
+function qualityTone(q: string | null | undefined): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (q === 'GREEN') return 'success';
+  if (q === 'YELLOW') return 'warning';
+  if (q === 'RED') return 'danger';
+  return 'neutral';
 }
 
 // ─── EnvVarNote ─────────────────────────────────────────────────────────────
@@ -106,59 +81,157 @@ function EnvVarNote({ vars }: { vars: string[] }) {
   );
 }
 
+// ─── Verification result card ────────────────────────────────────────────────
+
+function VerificationCard({ result }: { result: ChannelVerification }) {
+  if (result.ok) {
+    return (
+      <div
+        className="sos-banner sos-banner--success"
+        style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <CheckCircle2 size={14} />
+          <strong style={{ fontSize: 13 }}>Live — Meta accepted the credentials</strong>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 10,
+            fontSize: 12.5,
+          }}
+        >
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>Verified business name</div>
+            <div style={{ fontWeight: 600 }}>{result.verifiedName ?? '—'}</div>
+          </div>
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>Display number</div>
+            <div style={{ fontFamily: 'monospace' }}>{result.displayPhoneNumber ?? '—'}</div>
+          </div>
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>Quality rating</div>
+            <StatusBadge tone={qualityTone(result.qualityRating)} size="sm" dot>
+              {(result.qualityRating ?? 'unknown').toLowerCase()}
+            </StatusBadge>
+          </div>
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>Messaging tier</div>
+            <div style={{ fontWeight: 600 }}>{formatTier(result.messagingLimitTier)}</div>
+          </div>
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>Phone verification</div>
+            <div>{result.codeVerificationStatus ?? '—'}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="sos-banner sos-banner--danger"
+      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <AlertTriangle size={14} />
+        <strong style={{ fontSize: 13 }}>Meta rejected the credentials</strong>
+      </div>
+      <div style={{ fontSize: 12.5 }}>
+        {result.error?.title ? <strong>{result.error.title}: </strong> : null}
+        {result.error?.message ?? 'Unknown error from Meta Graph API.'}
+        {result.error?.code ? (
+          <span className="sos-text-muted" style={{ marginLeft: 6 }}>
+            (code {result.error.code})
+          </span>
+        ) : null}
+      </div>
+      <div className="sos-text-muted" style={{ fontSize: 12 }}>
+        Common causes: access token expired or revoked · wrong phone-number-id · token
+        was issued for a different Meta app · app review not approved for this WABA.
+      </div>
+    </div>
+  );
+}
+
 // ─── ConnectedChannelCard ────────────────────────────────────────────────────
 
 function ConnectedChannelCard({
   channel,
+  verification,
   onEdit,
+  onTest,
+  testing,
 }: {
   channel: AdminChannel;
+  verification: ChannelVerification | null;
   onEdit: () => void;
+  onTest: () => void;
+  testing: boolean;
 }) {
   const tone = channel.status === 'ACTIVE' ? 'success' : channel.status === 'PAUSED' ? 'warning' : 'danger';
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 14,
-        padding: '14px 18px',
-        borderRadius: 'var(--sos-radius-sm)',
-        background: 'var(--sos-surface-1)',
-        border: '1px solid var(--sos-border-subtle)',
-      }}
-    >
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div
         style={{
-          width: 40,
-          height: 40,
-          borderRadius: 12,
-          display: 'grid',
-          placeItems: 'center',
-          background: 'var(--sos-brand-primary-soft)',
-          color: 'var(--sos-brand-primary)',
-          border: '1px solid var(--sos-brand-primary-border)',
-          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 14,
+          padding: '14px 18px',
+          borderRadius: 'var(--sos-radius-sm)',
+          background: 'var(--sos-surface-1)',
+          border: '1px solid var(--sos-border-subtle)',
+          flexWrap: 'wrap',
         }}
       >
-        <MessageSquare size={18} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="sos-title" style={{ fontSize: 'var(--sos-text-base)' }}>
-            {channel.label}
-          </span>
-          <StatusBadge tone={tone} size="sm" dot>
-            {channel.status.toLowerCase()}
-          </StatusBadge>
+        <div
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            display: 'grid',
+            placeItems: 'center',
+            background: 'var(--sos-brand-primary-soft)',
+            color: 'var(--sos-brand-primary)',
+            border: '1px solid var(--sos-brand-primary-border)',
+            flexShrink: 0,
+          }}
+        >
+          <MessageSquare size={18} />
         </div>
-        <div className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)', marginTop: 2 }}>
-          {channel.displayNumber} · phone_number_id {channel.phoneNumberId}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span className="sos-title" style={{ fontSize: 'var(--sos-text-base)' }}>
+              {channel.label}
+            </span>
+            <StatusBadge tone={tone} size="sm" dot>
+              {channel.status.toLowerCase()}
+            </StatusBadge>
+            {channel.lastSyncAt ? (
+              <span className="sos-text-faint" style={{ fontSize: 11 }}>
+                · last verified {new Date(channel.lastSyncAt).toLocaleString()}
+              </span>
+            ) : null}
+          </div>
+          <div className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)', marginTop: 2 }}>
+            {channel.displayNumber} · phone_number_id <span style={{ fontFamily: 'monospace' }}>{channel.phoneNumberId}</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <GhostButton
+            size="sm"
+            disabled={testing}
+            iconLeft={testing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Signal size={13} />}
+            onClick={onTest}
+          >
+            {testing ? 'Testing…' : 'Test connection'}
+          </GhostButton>
+          <GhostButton size="sm" onClick={onEdit}>
+            Update credentials
+          </GhostButton>
         </div>
       </div>
-      <GhostButton size="sm" onClick={onEdit}>
-        Update credentials
-      </GhostButton>
+      {verification ? <VerificationCard result={verification} /> : null}
     </div>
   );
 }
@@ -167,7 +240,7 @@ function ConnectedChannelCard({
 
 interface ChannelFormProps {
   initial?: AdminChannel;
-  onSaved: () => void;
+  onSaved: (verification: ChannelVerification) => void;
   onCancel?: () => void;
 }
 
@@ -180,7 +253,6 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
   const [showToken, setShowToken] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
 
   async function handleSubmit() {
     if (!label.trim() || !wabaId.trim() || !phoneNumberId.trim() || !displayNumber.trim() || !accessToken.trim()) {
@@ -189,15 +261,10 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
     }
     setSubmitting(true);
     setError(null);
-    setSuccess(false);
     try {
-      await connectChannel({ label, wabaId, phoneNumberId, displayNumber, accessToken });
-      setSuccess(true);
+      const res = await connectChannel({ label, wabaId, phoneNumberId, displayNumber, accessToken });
       setAccessToken('');
-      setTimeout(() => {
-        setSuccess(false);
-        onSaved();
-      }, 1500);
+      onSaved(res.verification);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save credentials');
     } finally {
@@ -208,14 +275,18 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {initial ? (
-        <div
-          className="sos-banner sos-banner--info"
-          style={{ fontSize: 12.5 }}
-        >
-          You are updating credentials for <strong>{initial.displayNumber}</strong>. The access token
-          field must be filled — leave other fields as-is if unchanged.
+        <div className="sos-banner sos-banner--info" style={{ fontSize: 12.5 }}>
+          You are updating credentials for <strong>{initial.displayNumber}</strong>. The access
+          token field must be filled — leave other fields as-is if unchanged.
         </div>
-      ) : null}
+      ) : (
+        <div className="sos-banner sos-banner--info" style={{ fontSize: 12.5 }}>
+          Paste these from <strong>Meta Business Manager → WhatsApp Manager → API Setup</strong>.
+          Tashfeen will encrypt the access token (AES-256-GCM), save it, then immediately ping
+          the Meta Graph API with it. If Meta accepts the call the integration goes live; if
+          not we'll show you exactly what Meta returned.
+        </div>
+      )}
 
       <div
         style={{
@@ -234,7 +305,7 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
 
         <Field
           label="WABA ID (WhatsApp Business Account ID)"
-          hint="Found in Meta Business Manager → WhatsApp Accounts"
+          hint="Meta Business Manager → WhatsApp Accounts → top of the page"
         >
           <FormInput
             value={wabaId}
@@ -246,7 +317,7 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
 
         <Field
           label="Phone Number ID"
-          hint="From Meta Developer App → WhatsApp → API Setup"
+          hint="Meta Developer App → WhatsApp → API Setup → labelled phone_number_id"
         >
           <FormInput
             value={phoneNumberId}
@@ -270,7 +341,7 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
         hint={
           initial
             ? 'Enter the new token. Leave blank to keep the existing encrypted token — but you must still provide a value here to submit.'
-            : 'Your Meta permanent system user access token. Encrypted with AES-256-GCM before storage.'
+            : 'Your Meta System User permanent access token. Encrypted with AES-256-GCM before storage; never returned over the wire after save.'
         }
       >
         <div style={{ display: 'flex', gap: 8 }}>
@@ -290,7 +361,11 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
             title={showToken ? 'Hide token' : 'Show token'}
             onClick={() => setShowToken((v) => !v)}
             iconLeft={showToken ? <EyeOff size={13} /> : <Eye size={13} />}
-          />
+          >
+            <span style={{ position: 'absolute', left: -9999 }}>
+              {showToken ? 'Hide' : 'Show'}
+            </span>
+          </GhostButton>
         </div>
       </Field>
 
@@ -298,13 +373,6 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
         <div className="sos-banner sos-banner--danger" style={{ display: 'flex', gap: 8 }}>
           <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{error}</span>
-        </div>
-      ) : null}
-
-      {success ? (
-        <div className="sos-banner sos-banner--success" style={{ display: 'flex', gap: 8 }}>
-          <CheckCircle2 size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>Credentials saved successfully.</span>
         </div>
       ) : null}
 
@@ -319,7 +387,7 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
           onClick={() => void handleSubmit()}
           disabled={submitting}
         >
-          {submitting ? 'Saving…' : 'Save channel'}
+          {submitting ? 'Saving & verifying…' : 'Save & verify with Meta'}
         </PrimaryButton>
       </div>
     </div>
@@ -328,9 +396,9 @@ function ChannelForm({ initial, onSaved, onCancel }: ChannelFormProps) {
 
 // ─── WebhookSection ──────────────────────────────────────────────────────────
 
-function WebhookSection() {
+function WebhookSection({ info }: { info: IntegrationInfo | null }) {
   const [copied, setCopied] = useState(false);
-  const webhookUrl = 'https://backend-production-5a89.up.railway.app/v1/whatsapp/webhooks/meta';
+  const webhookUrl = info?.webhookUrl ?? '';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -338,28 +406,23 @@ function WebhookSection() {
         <div className="sos-eyebrow" style={{ marginBottom: 6 }}>
           Webhook callback URL
         </div>
-        <div
-          style={{
-            display: 'flex',
-            gap: 8,
-            alignItems: 'center',
-          }}
-        >
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div
             className="sos-input"
             style={{
               flex: 1,
               fontFamily: 'monospace',
               fontSize: 12.5,
-              color: 'var(--sos-text-secondary)',
+              color: webhookUrl ? 'var(--sos-text-secondary)' : 'var(--sos-text-faint)',
               cursor: 'default',
               userSelect: 'text',
             }}
           >
-            {webhookUrl}
+            {webhookUrl || 'Loading from server…'}
           </div>
           <GhostButton
             size="sm"
+            disabled={!webhookUrl}
             iconLeft={copied ? <CheckCircle2 size={13} /> : <Copy size={13} />}
             onClick={() => copyToClipboard(webhookUrl, () => setCopied(true))}
           >
@@ -367,7 +430,8 @@ function WebhookSection() {
           </GhostButton>
         </div>
         <div className="sos-text-muted" style={{ fontSize: 12, marginTop: 6 }}>
-          Paste this into Meta → App Dashboard → WhatsApp → Configuration → Webhook URL.
+          Paste this into Meta → App Dashboard → WhatsApp → Configuration → Webhook URL. Subscribe
+          to <code>messages</code>, <code>message_status</code>, and <code>message_template_status_update</code>.
         </div>
       </div>
 
@@ -382,25 +446,46 @@ function WebhookSection() {
           label="Verify token"
           envVar="META_WEBHOOK_VERIFY_TOKEN"
           hint="Must match what you enter in Meta webhook config."
+          configured={info?.env.verifyTokenConfigured}
         />
         <EnvTile
           label="App secret"
           envVar="META_APP_SECRET"
           hint="Used to verify the X-Hub-Signature-256 on every webhook event."
+          configured={info?.env.appSecretConfigured}
         />
         <EnvTile
           label="Token encryption key"
           envVar="WHATSAPP_ENCRYPTION_KEY"
           hint="64-hex-char AES-256-GCM key. Used to encrypt stored access tokens."
+          configured={info?.env.encryptionKeyConfigured}
+        />
+        <EnvTile
+          label="Graph API version pin"
+          envVar="META_GRAPH_API_VERSION"
+          hint={`Currently pinned to ${info?.apiVersion ?? '—'}. Bump when Meta deprecates.`}
+          configured={Boolean(info?.apiVersion)}
         />
       </div>
 
-      <EnvVarNote vars={['META_WEBHOOK_VERIFY_TOKEN', 'META_APP_SECRET', 'WHATSAPP_ENCRYPTION_KEY']} />
+      <EnvVarNote
+        vars={['META_WEBHOOK_VERIFY_TOKEN', 'META_APP_SECRET', 'WHATSAPP_ENCRYPTION_KEY', 'META_GRAPH_API_VERSION']}
+      />
     </div>
   );
 }
 
-function EnvTile({ label, envVar, hint }: { label: string; envVar: string; hint: string }) {
+function EnvTile({
+  label,
+  envVar,
+  hint,
+  configured,
+}: {
+  label: string;
+  envVar: string;
+  hint: string;
+  configured?: boolean;
+}) {
   return (
     <div
       style={{
@@ -410,8 +495,13 @@ function EnvTile({ label, envVar, hint }: { label: string; envVar: string; hint:
         border: '1px solid var(--sos-border-subtle)',
       }}
     >
-      <div className="sos-eyebrow" style={{ marginBottom: 4 }}>
-        {label}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div className="sos-eyebrow">{label}</div>
+        {configured === undefined ? null : configured ? (
+          <StatusBadge tone="success" size="sm" dot>set</StatusBadge>
+        ) : (
+          <StatusBadge tone="danger" size="sm" dot>missing</StatusBadge>
+        )}
       </div>
       <code style={{ fontSize: 11.5, color: 'var(--sos-text-muted)', display: 'block', marginBottom: 6 }}>
         {envVar}
@@ -427,16 +517,23 @@ function EnvTile({ label, envVar, hint }: { label: string; envVar: string; hint:
 
 export default function IntegrationsSettingsPage() {
   const [channels, setChannels] = useState<AdminChannel[]>([]);
+  const [info, setInfo] = useState<IntegrationInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingChannel, setEditingChannel] = useState<AdminChannel | null | 'new'>('new');
+  const [verification, setVerification] = useState<ChannelVerification | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const list = await listChannels();
+      const [list, integrationInfo] = await Promise.all([
+        listChannels(),
+        getIntegrationInfo().catch(() => null),
+      ]);
       setChannels(list);
+      setInfo(integrationInfo);
       if (list.length > 0) setEditingChannel(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load channels');
@@ -451,18 +548,66 @@ export default function IntegrationsSettingsPage() {
 
   const activeChannel = channels[0] ?? null;
 
+  async function handleTest() {
+    if (!activeChannel) return;
+    setTesting(true);
+    try {
+      const result = await verifyChannel(activeChannel.id);
+      setVerification(result);
+      // Refresh channel list so the new lastSyncAt + tier flow through.
+      const list = await listChannels();
+      setChannels(list);
+    } catch (err) {
+      setVerification({
+        ok: false,
+        verifiedName: null,
+        displayPhoneNumber: null,
+        qualityRating: null,
+        messagingLimitTier: null,
+        codeVerificationStatus: null,
+        platformType: null,
+        error: { code: 0, message: err instanceof Error ? err.message : 'Failed to verify' },
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <PageHeader
         eyebrow="Settings · Integrations"
-        title="External API credentials"
-        description="Connect Tashfeen to WhatsApp Business Cloud API. Credentials are encrypted at rest and never returned to the client after saving."
+        title="Meta WhatsApp Cloud API"
+        description="Paste your Meta WhatsApp credentials once. We encrypt the token, save it, and immediately verify with Meta's Graph API — so you know within seconds whether the integration is live."
         actions={
           <GhostButton iconLeft={<RefreshCw size={14} />} onClick={() => void reload()}>
             Refresh
           </GhostButton>
         }
       />
+
+      {/* ── Setup vs. day-to-day operations callout ─────────────────────── */}
+      <div
+        className="sos-banner sos-banner--info"
+        style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5 }}
+      >
+        <ShieldCheck size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+        <span>
+          <strong>This page (Integrations)</strong> is for initial setup and credential rotation —
+          everything Tashfeen needs to talk to Meta lives here.{' '}
+          <strong>
+            <Link
+              href={'/admin/settings/whatsapp/channels' as Route}
+              style={{ color: 'inherit', textDecoration: 'underline' }}
+            >
+              WhatsApp → Channels
+            </Link>
+          </strong>{' '}
+          is for day-to-day operations on the same connected numbers (pause / resume, re-sync
+          approved templates, monitor tier). The two pages share the same backing channel rows;
+          you don't need to set things up in both places.
+        </span>
+      </div>
 
       {/* ── WhatsApp channel ──────────────────────────────────────────────── */}
       <GlassCard variant="default" padded="lg">
@@ -486,7 +631,7 @@ export default function IntegrationsSettingsPage() {
                 WhatsApp Business Cloud API
               </div>
               <div className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)' }}>
-                Meta phone number, WABA ID, and access token
+                Meta phone number, WABA ID, and permanent access token
               </div>
             </div>
           </div>
@@ -498,14 +643,26 @@ export default function IntegrationsSettingsPage() {
           ) : activeChannel && editingChannel === null ? (
             <ConnectedChannelCard
               channel={activeChannel}
-              onEdit={() => setEditingChannel(activeChannel)}
+              verification={verification}
+              onEdit={() => {
+                setVerification(null);
+                setEditingChannel(activeChannel);
+              }}
+              onTest={() => void handleTest()}
+              testing={testing}
             />
           ) : editingChannel === 'new' || editingChannel === null ? (
-            <ChannelForm onSaved={() => void reload()} />
+            <ChannelForm
+              onSaved={(v) => {
+                setVerification(v);
+                void reload();
+              }}
+            />
           ) : (
             <ChannelForm
               initial={editingChannel}
-              onSaved={() => {
+              onSaved={(v) => {
+                setVerification(v);
                 setEditingChannel(null);
                 void reload();
               }}
@@ -537,12 +694,12 @@ export default function IntegrationsSettingsPage() {
                 Webhook & security
               </div>
               <div className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)' }}>
-                Configure in Meta App Dashboard — read from server env vars
+                Configure in Meta App Dashboard — values read from server env vars
               </div>
             </div>
           </div>
 
-          <WebhookSection />
+          <WebhookSection info={info} />
         </div>
       </GlassCard>
 
@@ -572,6 +729,10 @@ export default function IntegrationsSettingsPage() {
                       ? 'warning'
                       : 'danger'
                 }
+              />
+              <SummaryTile
+                label="Last verified with Meta"
+                value={activeChannel.lastSyncAt ? new Date(activeChannel.lastSyncAt).toLocaleString() : 'Never'}
               />
               <SummaryTile
                 label="Access token"
@@ -621,6 +782,7 @@ function SummaryTile({
             fontSize: muted ? 12 : 13,
             fontFamily: mono ? 'monospace' : undefined,
             color: muted ? 'var(--sos-text-faint)' : 'var(--sos-text-primary)',
+            wordBreak: 'break-all',
           }}
         >
           {value}

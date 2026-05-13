@@ -157,6 +157,65 @@ export class MetaCloudClient {
     }
   }
 
+  /**
+   * Fetch the phone-number-level metadata Meta exposes about a connected
+   * business number. Used by the admin Settings → Integrations page to
+   * verify saved credentials actually work end-to-end, and to surface
+   * the real verified name / quality rating / messaging tier back to
+   * the operator instead of just "saved, hope it works".
+   *
+   * Endpoint: GET /{phone_number_id}?fields=...
+   * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/phone-numbers
+   */
+  async getPhoneNumberInfo(): Promise<{
+    verified_name: string | null;
+    display_phone_number: string | null;
+    quality_rating: 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN' | null;
+    messaging_limit_tier:
+      | 'TIER_50'
+      | 'TIER_250'
+      | 'TIER_1K'
+      | 'TIER_10K'
+      | 'TIER_100K'
+      | 'TIER_UNLIMITED'
+      | null;
+    code_verification_status: 'VERIFIED' | 'NOT_VERIFIED' | 'EXPIRED' | null;
+    platform_type: string | null;
+  }> {
+    try {
+      const res = await this.http.get<{
+        verified_name?: string;
+        display_phone_number?: string;
+        quality_rating?: string;
+        messaging_limit_tier?: string;
+        code_verification_status?: string;
+        platform_type?: string;
+      }>(
+        `/${this.phoneNumberId}?fields=verified_name,display_phone_number,quality_rating,messaging_limit_tier,code_verification_status,platform_type`,
+      );
+      return {
+        verified_name: res.data.verified_name ?? null,
+        display_phone_number: res.data.display_phone_number ?? null,
+        quality_rating:
+          (res.data.quality_rating as 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN') ?? null,
+        messaging_limit_tier:
+          (res.data.messaging_limit_tier as
+            | 'TIER_50'
+            | 'TIER_250'
+            | 'TIER_1K'
+            | 'TIER_10K'
+            | 'TIER_100K'
+            | 'TIER_UNLIMITED') ?? null,
+        code_verification_status:
+          (res.data.code_verification_status as 'VERIFIED' | 'NOT_VERIFIED' | 'EXPIRED') ??
+          null,
+        platform_type: res.data.platform_type ?? null,
+      };
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
   async listTemplates(wabaId: string): Promise<unknown[]> {
     try {
       const out: unknown[] = [];

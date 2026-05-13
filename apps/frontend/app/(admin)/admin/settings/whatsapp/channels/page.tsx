@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Loader2, MessageSquare, Pause, Phone, Play, Plus, RotateCw } from 'lucide-react';
+import Link from 'next/link';
+import type { Route } from 'next';
+import { Download, Key, Loader2, MessageSquare, Pause, Phone, Play, Plus, RotateCw } from 'lucide-react';
 import {
   EmptyState,
   Field,
@@ -48,13 +50,34 @@ export default function WhatsAppChannelsAdminPage() {
       <PageHeader
         eyebrow="WhatsApp"
         title="Connected business numbers"
-        description="One Meta WhatsApp Business Cloud API number per channel. Access tokens are encrypted at rest with AES-256-GCM."
+        description="Day-to-day operations on already-connected Meta numbers — pause / resume routing, re-sync approved templates, and monitor messaging tier."
         actions={
           <PrimaryButton iconLeft={<Plus size={14} />} onClick={() => setConnectOpen(true)}>
             Connect channel
           </PrimaryButton>
         }
       />
+
+      <div
+        className="sos-banner sos-banner--info"
+        style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5 }}
+      >
+        <Key size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+        <span>
+          First-time setup, credential rotation, webhook URL, and the security env-var checklist
+          all live on{' '}
+          <strong>
+            <Link
+              href={'/admin/settings/integrations' as Route}
+              style={{ color: 'inherit', textDecoration: 'underline' }}
+            >
+              Settings → Integrations
+            </Link>
+          </strong>
+          . That page also runs a live Meta Graph API verification right after you paste
+          credentials. This page is for the ongoing operations on already-verified numbers.
+        </span>
+      </div>
 
       <GlassCard variant="default" padded="lg">
         {loading ? (

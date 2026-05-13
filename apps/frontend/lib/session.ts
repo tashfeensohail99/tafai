@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from './api-client';
+import { apiFetch, invalidateApiCache } from './api-client';
 import { clearAccessToken, getAccessToken, setAccessToken } from './auth-client';
 
 export interface SessionUser {
@@ -104,6 +104,7 @@ export async function login(email: string, password: string): Promise<SessionUse
   });
   setAccessToken(tokens.accessToken);
   invalidateSessionCache();
+  invalidateApiCache();
   // Pull the canonical user from /auth/me — it carries the roles + permissions.
   return fetchMe();
 }
@@ -111,6 +112,7 @@ export async function login(email: string, password: string): Promise<SessionUse
 export function logout() {
   clearAccessToken();
   invalidateSessionCache();
+  invalidateApiCache();
 }
 
 /**

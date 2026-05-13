@@ -31,7 +31,7 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   fetchHandovers,
-  reviewHandover,
+  verifyPayment,
   METHOD_LABEL,
   STATUS_LABEL,
   fmtAmount,
@@ -689,12 +689,12 @@ export function FinanceHandoverPage() {
   const [panel, setPanel] = useState<PanelState>({ type: 'none' });
 
   useEffect(() => {
-    fetchHandovers({ status: 'PAYMENT_VERIFIED' }).then(setHandovers).catch(console.error);
+    fetchHandovers({ status: 'PAYMENT_RECORDED' }).then(setHandovers).catch(console.error);
   }, []);
 
   // Keep sent items visible in the list
   const queue = handovers.filter(
-    (p) => p.status === 'PAYMENT_VERIFIED' || sentIds.has(p.id),
+    (p) => p.status === 'PAYMENT_RECORDED' || sentIds.has(p.id),
   );
 
   // Sort: sent last
@@ -730,8 +730,9 @@ export function FinanceHandoverPage() {
   async function handleSend() {
     if (panel.type !== 'form') return;
     const { payment } = panel;
+    if (!payment.payment?.id) return;
     try {
-      await reviewHandover(payment.id, 'RECORD_PAYMENT', { financeNotes: panel.form.note || 'Sent to processing' });
+      await verifyPayment(payment.payment.id, panel.form.note || 'Sent to processing');
       setSentIds((prev) => new Set([...prev, payment.id]));
       setPanel({ type: 'sent', payment, sentAt: new Date().toISOString() });
     } catch {

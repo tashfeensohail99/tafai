@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * The WhatsApp chat panel — the single piece of UI that powers both:
+ * The WhatsApp chat panel Ã¢â‚¬â€ the single piece of UI that powers both:
  *   1. The "WhatsApp Chat" tab on the lead/client detail page.
  *   2. The standalone /sales/inbox conversation view.
  *
@@ -166,12 +166,12 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'var(--wa-chat-bg, #0b141a)',
+          background: 'var(--wa-chat-bg)',
           color: 'var(--sos-text-muted)',
           fontSize: 14,
         }}
       >
-        Loading conversation…
+        Loading conversationÃ¢â‚¬Â¦
       </div>
     );
   }
@@ -183,14 +183,14 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'var(--wa-chat-bg, #0b141a)',
+          background: 'var(--wa-chat-bg)',
           padding: 24,
         }}
       >
         <div
           style={{
-            background: '#7f1d1d',
-            color: '#fca5a5',
+            background: 'var(--sos-status-danger-soft)',
+            color: 'var(--sos-status-danger)',
             borderRadius: 8,
             padding: '10px 16px',
             fontSize: 13,
@@ -223,7 +223,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         overflow: 'hidden',
       }}
     >
-      {/* ── Chat window ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Chat window Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <ChatHeader
           displayName={displayName}
@@ -237,14 +237,12 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           assignedTo={thread.lead?.assignedEmployee ?? null}
           onBack={onBack}
         />
-        {/* Quick actions strip — visible only when there's no right sidebar
+        {/* Quick actions strip Ã¢â‚¬â€ visible only when there's no right sidebar
             (i.e. on the inbox view). Lead-detail tab variant has its own
             sidebar with the same actions, so we skip the duplicate there. */}
         {hideSidePanel && thread.leadId ? (
           <QuickActionsBar
             isLead={!thread.client && !!thread.lead}
-            isLeadConverted={Boolean(thread.lead?.convertedClientId)}
-            onConvert={() => setConvertOpen(true)}
             onBook={() => setBookOpen(true)}
             onFollowUp={() => setFollowUpOpen(true)}
           />
@@ -260,7 +258,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             display: 'flex',
             flexDirection: 'column',
             gap: 2,
-            background: 'var(--wa-chat-bg, #0b141a)',
+            background: 'var(--wa-chat-bg)',
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.02'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
           }}
         >
@@ -292,7 +290,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         />
       </div>
 
-      {/* ── Side panel (profile + CTAs) ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Side panel (profile + CTAs) Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {!hideSidePanel && (
         <SidePanel
           thread={thread}
@@ -360,7 +358,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
 
 // ---- Header -------------------------------------------------------------
 
-const AVATAR_COLORS = ['#00a884', '#0099cc', '#9c27b0', '#e91e63', '#ff5722', '#607d8b'];
+const AVATAR_COLORS = ['var(--wa-accent)', '#0099cc', '#9c27b0', '#e91e63', '#ff5722', '#607d8b'];
 function avatarColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
@@ -383,7 +381,7 @@ function ChatHeader(props: {
     <header
       style={{
         padding: '10px 16px',
-        background: 'var(--wa-panel-header, #202c33)',
+        background: 'var(--wa-panel-header)',
         display: 'flex',
         alignItems: 'center',
         gap: 12,
@@ -438,8 +436,8 @@ function ChatHeader(props: {
         <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 1 }}>
           {props.phone}
           {props.assignedTo && (
-            <span style={{ color: '#00a884', marginLeft: 8 }}>
-              · {props.assignedTo.firstName}
+            <span style={{ color: 'var(--wa-accent)', marginLeft: 8 }}>
+              Ã‚Â· {props.assignedTo.firstName}
             </span>
           )}
         </div>
@@ -452,8 +450,8 @@ function ChatHeader(props: {
               padding: '2px 8px',
               borderRadius: 10,
               fontWeight: 600,
-              background: props.slaBreached ? '#7f1d1d' : props.slaTone === 'warning' ? '#78350f' : '#064e3b',
-              color: props.slaBreached ? '#fca5a5' : props.slaTone === 'warning' ? '#fde68a' : '#6ee7b7',
+              background: props.slaBreached ? 'var(--sos-status-danger-soft)' : props.slaTone === 'warning' ? 'var(--sos-status-warning-soft)' : 'var(--sos-status-success-soft)',
+              color: props.slaBreached ? 'var(--sos-status-danger)' : props.slaTone === 'warning' ? 'var(--sos-status-warning)' : 'var(--sos-status-success)',
             }}
           >
             SLA {formatRelativeShort(props.slaDeadlineAt)}
@@ -466,8 +464,8 @@ function ChatHeader(props: {
               padding: '2px 8px',
               borderRadius: 10,
               fontWeight: 600,
-              background: props.slaBreached ? '#7f1d1d' : '#064e3b',
-              color: props.slaBreached ? '#fca5a5' : '#6ee7b7',
+              background: props.slaBreached ? 'var(--sos-status-danger-soft)' : 'var(--sos-status-success-soft)',
+              color: props.slaBreached ? 'var(--sos-status-danger)' : 'var(--sos-status-success)',
             }}
           >
             {props.slaBreached ? 'SLA breached' : 'SLA met'}
@@ -480,8 +478,8 @@ function ChatHeader(props: {
               padding: '2px 8px',
               borderRadius: 10,
               fontWeight: 600,
-              background: '#78350f',
-              color: '#fde68a',
+              background: 'var(--sos-status-warning-soft)',
+              color: 'var(--sos-status-warning)',
             }}
           >
             Template only
@@ -496,22 +494,27 @@ function ChatHeader(props: {
 
 /**
  * Compact horizontal CTA bar shown right under the chat header on the
- * inbox view (where the right-hand sidebar is hidden). Surfaces the same
- * three actions the SidePanel exposes: Convert to client, Book appointment,
- * Add follow-up. Lead-only — when the contact is already a client, hide
- * Convert; when there's no lead context, hide the whole strip (handled by
- * the caller).
+ * inbox view (where the right-hand sidebar is hidden).
+ *
+ * Important domain rule (see memory/domain_entities.md):
+ * A contact stays a Lead until Finance verifies payment and sends the case
+ * to Processing Ã¢â‚¬â€ that's the only path that creates a Client. Sales agents
+ * never "convert to client" manually from the chat. The quick actions a
+ * sales agent needs in the conversation are:
+ *   - Book appointment
+ *   - Add follow-up
+ *
+ * Once a payment is recorded, the conversion happens automatically inside
+ * ProcessingService.createFromHandover (already wired). After conversion
+ * the contact shows on the chat as a Client; this bar still shows Book +
+ * Add follow-up so the relationship stays productive.
  */
 function QuickActionsBar({
   isLead,
-  isLeadConverted,
-  onConvert,
   onBook,
   onFollowUp,
 }: {
   isLead: boolean;
-  isLeadConverted: boolean;
-  onConvert: () => void;
   onBook: () => void;
   onFollowUp: () => void;
 }) {
@@ -521,37 +524,13 @@ function QuickActionsBar({
         display: 'flex',
         gap: 8,
         padding: '8px 16px',
-        background: 'var(--wa-panel-header, #202c33)',
+        background: 'var(--wa-panel-header)',
         borderBottom: '1px solid var(--sos-border-subtle)',
         flexShrink: 0,
         overflowX: 'auto',
       }}
       className="sos-scroll"
     >
-      {isLead && !isLeadConverted ? (
-        <button
-          type="button"
-          onClick={onConvert}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '7px 14px',
-            borderRadius: 999,
-            border: 'none',
-            background: 'var(--sos-brand-gradient)',
-            color: 'var(--sos-text-on-accent)',
-            fontSize: 12.5,
-            fontWeight: 700,
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            boxShadow: 'var(--sos-shadow-glow)',
-          }}
-        >
-          <UserPlus size={13} />
-          Convert to client
-        </button>
-      ) : null}
       <button
         type="button"
         onClick={onBook}
@@ -561,13 +540,14 @@ function QuickActionsBar({
           gap: 6,
           padding: '7px 14px',
           borderRadius: 999,
-          border: '1px solid var(--sos-border-strong)',
-          background: 'var(--sos-surface-1)',
-          color: 'var(--sos-text-primary)',
+          border: 'none',
+          background: 'var(--sos-brand-gradient)',
+          color: 'var(--sos-text-on-accent)',
           fontSize: 12.5,
-          fontWeight: 600,
+          fontWeight: 700,
           cursor: 'pointer',
           whiteSpace: 'nowrap',
+          boxShadow: 'var(--sos-shadow-glow)',
         }}
       >
         <CalendarClock size={13} />
@@ -619,7 +599,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           minWidth: 80,
           padding: '6px 10px 4px',
           borderRadius: isOut ? '8px 0 8px 8px' : '0 8px 8px 8px',
-          background: isOut ? 'var(--wa-bubble-out, #005c4b)' : 'var(--wa-bubble-in, #202c33)',
+          background: isOut ? 'var(--wa-bubble-out)' : 'var(--wa-bubble-in)',
           boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
           position: 'relative',
         }}
@@ -635,7 +615,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         >
           {message.body ??
             (message.templateName
-              ? `📋 Template: ${message.templateName}`
+              ? `Ã°Å¸â€œâ€¹ Template: ${message.templateName}`
               : `[${message.type.toLowerCase()}]`)}
         </div>
         <div
@@ -713,7 +693,7 @@ function ChatComposer(props: {
     <div
       style={{
         padding: '8px 12px',
-        background: 'var(--wa-panel-header, #202c33)',
+        background: 'var(--wa-panel-header)',
         borderTop: '1px solid var(--sos-border-subtle)',
         display: 'flex',
         alignItems: 'flex-end',
@@ -729,7 +709,7 @@ function ChatComposer(props: {
         style={{
           all: 'unset',
           cursor: 'pointer',
-          color: props.disabled ? '#00a884' : 'var(--sos-text-muted)',
+          color: props.disabled ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -756,11 +736,11 @@ function ChatComposer(props: {
             if (!props.sending && props.value.trim()) props.onSend();
           }
         }}
-        placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
+        placeholder={props.disabled ? 'Window closed Ã¢â‚¬â€ use template to reopen' : 'Type a message'}
         rows={1}
         style={{
           flex: 1,
-          background: 'var(--sos-surface-3, #2a3942)',
+          background: 'var(--wa-composer-input-bg)',
           color: 'var(--sos-text-primary)',
           border: 'none',
           borderRadius: 8,
@@ -792,7 +772,7 @@ function ChatComposer(props: {
           width: 40,
           height: 40,
           borderRadius: '50%',
-          background: props.disabled || !props.value.trim() ? '#374151' : '#00a884',
+          background: props.disabled || !props.value.trim() ? 'var(--sos-surface-3)' : 'var(--wa-accent)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',

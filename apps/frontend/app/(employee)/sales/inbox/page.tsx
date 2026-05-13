@@ -29,7 +29,7 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 ];
 
 /**
- * WhatsApp-style unified inbox — full-height split layout matching WhatsApp Web.
+ * WhatsApp-style unified inbox Ã¢â‚¬â€ full-height split layout matching WhatsApp Web.
  * Left: contact list with search + filter tabs. Right: live chat panel.
  */
 export default function SalesInboxPage() {
@@ -50,7 +50,7 @@ export default function SalesInboxPage() {
           ...(search ? { search } : {}),
         });
         setItems(res.items);
-        // Auto-select first thread on desktop only — on mobile we want the
+        // Auto-select first thread on desktop only Ã¢â‚¬â€ on mobile we want the
         // user to land on the list and tap-into a chat.
         if (!activeId && res.items.length > 0 && !isMobile) {
           setActiveId(res.items[0]!.id);
@@ -94,7 +94,7 @@ export default function SalesInboxPage() {
         background: 'var(--sos-surface-1)',
       }}
     >
-      {/* ── Left panel: contact list ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Left panel: contact list Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {showList ? (
       <div
         style={{
@@ -108,7 +108,7 @@ export default function SalesInboxPage() {
         <div
           style={{
             padding: '12px 16px',
-            background: 'var(--wa-panel-header, #202c33)',
+            background: 'var(--wa-panel-header)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -122,7 +122,7 @@ export default function SalesInboxPage() {
                 width: 38,
                 height: 38,
                 borderRadius: '50%',
-                background: '#00a884',
+                background: 'var(--wa-accent)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -140,7 +140,7 @@ export default function SalesInboxPage() {
             {totalUnread > 0 && (
               <span
                 style={{
-                  background: '#00a884',
+                  background: 'var(--wa-accent)',
                   color: '#fff',
                   borderRadius: 10,
                   fontSize: 11,
@@ -159,7 +159,7 @@ export default function SalesInboxPage() {
         <div
           style={{
             padding: '8px 12px',
-            background: 'var(--sos-surface-2, #111b21)',
+            background: 'var(--wa-panel-header)',
             flexShrink: 0,
           }}
         >
@@ -168,7 +168,7 @@ export default function SalesInboxPage() {
               display: 'flex',
               alignItems: 'center',
               gap: 8,
-              background: 'var(--sos-surface-3, #202c33)',
+              background: 'var(--wa-composer-input-bg)',
               borderRadius: 8,
               padding: '6px 12px',
             }}
@@ -196,7 +196,7 @@ export default function SalesInboxPage() {
           style={{
             display: 'flex',
             borderBottom: '1px solid var(--sos-border-subtle)',
-            background: 'var(--sos-surface-2, #111b21)',
+            background: 'var(--wa-panel-header)',
             flexShrink: 0,
           }}
         >
@@ -212,9 +212,9 @@ export default function SalesInboxPage() {
                   flex: 1,
                   padding: '8px 4px',
                   border: 'none',
-                  borderBottom: active ? '2px solid #00a884' : '2px solid transparent',
+                  borderBottom: active ? '2px solid var(--wa-accent)' : '2px solid transparent',
                   background: 'transparent',
-                  color: active ? '#00a884' : 'var(--sos-text-muted)',
+                  color: active ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
                   fontSize: 12,
                   fontWeight: active ? 600 : 400,
                   cursor: 'pointer',
@@ -229,7 +229,7 @@ export default function SalesInboxPage() {
                 {count > 0 && (
                   <span
                     style={{
-                      background: active ? '#00a884' : 'var(--sos-border-subtle)',
+                      background: active ? 'var(--wa-accent)' : 'var(--sos-border-subtle)',
                       color: active ? '#fff' : 'var(--sos-text-muted)',
                       borderRadius: 8,
                       fontSize: 10,
@@ -256,7 +256,7 @@ export default function SalesInboxPage() {
         >
           {loading ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
-              Loading chats…
+              Loading chatsÃ¢â‚¬Â¦
             </div>
           ) : items.length === 0 ? (
             <div
@@ -289,7 +289,7 @@ export default function SalesInboxPage() {
       </div>
       ) : null}
 
-      {/* ── Right panel: chat ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Right panel: chat Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {showChat ? (
       activeId ? (
         <WhatsAppChatPanel
@@ -305,7 +305,7 @@ export default function SalesInboxPage() {
             alignItems: 'center',
             justifyContent: 'center',
             gap: 16,
-            background: 'var(--wa-chat-bg, #0b141a)',
+            background: 'var(--wa-chat-bg)',
             color: 'var(--sos-text-muted)',
           }}
         >
@@ -356,12 +356,12 @@ function ThreadRow({
           alignItems: 'center',
           gap: 12,
           padding: '10px 16px',
-          background: active ? 'var(--sos-surface-3, #2a3942)' : 'transparent',
+          background: active ? 'var(--wa-composer-input-bg)' : 'transparent',
           borderBottom: '1px solid var(--sos-border-subtle)',
           transition: 'background 0.1s',
         }}
         onMouseEnter={(e) => {
-          if (!active) (e.currentTarget as HTMLDivElement).style.background = 'var(--sos-surface-2, #202c33)';
+          if (!active) (e.currentTarget as HTMLDivElement).style.background = 'var(--wa-panel-header)';
         }}
         onMouseLeave={(e) => {
           if (!active) (e.currentTarget as HTMLDivElement).style.background = 'transparent';
@@ -406,7 +406,7 @@ function ThreadRow({
               <span
                 style={{
                   fontSize: 11,
-                  color: item.unreadCount > 0 ? '#00a884' : 'var(--sos-text-faint)',
+                  color: item.unreadCount > 0 ? 'var(--wa-accent)' : 'var(--sos-text-faint)',
                   flexShrink: 0,
                 }}
               >
@@ -445,7 +445,7 @@ function ThreadRow({
               {item.unreadCount > 0 && (
                 <span
                   style={{
-                    background: '#00a884',
+                    background: 'var(--wa-accent)',
                     color: '#fff',
                     borderRadius: 10,
                     minWidth: 18,
@@ -478,7 +478,7 @@ function tone(s: ThreadListItem['status']) {
   }
 }
 
-const AVATAR_COLORS = ['#00a884', '#0099cc', '#9c27b0', '#e91e63', '#ff5722', '#607d8b', '#795548'];
+const AVATAR_COLORS = ['var(--wa-accent)', '#0099cc', '#9c27b0', '#e91e63', '#ff5722', '#607d8b', '#795548'];
 function avatarColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);

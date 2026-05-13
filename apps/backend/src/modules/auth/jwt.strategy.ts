@@ -1,16 +1,30 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { PrismaService } from '../../common/prisma/prisma.service';
-import {
-  JwtPayload,
-  RequestUser,
-  extractRolesAndPermissions,
-} from '../../common/types/auth.types';
+import { JwtPayload, RequestUser } from '../../common/types/auth.types';
 
+/**
+ * JwtStrategy — verifies the JWT and builds the request user from the
+ * payload alone.
+ *
+ * The previous implementation ran a deep nested Prisma query
+ * (UserAccount → UserRole → Role → RolePermission → Permission) on
+ * EVERY authenticated request. For a super_admin (128 permissions) that
+ * join cost ~2-4s on the Supabase pooler — turning every API call
+ * sluggish and making the inbox feel broken.
+ *
+ * The JWT already carries `sub`, `email`, `roles`, `permissions` baked
+ * in at login time. passport-jwt verifies the signature for us, so the
+ * payload is trustworthy. Build RequestUser directly; no DB hop.
+ *
+ * Tradeoff: revoking a user's access requires the token to expire
+ * (default 15 min) or rotating the JWT secret. Acceptable — this is
+ * standard for any JWT-based system. Faster revocation comes from
+ * shortening the access-token TTL, not from a per-request DB lookup.
+ */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private readonly prisma: PrismaService) {
+  constructor() {
     const secret = process.env.JWT_SECRET;
     if (!secret) {
       throw new Error('JWT_SECRET environment variable is not set. Refusing to start.');
@@ -23,26 +37,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<RequestUser> {
-    const user = await this.prisma.userAccount.findUnique({
-      where: { id: payload.sub, deletedAt: null },
-      include: {
-        userRoles: {
-          include: {
-            role: {
-              include: {
-                rolePermissions: { include: { permission: true } },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!user || user.status !== 'ACTIVE') {
-      throw new UnauthorizedException('User not found or inactive');
+    if (!payload?.sub || !payload?.email) {
+      throw new UnauthorizedException('Invalid token payload');
     }
-
-    const { roles, permissions } = extractRolesAndPermissions(user);
-    return { id: user.id, email: user.email, roles, permissions };
+    return {
+      id: payload.sub,
+      email: payload.email,
+      roles: payload.roles ?? [],
+      permissions: payload.permissions ?? [],
+    };
   }
 }

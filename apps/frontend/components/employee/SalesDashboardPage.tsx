@@ -115,6 +115,16 @@ export function SalesDashboardPage() {
 
   const dueToday = followUps.filter((f) => f.status === 'DUE_TODAY').length;
   const followOverdue = followUps.filter((f) => f.status === 'OVERDUE').length;
+  const followCompleted = followUps.filter((f) => f.status === 'COMPLETED').length;
+  const followDueWithinHour = followUps.filter((f) => {
+    if (f.status === 'COMPLETED' || f.status === 'OVERDUE') return false;
+    const due = new Date(f.dueAt).getTime();
+    const diff = due - Date.now();
+    return diff > 0 && diff <= 3_600_000;
+  }).length;
+  const slaOnTimePct = Math.round(
+    (followCompleted / Math.max(1, followCompleted + followOverdue)) * 100,
+  );
   const handovers = leads.filter((l) => l.stage === 'SENT_TO_FINANCE').length;
 
   const upcomingAppointments = appointments
@@ -557,7 +567,7 @@ export function SalesDashboardPage() {
                 width: '120px',
                 height: '120px',
                 borderRadius: '50%',
-                background: `conic-gradient(var(--sos-status-success) 0 72%, var(--sos-surface-progress-track) 72% 100%)`,
+                background: `conic-gradient(var(--sos-status-success) 0 ${slaOnTimePct}%, var(--sos-surface-progress-track) ${slaOnTimePct}% 100%)`,  
               }}
             >
               <div
@@ -578,7 +588,7 @@ export function SalesDashboardPage() {
                     color: 'var(--sos-text-primary)',
                   }}
                 >
-                  72%
+                  {slaOnTimePct}%
                 </div>
                 <div
                   style={{
@@ -604,8 +614,8 @@ export function SalesDashboardPage() {
                 minWidth: 0,
               }}
             >
-              <SlaRow Icon={CheckCircle2} tone="var(--sos-status-success)" label="On-time touches" value={18} />
-              <SlaRow Icon={TimerReset} tone="var(--sos-status-warning)" label="Within next hour" value={4} />
+              <SlaRow Icon={CheckCircle2} tone="var(--sos-status-success)" label="On-time touches" value={followCompleted} />
+              <SlaRow Icon={TimerReset} tone="var(--sos-status-warning)" label="Within next hour" value={followDueWithinHour} />
               <SlaRow Icon={CircleAlert} tone="var(--sos-status-danger)" label="Overdue" value={followOverdue} />
             </div>
           </div>

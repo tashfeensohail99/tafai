@@ -1,8 +1,9 @@
 'use client';
-// Finance Dashboard — Phase 1 / Screen 1 of 7.
+// Finance Dashboard – Phase 1 / Screen 1 of 7.
 // What finance officer sees when they sign in: today's verification queue,
 // problem pile, collection summary, and one-click jump to active queues.
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -25,69 +26,93 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_FINANCE_USER,
-  METHOD_LABEL,
-  STATUS_LABEL,
-  collectedToday,
-  countByStatus,
-  countMine,
+  fetchHandovers,
+  fetchRevenueByService,
   fmtAmount,
   fmtRelative,
-  initialsOf,
-  myActiveQueue,
-  problemPile,
-  readyForProcessingCount,
-  verifiedTodayCount,
-  type PaymentRecord,
-  type PaymentStatus,
-} from '@/components/finance-v1/mockData';
+  clientName,
+  STATUS_LABEL,
+  METHOD_LABEL,
+  type ApiHandover,
+  type FinanceHandoverStatus,
+  type ApiRevenueByService,
+} from '@/lib/finance-api';
+import { useSession } from '@/lib/session';
 
-function statusTone(status: PaymentStatus): BadgeTone {
+function statusTone(status: FinanceHandoverStatus): BadgeTone {
   switch (status) {
-    case 'NEW_FROM_SALES':
+    case 'SUBMITTED':
       return 'info';
-    case 'UNDER_VERIFICATION':
+    case 'IN_REVIEW':
       return 'cyan';
-    case 'ON_HOLD':
-      return 'neutral';
-    case 'CORRECTION_REQUIRED':
-      return 'warning';
-    case 'REJECTED':
-      return 'danger';
-    case 'AWAITING_BALANCE':
+    case 'PAYMENT_RECORDED':
       return 'warm';
-    case 'VERIFIED':
-    case 'RECEIPT_CONFIRMED':
+    case 'REJECTED':
+      return 'warning';
+    case 'PAYMENT_VERIFIED':
       return 'success';
     case 'SENT_TO_PROCESSING':
       return 'violet';
+    case 'CANCELLED':
+      return 'neutral';
     default:
       return 'neutral';
   }
 }
 
-function slaTone(status: PaymentRecord['slaStatus']): BadgeTone {
-  if (status === 'BREACHED') return 'danger';
-  if (status === 'APPROACHING') return 'warning';
-  if (status === 'CLEARED') return 'success';
-  return 'info';
+function initialsOf(name: string): string {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('');
 }
 
 export function FinanceDashboardPage() {
-  const newFromSales = countByStatus('NEW_FROM_SALES');
-  const underVerificationMine = countMine('UNDER_VERIFICATION');
-  const awaitingBalance = countByStatus('AWAITING_BALANCE');
-  const correctionRequired = countByStatus('CORRECTION_REQUIRED');
-  const readyForProcessing = readyForProcessingCount();
-  const collected = collectedToday();
-  const verifiedToday = verifiedTodayCount();
-  const queue = myActiveQueue();
-  const problems = problemPile();
+  const session = useSession();
+  const [handovers, setHandovers] = useState<ApiHandover[]>([]);
+  const [revenue, setRevenue] = useState<ApiRevenueByService | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([fetchHandovers(), fetchRevenueByService()])
+      .then(([h, r]) => {
+        setHandovers(h);
+        setRevenue(r);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const userId = session.status === 'authed' ? session.user.id : null;
+  const newFromSales = handovers.filter((h) => h.status === 'SUBMITTED').length;
+  const underVerificationMine = handovers.filter(
+    (h) => h.status === 'IN_REVIEW' && h.reviewedByUserId === userId,
+  ).length;
+  const correctionRequired = handovers.filter((h) => h.status === 'REJECTED').length;
+  const readyForProcessing = handovers.filter((h) => h.status === 'PAYMENT_VERIFIED').length;
+  const collectedAllTime = revenue?.totals.allTime ?? 0;
+  const verifiedCount = handovers.filter((h) => h.status === 'PAYMENT_VERIFIED' || h.status === 'SENT_TO_PROCESSING').length;
+  const queue = handovers
+    .filter((h) => h.status === 'SUBMITTED' || h.status === 'IN_REVIEW')
+    .slice(0, 6);
+  const problems = handovers.filter(
+    (h) => h.status === 'REJECTED' || h.status === 'CANCELLED',
+  );
+
+  if (loading) {
+    return (
+      <div style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--sos-text-muted)' }}>
+        Loading finance dashboard…
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
-        eyebrow={`Finance · ${MOCK_FINANCE_USER.name}'s queue`}
+        eyebrow="Finance · verification queue"
         title={
           <>
             Keep verifications honest,<br />on time, and audited.
@@ -97,8 +122,8 @@ export function FinanceDashboardPage() {
           <>
             {newFromSales} fresh cases from Sales waiting for a claim ·{' '}
             {underVerificationMine} in your active review · {readyForProcessing} ready to
-            ship to Processing · {fmtAmount(collected.amount, collected.currency)} collected
-            today across {verifiedToday} verified payments.
+            ship to Processing · {fmtAmount(collectedAllTime, 'CAD')} collected
+            all time across {verifiedCount} verified payments.
           </>
         }
         actions={
@@ -154,11 +179,11 @@ export function FinanceDashboardPage() {
         />
         <MetricCard
           label="Awaiting balance"
-          value={awaitingBalance}
-          hint="Deposit verified, balance owed"
+          value={handovers.filter((h) => h.status === 'PAYMENT_RECORDED').length}
+          hint="Deposit recorded, awaiting verification"
           tone="warm"
           Icon={Wallet}
-          footer="Sales is chasing the rest"
+          footer="Payment recorded by sales"
         />
         <MetricCard
           label="Correction required"
@@ -185,12 +210,12 @@ export function FinanceDashboardPage() {
           }
         />
         <MetricCard
-          label="Collected today"
-          value={fmtAmount(collected.amount, collected.currency)}
-          hint={`${verifiedToday} verified payments`}
+          label="Collected all-time"
+          value={fmtAmount(collectedAllTime, 'CAD')}
+          hint={`${verifiedCount} verified payments`}
           tone="warm"
           Icon={Receipt}
-          footer="Base currency total"
+          footer="All verified payments"
         />
       </section>
 
@@ -207,7 +232,7 @@ export function FinanceDashboardPage() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <ProblemPileCard items={problems} />
-          <CollectionSummaryCard collected={collected.amount} verified={verifiedToday} />
+          <CollectionSummaryCard revenue={revenue} verified={verifiedCount} />
         </div>
       </section>
     </div>
@@ -216,7 +241,7 @@ export function FinanceDashboardPage() {
 
 // ---------- My queue ----------------------------------------------------
 
-function MyQueueCard({ items }: { items: PaymentRecord[] }) {
+function MyQueueCard({ items }: { items: ApiHandover[] }) {
   return (
     <GlassCard variant="strong" padded="lg" glow="accent">
       <div
@@ -274,8 +299,9 @@ function MyQueueCard({ items }: { items: PaymentRecord[] }) {
   );
 }
 
-function QueueRow({ item }: { item: PaymentRecord }) {
-  const initials = initialsOf(item.clientName);
+function QueueRow({ item }: { item: ApiHandover }) {
+  const name = clientName(item);
+  const initials = initialsOf(name);
   return (
     <Link
       href={`/finance/intake/${item.id}` as Route}
@@ -322,23 +348,18 @@ function QueueRow({ item }: { item: PaymentRecord }) {
                 color: 'var(--sos-text-primary)',
               }}
             >
-              {item.clientName}
+              {name}
             </span>
             <StatusBadge tone={statusTone(item.status)} size="sm">
               {STATUS_LABEL[item.status]}
             </StatusBadge>
-            {item.priority === 'URGENT' ? (
-              <StatusBadge tone="danger" size="sm">
-                Urgent
-              </StatusBadge>
-            ) : null}
           </div>
           <div
             className="sos-text-muted"
             style={{ marginTop: '4px', fontSize: '12px' }}
           >
-            {fmtAmount(item.receivedAmount, item.currency)} ·{' '}
-            {METHOD_LABEL[item.paymentMethod]} · from {item.salesUserName}
+            {fmtAmount(item.submittedAmount, item.currency)} ·{' '}
+            {item.paymentMethod ? METHOD_LABEL[item.paymentMethod] ?? item.paymentMethod : '—'}
           </div>
         </div>
 
@@ -352,22 +373,17 @@ function QueueRow({ item }: { item: PaymentRecord }) {
               textTransform: 'uppercase',
             }}
           >
-            SLA
+            Submitted
           </div>
           <div
             style={{
               marginTop: '2px',
               fontSize: '12.5px',
               fontWeight: 700,
-              color:
-                item.slaStatus === 'BREACHED'
-                  ? 'var(--sos-status-danger)'
-                  : item.slaStatus === 'APPROACHING'
-                    ? 'var(--sos-status-warning)'
-                    : 'var(--sos-text-primary)',
+              color: 'var(--sos-text-primary)',
             }}
           >
-            {fmtRelative(item.slaDueAt)}
+            {fmtRelative(item.submittedAt)}
           </div>
         </div>
 
@@ -379,7 +395,7 @@ function QueueRow({ item }: { item: PaymentRecord }) {
 
 // ---------- Problem pile -------------------------------------------------
 
-function ProblemPileCard({ items }: { items: PaymentRecord[] }) {
+function ProblemPileCard({ items }: { items: ApiHandover[] }) {
   return (
     <GlassCard variant="default" padded="md">
       <div
@@ -471,17 +487,17 @@ function ProblemPileCard({ items }: { items: PaymentRecord[] }) {
                       textOverflow: 'ellipsis',
                     }}
                   >
-                    {p.clientName}
+                    {clientName(p)}
                   </div>
                   <div
                     className="sos-text-faint"
                     style={{ marginTop: '2px', fontSize: '11px' }}
                   >
-                    {p.correctionLastReason ?? STATUS_LABEL[p.status]}
+                    {p.financeNotes ?? STATUS_LABEL[p.status]}
                   </div>
                 </div>
-                <StatusBadge tone={slaTone(p.slaStatus)} size="sm">
-                  {p.slaStatus === 'BREACHED' ? 'Breached' : fmtRelative(p.slaDueAt)}
+                <StatusBadge tone="warning" size="sm">
+                  {fmtRelative(p.submittedAt)}
                 </StatusBadge>
               </div>
             </Link>
@@ -495,15 +511,17 @@ function ProblemPileCard({ items }: { items: PaymentRecord[] }) {
 // ---------- Collection summary ------------------------------------------
 
 function CollectionSummaryCard({
-  collected,
+  revenue,
   verified,
 }: {
-  collected: number;
+  revenue: ApiRevenueByService | null;
   verified: number;
 }) {
+  const collected = revenue?.totals.allTime ?? 0;
+  const byService = revenue?.byService ?? [];
   return (
     <GlassCard variant="strong" padded="lg" glow="warm">
-      <div className="sos-eyebrow">Today's collection</div>
+      <div className="sos-eyebrow">Collection summary (all time)</div>
 
       <div
         style={{
@@ -552,10 +570,16 @@ function CollectionSummaryCard({
           gap: '8px',
         }}
       >
-        <ChannelRow label="Cash" amount={3300} pct={35} />
-        <ChannelRow label="Bank transfer" amount={4400} pct={47} />
-        <ChannelRow label="Card" amount={800} pct={9} />
-        <ChannelRow label="Wire" amount={0} pct={0} />
+        {byService.length > 0 ? byService.map((s) => (
+          <ChannelRow
+            key={s.service}
+            label={s.service}
+            amount={s.allTime}
+            pct={collected > 0 ? Math.round((s.allTime / collected) * 100) : 0}
+          />
+        )) : (
+          <div className="sos-text-muted" style={{ fontSize: '12.5px' }}>No breakdown available.</div>
+        )}
       </div>
 
       <p

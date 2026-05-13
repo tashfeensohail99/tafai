@@ -6,7 +6,7 @@
 // Phase 1: mock data, client-side filter/sort, stub row actions.
 // Phase 2: real pagination, CSV/XLSX/PDF export, refund initiation.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   ArrowUpDown,
   Calendar,
@@ -27,46 +27,39 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_PAYMENTS,
+  fetchHandovers,
   METHOD_LABEL,
   STATUS_LABEL,
   fmtAmount,
-  fmtDateTime,
   fmtRelative,
-  type PaymentMethod,
-  type PaymentRecord,
-  type PaymentStatus,
-} from '@/components/finance-v1/mockData';
+  clientName,
+  type ApiHandover,
+  type FinanceHandoverStatus,
+} from '@/lib/finance-api';
 
 // ---------- Config -------------------------------------------------------
 
-const STATUS_TONE: Record<PaymentStatus, BadgeTone> = {
-  NEW_FROM_SALES: 'neutral',
-  UNDER_VERIFICATION: 'info',
-  ON_HOLD: 'warning',
-  CORRECTION_REQUIRED: 'warning',
+const STATUS_TONE: Record<FinanceHandoverStatus, BadgeTone> = {
+  SUBMITTED: 'neutral',
+  IN_REVIEW: 'info',
+  PAYMENT_RECORDED: 'accent',
+  PAYMENT_VERIFIED: 'success',
   REJECTED: 'danger',
-  VERIFIED: 'accent',
-  RECEIPT_CONFIRMED: 'success',
-  AWAITING_BALANCE: 'warm',
+  CANCELLED: 'neutral',
   SENT_TO_PROCESSING: 'violet',
 };
 
-const ALL_STATUSES: PaymentStatus[] = [
-  'NEW_FROM_SALES',
-  'UNDER_VERIFICATION',
-  'ON_HOLD',
-  'CORRECTION_REQUIRED',
+const ALL_STATUSES: FinanceHandoverStatus[] = [
+  'SUBMITTED',
+  'IN_REVIEW',
+  'PAYMENT_RECORDED',
+  'PAYMENT_VERIFIED',
   'REJECTED',
-  'VERIFIED',
-  'RECEIPT_CONFIRMED',
-  'AWAITING_BALANCE',
+  'CANCELLED',
   'SENT_TO_PROCESSING',
 ];
 
-const ALL_METHODS: PaymentMethod[] = [
-  'CASH', 'BANK', 'CARD', 'CHEQUE', 'MOBILE', 'WIRE', 'ONLINE', 'OTHER',
-];
+const ALL_METHODS = ['CASH', 'BANK', 'CARD', 'CHEQUE', 'MOBILE', 'WIRE', 'ONLINE', 'OTHER'];
 
 type SortField = 'date' | 'amount' | 'client' | 'status';
 type SortDir = 'asc' | 'desc';
@@ -75,10 +68,8 @@ type SortDir = 'asc' | 'desc';
 
 interface FilterState {
   search: string;
-  status: PaymentStatus | '';
-  method: PaymentMethod | '';
-  branch: string;
-  salesUser: string;
+  status: FinanceHandoverStatus | '';
+  method: string;
   dateFrom: string;
   dateTo: string;
 }
@@ -87,8 +78,6 @@ const EMPTY_FILTER: FilterState = {
   search: '',
   status: '',
   method: '',
-  branch: '',
-  salesUser: '',
   dateFrom: '',
   dateTo: '',
 };
@@ -96,59 +85,51 @@ const EMPTY_FILTER: FilterState = {
 // ---------- Helpers ------------------------------------------------------
 
 function applyFilters(
-  records: PaymentRecord[],
+  records: ApiHandover[],
   f: FilterState,
-): PaymentRecord[] {
+): ApiHandover[] {
   const q = f.search.toLowerCase();
   return records.filter((p) => {
     if (
       q &&
-      !p.clientName.toLowerCase().includes(q) &&
+      !clientName(p).toLowerCase().includes(q) &&
       !p.id.toLowerCase().includes(q) &&
-      !(p.receiptNumber ?? '').toLowerCase().includes(q) &&
-      !(p.transactionReference ?? '').toLowerCase().includes(q)
+      !(p.transactionRef ?? '').toLowerCase().includes(q) &&
+      !p.leadId.toLowerCase().includes(q)
     )
       return false;
     if (f.status && p.status !== f.status) return false;
     if (f.method && p.paymentMethod !== f.method) return false;
-    if (f.branch && p.branch !== f.branch) return false;
-    if (f.salesUser && p.salesUserName !== f.salesUser) return false;
-    if (f.dateFrom && new Date(p.sentToFinanceAt) < new Date(f.dateFrom))
+    if (f.dateFrom && new Date(p.submittedAt) < new Date(f.dateFrom))
       return false;
     if (f.dateTo) {
       const to = new Date(f.dateTo);
       to.setHours(23, 59, 59, 999);
-      if (new Date(p.sentToFinanceAt) > to) return false;
+      if (new Date(p.submittedAt) > to) return false;
     }
     return true;
   });
 }
 
 function sortRecords(
-  records: PaymentRecord[],
+  records: ApiHandover[],
   field: SortField,
   dir: SortDir,
-): PaymentRecord[] {
+): ApiHandover[] {
   const sign = dir === 'asc' ? 1 : -1;
   return [...records].sort((a, b) => {
     switch (field) {
       case 'date':
-        return sign * (+new Date(a.sentToFinanceAt) - +new Date(b.sentToFinanceAt));
+        return sign * (+new Date(a.submittedAt) - +new Date(b.submittedAt));
       case 'amount':
-        return sign * (a.receivedAmount - b.receivedAmount);
+        return sign * (parseFloat(a.submittedAmount) - parseFloat(b.submittedAmount));
       case 'client':
-        return sign * a.clientName.localeCompare(b.clientName);
+        return sign * clientName(a).localeCompare(clientName(b));
       case 'status':
         return sign * a.status.localeCompare(b.status);
     }
   });
 }
-
-// Derive unique branches + sales users from mock data
-const UNIQUE_BRANCHES = [...new Set(MOCK_PAYMENTS.map((p) => p.branch))].sort();
-const UNIQUE_SALES = [
-  ...new Set(MOCK_PAYMENTS.map((p) => p.salesUserName)),
-].sort();
 
 // ---------- Sub-components -----------------------------------------------
 
@@ -277,7 +258,7 @@ function HistoryRow({
   payment,
   index,
 }: {
-  payment: PaymentRecord;
+  payment: ApiHandover;
   index: number;
 }) {
   const tone = STATUS_TONE[payment.status];
@@ -290,20 +271,17 @@ function HistoryRow({
         transition: 'background 0.12s',
       }}
     >
-      {/* Receipt / ID */}
+      {/* ID */}
       <td
         style={{
           padding: '10px 12px',
           fontSize: 'var(--sos-text-xs)',
           fontFamily: 'monospace',
-          color: payment.receiptNumber ? 'var(--sos-accent)' : 'var(--sos-muted)',
+          color: 'var(--sos-accent)',
           whiteSpace: 'nowrap',
         }}
       >
-        {payment.receiptNumber ?? (
-          <span style={{ fontStyle: 'italic' }}>—</span>
-        )}
-        <div style={{ color: 'var(--sos-muted)', marginTop: 1 }}>{payment.id}</div>
+        {payment.id.slice(0, 8)}
       </td>
 
       {/* Date */}
@@ -315,12 +293,7 @@ function HistoryRow({
           whiteSpace: 'nowrap',
         }}
       >
-        {payment.verifiedAt
-          ? fmtDateTime(payment.verifiedAt)
-          : fmtRelative(payment.sentToFinanceAt)}
-        <div style={{ fontSize: 10, marginTop: 1, color: 'var(--sos-border)' }}>
-          {payment.verifiedAt ? 'verified' : 'received'}
-        </div>
+        {fmtRelative(payment.submittedAt)}
       </td>
 
       {/* Client */}
@@ -332,7 +305,7 @@ function HistoryRow({
             color: 'var(--sos-text)',
           }}
         >
-          {payment.clientName}
+          {clientName(payment)}
         </div>
         <div
           style={{
@@ -341,7 +314,7 @@ function HistoryRow({
             marginTop: 2,
           }}
         >
-          {payment.service} · {payment.targetCountry}
+          {payment.lead.serviceInterest ?? '—'} · {payment.lead.targetCountry ?? '—'}
         </div>
       </td>
 
@@ -360,19 +333,8 @@ function HistoryRow({
             color: 'var(--sos-text)',
           }}
         >
-          {fmtAmount(payment.receivedAmount, payment.currency)}
+          {fmtAmount(payment.submittedAmount, payment.currency)}
         </div>
-        {payment.receivedAmount !== payment.expectedAmount && (
-          <div
-            style={{
-              fontSize: 'var(--sos-text-xs)',
-              color: 'var(--sos-warning)',
-              marginTop: 2,
-            }}
-          >
-            exp. {fmtAmount(payment.expectedAmount, payment.currency)}
-          </div>
-        )}
       </td>
 
       {/* Method */}
@@ -384,8 +346,8 @@ function HistoryRow({
           whiteSpace: 'nowrap',
         }}
       >
-        <div>{METHOD_LABEL[payment.paymentMethod]}</div>
-        {payment.transactionReference && (
+        <div>{payment.paymentMethod ? (METHOD_LABEL[payment.paymentMethod] ?? payment.paymentMethod) : '—'}</div>
+        {payment.transactionRef && (
           <div
             style={{
               fontFamily: 'monospace',
@@ -393,7 +355,7 @@ function HistoryRow({
               color: 'var(--sos-text)',
             }}
           >
-            {payment.transactionReference}
+            {payment.transactionRef}
           </div>
         )}
       </td>
@@ -405,30 +367,16 @@ function HistoryRow({
         </StatusBadge>
       </td>
 
-      {/* Sales / Finance */}
+      {/* Lead ID */}
       <td
         style={{
           padding: '10px 12px',
           fontSize: 'var(--sos-text-xs)',
           color: 'var(--sos-muted)',
+          fontFamily: 'monospace',
         }}
       >
-        <div>{payment.salesUserName}</div>
-        {payment.financeUserName && (
-          <div style={{ marginTop: 2 }}>{payment.financeUserName}</div>
-        )}
-      </td>
-
-      {/* Branch */}
-      <td
-        style={{
-          padding: '10px 12px',
-          fontSize: 'var(--sos-text-xs)',
-          color: 'var(--sos-muted)',
-          textAlign: 'center',
-        }}
-      >
-        {payment.branch}
+        {payment.leadId.slice(0, 8)}
       </td>
 
       {/* Actions */}
@@ -449,23 +397,6 @@ function HistoryRow({
           >
             <Eye size={13} />
           </button>
-          {payment.receiptNumber && (
-            <button
-              title="View receipt"
-              style={{
-                background: 'var(--sos-surface-hover)',
-                border: '1px solid var(--sos-border)',
-                borderRadius: 'var(--sos-radius-sm)',
-                padding: '4px 8px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                color: 'var(--sos-muted)',
-              }}
-            >
-              <FileText size={13} />
-            </button>
-          )}
         </div>
       </td>
     </tr>
@@ -526,10 +457,15 @@ function SortTh({
 // ---------- Main page ----------------------------------------------------
 
 export function FinanceHistoryPage() {
+  const [allHandovers, setAllHandovers] = useState<ApiHandover[]>([]);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTER);
   const [showFilters, setShowFilters] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  useEffect(() => {
+    fetchHandovers().then(setAllHandovers).catch(console.error);
+  }, []);
 
   const set = <K extends keyof FilterState>(key: K) =>
     (value: FilterState[K]) =>
@@ -545,8 +481,8 @@ export function FinanceHistoryPage() {
   }
 
   const filtered = useMemo(
-    () => applyFilters(MOCK_PAYMENTS, filters),
-    [filters],
+    () => applyFilters(allHandovers, filters),
+    [allHandovers, filters],
   );
 
   const sorted = useMemo(
@@ -559,11 +495,7 @@ export function FinanceHistoryPage() {
   if (filters.status)
     activePills.push({ label: STATUS_LABEL[filters.status], clear: () => set('status')('') });
   if (filters.method)
-    activePills.push({ label: METHOD_LABEL[filters.method], clear: () => set('method')('') });
-  if (filters.branch)
-    activePills.push({ label: `Branch: ${filters.branch}`, clear: () => set('branch')('') });
-  if (filters.salesUser)
-    activePills.push({ label: `Sales: ${filters.salesUser}`, clear: () => set('salesUser')('') });
+    activePills.push({ label: METHOD_LABEL[filters.method] ?? filters.method, clear: () => set('method')('') });
   if (filters.dateFrom)
     activePills.push({ label: `From: ${filters.dateFrom}`, clear: () => set('dateFrom')('') });
   if (filters.dateTo)
@@ -573,18 +505,13 @@ export function FinanceHistoryPage() {
     filters.search ||
     filters.status ||
     filters.method ||
-    filters.branch ||
-    filters.salesUser ||
     filters.dateFrom ||
     filters.dateTo;
 
-  // Summary totals from filtered set
-  const totalFiltered = filtered.reduce((s, p) => s + p.receivedAmount, 0);
+  // Summary totals
+  const totalFiltered = filtered.reduce((s, p) => s + parseFloat(p.submittedAmount), 0);
   const verifiedCount = filtered.filter(
-    (p) =>
-      p.status === 'VERIFIED' ||
-      p.status === 'RECEIPT_CONFIRMED' ||
-      p.status === 'SENT_TO_PROCESSING',
+    (p) => p.status === 'PAYMENT_VERIFIED' || p.status === 'SENT_TO_PROCESSING',
   ).length;
 
   return (
@@ -735,25 +662,13 @@ export function FinanceHistoryPage() {
                 label="Status"
                 value={filters.status}
                 options={ALL_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
-                onChange={(v) => set('status')(v as PaymentStatus | '')}
+                onChange={(v) => set('status')(v as FinanceHandoverStatus | '')}
               />
               <SelectFilter
                 label="Payment method"
                 value={filters.method}
-                options={ALL_METHODS.map((m) => ({ value: m, label: METHOD_LABEL[m] }))}
-                onChange={(v) => set('method')(v as PaymentMethod | '')}
-              />
-              <SelectFilter
-                label="Branch"
-                value={filters.branch}
-                options={UNIQUE_BRANCHES.map((b) => ({ value: b, label: b }))}
-                onChange={(v) => set('branch')(v)}
-              />
-              <SelectFilter
-                label="Sales person"
-                value={filters.salesUser}
-                options={UNIQUE_SALES.map((s) => ({ value: s, label: s }))}
-                onChange={(v) => set('salesUser')(v)}
+                options={ALL_METHODS.map((m) => ({ value: m, label: METHOD_LABEL[m] ?? m }))}
+                onChange={(v) => set('method')(v)}
               />
               <DateFilter
                 label="Date from"
@@ -788,7 +703,7 @@ export function FinanceHistoryPage() {
         >
           Showing{' '}
           <strong style={{ color: 'var(--sos-text)' }}>{sorted.length}</strong>{' '}
-          of {MOCK_PAYMENTS.length} records
+          of {allHandovers.length} records
           {hasFilters && ' (filtered)'}
         </p>
         <div style={{ display: 'flex', gap: 'var(--sos-space-4)', flexWrap: 'wrap' }}>
@@ -869,22 +784,7 @@ export function FinanceHistoryPage() {
                       borderBottom: '1px solid var(--sos-border)',
                     }}
                   >
-                    Sales / Finance
-                  </th>
-                  <th
-                    style={{
-                      padding: '10px 12px',
-                      fontSize: 'var(--sos-text-xs)',
-                      fontWeight: 600,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      color: 'var(--sos-muted)',
-                      textAlign: 'center',
-                      background: 'var(--sos-surface-2)',
-                      borderBottom: '1px solid var(--sos-border)',
-                    }}
-                  >
-                    Branch
+                    Lead ID
                   </th>
                   <th
                     style={{
@@ -936,7 +836,7 @@ export function FinanceHistoryPage() {
                   >
                     CAD{' '}
                     {sorted
-                      .reduce((s, p) => s + p.receivedAmount, 0)
+                      .reduce((s, p) => s + parseFloat(p.submittedAmount), 0)
                       .toLocaleString()}
                   </td>
                   <td

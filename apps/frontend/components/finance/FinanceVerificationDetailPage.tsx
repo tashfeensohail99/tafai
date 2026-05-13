@@ -9,7 +9,7 @@
  * file viewer, no maker-checker enforcement, no fraud-rule engine.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
@@ -27,28 +27,15 @@ import {
   ActionBar,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_PAYMENTS,
-  type PaymentRecord,
-  type PaymentMethod,
+  fetchHandoverById,
+  reviewHandover,
   fmtAmount,
   fmtRelative,
-  METHOD_LABEL,
+  clientName,
   STATUS_LABEL,
-} from '@/components/finance-v1/mockData';
-
-// ---------- helpers -------------------------------------------------------
-
-function slaColor(s: PaymentRecord['slaStatus']): string {
-  switch (s) {
-    case 'BREACHED':    return 'var(--sos-status-danger)';
-    case 'APPROACHING': return 'var(--sos-status-warning)';
-    default:            return 'var(--sos-status-success)';
-  }
-}
-
-function amountMismatched(p: PaymentRecord): boolean {
-  return Math.abs(p.receivedAmount - p.expectedAmount) > 0.01;
-}
+  METHOD_LABEL,
+  type ApiHandover,
+} from '@/lib/finance-api';
 
 // ---------- checklist config ---------------------------------------------
 
@@ -77,43 +64,14 @@ const DEFAULT_CHECKLIST: ChecklistState = {
   noCompliance:    false,
 };
 
-// ---------- mock fraud flags ---------------------------------------------
-
-function getMockFlags(p: PaymentRecord): { id: string; message: string; severity: 'warn' | 'block' }[] {
-  const flags: { id: string; message: string; severity: 'warn' | 'block' }[] = [];
-  if (p.correctionBounceCount >= 2) {
-    flags.push({
-      id: 'bounce',
-      message: `This record has been returned to sales ${p.correctionBounceCount} times — review history carefully.`,
-      severity: 'warn',
-    });
-  }
-  if (p.transactionReference === 'TFN-2391') {
-    flags.push({
-      id: 'dup-ref',
-      message: 'Same reference TFN-2391 seen 14 days ago on a different client — review.',
-      severity: 'warn',
-    });
-  }
-  if (amountMismatched(p)) {
-    flags.push({
-      id: 'amount',
-      message: `Amount on record (${fmtAmount(p.receivedAmount, p.currency)}) differs from expected (${fmtAmount(p.expectedAmount, p.currency)}).`,
-      severity: 'block',
-    });
-  }
-  return flags;
-}
-
 // ---------- payment method options ---------------------------------------
 
 const METHOD_OPTIONS = Object.entries(METHOD_LABEL).map(([value, label]) => ({ value, label }));
 
 // ---------- Receipt preview (Phase 1 placeholder) -----------------------
 
-function ReceiptPreviewPanel({ payment }: { payment: PaymentRecord }) {
+function ReceiptPreviewPanel({ payment }: { payment: ApiHandover }) {
   const [activeTab, setActiveTab] = useState(0);
-  const count = payment.receiptFileCount;
 
   return (
     <div style={{ position: 'sticky', top: '80px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -122,32 +80,12 @@ function ReceiptPreviewPanel({ payment }: { payment: PaymentRecord }) {
       <GlassCard>
         <div style={{ padding: '16px 20px 0' }}>
           <p style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--sos-text-muted)', marginBottom: '3px' }}>
-            Receipt files
+            Receipt file
           </p>
           <p style={{ fontSize: '13px', color: 'var(--sos-text-secondary)', marginBottom: '14px' }}>
-            {count} file{count !== 1 ? 's' : ''} attached by {payment.salesUserName}
+            {payment.receiptFileName}
           </p>
         </div>
-
-        {count > 1 && (
-          <div style={{ display: 'flex', borderTop: '1px solid var(--sos-border-subtle)', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-            {Array.from({ length: count }).map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveTab(i)}
-                style={{
-                  flex: 1, padding: '8px', fontSize: '12px',
-                  fontWeight: activeTab === i ? 600 : 400,
-                  color: activeTab === i ? 'var(--sos-brand-primary)' : 'var(--sos-text-muted)',
-                  background: activeTab === i ? 'var(--sos-bg-glass-subtle)' : 'transparent',
-                  border: 'none', cursor: 'pointer',
-                }}
-              >
-                Receipt {i + 1}
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* placeholder viewer */}
         <div
@@ -168,27 +106,30 @@ function ReceiptPreviewPanel({ payment }: { payment: PaymentRecord }) {
             <polyline points="10 9 9 9 8 9" />
           </svg>
           <p style={{ fontSize: '13px', color: 'var(--sos-text-muted)', textAlign: 'center' }}>
-            Receipt {activeTab + 1} of {count}
+            {payment.receiptFileName}
             <br />
-            <span style={{ fontSize: '11px' }}>Uploaded by {payment.salesUserName}</span>
+            <span style={{ fontSize: '11px' }}>Submitted by sales</span>
           </p>
         </div>
 
         <div style={{ display: 'flex', gap: '8px', padding: '0 16px 16px', flexWrap: 'wrap' }}>
-          {(['Zoom', 'Rotate', 'Download'] as const).map((label) => (
-            <button
-              key={label}
+          {payment.receiptDownloadUrl ? (
+            <a
+              href={payment.receiptDownloadUrl}
+              target="_blank"
+              rel="noreferrer"
               style={{
                 padding: '5px 10px', fontSize: '12px',
-                color: 'var(--sos-text-secondary)',
+                color: 'var(--sos-brand-primary)',
                 background: 'var(--sos-bg-glass-subtle)',
                 border: '1px solid var(--sos-border-subtle)',
                 borderRadius: '6px', cursor: 'pointer',
+                textDecoration: 'none',
               }}
             >
-              {label}
-            </button>
-          ))}
+              Download
+            </a>
+          ) : null}
         </div>
       </GlassCard>
 
@@ -202,27 +143,10 @@ function ReceiptPreviewPanel({ payment }: { payment: PaymentRecord }) {
           </div>
           <p style={{ fontSize: '12px', color: 'var(--sos-text-muted)', lineHeight: '1.5' }}>
             Detected amount:{' '}
-            <strong style={{ color: 'var(--sos-text-primary)' }}>{fmtAmount(payment.receivedAmount, payment.currency)}</strong>
+            <strong style={{ color: 'var(--sos-text-primary)' }}>{fmtAmount(payment.submittedAmount, payment.currency)}</strong>
             <br />
             Auto-fill available in Phase 2.
           </p>
-        </div>
-      </GlassCard>
-
-      {/* re-upload */}
-      <GlassCard>
-        <div style={{ padding: '14px 16px' }}>
-          <p style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginBottom: '8px' }}>Wrong file uploaded by Sales?</p>
-          <button
-            style={{
-              width: '100%', padding: '8px', fontSize: '12.5px',
-              color: 'var(--sos-brand-accent)',
-              border: '1px solid var(--sos-brand-accent)',
-              borderRadius: '8px', background: 'transparent', cursor: 'pointer', fontWeight: 500,
-            }}
-          >
-            Request re-upload from Sales
-          </button>
         </div>
       </GlassCard>
     </div>
@@ -272,24 +196,35 @@ interface Props {
 
 export function FinanceVerificationDetailPage({ paymentId }: Props) {
   const router = useRouter();
-  const payment = MOCK_PAYMENTS.find((p) => p.id === paymentId);
+  const [handover, setHandover] = useState<ApiHandover | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   // form state
   const [checklist, setChecklist]            = useState<ChecklistState>(DEFAULT_CHECKLIST);
-  const [verifiedAmount, setVerifiedAmount]  = useState(payment?.receivedAmount.toString() ?? '');
-  const [transactionRef, setTransactionRef]  = useState(payment?.transactionReference ?? '');
-  const [paymentMethod, setPaymentMethod]    = useState<PaymentMethod>(payment?.paymentMethod ?? 'CASH');
-  const [receivedDate, setReceivedDate]      = useState(payment?.paymentReceivedAt.slice(0, 10) ?? '');
-  const [serviceFee, setServiceFee]          = useState(payment ? Math.round(payment.receivedAmount * 0.85).toString() : '');
-  const [govtFee, setGovtFee]               = useState(payment ? Math.round(payment.receivedAmount * 0.1).toString() : '');
-  const [financeNote, setFinanceNote]        = useState(payment?.financeNote ?? '');
+  const [verifiedAmount, setVerifiedAmount]  = useState('');
+  const [transactionRef, setTransactionRef]  = useState('');
+  const [paymentMethod, setPaymentMethod]    = useState('CASH');
+  const [receivedDate, setReceivedDate]      = useState('');
+  const [serviceFee, setServiceFee]          = useState('');
+  const [govtFee, setGovtFee]               = useState('');
+  const [financeNote, setFinanceNote]        = useState('');
   const [acknowledgedFlags, setAcknowledgedFlags] = useState<Set<string>>(new Set());
   const [toast, setToast]                    = useState<string | null>(null);
   const [lastSaved, setLastSaved]            = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const toggleCheck = useCallback((key: ChecklistKey) => {
-    setChecklist((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
+  useEffect(() => {
+    fetchHandoverById(paymentId)
+      .then((h) => {
+        setHandover(h);
+        setVerifiedAmount(h.submittedAmount);
+        setTransactionRef(h.transactionRef ?? '');
+        setPaymentMethod(h.paymentMethod ?? 'CASH');
+        setReceivedDate(h.submittedAt.slice(0, 10));
+        setFinanceNote(h.financeNotes ?? '');
+      })
+      .catch(() => setLoadError(true));
+  }, [paymentId]);
 
   const checklistDone     = Object.values(checklist).filter(Boolean).length;
   const checklistComplete = checklistDone === CHECKLIST_ITEMS.length;
@@ -297,9 +232,7 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
   const taxAmount   = Math.round(((parseFloat(serviceFee) || 0) + (parseFloat(govtFee) || 0)) * 0.05);
   const totalAmount = (parseFloat(serviceFee) || 0) + (parseFloat(govtFee) || 0) + taxAmount;
 
-  const flags           = payment ? getMockFlags(payment) : [];
-  const blockingUnacked = flags.filter((f) => f.severity === 'block' && !acknowledgedFlags.has(f.id)).length;
-  const canVerify       = checklistComplete && blockingUnacked === 0;
+  const canVerify = checklistComplete;
 
   function showToast(msg: string) {
     setToast(msg);
@@ -311,44 +244,80 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
     showToast('Draft saved.');
   }
 
-  function handleVerify() {
-    if (!canVerify) {
-      showToast('Complete all checklist items and resolve blocking flags first.');
+  async function handleMarkInReview() {
+    if (!handover) return;
+    setSaving(true);
+    try {
+      await reviewHandover(handover.id, 'MARK_IN_REVIEW', { financeNotes: financeNote });
+      showToast('Marked as in review.');
+    } catch {
+      showToast('Failed to update status.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleVerify() {
+    if (!canVerify || !handover) {
+      showToast('Complete all checklist items first.');
       return;
     }
-    showToast('Payment verified. Moving to Receipt Confirmation.');
-    setTimeout(() => router.push('/finance/receipts' as Route), 1800);
+    setSaving(true);
+    try {
+      await reviewHandover(handover.id, 'RECORD_PAYMENT', { financeNotes: financeNote });
+      showToast('Payment recorded. Moving to receipts.');
+      setTimeout(() => router.push('/finance/receipts' as Route), 1800);
+    } catch {
+      showToast('Failed to record payment.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleReject() {
+    if (!handover) return;
+    setSaving(true);
+    try {
+      await reviewHandover(handover.id, 'REJECT', { financeNotes: financeNote });
+      showToast('Rejected. Sales has been notified.');
+      setTimeout(() => router.push('/finance/intake'), 1800);
+    } catch {
+      showToast('Failed to reject handover.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleHold() {
+    showToast('On-hold feature coming in Phase 2.');
   }
 
   function handleRequestCorrection() {
     router.push(`/finance/corrections/${paymentId}` as Route);
   }
 
-  function handleReject() {
-    showToast('Payment rejected. Sales has been notified.');
-    setTimeout(() => router.push('/finance/intake'), 1800);
-  }
-
-  function handleHold() {
-    showToast('Payment placed on hold.');
-    setTimeout(() => router.push('/finance/intake'), 1800);
-  }
-
-  // --- 404 ----------------------------------------------------------------
-  if (!payment) {
+  // --- loading/404 ----------------------------------------------------------------
+  if (!handover && !loadError) {
     return (
       <div style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--sos-text-muted)' }}>
-        <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Payment record not found</p>
+        Loading handover…
+      </div>
+    );
+  }
+
+  if (loadError || !handover) {
+    return (
+      <div style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--sos-text-muted)' }}>
+        <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Handover not found</p>
         <p style={{ fontSize: '13px', marginBottom: '20px' }}>
-          Record <code>{paymentId}</code> does not exist.
+          Record <code>{paymentId}</code> does not exist or you do not have access.
         </p>
         <SecondaryButton onClick={() => router.push('/finance/intake')}>← Back to Intake Queue</SecondaryButton>
       </div>
     );
   }
 
-  const mismatch = amountMismatched(payment);
-  const diff     = payment.receivedAmount - payment.expectedAmount;
+  const name = clientName(handover);
 
   return (
     <div style={{ padding: '0 0 120px' }}>
@@ -370,26 +339,14 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
 
       {/* page header */}
       <PageHeader
-        eyebrow={`Finance intake · ${payment.id}`}
-        title={`Verify: ${payment.clientName}`}
+        eyebrow={`Finance intake · ${handover.id.slice(0, 8)}`}
+        title={`Verify: ${name}`}
         description={
           <span style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <span>{payment.service} · {payment.targetCountry} · {payment.branch}</span>
-            <StatusBadge
-              tone={
-                payment.status === 'UNDER_VERIFICATION' ? 'info'
-                : payment.status === 'CORRECTION_REQUIRED' ? 'warning'
-                : payment.status === 'REJECTED' ? 'danger'
-                : 'neutral'
-              }
-            >
-              {STATUS_LABEL[payment.status]}
+            <span>{handover.lead.serviceInterest ?? '—'} · {handover.lead.targetCountry ?? '—'}</span>
+            <StatusBadge tone="info">
+              {STATUS_LABEL[handover.status]}
             </StatusBadge>
-            {payment.slaStatus !== 'CLEARED' && (
-              <span style={{ fontSize: '12px', color: slaColor(payment.slaStatus), fontWeight: 600 }}>
-                SLA: {fmtRelative(payment.slaDueAt)}
-              </span>
-            )}
           </span>
         }
         actions={
@@ -403,7 +360,7 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
       <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: '20px', alignItems: 'start' }}>
 
         {/* LEFT — receipt preview (sticky) */}
-        <ReceiptPreviewPanel payment={payment} />
+        <ReceiptPreviewPanel payment={handover} />
 
         {/* RIGHT — verification form */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
@@ -411,16 +368,15 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
           {/* §1 Client Summary */}
           <SectionCard title="Client summary">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
-              <InfoRow label="Client name"    value={payment.clientName} />
-              <InfoRow label="Branch"         value={payment.branch} />
-              <InfoRow label="Service"        value={payment.service} />
-              <InfoRow label="Target country" value={payment.targetCountry} />
-              <InfoRow label="Sales person"   value={payment.salesUserName} />
-              <InfoRow label="Priority"       value={payment.priority} />
+              <InfoRow label="Client name"    value={name} />
+              <InfoRow label="Phone"          value={handover.lead.phone} />
+              <InfoRow label="Service"        value={handover.lead.serviceInterest ?? '—'} />
+              <InfoRow label="Target country" value={handover.lead.targetCountry ?? '—'} />
+              <InfoRow label="Status"         value={handover.lead.status} />
             </div>
             <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--sos-border-subtle)' }}>
               <Link
-                href={`/sales/leads/${payment.leadId}`}
+                href={`/sales/leads/${handover.leadId}`}
                 style={{ fontSize: '12.5px', color: 'var(--sos-brand-primary)', textDecoration: 'none', fontWeight: 500 }}
               >
                 View lead profile →
@@ -432,95 +388,39 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
           <SectionCard title="Sales handover details">
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
-                <InfoRow label="Sent to finance" value={fmtRelative(payment.sentToFinanceAt)} />
-                <InfoRow label="Receipts sent"   value={`${payment.receiptFileCount} file${payment.receiptFileCount !== 1 ? 's' : ''}`} />
-                <InfoRow label="Payment method"  value={METHOD_LABEL[payment.paymentMethod]} />
-                <div>
-                  <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '2px' }}>SLA deadline</p>
-                  <p style={{ fontSize: '13.5px', fontWeight: 600, color: slaColor(payment.slaStatus) }}>
-                    {fmtRelative(payment.slaDueAt)}{' '}
-                    <span style={{ fontWeight: 400, fontSize: '11px', color: 'var(--sos-text-muted)' }}>({payment.slaStatus})</span>
-                  </p>
-                </div>
+                <InfoRow label="Submitted at" value={fmtRelative(handover.submittedAt)} />
+                <InfoRow label="Receipt file" value={handover.receiptFileName} />
+                <InfoRow label="Payment method" value={handover.paymentMethod ? (METHOD_LABEL[handover.paymentMethod] ?? handover.paymentMethod) : '—'} />
+                <InfoRow label="Currency" value={handover.currency} />
               </div>
 
-              {payment.salesNote && (
+              {handover.notes && (
                 <div style={{ background: 'var(--sos-bg-glass-subtle)', borderRadius: '8px', padding: '12px 14px', borderLeft: '3px solid var(--sos-brand-accent)' }}>
                   <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '4px', fontWeight: 600 }}>SALES NOTE</p>
-                  <p style={{ fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: '1.55' }}>{payment.salesNote}</p>
-                </div>
-              )}
-
-              {payment.correctionBounceCount > 0 && (
-                <div style={{ background: 'var(--sos-bg-glass-subtle)', borderRadius: '8px', padding: '10px 14px', borderLeft: '3px solid var(--sos-status-warning)' }}>
-                  <p style={{ fontSize: '12px', color: 'var(--sos-status-warning)', fontWeight: 600 }}>
-                    Returned to sales {payment.correctionBounceCount} time{payment.correctionBounceCount !== 1 ? 's' : ''}
-                  </p>
-                  {payment.correctionLastReason && (
-                    <p style={{ fontSize: '12px', color: 'var(--sos-text-secondary)', marginTop: '3px' }}>
-                      Last reason: {payment.correctionLastReason}
-                    </p>
-                  )}
+                  <p style={{ fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: '1.55' }}>{handover.notes}</p>
                 </div>
               )}
             </div>
           </SectionCard>
 
           {/* §3 Expected vs. Received */}
-          <SectionCard
-            title="Expected vs. received"
-            badge={
-              <span
-                style={{
-                  fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
-                  color: mismatch ? 'var(--sos-status-danger)' : 'var(--sos-status-success)',
-                  background: mismatch
-                    ? 'color-mix(in srgb, var(--sos-status-danger) 12%, transparent)'
-                    : 'color-mix(in srgb, var(--sos-status-success) 12%, transparent)',
-                }}
-              >
-                {mismatch ? 'MISMATCH' : 'MATCHED'}
-              </span>
-            }
-          >
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: mismatch ? '14px' : 0 }}>
+          <SectionCard title="Expected vs. received">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div style={{ background: 'var(--sos-bg-glass-subtle)', borderRadius: '10px', padding: '16px', textAlign: 'center' }}>
-                <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '6px', fontWeight: 600 }}>EXPECTED</p>
+                <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '6px', fontWeight: 600 }}>SUBMITTED</p>
                 <p style={{ fontSize: '24px', fontWeight: 700, color: 'var(--sos-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-                  {fmtAmount(payment.expectedAmount, payment.currency)}
+                  {fmtAmount(handover.submittedAmount, handover.currency)}
                 </p>
               </div>
-              <div
-                style={{
-                  background: mismatch
-                    ? 'color-mix(in srgb, var(--sos-status-danger) 8%, var(--sos-bg-glass-subtle))'
-                    : 'color-mix(in srgb, var(--sos-status-success) 8%, var(--sos-bg-glass-subtle))',
-                  borderRadius: '10px', padding: '16px', textAlign: 'center',
-                  border: mismatch ? '1px solid color-mix(in srgb, var(--sos-status-danger) 25%, transparent)' : 'none',
-                }}
-              >
-                <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '6px', fontWeight: 600 }}>RECEIVED</p>
-                <p style={{
-                  fontSize: '24px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                  color: mismatch ? 'var(--sos-status-danger)' : 'var(--sos-status-success)',
-                }}>
-                  {fmtAmount(payment.receivedAmount, payment.currency)}
-                </p>
-              </div>
+              {handover.invoice && (
+                <div style={{ background: 'var(--sos-bg-glass-subtle)', borderRadius: '10px', padding: '16px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '6px', fontWeight: 600 }}>INVOICE TOTAL</p>
+                  <p style={{ fontSize: '24px', fontWeight: 700, color: 'var(--sos-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtAmount(handover.invoice.totalAmount, handover.currency)}
+                  </p>
+                </div>
+              )}
             </div>
-
-            {mismatch && (
-              <div style={{
-                background: 'color-mix(in srgb, var(--sos-status-danger) 8%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--sos-status-danger) 25%, transparent)',
-                borderRadius: '8px', padding: '10px 14px',
-              }}>
-                <p style={{ fontSize: '13px', color: 'var(--sos-status-danger)', fontWeight: 600 }}>
-                  Difference: {diff > 0 ? '+' : ''}{fmtAmount(Math.abs(diff), payment.currency)}{' '}
-                  <span style={{ fontWeight: 400 }}>({diff < 0 ? 'under-payment' : 'over-payment'})</span>
-                </p>
-              </div>
-            )}
           </SectionCard>
 
           {/* §4 Payment Details (editable) */}
@@ -535,13 +435,13 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
               />
               <FormInput
                 label="Currency"
-                value={payment.currency}
+                value={handover.currency}
                 readOnly
               />
               <FormSelect
                 label="Payment method"
                 value={paymentMethod}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setPaymentMethod(e.target.value as PaymentMethod)}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setPaymentMethod(e.target.value)}
                 options={METHOD_OPTIONS}
               />
               <FormInput
@@ -555,11 +455,6 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
                 type="date"
                 value={receivedDate}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReceivedDate(e.target.value)}
-              />
-              <FormInput
-                label="Collected by (sales)"
-                value={payment.salesUserName}
-                readOnly
               />
             </div>
           </SectionCard>
@@ -625,69 +520,7 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
             </div>
           </SectionCard>
 
-          {/* §6 Duplicate / Fraud Flags */}
-          <SectionCard title="Duplicate & fraud flags">
-            {flags.length === 0 ? (
-              <div style={{
-                padding: '18px', textAlign: 'center', fontSize: '13px',
-                color: 'var(--sos-status-success)',
-                background: 'color-mix(in srgb, var(--sos-status-success) 6%, var(--sos-bg-glass-subtle))',
-                borderRadius: '8px',
-                border: '1px solid color-mix(in srgb, var(--sos-status-success) 20%, transparent)',
-              }}>
-                ✓ No flags detected on this record.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {flags.map((flag) => {
-                  const acked   = acknowledgedFlags.has(flag.id);
-                  const accent  = flag.severity === 'block' ? 'var(--sos-status-danger)' : 'var(--sos-status-warning)';
-                  const bgColor = flag.severity === 'block'
-                    ? 'color-mix(in srgb, var(--sos-status-danger) 8%, transparent)'
-                    : 'color-mix(in srgb, var(--sos-status-warning) 8%, transparent)';
-                  return (
-                    <div
-                      key={flag.id}
-                      style={{
-                        background: acked ? 'var(--sos-bg-glass-subtle)' : bgColor,
-                        border: `1px solid ${acked ? 'var(--sos-border-subtle)' : accent}`,
-                        borderRadius: '8px', padding: '12px 14px',
-                        display: 'flex', alignItems: 'flex-start', gap: '12px',
-                        opacity: acked ? 0.6 : 1, transition: 'opacity 0.2s',
-                      }}
-                    >
-                      <span style={{ fontSize: '16px', flexShrink: 0, marginTop: '1px' }}>
-                        {flag.severity === 'block' ? '⛔' : '⚠️'}
-                      </span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: '1.45', marginBottom: '6px' }}>
-                          {flag.message}
-                        </p>
-                        <button
-                          onClick={() =>
-                            setAcknowledgedFlags((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(flag.id)) next.delete(flag.id); else next.add(flag.id);
-                              return next;
-                            })
-                          }
-                          style={{
-                            fontSize: '11.5px', color: acked ? 'var(--sos-text-muted)' : accent,
-                            background: 'none',
-                            border: `1px solid ${acked ? 'var(--sos-border-subtle)' : accent}`,
-                            borderRadius: '5px', padding: '3px 10px',
-                            cursor: 'pointer', fontWeight: 500,
-                          }}
-                        >
-                          {acked ? 'Undo acknowledge' : 'Acknowledge'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </SectionCard>
+
 
           {/* §7 Tax & Fee Breakdown */}
           <SectionCard title="Tax & fee breakdown">
@@ -709,13 +542,13 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
               <div>
                 <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '4px', fontWeight: 500, letterSpacing: '0.04em' }}>TAX (5% GST, auto)</p>
                 <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--sos-text-secondary)' }}>
-                  {payment.currency} {taxAmount.toLocaleString()}
+                  {handover.currency} {taxAmount.toLocaleString()}
                 </p>
               </div>
               <div>
                 <p style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '4px', fontWeight: 500, letterSpacing: '0.04em' }}>TOTAL</p>
                 <p style={{ fontSize: '15px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>
-                  {payment.currency} {totalAmount.toLocaleString()}
+                  {handover.currency} {totalAmount.toLocaleString()}
                 </p>
               </div>
             </div>
@@ -752,9 +585,7 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
         }
         hint={
           !canVerify
-            ? !checklistComplete
-              ? `${CHECKLIST_ITEMS.length - checklistDone} checklist item${CHECKLIST_ITEMS.length - checklistDone !== 1 ? 's' : ''} remaining`
-              : `${blockingUnacked} blocking flag${blockingUnacked !== 1 ? 's' : ''} — acknowledge to proceed`
+            ? `${CHECKLIST_ITEMS.length - checklistDone} checklist item${CHECKLIST_ITEMS.length - checklistDone !== 1 ? 's' : ''} remaining`
             : undefined
         }
         right={

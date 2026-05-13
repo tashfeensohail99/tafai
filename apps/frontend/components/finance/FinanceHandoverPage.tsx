@@ -4,7 +4,7 @@
 // Officer selects processing assignment + adds a handover note, then fires
 // "Send to Processing". Phase 1: mock data, session-state transitions.
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
@@ -30,28 +30,19 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_PAYMENTS,
+  fetchHandovers,
+  reviewHandover,
   METHOD_LABEL,
+  STATUS_LABEL,
   fmtAmount,
   fmtRelative,
   fmtDateTime,
-  type PaymentRecord,
-  type Priority,
-} from '@/components/finance-v1/mockData';
+  clientName,
+  type ApiHandover,
+  type FinanceHandoverStatus,
+} from '@/lib/finance-api';
 
 // ---------- Config -------------------------------------------------------
-
-const PRIORITY_TONE: Record<Priority, BadgeTone> = {
-  LOW: 'neutral',
-  NORMAL: 'info',
-  URGENT: 'warning',
-};
-
-const PRIORITY_LABEL: Record<Priority, string> = {
-  LOW: 'Low',
-  NORMAL: 'Normal',
-  URGENT: 'Urgent',
-};
 
 // Processing departments inferred from service
 const DEPT_OPTIONS = [
@@ -98,8 +89,8 @@ interface HandoverForm {
 
 type PanelState =
   | { type: 'none' }
-  | { type: 'form'; payment: PaymentRecord; form: HandoverForm }
-  | { type: 'sent'; payment: PaymentRecord; sentAt: string };
+  | { type: 'form'; payment: ApiHandover; form: HandoverForm }
+  | { type: 'sent'; payment: ApiHandover; sentAt: string };
 
 // ---------- Sub-components -----------------------------------------------
 
@@ -109,7 +100,7 @@ function QueueRow({
   isSent,
   onClick,
 }: {
-  payment: PaymentRecord;
+  payment: ApiHandover;
   selected: boolean;
   isSent: boolean;
   onClick: () => void;
@@ -149,8 +140,6 @@ function QueueRow({
           justifyContent: 'center',
           background: isSent
             ? 'var(--sos-success-muted, color-mix(in srgb, var(--sos-success) 12%, transparent))'
-            : payment.priority === 'URGENT'
-            ? 'color-mix(in srgb, var(--sos-warning) 12%, transparent)'
             : 'var(--sos-surface-2)',
           flexShrink: 0,
         }}
@@ -160,11 +149,7 @@ function QueueRow({
         ) : (
           <FileText
             size={18}
-            color={
-              payment.priority === 'URGENT'
-                ? 'var(--sos-warning)'
-                : 'var(--sos-muted)'
-            }
+            color='var(--sos-muted)'
           />
         )}
       </div>
@@ -182,8 +167,8 @@ function QueueRow({
             {payment.clientName}
           </span>
           {!isSent && (
-            <StatusBadge tone={PRIORITY_TONE[payment.priority]} size="sm">
-              {PRIORITY_LABEL[payment.priority]}
+            <StatusBadge tone="info" size="sm">
+              Verified
             </StatusBadge>
           )}
           {isSent && (
@@ -202,15 +187,13 @@ function QueueRow({
             flexWrap: 'wrap',
           }}
         >
-          <span>{payment.service}</span>
+          <span>{payment.lead.serviceInterest ?? '—'}</span>
           <span>·</span>
-          <span>{payment.targetCountry}</span>
+          <span>{payment.lead.targetCountry ?? '—'}</span>
           <span>·</span>
           <span style={{ fontFamily: 'monospace' }}>
-            {fmtAmount(payment.receivedAmount, payment.currency)}
+            {fmtAmount(payment.submittedAmount, payment.currency)}
           </span>
-          <span>·</span>
-          <span>{payment.branch}</span>
         </div>
       </div>
 
@@ -226,7 +209,7 @@ function QueueRow({
 // ---------- Handover detail panel ----------------------------------------
 
 interface HandoverPanelProps {
-  payment: PaymentRecord;
+  payment: ApiHandover;
   form: HandoverForm;
   onChange: (form: HandoverForm) => void;
   onSend: () => void;
@@ -288,16 +271,11 @@ function HandoverPanel({
             }}
           >
             {[
-              ['Client', payment.clientName],
-              ['Service', payment.service],
-              ['Target country', payment.targetCountry],
-              ['Branch', payment.branch],
-              ['Amount', fmtAmount(payment.receivedAmount, payment.currency)],
-              ['Method', METHOD_LABEL[payment.paymentMethod]],
-              ['Receipt', payment.receiptNumber ?? '—'],
-              ['Verified', payment.verifiedAt ? fmtDateTime(payment.verifiedAt) : '—'],
-              ['Sales', payment.salesUserName],
-              ['Finance', payment.financeUserName ?? '—'],
+              ['Client', clientName(payment)],
+              ['Service', payment.lead.serviceInterest ?? '—'],
+              ['Target country', payment.lead.targetCountry ?? '—'],
+              ['Amount', fmtAmount(payment.submittedAmount, payment.currency)],
+              ['Method', payment.paymentMethod ? (METHOD_LABEL[payment.paymentMethod] ?? payment.paymentMethod) : '—'],
             ].map(([label, value]) => (
               <div key={label}>
                 <p
@@ -324,26 +302,26 @@ function HandoverPanel({
       </GlassCard>
 
       {/* Notes (read-only) */}
-      {(payment.salesNote || payment.financeNote) && (
+      {(payment.notes || payment.financeNotes) && (
         <GlassCard>
           <div style={{ padding: 'var(--sos-space-4) var(--sos-space-5)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {payment.salesNote && (
+            {payment.notes && (
               <div>
                 <p style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)', fontWeight: 600, marginBottom: 4 }}>
                   Sales note
                 </p>
                 <p style={{ fontSize: 'var(--sos-text-sm)', color: 'var(--sos-text)' }}>
-                  {payment.salesNote}
+                  {payment.notes}
                 </p>
               </div>
             )}
-            {payment.financeNote && (
+            {payment.financeNotes && (
               <div>
                 <p style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)', fontWeight: 600, marginBottom: 4 }}>
                   Finance note
                 </p>
                 <p style={{ fontSize: 'var(--sos-text-sm)', color: 'var(--sos-text)' }}>
-                  {payment.financeNote}
+                  {payment.financeNotes}
                 </p>
               </div>
             )}
@@ -545,7 +523,7 @@ function HandoverPanel({
                   Send to Processing?
                 </p>
                 <p style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)', marginTop: 2 }}>
-                  {payment.clientName} · {fmtAmount(payment.receivedAmount, payment.currency)}
+                  {clientName(payment)} · {fmtAmount(payment.submittedAmount, payment.currency)}
                 </p>
               </div>
             </div>
@@ -609,7 +587,7 @@ function HandoverPanel({
 
 // ---------- Sent confirmation panel --------------------------------------
 
-function SentPanel({ payment }: { payment: PaymentRecord }) {
+function SentPanel({ payment }: { payment: ApiHandover }) {
   return (
     <GlassCard>
       <div
@@ -652,8 +630,8 @@ function SentPanel({ payment }: { payment: PaymentRecord }) {
               marginTop: 4,
             }}
           >
-            {payment.clientName} ·{' '}
-            {fmtAmount(payment.receivedAmount, payment.currency)} has been
+            {clientName(payment)} ·{' '}
+            {fmtAmount(payment.submittedAmount, payment.currency)} has been
             dispatched to the Processing department.
           </p>
         </div>
@@ -706,53 +684,59 @@ function NonePanel() {
 // ---------- Main page ----------------------------------------------------
 
 export function FinanceHandoverPage() {
-  // Session-state: track which payment IDs have been sent
+  const [handovers, setHandovers] = useState<ApiHandover[]>([]);
   const [sentIds, setSentIds] = useState<Set<string>>(new Set());
   const [panel, setPanel] = useState<PanelState>({ type: 'none' });
 
-  // Pull RECEIPT_CONFIRMED from mock data (+ session-sent stay visible as sent)
-  const queue = MOCK_PAYMENTS.filter(
-    (p) => p.status === 'RECEIPT_CONFIRMED' || sentIds.has(p.id),
+  useEffect(() => {
+    fetchHandovers({ status: 'PAYMENT_VERIFIED' }).then(setHandovers).catch(console.error);
+  }, []);
+
+  // Keep sent items visible in the list
+  const queue = handovers.filter(
+    (p) => p.status === 'PAYMENT_VERIFIED' || sentIds.has(p.id),
   );
 
-  // Sort: sent last, urgent first
+  // Sort: sent last
   const sortedQueue = [...queue].sort((a, b) => {
     const aSent = sentIds.has(a.id) ? 1 : 0;
     const bSent = sentIds.has(b.id) ? 1 : 0;
-    if (aSent !== bSent) return aSent - bSent;
-    const pOrder: Record<Priority, number> = { URGENT: 0, NORMAL: 1, LOW: 2 };
-    return pOrder[a.priority] - pOrder[b.priority];
+    return aSent - bSent;
   });
 
   const pendingCount = queue.filter((p) => !sentIds.has(p.id)).length;
   const sentCount = sentIds.size;
   const totalAmount = queue
     .filter((p) => !sentIds.has(p.id))
-    .reduce((s, p) => s + p.receivedAmount, 0);
+    .reduce((s, p) => s + parseFloat(p.submittedAmount), 0);
 
-  function openPayment(payment: PaymentRecord) {
-    if (sentIds.has(payment.id)) {
-      setPanel({ type: 'sent', payment, sentAt: new Date().toISOString() });
+  function openPayment(handover: ApiHandover) {
+    if (sentIds.has(handover.id)) {
+      setPanel({ type: 'sent', payment: handover, sentAt: new Date().toISOString() });
       return;
     }
     setPanel({
       type: 'form',
-      payment,
+      payment: handover,
       form: {
-        dept: suggestDept(payment.service),
+        dept: suggestDept(handover.lead.serviceInterest ?? ''),
         officer: 'proc-aisha',
-        dispatchPriority:
-          payment.priority === 'URGENT' ? 'Rush' : 'Normal',
+        dispatchPriority: 'Normal',
         note: '',
       },
     });
   }
 
-  function handleSend() {
+  async function handleSend() {
     if (panel.type !== 'form') return;
     const { payment } = panel;
-    setSentIds((prev) => new Set([...prev, payment.id]));
-    setPanel({ type: 'sent', payment, sentAt: new Date().toISOString() });
+    try {
+      await reviewHandover(payment.id, 'RECORD_PAYMENT', { financeNotes: panel.form.note || 'Sent to processing' });
+      setSentIds((prev) => new Set([...prev, payment.id]));
+      setPanel({ type: 'sent', payment, sentAt: new Date().toISOString() });
+    } catch {
+      // fail silently for now
+    }
   }
 
   function handleCancel() {

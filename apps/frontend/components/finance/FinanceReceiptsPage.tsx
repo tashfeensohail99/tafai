@@ -9,7 +9,7 @@
 // dispatch.  Receipt number is minted client-side for UI preview.
 // Phase 2 will wire up the real backend endpoints.
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   CheckCircle2,
   ChevronRight,
@@ -38,15 +38,15 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_FINANCE_USER,
-  MOCK_PAYMENTS,
+  fetchHandovers,
   METHOD_LABEL,
+  STATUS_LABEL,
   fmtAmount,
-  fmtDateTime,
   fmtRelative,
-  type PaymentRecord,
-  type PaymentStatus,
-} from '@/components/finance-v1/mockData';
+  clientName,
+  type ApiHandover,
+  type FinanceHandoverStatus,
+} from '@/lib/finance-api';
 
 // ---------- Types --------------------------------------------------------
 
@@ -63,13 +63,13 @@ interface ReceiptFormState {
 
 // ---------- Constants ---------------------------------------------------
 
-const TABS: Array<{ key: TabKey; label: string; statuses: PaymentStatus[] }> =
+const TABS: Array<{ key: TabKey; label: string; statuses: FinanceHandoverStatus[] }> =
   [
-    { key: 'NEEDS_RECEIPT', label: 'Needs Receipt', statuses: ['VERIFIED'] },
+    { key: 'NEEDS_RECEIPT', label: 'Needs Receipt', statuses: ['PAYMENT_RECORDED'] },
     {
       key: 'CONFIRMED',
       label: 'Receipt Confirmed',
-      statuses: ['RECEIPT_CONFIRMED'],
+      statuses: ['PAYMENT_VERIFIED'],
     },
   ];
 
@@ -87,24 +87,23 @@ const TAX_RATE_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 
 const STATUS_TONE: Record<string, BadgeTone> = {
-  VERIFIED: 'info',
-  RECEIPT_CONFIRMED: 'success',
+  PAYMENT_RECORDED: 'info',
+  PAYMENT_VERIFIED: 'success',
 };
 
 // ---------- Helpers ------------------------------------------------------
 
-function nextReceiptNumber(branch: string): string {
+function nextReceiptNumber(): string {
   const year = new Date().getFullYear();
-  // Mock — real backend uses an atomic sequence.
   const seq = String(Math.floor(142 + Math.random() * 10)).padStart(6, '0');
-  return `TF-${branch}-${year}-${seq}`;
+  return `TF-${year}-${seq}`;
 }
 
-function defaultForm(p: PaymentRecord): ReceiptFormState {
+function defaultForm(p: ApiHandover): ReceiptFormState {
   return {
     publicRemarks: '',
     internalRemarks: '',
-    serviceFee: String(p.receivedAmount),
+    serviceFee: p.submittedAmount,
     govtFee: '0',
     taxRate: '0',
     template: 'standard',
@@ -174,7 +173,7 @@ function ReadOnlyRow({
 // ---------- Payment row card ---------------------------------------------
 
 interface PaymentRowProps {
-  payment: PaymentRecord;
+  payment: ApiHandover;
   isSelected: boolean;
   onSelect: () => void;
 }
@@ -219,7 +218,7 @@ function PaymentRow({ payment, isSelected, onSelect }: PaymentRowProps) {
           color: 'var(--sos-accent)',
         }}
       >
-        {payment.clientName
+        {clientName(payment)
           .split(' ')
           .map((w) => w[0])
           .join('')
@@ -247,10 +246,10 @@ function PaymentRow({ payment, isSelected, onSelect }: PaymentRowProps) {
               whiteSpace: 'nowrap',
             }}
           >
-            {payment.clientName}
+            {clientName(payment)}
           </span>
           <StatusBadge tone={tone}>
-            {payment.status === 'VERIFIED' ? 'Verified' : 'Receipted'}
+            {payment.status === 'PAYMENT_RECORDED' ? 'Needs Receipt' : 'Verified'}
           </StatusBadge>
         </div>
         <div
@@ -262,7 +261,7 @@ function PaymentRow({ payment, isSelected, onSelect }: PaymentRowProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {payment.service} · {payment.targetCountry} · {payment.branch}
+          {payment.lead.serviceInterest ?? '—'} · {payment.lead.targetCountry ?? '—'}
         </div>
       </div>
 
@@ -275,7 +274,7 @@ function PaymentRow({ payment, isSelected, onSelect }: PaymentRowProps) {
             color: 'var(--sos-text)',
           }}
         >
-          {fmtAmount(payment.receivedAmount, payment.currency)}
+          {fmtAmount(payment.submittedAmount, payment.currency)}
         </div>
         <div
           style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)' }}
@@ -295,7 +294,7 @@ function PaymentRow({ payment, isSelected, onSelect }: PaymentRowProps) {
 // ---------- Receipt generation panel (VERIFIED → generate) ---------------
 
 interface GenerationPanelProps {
-  payment: PaymentRecord;
+  payment: ApiHandover;
   onGenerated: (receiptNumber: string) => void;
 }
 
@@ -311,9 +310,8 @@ function ReceiptGenerationPanel({ payment, onGenerated }: GenerationPanelProps) 
 
   function handleGenerate() {
     setGenerating(true);
-    // Simulate async mint
     setTimeout(() => {
-      onGenerated(nextReceiptNumber(payment.branch));
+      onGenerated(nextReceiptNumber());
     }, 800);
   }
 
@@ -335,17 +333,14 @@ function ReceiptGenerationPanel({ payment, onGenerated }: GenerationPanelProps) 
             }}
           >
             <ReadOnlyRow label="Receipt number" value={<em style={{ color: 'var(--sos-muted)' }}>Will be generated on confirmation</em>} />
-            <ReadOnlyRow label="Client" value={payment.clientName} />
-            <ReadOnlyRow label="Service" value={payment.service} />
-            <ReadOnlyRow label="Target country" value={payment.targetCountry} />
-            <ReadOnlyRow label="Verified amount" value={fmtAmount(payment.receivedAmount, payment.currency)} />
-            <ReadOnlyRow label="Payment method" value={METHOD_LABEL[payment.paymentMethod]} />
-            {payment.transactionReference && (
-              <ReadOnlyRow label="Transaction reference" value={payment.transactionReference} />
+            <ReadOnlyRow label="Client" value={clientName(payment)} />
+            <ReadOnlyRow label="Service" value={payment.lead.serviceInterest ?? '—'} />
+            <ReadOnlyRow label="Target country" value={payment.lead.targetCountry ?? '—'} />
+            <ReadOnlyRow label="Verified amount" value={fmtAmount(payment.submittedAmount, payment.currency)} />
+            <ReadOnlyRow label="Payment method" value={payment.paymentMethod ? (METHOD_LABEL[payment.paymentMethod] ?? payment.paymentMethod) : '—'} />
+            {payment.transactionRef && (
+              <ReadOnlyRow label="Transaction reference" value={payment.transactionRef} />
             )}
-            <ReadOnlyRow label="Verified at" value={payment.verifiedAt ? fmtDateTime(payment.verifiedAt) : '—'} />
-            <ReadOnlyRow label="Verified by" value={payment.financeUserName ?? MOCK_FINANCE_USER.name} />
-            <ReadOnlyRow label="Branch" value={payment.branch} />
           </div>
         </div>
       </GlassCard>
@@ -528,7 +523,7 @@ function ReceiptGenerationPanel({ payment, onGenerated }: GenerationPanelProps) 
 // ---------- Receipt confirmed panel (view + distribute + mark ready) ------
 
 interface ConfirmedPanelProps {
-  payment: PaymentRecord;
+  payment: ApiHandover;
   receiptNumber: string;
   onMarkReady: () => void;
   alreadyReady: boolean;
@@ -593,18 +588,17 @@ function ReceiptConfirmedPanel({
                 </span>
               }
             />
-            <ReadOnlyRow label="Client" value={payment.clientName} />
-            <ReadOnlyRow label="Service" value={payment.service} />
-            <ReadOnlyRow label="Amount" value={fmtAmount(payment.receivedAmount, payment.currency)} />
-            <ReadOnlyRow label="Payment method" value={METHOD_LABEL[payment.paymentMethod]} />
-            {payment.transactionReference && (
-              <ReadOnlyRow label="Transaction ref." value={payment.transactionReference} />
+            <ReadOnlyRow label="Client" value={clientName(payment)} />
+            <ReadOnlyRow label="Service" value={payment.lead.serviceInterest ?? '—'} />
+            <ReadOnlyRow label="Amount" value={fmtAmount(payment.submittedAmount, payment.currency)} />
+            <ReadOnlyRow label="Payment method" value={payment.paymentMethod ? (METHOD_LABEL[payment.paymentMethod] ?? payment.paymentMethod) : '—'} />
+            {payment.transactionRef && (
+              <ReadOnlyRow label="Transaction ref." value={payment.transactionRef} />
             )}
             <ReadOnlyRow
-              label="Verified at"
-              value={payment.verifiedAt ? fmtDateTime(payment.verifiedAt) : fmtRelative(new Date().toISOString())}
+              label="Submitted at"
+              value={fmtRelative(payment.submittedAt)}
             />
-            <ReadOnlyRow label="Verified by" value={payment.financeUserName ?? MOCK_FINANCE_USER.name} />
           </div>
         </div>
       </GlassCard>
@@ -662,24 +656,24 @@ function ReceiptConfirmedPanel({
 // ---------- Main page component ------------------------------------------
 
 export function FinanceReceiptsPage() {
+  const [allHandovers, setAllHandovers] = useState<ApiHandover[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('NEEDS_RECEIPT');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  // Track which payments have been receipted this session (VERIFIED → minted)
-  const [mintedReceipts, setMintedReceipts] = useState<
-    Record<string, string>
-  >({});
-  // Track which payments have been marked ready this session
+  const [mintedReceipts, setMintedReceipts] = useState<Record<string, string>>({});
   const [readySet, setReadySet] = useState<Set<string>>(new Set());
 
+  useEffect(() => {
+    fetchHandovers().then(setAllHandovers).catch(console.error);
+  }, []);
+
   const needsReceiptPayments = useMemo(
-    () => MOCK_PAYMENTS.filter((p) => p.status === 'VERIFIED'),
-    [],
+    () => allHandovers.filter((p) => p.status === 'PAYMENT_RECORDED'),
+    [allHandovers],
   );
 
   const confirmedPayments = useMemo(
-    () => MOCK_PAYMENTS.filter((p) => p.status === 'RECEIPT_CONFIRMED'),
-    [],
+    () => allHandovers.filter((p) => p.status === 'PAYMENT_VERIFIED'),
+    [allHandovers],
   );
 
   const activeList =
@@ -690,9 +684,8 @@ export function FinanceReceiptsPage() {
     [activeList, selectedId],
   );
 
-  // Merge: session-minted receipts override mock receiptNumber
-  function resolveReceiptNumber(p: PaymentRecord): string {
-    return mintedReceipts[p.id] ?? p.receiptNumber ?? '';
+  function resolveReceiptNumber(p: ApiHandover): string {
+    return mintedReceipts[p.id] ?? '';
   }
 
   const handleGenerated = useCallback(
@@ -706,9 +699,7 @@ export function FinanceReceiptsPage() {
     setReadySet((prev) => new Set([...prev, id]));
   }, []);
 
-  const needsCount =
-    needsReceiptPayments.length +
-    Object.keys(mintedReceipts).length;
+  const needsCount = needsReceiptPayments.length;
   const confirmedCount =
     confirmedPayments.length + Object.keys(mintedReceipts).length;
 
@@ -834,20 +825,15 @@ export function FinanceReceiptsPage() {
                 />
               ))}
 
-              {/* Freshly minted receipts (moved from NEEDS_RECEIPT this session) */}
+              {/* Freshly minted receipts visible in Confirmed tab */}
               {activeTab === 'CONFIRMED' &&
                 Object.entries(mintedReceipts).map(([id]) => {
-                  const original = MOCK_PAYMENTS.find((p) => p.id === id);
+                  const original = allHandovers.find((p) => p.id === id);
                   if (!original) return null;
-                  const synthetic: PaymentRecord = {
-                    ...original,
-                    status: 'RECEIPT_CONFIRMED',
-                    receiptNumber: mintedReceipts[id],
-                  };
                   return (
                     <PaymentRow
                       key={`session-${id}`}
-                      payment={synthetic}
+                      payment={original}
                       isSelected={selectedId === `session-${id}`}
                       onSelect={() =>
                         setSelectedId(
@@ -896,8 +882,8 @@ export function FinanceReceiptsPage() {
                 >
                   {activeTab === 'NEEDS_RECEIPT' &&
                   !mintedReceipts[selectedPayment.id]
-                    ? `Generate: ${selectedPayment.clientName}`
-                    : `Receipt: ${selectedPayment.clientName}`}
+                    ? `Generate: ${clientName(selectedPayment)}`
+                    : `Receipt: ${clientName(selectedPayment)}`}
                 </h1>
                 <p
                   style={{
@@ -907,7 +893,7 @@ export function FinanceReceiptsPage() {
                   }}
                 >
                   {selectedPayment.service} · {selectedPayment.targetCountry} ·{' '}
-                  {fmtAmount(selectedPayment.receivedAmount, selectedPayment.currency)}
+                  {fmtAmount(selectedPayment.submittedAmount, selectedPayment.currency)}
                   {' · '}
                   {METHOD_LABEL[selectedPayment.paymentMethod]}
                 </p>

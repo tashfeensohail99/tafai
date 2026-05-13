@@ -1,18 +1,13 @@
 'use client';
 // Finance Intake Queue — Phase 1 / Screen 2 of 7.
-// Lists every payment record currently in an active finance state.
+// Lists every handover currently in an active finance state.
 // Officer claims an unclaimed case OR resumes one already in their queue.
-//
-// What's IN Phase 1: status tabs, search, filter by payment method, row
-// list with full meta. What's NOT in Phase 1: bulk actions, reassignment,
-// concurrent-edit locks, fraud-flag indicators — those land in Phase 2.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
   ArrowRight,
-  AtSign,
   Banknote,
   Building2,
   CalendarClock,
@@ -27,7 +22,6 @@ import {
   ShieldCheck,
   Sliders,
   Smartphone,
-  User,
   Wallet,
 } from 'lucide-react';
 import {
@@ -42,37 +36,34 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_FINANCE_USER,
-  MOCK_PAYMENTS,
-  METHOD_LABEL,
-  STATUS_LABEL,
-  countByStatus,
-  countMine,
+  fetchHandovers,
   fmtAmount,
   fmtRelative,
-  initialsOf,
-  type PaymentMethod,
-  type PaymentRecord,
-  type PaymentStatus,
-} from '@/components/finance-v1/mockData';
+  clientName,
+  STATUS_LABEL,
+  METHOD_LABEL,
+  type ApiHandover,
+  type FinanceHandoverStatus,
+} from '@/lib/finance-api';
+import { useSession } from '@/lib/session';
 
 // ---------- Tab filter system -------------------------------------------
 
 type TabKey =
   | 'ALL'
-  | 'NEW_FROM_SALES'
+  | 'SUBMITTED'
   | 'MINE'
-  | 'CORRECTION_REQUIRED'
-  | 'AWAITING_BALANCE'
-  | 'ON_HOLD';
+  | 'REJECTED'
+  | 'PAYMENT_RECORDED'
+  | 'IN_REVIEW';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'ALL', label: 'All active' },
-  { key: 'NEW_FROM_SALES', label: 'New from Sales' },
+  { key: 'SUBMITTED', label: 'New from Sales' },
   { key: 'MINE', label: 'My queue' },
-  { key: 'CORRECTION_REQUIRED', label: 'Corrections' },
-  { key: 'AWAITING_BALANCE', label: 'Awaiting balance' },
-  { key: 'ON_HOLD', label: 'On hold' },
+  { key: 'REJECTED', label: 'Corrections' },
+  { key: 'PAYMENT_RECORDED', label: 'Payment Recorded' },
+  { key: 'IN_REVIEW', label: 'In Review' },
 ];
 
 const ACTIVE_STATUSES: PaymentStatus[] = [
@@ -83,22 +74,27 @@ const ACTIVE_STATUSES: PaymentStatus[] = [
   'AWAITING_BALANCE',
 ];
 
-function applyTab(items: PaymentRecord[], tab: TabKey): PaymentRecord[] {
+const ACTIVE_STATUSES: FinanceHandoverStatus[] = [
+  'SUBMITTED',
+  'IN_REVIEW',
+  'PAYMENT_RECORDED',
+  'REJECTED',
+];
+
+function applyTab(items: ApiHandover[], tab: TabKey, userId: string | null): ApiHandover[] {
   switch (tab) {
-    case 'NEW_FROM_SALES':
-      return items.filter((p) => p.status === 'NEW_FROM_SALES');
+    case 'SUBMITTED':
+      return items.filter((p) => p.status === 'SUBMITTED');
     case 'MINE':
       return items.filter(
-        (p) =>
-          p.financeUserId === MOCK_FINANCE_USER.id &&
-          p.status === 'UNDER_VERIFICATION',
+        (p) => p.reviewedByUserId === userId && p.status === 'IN_REVIEW',
       );
-    case 'CORRECTION_REQUIRED':
-      return items.filter((p) => p.status === 'CORRECTION_REQUIRED');
-    case 'AWAITING_BALANCE':
-      return items.filter((p) => p.status === 'AWAITING_BALANCE');
-    case 'ON_HOLD':
-      return items.filter((p) => p.status === 'ON_HOLD');
+    case 'REJECTED':
+      return items.filter((p) => p.status === 'REJECTED');
+    case 'PAYMENT_RECORDED':
+      return items.filter((p) => p.status === 'PAYMENT_RECORDED');
+    case 'IN_REVIEW':
+      return items.filter((p) => p.status === 'IN_REVIEW');
     case 'ALL':
     default:
       return items.filter((p) => ACTIVE_STATUSES.includes(p.status));
@@ -107,42 +103,32 @@ function applyTab(items: PaymentRecord[], tab: TabKey): PaymentRecord[] {
 
 // ---------- Tone mappers -------------------------------------------------
 
-function statusTone(status: PaymentStatus): BadgeTone {
+function statusTone(status: FinanceHandoverStatus): BadgeTone {
   switch (status) {
-    case 'NEW_FROM_SALES':
+    case 'SUBMITTED':
       return 'info';
-    case 'UNDER_VERIFICATION':
+    case 'IN_REVIEW':
       return 'cyan';
-    case 'ON_HOLD':
-      return 'neutral';
-    case 'CORRECTION_REQUIRED':
-      return 'warning';
-    case 'REJECTED':
-      return 'danger';
-    case 'AWAITING_BALANCE':
+    case 'PAYMENT_RECORDED':
       return 'warm';
-    case 'VERIFIED':
-    case 'RECEIPT_CONFIRMED':
+    case 'REJECTED':
+      return 'warning';
+    case 'PAYMENT_VERIFIED':
       return 'success';
     case 'SENT_TO_PROCESSING':
       return 'violet';
+    case 'CANCELLED':
+      return 'neutral';
     default:
       return 'neutral';
   }
-}
-
-function slaToneFromStatus(s: PaymentRecord['slaStatus']): BadgeTone {
-  if (s === 'BREACHED') return 'danger';
-  if (s === 'APPROACHING') return 'warning';
-  if (s === 'CLEARED') return 'success';
-  return 'info';
 }
 
 function MethodIcon({
   method,
   size = 13,
 }: {
-  method: PaymentMethod;
+  method: string;
   size?: number;
 }) {
   switch (method) {
@@ -158,64 +144,80 @@ function MethodIcon({
       return <Smartphone size={size} />;
     case 'WIRE':
       return <Globe size={size} />;
-    case 'ONLINE':
-      return <AtSign size={size} />;
     default:
       return <Wallet size={size} />;
   }
 }
 
+function initialsOf(name: string): string {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('');
+}
+
 // ---------- Main page ----------------------------------------------------
 
 export function FinanceIntakePage() {
+  const session = useSession();
   const [tab, setTab] = useState<TabKey>('ALL');
   const [query, setQuery] = useState('');
-  const [methodFilter, setMethodFilter] = useState<PaymentMethod | 'ALL'>('ALL');
+  const [methodFilter, setMethodFilter] = useState<string>('ALL');
+  const [handovers, setHandovers] = useState<ApiHandover[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const userId = session.status === 'authed' ? session.user.id : null;
+
+  useEffect(() => {
+    fetchHandovers()
+      .then(setHandovers)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
 
   const filtered = useMemo(() => {
-    let result = applyTab(MOCK_PAYMENTS, tab);
+    let result = applyTab(handovers, tab, userId);
 
     if (methodFilter !== 'ALL') {
       result = result.filter((p) => p.paymentMethod === methodFilter);
     }
     if (query.trim()) {
       const q = query.toLowerCase();
-      result = result.filter(
-        (p) =>
-          p.clientName.toLowerCase().includes(q) ||
-          p.service.toLowerCase().includes(q) ||
-          p.salesUserName.toLowerCase().includes(q) ||
-          (p.transactionReference?.toLowerCase().includes(q) ?? false) ||
-          p.id.toLowerCase().includes(q),
-      );
+      result = result.filter((p) => {
+        const name = clientName(p).toLowerCase();
+        return (
+          name.includes(q) ||
+          (p.lead.serviceInterest?.toLowerCase().includes(q) ?? false) ||
+          (p.transactionRef?.toLowerCase().includes(q) ?? false) ||
+          p.id.toLowerCase().includes(q)
+        );
+      });
     }
 
-    // Sort: urgent first, then SLA-due ascending
-    return [...result].sort((a, b) => {
-      if (a.priority === 'URGENT' && b.priority !== 'URGENT') return -1;
-      if (b.priority === 'URGENT' && a.priority !== 'URGENT') return 1;
-      return +new Date(a.slaDueAt) - +new Date(b.slaDueAt);
-    });
-  }, [tab, query, methodFilter]);
+    return [...result].sort((a, b) =>
+      new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime(),
+    );
+  }, [tab, query, methodFilter, handovers, userId]);
 
   // KPI counts (computed once)
+  const activeHandovers = handovers.filter((p) => ACTIVE_STATUSES.includes(p.status));
   const counts = {
-    total: MOCK_PAYMENTS.filter((p) => ACTIVE_STATUSES.includes(p.status)).length,
-    newFromSales: countByStatus('NEW_FROM_SALES'),
-    mine: countMine('UNDER_VERIFICATION'),
-    correction: countByStatus('CORRECTION_REQUIRED'),
+    total: activeHandovers.length,
+    newFromSales: handovers.filter((p) => p.status === 'SUBMITTED').length,
+    mine: handovers.filter((p) => p.reviewedByUserId === userId && p.status === 'IN_REVIEW').length,
+    correction: handovers.filter((p) => p.status === 'REJECTED').length,
   };
 
   const tabCounts: Record<TabKey, number> = {
     ALL: counts.total,
-    NEW_FROM_SALES: counts.newFromSales,
+    SUBMITTED: counts.newFromSales,
     MINE: counts.mine,
-    CORRECTION_REQUIRED: counts.correction,
-    AWAITING_BALANCE: countByStatus('AWAITING_BALANCE'),
-    ON_HOLD: countByStatus('ON_HOLD'),
+    REJECTED: counts.correction,
+    PAYMENT_RECORDED: handovers.filter((p) => p.status === 'PAYMENT_RECORDED').length,
+    IN_REVIEW: handovers.filter((p) => p.status === 'IN_REVIEW').length,
   };
-
-  const slaBreaches = filtered.filter((p) => p.slaStatus === 'BREACHED').length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -230,21 +232,11 @@ export function FinanceIntakePage() {
           <>
             {counts.total} active cases in the queue · {counts.newFromSales} waiting
             to be claimed · {counts.mine} in your active review · {counts.correction}{' '}
-            sent back to Sales for fixes
-            {slaBreaches > 0 ? (
-              <>
-                {' '}
-                · <strong style={{ color: 'var(--sos-status-danger)' }}>
-                  {slaBreaches} past SLA
-                </strong>
-              </>
-            ) : null}
-            .
+            sent back to Sales for fixes.
           </>
         }
         actions={
           <>
-            <PrimaryButton iconLeft={<Inbox size={15} />}>Claim next case</PrimaryButton>
             <SecondaryButton iconLeft={<Sliders size={15} />}>More filters</SecondaryButton>
           </>
         }
@@ -283,15 +275,15 @@ export function FinanceIntakePage() {
           footer="Resume where you left off"
         />
         <MetricCard
-          label="Past SLA"
-          value={slaBreaches}
-          hint="Need immediate attention"
-          tone={slaBreaches > 0 ? 'danger' : 'success'}
+          label="Corrections"
+          value={counts.correction}
+          hint="Sent back to Sales"
+          tone={counts.correction > 0 ? 'danger' : 'success'}
           Icon={CalendarClock}
           footer={
-            slaBreaches > 0
-              ? 'Sort sorts urgent + breached to the top'
-              : 'All cases within SLA window'
+            counts.correction > 0
+              ? 'Sales is fixing these cases'
+              : 'No pending corrections'
           }
         />
       </section>
@@ -355,9 +347,7 @@ export function FinanceIntakePage() {
             <select
               className="sos-select"
               value={methodFilter}
-              onChange={(e) =>
-                setMethodFilter(e.target.value as PaymentMethod | 'ALL')
-              }
+              onChange={(e) => setMethodFilter(e.target.value)}
               style={{ width: 'auto', minWidth: '160px' }}
               aria-label="Filter by payment method"
             >
@@ -376,11 +366,15 @@ export function FinanceIntakePage() {
       </GlassCard>
 
       {/* Queue */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div style={{ padding: '40px 24px', textAlign: 'center', color: 'var(--sos-text-muted)' }}>
+          Loading handovers…
+        </div>
+      ) : filtered.length === 0 ? (
         <EmptyState
           Icon={CheckCircle2}
           title="No cases match this view"
-          description="Try the All tab, clear the search, or check Awaiting Balance / On Hold."
+          description="Try the All tab or clear the search."
           action={
             <PrimaryButton
               onClick={() => {
@@ -398,7 +392,7 @@ export function FinanceIntakePage() {
           style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
         >
           {filtered.map((p) => (
-            <PaymentRow key={p.id} item={p} />
+            <PaymentRow key={p.id} item={p} currentUserId={userId} />
           ))}
         </section>
       )}
@@ -408,12 +402,12 @@ export function FinanceIntakePage() {
 
 // ---------- Row ---------------------------------------------------------
 
-function PaymentRow({ item }: { item: PaymentRecord }) {
-  const initials = initialsOf(item.clientName);
-  const unclaimed = item.financeUserId == null;
-  const claimedByMe = item.financeUserId === MOCK_FINANCE_USER.id;
+function PaymentRow({ item, currentUserId }: { item: ApiHandover; currentUserId: string | null }) {
+  const name = clientName(item);
+  const initials = initialsOf(name);
+  const unclaimed = item.reviewedByUserId == null;
+  const claimedByMe = item.reviewedByUserId === currentUserId;
   const claimedByOther = !unclaimed && !claimedByMe;
-  const isBreached = item.slaStatus === 'BREACHED';
 
   return (
     <Link
@@ -433,11 +427,6 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
           {/* Avatar */}
           <div
             className="sos-avatar"
-            style={{
-              background: isBreached
-                ? 'var(--sos-avatar-danger-gradient)'
-                : 'var(--sos-brand-gradient)',
-            }}
             aria-hidden
           >
             {initials}
@@ -461,34 +450,19 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
                   letterSpacing: '-0.005em',
                 }}
               >
-                {item.clientName}
+                {name}
               </span>
               <StatusBadge tone={statusTone(item.status)} size="sm">
                 {STATUS_LABEL[item.status]}
               </StatusBadge>
-              {item.priority === 'URGENT' ? (
-                <StatusBadge tone="danger" size="sm">
-                  Urgent
-                </StatusBadge>
-              ) : null}
-              {isBreached ? (
-                <StatusBadge tone="danger" size="sm">
-                  SLA past
-                </StatusBadge>
-              ) : null}
-              {item.correctionBounceCount > 1 ? (
-                <StatusBadge tone="warning" size="sm">
-                  {item.correctionBounceCount}× bounced
-                </StatusBadge>
-              ) : null}
             </div>
             <div
               className="sos-text-muted"
               style={{ marginTop: '6px', fontSize: '12.5px' }}
             >
-              {item.service} → {item.targetCountry} · {item.id}
+              {item.lead.serviceInterest ?? '—'} → {item.lead.targetCountry ?? '—'} · {item.id.slice(0, 8)}
             </div>
-            {item.status === 'CORRECTION_REQUIRED' && item.financeNote ? (
+            {item.status === 'REJECTED' && item.financeNotes ? (
               <div
                 className="sos-text-faint"
                 style={{
@@ -510,7 +484,7 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
                     color: 'var(--sos-status-warning)',
                   }}
                 />
-                {item.financeNote}
+                {item.financeNotes}
               </div>
             ) : null}
           </div>
@@ -525,20 +499,8 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
                 letterSpacing: '-0.005em',
               }}
             >
-              {fmtAmount(item.receivedAmount, item.currency)}
+              {fmtAmount(item.submittedAmount, item.currency)}
             </div>
-            {item.receivedAmount !== item.expectedAmount ? (
-              <div
-                style={{
-                  fontSize: '11px',
-                  color: 'var(--sos-status-warning)',
-                  fontWeight: 600,
-                  marginTop: '2px',
-                }}
-              >
-                Expected {fmtAmount(item.expectedAmount, item.currency)}
-              </div>
-            ) : null}
             <div
               style={{
                 marginTop: '6px',
@@ -547,22 +509,18 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
                 gap: '6px',
               }}
             >
-              <MetaPill icon={<MethodIcon method={item.paymentMethod} />}>
-                {METHOD_LABEL[item.paymentMethod]}
-              </MetaPill>
-              <MetaPill icon={<User size={11} />}>{item.salesUserName}</MetaPill>
-              <MetaPill icon={<Building2 size={11} />}>{item.branch}</MetaPill>
-              {item.receiptFileCount > 0 ? (
-                <MetaPill>
-                  {item.receiptFileCount} file{item.receiptFileCount === 1 ? '' : 's'}
+              {item.paymentMethod ? (
+                <MetaPill icon={<MethodIcon method={item.paymentMethod} />}>
+                  {METHOD_LABEL[item.paymentMethod] ?? item.paymentMethod}
                 </MetaPill>
-              ) : (
-                <MetaPill tone="danger">No file</MetaPill>
-              )}
+              ) : null}
+              <MetaPill>
+                {item.receiptFileName}
+              </MetaPill>
             </div>
           </div>
 
-          {/* SLA + assignment */}
+          {/* Submitted + assignment */}
           <div style={{ textAlign: 'right' }}>
             <div
               className="sos-text-faint"
@@ -573,29 +531,17 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
                 textTransform: 'uppercase',
               }}
             >
-              SLA
+              Submitted
             </div>
             <div
               style={{
                 marginTop: '2px',
                 fontSize: '13.5px',
                 fontWeight: 700,
-                color:
-                  item.slaStatus === 'BREACHED'
-                    ? 'var(--sos-status-danger)'
-                    : item.slaStatus === 'APPROACHING'
-                      ? 'var(--sos-status-warning)'
-                      : 'var(--sos-text-primary)',
+                color: 'var(--sos-text-primary)',
               }}
             >
-              {fmtRelative(item.slaDueAt)}
-            </div>
-            <div
-              style={{ marginTop: '6px', display: 'flex', justifyContent: 'flex-end' }}
-            >
-              <StatusBadge tone={slaToneFromStatus(item.slaStatus)} size="sm">
-                {item.slaStatus.toLowerCase()}
-              </StatusBadge>
+              {fmtRelative(item.submittedAt)}
             </div>
             <div
               style={{
@@ -624,7 +570,7 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
                 </>
               ) : (
                 <>
-                  <Phone size={11} /> {item.financeUserName}
+                  <Phone size={11} /> Assigned
                 </>
               )}
             </div>
@@ -656,7 +602,7 @@ function PaymentRow({ item }: { item: PaymentRecord }) {
               size={12}
               style={{ color: 'var(--sos-status-info)', flexShrink: 0 }}
             />
-            Currently being reviewed by {item.financeUserName}. You'll see a
+            Currently being reviewed by another officer. You'll see a
             read-only view if you open it.
           </div>
         ) : null}

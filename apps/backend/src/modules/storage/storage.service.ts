@@ -91,7 +91,7 @@ export class StorageService {
             'Content-Type': mimeType,
             'x-upsert': 'true',
           },
-          body: buffer,
+          body: new Uint8Array(buffer),
         },
       );
       if (!res.ok) {

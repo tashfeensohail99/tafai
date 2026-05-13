@@ -66,7 +66,6 @@ export class StorageService {
     });
   }
 
-  /**
   async upload(
     buffer: Buffer,
     mimeType: string,

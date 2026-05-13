@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import '../styles/globals.css';
 import { ThemeProvider } from '@/components/layout/ThemeProvider';
+import { BackendWarmup } from '@/components/layout/BackendWarmup';
 
 export const metadata = {
   title: 'Tafsheen – Immigration Solutions',
@@ -12,7 +13,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head />
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <BackendWarmup />
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

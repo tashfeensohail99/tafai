@@ -11,22 +11,57 @@ export interface SessionUser {
   permissions: string[];
 }
 
+// Module-level cache. Before this every shell re-fetched /auth/me on mount,
+// so navigating /admin → /admin/users → /admin/sales fired 3 separate auth
+// probes. Now the first call seeds this cache and the rest of the app reads
+// it instantly. TTL is short enough that role/permission changes still
+// propagate within ~half a minute.
+const SESSION_TTL_MS = 30_000;
+let cachedUser: SessionUser | null = null;
+let cachedAt = 0;
+let inflight: Promise<SessionUser> | null = null;
+
+function fetchMe(): Promise<SessionUser> {
+  // Coalesce parallel requests — if two shells mount at the same moment,
+  // only one network call goes out.
+  if (inflight) return inflight;
+  inflight = apiFetch<SessionUser>('/auth/me')
+    .then((user) => {
+      cachedUser = user;
+      cachedAt = Date.now();
+      return user;
+    })
+    .finally(() => {
+      inflight = null;
+    });
+  return inflight;
+}
+
+/** Clear the session cache. Call after login / logout. */
+export function invalidateSessionCache(): void {
+  cachedUser = null;
+  cachedAt = 0;
+  inflight = null;
+}
+
 /**
- * Single source of truth for "who is logged in." Used by every shell
- * (AdminShell, ClientPortalShell, and future Employee/Finance/Processing
- * shells once they migrate off mocks).
- *
- * Reads JWT from sessionStorage and calls `/auth/me`. Returns:
- *   - { status: 'loading' } while resolving
- *   - { status: 'authed', user } when authenticated
- *   - { status: 'unauthed' } when no token or token invalid
+ * Single source of truth for "who is logged in." Used by every shell.
+ * Reads JWT from sessionStorage and calls `/auth/me` (cached for 30s).
+ * Returns: { status: 'loading' | 'authed' | 'unauthed' }
  */
 export function useSession() {
   const [state, setState] = useState<
     | { status: 'loading' }
     | { status: 'authed'; user: SessionUser }
     | { status: 'unauthed' }
-  >({ status: 'loading' });
+  >(() => {
+    // Synchronous warm-start: if the cache is fresh we can render with the
+    // user immediately — no spinner flash on route changes.
+    if (cachedUser && Date.now() - cachedAt < SESSION_TTL_MS) {
+      return { status: 'authed', user: cachedUser };
+    }
+    return { status: 'loading' };
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -35,12 +70,18 @@ export function useSession() {
       setState({ status: 'unauthed' });
       return;
     }
-    apiFetch<SessionUser>('/auth/me')
+    // Cache hit — already rendered, nothing to do.
+    if (cachedUser && Date.now() - cachedAt < SESSION_TTL_MS) {
+      setState({ status: 'authed', user: cachedUser });
+      return;
+    }
+    fetchMe()
       .then((user) => {
         if (!cancelled) setState({ status: 'authed', user });
       })
       .catch(() => {
         clearAccessToken();
+        invalidateSessionCache();
         if (!cancelled) setState({ status: 'unauthed' });
       });
     return () => {
@@ -62,12 +103,14 @@ export async function login(email: string, password: string): Promise<SessionUse
     body: JSON.stringify({ email, password }),
   });
   setAccessToken(tokens.accessToken);
+  invalidateSessionCache();
   // Pull the canonical user from /auth/me — it carries the roles + permissions.
-  return apiFetch<SessionUser>('/auth/me');
+  return fetchMe();
 }
 
 export function logout() {
   clearAccessToken();
+  invalidateSessionCache();
 }
 
 /**

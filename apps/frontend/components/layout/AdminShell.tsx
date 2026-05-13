@@ -39,6 +39,7 @@ import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { apiFetch, ApiClientError } from '@/lib/api-client';
 import { clearAccessToken, getAccessToken } from '@/lib/auth-client';
+import { invalidateSessionCache } from '@/lib/session';
 
 export interface AdminUser {
   id: string;
@@ -178,6 +179,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   function logout() {
     clearAccessToken();
+    invalidateSessionCache();
     setUser(null);
     router.replace('/login');
   }

@@ -58,7 +58,8 @@ export class LeadsService {
         referralPartner: {
           select: { id: true, companyName: true, referralCode: true },
         },
-        _count: { select: { appointments: true, invoices: true, timelineEvents: true } },
+        // _count dropped on list endpoints — three extra subqueries per row
+        // that nothing was rendering. Detail endpoint still returns them.
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -122,7 +123,8 @@ export class LeadsService {
         referralPartner: {
           select: { id: true, companyName: true, referralCode: true },
         },
-        _count: { select: { appointments: true, invoices: true, timelineEvents: true } },
+        // _count dropped on list endpoints — three extra subqueries per row
+        // that nothing was rendering. Detail endpoint still returns them.
       },
       orderBy: { createdAt: 'desc' },
     });

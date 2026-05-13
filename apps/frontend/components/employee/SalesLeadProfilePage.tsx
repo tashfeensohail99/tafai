@@ -364,6 +364,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
       <QuickActionRail
         applyQuickAction={applyQuickAction}
         currentStage={stage}
+        leadId={leadId}
       />
 
       <Tabs tab={tab} setTab={setTab} counts={{
@@ -760,9 +761,11 @@ function ContactItem({
 function QuickActionRail({
   applyQuickAction,
   currentStage,
+  leadId,
 }: {
   applyQuickAction: (next: LeadStage, text: string) => void;
   currentStage: LeadStage;
+  leadId: string;
 }) {
   const actions: Array<{
     Icon: typeof Phone;
@@ -800,7 +803,7 @@ function QuickActionRail({
       title: 'Send to Finance',
       caption: 'Hand off receipt for verification',
       tone: 'var(--sos-status-success)',
-      href: '/sales/decisions',
+      href: `/sales/decisions?leadId=${leadId}`,
     },
   ];
 
@@ -1136,7 +1139,7 @@ function OverviewTab({
           </div>
           <div style={{ marginTop: '14px' }}>
             <ButtonLink
-              href={'/sales/decisions' as Route}
+              href={`/sales/decisions?leadId=${lead.id}` as Route}
               variant="success"
               fullWidth
               iconRight={<ArrowRight size={15} />}

@@ -365,6 +365,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
         onRescheduleHour={() => quickReschedule(1)}
         onRescheduleTomorrow={quickRescheduleTomorrow11}
         onReschedule24h={() => quickReschedule(24)}
+        leadId={followUp.leadId}
       />
 
       <section
@@ -527,7 +528,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <OriginalScheduleCard followUp={followUp} />
-          <HandoffCard />
+          <HandoffCard leadId={followUp.leadId} />
           {otherFollowUps.length > 0 ? (
             <RelatedFollowUpsCard items={otherFollowUps.slice(0, 4)} />
           ) : null}
@@ -738,12 +739,14 @@ function QuickActionRow({
   onRescheduleHour,
   onRescheduleTomorrow,
   onReschedule24h,
+  leadId,
 }: {
   onMarkDone: () => void;
   onNoResponse: () => void;
   onRescheduleHour: () => void;
   onRescheduleTomorrow: () => void;
   onReschedule24h: () => void;
+  leadId: string;
 }) {
   return (
     <GlassCard variant="default" padded="md">
@@ -766,7 +769,7 @@ function QuickActionRow({
           </p>
         </div>
         <ButtonLink
-          href={'/sales/decisions' as Route}
+          href={`/sales/decisions?leadId=${leadId}` as Route}
           variant="primary"
           iconRight={<Send size={14} />}
         >
@@ -1034,7 +1037,7 @@ function Mini({ label, value }: { label: string; value: string }) {
   );
 }
 
-function HandoffCard() {
+function HandoffCard({ leadId }: { leadId: string }) {
   return (
     <GlassCard variant="default" padded="md">
       <div
@@ -1076,7 +1079,7 @@ function HandoffCard() {
       </div>
       <div style={{ marginTop: '14px' }}>
         <ButtonLink
-          href={'/sales/decisions' as Route}
+          href={`/sales/decisions?leadId=${leadId}` as Route}
           variant="success"
           fullWidth
           iconRight={<ArrowRight size={15} />}

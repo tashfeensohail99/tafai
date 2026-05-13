@@ -139,7 +139,7 @@ function stageBadgeTone(stage: Lead['stage']): BadgeTone {
   }
 }
 
-export function SalesDecisionsPage() {
+export function SalesDecisionsPage({ preselectedLeadId = '' }: { preselectedLeadId?: string }) {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,9 +147,11 @@ export function SalesDecisionsPage() {
   useEffect(() => {
     fetchLeads().then((l) => {
       setLeads(l);
-      const def = l.find((x) => x.stage === 'PAYMENT_INTERESTED') ?? l[0];
+      const pre = preselectedLeadId ? l.find((x) => x.id === preselectedLeadId) : null;
+      const def = pre ?? l.find((x) => x.stage === 'PAYMENT_INTERESTED') ?? l[0];
       if (def) setLeadId(def.id);
     }).finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const [leadId, setLeadId] = useState('');

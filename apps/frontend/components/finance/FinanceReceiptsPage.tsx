@@ -279,7 +279,7 @@ function PaymentRow({ payment, isSelected, onSelect }: PaymentRowProps) {
         <div
           style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)' }}
         >
-          {METHOD_LABEL[payment.paymentMethod]}
+          {payment.paymentMethod ? (METHOD_LABEL[payment.paymentMethod] ?? payment.paymentMethod) : '—'}
         </div>
       </div>
 
@@ -892,10 +892,10 @@ export function FinanceReceiptsPage() {
                     marginTop: 'var(--sos-space-1)',
                   }}
                 >
-                  {selectedPayment.service} · {selectedPayment.targetCountry} ·{' '}
+                  {selectedPayment.lead.serviceInterest ?? '—'} · {selectedPayment.lead.targetCountry ?? '—'} ·{' '}
                   {fmtAmount(selectedPayment.submittedAmount, selectedPayment.currency)}
                   {' · '}
-                  {METHOD_LABEL[selectedPayment.paymentMethod]}
+                  {selectedPayment.paymentMethod ? (METHOD_LABEL[selectedPayment.paymentMethod] ?? selectedPayment.paymentMethod) : '—'}
                 </p>
               </div>
             </div>

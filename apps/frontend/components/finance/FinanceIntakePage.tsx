@@ -66,14 +66,6 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'IN_REVIEW', label: 'In Review' },
 ];
 
-const ACTIVE_STATUSES: PaymentStatus[] = [
-  'NEW_FROM_SALES',
-  'UNDER_VERIFICATION',
-  'ON_HOLD',
-  'CORRECTION_REQUIRED',
-  'AWAITING_BALANCE',
-];
-
 const ACTIVE_STATUSES: FinanceHandoverStatus[] = [
   'SUBMITTED',
   'IN_REVIEW',

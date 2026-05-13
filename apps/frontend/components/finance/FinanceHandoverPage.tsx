@@ -164,7 +164,7 @@ function QueueRow({
               color: 'var(--sos-text)',
             }}
           >
-            {payment.clientName}
+            {clientName(payment)}
           </span>
           {!isSent && (
             <StatusBadge tone="info" size="sm">

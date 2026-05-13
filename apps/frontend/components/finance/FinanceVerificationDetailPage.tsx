@@ -229,6 +229,10 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
   const checklistDone     = Object.values(checklist).filter(Boolean).length;
   const checklistComplete = checklistDone === CHECKLIST_ITEMS.length;
 
+  function toggleCheck(key: ChecklistKey) {
+    setChecklist((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
   const taxAmount   = Math.round(((parseFloat(serviceFee) || 0) + (parseFloat(govtFee) || 0)) * 0.05);
   const totalAmount = (parseFloat(serviceFee) || 0) + (parseFloat(govtFee) || 0) + taxAmount;
 

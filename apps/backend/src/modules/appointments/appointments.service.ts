@@ -391,6 +391,104 @@ export class AppointmentsService {
     };
   }
 
+  async generateIcs(user: RequestUser): Promise<string> {
+    const canViewAll = user.permissions.includes('appointments.view_all');
+    const assignedEmployeeId = canViewAll
+      ? undefined
+      : await this.findEmployeeIdByUserId(user.id);
+
+    if (!canViewAll && !assignedEmployeeId) {
+      return this.buildIcs([]);
+    }
+
+    const rows = await this.prisma.appointment.findMany({
+      where: {
+        ...(!canViewAll ? { assignedEmployeeId } : {}),
+        status: { notIn: ['CANCELLED'] as any },
+      },
+      include: {
+        lead: { select: { firstName: true, lastName: true } },
+        client: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    return this.buildIcs(rows);
+  }
+
+  private buildIcs(
+    rows: Array<{
+      id: string;
+      title: string;
+      scheduledAt: Date;
+      durationMinutes: number;
+      location?: string | null;
+      meetingLink?: string | null;
+      notes?: string | null;
+      status: string;
+      lead?: { firstName: string; lastName: string } | null;
+      client?: { firstName: string; lastName: string } | null;
+    }>,
+  ): string {
+    const escape = (s: string) =>
+      s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+
+    const fmtDt = (d: Date) =>
+      d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+    const foldLine = (line: string): string => {
+      const chunks: string[] = [];
+      while (line.length > 75) {
+        chunks.push(line.slice(0, 75));
+        line = ' ' + line.slice(75);
+      }
+      chunks.push(line);
+      return chunks.join('\r\n');
+    };
+
+    const now = fmtDt(new Date());
+
+    const events = rows.map((r) => {
+      const start = new Date(r.scheduledAt);
+      const end = new Date(start.getTime() + r.durationMinutes * 60_000);
+      const contact = r.client ?? r.lead;
+      const summary = contact
+        ? `${contact.firstName} ${contact.lastName} — ${r.title}`
+        : r.title;
+      const descParts: string[] = [];
+      if (r.meetingLink) descParts.push(`Meeting link: ${r.meetingLink}`);
+      if (r.notes) descParts.push(r.notes);
+      const desc = descParts.join('\\n');
+
+      const lines = [
+        'BEGIN:VEVENT',
+        foldLine(`UID:${r.id}@tafsheen.app`),
+        `DTSTAMP:${now}`,
+        `DTSTART:${fmtDt(start)}`,
+        `DTEND:${fmtDt(end)}`,
+        foldLine(`SUMMARY:${escape(summary)}`),
+      ];
+      if (r.location) lines.push(foldLine(`LOCATION:${escape(r.location)}`));
+      if (r.meetingLink) lines.push(foldLine(`URL:${escape(r.meetingLink)}`));
+      if (desc) lines.push(foldLine(`DESCRIPTION:${escape(desc)}`));
+      lines.push(`STATUS:${r.status === 'COMPLETED' ? 'COMPLETED' : 'CONFIRMED'}`);
+      lines.push('END:VEVENT');
+      return lines.join('\r\n');
+    });
+
+    return [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Tafsheen//Appointments//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'X-WR-CALNAME:Tafsheen Appointments',
+      'X-WR-TIMEZONE:Asia/Karachi',
+      ...events,
+      'END:VCALENDAR',
+    ].join('\r\n');
+  }
+
   private async findEmployeeIdByUserId(userId: string) {
     const employee = await this.prisma.employee.findFirst({
       where: {

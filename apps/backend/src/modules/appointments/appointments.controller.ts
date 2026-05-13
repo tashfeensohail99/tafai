@@ -87,6 +87,21 @@ export class AppointmentsController {
     sendCsvDownload(res, `appointments-${todayStamp()}.csv`, csv);
   }
 
+  @Get('calendar.ics')
+  @RequireAnyPermissions('appointments.view_all', 'appointments.view_assigned')
+  async downloadCalendar(
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const ics = await this.appointmentsService.generateIcs(user);
+    res.set({
+      'Content-Type': 'text/calendar; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="tafsheen-appointments.ics"',
+      'Cache-Control': 'no-cache, no-store',
+    });
+    res.send(ics);
+  }
+
   @Get(':id')
   @RequireAnyPermissions('appointments.view_all', 'appointments.view_assigned')
   findById(

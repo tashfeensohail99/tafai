@@ -1,7 +1,7 @@
 'use client';
 // Sales OS — Appointments (premium dark glass redesign).
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   Briefcase,
   CalendarCheck,
@@ -44,6 +44,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { fetchLeads, fetchAppointments, createAppointment } from '@/lib/sales-api';
+import { apiFetch } from '@/lib/api-client';
 
 const TYPES: AppointmentType[] = [
   'OFFICE_MEETING',
@@ -110,6 +111,8 @@ export function SalesAppointmentsPage() {
   const [allAppointments, setAllAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState(false);
+  const [syncingCal, setSyncingCal] = useState(false);
+  const bookFormRef = useRef<HTMLDivElement>(null);
 
   const [clientId, setClientId] = useState('');
   const [type, setType] = useState<AppointmentType>('OFFICE_MEETING');
@@ -202,6 +205,38 @@ export function SalesAppointmentsPage() {
   const scheduledDateTime =
     date && time ? new Date(`${date}T${time}:00`) : null;
 
+  function handleQuickBook() {
+    bookFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Flash highlight on the card
+    const el = bookFormRef.current;
+    if (el) {
+      el.style.outline = '2px solid var(--sos-brand-primary-strong)';
+      el.style.outlineOffset = '4px';
+      setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; }, 1200);
+    }
+  }
+
+  async function handleSyncCalendar() {
+    if (syncingCal) return;
+    setSyncingCal(true);
+    try {
+      const icsText = await apiFetch<string>('/appointments/calendar.ics');
+      const blob = new Blob([icsText], { type: 'text/calendar;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tafsheen-appointments.ics';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Calendar sync failed:', err);
+    } finally {
+      setSyncingCal(false);
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
@@ -229,11 +264,15 @@ export function SalesAppointmentsPage() {
         }
         actions={
           <>
-            <PrimaryButton iconLeft={<CalendarPlus size={15} />}>
+            <PrimaryButton iconLeft={<CalendarPlus size={15} />} onClick={handleQuickBook}>
               Quick book
             </PrimaryButton>
-            <SecondaryButton iconLeft={<CalendarClock size={15} />}>
-              Sync calendar
+            <SecondaryButton
+              iconLeft={syncingCal ? <Loader2 size={15} className="sos-spin" /> : <CalendarClock size={15} />}
+              onClick={handleSyncCalendar}
+              disabled={syncingCal}
+            >
+              {syncingCal ? 'Downloading…' : 'Sync calendar'}
             </SecondaryButton>
           </>
         }
@@ -285,10 +324,12 @@ export function SalesAppointmentsPage() {
       </section>
 
       <section
+        ref={bookFormRef}
         style={{
           display: 'grid',
           gap: '20px',
           gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.6fr)',
+          scrollMarginTop: '80px',
         }}
         className="sos-detail-grid"
       >

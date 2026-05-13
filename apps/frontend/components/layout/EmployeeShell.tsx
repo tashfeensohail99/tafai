@@ -311,13 +311,17 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
 
               <ThemeToggle />
 
-              <PresencePill />
+              <span className="sos-topbar__optional">
+                <PresencePill />
+              </span>
 
               <button type="button" className="sos-topbar__icon-btn" aria-label="Notifications">
                 <Bell size={15} />
               </button>
 
-              <RoleBadge role={user.roles[0] ?? 'SALES'} />
+              <span className="sos-topbar__optional">
+                <RoleBadge role={user.roles[0] ?? 'SALES'} />
+              </span>
 
               <div className="sos-topbar__user">
                 <div className="sos-sidebar__user-avatar" style={{ width: 32, height: 32, fontSize: 12 }}>
@@ -362,8 +366,16 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
           }
           @media (max-width: 720px) {
             .sos-topbar__user { display: none; }
-            .sos-topbar__actions > .sos-pill,
-            .sos-topbar__actions > span { display: none; }
+            /* Hide presence pill + role badge on phones so the topbar
+               doesn't crowd the page title. Both are wrapped in
+               .sos-topbar__optional. */
+            .sos-topbar__optional { display: none; }
+            .sos-topbar__actions { gap: 8px; }
+          }
+          @media (max-width: 480px) {
+            /* On the smallest phones, lose the breadcrumb so only the
+               page title remains alongside hamburger + theme + bell. */
+            .sos-breadcrumb { display: none; }
           }
           @media (min-width: 1280px) {
             .sos-detail-grid {

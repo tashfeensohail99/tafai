@@ -754,6 +754,15 @@
   text-transform: uppercase;
   letter-spacing: var(--sos-letter-eyebrow);
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.sos-breadcrumb > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sos-breadcrumb__current {
@@ -766,6 +775,24 @@
   color: var(--sos-text-primary);
   letter-spacing: -0.01em;
   margin-top: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .sos-topbar__title {
+    font-size: var(--sos-text-md);
+  }
+}
+
+/* Topbar items that hide on phones so the title has room. Wrap things
+   like RoleBadge and PresencePill in <span class="sos-topbar__optional">. */
+@media (max-width: 720px) {
+  .sos-topbar__optional {
+    display: none !important;
+  }
 }
 
 .sos-topbar__search {
@@ -1742,6 +1769,77 @@
 @media (max-width: 639px) {
   .sos-sidebar.is-open {
     width: min(85vw, 320px) !important;
+  }
+}
+
+/* ---- PageHeader (sales-v2 hero) ---- */
+
+/* Mobile-first: tight padding, single column, actions stack below content
+   and stretch full-width. Desktop+: relaxed padding, two-column row with
+   actions on the right. */
+.sos-page-header {
+  padding: 20px 18px;
+}
+.sos-page-header__row {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: flex-end;
+}
+.sos-page-header__content {
+  min-width: 0;
+}
+.sos-page-header__title {
+  font-size: clamp(1.45rem, 5.2vw, 2.85rem);
+  /* No fixed maxWidth on mobile — let it use the full column width and
+     wrap naturally. Reintroduce the ch cap only at tablet+ where the
+     glass card is wide enough to benefit from it. */
+}
+.sos-page-header__description {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.sos-page-header__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  width: 100%;
+}
+.sos-page-header__actions > * {
+  /* Buttons that would otherwise be 130px+ each can wrap onto multiple
+     rows on mobile; keep them readable. */
+  flex: 0 1 auto;
+}
+
+@media (min-width: 768px) {
+  .sos-page-header {
+    padding: 28px 28px;
+  }
+  .sos-page-header__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 24px;
+  }
+  .sos-page-header__title {
+    max-width: 24ch;
+  }
+  .sos-page-header__description {
+    margin-top: 12px;
+    font-size: 14.5px;
+    line-height: 1.65;
+    max-width: 60ch;
+  }
+  .sos-page-header__actions {
+    justify-content: flex-end;
+    width: auto;
+  }
+}
+
+@media (min-width: 1024px) {
+  .sos-page-header {
+    padding: 28px 32px;
   }
 }
 

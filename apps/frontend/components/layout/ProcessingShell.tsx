@@ -277,7 +277,9 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
               <button type="button" aria-label="Notifications" className="sos-topbar__icon-btn">
                 <Bell size={16} />
               </button>
-              <RoleBadge role="Processing" />
+              <span className="sos-topbar__optional">
+                <RoleBadge role="Processing" />
+              </span>
             </div>
           </header>
 

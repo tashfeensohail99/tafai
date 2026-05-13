@@ -17,9 +17,8 @@ interface PageHeaderProps {
 export function PageHeader({ eyebrow, title, description, actions, meta }: PageHeaderProps) {
   return (
     <header
-      className="sos-glass sos-glass--hero"
+      className="sos-glass sos-glass--hero sos-page-header"
       style={{
-        padding: '28px 32px',
         display: 'flex',
         flexDirection: 'column',
         gap: '20px',
@@ -55,54 +54,25 @@ export function PageHeader({ eyebrow, title, description, actions, meta }: PageH
         }}
       />
 
-      <div
-        style={{
-          position: 'relative',
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) auto',
-          gap: '24px',
-          alignItems: 'flex-end',
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
+      <div className="sos-page-header__row">
+        <div className="sos-page-header__content">
           {eyebrow ? (
             <div className="sos-eyebrow" style={{ marginBottom: '10px' }}>
               {eyebrow}
             </div>
           ) : null}
-          <h1
-            className="sos-display"
-            style={{
-              fontSize: 'clamp(1.85rem, 3.6vw, 2.85rem)',
-              maxWidth: '24ch',
-            }}
-          >
+          <h1 className="sos-display sos-page-header__title">
             {title}
           </h1>
           {description ? (
-            <p
-              className="sos-text-secondary"
-              style={{
-                marginTop: '12px',
-                fontSize: '14.5px',
-                lineHeight: 1.65,
-                maxWidth: '60ch',
-              }}
-            >
+            <p className="sos-text-secondary sos-page-header__description">
               {description}
             </p>
           ) : null}
         </div>
 
         {actions ? (
-          <div
-            style={{
-              display: 'flex',
-              gap: '10px',
-              flexWrap: 'wrap',
-              justifyContent: 'flex-end',
-            }}
-          >
+          <div className="sos-page-header__actions">
             {actions}
           </div>
         ) : null}

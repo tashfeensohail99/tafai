@@ -177,7 +177,7 @@ export function SalesDashboardPage() {
       {/* Hero */}
       <PageHeader
         eyebrow={`${fmtLongDate(new Date().toISOString())} · ${firstName}'s queue`}
-        title={<>Keep today&rsquo;s lead queue<br />calm, fast, and under control.</>}
+        title={<>Keep today&rsquo;s lead queue calm, fast, and under control.</>}
         description={
           <>
             {activeLeads.length} active leads are moving right now. {dueToday} follow-ups need a touch

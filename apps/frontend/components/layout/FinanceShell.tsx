@@ -353,7 +353,9 @@ export function FinanceShell({ children }: { children: ReactNode }) {
                 <Bell size={15} />
               </button>
 
-              <RoleBadge role={user.roles[0] ?? 'FINANCE'} />
+              <span className="sos-topbar__optional">
+                <RoleBadge role={user.roles[0] ?? 'FINANCE'} />
+              </span>
 
               <div className="sos-topbar__user">
                 <div className="sos-sidebar__user-avatar" style={{ width: 32, height: 32, fontSize: 12 }}>
@@ -396,8 +398,11 @@ export function FinanceShell({ children }: { children: ReactNode }) {
           }
           @media (max-width: 720px) {
             .sos-topbar__user { display: none; }
-            .sos-topbar__actions > .sos-pill,
-            .sos-topbar__actions > span { display: none; }
+            .sos-topbar__optional { display: none; }
+            .sos-topbar__actions { gap: 8px; }
+          }
+          @media (max-width: 480px) {
+            .sos-breadcrumb { display: none; }
           }
           @media (min-width: 1280px) {
             .sos-detail-grid {

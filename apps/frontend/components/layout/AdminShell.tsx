@@ -316,7 +316,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 </div>
               ) : null}
             </div>
-            <RoleBadge role={userRole} />
+            <span className="sos-topbar__optional">
+              <RoleBadge role={userRole} />
+            </span>
             <ThemeToggle />
           </header>
           <main className="sos-page">{children}</main>

@@ -64,13 +64,12 @@ export default function LoginPage() {
 
   return (
     <div
+      className="sos-login-shell"
       style={{
         minHeight: '100vh',
         width: '100%',
         background: 'var(--sos-bg-app)',
         color: 'var(--sos-text-primary)',
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.05fr)',
       }}
     >
       {/* Left — branding */}
@@ -110,7 +109,7 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <h2 style={{ fontSize: 38, fontWeight: 700, lineHeight: 1.1, letterSpacing: '-0.02em', maxWidth: 460 }}>
+          <h2 style={{ fontSize: 'clamp(28px, 4.2vw, 42px)', fontWeight: 700, lineHeight: 1.1, letterSpacing: '-0.02em', maxWidth: 460 }}>
             One workspace, from first touch to finance handover.
           </h2>
           <p style={{ marginTop: 18, color: 'rgb(255 255 255 / 0.7)', fontSize: 15, lineHeight: 1.6, maxWidth: 480 }}>
@@ -199,7 +198,7 @@ export default function LoginPage() {
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 10,
-                    padding: 18,
+                    padding: 'clamp(12px, 3vw, 18px)',
                     border: active
                       ? '1.5px solid var(--sos-brand-primary)'
                       : '1.5px solid var(--sos-border)',
@@ -209,11 +208,12 @@ export default function LoginPage() {
                     cursor: 'pointer',
                     textAlign: 'left',
                     width: '100%',
+                    minWidth: 0,
                     transition: 'all 160ms ease',
                     fontFamily: 'inherit',
                   }}
                 >
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
                     <div
                       style={{
                         width: 32,
@@ -224,13 +224,24 @@ export default function LoginPage() {
                         justifyContent: 'center',
                         background: `${accent}1f`,
                         color: accent,
+                        flexShrink: 0,
                       }}
                     >
                       <Icon className="h-4 w-4" />
                     </div>
-                    <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--sos-text-primary)' }}>{label}</span>
+                    <span
+                      className="sos-truncate"
+                      style={{ fontWeight: 600, fontSize: 14, color: 'var(--sos-text-primary)' }}
+                    >
+                      {label}
+                    </span>
                   </div>
-                  <p style={{ fontSize: 12, color: 'var(--sos-text-muted)', lineHeight: 1.4 }}>{caption}</p>
+                  <p
+                    className="sos-clamp-2"
+                    style={{ fontSize: 12, color: 'var(--sos-text-muted)', lineHeight: 1.4, margin: 0 }}
+                  >
+                    {caption}
+                  </p>
                 </button>
               );
             })}

@@ -1,5 +1,5 @@
 'use client';
-// Sales OS — Assigned Leads (premium dark glass redesign).
+// Sales OS â€” Assigned Leads (premium dark glass redesign).
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -174,7 +174,7 @@ export function SalesLeadsPage() {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
         <Loader2 size={20} className="sos-spin" />
-        <span>Loading leads…</span>
+        <span>Loading leadsâ€¦</span>
       </div>
     );
   }
@@ -196,8 +196,8 @@ export function SalesLeadsPage() {
         title={<>Every lead with a name,<br />a stage, and a next move.</>}
         description={
           <>
-            {counts.ALL} leads currently in your queue · {counts.ADMIN} from admin · {counts.AUTO_CRM} from
-            auto-CRM · {counts.OVERDUE} need immediate attention.
+            {counts.ALL} leads currently in your queue Â· {counts.ADMIN} from admin Â· {counts.AUTO_CRM} from
+            auto-CRM Â· {counts.OVERDUE} need immediate attention.
           </>
         }
         actions={
@@ -296,12 +296,12 @@ export function SalesLeadsPage() {
           </div>
 
           {/* Search */}
-          <div className="sos-topbar__search" style={{ minWidth: '260px' }}>
+          <div className="sos-topbar__search sos-search-input">
             <Search size={14} />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name, phone, service…"
+              placeholder="Search by name, phone, serviceâ€¦"
               aria-label="Search leads"
             />
           </div>
@@ -324,7 +324,7 @@ export function SalesLeadsPage() {
           style={{
             display: 'grid',
             gap: '16px',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',
           }}
         >
           {filtered.map((lead) => (
@@ -339,7 +339,7 @@ export function SalesLeadsPage() {
 function LeadCard({ lead }: { lead: Lead }) {
   const assignedLabel =
     lead.assignmentType === 'ADMIN'
-      ? `Admin · ${lead.assignedBy?.split('·')[1]?.trim() ?? 'Front desk'}`
+      ? `Admin Â· ${lead.assignedBy?.split('Â·')[1]?.trim() ?? 'Front desk'}`
       : 'Auto CRM';
 
   return (
@@ -385,7 +385,7 @@ function LeadCard({ lead }: { lead: Lead }) {
                 fontWeight: 600,
               }}
             >
-              {assignedLabel} · Assigned {fmtRelative(lead.assignedAt)}
+              {assignedLabel} Â· Assigned {fmtRelative(lead.assignedAt)}
             </div>
           </div>
 

@@ -326,7 +326,7 @@ export function FinanceIntakePage() {
               flexWrap: 'wrap',
             }}
           >
-            <div className="sos-topbar__search" style={{ minWidth: '260px' }}>
+            <div className="sos-topbar__search sos-search-input">
               <Search size={14} />
               <input
                 value={query}
@@ -340,7 +340,7 @@ export function FinanceIntakePage() {
               className="sos-select"
               value={methodFilter}
               onChange={(e) => setMethodFilter(e.target.value)}
-              style={{ width: 'auto', minWidth: '160px' }}
+              style={{ flex: '1 1 140px', minWidth: 0, maxWidth: '200px' }}
               aria-label="Filter by payment method"
             >
               <option value="ALL">All methods</option>

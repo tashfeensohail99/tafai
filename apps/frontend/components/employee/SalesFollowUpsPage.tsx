@@ -1,5 +1,5 @@
 'use client';
-// Sales OS — Follow-ups (premium dark glass redesign).
+// Sales OS â€” Follow-ups (premium dark glass redesign).
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -169,7 +169,7 @@ export function SalesFollowUpsPage() {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
         <Loader2 size={20} className="sos-spin" />
-        <span>Loading follow-ups…</span>
+        <span>Loading follow-upsâ€¦</span>
       </div>
     );
   }
@@ -185,7 +185,7 @@ export function SalesFollowUpsPage() {
         }
         description={
           <>
-            {counts.TODAY} touches due today · {counts.OVERDUE} outside SLA · {counts.UPCOMING}{' '}
+            {counts.TODAY} touches due today Â· {counts.OVERDUE} outside SLA Â· {counts.UPCOMING}{' '}
             queued for the rest of the week. Sort by what is bleeding most and clear it first.
           </>
         }
@@ -281,12 +281,12 @@ export function SalesFollowUpsPage() {
             ))}
           </div>
 
-          <div className="sos-topbar__search" style={{ minWidth: '260px' }}>
+          <div className="sos-topbar__search sos-search-input">
             <Search size={14} />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by client or reason…"
+              placeholder="Search by client or reasonâ€¦"
               aria-label="Search follow-ups"
             />
           </div>

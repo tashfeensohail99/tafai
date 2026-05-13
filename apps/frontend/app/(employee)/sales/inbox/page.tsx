@@ -7,7 +7,7 @@ import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 
 /** Hook: track viewport width so we can switch to single-pane on mobile. */
-function useIsMobile(threshold = 768): boolean {
+function useIsMobile(threshold = 1024): boolean {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -86,12 +86,17 @@ export default function SalesInboxPage() {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: isMobile ? '1fr' : '360px 1fr',
+        // Tablet (≤1023px): single pane; the useIsMobile hook now triggers
+        // at 1024px so iPad portrait + small laptops also get the WhatsApp-
+        // mobile flow. Desktop: 320px list + chat (was 360px — gives the
+        // chat more breathing room).
+        gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'minmax(280px, 320px) minmax(0, 1fr)',
         height: 'calc(100vh - 64px)',
         overflow: 'hidden',
         border: '1px solid var(--sos-border-subtle)',
         borderRadius: 12,
         background: 'var(--sos-surface-1)',
+        minWidth: 0,
       }}
     >
       {/* Ã¢â€â‚¬Ã¢â€â‚¬ Left panel: contact list Ã¢â€â‚¬Ã¢â€â‚¬ */}

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -8,8 +9,12 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
@@ -130,5 +135,57 @@ export class LeadsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.leadsService.update(id, dto, user.id);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lead file attachments
+  // ---------------------------------------------------------------------------
+
+  @Post(':id/files')
+  @RequirePermissions('leads.update')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB cap
+    }),
+  )
+  uploadFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (!file) {
+      throw new Error('No file provided. Use multipart/form-data with field name "file".');
+    }
+    return this.leadsService.uploadLeadFile(id, file, user);
+  }
+
+  @Get(':id/files')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  listFiles(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.leadsService.listLeadFiles(id, user);
+  }
+
+  @Get(':id/files/:fileId/url')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  getFileUrl(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.leadsService.getLeadFileSignedUrl(id, fileId, user);
+  }
+
+  @Delete(':id/files/:fileId')
+  @RequirePermissions('leads.update')
+  deleteFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.leadsService.deleteLeadFile(id, fileId, user);
   }
 }

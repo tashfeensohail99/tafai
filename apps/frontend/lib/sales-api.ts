@@ -357,3 +357,48 @@ export async function createFinanceHandover(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Lead file attachments
+// ---------------------------------------------------------------------------
+
+export interface ApiLeadFile {
+  id: string;
+  leadId: string;
+  fileName: string;
+  fileMimeType: string | null;
+  fileSizeBytes: number | null;
+  createdAt: string;
+}
+
+export async function fetchLeadFiles(leadId: string): Promise<ApiLeadFile[]> {
+  return apiFetch<ApiLeadFile[]>(`/leads/${leadId}/files`);
+}
+
+export async function uploadLeadFile(leadId: string, file: File): Promise<ApiLeadFile> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'https://backend-production-5a89.up.railway.app';
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/leads/${leadId}/files`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Upload failed (${res.status}): ${text}`);
+  }
+  return res.json() as Promise<ApiLeadFile>;
+}
+
+export async function getLeadFileUrl(leadId: string, fileId: string): Promise<string> {
+  const data = await apiFetch<{ url: string; fileName: string }>(
+    `/leads/${leadId}/files/${fileId}/url`,
+  );
+  return data.url;
+}
+
+export async function deleteLeadFile(leadId: string, fileId: string): Promise<void> {
+  await apiFetch(`/leads/${leadId}/files/${fileId}`, { method: 'DELETE' });
+}

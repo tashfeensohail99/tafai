@@ -9,7 +9,7 @@
 //   5. Live SLA / countdown so you always know what is bleeding.
 //   6. Sticky save bar so edits never get lost.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
@@ -17,7 +17,6 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
-  Building2,
   CalendarClock,
   CalendarPlus,
   Check,
@@ -26,10 +25,8 @@ import {
   Clock4,
   Copy,
   ExternalLink,
-  FileText,
   Flame,
   Globe2,
-  Handshake,
   History,
   Loader2,
   Mail,
@@ -89,6 +86,11 @@ import {
   fetchFollowUps,
   fetchAppointments,
   patchLead,
+  fetchLeadFiles,
+  uploadLeadFile,
+  getLeadFileUrl,
+  deleteLeadFile,
+  type ApiLeadFile,
 } from '@/lib/sales-api';
 
 const STAGES: LeadStage[] = [
@@ -400,7 +402,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
       ) : null}
 
       {tab === 'NOTES' ? (
-        <NotesTab salesNote={salesNote} setSalesNote={setSalesNote} />
+        <NotesTab salesNote={salesNote} setSalesNote={setSalesNote} leadId={lead.id} />
       ) : null}
 
       {tab === 'WHATSAPP' ? (
@@ -1698,10 +1700,69 @@ function AppointmentsTab({
 function NotesTab({
   salesNote,
   setSalesNote,
+  leadId,
 }: {
   salesNote: string;
   setSalesNote: (s: string) => void;
+  leadId: string;
 }) {
+  const [files, setFiles] = useState<ApiLeadFile[]>([]);
+  const [filesLoading, setFilesLoading] = useState(true);
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFilesLoading(true);
+    setFilesError(null);
+    fetchLeadFiles(leadId)
+      .then((data) => { if (!cancelled) { setFiles(data); setFilesLoading(false); } })
+      .catch((err) => { if (!cancelled) { setFilesError(String(err)); setFilesLoading(false); } });
+    return () => { cancelled = true; };
+  }, [leadId]);
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const created = await uploadLeadFile(leadId, file);
+      setFiles((prev) => [created, ...prev]);
+    } catch (err) {
+      alert(`Upload failed: ${String(err)}`);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  async function handleDownload(fileId: string) {
+    try {
+      const url = await getLeadFileUrl(leadId, fileId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      alert('Could not generate download link. Please try again.');
+    }
+  }
+
+  async function handleDelete(fileId: string, fileName: string) {
+    if (!confirm(`Delete "${fileName}"? This cannot be undone.`)) return;
+    try {
+      await deleteLeadFile(leadId, fileId);
+      setFiles((prev) => prev.filter((f) => f.id !== fileId));
+    } catch {
+      alert('Delete failed. Please try again.');
+    }
+  }
+
+  function fmtBytes(bytes: number | null): string {
+    if (!bytes) return '—';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   return (
     <section
       style={{
@@ -1746,8 +1807,19 @@ function NotesTab({
                 Attach passports, transcripts, or receipts so finance can verify in one click.
               </p>
             </div>
-            <PrimaryButton size="sm" iconLeft={<Upload size={13} />}>
-              Upload
+            <input
+              ref={fileInputRef}
+              type="file"
+              style={{ display: 'none' }}
+              onChange={handleUpload}
+            />
+            <PrimaryButton
+              size="sm"
+              iconLeft={uploading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={13} />}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+            >
+              {uploading ? 'Uploading…' : 'Upload'}
             </PrimaryButton>
           </div>
           <div
@@ -1758,9 +1830,94 @@ function NotesTab({
               gap: '8px',
             }}
           >
-            <DocRow name="passport-front.jpg" size="412 KB" />
-            <DocRow name="cnic-back.jpg" size="298 KB" />
-            <DocRow name="academic-transcripts.pdf" size="1.1 MB" />
+            {filesLoading ? (
+              <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--sos-text-faint)', fontSize: '12px' }}>
+                Loading files…
+              </div>
+            ) : filesError ? (
+              <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--sos-status-danger)', fontSize: '12px' }}>
+                {filesError}
+              </div>
+            ) : files.length === 0 ? (
+              <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--sos-text-faint)', fontSize: '12px' }}>
+                No files attached yet. Click Upload to add documents.
+              </div>
+            ) : (
+              files.map((f) => (
+                <div
+                  key={f.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '10px 12px',
+                    borderRadius: 'var(--sos-radius-sm)',
+                    background: 'var(--sos-surface-1)',
+                    border: '1px solid var(--sos-border-subtle)',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '10px',
+                      display: 'grid',
+                      placeItems: 'center',
+                      background: 'var(--sos-surface-2)',
+                      color: 'var(--sos-text-muted)',
+                      border: '1px solid var(--sos-border-subtle)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Paperclip size={14} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(f.id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      minWidth: 0,
+                      flex: 1,
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '12.5px',
+                        fontWeight: 600,
+                        color: 'var(--sos-text-primary)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {f.fileName}
+                    </div>
+                    <div className="sos-text-faint" style={{ fontSize: '11px', marginTop: '2px' }}>
+                      {fmtBytes(f.fileSizeBytes)}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Remove document"
+                    onClick={() => handleDelete(f.id, f.fileName)}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--sos-text-faint)',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      padding: '4px',
+                    }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </GlassCard>
 
@@ -1769,145 +1926,17 @@ function NotesTab({
           <div
             style={{
               marginTop: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
+              padding: '16px 0',
+              textAlign: 'center',
+              color: 'var(--sos-text-faint)',
+              fontSize: '12px',
             }}
           >
-            <ReminderRow
-              Icon={Handshake}
-              title="Confirm walk-in time"
-              caption="Tomorrow · 10:30 AM"
-            />
-            <ReminderRow
-              Icon={FileText}
-              title="Collect deposit receipt"
-              caption="Once payment confirmed"
-            />
-            <ReminderRow
-              Icon={Building2}
-              title="Hand-off to consultant"
-              caption="After visa pathway selection"
-            />
+            Reminders will appear here once the module is enabled.
           </div>
         </GlassCard>
       </div>
     </section>
-  );
-}
-
-function DocRow({ name, size }: { name: string; size: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        padding: '10px 12px',
-        borderRadius: 'var(--sos-radius-sm)',
-        background: 'var(--sos-surface-1)',
-        border: '1px solid var(--sos-border-subtle)',
-      }}
-    >
-      <div
-        style={{
-          width: '32px',
-          height: '32px',
-          borderRadius: '10px',
-          display: 'grid',
-          placeItems: 'center',
-          background: 'var(--sos-surface-2)',
-          color: 'var(--sos-text-muted)',
-          border: '1px solid var(--sos-border-subtle)',
-        }}
-      >
-        <Paperclip size={14} />
-      </div>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div
-          style={{
-            fontSize: '12.5px',
-            fontWeight: 600,
-            color: 'var(--sos-text-primary)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {name}
-        </div>
-        <div className="sos-text-faint" style={{ fontSize: '11px', marginTop: '2px' }}>
-          {size}
-        </div>
-      </div>
-      <button
-        type="button"
-        aria-label="Remove document"
-        style={{
-          border: 'none',
-          background: 'transparent',
-          color: 'var(--sos-text-faint)',
-          cursor: 'pointer',
-          display: 'inline-flex',
-          padding: '4px',
-        }}
-      >
-        <X size={13} />
-      </button>
-    </div>
-  );
-}
-
-function ReminderRow({
-  Icon,
-  title,
-  caption,
-}: {
-  Icon: typeof Handshake;
-  title: string;
-  caption: string;
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        padding: '10px 12px',
-        borderRadius: 'var(--sos-radius-sm)',
-        background: 'var(--sos-surface-1)',
-        border: '1px solid var(--sos-border-subtle)',
-      }}
-    >
-      <div
-        style={{
-          width: '30px',
-          height: '30px',
-          borderRadius: '10px',
-          display: 'grid',
-          placeItems: 'center',
-          background: 'var(--sos-brand-accent-soft)',
-          color: 'var(--sos-brand-accent)',
-          border: '1px solid var(--sos-brand-accent-border)',
-        }}
-      >
-        <Icon size={13} />
-      </div>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div
-          style={{
-            fontSize: '12.5px',
-            fontWeight: 600,
-            color: 'var(--sos-text-primary)',
-          }}
-        >
-          {title}
-        </div>
-        <div className="sos-text-faint" style={{ fontSize: '11px', marginTop: '2px' }}>
-          {caption}
-        </div>
-      </div>
-    </div>
   );
 }
 

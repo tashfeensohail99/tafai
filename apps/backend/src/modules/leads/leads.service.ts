@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
+import { StorageService } from '../storage/storage.service';
 import { AssignLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
 
 @Injectable()
@@ -16,6 +18,7 @@ export class LeadsService {
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
     private readonly activityTimeline: ActivityTimelineService,
+    private readonly storage: StorageService,
   ) {}
 
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
@@ -461,5 +464,116 @@ export class LeadsService {
     });
 
     return employee?.id ?? null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lead file attachments
+  // ---------------------------------------------------------------------------
+
+  private async assertLeadAccess(leadId: string, user: RequestUser): Promise<void> {
+    const canViewAll = user.permissions.includes('leads.view_all');
+    const lead = await this.prisma.lead.findFirst({
+      where: {
+        id: leadId,
+        deletedAt: null,
+        ...(!canViewAll
+          ? {
+              OR: [
+                { assignedEmployee: { userId: user.id } },
+                { createdByUserId: user.id },
+              ],
+            }
+          : {}),
+      },
+      select: { id: true },
+    });
+    if (!lead) throw new NotFoundException('Lead not found or access denied');
+  }
+
+  async uploadLeadFile(
+    leadId: string,
+    file: Express.Multer.File,
+    user: RequestUser,
+  ) {
+    await this.assertLeadAccess(leadId, user);
+
+    const { key } = await this.storage.upload(
+      file.buffer,
+      file.mimetype,
+      `leads/${leadId}/attachments`,
+      file.originalname,
+    );
+
+    const employee = await this.findEmployeeIdByUserId(user.id);
+    void employee; // employee id not stored in lead_files, use userId directly
+
+    return this.prisma.leadFile.create({
+      data: {
+        leadId,
+        uploadedByUserId: user.id,
+        fileName: file.originalname,
+        fileKey: key,
+        fileMimeType: file.mimetype,
+        fileSizeBytes: file.size,
+      },
+      select: {
+        id: true,
+        leadId: true,
+        fileName: true,
+        fileMimeType: true,
+        fileSizeBytes: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  async listLeadFiles(leadId: string, user: RequestUser) {
+    await this.assertLeadAccess(leadId, user);
+
+    return this.prisma.leadFile.findMany({
+      where: { leadId },
+      select: {
+        id: true,
+        leadId: true,
+        fileName: true,
+        fileMimeType: true,
+        fileSizeBytes: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getLeadFileSignedUrl(leadId: string, fileId: string, user: RequestUser) {
+    await this.assertLeadAccess(leadId, user);
+
+    const record = await this.prisma.leadFile.findFirst({
+      where: { id: fileId, leadId },
+      select: { fileKey: true, fileName: true },
+    });
+    if (!record) throw new NotFoundException('File not found');
+
+    const url = await this.storage.getSignedUrl(record.fileKey);
+    return { url, fileName: record.fileName };
+  }
+
+  async deleteLeadFile(leadId: string, fileId: string, user: RequestUser) {
+    await this.assertLeadAccess(leadId, user);
+
+    const record = await this.prisma.leadFile.findFirst({
+      where: { id: fileId, leadId },
+      select: { id: true, fileKey: true, uploadedByUserId: true },
+    });
+    if (!record) throw new NotFoundException('File not found');
+
+    // Only uploader or someone with leads.view_all can delete
+    const canDeleteAny = user.permissions.includes('leads.view_all');
+    if (!canDeleteAny && record.uploadedByUserId !== user.id) {
+      throw new ForbiddenException('You can only delete files you uploaded');
+    }
+
+    await this.storage.delete(record.fileKey);
+    await this.prisma.leadFile.delete({ where: { id: fileId } });
+    return { deleted: true };
   }
 }

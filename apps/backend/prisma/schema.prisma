@@ -780,6 +780,24 @@ model Lead {
   @@index([preferredEmployeeId])
   @@map("leads")
   @@schema("crm")
+  files               LeadFile[]
+}
+
+model LeadFile {
+  id               String   @id @default(uuid())
+  leadId           String
+  uploadedByUserId String?
+  fileName         String
+  fileKey          String
+  fileMimeType     String?
+  fileSizeBytes    Int?
+  createdAt        DateTime @default(now())
+
+  lead             Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@map("lead_files")
+  @@schema("crm")
 }
 
 model FollowUp {

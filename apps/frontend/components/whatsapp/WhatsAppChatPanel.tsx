@@ -24,12 +24,14 @@ import {
 } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
   CalendarClock,
   Check,
   CheckCheck,
   Clock4,
   FileText,
   Phone,
+  PhoneCall,
   Send,
   Sparkles,
   UserPlus,
@@ -64,9 +66,11 @@ interface Props {
   hideSidePanel?: boolean;
   /** Called after a successful lead-to-client conversion. Parent typically routes to the client page. */
   onConverted?: (clientId: string) => void;
+  /** Mobile: show a back arrow in the chat header to return to the conversation list. */
+  onBack?: () => void;
 }
 
-export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Props) {
+export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack }: Props) {
   const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -231,7 +235,20 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted }: Prop
           firstAgentReplyAt={thread.firstAgentReplyAt}
           slaBreached={thread.slaBreached}
           assignedTo={thread.lead?.assignedEmployee ?? null}
+          onBack={onBack}
         />
+        {/* Quick actions strip — visible only when there's no right sidebar
+            (i.e. on the inbox view). Lead-detail tab variant has its own
+            sidebar with the same actions, so we skip the duplicate there. */}
+        {hideSidePanel && thread.leadId ? (
+          <QuickActionsBar
+            isLead={!thread.client && !!thread.lead}
+            isLeadConverted={Boolean(thread.lead?.convertedClientId)}
+            onConvert={() => setConvertOpen(true)}
+            onBook={() => setBookOpen(true)}
+            onFollowUp={() => setFollowUpOpen(true)}
+          />
+        ) : null}
         {/* Messages */}
         <div
           ref={scrollRef}
@@ -360,6 +377,7 @@ function ChatHeader(props: {
   firstAgentReplyAt: string | null;
   slaBreached: boolean;
   assignedTo: { firstName: string; lastName: string } | null;
+  onBack?: () => void;
 }) {
   return (
     <header
@@ -373,6 +391,29 @@ function ChatHeader(props: {
         flexShrink: 0,
       }}
     >
+      {props.onBack ? (
+        <button
+          type="button"
+          onClick={props.onBack}
+          aria-label="Back to conversation list"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: '50%',
+            background: 'transparent',
+            color: 'var(--sos-text-secondary)',
+            border: 'none',
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+          className="wa-back-btn"
+        >
+          <ArrowLeft size={18} />
+        </button>
+      ) : null}
       <div
         style={{
           width: 40,
@@ -448,6 +489,114 @@ function ChatHeader(props: {
         )}
       </div>
     </header>
+  );
+}
+
+// ---- Quick actions strip ------------------------------------------------
+
+/**
+ * Compact horizontal CTA bar shown right under the chat header on the
+ * inbox view (where the right-hand sidebar is hidden). Surfaces the same
+ * three actions the SidePanel exposes: Convert to client, Book appointment,
+ * Add follow-up. Lead-only — when the contact is already a client, hide
+ * Convert; when there's no lead context, hide the whole strip (handled by
+ * the caller).
+ */
+function QuickActionsBar({
+  isLead,
+  isLeadConverted,
+  onConvert,
+  onBook,
+  onFollowUp,
+}: {
+  isLead: boolean;
+  isLeadConverted: boolean;
+  onConvert: () => void;
+  onBook: () => void;
+  onFollowUp: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 8,
+        padding: '8px 16px',
+        background: 'var(--wa-panel-header, #202c33)',
+        borderBottom: '1px solid var(--sos-border-subtle)',
+        flexShrink: 0,
+        overflowX: 'auto',
+      }}
+      className="sos-scroll"
+    >
+      {isLead && !isLeadConverted ? (
+        <button
+          type="button"
+          onClick={onConvert}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '7px 14px',
+            borderRadius: 999,
+            border: 'none',
+            background: 'var(--sos-brand-gradient)',
+            color: 'var(--sos-text-on-accent)',
+            fontSize: 12.5,
+            fontWeight: 700,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            boxShadow: 'var(--sos-shadow-glow)',
+          }}
+        >
+          <UserPlus size={13} />
+          Convert to client
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={onBook}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '7px 14px',
+          borderRadius: 999,
+          border: '1px solid var(--sos-border-strong)',
+          background: 'var(--sos-surface-1)',
+          color: 'var(--sos-text-primary)',
+          fontSize: 12.5,
+          fontWeight: 600,
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <CalendarClock size={13} />
+        Book appointment
+      </button>
+      {isLead ? (
+        <button
+          type="button"
+          onClick={onFollowUp}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '7px 14px',
+            borderRadius: 999,
+            border: '1px solid var(--sos-border-strong)',
+            background: 'var(--sos-surface-1)',
+            color: 'var(--sos-text-primary)',
+            fontSize: 12.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <PhoneCall size={13} />
+          Add follow-up
+        </button>
+      ) : null}
+    </div>
   );
 }
 

@@ -6,6 +6,19 @@ import { listThreads, type ThreadListItem, type WhatsAppThreadStatus } from '@/l
 import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 
+/** Hook: track viewport width so we can switch to single-pane on mobile. */
+function useIsMobile(threshold = 768): boolean {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const update = () => setIsMobile(window.innerWidth < threshold);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [threshold]);
+  return isMobile;
+}
+
 type Filter = WhatsAppThreadStatus | 'ALL';
 
 const FILTERS: Array<{ key: Filter; label: string }> = [
@@ -26,6 +39,7 @@ export default function SalesInboxPage() {
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const { socket } = useWhatsAppSocket();
+  const isMobile = useIsMobile();
 
   const reload = useMemo(
     () => async () => {
@@ -36,12 +50,16 @@ export default function SalesInboxPage() {
           ...(search ? { search } : {}),
         });
         setItems(res.items);
-        if (!activeId && res.items.length > 0) setActiveId(res.items[0]!.id);
+        // Auto-select first thread on desktop only — on mobile we want the
+        // user to land on the list and tap-into a chat.
+        if (!activeId && res.items.length > 0 && !isMobile) {
+          setActiveId(res.items[0]!.id);
+        }
       } finally {
         setLoading(false);
       }
     },
-    [filter, search, activeId],
+    [filter, search, activeId, isMobile],
   );
 
   useEffect(() => { void reload(); }, [reload]);
@@ -59,11 +77,16 @@ export default function SalesInboxPage() {
 
   const totalUnread = useMemo(() => items.reduce((acc, t) => acc + t.unreadCount, 0), [items]);
 
+  // Mobile single-pane: when a chat is selected we show only the chat;
+  // back button returns to the list. On desktop both panes stay visible.
+  const showList = !isMobile || activeId === null;
+  const showChat = !isMobile || activeId !== null;
+
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '360px 1fr',
+        gridTemplateColumns: isMobile ? '1fr' : '360px 1fr',
         height: 'calc(100vh - 64px)',
         overflow: 'hidden',
         border: '1px solid var(--sos-border-subtle)',
@@ -72,11 +95,12 @@ export default function SalesInboxPage() {
       }}
     >
       {/* ── Left panel: contact list ── */}
+      {showList ? (
       <div
         style={{
           display: 'flex',
           flexDirection: 'column',
-          borderRight: '1px solid var(--sos-border-subtle)',
+          borderRight: isMobile ? 'none' : '1px solid var(--sos-border-subtle)',
           overflow: 'hidden',
         }}
       >
@@ -263,10 +287,16 @@ export default function SalesInboxPage() {
           )}
         </div>
       </div>
+      ) : null}
 
       {/* ── Right panel: chat ── */}
-      {activeId ? (
-        <WhatsAppChatPanel threadId={activeId} hideSidePanel />
+      {showChat ? (
+      activeId ? (
+        <WhatsAppChatPanel
+          threadId={activeId}
+          hideSidePanel
+          onBack={isMobile ? () => setActiveId(null) : undefined}
+        />
       ) : (
         <div
           style={{
@@ -287,7 +317,8 @@ export default function SalesInboxPage() {
             Select a conversation from the list to start messaging
           </div>
         </div>
-      )}
+      )
+      ) : null}
     </div>
   );
 }

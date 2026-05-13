@@ -103,6 +103,16 @@ export class CreateLeadDto {
   @IsOptional()
   @IsEnum(LeadStatus)
   status?: LeadStatus;
+
+  /**
+   * If provided, the new Lead is linked to this existing WhatsApp thread
+   * after creation (thread.leadId = newLead.id). Used by the inbox
+   * "Convert to Lead" flow so a raw WhatsApp contact becomes a tracked
+   * Lead and the chat history continues against the same thread.
+   */
+  @IsOptional()
+  @IsUUID()
+  whatsAppThreadId?: string;
 }
 
 export class UpdateLeadDto {

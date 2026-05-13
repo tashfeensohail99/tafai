@@ -215,11 +215,7 @@ export function FinanceIntakePage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         eyebrow="Finance intake"
-        title={
-          <>
-            Verify the receipt,<br />confirm the money is ours.
-          </>
-        }
+        title={<>Verify the receipt, confirm the money is ours.</>}
         description={
           <>
             {counts.total} active cases in the queue · {counts.newFromSales} waiting

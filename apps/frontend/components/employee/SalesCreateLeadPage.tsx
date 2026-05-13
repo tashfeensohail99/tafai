@@ -2,9 +2,9 @@
 // Sales OS — Create Lead wizard (premium dark glass redesign).
 
 import type { Route } from 'next';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api-client';
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -210,11 +210,31 @@ type UpdateFn = (key: keyof FormState, value: FormState[keyof FormState]) => voi
 
 export function SalesCreateLeadPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useEmployeeSession();
   const ownerName = displayNameFromEmail(user.email);
   const ownerInitials = initialsFromEmail(user.email);
 
-  const [form, setForm] = useState<FormState>(() => ({ ...initial, salesPerson: ownerName }));
+  // Inbox "Convert to Lead" deep-link prefills phone + source so the
+  // agent can complete the rest of the wizard without retyping the
+  // contact's number. threadId is held so we can link the thread back
+  // to the new lead server-side.
+  const prefillPhone = searchParams.get('phone') ?? '';
+  const prefillSource = searchParams.get('source');
+  const whatsAppThreadId = searchParams.get('threadId');
+  const validatedSource = useMemo<LeadSource | null>(() => {
+    const allowed: LeadSource[] = ['WALK_IN', 'FACEBOOK', 'INSTAGRAM', 'WEBSITE', 'WHATSAPP', 'REFERRAL', 'PHONE'];
+    return prefillSource && (allowed as string[]).includes(prefillSource)
+      ? (prefillSource as LeadSource)
+      : null;
+  }, [prefillSource]);
+
+  const [form, setForm] = useState<FormState>(() => ({
+    ...initial,
+    salesPerson: ownerName,
+    phone: prefillPhone,
+    source: validatedSource,
+  }));
   const [stepIdx, setStepIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [savedDraft, setSavedDraft] = useState(false);
@@ -269,9 +289,17 @@ export function SalesCreateLeadPage() {
           targetCountry: form.country || undefined,
           priority: form.temperature || undefined,
           notes: form.note.trim() || undefined,
+          whatsAppThreadId: whatsAppThreadId ?? undefined,
         }),
       });
-      router.push('/sales/decisions');
+      // If they came from the inbox via Convert-to-Lead, drop them back
+      // into the same chat — now linked to a real Lead — instead of
+      // bouncing to /sales/decisions.
+      if (whatsAppThreadId) {
+        router.push('/sales/inbox' as Route);
+      } else {
+        router.push('/sales/decisions');
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to create lead';
       setError(msg);
@@ -283,11 +311,7 @@ export function SalesCreateLeadPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         eyebrow="Lead intake flow"
-        title={
-          <>
-            Create a new lead the<br />team can act on today.
-          </>
-        }
+        title={<>Create a new lead the team can act on today.</>}
         description={
           <>
             Step {stepIdx + 1} of {totalSteps} · {step.label}. Capture the basics now and the queue

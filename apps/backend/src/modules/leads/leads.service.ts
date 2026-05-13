@@ -208,6 +208,25 @@ export class LeadsService {
       },
     });
 
+    // Inbox "Convert to Lead" flow: if a raw WhatsApp thread was the
+    // source, link it to the new Lead so the chat history continues
+    // against the same thread. Best-effort — if the thread is already
+    // linked to a different lead/client we leave it alone.
+    if (dto.whatsAppThreadId) {
+      try {
+        await this.prisma.whatsAppThread.updateMany({
+          where: {
+            id: dto.whatsAppThreadId,
+            leadId: null,
+            clientId: null,
+          },
+          data: { leadId: lead.id },
+        });
+      } catch {
+        // Don't fail the whole create if the link step errors out.
+      }
+    }
+
     return lead;
   }
 

@@ -113,11 +113,7 @@ export function FinanceDashboardPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         eyebrow="Finance · verification queue"
-        title={
-          <>
-            Keep verifications honest,<br />on time, and audited.
-          </>
-        }
+        title={<>Keep verifications honest, on time, and audited.</>}
         description={
           <>
             {newFromSales} fresh cases from Sales waiting for a claim ·{' '}

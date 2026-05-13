@@ -293,11 +293,7 @@ export function SalesDecisionsPage({ preselectedLeadId = '' }: { preselectedLead
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         eyebrow="Decisions"
-        title={
-          <>
-            What does the client<br />want to do next?
-          </>
-        }
+        title={<>What does the client want to do next?</>}
         description={
           <>
             Pick the lead, then choose either to book a follow-up meeting or

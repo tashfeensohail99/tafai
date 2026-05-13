@@ -22,6 +22,8 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useRouter } from 'next/navigation';
+import type { Route } from 'next';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -84,6 +86,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const router = useRouter();
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -240,9 +243,21 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         {/* Quick actions strip Ã¢â‚¬â€ visible only when there's no right sidebar
             (i.e. on the inbox view). Lead-detail tab variant has its own
             sidebar with the same actions, so we skip the duplicate there. */}
-        {hideSidePanel && thread.leadId ? (
+        {hideSidePanel ? (
           <QuickActionsBar
             isLead={!thread.client && !!thread.lead}
+            canConvertToLead={!thread.leadId && !thread.clientId}
+            onConvertToLead={() => {
+              // Prefill the Create Lead wizard with the contact's phone and
+              // the source thread so the new Lead links back to this chat.
+              const phone = thread.lead?.phone ?? thread.client?.phone ?? thread.waContactId;
+              const qs = new URLSearchParams({
+                phone,
+                threadId: thread.id,
+                source: 'WHATSAPP',
+              }).toString();
+              router.push(`/sales/create-lead?${qs}` as Route);
+            }}
             onBook={() => setBookOpen(true)}
             onFollowUp={() => setFollowUpOpen(true)}
           />
@@ -511,10 +526,14 @@ function ChatHeader(props: {
  */
 function QuickActionsBar({
   isLead,
+  canConvertToLead,
+  onConvertToLead,
   onBook,
   onFollowUp,
 }: {
   isLead: boolean;
+  canConvertToLead: boolean;
+  onConvertToLead: () => void;
   onBook: () => void;
   onFollowUp: () => void;
 }) {
@@ -531,6 +550,33 @@ function QuickActionsBar({
       }}
       className="sos-scroll"
     >
+      {/* Convert-to-Lead is the primary action when this is a raw
+          WhatsApp contact not yet in the pipeline. Once they're a Lead
+          this button hides and Book/Follow-up become primary. */}
+      {canConvertToLead ? (
+        <button
+          type="button"
+          onClick={onConvertToLead}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '7px 14px',
+            borderRadius: 999,
+            border: 'none',
+            background: 'var(--sos-brand-gradient)',
+            color: 'var(--sos-text-on-accent)',
+            fontSize: 12.5,
+            fontWeight: 700,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            boxShadow: 'var(--sos-shadow-glow)',
+          }}
+        >
+          <UserPlus size={13} />
+          Convert to Lead
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={onBook}
@@ -540,14 +586,14 @@ function QuickActionsBar({
           gap: 6,
           padding: '7px 14px',
           borderRadius: 999,
-          border: 'none',
-          background: 'var(--sos-brand-gradient)',
-          color: 'var(--sos-text-on-accent)',
+          border: canConvertToLead ? '1px solid var(--sos-border-strong)' : 'none',
+          background: canConvertToLead ? 'var(--sos-surface-1)' : 'var(--sos-brand-gradient)',
+          color: canConvertToLead ? 'var(--sos-text-primary)' : 'var(--sos-text-on-accent)',
           fontSize: 12.5,
-          fontWeight: 700,
+          fontWeight: canConvertToLead ? 600 : 700,
           cursor: 'pointer',
           whiteSpace: 'nowrap',
-          boxShadow: 'var(--sos-shadow-glow)',
+          boxShadow: canConvertToLead ? 'none' : 'var(--sos-shadow-glow)',
         }}
       >
         <CalendarClock size={13} />

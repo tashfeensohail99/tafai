@@ -178,11 +178,7 @@ export function SalesFollowUpsPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         eyebrow="Follow-ups"
-        title={
-          <>
-            Keep every touchpoint<br />honest and on the clock.
-          </>
-        }
+        title={<>Keep every touchpoint honest and on the clock.</>}
         description={
           <>
             {counts.TODAY} touches due today Â· {counts.OVERDUE} outside SLA Â· {counts.UPCOMING}{' '}

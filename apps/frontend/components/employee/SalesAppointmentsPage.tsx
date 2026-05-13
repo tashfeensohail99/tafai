@@ -250,11 +250,7 @@ export function SalesAppointmentsPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         eyebrow="Appointments"
-        title={
-          <>
-            Lock down the meeting,<br />the lead does the rest.
-          </>
-        }
+        title={<>Lock down the meeting, the lead does the rest.</>}
         description={
           <>
             {upcoming.length} upcoming · {todayCount} today · {completedCount}{' '}

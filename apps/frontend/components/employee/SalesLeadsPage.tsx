@@ -193,7 +193,7 @@ export function SalesLeadsPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         eyebrow="Assigned queue"
-        title={<>Every lead with a name,<br />a stage, and a next move.</>}
+        title={<>Every lead with a name, a stage, and a next move.</>}
         description={
           <>
             {counts.ALL} leads currently in your queue Â· {counts.ADMIN} from admin Â· {counts.AUTO_CRM} from

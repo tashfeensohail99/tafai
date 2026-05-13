@@ -30,6 +30,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { PresencePill } from '@/components/whatsapp/PresencePill';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { setMyPresence } from '@/lib/whatsapp';
 
 export interface EmployeeUser {
   id: string;
@@ -113,7 +114,14 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
 
   const user: EmployeeUser = session.user;
 
-  function logout() {
+  async function logout() {
+    // Set presence OFFLINE before clearing the JWT so the backend call
+    // is still authenticated. Best-effort — if it fails we still log out.
+    try {
+      await setMyPresence('OFFLINE');
+    } catch {
+      // ignore
+    }
     sessionLogout();
     router.replace('/login');
   }

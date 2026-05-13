@@ -37,6 +37,15 @@ export function PresencePill() {
 
   useEffect(() => {
     getMyPresence()
+      .then((p) => {
+        // If the agent's explicit status is OFFLINE when they first open the
+        // sales shell (e.g. after a fresh login following a clean logout),
+        // auto-flip them to ONLINE so the team view reflects their availability.
+        if (p.explicit === 'OFFLINE') {
+          return setMyPresence('ONLINE');
+        }
+        return p;
+      })
       .then(setPresence)
       .catch(() => setPresence(null));
   }, []);

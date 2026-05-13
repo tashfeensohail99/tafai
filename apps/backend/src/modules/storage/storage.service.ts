@@ -18,6 +18,8 @@ export interface UploadResult {
   mimeType: string;
 }
 
+type StorageMode = 'supabase' | 's3' | 'local';
+
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
@@ -26,23 +28,31 @@ export class StorageService {
   private readonly signedUrlExpires: number;
   private readonly serverSideEncryption?: 'AES256' | 'aws:kms';
   private bucketReady = false;
-  /** When true, skip S3 and return stub values. Set via STORAGE_MODE=local */
-  private readonly localMode: boolean;
+  private supabaseBucketReady = false;
+  private readonly mode: StorageMode;
+  private readonly supabaseUrl?: string;
+  private readonly supabaseServiceKey?: string;
 
   constructor() {
-    this.bucket = process.env.STORAGE_BUCKET ?? 'tafsheen-documents';
+    this.bucket = process.env.STORAGE_BUCKET ?? 'receipts';
     this.signedUrlExpires = parseInt(
       process.env.STORAGE_SIGNED_URL_EXPIRES_SECONDS ?? '300',
       10,
     );
     this.serverSideEncryption = process.env.STORAGE_SERVER_SIDE_ENCRYPTION as 'AES256' | 'aws:kms' | undefined;
-    this.localMode =
-      process.env.STORAGE_MODE === 'local' ||
-      !process.env.STORAGE_ACCESS_KEY ||
-      !process.env.STORAGE_SECRET_KEY;
 
-    if (this.localMode) {
-      this.logger.warn('StorageService running in LOCAL mode — files are not persisted to S3.');
+    // Mode priority: supabase > s3 > local
+    if (process.env.SUPABASE_STORAGE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      this.mode = 'supabase';
+      this.supabaseUrl = process.env.SUPABASE_STORAGE_URL;
+      this.supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      this.logger.log('StorageService running in SUPABASE mode');
+    } else if (process.env.STORAGE_ACCESS_KEY && process.env.STORAGE_SECRET_KEY) {
+      this.mode = 's3';
+      this.logger.log('StorageService running in S3 mode');
+    } else {
+      this.mode = 'local';
+      this.logger.warn('StorageService running in LOCAL mode — files are not persisted.');
     }
 
     this.s3 = new S3Client({
@@ -52,15 +62,11 @@ export class StorageService {
         accessKeyId: process.env.STORAGE_ACCESS_KEY ?? '',
         secretAccessKey: process.env.STORAGE_SECRET_KEY ?? '',
       },
-      forcePathStyle: true, // Required for MinIO
+      forcePathStyle: true,
     });
   }
 
   /**
-   * Upload a file buffer to private storage.
-   * Returns the storage key for later retrieval.
-   * Never expose this key as a public URL.
-   */
   async upload(
     buffer: Buffer,
     mimeType: string,
@@ -70,68 +76,146 @@ export class StorageService {
     const ext = originalFilename?.split('.').pop() ?? 'bin';
     const key = `${folder}/${randomUUID()}.${ext}`;
 
-    if (this.localMode) {
+    if (this.mode === 'local') {
       this.logger.log(`[LOCAL] Skipped upload, stub key: ${key}`);
       return { key, bucket: this.bucket, sizeBytes: buffer.length, mimeType };
     }
 
-    await this.ensureBucketExists();
+    if (this.mode === 'supabase') {
+      await this.supabaseEnsureBucket();
+      const res = await fetch(
+        `${this.supabaseUrl}/storage/v1/object/${this.bucket}/${key}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.supabaseServiceKey}`,
+            'Content-Type': mimeType,
+            'x-upsert': 'true',
+          },
+          body: buffer,
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`Supabase upload failed: ${res.status} ${await res.text()}`);
+      }
+      this.logger.log(`[SUPABASE] Uploaded: ${key}`);
+      return { key, bucket: this.bucket, sizeBytes: buffer.length, mimeType };
+    }
 
+    await this.ensureBucketExists();
     await this.s3.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
         Body: buffer,
         ContentType: mimeType,
-        // Enforce private ACL — no public access
         ACL: 'private',
         ...(this.serverSideEncryption
           ? { ServerSideEncryption: this.serverSideEncryption }
           : {}),
       }),
     );
-
-    this.logger.log(`Uploaded file: ${key}`);
-
+    this.logger.log(`[S3] Uploaded: ${key}`);
     return { key, bucket: this.bucket, sizeBytes: buffer.length, mimeType };
   }
 
-  /**
-   * Generate a short-lived signed URL for a private object.
-   * Always call this AFTER verifying the requesting user
-   * has permission to access the document.
-   */
   async getSignedUrl(key: string): Promise<string> {
-    if (this.localMode) {
+    if (this.mode === 'local') {
       return `/storage/local/${encodeURIComponent(key)}`;
     }
+
+    if (this.mode === 'supabase') {
+      const res = await fetch(
+        `${this.supabaseUrl}/storage/v1/object/sign/${this.bucket}/${key}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.supabaseServiceKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ expiresIn: this.signedUrlExpires }),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`Supabase sign failed: ${res.status} ${await res.text()}`);
+      }
+      const data = await res.json() as { signedURL?: string; signedUrl?: string };
+      const signed = data.signedURL ?? data.signedUrl ?? '';
+      return signed.startsWith('http') ? signed : `${this.supabaseUrl}${signed}`;
+    }
+
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.s3, command, { expiresIn: this.signedUrlExpires });
   }
 
-  /**
-   * Delete a file from storage.
-   */
   async delete(key: string): Promise<void> {
-    if (this.localMode) {
+    if (this.mode === 'local') {
       this.logger.log(`[LOCAL] Skipped delete: ${key}`);
       return;
     }
+
+    if (this.mode === 'supabase') {
+      await fetch(`${this.supabaseUrl}/storage/v1/object/${this.bucket}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${this.supabaseServiceKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prefixes: [key] }),
+      });
+      this.logger.log(`[SUPABASE] Deleted: ${key}`);
+      return;
+    }
+
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
-    this.logger.log(`Deleted file: ${key}`);
+    this.logger.log(`[S3] Deleted: ${key}`);
   }
 
-  /**
-   * Check if a file exists in storage.
-   */
   async exists(key: string): Promise<boolean> {
-    if (this.localMode) return true;
+    if (this.mode === 'local') return true;
+
+    if (this.mode === 'supabase') {
+      const res = await fetch(
+        `${this.supabaseUrl}/storage/v1/object/info/${this.bucket}/${key}`,
+        { headers: { Authorization: `Bearer ${this.supabaseServiceKey}` } },
+      );
+      return res.ok;
+    }
+
     try {
       await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return true;
     } catch {
       return false;
     }
+  }
+
+  private async supabaseEnsureBucket(): Promise<void> {
+    if (this.supabaseBucketReady) return;
+    const checkRes = await fetch(
+      `${this.supabaseUrl}/storage/v1/bucket/${this.bucket}`,
+      { headers: { Authorization: `Bearer ${this.supabaseServiceKey}` } },
+    );
+    if (checkRes.ok) {
+      this.supabaseBucketReady = true;
+      return;
+    }
+    const createRes = await fetch(`${this.supabaseUrl}/storage/v1/bucket`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.supabaseServiceKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ id: this.bucket, name: this.bucket, public: false }),
+    });
+    if (!createRes.ok) {
+      const err = await createRes.text();
+      if (!err.includes('already exists') && !err.includes('Duplicate')) {
+        throw new Error(`Failed to create Supabase bucket: ${err}`);
+      }
+    }
+    this.logger.log(`[SUPABASE] Bucket ready: ${this.bucket}`);
+    this.supabaseBucketReady = true;
   }
 
   private async ensureBucketExists(): Promise<void> {

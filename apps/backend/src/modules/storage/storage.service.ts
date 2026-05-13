@@ -109,7 +109,6 @@ export class StorageService {
         Key: key,
         Body: buffer,
         ContentType: mimeType,
-        ACL: 'private',
         ...(this.serverSideEncryption
           ? { ServerSideEncryption: this.serverSideEncryption }
           : {}),

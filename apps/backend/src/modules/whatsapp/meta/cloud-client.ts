@@ -29,6 +29,10 @@ export interface SendMediaInput {
   mediaId?: string;
   caption?: string;
   filename?: string;
+  /** Set to true when sending a voice note. Meta requires voice: true in the
+   *  audio object to render the message as a voice note (waveform + auto-play)
+   *  rather than a basic audio attachment. File MUST be OGG/OPUS format. */
+  voice?: boolean;
 }
 
 export interface MetaSendResponse {
@@ -119,6 +123,11 @@ export class MetaCloudClient {
     if (input.mediaId) media.id = input.mediaId;
     if (input.caption) media.caption = input.caption;
     if (input.filename) media.filename = input.filename;
+    // voice: true is required by Meta to render as a voice note (waveform,
+    // auto-play, transcription). Without it the message arrives as a basic
+    // audio attachment (music-note icon, manual download). Only set when the
+    // caller explicitly marks this as a voice note — file must be OGG/OPUS.
+    if (input.voice) media.voice = true;
 
     const body = {
       messaging_product: 'whatsapp',

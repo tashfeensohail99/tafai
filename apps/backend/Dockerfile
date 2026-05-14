@@ -34,8 +34,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Runtime OS deps
-RUN apk add --no-cache openssl tini
+# Runtime OS deps (ffmpeg for voice-note OGG/OPUS transcoding)
+RUN apk add --no-cache openssl tini ffmpeg
 
 # Copy only production node_modules (re-install without devDeps)
 COPY package*.json ./

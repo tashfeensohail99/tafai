@@ -10,6 +10,13 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { writeFile, readFile, unlink } from 'node:fs/promises';
+
+const execFileAsync = promisify(execFile);
 import {
   Prisma,
   WhatsAppMessageDirection,
@@ -181,6 +188,15 @@ export class WhatsAppMessagesService {
       throw new ForbiddenException('Only employees may send WhatsApp messages');
     }
 
+    // Free-form media messages are subject to the same 24-hour window rule
+    // as text messages. Templates are exempt but they don't use this method.
+    const now = new Date();
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestException(
+        '24-hour customer-service window has expired. Use a template message instead.',
+      );
+    }
+
     // Resolve Meta message type from MIME type
     const mediaType = resolveMediaType(input.mimeType);
     if (!mediaType) {
@@ -201,12 +217,37 @@ export class WhatsAppMessagesService {
     // so the frontend can show "(#131009) Parameter value is not valid"
     // instead of the bare "Internal server error" that NestJS produces
     // for an unhandled non-HttpException.
+    // Detect voice notes by filename convention (frontend sends voice-note.*).
+    // Voice notes require OGG/OPUS format — transcode if the browser recorded
+    // in a different format (e.g. audio/mp4 on Chrome, audio/webm elsewhere).
+    const isVoiceNote = input.filename.toLowerCase().startsWith('voice-note.');
+    let uploadBuffer = input.file;
+    let uploadMimeType = input.mimeType;
+    let uploadFilename = input.filename;
+
+    if (isVoiceNote && !input.mimeType.toLowerCase().includes('ogg')) {
+      try {
+        uploadBuffer = await this.transcodeVoiceToOgg(input.file);
+        uploadMimeType = 'audio/ogg';
+        uploadFilename = 'voice-note.ogg';
+        this.logger.debug(
+          `Transcoded voice note from ${input.mimeType} → audio/ogg (${input.file.length} → ${uploadBuffer.length} bytes)`,
+        );
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `Voice note transcode failed (${reason}), uploading original ${input.mimeType} as-is`,
+        );
+        // Fall back to original — Meta may still accept it as basic audio
+      }
+    }
+
     let metaMediaId: string;
     try {
       metaMediaId = await metaClient.uploadMedia(
-        input.file,
-        input.mimeType,
-        input.filename,
+        uploadBuffer,
+        uploadMimeType,
+        uploadFilename,
       );
     } catch (err) {
       if (err instanceof MetaApiError) {
@@ -252,8 +293,15 @@ export class WhatsAppMessagesService {
         type: messageType,
         status: WhatsAppMessageStatus.QUEUED,
         mediaUrl: `meta:${metaMediaId}`,
-        mediaMimeType: input.mimeType,
+        // Store the normalised mime type so streamMedia serves the correct
+        // Content-Type and the processor knows the actual uploaded format.
+        mediaMimeType: uploadMimeType,
         body: input.caption ?? null,
+        // Mark voice notes so the outbound processor sends voice: true to Meta,
+        // which renders the message as a voice note (waveform) not basic audio.
+        payload: isVoiceNote
+          ? ({ isVoiceNote: true } as unknown as Prisma.InputJsonValue)
+          : null,
         sentByEmployeeId: caller.employeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
@@ -268,8 +316,35 @@ export class WhatsAppMessagesService {
     return message;
   }
 
+  /**
+   * Transcode any audio buffer to OGG/OPUS mono 16 kHz using ffmpeg.
+   * Meta requires this exact format for voice notes (voice: true messages).
+   * Falls back gracefully — callers should catch and upload the original.
+   */
+  private async transcodeVoiceToOgg(input: Buffer): Promise<Buffer> {
+    const tmpIn = join(tmpdir(), `vn-in-${randomUUID()}`);
+    const tmpOut = join(tmpdir(), `vn-out-${randomUUID()}.ogg`);
+    try {
+      await writeFile(tmpIn, input);
+      await execFileAsync('ffmpeg', [
+        '-y',           // overwrite output
+        '-i', tmpIn,
+        '-c:a', 'libopus',
+        '-ac', '1',     // mono (Meta requirement)
+        '-ar', '16000', // 16 kHz — standard for voice
+        '-application', 'voip',
+        '-b:a', '32k',
+        tmpOut,
+      ]);
+      return await readFile(tmpOut);
+    } finally {
+      await unlink(tmpIn).catch(() => {});
+      await unlink(tmpOut).catch(() => {});
+    }
+  }
+
   /** Look up the thread, enforcing the agent-scope rule. */
-  private async thread(caller: CallerContext, threadId: string) {    const t = await this.prisma.whatsAppThread.findUnique({
+  private async thread(caller: CallerContext, threadId: string) {
       where: { id: threadId },
       select: {
         id: true,

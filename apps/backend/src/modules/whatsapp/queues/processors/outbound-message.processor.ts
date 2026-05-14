@@ -215,11 +215,19 @@ export class OutboundMessageProcessor extends WorkerHost {
           : message.mediaUrl
             ? { link: message.mediaUrl }
             : {};
+        // For voice notes the service sets payload.isVoiceNote = true and
+        // transcodes the file to OGG/OPUS before upload. We must pass
+        // voice: true so Meta renders it as a voice note (waveform + auto-play)
+        // rather than a basic audio attachment.
+        const isVoiceNote =
+          message.type === WhatsAppMessageType.AUDIO &&
+          ((message.payload as { isVoiceNote?: boolean } | null)?.isVoiceNote ?? false);
         return client.sendMedia({
           to,
           type: message.type.toLowerCase() as 'image' | 'video' | 'audio' | 'document' | 'sticker',
           ...mediaRef,
           ...(message.body ? { caption: message.body } : {}),
+          ...(isVoiceNote ? { voice: true } : {}),
         });
       }
       default:

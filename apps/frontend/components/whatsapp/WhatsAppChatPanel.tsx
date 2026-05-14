@@ -1014,7 +1014,13 @@ function ChatComposer(props: {
   const startRecording = async () => {
     if (props.disabled) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,   // mono — Meta OGG voice notes are mono-only
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
       // Meta's WhatsApp Cloud API only accepts audio in: audio/aac,
       // audio/mp4, audio/mpeg, audio/amr, audio/ogg (opus). It does NOT
       // accept audio/webm — recording in webm and shipping it to Meta
@@ -1051,7 +1057,17 @@ function ChatComposer(props: {
       mediaRecorderRef.current = mr;
       setRecording(true);
       setRecordingSecs(0);
-      timerRef.current = setInterval(() => setRecordingSecs((s) => s + 1), 1000);
+      timerRef.current = setInterval(() => {
+        setRecordingSecs((s) => {
+          const next = s + 1;
+          // Auto-stop at 120 s — files larger than ~512 KB show a download
+          // icon instead of inline play on the recipient's WhatsApp.
+          if (next >= 120) {
+            stopRecording();
+          }
+          return next;
+        });
+      }, 1000);
     } catch {
       alert('Microphone access denied. Allow microphone in your browser settings.');
     }

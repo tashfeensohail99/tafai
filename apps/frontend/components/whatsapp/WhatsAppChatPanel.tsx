@@ -1015,12 +1015,26 @@ function ChatComposer(props: {
     if (props.disabled) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Prefer ogg/opus for WhatsApp compatibility; fall back to webm
-      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-        ? 'audio/ogg;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : 'audio/webm';
+      // Meta's WhatsApp Cloud API only accepts audio in: audio/aac,
+      // audio/mp4, audio/mpeg, audio/amr, audio/ogg (opus). It does NOT
+      // accept audio/webm — recording in webm and shipping it to Meta
+      // always 4xxs. Probe in order of preference and bail if the
+      // browser can't produce any Meta-compatible format.
+      const candidates = [
+        'audio/ogg;codecs=opus',  // Chrome / Firefox → uploads as audio/ogg
+        'audio/mp4',              // Safari / iOS
+        'audio/aac',
+        'audio/mpeg',
+      ];
+      const mimeType = candidates.find((c) => MediaRecorder.isTypeSupported(c));
+      if (!mimeType) {
+        stream.getTracks().forEach((t) => t.stop());
+        alert(
+          'Your browser cannot record in a WhatsApp-compatible audio format. ' +
+            'Try Chrome, Firefox, or Safari on a current OS.',
+        );
+        return;
+      }
       const mr = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
       mr.ondataavailable = (e) => {

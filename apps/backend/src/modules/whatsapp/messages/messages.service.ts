@@ -1,4 +1,12 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +19,7 @@ import {
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../queues/queue-contracts';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
+import { MetaApiError } from '../meta/cloud-client';
 
 interface CallerContext {
   userId: string;
@@ -62,6 +71,8 @@ interface SendMediaInput {
  */
 @Injectable()
 export class WhatsAppMessagesService {
+  private readonly logger = new Logger(WhatsAppMessagesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
@@ -185,12 +196,41 @@ export class WhatsAppMessagesService {
 
     const metaClient = this.metaFactory.forChannel(channel);
 
-    // Upload to Meta — returns reusable media_id
-    const metaMediaId = await metaClient.uploadMedia(
-      input.file,
-      input.mimeType,
-      input.filename,
-    );
+    // Upload to Meta — returns reusable media_id. Wrap any Meta-side
+    // failure in a BadGateway with the actual error code/title/message
+    // so the frontend can show "(#131009) Parameter value is not valid"
+    // instead of the bare "Internal server error" that NestJS produces
+    // for an unhandled non-HttpException.
+    let metaMediaId: string;
+    try {
+      metaMediaId = await metaClient.uploadMedia(
+        input.file,
+        input.mimeType,
+        input.filename,
+      );
+    } catch (err) {
+      if (err instanceof MetaApiError) {
+        const detail = err.detail;
+        const message = detail.title
+          ? `Meta rejected media upload: ${detail.title} — ${detail.message}`
+          : `Meta rejected media upload: ${detail.message}`;
+        this.logger.error(
+          `uploadMedia failed for thread=${thread.id} mime=${input.mimeType} bytes=${input.file.length}: code=${detail.code} message=${detail.message}`,
+        );
+        throw new BadGatewayException({
+          message,
+          metaCode: detail.code,
+          metaTitle: detail.title,
+          metaMessage: detail.message,
+          fbtraceId: detail.fbtrace_id,
+        });
+      }
+      const reason = err instanceof Error ? err.message : 'Unknown upload error';
+      this.logger.error(
+        `uploadMedia threw non-Meta error for thread=${thread.id} mime=${input.mimeType}: ${reason}`,
+      );
+      throw new BadGatewayException(`Media upload failed: ${reason}`);
+    }
 
     // Map MIME type → WhatsApp message type enum
     const messageType =

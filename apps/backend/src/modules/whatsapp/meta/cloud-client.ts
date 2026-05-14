@@ -65,11 +65,18 @@ export class MetaApiError extends Error {
 export class MetaCloudClient {
   private readonly http: AxiosInstance;
   private readonly phoneNumberId: string;
+  // Stored explicitly so multipart paths (uploadMedia) don't have to
+  // introspect axios defaults to recover the bearer — `defaults.headers`
+  // shape differs across axios v1 minors and can return undefined.
+  private readonly accessToken: string;
+  private readonly baseURL: string;
 
   constructor(cfg: MetaClientConfig) {
     this.phoneNumberId = cfg.phoneNumberId;
+    this.accessToken = cfg.accessToken;
+    this.baseURL = cfg.baseUrl ?? `https://graph.facebook.com/${cfg.apiVersion}`;
     this.http = axios.create({
-      baseURL: cfg.baseUrl ?? `https://graph.facebook.com/${cfg.apiVersion}`,
+      baseURL: this.baseURL,
       headers: {
         Authorization: `Bearer ${cfg.accessToken}`,
         'Content-Type': 'application/json',
@@ -257,18 +264,16 @@ export class MetaCloudClient {
       // Use a fresh `axios` call (not `this.http`) so we don't inherit
       // the shared instance's `Content-Type: application/json` default
       // and end up with a header collision against the multipart
-      // boundary that form.getHeaders() supplies. The Authorization
-      // header is set explicitly here for the same reason — we're not
-      // sharing config with the instance for this one call.
-      const authHeader = this.http.defaults.headers.Authorization as string | undefined;
-      const baseURL = this.http.defaults.baseURL ?? '';
+      // boundary that form.getHeaders() supplies. Auth + base URL are
+      // pulled from instance fields — not from axios defaults, whose
+      // shape isn't stable across axios v1 minors.
       const res = await axios.post<{ id: string }>(
-        `${baseURL}/${this.phoneNumberId}/media`,
+        `${this.baseURL}/${this.phoneNumberId}/media`,
         form,
         {
           headers: {
             ...form.getHeaders(),
-            ...(authHeader ? { Authorization: authHeader } : {}),
+            Authorization: `Bearer ${this.accessToken}`,
           },
           timeout: 60_000,
           maxBodyLength: 32 * 1024 * 1024,

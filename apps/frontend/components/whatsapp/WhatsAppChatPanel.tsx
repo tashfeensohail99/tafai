@@ -319,6 +319,43 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             messages.map((m) => <MessageBubble key={m.id} message={m} />)
           )}
         </div>
+        {/* Inline error banner — shown whenever a send (text or voice)
+            fails after the thread has already loaded. Without this
+            banner, sendError silently fell into state and the user saw
+            "nothing happened" when a voice note was rejected by Meta. */}
+        {error && thread ? (
+          <div
+            role="alert"
+            style={{
+              padding: '8px 14px',
+              background: 'var(--sos-status-danger-soft)',
+              color: 'var(--sos-status-danger)',
+              borderTop: '1px solid var(--sos-status-danger-border, rgba(229,62,62,0.35))',
+              fontSize: 12.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexShrink: 0,
+            }}
+          >
+            <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0 }}>{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              aria-label="Dismiss"
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                padding: 2,
+                color: 'inherit',
+                opacity: 0.8,
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : null}
         <ChatComposer
           value={draft}
           onChange={setDraft}

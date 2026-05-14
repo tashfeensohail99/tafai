@@ -222,17 +222,58 @@ export class MetaCloudClient {
    * The id is valid for ~30 days and can be passed to sendMedia({ mediaId }).
    *
    * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
+   *
+   * Two non-obvious bits this function gets right:
+   *
+   *   1. The `type` form field must be a bare MIME (e.g. "audio/ogg"), not
+   *      a parameterised one ("audio/ogg;codecs=opus"). Voice notes coming
+   *      from MediaRecorder in Chrome/Firefox arrive with the codecs param
+   *      attached; Meta rejects those with "(#100) Param type must be one
+   *      of {…}". We strip the params off the `type` field but keep the
+   *      original (with codecs) on the file part so the file is still
+   *      recognised correctly.
+   *
+   *   2. The shared axios instance has `Content-Type: application/json`
+   *      as a default header. Multipart uploads need
+   *      "multipart/form-data; boundary=…" instead — leaving the JSON
+   *      default in place can collide with the boundary header and Meta
+   *      either rejects or silently mis-parses the body. We pass
+   *      `Content-Type: undefined` in the per-request headers to delete
+   *      the inherited default, then set the multipart header from
+   *      form.getHeaders() right after.
+   *
+   *   3. The default 15s instance timeout is too short for larger media
+   *      (a 5MB document over a 3G uplink takes longer); bump to 60s for
+   *      the upload path only.
    */
   async uploadMedia(file: Buffer, mimeType: string, filename: string): Promise<string> {
     try {
+      const baseMime = mimeType.split(';')[0].trim().toLowerCase();
       const form = new FormData();
       form.append('messaging_product', 'whatsapp');
-      form.append('type', mimeType);
+      form.append('type', baseMime);
       form.append('file', file, { filename, contentType: mimeType });
-      const res = await this.http.post<{ id: string }>(
-        `/${this.phoneNumberId}/media`,
+
+      // Use a fresh `axios` call (not `this.http`) so we don't inherit
+      // the shared instance's `Content-Type: application/json` default
+      // and end up with a header collision against the multipart
+      // boundary that form.getHeaders() supplies. The Authorization
+      // header is set explicitly here for the same reason — we're not
+      // sharing config with the instance for this one call.
+      const authHeader = this.http.defaults.headers.Authorization as string | undefined;
+      const baseURL = this.http.defaults.baseURL ?? '';
+      const res = await axios.post<{ id: string }>(
+        `${baseURL}/${this.phoneNumberId}/media`,
         form,
-        { headers: form.getHeaders() },
+        {
+          headers: {
+            ...form.getHeaders(),
+            ...(authHeader ? { Authorization: authHeader } : {}),
+          },
+          timeout: 60_000,
+          maxBodyLength: 32 * 1024 * 1024,
+          maxContentLength: 32 * 1024 * 1024,
+        },
       );
       return res.data.id;
     } catch (err) {

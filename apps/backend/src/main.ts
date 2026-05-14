@@ -40,6 +40,8 @@ async function bootstrap(): Promise<void> {
     'http://localhost:5173',
     'http://127.0.0.1:3000',
     'https://frontend-production-08d4.up.railway.app',
+    'https://tashfeengroup.com',
+    'https://www.tashfeengroup.com',
   ];
   const envOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
     .split(',')

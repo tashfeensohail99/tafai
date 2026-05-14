@@ -73,20 +73,53 @@ export function AdminAuthDeleteModal(props: {
     setSubmitting(false);
   }, [open]);
 
+  /**
+   * Per-field validation. The previous single-error pattern was
+   * collapsing three different problems ("missing email" / "weak
+   * password" / "no reason") into one ambiguous message, which sent
+   * operators chasing the wrong field. Now we surface the FIRST
+   * specific failure so the user knows exactly what to fix.
+   */
   async function handleConfirm() {
-    if (!adminEmail.trim() || !adminPassword || reason.trim().length < 5) {
+    const trimmedEmail = adminEmail.trim();
+    const trimmedReason = reason.trim();
+
+    if (!trimmedEmail) {
+      setError('Admin email is required.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError('Admin email looks malformed — double-check before submitting.');
+      return;
+    }
+    if (!adminPassword) {
+      setError('Admin password is required.');
+      return;
+    }
+    if (adminPassword.length < 8) {
+      setError('Admin password must be at least 8 characters.');
+      return;
+    }
+    if (!trimmedReason) {
       setError(
-        'Admin email, password, and a reason of at least 5 characters are required.',
+        'Reason for deletion is required — the grey text in the box is just a placeholder. Type your own reason.',
       );
       return;
     }
+    if (trimmedReason.length < 5) {
+      setError(
+        `Reason must be at least 5 characters (you have ${trimmedReason.length}). Be specific so the audit trail is meaningful.`,
+      );
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
       await onConfirm({
-        adminEmail: adminEmail.trim(),
+        adminEmail: trimmedEmail,
         adminPassword,
-        reason: reason.trim(),
+        reason: trimmedReason,
       });
       // Parent handles the close on success — but if they don't, fall
       // through and clear the form locally so the modal returns to a
@@ -211,12 +244,22 @@ export function AdminAuthDeleteModal(props: {
       </div>
 
       <div style={{ marginTop: 12 }}>
-        <Field label="Reason for deletion" required>
+        <Field
+          label="Reason for deletion"
+          required
+          hint={
+            reason.trim().length === 0
+              ? 'Type the reason here — at least 5 characters. The audit log and the lead timeline both record it.'
+              : reason.trim().length < 5
+                ? `${5 - reason.trim().length} more character${5 - reason.trim().length === 1 ? '' : 's'} needed.`
+                : `${reason.trim().length} characters · audit trail will capture this verbatim.`
+          }
+        >
           <FormTextarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={3}
-            placeholder="e.g. Duplicate receipt; lead resubmitted under a different handover. See note in chat."
+            placeholder="Type your reason here…"
           />
         </Field>
       </div>

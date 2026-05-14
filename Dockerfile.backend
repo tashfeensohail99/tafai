@@ -12,7 +12,7 @@ RUN apk add --no-cache openssl
 COPY apps/backend/package*.json ./
 COPY apps/backend/prisma ./prisma/
 
-RUN npm ci
+RUN npm install
 
 COPY apps/backend/ .
 

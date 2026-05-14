@@ -38,7 +38,7 @@ import { ThemeToggle } from './ThemeToggle';
 import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { apiFetch, ApiClientError } from '@/lib/api-client';
-import { clearAccessToken, getAccessToken } from '@/lib/auth-client';
+import { clearAllTokens, getAccessToken } from '@/lib/auth-client';
 import { invalidateSessionCache } from '@/lib/session';
 
 export interface AdminUser {
@@ -168,7 +168,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       const profile = await apiFetch<AdminUser>('/auth/me');
       setUser(profile);
     } catch (err) {
-      clearAccessToken();
+      clearAllTokens();
       setUser(null);
       setError(err instanceof ApiClientError ? err.message : 'Unable to verify your session');
       router.replace('/login');
@@ -178,7 +178,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    clearAccessToken();
+    clearAllTokens();
     invalidateSessionCache();
     setUser(null);
     router.replace('/login');

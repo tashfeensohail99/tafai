@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch, invalidateApiCache } from './api-client';
-import { clearAccessToken, getAccessToken, setAccessToken } from './auth-client';
+import {
+  clearAllTokens,
+  getAccessToken,
+  getRefreshToken,
+  setAccessToken,
+  setRefreshToken,
+} from './auth-client';
 
 export interface SessionUser {
   id: string;
@@ -65,25 +71,37 @@ export function useSession() {
 
   useEffect(() => {
     let cancelled = false;
-    const token = getAccessToken();
-    if (!token) {
-      setState({ status: 'unauthed' });
-      return;
-    }
-    // Cache hit — already rendered, nothing to do.
-    if (cachedUser && Date.now() - cachedAt < SESSION_TTL_MS) {
-      setState({ status: 'authed', user: cachedUser });
-      return;
-    }
-    fetchMe()
-      .then((user) => {
+
+    const bootstrap = async (): Promise<void> => {
+      let token = getAccessToken();
+      // Cold start: no access token in this tab's sessionStorage but a
+      // refresh token is sitting in localStorage from a previous tab.
+      // Try once to mint a fresh access token before declaring the user
+      // unauthed — otherwise closing the tab and reopening it always
+      // forces a re-login even though the 7-day refresh window is open.
+      if (!token && getRefreshToken()) {
+        token = await refreshTokens();
+      }
+      if (!token) {
+        if (!cancelled) setState({ status: 'unauthed' });
+        return;
+      }
+      // Cache hit — already rendered, nothing to do.
+      if (cachedUser && Date.now() - cachedAt < SESSION_TTL_MS) {
+        if (!cancelled) setState({ status: 'authed', user: cachedUser });
+        return;
+      }
+      try {
+        const user = await fetchMe();
         if (!cancelled) setState({ status: 'authed', user });
-      })
-      .catch(() => {
-        clearAccessToken();
+      } catch {
+        clearAllTokens();
         invalidateSessionCache();
         if (!cancelled) setState({ status: 'unauthed' });
-      });
+      }
+    };
+
+    void bootstrap();
     return () => {
       cancelled = true;
     };
@@ -103,14 +121,67 @@ export async function login(email: string, password: string): Promise<SessionUse
     body: JSON.stringify({ email, password }),
   });
   setAccessToken(tokens.accessToken);
+  // Persist refresh token in localStorage so apiFetch can silently rotate
+  // the access token when it expires (15 min default). Without this the
+  // user's session dies mid-form and they have to log in again.
+  setRefreshToken(tokens.refreshToken);
   invalidateSessionCache();
   invalidateApiCache();
   // Pull the canonical user from /auth/me — it carries the roles + permissions.
   return fetchMe();
 }
 
+/**
+ * Exchange a refresh token for a fresh access token. Called by api-client
+ * when a request comes back 401, before retrying the original request.
+ * Returns the new access token, or null if the refresh failed (refresh
+ * token expired, revoked, or never existed). On failure the caller is
+ * responsible for clearing tokens + bouncing to /login.
+ *
+ * Coalesces concurrent refresh attempts so a page-load that fires 5
+ * parallel API calls (all hitting 401 simultaneously) only spends one
+ * refresh round-trip instead of racing 5 of them.
+ */
+let refreshInflight: Promise<string | null> | null = null;
+export function refreshTokens(): Promise<string | null> {
+  if (refreshInflight) return refreshInflight;
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return Promise.resolve(null);
+
+  refreshInflight = apiFetch<LoginResult>('/auth/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ refreshToken }),
+    cache: 'no-store',
+  })
+    .then((tokens) => {
+      setAccessToken(tokens.accessToken);
+      setRefreshToken(tokens.refreshToken);
+      return tokens.accessToken;
+    })
+    .catch(() => {
+      // Refresh failed — token is gone for good, surface that to the
+      // caller. They'll clear state and redirect.
+      return null;
+    })
+    .finally(() => {
+      refreshInflight = null;
+    });
+  return refreshInflight;
+}
+
 export function logout() {
-  clearAccessToken();
+  // Fire-and-forget revocation. The backend invalidates the refresh
+  // token server-side so even if it lingers in some other tab it can't
+  // be used. We don't await — logout is a UX action, not a transaction.
+  const refreshToken = getRefreshToken();
+  if (refreshToken) {
+    apiFetch('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+      cache: 'no-store',
+    }).catch(() => undefined);
+  }
+  clearAllTokens();
   invalidateSessionCache();
   invalidateApiCache();
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { getAccessToken } from './auth-client';
+import { clearAllTokens, getAccessToken, getRefreshToken } from './auth-client';
 
 export class ApiClientError extends Error {
   status: number;
@@ -12,6 +12,54 @@ export class ApiClientError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+/**
+ * Endpoints that must NEVER be retried after a 401-refresh cycle. Refresh
+ * itself is the obvious one (infinite loop), login and logout shouldn't
+ * be re-attempted with a fresh token either.
+ */
+const NO_REFRESH_PATHS = new Set(['/auth/refresh', '/auth/login', '/auth/logout']);
+
+/**
+ * Single-flight refresh coordinator. If 4 parallel requests all hit 401
+ * at once (typical on a page mount that fans out to /leads, /follow-ups,
+ * /appointments, /me), only one refresh call goes out and the other
+ * three wait on the same promise. Avoids 4 racing refresh attempts where
+ * 3 of them invalidate the fourth's just-rotated refresh token.
+ */
+let refreshPromise: Promise<string | null> | null = null;
+
+async function attemptRefresh(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+        cache: 'no-store',
+      });
+      if (!res.ok) return null;
+      const tokens = (await res.json()) as {
+        accessToken: string;
+        refreshToken: string;
+      };
+      // Write directly via the auth-client setters to avoid a circular
+      // import with session.ts (which itself imports from this file).
+      window.sessionStorage.setItem('tafsheen-access-token', tokens.accessToken);
+      window.localStorage.setItem('tafsheen-refresh-token', tokens.refreshToken);
+      return tokens.accessToken;
+    } catch {
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
 }
 
 function getApiBaseUrl(): string {
@@ -67,17 +115,41 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     if (existing) return existing as Promise<T>;
   }
 
-  const headers = new Headers(init?.headers ?? {});
-  if (!headers.has('Content-Type') && init?.body) {
-    headers.set('Content-Type', 'application/json');
+  function buildHeaders(currentToken: string | null): Headers {
+    const h = new Headers(init?.headers ?? {});
+    if (!h.has('Content-Type') && init?.body) {
+      h.set('Content-Type', 'application/json');
+    }
+    if (currentToken) h.set('Authorization', `Bearer ${currentToken}`);
+    return h;
   }
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  async function doFetch(currentToken: string | null): Promise<Response> {
+    return fetch(`${getApiBaseUrl()}${path}`, {
+      ...init,
+      headers: buildHeaders(currentToken),
+    });
+  }
 
   const promise = (async (): Promise<T> => {
-    const response = await fetch(`${getApiBaseUrl()}${path}`, {
-      ...init,
-      headers,
-    });
+    let response = await doFetch(token);
+
+    // Token-expiry recovery: if the request came back 401 AND the user
+    // had an access token (i.e. it wasn't an anonymous call), try to
+    // refresh once. If refresh succeeds we replay the original request
+    // with the new bearer. If refresh fails we clear state so the next
+    // navigation lands on /login instead of looping. Endpoints in
+    // NO_REFRESH_PATHS are deliberately excluded to avoid infinite loops.
+    if (response.status === 401 && token && !NO_REFRESH_PATHS.has(path)) {
+      const newToken = await attemptRefresh();
+      if (newToken) {
+        response = await doFetch(newToken);
+      } else {
+        // Refresh path is dead — wipe local state so the next mount of
+        // useSession() sees "unauthed" and the shell redirects to login.
+        clearAllTokens();
+      }
+    }
 
     const contentType = response.headers.get('content-type') ?? '';
     const body = contentType.includes('application/json')

@@ -45,6 +45,7 @@ import {
   Tag,
   Timer,
   Upload,
+  UserCog,
   Wallet,
   X,
 } from 'lucide-react';
@@ -82,6 +83,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
+import { EditLeadModal } from '@/components/whatsapp/EditLeadModal';
 import {
   fetchLead,
   fetchFollowUps,
@@ -172,6 +174,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [pinned, setPinned] = useState(false);
   const [copyHint, setCopyHint] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   // Load lead + related data
   useEffect(() => {
@@ -290,6 +293,12 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
               <Check size={11} /> {copyHint}
             </StatusBadge>
           ) : null}
+          <GhostButton
+            iconLeft={<UserCog size={14} />}
+            onClick={() => setEditOpen(true)}
+          >
+            Edit lead
+          </GhostButton>
           <GhostButton
             iconLeft={<Star size={14} fill={pinned ? 'currentColor' : 'none'} />}
             onClick={() => setPinned((v) => !v)}
@@ -465,6 +474,31 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
             </PrimaryButton>
           </>
         }
+      />
+
+      <EditLeadModal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        lead={
+          lead
+            ? {
+                id: lead.id,
+                firstName: lead.firstName,
+                lastName: lead.lastName,
+                phone: lead.phone,
+                email: lead.email,
+                service: lead.service,
+                targetCountry: lead.targetCountry,
+              }
+            : null
+        }
+        onSaved={() => {
+          // Pull a fresh copy so identity changes flow through the rest
+          // of the page (header title, identity strip, contact actions).
+          void fetchLead(leadId).then((fresh) => {
+            if (fresh) setLead(fresh);
+          });
+        }}
       />
     </div>
   );

@@ -276,14 +276,38 @@ export async function fetchLead(id: string): Promise<Lead | null> {
   }
 }
 
+/**
+ * PATCH /leads/:id — accepts both the pipeline fields (stage / priority /
+ * notes) AND the identity fields (firstName / lastName / phone / email /
+ * service / targetCountry). The UI splits them across two affordances:
+ *   - "Save changes" on the lead profile Overview tab → pipeline fields
+ *   - "Edit lead" modal (profile page header + chat panel) → identity
+ * Both flows funnel through here so the backend mapping stays in one place.
+ */
 export async function patchLead(
   id: string,
-  changes: { stage?: LeadStage; priority?: Priority; notes?: string },
+  changes: {
+    stage?: LeadStage;
+    priority?: Priority;
+    notes?: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    email?: string;
+    serviceInterest?: string;
+    targetCountry?: string;
+  },
 ): Promise<void> {
   const body: Record<string, unknown> = {};
   if (changes.stage !== undefined) body.status = mapStageToStatus(changes.stage);
   if (changes.priority !== undefined) body.priority = mapPriorityToApi(changes.priority);
   if (changes.notes !== undefined) body.notes = changes.notes;
+  if (changes.firstName !== undefined) body.firstName = changes.firstName;
+  if (changes.lastName !== undefined) body.lastName = changes.lastName;
+  if (changes.phone !== undefined) body.phone = changes.phone;
+  if (changes.email !== undefined) body.email = changes.email || undefined;
+  if (changes.serviceInterest !== undefined) body.serviceInterest = changes.serviceInterest || undefined;
+  if (changes.targetCountry !== undefined) body.targetCountry = changes.targetCountry || undefined;
   await apiFetch(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 

@@ -37,6 +37,7 @@ import {
   PhoneCall,
   Send,
   Sparkles,
+  UserCog,
   UserPlus,
   X,
 } from 'lucide-react';
@@ -62,6 +63,7 @@ import {
 import { ConvertToClientModal } from './ConvertToClientModal';
 import { BookAppointmentModal } from './BookAppointmentModal';
 import { AddFollowUpModal } from './AddFollowUpModal';
+import { EditLeadModal } from './EditLeadModal';
 import { TemplatePickerModal } from './TemplatePickerModal';
 
 interface Props {
@@ -85,6 +87,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   const [bookOpen, setBookOpen] = useState(false);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [editLeadOpen, setEditLeadOpen] = useState(false);
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -249,6 +252,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           <QuickActionsBar
             isLead={!thread.client && !!thread.lead}
             canConvertToLead={!thread.leadId && !thread.clientId}
+            canEditLead={!!thread.lead && !thread.client}
             onConvertToLead={() => {
               // Prefill the Create Lead wizard with the contact's phone and
               // the source thread so the new Lead links back to this chat.
@@ -260,6 +264,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               }).toString();
               router.push(`/sales/create-lead?${qs}` as Route);
             }}
+            onEditLead={() => setEditLeadOpen(true)}
             onBook={() => setBookOpen(true)}
             onFollowUp={() => setFollowUpOpen(true)}
           />
@@ -314,6 +319,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onConvert={() => setConvertOpen(true)}
           onBook={() => setBookOpen(true)}
           onFollowUp={() => setFollowUpOpen(true)}
+          onEditLead={() => setEditLeadOpen(true)}
         />
       )}
 
@@ -366,6 +372,30 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         channelId={thread.channelId}
         onSent={() => {
           setTemplateOpen(false);
+          void reload();
+        }}
+      />
+      <EditLeadModal
+        open={editLeadOpen}
+        onClose={() => setEditLeadOpen(false)}
+        lead={
+          thread.lead
+            ? {
+                id: thread.lead.id,
+                firstName: thread.lead.firstName,
+                lastName: thread.lead.lastName,
+                phone: thread.lead.phone,
+                email: thread.lead.email ?? undefined,
+                targetCountry: thread.lead.targetCountry ?? undefined,
+                // ThreadDetail.lead doesn't carry serviceInterest, so it
+                // starts empty in the modal — the agent can still set
+                // it from the chat for the first time if needed.
+                service: undefined,
+              }
+            : null
+        }
+        onSaved={() => {
+          setEditLeadOpen(false);
           void reload();
         }}
       />
@@ -529,13 +559,17 @@ function ChatHeader(props: {
 function QuickActionsBar({
   isLead,
   canConvertToLead,
+  canEditLead,
   onConvertToLead,
+  onEditLead,
   onBook,
   onFollowUp,
 }: {
   isLead: boolean;
   canConvertToLead: boolean;
+  canEditLead: boolean;
   onConvertToLead: () => void;
+  onEditLead: () => void;
   onBook: () => void;
   onFollowUp: () => void;
 }) {
@@ -622,6 +656,35 @@ function QuickActionsBar({
         >
           <PhoneCall size={13} />
           Add follow-up
+        </button>
+      ) : null}
+      {/* Edit lead — only shown once the contact is a tracked Lead.
+          Opens the same EditLeadModal used on the lead profile page,
+          prefilled with the lead's current details. Lets sales correct
+          a misspelled name or swap a phone number without leaving the
+          chat. Clients (post-conversion) are read-only here on purpose
+          — finance/processing own the client record at that point. */}
+      {canEditLead ? (
+        <button
+          type="button"
+          onClick={onEditLead}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '7px 14px',
+            borderRadius: 999,
+            border: '1px solid var(--sos-border-strong)',
+            background: 'var(--sos-surface-1)',
+            color: 'var(--sos-text-primary)',
+            fontSize: 12.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <UserCog size={13} />
+          Edit lead
         </button>
       ) : null}
     </div>
@@ -988,11 +1051,13 @@ function SidePanel({
   onConvert,
   onBook,
   onFollowUp,
+  onEditLead,
 }: {
   thread: ThreadDetail;
   onConvert: () => void;
   onBook: () => void;
   onFollowUp: () => void;
+  onEditLead: () => void;
 }) {
   const isLead = !thread.client && !!thread.lead;
   const isClient = !!thread.client;
@@ -1043,6 +1108,11 @@ function SidePanel({
           {isLead && lead && (
             <SecondaryButton onClick={onFollowUp} iconLeft={<Phone size={14} />} fullWidth>
               Add follow-up
+            </SecondaryButton>
+          )}
+          {isLead && lead && (
+            <SecondaryButton onClick={onEditLead} iconLeft={<UserCog size={14} />} fullWidth>
+              Edit lead details
             </SecondaryButton>
           )}
         </div>

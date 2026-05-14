@@ -1,0 +1,211 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Loader2, Save, UserCog } from 'lucide-react';
+import {
+  Field,
+  FormInput,
+  GhostButton,
+  PrimaryButton,
+} from '@/components/sales-v2/ui';
+import { patchLead } from '@/lib/sales-api';
+import { Modal } from './Modal';
+
+/**
+ * Edit Lead Modal — opens with a lead's current identity fields prefilled
+ * and lets a sales agent correct the spelling, swap the phone number, or
+ * add an email that came in later through the conversation. Used from
+ * two places:
+ *   - Lead profile page header ("Edit lead" pill)
+ *   - WhatsApp chat panel (QuickActionsBar + SidePanel)
+ *
+ * Only edits identity fields (firstName, lastName, phone, email,
+ * service, targetCountry). Pipeline state (stage, priority, notes) is
+ * still owned by the dedicated Overview-tab editor on the profile page,
+ * which has the surrounding context (stage progress, next-action chips,
+ * SLA badges) to make those choices meaningful.
+ */
+export interface EditLeadModalLead {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email?: string;
+  service?: string;
+  targetCountry?: string;
+}
+
+export function EditLeadModal(props: {
+  open: boolean;
+  onClose: () => void;
+  /** Current lead; nothing is rendered while this is null. */
+  lead: EditLeadModalLead | null;
+  /** Called after a successful save; parent should refetch. */
+  onSaved: () => void;
+}) {
+  const { open, onClose, lead, onSaved } = props;
+
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [service, setService] = useState('');
+  const [targetCountry, setTargetCountry] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-prefill every time the modal opens against a (potentially) new lead.
+  useEffect(() => {
+    if (!open || !lead) return;
+    setFirstName(lead.firstName ?? '');
+    setLastName(lead.lastName ?? '');
+    setPhone(lead.phone ?? '');
+    setEmail(lead.email ?? '');
+    setService(lead.service ?? '');
+    setTargetCountry(lead.targetCountry ?? '');
+    setError(null);
+    setSubmitting(false);
+  }, [open, lead]);
+
+  async function handleSave() {
+    if (!lead) return;
+    if (!firstName.trim() || !lastName.trim() || !phone.trim()) {
+      setError('First name, last name, and phone are required.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      // Only send fields that actually changed so we don't burn an audit
+      // log row recording "lastName: Khan → Khan".
+      const changes: Parameters<typeof patchLead>[1] = {};
+      if (firstName.trim() !== lead.firstName) changes.firstName = firstName.trim();
+      if (lastName.trim() !== lead.lastName) changes.lastName = lastName.trim();
+      if (phone.trim() !== lead.phone) changes.phone = phone.trim();
+      if ((email.trim() || undefined) !== (lead.email || undefined)) {
+        changes.email = email.trim();
+      }
+      if ((service.trim() || undefined) !== (lead.service || undefined)) {
+        changes.serviceInterest = service.trim();
+      }
+      if ((targetCountry.trim() || undefined) !== (lead.targetCountry || undefined)) {
+        changes.targetCountry = targetCountry.trim();
+      }
+      // No-op save still counts as success — close the modal anyway.
+      if (Object.keys(changes).length > 0) {
+        await patchLead(lead.id, changes);
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save changes.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={() => (submitting ? undefined : onClose())}
+      title="Edit lead details"
+      width={560}
+      footer={
+        <>
+          <GhostButton onClick={onClose} disabled={submitting}>
+            Cancel
+          </GhostButton>
+          <PrimaryButton
+            onClick={() => void handleSave()}
+            disabled={submitting}
+            iconLeft={
+              submitting ? (
+                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              ) : (
+                <Save size={14} />
+              )
+            }
+          >
+            {submitting ? 'Saving…' : 'Save changes'}
+          </PrimaryButton>
+        </>
+      }
+    >
+      <div
+        className="sos-text-secondary"
+        style={{ fontSize: 'var(--sos-text-sm)', display: 'flex', alignItems: 'center', gap: 8 }}
+      >
+        <UserCog size={14} />
+        <span>
+          Update the contact details. Pipeline stage and priority are edited from the lead
+          profile&apos;s Overview tab.
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop: 16,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: 12,
+        }}
+      >
+        <Field label="First name" required>
+          <FormInput
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            placeholder="First name"
+          />
+        </Field>
+        <Field label="Last name" required>
+          <FormInput
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            placeholder="Last name"
+          />
+        </Field>
+        <Field label="Phone" required hint="E.164 preferred (e.g. +92312…)">
+          <FormInput
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+92 ..."
+            inputMode="tel"
+          />
+        </Field>
+        <Field label="Email" hint="Optional — improves auto-routing">
+          <FormInput
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="lead@example.com"
+            type="email"
+            inputMode="email"
+          />
+        </Field>
+        <Field label="Service of interest">
+          <FormInput
+            value={service}
+            onChange={(e) => setService(e.target.value)}
+            placeholder="e.g. Study Visa"
+          />
+        </Field>
+        <Field label="Target country">
+          <FormInput
+            value={targetCountry}
+            onChange={(e) => setTargetCountry(e.target.value)}
+            placeholder="e.g. Canada"
+          />
+        </Field>
+      </div>
+
+      {error ? (
+        <div
+          className="sos-banner sos-banner--danger"
+          style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'flex-start' }}
+        >
+          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+    </Modal>
+  );
+}

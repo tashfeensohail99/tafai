@@ -88,6 +88,7 @@ import {
   fetchLead,
   fetchFollowUps,
   fetchAppointments,
+  fetchLeadFinanceHandovers,
   patchLead,
   sendLeadEmailVerification,
   fetchLeadFiles,
@@ -95,6 +96,7 @@ import {
   getLeadFileUrl,
   deleteLeadFile,
   type ApiLeadFile,
+  type ApiLeadFinanceHandover,
 } from '@/lib/sales-api';
 
 const STAGES: LeadStage[] = [
@@ -119,7 +121,7 @@ const STAGE_PROGRESS: LeadStage[] = [
   'SENT_TO_FINANCE',
 ];
 
-type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP' | 'VERIFICATION';
+type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP' | 'VERIFICATION' | 'FINANCE';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'OVERVIEW', label: 'Overview', Icon: ClipboardList },
@@ -127,6 +129,7 @@ const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'ACTIVITY', label: 'Activity', Icon: History },
   { key: 'FOLLOWUPS', label: 'Follow-ups', Icon: Phone },
   { key: 'APPOINTMENTS', label: 'Appointments', Icon: CalendarClock },
+  { key: 'FINANCE', label: 'Finance', Icon: Wallet },
   { key: 'NOTES', label: 'Notes & docs', Icon: StickyNote },
   { key: 'VERIFICATION', label: 'Email verify', Icon: ShieldCheck },
 ];
@@ -175,6 +178,8 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   const [pinned, setPinned] = useState(false);
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [financeHandovers, setFinanceHandovers] = useState<ApiLeadFinanceHandover[]>([]);
+  const [financeLoading, setFinanceLoading] = useState(true);
 
   // Load lead + related data
   useEffect(() => {
@@ -191,6 +196,11 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
     });
     fetchFollowUps(leadId).then(setLeadFollowUps).catch(() => {});
     fetchAppointments(leadId).then(setLeadAppointments).catch(() => {});
+    setFinanceLoading(true);
+    fetchLeadFinanceHandovers(leadId)
+      .then(setFinanceHandovers)
+      .catch(() => setFinanceHandovers([]))
+      .finally(() => setFinanceLoading(false));
   }, [leadId]);
 
   if (loadingLead) {
@@ -292,6 +302,30 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
             <StatusBadge tone="success" size="sm">
               <Check size={11} /> {copyHint}
             </StatusBadge>
+          ) : null}
+          {/* "Finance returned this case" pill — shown across every tab so
+              the agent can't miss a bounce-back. Clicking jumps to the
+              Finance tab where the rejection reason + receipt + notes live. */}
+          {financeHandovers[0]?.status === 'REJECTED' ? (
+            <button
+              type="button"
+              onClick={() => setTab('FINANCE')}
+              className="sos-banner sos-banner--danger"
+              style={{
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontSize: 12.5,
+                fontWeight: 700,
+                border: 'none',
+                borderRadius: 999,
+              }}
+            >
+              <CircleAlert size={13} />
+              Finance returned — open Finance tab
+            </button>
           ) : null}
           <GhostButton
             iconLeft={<UserCog size={14} />}
@@ -425,6 +459,10 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
 
       {tab === 'VERIFICATION' ? (
         <VerificationTab lead={lead} onVerified={(verified) => setLead((prev) => prev ? { ...prev, emailVerified: verified } : prev)} />
+      ) : null}
+
+      {tab === 'FINANCE' ? (
+        <FinanceTab handovers={financeHandovers} loading={financeLoading} />
       ) : null}
 
       <ActionBar
@@ -2224,6 +2262,350 @@ function VerificationTab({
         </p>
       </div>
     </GlassCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Finance tab — the trail of every handover Sales has shipped + every
+// decision Finance has returned. This is what makes the "where did my
+// receipt go?" question answerable from inside the lead profile.
+// ---------------------------------------------------------------------------
+
+type HandoverStatus = ApiLeadFinanceHandover['status'];
+
+const FINANCE_STATUS_LABEL: Record<HandoverStatus, string> = {
+  SUBMITTED: 'Submitted to Finance',
+  IN_REVIEW: 'Finance reviewing',
+  PAYMENT_RECORDED: 'Payment recorded',
+  PAYMENT_VERIFIED: 'Payment verified',
+  REJECTED: 'Returned to Sales',
+  CANCELLED: 'Cancelled',
+  SENT_TO_PROCESSING: 'Sent to Processing',
+};
+
+function financeStatusTone(s: HandoverStatus): BadgeTone {
+  switch (s) {
+    case 'REJECTED':
+    case 'CANCELLED':
+      return 'danger';
+    case 'SUBMITTED':
+    case 'IN_REVIEW':
+      return 'warning';
+    case 'PAYMENT_RECORDED':
+      return 'info';
+    case 'PAYMENT_VERIFIED':
+    case 'SENT_TO_PROCESSING':
+      return 'success';
+    default:
+      return 'neutral';
+  }
+}
+
+function fmtAmount(amount: string, currency: string): string {
+  const n = Number(amount);
+  if (Number.isNaN(n)) return `${amount} ${currency}`;
+  // Locale-aware grouping is nice for big-ticket payments without
+  // depending on a heavy i18n library. Falls back gracefully if the
+  // currency code isn't ISO 4217.
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return `${n.toLocaleString()} ${currency}`;
+  }
+}
+
+function FinanceTab({
+  handovers,
+  loading,
+}: {
+  handovers: ApiLeadFinanceHandover[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <GlassCard variant="strong" padded="lg">
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '32px 16px',
+            color: 'var(--sos-text-muted)',
+            gap: 10,
+          }}
+        >
+          <Loader2 size={16} className="sos-spin" />
+          Loading finance history…
+        </div>
+      </GlassCard>
+    );
+  }
+
+  if (handovers.length === 0) {
+    return (
+      <GlassCard variant="strong" padded="lg">
+        <div style={{ textAlign: 'center', padding: '36px 16px' }}>
+          <Wallet
+            size={36}
+            style={{ color: 'var(--sos-text-faint)', margin: '0 auto 12px' }}
+          />
+          <h3 className="sos-title" style={{ fontSize: '16px' }}>
+            Nothing sent to Finance yet
+          </h3>
+          <p className="sos-text-muted" style={{ marginTop: 6, fontSize: '13px' }}>
+            Once you upload a receipt and hand this lead to Finance, every
+            decision — approval, rejection, correction request — will show up
+            here with the finance officer&apos;s notes.
+          </p>
+        </div>
+      </GlassCard>
+    );
+  }
+
+  // Handovers come back newest-first from the API; reflect that ordering.
+  const latest = handovers[0];
+  const showAlert = latest.status === 'REJECTED';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {showAlert ? (
+        <div
+          role="alert"
+          style={{
+            padding: '14px 18px',
+            borderRadius: 'var(--sos-radius-sm)',
+            background: 'var(--sos-status-danger-soft)',
+            border: '1px solid var(--sos-status-danger)',
+            color: 'var(--sos-status-danger)',
+            display: 'flex',
+            gap: 12,
+            alignItems: 'flex-start',
+          }}
+        >
+          <CircleAlert size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13.5 }}>
+              Finance returned this case to Sales
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 12.5,
+                color: 'var(--sos-text-primary)',
+                lineHeight: 1.5,
+              }}
+            >
+              {latest.financeNotes
+                ? `Finance note: "${latest.financeNotes}"`
+                : 'No finance note was attached. Open the verification detail in /finance/corrections for context.'}
+            </div>
+            <div className="sos-text-muted" style={{ marginTop: 6, fontSize: 11.5 }}>
+              {latest.reviewedAt
+                ? `Reviewed ${new Date(latest.reviewedAt).toLocaleString()}`
+                : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <GlassCard variant="strong" padded="lg">
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+            marginBottom: 14,
+          }}
+        >
+          <div>
+            <div className="sos-eyebrow">Finance handover ledger</div>
+            <h2 className="sos-title" style={{ fontSize: '17px', marginTop: 6 }}>
+              {handovers.length} {handovers.length === 1 ? 'handover' : 'handovers'}
+            </h2>
+            <p
+              className="sos-text-muted"
+              style={{ marginTop: 4, fontSize: 12.5 }}
+            >
+              Every receipt sent to Finance for this lead and every decision
+              Finance has logged. Newest first.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {handovers.map((h, idx) => (
+            <HandoverCard key={h.id} handover={h} index={handovers.length - idx} />
+          ))}
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
+
+function HandoverCard({
+  handover,
+  index,
+}: {
+  handover: ApiLeadFinanceHandover;
+  index: number;
+}) {
+  const tone = financeStatusTone(handover.status);
+  const label = FINANCE_STATUS_LABEL[handover.status];
+  const isRejected = handover.status === 'REJECTED';
+
+  return (
+    <div
+      style={{
+        padding: '16px 18px',
+        borderRadius: 'var(--sos-radius-sm)',
+        background: 'var(--sos-surface-1)',
+        border: isRejected
+          ? '1px solid var(--sos-status-danger)'
+          : '1px solid var(--sos-border-subtle)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <span
+            className="sos-text-faint"
+            style={{ fontSize: 11, letterSpacing: '0.06em' }}
+          >
+            #{index}
+          </span>
+          <span
+            style={{
+              fontWeight: 700,
+              fontSize: 15,
+              color: 'var(--sos-text-primary)',
+            }}
+          >
+            {fmtAmount(handover.submittedAmount, handover.currency)}
+          </span>
+          {handover.paymentMethod ? (
+            <StatusBadge tone="neutral" size="sm">
+              {handover.paymentMethod}
+            </StatusBadge>
+          ) : null}
+          <StatusBadge tone={tone} size="sm" dot>
+            {label}
+          </StatusBadge>
+        </div>
+        {handover.receiptDownloadUrl ? (
+          <a
+            href={handover.receiptDownloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="sos-btn sos-btn--ghost sos-btn--sm"
+            style={{ textDecoration: 'none' }}
+          >
+            <Paperclip size={13} />
+            {handover.receiptFileName}
+          </a>
+        ) : null}
+      </div>
+
+      <div
+        style={{
+          marginTop: 12,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: 10,
+          fontSize: 12.5,
+        }}
+      >
+        <div>
+          <div className="sos-text-faint" style={{ fontSize: 11 }}>Submitted</div>
+          <div>{new Date(handover.submittedAt).toLocaleString()}</div>
+        </div>
+        {handover.reviewedAt ? (
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>
+              Reviewed by Finance
+            </div>
+            <div>{new Date(handover.reviewedAt).toLocaleString()}</div>
+          </div>
+        ) : (
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>
+              Reviewed by Finance
+            </div>
+            <div className="sos-text-faint">Awaiting review</div>
+          </div>
+        )}
+        {handover.transactionRef ? (
+          <div>
+            <div className="sos-text-faint" style={{ fontSize: 11 }}>
+              Transaction ref
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
+              {handover.transactionRef}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {handover.notes ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: '10px 12px',
+            borderRadius: 'var(--sos-radius-xs)',
+            background: 'var(--sos-surface-0)',
+            border: '1px solid var(--sos-border-subtle)',
+            fontSize: 12.5,
+          }}
+        >
+          <div className="sos-text-faint" style={{ fontSize: 11, marginBottom: 4 }}>
+            Sales note (sent with receipt)
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap' }}>{handover.notes}</div>
+        </div>
+      ) : null}
+
+      {handover.financeNotes ? (
+        <div
+          style={{
+            marginTop: 10,
+            padding: '10px 12px',
+            borderRadius: 'var(--sos-radius-xs)',
+            background: isRejected
+              ? 'var(--sos-status-danger-soft)'
+              : 'var(--sos-surface-0)',
+            border: isRejected
+              ? '1px solid var(--sos-status-danger)'
+              : '1px solid var(--sos-border-subtle)',
+            fontSize: 12.5,
+          }}
+        >
+          <div
+            className="sos-text-faint"
+            style={{
+              fontSize: 11,
+              marginBottom: 4,
+              color: isRejected ? 'var(--sos-status-danger)' : undefined,
+              fontWeight: isRejected ? 700 : undefined,
+            }}
+          >
+            Finance officer note {isRejected ? '— REASON FOR RETURN' : ''}
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap' }}>{handover.financeNotes}</div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -435,3 +435,72 @@ export async function getLeadFileUrl(leadId: string, fileId: string): Promise<st
 export async function deleteLeadFile(leadId: string, fileId: string): Promise<void> {
   await apiFetch(`/leads/${leadId}/files/${fileId}`, { method: 'DELETE' });
 }
+
+// ---------------------------------------------------------------------------
+// Finance handover history (for the "Finance" tab on the lead profile)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row in the finance handover ledger for a given lead. This is the
+ * authoritative trail of every receipt the agent has shipped to Finance
+ * and every decision Finance has returned. Sales sees this on the
+ * lead profile's Finance tab; it's what closes the visibility gap that
+ * left "where did Arslan's receipt go?" unanswered.
+ */
+export interface ApiLeadFinanceHandover {
+  id: string;
+  leadId: string;
+  invoiceId: string | null;
+  paymentId: string | null;
+  createdByUserId: string;
+  reviewedByUserId: string | null;
+  status:
+    | 'SUBMITTED'
+    | 'IN_REVIEW'
+    | 'PAYMENT_RECORDED'
+    | 'PAYMENT_VERIFIED'
+    | 'REJECTED'
+    | 'CANCELLED'
+    | 'SENT_TO_PROCESSING';
+  submittedAmount: string;
+  currency: string;
+  paymentMethod: string | null;
+  transactionRef: string | null;
+  notes: string | null;
+  financeNotes: string | null;
+  receiptFileName: string;
+  receiptMimeType: string | null;
+  receiptSizeBytes: number | null;
+  receiptDownloadUrl: string | null;
+  submittedAt: string;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * GET /finance/handovers?leadId=<id>
+ *
+ * Returns every handover ever submitted for this lead, newest first.
+ * Backend already filters by sales-agent ownership (the agent assigned
+ * to the lead OR the agent who submitted the handover), so a sales rep
+ * only sees their own leads' history.
+ *
+ * Returns [] (not null) when nothing has been sent to Finance yet — that
+ * lets the Finance tab render an empty state without special-casing.
+ */
+export async function fetchLeadFinanceHandovers(
+  leadId: string,
+): Promise<ApiLeadFinanceHandover[]> {
+  try {
+    const data = await apiFetch<ApiLeadFinanceHandover[]>(
+      `/finance/handovers?leadId=${encodeURIComponent(leadId)}`,
+    );
+    return data ?? [];
+  } catch {
+    // Sales rep without finance_handover.view_own permission, or backend
+    // unreachable — return [] so the Finance tab still renders the empty
+    // state instead of crashing the whole profile page.
+    return [];
+  }
+}

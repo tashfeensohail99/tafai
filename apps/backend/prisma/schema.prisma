@@ -301,6 +301,7 @@ enum TimelineEventType {
   WHATSAPP_ASSIGNED
   WHATSAPP_CONVERSATION_RESOLVED
   WHATSAPP_OPTED_OUT
+  EMAIL_RECEIVED
   @@schema("crm")
 }
 
@@ -766,6 +767,7 @@ model Lead {
   processingCases     ProcessingCase[]
   whatsappThread      WhatsAppThread? @relation("LeadWhatsAppThread")
   whatsappMessages    WhatsAppMessage[] @relation("LeadWhatsAppMessages")
+  incomingEmails      IncomingEmail[]   @relation("LeadIncomingEmails")
   // Reverse of Client.sourceLeadId. Typically 0..1 Client per Lead, but the
   // relation is modelled as one-to-many to keep Prisma's type generation
   // happy.
@@ -881,6 +883,7 @@ model Client {
   // WhatsApp chat history follows the client after lead-to-client conversion.
   whatsappThreads    WhatsAppThread[]  @relation("ClientWhatsAppThreads")
   whatsappMessages   WhatsAppMessage[] @relation("ClientWhatsAppMessages")
+  incomingEmails     IncomingEmail[]   @relation("ClientIncomingEmails")
 
   @@index([phone])
   @@index([email])
@@ -1174,6 +1177,39 @@ model ActivityTimeline {
   @@index([caseId])
   @@index([createdAt])
   @@map("activity_timeline")
+  @@schema("crm")
+}
+
+// =============================================================================
+// INCOMING EMAILS
+// Stores every inbound email received via IMAP polling from admin@tashfeengroup.com.
+// Matched to lead or client by the sender's email address.
+// =============================================================================
+
+model IncomingEmail {
+  id           String    @id @default(uuid())
+  /// IMAP Message-ID header — used for deduplication
+  messageId    String    @unique
+  fromAddress  String
+  fromName     String?
+  toAddress    String
+  subject      String?
+  bodyText     String?
+  bodyHtml     String?
+  receivedAt   DateTime
+  processedAt  DateTime  @default(now())
+
+  leadId       String?
+  clientId     String?
+
+  lead   Lead?   @relation("LeadIncomingEmails",   fields: [leadId],   references: [id], onDelete: SetNull)
+  client Client? @relation("ClientIncomingEmails", fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([fromAddress])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([receivedAt])
+  @@map("incoming_emails")
   @@schema("crm")
 }
 

@@ -669,6 +669,41 @@ export class FinanceService {
     }
 
     if (dto.action === FinanceHandoverReviewAction.REJECT) {
+      // If the operator already clicked "Verify payment" once (which
+      // ran RECORD_PAYMENT and created an Invoice + a PENDING Payment
+      // row) and is now rejecting, those rows would otherwise sit
+      // orphaned in the database. The next handover for the same lead
+      // would create yet another Invoice, and any aggregate over the
+      // lead's invoices/payments would double-count the rejected
+      // attempt as money still owed/received. Void them here so the
+      // ledger reflects reality.
+      //
+      // We use updateMany with a status-guard so a Payment that's
+      // already been verified (status: PAID/PARTIAL) is not touched —
+      // that would only happen if someone reverses verification, which
+      // isn't a supported flow today, but the guard is cheap insurance.
+      if (existing.paymentId) {
+        await this.prisma.payment.updateMany({
+          where: {
+            id: existing.paymentId,
+            status: PaymentStatus.PENDING,
+          },
+          data: { status: PaymentStatus.CANCELLED },
+        });
+      }
+      if (existing.invoiceId) {
+        await this.prisma.invoice.updateMany({
+          where: {
+            id: existing.invoiceId,
+            // Only cancel an invoice that hasn't been paid yet. If the
+            // invoice already shows partial/full payment we leave it
+            // alone — that money is real and live elsewhere.
+            status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.SENT] },
+          },
+          data: { status: InvoiceStatus.CANCELLED },
+        });
+      }
+
       const rejected = await this.prisma.financeHandover.update({
         where: { id },
         data: {
@@ -686,7 +721,12 @@ export class FinanceService {
         entityType: 'FinanceHandover',
         entityId: id,
         oldValues: { status: existing.status },
-        newValues: { status: rejected.status, financeNotes: dto.financeNotes },
+        newValues: {
+          status: rejected.status,
+          financeNotes: dto.financeNotes,
+          voidedInvoiceId: existing.invoiceId,
+          voidedPaymentId: existing.paymentId,
+        },
       });
 
       await this.activityTimeline.record({
@@ -694,9 +734,15 @@ export class FinanceService {
         entityId: rejected.leadId,
         leadId: rejected.leadId,
         eventType: TimelineEventType.FINANCE_HANDOVER_REVIEWED,
-        description: 'Finance handover rejected and returned to sales',
+        description: existing.invoiceId
+          ? 'Finance handover rejected and returned to sales (recorded invoice + payment voided)'
+          : 'Finance handover rejected and returned to sales',
         actorUserId,
-        metadata: { financeHandoverId: id },
+        metadata: {
+          financeHandoverId: id,
+          voidedInvoiceId: existing.invoiceId,
+          voidedPaymentId: existing.paymentId,
+        },
       });
 
       return {

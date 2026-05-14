@@ -459,16 +459,29 @@ function LeadGroup({
   const unclaimedCount = items.filter((i) => i.reviewedByUserId == null).length;
   const mineCount = items.filter((i) => i.reviewedByUserId === currentUserId).length;
   const otherCount = items.length - unclaimedCount - mineCount;
+  const rejectedCount = items.filter((i) => i.status === 'REJECTED').length;
 
-  // Aggregate amount per currency — only show a total when all transactions
-  // share one currency. Mixed-currency leads see a per-currency breakdown.
-  const amountsByCurrency = items.reduce<Record<string, number>>((acc, h) => {
-    const n = Number(h.submittedAmount);
-    if (!Number.isNaN(n)) {
-      acc[h.currency] = (acc[h.currency] ?? 0) + n;
-    }
-    return acc;
-  }, {});
+  // Aggregate amount per currency, but ONLY for handovers that are
+  // genuinely pending finance action. Rejected and cancelled handovers
+  // are not "money in flight" — they're closed-loop failures that have
+  // already been bounced back. If we summed them here, a lead with one
+  // rejected $1000 attempt and a successful $1500 resubmission would
+  // appear to owe $2500 instead of the real $1500. (This was the
+  // specific bug the user reported.)
+  const PENDING_STATUSES = new Set<FinanceHandoverStatus>([
+    'SUBMITTED',
+    'IN_REVIEW',
+    'PAYMENT_RECORDED',
+  ]);
+  const amountsByCurrency = items
+    .filter((h) => PENDING_STATUSES.has(h.status))
+    .reduce<Record<string, number>>((acc, h) => {
+      const n = Number(h.submittedAmount);
+      if (!Number.isNaN(n)) {
+        acc[h.currency] = (acc[h.currency] ?? 0) + n;
+      }
+      return acc;
+    }, {});
   const currencyTotals = Object.entries(amountsByCurrency).map(([c, total]) =>
     fmtAmount(String(total), c),
   );
@@ -513,8 +526,8 @@ function LeadGroup({
             {items.length} {items.length === 1 ? 'handover' : 'handovers'}
           </StatusBadge>
           {currencyTotals.length > 0 ? (
-            <StatusBadge tone="neutral" size="sm">
-              {currencyTotals.join(' · ')}
+            <StatusBadge tone="neutral" size="sm" title="Sum of handovers still awaiting finance action — rejected attempts are excluded.">
+              {currencyTotals.join(' · ')} pending
             </StatusBadge>
           ) : null}
           {unclaimedCount > 0 ? (
@@ -530,6 +543,11 @@ function LeadGroup({
           {otherCount > 0 ? (
             <StatusBadge tone="neutral" size="sm">
               {otherCount} other officer
+            </StatusBadge>
+          ) : null}
+          {rejectedCount > 0 ? (
+            <StatusBadge tone="danger" size="sm" dot>
+              {rejectedCount} rejected
             </StatusBadge>
           ) : null}
         </div>

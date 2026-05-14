@@ -299,9 +299,7 @@ export class WhatsAppMessagesService {
         body: input.caption ?? null,
         // Mark voice notes so the outbound processor sends voice: true to Meta,
         // which renders the message as a voice note (waveform) not basic audio.
-        payload: isVoiceNote
-          ? ({ isVoiceNote: true } as unknown as Prisma.InputJsonValue)
-          : null,
+        ...(isVoiceNote ? { payload: { isVoiceNote: true } as unknown as Prisma.InputJsonValue } : {}),
         sentByEmployeeId: caller.employeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
@@ -345,6 +343,7 @@ export class WhatsAppMessagesService {
 
   /** Look up the thread, enforcing the agent-scope rule. */
   private async thread(caller: CallerContext, threadId: string) {
+    const t = await this.prisma.whatsAppThread.findUnique({
       where: { id: threadId },
       select: {
         id: true,

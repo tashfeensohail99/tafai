@@ -314,3 +314,35 @@ export async function refundPayment(
     body: JSON.stringify(opts ?? {}),
   });
 }
+
+/**
+ * Result of an admin orphan-cleanup run. `scannedHandovers` is the
+ * number of rejected handovers inspected; `voidedInvoices` /
+ * `voidedPayments` are the actual count of rows transitioned to
+ * CANCELLED. `affectedLeadIds` lets the UI report which leads had
+ * their finance state cleaned up.
+ */
+export interface OrphanCleanupResult {
+  scannedHandovers: number;
+  voidedInvoices: number;
+  voidedPayments: number;
+  affectedLeadIds: string[];
+  reason: string;
+  processedAt: string;
+}
+
+/**
+ * Admin maintenance — retroactively cancel Invoice/Payment rows that
+ * were left orphaned by a "Verify then Reject" flow before the REJECT
+ * branch was patched to auto-void them. The `reason` is required by
+ * the backend and lands on every voided row's notes plus the audit
+ * log and the lead activity timeline.
+ */
+export async function cleanupOrphanHandovers(
+  reason: string,
+): Promise<OrphanCleanupResult> {
+  return apiFetch<OrphanCleanupResult>('/finance/maintenance/cleanup-orphans', {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}

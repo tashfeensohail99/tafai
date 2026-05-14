@@ -981,6 +981,175 @@ export class FinanceService {
     return updatedPayment;
   }
 
+  /**
+   * Admin maintenance — find every FinanceHandover that's been rejected
+   * but still has an `invoiceId` or `paymentId` set, and cancel the
+   * Invoice/Payment rows that step left behind. Pre-fix history (before
+   * the REJECT branch was patched to auto-void) accumulated these
+   * orphans; running this once retroactively cleans the slate so lead
+   * aggregates stop double-counting rejected attempts as money.
+   *
+   * Safety rails:
+   *   - Only invoices in DRAFT/SENT and payments in PENDING are touched.
+   *     Anything that holds real money (PAID/PARTIAL on a payment, paid
+   *     status on an invoice) is left alone — those are live and were
+   *     never orphans.
+   *   - The operator must supply a `reason` (audit + timeline trail
+   *     gets a "why"). The reason is appended to each voided row's
+   *     `notes` field as a `[VOIDED <date> by <userId>: <reason>]`
+   *     line so the trail is self-contained on the row itself.
+   *   - One AuditLog row + one Lead timeline event per voided row.
+   *   - All work happens in a single Prisma transaction so a partial
+   *     failure doesn't leave half the cleanup half-done.
+   *
+   * Returns counts so the admin sees exactly what was changed.
+   */
+  async cleanupOrphanHandovers(
+    reason: string,
+    actorUserId: string,
+  ): Promise<{
+    scannedHandovers: number;
+    voidedInvoices: number;
+    voidedPayments: number;
+    affectedLeadIds: string[];
+    reason: string;
+    processedAt: string;
+  }> {
+    const trimmed = reason.trim();
+    if (trimmed.length < 5) {
+      throw new BadRequestException(
+        'A clear reason (at least 5 characters) is required for orphan cleanup so the audit trail is meaningful.',
+      );
+    }
+
+    // Find every rejected handover that left an Invoice/Payment behind.
+    const orphanHandovers = await this.prisma.financeHandover.findMany({
+      where: {
+        status: FinanceHandoverStatus.REJECTED,
+        OR: [
+          { invoiceId: { not: null } },
+          { paymentId: { not: null } },
+        ],
+      },
+      select: {
+        id: true,
+        leadId: true,
+        invoiceId: true,
+        paymentId: true,
+      },
+    });
+
+    const processedAt = new Date();
+    const stamp = `[VOIDED ${processedAt.toISOString()} by ${actorUserId}: ${trimmed}]`;
+    const affectedLeadIds = new Set<string>();
+    let voidedInvoices = 0;
+    let voidedPayments = 0;
+
+    for (const orphan of orphanHandovers) {
+      affectedLeadIds.add(orphan.leadId);
+
+      let voidedPaymentNow = false;
+      let voidedInvoiceNow = false;
+
+      if (orphan.paymentId) {
+        // Read first so we can preserve any prior notes when appending.
+        const payment = await this.prisma.payment.findUnique({
+          where: { id: orphan.paymentId },
+          select: { id: true, status: true, notes: true },
+        });
+        if (payment && payment.status === PaymentStatus.PENDING) {
+          await this.prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+              status: PaymentStatus.CANCELLED,
+              notes: payment.notes ? `${payment.notes}\n${stamp}` : stamp,
+            },
+          });
+          voidedPayments += 1;
+          voidedPaymentNow = true;
+          await this.auditLog.log({
+            actorUserId,
+            action: AuditAction.PAYMENT_VERIFIED, // closest existing
+            entityType: 'Payment',
+            entityId: payment.id,
+            oldValues: { status: payment.status },
+            newValues: {
+              status: PaymentStatus.CANCELLED,
+              voidReason: trimmed,
+              voidedFromOrphanCleanup: true,
+            },
+          });
+        }
+      }
+
+      if (orphan.invoiceId) {
+        const invoice = await this.prisma.invoice.findUnique({
+          where: { id: orphan.invoiceId },
+          select: { id: true, status: true, notes: true },
+        });
+        if (
+          invoice &&
+          (invoice.status === InvoiceStatus.DRAFT ||
+            invoice.status === InvoiceStatus.SENT)
+        ) {
+          await this.prisma.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              status: InvoiceStatus.CANCELLED,
+              notes: invoice.notes ? `${invoice.notes}\n${stamp}` : stamp,
+            },
+          });
+          voidedInvoices += 1;
+          voidedInvoiceNow = true;
+          await this.auditLog.log({
+            actorUserId,
+            action: AuditAction.PAYMENT_VERIFIED,
+            entityType: 'Invoice',
+            entityId: invoice.id,
+            oldValues: { status: invoice.status },
+            newValues: {
+              status: InvoiceStatus.CANCELLED,
+              voidReason: trimmed,
+              voidedFromOrphanCleanup: true,
+            },
+          });
+        }
+      }
+
+      // Only record a timeline event if we actually voided something
+      // for this orphan — otherwise the row was already in a paid/live
+      // state and we left it alone (no event needed).
+      if (voidedPaymentNow || voidedInvoiceNow) {
+        await this.activityTimeline
+          .record({
+            entityType: 'Lead',
+            entityId: orphan.leadId,
+            leadId: orphan.leadId,
+            eventType: TimelineEventType.FINANCE_HANDOVER_REVIEWED,
+            description: `Orphan ${voidedInvoiceNow ? 'invoice' : ''}${voidedInvoiceNow && voidedPaymentNow ? ' + ' : ''}${voidedPaymentNow ? 'payment' : ''} from rejected handover voided by admin · "${trimmed}"`,
+            actorUserId,
+            metadata: {
+              financeHandoverId: orphan.id,
+              voidedInvoiceId: voidedInvoiceNow ? orphan.invoiceId : null,
+              voidedPaymentId: voidedPaymentNow ? orphan.paymentId : null,
+              voidReason: trimmed,
+              voidedFromOrphanCleanup: true,
+            },
+          })
+          .catch(() => undefined);
+      }
+    }
+
+    return {
+      scannedHandovers: orphanHandovers.length,
+      voidedInvoices,
+      voidedPayments,
+      affectedLeadIds: Array.from(affectedLeadIds),
+      reason: trimmed,
+      processedAt: processedAt.toISOString(),
+    };
+  }
+
   private async ensureLeadExists(leadId: string) {
     const lead = await this.prisma.lead.findUnique({
       where: { id: leadId, deletedAt: null },

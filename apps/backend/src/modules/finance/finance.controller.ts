@@ -22,6 +22,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { FinanceService } from './finance.service';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 import {
+  CleanupOrphanHandoversDto,
   CreateFinanceHandoverDto,
   CreateInvoiceDto,
   CreatePaymentDto,
@@ -192,5 +193,27 @@ export class FinanceController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.financeService.refundPayment(id, dto, user.id);
+  }
+
+  /**
+   * Admin maintenance — retroactively void Invoice/Payment rows that
+   * were created during a "Verify payment" step but then the handover
+   * was rejected, leaving the rows orphaned. Newer code voids these
+   * automatically at REJECT time, so this endpoint is meant to be run
+   * once against pre-fix data, not on a schedule.
+   *
+   * Gated by `settings.manage` — same permission level as the other
+   * admin-only settings pages (countries, services, integrations).
+   * The required `reason` lands on each voided row's notes + the
+   * audit log + the lead activity timeline so the cleanup leaves a
+   * complete audit trail.
+   */
+  @Post('maintenance/cleanup-orphans')
+  @RequirePermissions('settings.manage')
+  cleanupOrphans(
+    @Body() dto: CleanupOrphanHandoversDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.cleanupOrphanHandovers(dto.reason, user.id);
   }
 }

@@ -312,3 +312,15 @@ export class RefundPaymentDto {
   @MaxLength(1000)
   notes?: string;
 }
+
+/**
+ * Admin orphan-cleanup request. The reason is required and lands on
+ * every voided row's notes + the audit log + the lead activity timeline
+ * so the trail is self-explanatory months later. Min length 5 to keep
+ * the trail honest — a one-character placeholder isn't useful.
+ */
+export class CleanupOrphanHandoversDto {
+  @IsString()
+  @MaxLength(500)
+  reason!: string;
+}

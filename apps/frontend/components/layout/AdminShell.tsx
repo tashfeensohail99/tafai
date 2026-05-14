@@ -22,6 +22,7 @@ import {
   UserRoundCog,
   Users,
   UsersRound,
+  Wrench,
   X,
 } from 'lucide-react';
 import {
@@ -108,6 +109,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'WhatsApp Hours', href: '/admin/settings/whatsapp/hours', icon: Clock, caption: 'SLA + working hours', permissionKey: 'whatsapp.manage_settings' },
       { label: 'WhatsApp Team', href: '/admin/settings/whatsapp/team', icon: UsersRound, caption: 'Inbox roster', permissionKey: 'whatsapp.view_team_dashboard' },
       { label: 'Integrations', href: '/admin/settings/integrations', icon: Plug2, caption: 'Meta API & external keys', permissionKey: 'settings.manage' },
+      { label: 'Finance maintenance', href: '/admin/settings/finance', icon: Wrench, caption: 'Orphan cleanup & finance tools', permissionKey: 'settings.manage' },
     ],
   },
 ];
@@ -137,6 +139,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/settings/whatsapp/hours')) return { title: 'WhatsApp Hours & SLA', subtitle: 'Working hours + SLA' };
   if (pathname.startsWith('/admin/settings/whatsapp/team')) return { title: 'WhatsApp Team', subtitle: 'Inbox roster' };
   if (pathname.startsWith('/admin/settings/integrations')) return { title: 'Integrations', subtitle: 'External API credentials' };
+  if (pathname.startsWith('/admin/settings/finance')) return { title: 'Finance maintenance', subtitle: 'Orphan cleanup & finance tools' };
   return { title: 'Admin', subtitle: '' };
 }
 

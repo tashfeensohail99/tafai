@@ -207,13 +207,21 @@ export class OutboundMessageProcessor extends WorkerHost {
       case WhatsAppMessageType.VIDEO:
       case WhatsAppMessageType.AUDIO:
       case WhatsAppMessageType.DOCUMENT:
-      case WhatsAppMessageType.STICKER:
+      case WhatsAppMessageType.STICKER: {
+        // mediaUrl prefixed with "meta:" means we already have a Meta media_id
+        const isMetaId = message.mediaUrl?.startsWith('meta:');
+        const mediaRef = isMetaId
+          ? { mediaId: message.mediaUrl!.slice(5) }
+          : message.mediaUrl
+            ? { link: message.mediaUrl }
+            : {};
         return client.sendMedia({
           to,
           type: message.type.toLowerCase() as 'image' | 'video' | 'audio' | 'document' | 'sticker',
-          ...(message.mediaUrl ? { link: message.mediaUrl } : {}),
+          ...mediaRef,
           ...(message.body ? { caption: message.body } : {}),
         });
+      }
       default:
         throw new Error(`Unsupported outbound type: ${message.type}`);
     }

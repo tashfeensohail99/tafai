@@ -33,10 +33,12 @@ import {
   Clock4,
   Download,
   FileText,
+  Mic,
   Phone,
   PhoneCall,
   Send,
   Sparkles,
+  Square,
   UserCog,
   UserPlus,
   X,
@@ -55,6 +57,7 @@ import {
   getThread,
   listMessages,
   markThreadRead,
+  sendMediaMessage,
   sendText,
   type ChatMessage,
   type ThreadDetail,
@@ -161,6 +164,20 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       setDraft('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleSendVoice = async (blob: Blob, mimeType: string) => {
+    if (!thread) return;
+    setSending(true);
+    try {
+      const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const msg = await sendMediaMessage(thread.id, blob, `voice-note.${ext}`);
+      setMessages((curr) => [...curr, msg]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send voice message');
     } finally {
       setSending(false);
     }
@@ -306,6 +323,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           value={draft}
           onChange={setDraft}
           onSend={handleSend}
+          onSendVoice={handleSendVoice}
           onOpenTemplate={() => setTemplateOpen(true)}
           disabled={!withinWindow}
           sending={sending}
@@ -943,10 +961,69 @@ function ChatComposer(props: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
+  onSendVoice: (blob: Blob, mimeType: string) => void;
   onOpenTemplate: () => void;
   disabled: boolean;
   sending: boolean;
 }) {
+  const [recording, setRecording] = useState(false);
+  const [recordingSecs, setRecordingSecs] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startRecording = async () => {
+    if (props.disabled) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Prefer ogg/opus for WhatsApp compatibility; fall back to webm
+      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+      const mr = new MediaRecorder(stream, { mimeType });
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      mr.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType });
+        props.onSendVoice(blob, mr.mimeType);
+        setRecording(false);
+        setRecordingSecs(0);
+      };
+      mr.start(250); // collect chunks every 250ms
+      mediaRecorderRef.current = mr;
+      setRecording(true);
+      setRecordingSecs(0);
+      timerRef.current = setInterval(() => setRecordingSecs((s) => s + 1), 1000);
+    } catch {
+      alert('Microphone access denied. Allow microphone in your browser settings.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    mediaRecorderRef.current?.stop();
+  };
+
+  const cancelRecording = () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    const mr = mediaRecorderRef.current;
+    if (mr) {
+      mr.onstop = null; // prevent send
+      mr.stream?.getTracks().forEach((t) => t.stop());
+      try { mr.stop(); } catch { /* ignore */ }
+      mediaRecorderRef.current = null;
+    }
+    setRecording(false);
+    setRecordingSecs(0);
+  };
+
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
   return (
     <div
       style={{
@@ -959,87 +1036,145 @@ function ChatComposer(props: {
         flexShrink: 0,
       }}
     >
-      {/* Template button */}
-      <button
-        type="button"
-        title="Send a template message"
-        onClick={props.onOpenTemplate}
-        style={{
-          all: 'unset',
-          cursor: 'pointer',
-          color: props.disabled ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 36,
-          height: 36,
-          borderRadius: '50%',
-          flexShrink: 0,
-          transition: 'background 0.15s',
-        }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)'; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-      >
-        <FileText size={20} />
-      </button>
+      {recording ? (
+        /* ── Recording mode ── */
+        <>
+          {/* Cancel */}
+          <button
+            type="button"
+            title="Cancel recording"
+            onClick={cancelRecording}
+            style={{
+              all: 'unset', cursor: 'pointer', color: 'var(--sos-text-muted)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+            }}
+          >
+            <X size={20} />
+          </button>
+          {/* Timer */}
+          <div style={{
+            flex: 1, display: 'flex', alignItems: 'center', gap: 10,
+            color: 'var(--sos-text-primary)', fontSize: 14,
+          }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: '#e53e3e', flexShrink: 0,
+              animation: 'pulse 1s ease-in-out infinite',
+            }} />
+            <span>{fmtTime(recordingSecs)}</span>
+            <span style={{ color: 'var(--sos-text-muted)', fontSize: 12 }}>Recording…</span>
+          </div>
+          {/* Stop + send */}
+          <button
+            type="button"
+            title="Stop and send"
+            onClick={stopRecording}
+            style={{
+              all: 'unset', cursor: 'pointer',
+              width: 40, height: 40, borderRadius: '50%',
+              background: 'var(--wa-accent)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <Square size={16} color="#fff" fill="#fff" />
+          </button>
+        </>
+      ) : (
+        /* ── Normal compose mode ── */
+        <>
+          {/* Template button */}
+          <button
+            type="button"
+            title="Send a template message"
+            onClick={props.onOpenTemplate}
+            style={{
+              all: 'unset', cursor: 'pointer',
+              color: props.disabled ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+              transition: 'background 0.15s',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+          >
+            <FileText size={20} />
+          </button>
 
-      {/* Text input */}
-      <textarea
-        disabled={props.disabled}
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            if (!props.sending && props.value.trim()) props.onSend();
-          }
-        }}
-        placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
-        rows={1}
-        style={{
-          flex: 1,
-          background: 'var(--wa-composer-input-bg)',
-          color: 'var(--sos-text-primary)',
-          border: 'none',
-          borderRadius: 8,
-          padding: '9px 12px',
-          fontSize: 14,
-          lineHeight: '1.5',
-          resize: 'none',
-          outline: 'none',
-          maxHeight: 120,
-          fontFamily: 'inherit',
-          opacity: props.disabled ? 0.5 : 1,
-        }}
-        onInput={(e) => {
-          const el = e.target as HTMLTextAreaElement;
-          el.style.height = 'auto';
-          el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-        }}
-      />
+          {/* Text input */}
+          <textarea
+            disabled={props.disabled}
+            value={props.value}
+            onChange={(e) => props.onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!props.sending && props.value.trim()) props.onSend();
+              }
+            }}
+            placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
+            rows={1}
+            style={{
+              flex: 1,
+              background: 'var(--wa-composer-input-bg)',
+              color: 'var(--sos-text-primary)',
+              border: 'none',
+              borderRadius: 8,
+              padding: '9px 12px',
+              fontSize: 14,
+              lineHeight: '1.5',
+              resize: 'none',
+              outline: 'none',
+              maxHeight: 120,
+              fontFamily: 'inherit',
+              opacity: props.disabled ? 0.5 : 1,
+            }}
+            onInput={(e) => {
+              const el = e.target as HTMLTextAreaElement;
+              el.style.height = 'auto';
+              el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+            }}
+          />
 
-      {/* Send button */}
-      <button
-        type="button"
-        onClick={props.onSend}
-        disabled={props.disabled || props.sending || !props.value.trim()}
-        title="Send"
-        style={{
-          all: 'unset',
-          cursor: props.disabled || props.sending || !props.value.trim() ? 'not-allowed' : 'pointer',
-          width: 40,
-          height: 40,
-          borderRadius: '50%',
-          background: props.disabled || !props.value.trim() ? 'var(--sos-surface-3)' : 'var(--wa-accent)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          transition: 'background 0.2s',
-        }}
-      >
-        <Send size={18} color="#fff" />
-      </button>
+          {/* Send or Mic button */}
+          {props.value.trim() ? (
+            <button
+              type="button"
+              onClick={props.onSend}
+              disabled={props.disabled || props.sending}
+              title="Send"
+              style={{
+                all: 'unset',
+                cursor: props.disabled || props.sending ? 'not-allowed' : 'pointer',
+                width: 40, height: 40, borderRadius: '50%',
+                background: props.disabled ? 'var(--sos-surface-3)' : 'var(--wa-accent)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, transition: 'background 0.2s',
+              }}
+            >
+              <Send size={18} color="#fff" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={props.disabled || props.sending}
+              title="Record voice message"
+              style={{
+                all: 'unset',
+                cursor: props.disabled || props.sending ? 'not-allowed' : 'pointer',
+                width: 40, height: 40, borderRadius: '50%',
+                background: props.disabled ? 'var(--sos-surface-3)' : 'var(--wa-accent)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, transition: 'background 0.2s',
+              }}
+            >
+              <Mic size={18} color="#fff" />
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }

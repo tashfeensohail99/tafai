@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import FormData from 'form-data';
 
 export interface MetaClientConfig {
   apiVersion: string;
@@ -216,8 +217,30 @@ export class MetaCloudClient {
     }
   }
 
-  async listTemplates(wabaId: string): Promise<unknown[]> {
+  /**
+   * Upload a media file to Meta's media API and return the reusable media_id.
+   * The id is valid for ~30 days and can be passed to sendMedia({ mediaId }).
+   *
+   * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
+   */
+  async uploadMedia(file: Buffer, mimeType: string, filename: string): Promise<string> {
     try {
+      const form = new FormData();
+      form.append('messaging_product', 'whatsapp');
+      form.append('type', mimeType);
+      form.append('file', file, { filename, contentType: mimeType });
+      const res = await this.http.post<{ id: string }>(
+        `/${this.phoneNumberId}/media`,
+        form,
+        { headers: form.getHeaders() },
+      );
+      return res.data.id;
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
+  async listTemplates(wabaId: string): Promise<unknown[]> {    try {
       const out: unknown[] = [];
       let next: string | undefined = `/${wabaId}/message_templates?limit=100`;
       while (next) {

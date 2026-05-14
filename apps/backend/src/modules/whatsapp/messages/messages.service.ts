@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../queues/queue-contracts';
+import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 
 interface CallerContext {
   userId: string;
@@ -34,6 +35,19 @@ interface SendTemplateInput {
   idempotencyKey?: string;
 }
 
+interface SendMediaInput {
+  threadId: string;
+  /** Raw file buffer from the multipart upload. */
+  file: Buffer;
+  /** MIME type from Content-Type, e.g. audio/ogg or image/jpeg. */
+  mimeType: string;
+  /** Original filename, used for Meta upload and as document display name. */
+  filename: string;
+  /** Optional text caption shown below the media. */
+  caption?: string;
+  idempotencyKey?: string;
+}
+
 /**
  * Compose + enqueue outbound WhatsApp messages. The Meta send happens in the
  * outbound-message worker; this service only persists the Message row and
@@ -52,6 +66,7 @@ export class WhatsAppMessagesService {
     private readonly prisma: PrismaService,
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundQueue: Queue<OutboundMessageJob>,
+    private readonly metaFactory: WhatsAppMetaClientFactory,
   ) {}
 
   async listForThread(
@@ -145,9 +160,76 @@ export class WhatsAppMessagesService {
     return message;
   }
 
+  /**
+   * Upload a media file to Meta, then enqueue the outbound media message.
+   * Supports audio, image, video, and document types.
+   */
+  async sendMediaMessage(caller: CallerContext, input: SendMediaInput) {
+    const thread = await this.thread(caller, input.threadId);
+    if (!caller.employeeId) {
+      throw new ForbiddenException('Only employees may send WhatsApp messages');
+    }
+
+    // Resolve Meta message type from MIME type
+    const mediaType = resolveMediaType(input.mimeType);
+    if (!mediaType) {
+      throw new BadRequestException(`Unsupported media MIME type: ${input.mimeType}`);
+    }
+
+    // Get the WhatsApp channel settings to build the Meta client
+    const channel = await this.prisma.whatsAppChannel.findUnique({
+      where: { id: thread.channelId },
+      select: { id: true },
+    });
+    if (!channel) throw new NotFoundException('WhatsApp channel not found');
+
+    const metaClient = await this.metaFactory.forChannel(thread.channelId);
+
+    // Upload to Meta — returns reusable media_id
+    const metaMediaId = await metaClient.uploadMedia(
+      input.file,
+      input.mimeType,
+      input.filename,
+    );
+
+    // Map MIME type → WhatsApp message type enum
+    const messageType =
+      mediaType === 'image'
+        ? WhatsAppMessageType.IMAGE
+        : mediaType === 'video'
+          ? WhatsAppMessageType.VIDEO
+          : mediaType === 'document'
+            ? WhatsAppMessageType.DOCUMENT
+            : WhatsAppMessageType.AUDIO;
+
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: messageType,
+        status: WhatsAppMessageStatus.QUEUED,
+        mediaUrl: `meta:${metaMediaId}`,
+        mediaMimeType: input.mimeType,
+        body: input.caption ?? null,
+        sentByEmployeeId: caller.employeeId,
+        idempotencyKey: input.idempotencyKey ?? randomUUID(),
+      },
+      select: this.publicSelect(),
+    });
+
+    await this.outboundQueue.add(
+      'send',
+      { messageId: message.id },
+      { jobId: message.id },
+    );
+    return message;
+  }
+
   /** Look up the thread, enforcing the agent-scope rule. */
-  private async thread(caller: CallerContext, threadId: string) {
-    const t = await this.prisma.whatsAppThread.findUnique({
+  private async thread(caller: CallerContext, threadId: string) {    const t = await this.prisma.whatsAppThread.findUnique({
       where: { id: threadId },
       select: {
         id: true,
@@ -194,4 +276,27 @@ export class WhatsAppMessagesService {
       createdAt: true,
     } as const;
   }
+}
+
+/** Map inbound MIME type to one of Meta's media categories. */
+function resolveMediaType(
+  mimeType: string,
+): 'audio' | 'image' | 'video' | 'document' | null {
+  const base = mimeType.split(';')[0].trim().toLowerCase();
+  if (base.startsWith('audio/')) return 'audio';
+  if (base.startsWith('image/') && base !== 'image/webp') return 'image';
+  if (base === 'image/webp') return 'image'; // sticker-like, treat as image
+  if (base.startsWith('video/')) return 'video';
+  const documentMimes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+  ];
+  if (documentMimes.includes(base)) return 'document';
+  return null;
 }

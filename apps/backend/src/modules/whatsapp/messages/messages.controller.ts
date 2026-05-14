@@ -6,8 +6,11 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ArrayMaxSize, IsArray, IsOptional, IsString, MinLength } from 'class-validator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
@@ -75,6 +78,43 @@ export class WhatsAppMessagesController {
   ) {
     const caller = await this.callerContext(user);
     return this.messages.sendTemplate(caller, { threadId, ...dto });
+  }
+
+  /**
+   * Upload and send a media message (audio/image/video/document).
+   * Multipart form-data: field name = "file", optional "caption" text field.
+   * Max upload size is controlled by the NestJS / Express body-parser limits.
+   *
+   * Meta supports audio/ogg, audio/mpeg, audio/aac, audio/mp4, audio/amr,
+   * image/jpeg, image/png, image/webp, video/mp4, video/3gp, and common
+   * document types (application/pdf, etc.).
+   */
+  @Post('media')
+  @RequirePermissions('whatsapp.send_message')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 16 * 1024 * 1024 }, // 16 MB — Meta's hard limit
+    }),
+  )
+  async sendMedia(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('caption') caption?: string,
+    @Body('idempotencyKey') idempotencyKey?: string,
+  ) {
+    if (!file) {
+      return { error: 'No file uploaded' };
+    }
+    const caller = await this.callerContext(user);
+    return this.messages.sendMediaMessage(caller, {
+      threadId,
+      file: file.buffer,
+      mimeType: file.mimetype,
+      filename: file.originalname,
+      caption: caption?.trim() || undefined,
+      idempotencyKey,
+    });
   }
 
   private async callerContext(user: RequestUser) {

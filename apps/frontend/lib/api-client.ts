@@ -117,7 +117,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   function buildHeaders(currentToken: string | null): Headers {
     const h = new Headers(init?.headers ?? {});
-    if (!h.has('Content-Type') && init?.body) {
+    if (!h.has('Content-Type') && init?.body && !(init.body instanceof FormData)) {
       h.set('Content-Type', 'application/json');
     }
     if (currentToken) h.set('Authorization', `Bearer ${currentToken}`);

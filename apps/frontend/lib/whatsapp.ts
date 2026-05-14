@@ -196,6 +196,29 @@ export function sendTemplate(threadId: string, input: {
   });
 }
 
+/**
+ * Upload and send a media message (voice note, image, video, document).
+ * Uses multipart/form-data; `apiFetch` is bypassed because we need raw FormData.
+ */
+export async function sendMediaMessage(
+  threadId: string,
+  file: Blob,
+  filename: string,
+  caption?: string,
+  idempotencyKey?: string,
+): Promise<ChatMessage> {
+  const form = new FormData();
+  form.append('file', file, filename);
+  if (caption) form.append('caption', caption);
+  if (idempotencyKey) form.append('idempotencyKey', idempotencyKey);
+
+  // Use apiFetch without Content-Type header (browser sets multipart boundary automatically)
+  return apiFetch<ChatMessage>(`/whatsapp/threads/${threadId}/messages/media`, {
+    method: 'POST',
+    body: form,
+  });
+}
+
 // ---- Templates catalog --------------------------------------------------
 
 export type WhatsAppTemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';

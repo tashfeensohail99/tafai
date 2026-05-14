@@ -702,7 +702,7 @@ export class LeadsService {
       leadId: lead.id,
       eventType: TimelineEventType.EMAIL_VERIFIED,
       description: `Email address verified`,
-      actorUserId: null,
+      actorUserId: undefined,
     });
 
     return { verified: true, leadName: `${lead.firstName} ${lead.lastName}` };

@@ -123,6 +123,7 @@ function buildService() {
     auditMock as any,
     storageMock as any,
     timelineMock as any,
+    {} as any, // leadsService mock
   );
 
   return { service, prismaMock, auditMock, storageMock, timelineMock };

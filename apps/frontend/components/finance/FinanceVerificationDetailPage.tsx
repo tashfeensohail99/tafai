@@ -18,7 +18,6 @@ import {
   PageHeader,
   StatusBadge,
   SecondaryButton,
-  GhostButton,
   DangerButton,
   SuccessButton,
   FormInput,
@@ -29,6 +28,7 @@ import {
 import {
   fetchHandoverById,
   reviewHandover,
+  verifyPayment,
   fmtAmount,
   fmtRelative,
   clientName,
@@ -243,16 +243,41 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
     setTimeout(() => setToast(null), 3500);
   }
 
-  function handleSaveDraft() {
-    setLastSaved('just now');
-    showToast('Draft saved.');
+  /**
+   * "Save draft" actually persists the finance note server-side now —
+   * previously it just showed a toast and lost the text on refresh.
+   * Uses MARK_IN_REVIEW because that's the only existing action that
+   * also accepts `financeNotes` without forcing a status transition
+   * the operator isn't ready for. If the handover is already past
+   * IN_REVIEW (e.g. PAYMENT_RECORDED), MARK_IN_REVIEW also re-opens it
+   * so the operator can edit notes mid-flow — that's the right
+   * semantic for "I want to keep working on this".
+   */
+  async function handleSaveDraft() {
+    if (!handover) return;
+    setSaving(true);
+    try {
+      const updated = await reviewHandover(handover.id, 'MARK_IN_REVIEW', {
+        financeNotes: financeNote,
+      });
+      setHandover(updated);
+      setLastSaved('just now');
+      showToast('Note saved · case marked in review.');
+    } catch {
+      showToast('Failed to save draft.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleMarkInReview() {
     if (!handover) return;
     setSaving(true);
     try {
-      await reviewHandover(handover.id, 'MARK_IN_REVIEW', { financeNotes: financeNote });
+      const updated = await reviewHandover(handover.id, 'MARK_IN_REVIEW', {
+        financeNotes: financeNote,
+      });
+      setHandover(updated);
       showToast('Marked as in review.');
     } catch {
       showToast('Failed to update status.');
@@ -261,18 +286,57 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
     }
   }
 
+  /**
+   * Full verification flow. Two backend steps under one button so the
+   * operator never has to leave this page and dig through another
+   * screen to "finish" a case:
+   *
+   *   1. POST /finance/handovers/:id/review { action: RECORD_PAYMENT }
+   *      Creates the Invoice + an initial Payment row (status SUBMITTED).
+   *      Handover → PAYMENT_RECORDED. Skipped if already at this step.
+   *
+   *   2. POST /finance/payments/:paymentId/verify
+   *      Flips Payment to PAID, converts the Lead to a Client (if not
+   *      already converted), creates a ProcessingCase, attaches the
+   *      client/case back to the Invoice, marks the Handover
+   *      PAYMENT_VERIFIED. This is the step that actually pushes the
+   *      case forward into Processing.
+   *
+   * Both steps already existed on the backend and were verified wired
+   * in the earlier audit — they were just split across two pages in
+   * the UI. This handler runs them sequentially so one click does the
+   * whole thing.
+   */
   async function handleVerify() {
-    if (!canVerify || !handover) {
+    if (!handover) return;
+    if (!canVerify) {
       showToast('Complete all checklist items first.');
       return;
     }
     setSaving(true);
     try {
-      await reviewHandover(handover.id, 'RECORD_PAYMENT', { financeNotes: financeNote });
-      showToast('Payment recorded. Moving to receipts.');
-      setTimeout(() => router.push('/finance/receipts' as Route), 1800);
-    } catch {
-      showToast('Failed to record payment.');
+      // Step 1 — record payment (skipped if we're already past it).
+      let withPayment = handover;
+      if (handover.status === 'SUBMITTED' || handover.status === 'IN_REVIEW') {
+        withPayment = await reviewHandover(handover.id, 'RECORD_PAYMENT', {
+          financeNotes: financeNote,
+        });
+        setHandover(withPayment);
+      }
+      const paymentId = withPayment.payment?.id;
+      if (!paymentId) {
+        showToast('Payment row missing after record step — please reopen the case.');
+        return;
+      }
+      // Step 2 — verify + create Client + create ProcessingCase.
+      await verifyPayment(paymentId, {
+        verificationNote: financeNote || undefined,
+      });
+      showToast('Payment verified · client created · case sent to Processing.');
+      setTimeout(() => router.push('/finance/intake'), 2000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Verification failed';
+      showToast(msg);
     } finally {
       setSaving(false);
     }
@@ -283,17 +347,13 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
     setSaving(true);
     try {
       await reviewHandover(handover.id, 'REJECT', { financeNotes: financeNote });
-      showToast('Rejected. Sales has been notified.');
+      showToast('Rejected · visible on lead profile’s Finance tab.');
       setTimeout(() => router.push('/finance/intake'), 1800);
     } catch {
       showToast('Failed to reject handover.');
     } finally {
       setSaving(false);
     }
-  }
-
-  function handleHold() {
-    showToast('On-hold feature coming in Phase 2.');
   }
 
   function handleRequestCorrection() {
@@ -575,11 +635,17 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
         </div>
       </div>
 
-      {/* Sticky action bar */}
+      {/* Sticky action bar — actions are status-aware so the operator
+          can't accidentally re-verify a case that's already moved on
+          to Processing, or click Reject on a handover that's already
+          been paid. Once status === PAYMENT_VERIFIED, only Save draft
+          remains (for late-edit notes that need to land on the timeline). */}
       <ActionBar
         left={
           <>
-            <SecondaryButton onClick={handleSaveDraft}>Save draft</SecondaryButton>
+            <SecondaryButton onClick={handleSaveDraft} disabled={saving}>
+              Save draft
+            </SecondaryButton>
             {lastSaved && (
               <span style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>
                 Last saved: {lastSaved}
@@ -588,19 +654,34 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
           </>
         }
         hint={
-          !canVerify
-            ? `${CHECKLIST_ITEMS.length - checklistDone} checklist item${CHECKLIST_ITEMS.length - checklistDone !== 1 ? 's' : ''} remaining`
-            : undefined
+          handover.status === 'PAYMENT_VERIFIED'
+            ? 'Verified · client created · sent to Processing'
+            : handover.status === 'REJECTED'
+              ? 'Rejected · visible on the lead’s Finance tab'
+              : !canVerify
+                ? `${CHECKLIST_ITEMS.length - checklistDone} checklist item${CHECKLIST_ITEMS.length - checklistDone !== 1 ? 's' : ''} remaining`
+                : undefined
         }
         right={
-          <>
-            <GhostButton onClick={handleHold}>Place on hold</GhostButton>
-            <SecondaryButton onClick={handleRequestCorrection}>Request correction</SecondaryButton>
-            <DangerButton onClick={handleReject}>Reject</DangerButton>
-            <SuccessButton onClick={handleVerify} disabled={!canVerify}>
-              Verify payment
-            </SuccessButton>
-          </>
+          handover.status === 'PAYMENT_VERIFIED' || handover.status === 'REJECTED' ? (
+            <SecondaryButton onClick={() => router.push('/finance/intake')}>
+              Back to queue
+            </SecondaryButton>
+          ) : (
+            <>
+              <SecondaryButton onClick={handleRequestCorrection} disabled={saving}>
+                Request correction
+              </SecondaryButton>
+              <DangerButton onClick={handleReject} disabled={saving}>
+                Reject
+              </DangerButton>
+              <SuccessButton onClick={handleVerify} disabled={!canVerify || saving}>
+                {handover.status === 'PAYMENT_RECORDED'
+                  ? 'Send to Processing'
+                  : 'Verify & send to Processing'}
+              </SuccessButton>
+            </>
+          )
         }
       />
     </div>

@@ -64,6 +64,12 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsDateString()
   joiningDate?: string;
+
+  /** Only used for the welcome-email body — never stored in the database. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  tempPasswordForEmail?: string;
 }
 
 export class UpdateEmployeeDto {

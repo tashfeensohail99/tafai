@@ -28,6 +28,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { ProcessingModule } from './modules/processing/processing.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
+import { EmailModule } from './modules/email/email.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
     ActivityTimelineModule,
     StorageModule,
     WhatsAppModule,
+    EmailModule,
   ],
 })
 export class AppModule {}

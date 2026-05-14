@@ -11,6 +11,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
 import { AssignLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class LeadsService {
@@ -19,6 +20,7 @@ export class LeadsService {
     private readonly auditLog: AuditLogService,
     private readonly activityTimeline: ActivityTimelineService,
     private readonly storage: StorageService,
+    private readonly email: EmailService,
   ) {}
 
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
@@ -208,6 +210,18 @@ export class LeadsService {
       },
     });
 
+    // Email — notify the assigned employee (fire-and-forget, non-blocking)
+    if (lead.assignedEmployeeId) {
+      void this.notifyAssignedEmployee(lead.assignedEmployeeId, {
+        leadName: `${lead.firstName} ${lead.lastName}`,
+        leadPhone: lead.phone,
+        leadService: lead.serviceInterest ?? null,
+        leadCountry: lead.targetCountry ?? null,
+        source: lead.sourceChannel ?? null,
+        notes: lead.notes ?? null,
+      });
+    }
+
     // Inbox "Convert to Lead" flow: if a raw WhatsApp thread was the
     // source, link it to the new Lead so the chat history continues
     // against the same thread. Best-effort — if the thread is already
@@ -319,6 +333,16 @@ export class LeadsService {
         assignedEmployeeId: dto.assignedEmployeeId,
         assignedEmployeeName: updated.assignedEmployee ? `${updated.assignedEmployee.firstName} ${updated.assignedEmployee.lastName}` : null,
       },
+    });
+
+    // Email — notify the newly assigned employee (fire-and-forget)
+    void this.notifyAssignedEmployee(dto.assignedEmployeeId, {
+      leadName: `${existing.firstName} ${existing.lastName}`,
+      leadPhone: existing.phone,
+      leadService: existing.serviceInterest ?? null,
+      leadCountry: existing.targetCountry ?? null,
+      source: existing.sourceChannel ?? null,
+      notes: existing.notes ?? null,
     });
 
     return this.findById(id);
@@ -596,5 +620,45 @@ export class LeadsService {
     await this.storage.delete(record.fileKey);
     await this.prisma.leadFile.delete({ where: { id: fileId } });
     return { deleted: true };
+  }
+
+  // ── Email helpers ──────────────────────────────────────────────────────────
+
+  private async notifyAssignedEmployee(
+    assignedEmployeeId: string,
+    lead: {
+      leadName: string;
+      leadPhone: string;
+      leadService: string | null;
+      leadCountry: string | null;
+      source: string | null;
+      notes: string | null;
+    },
+  ): Promise<void> {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: assignedEmployeeId },
+        select: {
+          firstName: true,
+          lastName: true,
+          user: { select: { email: true } },
+        },
+      });
+
+      if (!emp?.user?.email) return;
+
+      await this.email.sendLeadAssigned({
+        to: emp.user.email,
+        consultantName: `${emp.firstName} ${emp.lastName}`,
+        leadName: lead.leadName,
+        leadPhone: lead.leadPhone,
+        leadService: lead.leadService,
+        leadCountry: lead.leadCountry,
+        source: lead.source,
+        notes: lead.notes,
+      });
+    } catch {
+      // Email failure must never break the main request
+    }
   }
 }

@@ -419,7 +419,7 @@ export function EmployeesAdminPage() {
             roleNames: selectedRole ? [selectedRole.name] : [],
           }),
         });
-        // 2. Create employee profile
+        // 2. Create employee profile (pass temp password so the backend can send welcome email)
         const createdEmp = await apiFetch<{ id: string }>('/employees', {
           method: 'POST',
           body: JSON.stringify({
@@ -428,6 +428,7 @@ export function EmployeesAdminPage() {
             lastName: form.lastName,
             departmentId: form.departmentId || undefined,
             branchId: form.branchId || undefined,
+            tempPasswordForEmail: form.password,
           }),
         });
         // 3. Apply WhatsApp + skills if configured during creation

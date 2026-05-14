@@ -3,12 +3,14 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '@prisma/client';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './employees.dto';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
+    private readonly email: EmailService,
   ) {}
 
   async findAll() {
@@ -82,6 +84,26 @@ export class EmployeesService {
       entityId: emp.id,
       newValues: { userId: dto.userId, firstName: dto.firstName, lastName: dto.lastName },
     });
+
+    // Welcome email — fire-and-forget, non-blocking
+    void (async () => {
+      try {
+        const user = await this.prisma.userAccount.findUnique({
+          where: { id: dto.userId },
+          select: { email: true },
+        });
+        if (user?.email) {
+          await this.email.sendWelcomeEmployee({
+            to: user.email,
+            firstName: dto.firstName,
+            tempPassword: dto.tempPasswordForEmail ?? '(ask your administrator)',
+            loginUrl: 'https://tashfeengroup.com/login',
+          });
+        }
+      } catch {
+        // Never let email failure break employee creation
+      }
+    })();
 
     return emp;
   }

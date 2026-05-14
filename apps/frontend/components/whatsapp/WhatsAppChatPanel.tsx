@@ -31,6 +31,7 @@ import {
   Check,
   CheckCheck,
   Clock4,
+  Download,
   FileText,
   Phone,
   PhoneCall,
@@ -48,6 +49,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
+import { getAccessToken } from '@/lib/auth-client';
 import {
   getThread,
   listMessages,
@@ -452,7 +454,7 @@ function ChatHeader(props: {
           {props.phone}
           {props.assignedTo && (
             <span style={{ color: 'var(--wa-accent)', marginLeft: 8 }}>
-              Ã‚Â· {props.assignedTo.firstName}
+              · {props.assignedTo.firstName}
             </span>
           )}
         </div>
@@ -628,8 +630,145 @@ function QuickActionsBar({
 
 // ---- Message bubble -----------------------------------------------------
 
+/** Fetch media binary from the backend proxy and return a blob URL. */
+function useMediaBlobUrl(threadId: string, messageId: string, enabled: boolean): {
+  blobUrl: string | null;
+  loading: boolean;
+  error: boolean;
+} {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const blobRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    setLoading(true);
+    setError(false);
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+    const token = getAccessToken();
+    fetch(`${apiBase}/whatsapp/threads/${threadId}/messages/${messageId}/media`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        blobRef.current = url;
+        setBlobUrl(url);
+      })
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
+
+    return () => {
+      if (blobRef.current) {
+        URL.revokeObjectURL(blobRef.current);
+        blobRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId, messageId]);
+
+  return { blobUrl, loading, error };
+}
+
+/** Renders image / audio / video / document media inside a message bubble. */
+function MediaBubbleContent({ message }: { message: ChatMessage }) {
+  type AnyPayload = Record<string, { id?: string; filename?: string }>;
+  const p = message.payload as AnyPayload | null;
+  const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document';
+  const hasMedia = !!(p?.[typeKey]?.id);
+
+  const { blobUrl, loading, error } = useMediaBlobUrl(
+    message.threadId,
+    message.id,
+    hasMedia,
+  );
+
+  const filename = p?.[typeKey]?.filename ?? `${typeKey}`;
+
+  if (!hasMedia) {
+    return (
+      <span style={{ fontStyle: 'italic', color: 'var(--sos-text-faint)' }}>
+        [{message.type.toLowerCase()}]
+      </span>
+    );
+  }
+
+  if (loading) {
+    return (
+      <span style={{ fontSize: 13, color: 'var(--sos-text-faint)', fontStyle: 'italic' }}>
+        Loading {typeKey}…
+      </span>
+    );
+  }
+
+  if (error || !blobUrl) {
+    return (
+      <span style={{ fontSize: 13, color: 'var(--sos-status-danger)', fontStyle: 'italic' }}>
+        Media unavailable
+      </span>
+    );
+  }
+
+  if (message.type === 'IMAGE') {
+    return (
+      <img
+        src={blobUrl}
+        alt="Image"
+        style={{
+          maxWidth: '100%',
+          maxHeight: 280,
+          borderRadius: 6,
+          display: 'block',
+          cursor: 'pointer',
+        }}
+        onClick={() => window.open(blobUrl, '_blank')}
+      />
+    );
+  }
+
+  if (message.type === 'AUDIO') {
+    return (
+      // eslint-disable-next-line jsx-a11y/media-has-caption
+      <audio
+        controls
+        src={blobUrl}
+        style={{ width: '100%', minWidth: 200, maxWidth: 320 }}
+      />
+    );
+  }
+
+  // VIDEO and DOCUMENT — download to device.
+  return (
+    <a
+      href={blobUrl}
+      download={filename}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '6px 12px',
+        borderRadius: 6,
+        background: 'var(--wa-bubble-out)',
+        color: 'var(--sos-text-primary)',
+        textDecoration: 'none',
+        fontSize: 13,
+        fontWeight: 500,
+        border: '1px solid var(--sos-border)',
+      }}
+    >
+      <Download size={14} />
+      {message.type === 'VIDEO' ? 'Download video' : filename}
+    </a>
+  );
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isOut = message.direction === 'OUTBOUND';
+  const isMedia = ['IMAGE', 'AUDIO', 'VIDEO', 'DOCUMENT'].includes(message.type);
   return (
     <div
       style={{
@@ -656,13 +795,23 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             color: 'var(--sos-text-primary)',
             lineHeight: '1.5',
             wordBreak: 'break-word',
-            whiteSpace: 'pre-wrap',
+            whiteSpace: isMedia ? 'normal' : 'pre-wrap',
           }}
         >
-          {message.body ??
-            (message.templateName
-              ? `📋 Template: ${message.templateName}`
-              : `[${message.type.toLowerCase()}]`)}
+          {isMedia ? (
+            <MediaBubbleContent message={message} />
+          ) : (
+            message.body ??
+              (message.templateName
+                ? `📋 Template: ${message.templateName}`
+                : `[${message.type.toLowerCase()}]`)
+          )}
+          {/* Caption below media if present */}
+          {isMedia && message.body && (
+            <div style={{ marginTop: 4, fontSize: 13, whiteSpace: 'pre-wrap' }}>
+              {message.body}
+            </div>
+          )}
         </div>
         <div
           style={{

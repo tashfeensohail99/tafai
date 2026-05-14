@@ -3,12 +3,16 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { IsBooleanString, IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -20,6 +24,7 @@ import {
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WhatsAppThreadsService } from './threads.service';
 
 class ListThreadsDto {
@@ -54,6 +59,7 @@ export class WhatsAppThreadsController {
   constructor(
     private readonly threads: WhatsAppThreadsService,
     private readonly prisma: PrismaService,
+    private readonly metaFactory: WhatsAppMetaClientFactory,
   ) {}
 
   @Get()
@@ -99,6 +105,73 @@ export class WhatsAppThreadsController {
   ) {
     const caller = await this.buildCallerContext(user);
     return this.threads.reassign(caller, id, dto.employeeId);
+  }
+
+  /**
+   * Stream a WhatsApp media attachment (image / audio / video / document)
+   * through the backend, proxying from Meta's temporary CDN URL.
+   *
+   * - Images and audio are streamed inline (browser preview / audio player).
+   * - Videos and documents are sent with Content-Disposition: attachment so
+   *   the browser downloads to the user's device rather than opening inline.
+   *
+   * Permission: whatsapp.view_inbox (same as reading the thread itself).
+   */
+  @Get(':threadId/messages/:messageId/media')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async streamMedia(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const caller = await this.buildCallerContext(user);
+
+    // Verify caller can see this thread.
+    await this.threads.getOrFail(caller, threadId);
+
+    const message = await this.prisma.whatsAppMessage.findUnique({
+      where: { id: messageId },
+      include: { channel: true },
+    });
+    if (!message || message.threadId !== threadId) {
+      throw new HttpException('Message not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Extract the Meta media ID from the payload based on message type.
+    type MediaPayload = { id?: string; mime_type?: string; filename?: string };
+    const p = message.payload as Record<string, MediaPayload> | null;
+    const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document' | 'sticker';
+    const mediaMeta = p?.[typeKey];
+    const metaMediaId = mediaMeta?.id ?? null;
+
+    if (!metaMediaId) {
+      throw new HttpException('No media ID for this message', HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    const client = this.metaFactory.forChannel(message.channel);
+
+    // Step 1: Resolve the temporary CDN URL from Meta.
+    const { url: cdnUrl, mime_type } = await client.getMediaUrl(metaMediaId);
+
+    // Step 2: Fetch the binary from Meta's CDN.
+    const binary = await client.downloadMedia(cdnUrl);
+
+    const mimeType = message.mediaMimeType ?? mime_type ?? 'application/octet-stream';
+    const filename = mediaMeta?.filename ?? `${typeKey}.${mimeType.split('/')[1] ?? 'bin'}`;
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Length', binary.length);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+
+    // Videos and documents must trigger a device download, not inline display.
+    if (message.type === 'VIDEO' || message.type === 'DOCUMENT') {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    } else {
+      res.setHeader('Content-Disposition', 'inline');
+    }
+
+    res.end(binary);
   }
 
   /**

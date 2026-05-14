@@ -562,7 +562,8 @@ function HandoverPanel({
 
             <p style={{ fontSize: 'var(--sos-text-sm)', color: 'var(--sos-muted)' }}>
               This will move the case to the Processing department. The sales
-              person and admin will be notified. This action is logged.
+              agent will see this update on the lead profile&apos;s Finance tab.
+              This action is logged.
             </p>
 
             <div style={{ display: 'flex', gap: 'var(--sos-space-3)', justifyContent: 'flex-end' }}>
@@ -647,7 +648,7 @@ function SentPanel({ payment }: { payment: ApiHandover }) {
             Status updated to Sent to Processing
           </StatusBadge>
           <StatusBadge tone="info" size="sm">
-            Sales notified
+            Visible on lead&apos;s Finance tab
           </StatusBadge>
           <StatusBadge tone="info" size="sm">
             Audit logged

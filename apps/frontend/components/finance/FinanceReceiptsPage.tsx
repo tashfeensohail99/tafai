@@ -715,10 +715,52 @@ export function FinanceReceiptsPage() {
     >
       {/* Page header */}
       <PageHeader
-        eyebrow="Finance"
+        eyebrow="Finance · preview"
         title="Receipts"
         description="Generate and confirm official payment receipts"
       />
+
+      {/* Phase-2 banner — keeps an honest line between what's wired and
+          what's still a mock. The backend doesn't yet emit PDF receipts,
+          dispatch email/WhatsApp from this screen, or persist the
+          "ready for processing" toggle, so this banner is non-negotiable
+          until those endpoints land. */}
+      <div
+        role="alert"
+        style={{
+          padding: '12px 16px',
+          borderRadius: 'var(--sos-radius-sm)',
+          background: 'var(--sos-status-warning-soft)',
+          border: '1px solid var(--sos-status-warning)',
+          color: 'var(--sos-text-primary)',
+          display: 'flex',
+          gap: 10,
+          alignItems: 'flex-start',
+          fontSize: 12.5,
+          lineHeight: 1.55,
+        }}
+      >
+        <FileText size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+        <div>
+          <strong>Preview screen — actions on this page are not wired yet.</strong>{' '}
+          PDF generation, email/WhatsApp dispatch, and the &ldquo;Mark Ready
+          for Processing&rdquo; toggle live only in the browser session and
+          don&apos;t persist. To actually move a verified payment forward,
+          use{' '}
+          <a
+            href="/finance/handover"
+            style={{
+              color: 'var(--sos-brand-primary-strong)',
+              textDecoration: 'underline',
+              fontWeight: 600,
+            }}
+          >
+            Finance → Handover → Send to Processing
+          </a>
+          , which is fully wired (creates the Invoice / Payment / Case rows
+          and shows on the lead&apos;s Finance tab).
+        </div>
+      </div>
 
       {/* Tabs */}
       <div

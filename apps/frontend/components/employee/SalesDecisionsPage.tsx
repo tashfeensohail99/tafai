@@ -388,6 +388,7 @@ export function SalesDecisionsPage({ preselectedLeadId = '' }: { preselectedLead
           onSendToFinance={onSendToFinance}
           sent={sent}
           sendingToFinance={sendingToFinance}
+          sendError={sendError}
           formattedAmount={formattedAmount}
           checklist={checklist}
           allReady={allReady}
@@ -853,6 +854,7 @@ function PayPath({
   onSendToFinance,
   sent,
   sendingToFinance,
+  sendError,
   formattedAmount,
   checklist,
   allReady,
@@ -876,6 +878,7 @@ function PayPath({
   onSendToFinance: (e: FormEvent) => void;
   sent: boolean;
   sendingToFinance: boolean;
+  sendError: string | null;
   formattedAmount: string;
   checklist: Array<{ label: string; done: boolean }>;
   allReady: boolean;

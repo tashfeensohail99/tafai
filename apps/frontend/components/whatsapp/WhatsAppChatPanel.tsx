@@ -760,7 +760,9 @@ function MediaBubbleContent({ message }: { message: ChatMessage }) {
   type AnyPayload = Record<string, { id?: string; filename?: string }>;
   const p = message.payload as AnyPayload | null;
   const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document';
-  const hasMedia = !!(p?.[typeKey]?.id);
+  // Inbound: media ID lives in payload.audio.id etc.
+  // Outbound (voice notes we sent): media ID lives in mediaUrl as "meta:<id>", payload is null.
+  const hasMedia = !!(p?.[typeKey]?.id) || !!(message.mediaUrl);
 
   const { blobUrl, loading, error } = useMediaBlobUrl(
     message.threadId,

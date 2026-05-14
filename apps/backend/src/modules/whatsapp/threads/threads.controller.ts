@@ -139,11 +139,15 @@ export class WhatsAppThreadsController {
     }
 
     // Extract the Meta media ID from the payload based on message type.
+    // Inbound messages: media ID is in payload.audio.id (set by webhook ingest).
+    // Outbound messages we sent: media ID is in mediaUrl as "meta:<id>".
     type MediaPayload = { id?: string; mime_type?: string; filename?: string };
     const p = message.payload as Record<string, MediaPayload> | null;
     const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document' | 'sticker';
     const mediaMeta = p?.[typeKey];
-    const metaMediaId = mediaMeta?.id ?? null;
+    const metaMediaId =
+      mediaMeta?.id ??
+      (message.mediaUrl?.startsWith('meta:') ? message.mediaUrl.slice(5) : null);
 
     if (!metaMediaId) {
       throw new HttpException('No media ID for this message', HttpStatus.UNPROCESSABLE_ENTITY);

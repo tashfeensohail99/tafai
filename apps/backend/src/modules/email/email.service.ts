@@ -108,6 +108,7 @@ export class EmailService {
   async sendWelcomeEmployee(opts: {
     to: string;
     firstName: string;
+    email: string;
     tempPassword: string;
     loginUrl?: string;
   }): Promise<boolean> {
@@ -260,6 +261,7 @@ function buildLeadCreatedEmail(opts: {
 
 function buildWelcomeEmployeeEmail(opts: {
   firstName: string;
+  email: string;
   tempPassword: string;
   loginUrl?: string;
 }): string {
@@ -271,15 +273,16 @@ function buildWelcomeEmployeeEmail(opts: {
     <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:20px;margin-bottom:24px;">
       <table width="100%" cellpadding="0" cellspacing="0">
         ${infoRow('Login URL', url)}
+        ${infoRow('Email (username)', opts.email)}
         ${infoRow('Temporary password', opts.tempPassword)}
       </table>
       <p style="margin:16px 0 0;font-size:12px;color:#7c3aed;font-weight:600;">
-        ⚠ Please change your password after your first login.
+        Please change your password after your first login.
       </p>
     </div>
 
     <a href="${escHtml(url)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">
-      Sign in now →
+      Sign in now
     </a>
   `;
   return baseTemplate('Welcome to Tashfeen', content);

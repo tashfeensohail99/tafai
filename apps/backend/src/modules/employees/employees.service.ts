@@ -95,6 +95,7 @@ export class EmployeesService {
         if (user?.email) {
           await this.email.sendWelcomeEmployee({
             to: user.email,
+            email: user.email,
             firstName: dto.firstName,
             tempPassword: dto.tempPasswordForEmail ?? '(ask your administrator)',
             loginUrl: 'https://tashfeengroup.com/login',

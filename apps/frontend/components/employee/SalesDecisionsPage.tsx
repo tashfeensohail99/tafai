@@ -55,9 +55,20 @@ import {
   SuccessButton,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
-import { createAppointment, createFinanceHandover, fetchLeads } from '@/lib/sales-api';
+import { createAppointment, createFinanceHandover, fetchLead, fetchLeads } from '@/lib/sales-api';
 
 type Path = 'BOOK' | 'PAY';
+
+/** Safe base64 encoder — avoids stack overflow for large files. */
+function fileToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
 const PAY_METHODS: Array<{
   key: string;
@@ -145,9 +156,21 @@ export function SalesDecisionsPage({ preselectedLeadId = '' }: { preselectedLead
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchLeads().then((l) => {
+    fetchLeads().then(async (l) => {
       setLeads(l);
-      const pre = preselectedLeadId ? l.find((x) => x.id === preselectedLeadId) : null;
+      let pre = preselectedLeadId ? l.find((x) => x.id === preselectedLeadId) : null;
+      // Lead may not be in the assigned list (e.g. reassigned). Try fetching directly.
+      if (!pre && preselectedLeadId) {
+        try {
+          const direct = await fetchLead(preselectedLeadId);
+          if (direct) {
+            setLeads((curr) => [direct, ...curr]);
+            pre = direct;
+          }
+        } catch {
+          // not accessible — fall through to default selection
+        }
+      }
       const def = pre ?? l.find((x) => x.stage === 'PAYMENT_INTERESTED') ?? l[0];
       if (def) setLeadId(def.id);
     }).finally(() => setLoading(false));
@@ -170,6 +193,7 @@ export function SalesDecisionsPage({ preselectedLeadId = '' }: { preselectedLead
   const [files, setFiles] = useState<Array<{ name: string; size: string; file?: File }>>([]);
   const [sent, setSent] = useState(false);
   const [sendingToFinance, setSendingToFinance] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Appointment state
   const [meetingType, setMeetingType] = useState('OFFICE_MEETING');
@@ -204,9 +228,10 @@ export function SalesDecisionsPage({ preselectedLeadId = '' }: { preselectedLead
     const fileEntry = files[0];
     if (!fileEntry?.file) return;
     setSendingToFinance(true);
+    setSendError(null);
     try {
       const arrayBuffer = await fileEntry.file.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      const base64 = fileToBase64(arrayBuffer);
       await createFinanceHandover({
         leadId: lead.id,
         submittedAmount: amount,
@@ -218,8 +243,9 @@ export function SalesDecisionsPage({ preselectedLeadId = '' }: { preselectedLead
         receiptContentBase64: base64,
       });
       setSent(true);
-    } catch {
-      // keep form open so user can retry
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to send to Finance. Please try again.';
+      setSendError(msg);
     } finally {
       setSendingToFinance(false);
     }
@@ -1140,14 +1166,21 @@ function PayPath({
               borderTop: '1px solid var(--sos-divider)',
             }}
           >
-            <span
-              className="sos-text-muted"
-              style={{ fontSize: '12.5px' }}
-            >
-              {allReady
-                ? 'Everything looks ready to send.'
-                : 'Complete the checklist on the right before sending.'}
-            </span>
+            <div style={{ flex: 1 }}>
+              {sendError && (
+                <p style={{ margin: '0 0 8px', fontSize: '12.5px', color: 'var(--sos-status-danger)', fontWeight: 500 }}>
+                  {sendError}
+                </p>
+              )}
+              <span
+                className="sos-text-muted"
+                style={{ fontSize: '12.5px' }}
+              >
+                {allReady
+                  ? 'Everything looks ready to send.'
+                  : 'Complete the checklist on the right before sending.'}
+              </span>
+            </div>
             <div
               style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}
             >

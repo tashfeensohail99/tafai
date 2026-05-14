@@ -193,6 +193,43 @@ export function FinanceIntakePage() {
     );
   }, [tab, query, methodFilter, handovers, userId]);
 
+  /**
+   * Group filtered handovers by lead so multiple transactions for the
+   * same person collapse into one card. Each group lists its handovers
+   * newest-first; groups themselves are ordered by whichever lead has
+   * the most recent handover so fresh activity bubbles to the top.
+   *
+   * Why this matters: leads pay in installments (deposit → milestone →
+   * balance). Without grouping, every new transaction added another
+   * top-level row and the queue looked like 10 different cases when it
+   * was really 3 leads paying multiple times.
+   */
+  const groupedByLead = useMemo(() => {
+    const map = new Map<string, ApiHandover[]>();
+    for (const h of filtered) {
+      const key = h.lead.id;
+      const arr = map.get(key);
+      if (arr) arr.push(h);
+      else map.set(key, [h]);
+    }
+    const groups = Array.from(map.entries()).map(([leadId, items]) => {
+      const sorted = [...items].sort(
+        (a, b) =>
+          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+      );
+      return {
+        leadId,
+        lead: sorted[0].lead,
+        items: sorted,
+        latestAt: sorted[0].submittedAt,
+      };
+    });
+    groups.sort(
+      (a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime(),
+    );
+    return groups;
+  }, [filtered]);
+
   // KPI counts (computed once)
   const activeHandovers = handovers.filter((p) => ACTIVE_STATUSES.includes(p.status));
   const counts = {
@@ -377,10 +414,15 @@ export function FinanceIntakePage() {
         />
       ) : (
         <section
-          style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+          style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
         >
-          {filtered.map((p) => (
-            <PaymentRow key={p.id} item={p} currentUserId={userId} />
+          {groupedByLead.map((g) => (
+            <LeadGroup
+              key={g.leadId}
+              lead={g.lead}
+              items={g.items}
+              currentUserId={userId}
+            />
           ))}
         </section>
       )}
@@ -388,9 +430,147 @@ export function FinanceIntakePage() {
   );
 }
 
+// ---------- Lead group --------------------------------------------------
+/**
+ * A single lead's "finance card" — wraps every active handover for that
+ * lead under one identity header. Leads pay in installments (deposit,
+ * milestone, balance) so the intake queue can have multiple handovers
+ * per person; without grouping the queue read like 10 separate cases
+ * when it was really 3 leads paying multiple times.
+ *
+ * The group is purely a visual aggregation; each handover row inside
+ * still links to its own /finance/intake/:id detail page so the
+ * reviewer flow is unchanged.
+ */
+function LeadGroup({
+  lead,
+  items,
+  currentUserId,
+}: {
+  lead: ApiHandover['lead'];
+  items: ApiHandover[];
+  currentUserId: string | null;
+}) {
+  const fullName = `${lead.firstName ?? ''} ${lead.lastName ?? ''}`.trim() || '—';
+  const initials = initialsOf(fullName);
+
+  // Summary chips for the header — counts per status across this lead's
+  // visible (post-filter) handovers, plus claim summary.
+  const unclaimedCount = items.filter((i) => i.reviewedByUserId == null).length;
+  const mineCount = items.filter((i) => i.reviewedByUserId === currentUserId).length;
+  const otherCount = items.length - unclaimedCount - mineCount;
+
+  // Aggregate amount per currency — only show a total when all transactions
+  // share one currency. Mixed-currency leads see a per-currency breakdown.
+  const amountsByCurrency = items.reduce<Record<string, number>>((acc, h) => {
+    const n = Number(h.submittedAmount);
+    if (!Number.isNaN(n)) {
+      acc[h.currency] = (acc[h.currency] ?? 0) + n;
+    }
+    return acc;
+  }, {});
+  const currencyTotals = Object.entries(amountsByCurrency).map(([c, total]) =>
+    fmtAmount(String(total), c),
+  );
+
+  return (
+    <GlassCard variant="strong" padded={false}>
+      {/* Header — lead identity + summary */}
+      <div
+        style={{
+          padding: '14px 18px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '14px',
+          borderBottom: '1px solid var(--sos-border-subtle)',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div className="sos-avatar" aria-hidden style={{ width: 44, height: 44, fontSize: 14 }}>
+          {initials}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: '16px',
+              fontWeight: 700,
+              color: 'var(--sos-text-primary)',
+              letterSpacing: '-0.005em',
+            }}
+          >
+            {fullName}
+          </div>
+          <div
+            className="sos-text-muted"
+            style={{ marginTop: '4px', fontSize: '12.5px' }}
+          >
+            {lead.serviceInterest ?? '—'} → {lead.targetCountry ?? '—'}
+            {lead.phone ? ` · ${lead.phone}` : ''}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <StatusBadge tone="info" size="sm">
+            {items.length} {items.length === 1 ? 'handover' : 'handovers'}
+          </StatusBadge>
+          {currencyTotals.length > 0 ? (
+            <StatusBadge tone="neutral" size="sm">
+              {currencyTotals.join(' · ')}
+            </StatusBadge>
+          ) : null}
+          {unclaimedCount > 0 ? (
+            <StatusBadge tone="warning" size="sm" dot>
+              {unclaimedCount} unclaimed
+            </StatusBadge>
+          ) : null}
+          {mineCount > 0 ? (
+            <StatusBadge tone="success" size="sm" dot>
+              {mineCount} mine
+            </StatusBadge>
+          ) : null}
+          {otherCount > 0 ? (
+            <StatusBadge tone="neutral" size="sm">
+              {otherCount} other officer
+            </StatusBadge>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Body — every handover for this lead, newest-first */}
+      <div
+        style={{
+          padding: '12px 14px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+        }}
+      >
+        {items.map((h) => (
+          <PaymentRow
+            key={h.id}
+            item={h}
+            currentUserId={currentUserId}
+            hideLeadIdentity
+          />
+        ))}
+      </div>
+    </GlassCard>
+  );
+}
+
 // ---------- Row ---------------------------------------------------------
 
-function PaymentRow({ item, currentUserId }: { item: ApiHandover; currentUserId: string | null }) {
+function PaymentRow({
+  item,
+  currentUserId,
+  hideLeadIdentity = false,
+}: {
+  item: ApiHandover;
+  currentUserId: string | null;
+  /** When rendered inside a LeadGroup, the lead identity is already in
+   *  the group header — hide the avatar + name to remove visual noise.
+   */
+  hideLeadIdentity?: boolean;
+}) {
   const name = clientName(item);
   const initials = initialsOf(name);
   const unclaimed = item.reviewedByUserId == null;
@@ -402,23 +582,26 @@ function PaymentRow({ item, currentUserId }: { item: ApiHandover; currentUserId:
       href={`/finance/intake/${item.id}` as Route}
       style={{ textDecoration: 'none', display: 'block' }}
     >
-      <GlassCard variant="default" hover padded="md">
+      <GlassCard variant={hideLeadIdentity ? 'soft' : 'default'} hover padded="md">
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 0.9fr) auto auto',
+            // When the lead identity is in a group header above, drop
+            // the avatar column entirely so the row reads as a "transaction".
+            gridTemplateColumns: hideLeadIdentity
+              ? 'minmax(0, 1fr) minmax(0, 0.9fr) auto auto'
+              : 'auto minmax(0, 1fr) minmax(0, 0.9fr) auto auto',
             gap: '16px',
             alignItems: 'center',
           }}
           className="finance-intake-row"
         >
-          {/* Avatar */}
-          <div
-            className="sos-avatar"
-            aria-hidden
-          >
-            {initials}
-          </div>
+          {/* Avatar — skipped inside a LeadGroup since the header has it. */}
+          {hideLeadIdentity ? null : (
+            <div className="sos-avatar" aria-hidden>
+              {initials}
+            </div>
+          )}
 
           {/* Identity column */}
           <div style={{ minWidth: 0 }}>
@@ -430,16 +613,18 @@ function PaymentRow({ item, currentUserId }: { item: ApiHandover; currentUserId:
                 flexWrap: 'wrap',
               }}
             >
-              <span
-                style={{
-                  fontSize: '15px',
-                  fontWeight: 700,
-                  color: 'var(--sos-text-primary)',
-                  letterSpacing: '-0.005em',
-                }}
-              >
-                {name}
-              </span>
+              {hideLeadIdentity ? null : (
+                <span
+                  style={{
+                    fontSize: '15px',
+                    fontWeight: 700,
+                    color: 'var(--sos-text-primary)',
+                    letterSpacing: '-0.005em',
+                  }}
+                >
+                  {name}
+                </span>
+              )}
               <StatusBadge tone={statusTone(item.status)} size="sm">
                 {STATUS_LABEL[item.status]}
               </StatusBadge>
@@ -448,7 +633,9 @@ function PaymentRow({ item, currentUserId }: { item: ApiHandover; currentUserId:
               className="sos-text-muted"
               style={{ marginTop: '6px', fontSize: '12.5px' }}
             >
-              {item.lead.serviceInterest ?? '—'} → {item.lead.targetCountry ?? '—'} · {item.id.slice(0, 8)}
+              {hideLeadIdentity
+                ? `Handover ${item.id.slice(0, 8)}`
+                : `${item.lead.serviceInterest ?? '—'} → ${item.lead.targetCountry ?? '—'} · ${item.id.slice(0, 8)}`}
             </div>
             {item.status === 'REJECTED' && item.financeNotes ? (
               <div

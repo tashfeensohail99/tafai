@@ -15,6 +15,7 @@ import {
   FileText,
   Filter,
   Search,
+  Trash2,
   X,
 } from 'lucide-react';
 import {
@@ -27,6 +28,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
+  adminDeleteHandover,
   fetchHandovers,
   METHOD_LABEL,
   STATUS_LABEL,
@@ -36,6 +38,7 @@ import {
   type ApiHandover,
   type FinanceHandoverStatus,
 } from '@/lib/finance-api';
+import { AdminAuthDeleteModal } from './AdminAuthDeleteModal';
 
 // ---------- Config -------------------------------------------------------
 
@@ -257,12 +260,17 @@ function DateFilter({ label, value, onChange }: DateFilterProps) {
 function HistoryRow({
   payment,
   index,
+  onAdminDelete,
 }: {
   payment: ApiHandover;
   index: number;
+  /** Triggers the admin-auth delete modal for this row. */
+  onAdminDelete: () => void;
 }) {
   const tone = STATUS_TONE[payment.status];
   const isEven = index % 2 === 0;
+  // Don't offer to delete an already-deleted row.
+  const canDelete = payment.status !== 'CANCELLED';
 
   return (
     <tr
@@ -397,6 +405,25 @@ function HistoryRow({
           >
             <Eye size={13} />
           </button>
+          {canDelete ? (
+            <button
+              type="button"
+              title="Delete (requires admin password)"
+              onClick={onAdminDelete}
+              style={{
+                background: 'var(--sos-status-danger-soft)',
+                border: '1px solid var(--sos-status-danger)',
+                borderRadius: 'var(--sos-radius-sm)',
+                padding: '4px 8px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                color: 'var(--sos-status-danger)',
+              }}
+            >
+              <Trash2 size={13} />
+            </button>
+          ) : null}
         </div>
       </td>
     </tr>
@@ -462,10 +489,27 @@ export function FinanceHistoryPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [deletingHandover, setDeletingHandover] = useState<ApiHandover | null>(null);
 
   useEffect(() => {
     fetchHandovers().then(setAllHandovers).catch(console.error);
   }, []);
+
+  /** Step-up delete handler. Wraps the api call so the modal can surface
+   *  the error inline if the admin password is wrong / role check fails. */
+  async function handleAdminDelete(values: {
+    adminEmail: string;
+    adminPassword: string;
+    reason: string;
+  }) {
+    if (!deletingHandover) return;
+    await adminDeleteHandover(deletingHandover.id, values);
+    setDeletingHandover(null);
+    // Reload so the deleted row disappears from active filters (or
+    // reflects its new CANCELLED status if the user is showing all).
+    const fresh = await fetchHandovers();
+    setAllHandovers(fresh);
+  }
 
   const set = <K extends keyof FilterState>(key: K) =>
     (value: FilterState[K]) =>
@@ -804,7 +848,12 @@ export function FinanceHistoryPage() {
               </thead>
               <tbody>
                 {sorted.map((p, i) => (
-                  <HistoryRow key={p.id} payment={p} index={i} />
+                  <HistoryRow
+                    key={p.id}
+                    payment={p}
+                    index={i}
+                    onAdminDelete={() => setDeletingHandover(p)}
+                  />
                 ))}
               </tbody>
               {/* Footer totals row */}
@@ -852,6 +901,18 @@ export function FinanceHistoryPage() {
           </div>
         </GlassCard>
       )}
+
+      <AdminAuthDeleteModal
+        open={deletingHandover !== null}
+        onClose={() => setDeletingHandover(null)}
+        title="Delete finance handover"
+        subject={
+          deletingHandover
+            ? `${clientName(deletingHandover)} · ${fmtAmount(deletingHandover.submittedAmount, deletingHandover.currency)} · ${STATUS_LABEL[deletingHandover.status]}`
+            : undefined
+        }
+        onConfirm={handleAdminDelete}
+      />
     </div>
   );
 }

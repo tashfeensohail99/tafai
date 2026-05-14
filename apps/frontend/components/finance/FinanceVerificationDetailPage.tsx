@@ -26,6 +26,7 @@ import {
   ActionBar,
 } from '@/components/sales-v2/ui';
 import {
+  adminDeleteHandover,
   fetchHandoverById,
   reviewHandover,
   verifyPayment,
@@ -36,6 +37,7 @@ import {
   METHOD_LABEL,
   type ApiHandover,
 } from '@/lib/finance-api';
+import { AdminAuthDeleteModal } from './AdminAuthDeleteModal';
 
 // ---------- checklist config ---------------------------------------------
 
@@ -212,6 +214,7 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
   const [toast, setToast]                    = useState<string | null>(null);
   const [lastSaved, setLastSaved]            = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [adminDeleteOpen, setAdminDeleteOpen] = useState(false);
 
   useEffect(() => {
     fetchHandoverById(paymentId)
@@ -358,6 +361,23 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
 
   function handleRequestCorrection() {
     router.push(`/finance/corrections/${paymentId}` as Route);
+  }
+
+  /** Step-up delete — the modal collects admin creds + reason and we
+   *  hand them straight to the backend, which is what actually
+   *  verifies the admin. We throw on backend failure so the modal
+   *  surfaces the error inline rather than us showing a toast over
+   *  a still-open modal. */
+  async function handleAdminDelete(values: {
+    adminEmail: string;
+    adminPassword: string;
+    reason: string;
+  }) {
+    if (!handover) return;
+    await adminDeleteHandover(handover.id, values);
+    setAdminDeleteOpen(false);
+    showToast('Handover deleted · audit + lead timeline updated.');
+    setTimeout(() => router.push('/finance/intake'), 1500);
   }
 
   // --- loading/404 ----------------------------------------------------------------
@@ -651,6 +671,19 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
                 Last saved: {lastSaved}
               </span>
             )}
+            {/* Step-up admin delete — available on every status (including
+                already-CANCELLED is the only one we hide it on since
+                there'd be nothing to delete). The actual authorisation
+                happens server-side after the admin types their password
+                in the modal. */}
+            {handover.status !== 'CANCELLED' ? (
+              <DangerButton
+                onClick={() => setAdminDeleteOpen(true)}
+                disabled={saving}
+              >
+                Admin delete
+              </DangerButton>
+            ) : null}
           </>
         }
         hint={
@@ -683,6 +716,14 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
             </>
           )
         }
+      />
+
+      <AdminAuthDeleteModal
+        open={adminDeleteOpen}
+        onClose={() => setAdminDeleteOpen(false)}
+        title="Delete finance handover"
+        subject={`${clientName(handover)} · ${fmtAmount(handover.submittedAmount, handover.currency)} · ${STATUS_LABEL[handover.status]}`}
+        onConfirm={handleAdminDelete}
       />
     </div>
   );

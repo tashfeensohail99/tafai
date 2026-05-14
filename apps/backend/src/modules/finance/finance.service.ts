@@ -3,7 +3,9 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import {
   AuditAction,
   FinanceHandoverStatus,
@@ -1147,6 +1149,250 @@ export class FinanceService {
       affectedLeadIds: Array.from(affectedLeadIds),
       reason: trimmed,
       processedAt: processedAt.toISOString(),
+    };
+  }
+
+  /**
+   * Admin step-up deletion of a finance handover.
+   *
+   * The flow is intentionally two-identity:
+   *   - `actorUserId` is the finance officer currently logged in. They
+   *     initiated the delete from the UI.
+   *   - `dto.adminEmail` + `dto.adminPassword` are the admin's
+   *     credentials, typed live into the modal. We look that account
+   *     up independently of the JWT and verify it bcrypt-matches a
+   *     real, active admin user.
+   *
+   * Why both identities matter: the user wanted a flow where a finance
+   * officer can request a deletion at their desk but the actual
+   * authorisation comes from an admin physically present to type their
+   * password. The trail then attributes responsibility correctly —
+   * the audit log shows who asked AND who authorised.
+   *
+   * Soft-delete only: handover.status → CANCELLED, notes get a
+   * `[DELETED <iso> by finance=<id>, authorised by admin=<id>: <reason>]`
+   * stamp, attached Invoice/Payment get cancelled via the same status
+   * guards as orphan cleanup (paid rows never touched). The row stays
+   * in the database so historical reports + the lead's Finance tab
+   * still show the deletion with full context, which matches the
+   * "deleted must also appear in client profile" requirement.
+   */
+  async adminDeleteHandover(
+    handoverId: string,
+    dto: {
+      adminEmail: string;
+      adminPassword: string;
+      reason: string;
+    },
+    actorUserId: string,
+  ): Promise<{
+    handoverId: string;
+    voidedInvoiceId: string | null;
+    voidedPaymentId: string | null;
+    initiatedByUserId: string;
+    authorisedByAdminUserId: string;
+    reason: string;
+    deletedAt: string;
+  }> {
+    const reason = dto.reason.trim();
+    if (reason.length < 5) {
+      throw new BadRequestException(
+        'A clear reason (at least 5 characters) is required so the deletion is auditable.',
+      );
+    }
+
+    // -- Verify admin credentials (independent of the JWT). --
+    // Same lookup pattern as auth.service.login(). Generic error
+    // messages on every failure path so we don't leak which part
+    // failed (account doesn't exist vs. wrong password vs. not admin)
+    // — that's the standard advice for any step-up auth check.
+    const adminUser = await this.prisma.userAccount.findUnique({
+      where: { email: dto.adminEmail, deletedAt: null },
+      include: {
+        userRoles: {
+          include: { role: { select: { name: true } } },
+        },
+      },
+    });
+    if (!adminUser) {
+      throw new UnauthorizedException(
+        'Admin credentials invalid or account does not have permission to authorise deletions.',
+      );
+    }
+    if (adminUser.status !== 'ACTIVE') {
+      throw new UnauthorizedException(
+        'Admin credentials invalid or account does not have permission to authorise deletions.',
+      );
+    }
+    const passwordValid = await bcrypt.compare(
+      dto.adminPassword,
+      adminUser.passwordHash,
+    );
+    if (!passwordValid) {
+      // Mirror auth.service.login()'s failure-counter discipline so a
+      // brute-forced admin password is logged + eventually locks the
+      // account out at the same threshold as a regular login.
+      const attempts = adminUser.failedLoginAttempts + 1;
+      const lockUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null;
+      await this.prisma.userAccount.update({
+        where: { id: adminUser.id },
+        data: { failedLoginAttempts: attempts, lockedUntil: lockUntil },
+      });
+      await this.auditLog.log({
+        actorUserId: adminUser.id,
+        action: AuditAction.USER_LOGIN_FAILED,
+        entityType: 'UserAccount',
+        entityId: adminUser.id,
+        metadata: {
+          reason: 'invalid_admin_password_on_handover_delete',
+          handoverId,
+          initiatedByUserId: actorUserId,
+        },
+      });
+      throw new UnauthorizedException(
+        'Admin credentials invalid or account does not have permission to authorise deletions.',
+      );
+    }
+    const adminRoleNames = adminUser.userRoles
+      .map((ur) => ur.role.name.toLowerCase())
+      .filter(Boolean);
+    const hasAdminRole = adminRoleNames.some(
+      (r) => r === 'admin' || r === 'super_admin',
+    );
+    if (!hasAdminRole) {
+      throw new UnauthorizedException(
+        'Admin credentials invalid or account does not have permission to authorise deletions.',
+      );
+    }
+
+    // -- Look up the handover and capture pre-delete state. --
+    const existing = await this.prisma.financeHandover.findUnique({
+      where: { id: handoverId },
+      select: {
+        id: true,
+        leadId: true,
+        status: true,
+        invoiceId: true,
+        paymentId: true,
+        notes: true,
+        submittedAmount: true,
+        currency: true,
+      },
+    });
+    if (!existing) {
+      throw new NotFoundException('Finance handover not found');
+    }
+    if (existing.status === FinanceHandoverStatus.CANCELLED) {
+      throw new BadRequestException('This handover has already been deleted.');
+    }
+
+    // -- Perform the soft delete with full audit stamping. --
+    const deletedAt = new Date();
+    const stamp = `[DELETED ${deletedAt.toISOString()} by finance=${actorUserId}, authorised by admin=${adminUser.id} (${adminUser.email}): ${reason}]`;
+
+    let voidedInvoiceId: string | null = null;
+    let voidedPaymentId: string | null = null;
+
+    if (existing.paymentId) {
+      const payment = await this.prisma.payment.findUnique({
+        where: { id: existing.paymentId },
+        select: { id: true, status: true, notes: true },
+      });
+      if (
+        payment &&
+        (payment.status === PaymentStatus.PENDING ||
+          payment.status === PaymentStatus.PARTIAL ||
+          payment.status === PaymentStatus.PAID)
+      ) {
+        await this.prisma.payment.update({
+          where: { id: payment.id },
+          data: {
+            // PAID/PARTIAL payments get marked CANCELLED here too — this
+            // is admin authorisation, not the automated orphan cleanup,
+            // so the operator can void real money if they need to.
+            // Audit trail makes that decision attributable.
+            status: PaymentStatus.CANCELLED,
+            notes: payment.notes ? `${payment.notes}\n${stamp}` : stamp,
+          },
+        });
+        voidedPaymentId = payment.id;
+      }
+    }
+
+    if (existing.invoiceId) {
+      const invoice = await this.prisma.invoice.findUnique({
+        where: { id: existing.invoiceId },
+        select: { id: true, status: true, notes: true },
+      });
+      if (invoice && invoice.status !== InvoiceStatus.CANCELLED) {
+        await this.prisma.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            status: InvoiceStatus.CANCELLED,
+            notes: invoice.notes ? `${invoice.notes}\n${stamp}` : stamp,
+          },
+        });
+        voidedInvoiceId = invoice.id;
+      }
+    }
+
+    await this.prisma.financeHandover.update({
+      where: { id: handoverId },
+      data: {
+        status: FinanceHandoverStatus.CANCELLED,
+        notes: existing.notes ? `${existing.notes}\n${stamp}` : stamp,
+      },
+    });
+
+    // -- Audit log + lead timeline event. --
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.FINANCE_HANDOVER_REVIEWED,
+      entityType: 'FinanceHandover',
+      entityId: handoverId,
+      oldValues: { status: existing.status },
+      newValues: {
+        status: FinanceHandoverStatus.CANCELLED,
+        deletionReason: reason,
+        initiatedByUserId: actorUserId,
+        authorisedByAdminUserId: adminUser.id,
+        authorisedByAdminEmail: adminUser.email,
+        voidedInvoiceId,
+        voidedPaymentId,
+      },
+    });
+
+    await this.activityTimeline
+      .record({
+        entityType: 'Lead',
+        entityId: existing.leadId,
+        leadId: existing.leadId,
+        eventType: TimelineEventType.FINANCE_HANDOVER_REVIEWED,
+        description: `Finance handover deleted by admin authorisation · "${reason}"`,
+        actorUserId,
+        metadata: {
+          financeHandoverId: handoverId,
+          submittedAmount: existing.submittedAmount.toString(),
+          currency: existing.currency,
+          initiatedByUserId: actorUserId,
+          authorisedByAdminUserId: adminUser.id,
+          authorisedByAdminEmail: adminUser.email,
+          voidedInvoiceId,
+          voidedPaymentId,
+          reason,
+          deletionEvent: true,
+        },
+      })
+      .catch(() => undefined);
+
+    return {
+      handoverId,
+      voidedInvoiceId,
+      voidedPaymentId,
+      initiatedByUserId: actorUserId,
+      authorisedByAdminUserId: adminUser.id,
+      reason,
+      deletedAt: deletedAt.toISOString(),
     };
   }
 

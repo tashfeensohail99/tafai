@@ -22,6 +22,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { FinanceService } from './finance.service';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 import {
+  AdminDeleteHandoverDto,
   CleanupOrphanHandoversDto,
   CreateFinanceHandoverDto,
   CreateInvoiceDto,
@@ -215,5 +216,27 @@ export class FinanceController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.financeService.cleanupOrphanHandovers(dto.reason, user.id);
+  }
+
+  /**
+   * Step-up authentication delete: any finance user can INITIATE the
+   * deletion (anyone with finance_handover.view_own can reach the
+   * page) — the admin's email + password in the body are the actual
+   * authorisation gate. The service re-verifies the admin credentials
+   * server-side against UserAccount.passwordHash and only proceeds if
+   * the matched account is ACTIVE and holds an admin/super_admin role.
+   *
+   * Both identities (the initiator from JWT, the admin from the body)
+   * land on the audit log + the lead timeline so the trail reads
+   * "finance officer A deleted this, authorised by admin B".
+   */
+  @Post('handovers/:id/admin-delete')
+  @RequirePermissions('finance_handover.view_own')
+  adminDeleteHandover(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminDeleteHandoverDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.adminDeleteHandover(id, dto, user.id);
   }
 }

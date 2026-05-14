@@ -346,3 +346,39 @@ export async function cleanupOrphanHandovers(
     body: JSON.stringify({ reason }),
   });
 }
+
+/** Result of an admin-authorised handover deletion. */
+export interface AdminDeleteHandoverResult {
+  handoverId: string;
+  voidedInvoiceId: string | null;
+  voidedPaymentId: string | null;
+  initiatedByUserId: string;
+  authorisedByAdminUserId: string;
+  reason: string;
+  deletedAt: string;
+}
+
+/**
+ * Step-up admin deletion of a finance handover. The currently-logged-in
+ * finance user initiates the request; the `adminEmail` + `adminPassword`
+ * in the body are the actual authorisation gate (server-side bcrypt
+ * compare against the admin's UserAccount). Both identities are
+ * recorded on the audit log + lead timeline.
+ *
+ * The backend soft-deletes (status → CANCELLED, notes stamped with the
+ * full deletion context) so the row stays in the database for the
+ * lead's Finance / Activity tab to render, satisfying the
+ * "deleted must also appear in client profile" requirement.
+ */
+export async function adminDeleteHandover(
+  handoverId: string,
+  body: { adminEmail: string; adminPassword: string; reason: string },
+): Promise<AdminDeleteHandoverResult> {
+  return apiFetch<AdminDeleteHandoverResult>(
+    `/finance/handovers/${handoverId}/admin-delete`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
+}

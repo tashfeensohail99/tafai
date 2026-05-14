@@ -1,6 +1,7 @@
 import {
   IsBase64,
   IsDateString,
+  IsEmail,
   IsEnum,
   IsNotEmpty,
   IsNumberString,
@@ -8,6 +9,7 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 import { FinanceHandoverStatus, InvoiceStatus, PaymentStatus } from '@prisma/client';
 
@@ -321,6 +323,35 @@ export class RefundPaymentDto {
  */
 export class CleanupOrphanHandoversDto {
   @IsString()
+  @MaxLength(500)
+  reason!: string;
+}
+
+/**
+ * Admin step-up authentication for deleting a finance handover.
+ *
+ * A finance officer initiates the delete from the UI — they're already
+ * authenticated via JWT. To actually authorise the destructive action
+ * an admin physically walks over and types THEIR email + password into
+ * the modal. The backend looks up that admin account independently,
+ * bcrypt-compares the password, and verifies the account is ACTIVE
+ * and holds an admin role. Only then does the soft-delete proceed.
+ *
+ * Both identities (the initiating finance officer + the authorising
+ * admin) are recorded on the audit log + the lead timeline so the
+ * trail attributes responsibility cleanly.
+ */
+export class AdminDeleteHandoverDto {
+  @IsEmail()
+  adminEmail!: string;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(200)
+  adminPassword!: string;
+
+  @IsString()
+  @MinLength(5)
   @MaxLength(500)
   reason!: string;
 }

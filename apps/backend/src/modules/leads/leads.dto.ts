@@ -1,6 +1,7 @@
 import {
   IsEnum,
   IsNotEmpty,
+  IsNumberString,
   IsOptional,
   IsString,
   IsUUID,
@@ -105,6 +106,22 @@ export class CreateLeadDto {
   status?: LeadStatus;
 
   /**
+   * Agreed total fee for the service the lead signed up for. Captured
+   * at creation time when known, otherwise editable later via the
+   * "Edit lead" modal. Becomes the totalAmount on the single Invoice
+   * that future installment Payments roll up to. Passed as a string
+   * to preserve decimal precision over the wire.
+   */
+  @IsOptional()
+  @IsNumberString()
+  serviceFeeAmount?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  serviceFeeCurrency?: string;
+
+  /**
    * If provided, the new Lead is linked to this existing WhatsApp thread
    * after creation (thread.leadId = newLead.id). Used by the inbox
    * "Convert to Lead" flow so a raw WhatsApp contact becomes a tracked
@@ -191,6 +208,16 @@ export class UpdateLeadDto {
   @IsString()
   @MaxLength(500)
   lostReason?: string;
+
+  /** Agreed total fee for the lead's service. See CreateLeadDto. */
+  @IsOptional()
+  @IsNumberString()
+  serviceFeeAmount?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  serviceFeeCurrency?: string;
 }
 
 export class AssignLeadDto {

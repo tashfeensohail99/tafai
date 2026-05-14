@@ -738,6 +738,13 @@ model Lead {
   nationality        String?
   targetCountry      String?
   serviceInterest    String?
+  /// Agreed total fee for the service the lead signed up for. Captured by
+  /// Sales (Edit Lead modal) when the deal is set. Becomes the totalAmount
+  /// on the single Invoice that all installment Payments roll up to. NULL
+  /// while the deal is still being negotiated — finance falls back to the
+  /// first handover's submittedAmount in that case.
+  serviceFeeAmount   Decimal? @db.Decimal(12, 2)
+  serviceFeeCurrency String?
   sourceChannel      String?
   referralPartnerId  String?
   status             LeadStatus @default(NEW)

@@ -48,6 +48,11 @@ export interface Lead {
   nextAction: string;
   salesNote?: string;
   tags?: string[];
+  /** Agreed service fee for this lead — anchors the single Invoice that
+   *  finance installment Payments roll up to. Captured by Sales via the
+   *  Edit Lead modal. Decimal precision preserved as a string. */
+  serviceFeeAmount?: string;
+  serviceFeeCurrency?: string;
 }
 
 export type FollowUpType =

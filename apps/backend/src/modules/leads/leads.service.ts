@@ -172,6 +172,16 @@ export class LeadsService {
         status: dto.status ?? LeadStatus.NEW,
         priority: dto.priority,
         notes: dto.notes,
+        // Agreed service fee — anchors the single Invoice that future
+        // installment Payments roll up to. NULL is fine when the deal
+        // isn't finalised yet; finance falls back to the first handover
+        // amount as the implicit total.
+        ...(dto.serviceFeeAmount !== undefined
+          ? { serviceFeeAmount: new Prisma.Decimal(dto.serviceFeeAmount) }
+          : {}),
+        ...(dto.serviceFeeCurrency !== undefined
+          ? { serviceFeeCurrency: dto.serviceFeeCurrency }
+          : {}),
       },
       include: {
         assignedEmployee: {

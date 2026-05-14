@@ -462,7 +462,12 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
       ) : null}
 
       {tab === 'FINANCE' ? (
-        <FinanceTab handovers={financeHandovers} loading={financeLoading} />
+        <FinanceTab
+          handovers={financeHandovers}
+          loading={financeLoading}
+          serviceFeeAmount={lead.serviceFeeAmount}
+          serviceFeeCurrency={lead.serviceFeeCurrency}
+        />
       ) : null}
 
       <ActionBar
@@ -527,6 +532,8 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
                 email: lead.email,
                 service: lead.service,
                 targetCountry: lead.targetCountry,
+                serviceFeeAmount: lead.serviceFeeAmount,
+                serviceFeeCurrency: lead.serviceFeeCurrency,
               }
             : null
         }
@@ -2321,9 +2328,15 @@ function fmtAmount(amount: string, currency: string): string {
 function FinanceTab({
   handovers,
   loading,
+  serviceFeeAmount,
+  serviceFeeCurrency,
 }: {
   handovers: ApiLeadFinanceHandover[];
   loading: boolean;
+  /** The lead's agreed service fee (the anchor for the single Invoice).
+   *  When set, the tab shows a "paid X of Y · Z remaining" running balance. */
+  serviceFeeAmount?: string;
+  serviceFeeCurrency?: string;
 }) {
   if (loading) {
     return (
@@ -2370,8 +2383,116 @@ function FinanceTab({
   const latest = handovers[0];
   const showAlert = latest.status === 'REJECTED';
 
+  // Roll up "paid against the agreed fee" — only verified payments count.
+  // PAYMENT_RECORDED is in-flight (Finance recorded the receipt but didn't
+  // verify), so we report it separately as "pending review" rather than
+  // counting it as paid. Same currency across all rollups; if currencies
+  // mix we just hide the rollup to avoid lying.
+  const handoverCurrencies = new Set(handovers.map((h) => h.currency));
+  const singleCurrency = handoverCurrencies.size === 1 ? Array.from(handoverCurrencies)[0] : null;
+  const hasAgreedFee = !!serviceFeeAmount && Number(serviceFeeAmount) > 0;
+  const agreedTotal = hasAgreedFee ? Number(serviceFeeAmount) : null;
+  const paidVerified = handovers
+    .filter((h) => h.status === 'PAYMENT_VERIFIED' || h.status === 'SENT_TO_PROCESSING')
+    .reduce((s, h) => s + Number(h.submittedAmount), 0);
+  const pendingReview = handovers
+    .filter((h) => h.status === 'SUBMITTED' || h.status === 'IN_REVIEW' || h.status === 'PAYMENT_RECORDED')
+    .reduce((s, h) => s + Number(h.submittedAmount), 0);
+  const remaining = agreedTotal !== null ? Math.max(0, agreedTotal - paidVerified) : null;
+  const balanceCurrency = serviceFeeCurrency ?? singleCurrency ?? 'CAD';
+  const fmtMoney = (n: number) => {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: balanceCurrency,
+        maximumFractionDigits: 2,
+      }).format(n);
+    } catch {
+      return `${n.toLocaleString()} ${balanceCurrency}`;
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Contract / running-balance summary — the most important number on
+          this tab. When the agreed fee is captured, we show paid-of-total
+          progress; otherwise we just show what's been received so far. */}
+      <GlassCard variant="strong" padded="lg">
+        <div className="sos-eyebrow" style={{ marginBottom: 8 }}>
+          {hasAgreedFee ? 'Service contract' : 'Payments received'}
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+            gap: 14,
+            alignItems: 'flex-end',
+          }}
+        >
+          {hasAgreedFee ? (
+            <BalanceTile
+              label="Agreed total"
+              value={fmtMoney(agreedTotal ?? 0)}
+              tone="neutral"
+            />
+          ) : null}
+          <BalanceTile
+            label="Paid (verified)"
+            value={fmtMoney(paidVerified)}
+            tone={paidVerified > 0 ? 'success' : 'neutral'}
+          />
+          {pendingReview > 0 ? (
+            <BalanceTile
+              label="Pending review"
+              value={fmtMoney(pendingReview)}
+              tone="warning"
+            />
+          ) : null}
+          {hasAgreedFee && remaining !== null ? (
+            <BalanceTile
+              label="Remaining"
+              value={fmtMoney(remaining)}
+              tone={remaining === 0 ? 'success' : 'info'}
+            />
+          ) : null}
+        </div>
+        {hasAgreedFee && agreedTotal !== null && agreedTotal > 0 ? (
+          <div style={{ marginTop: 14 }}>
+            <div
+              style={{
+                width: '100%',
+                height: 6,
+                background: 'var(--sos-surface-1)',
+                borderRadius: 999,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: `${Math.min(100, Math.round((paidVerified / agreedTotal) * 100))}%`,
+                  height: '100%',
+                  background: 'var(--sos-status-success)',
+                  transition: 'width 200ms ease',
+                }}
+              />
+            </div>
+            <div className="sos-text-muted" style={{ marginTop: 6, fontSize: 11.5 }}>
+              {Math.round((paidVerified / agreedTotal) * 100)}% of the agreed fee paid
+            </div>
+          </div>
+        ) : null}
+        {!hasAgreedFee ? (
+          <div
+            className="sos-text-muted"
+            style={{ marginTop: 12, fontSize: 12, lineHeight: 1.5 }}
+          >
+            No agreed service fee captured yet. Set it via the &ldquo;Edit
+            lead&rdquo; button in the header so finance can show a running
+            balance and so installment payments roll up against one invoice.
+          </div>
+        ) : null}
+      </GlassCard>
+
       {showAlert ? (
         <div
           role="alert"
@@ -2444,6 +2565,42 @@ function FinanceTab({
           ))}
         </div>
       </GlassCard>
+    </div>
+  );
+}
+
+function BalanceTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'success' | 'warning' | 'info' | 'neutral';
+}) {
+  const colorByTone: Record<typeof tone, string> = {
+    success: 'var(--sos-status-success)',
+    warning: 'var(--sos-status-warning)',
+    info: 'var(--sos-brand-primary-strong)',
+    neutral: 'var(--sos-text-primary)',
+  };
+  return (
+    <div>
+      <div className="sos-text-faint" style={{ fontSize: 11, letterSpacing: '0.06em' }}>
+        {label.toUpperCase()}
+      </div>
+      <div
+        style={{
+          marginTop: 4,
+          fontSize: 22,
+          fontWeight: 700,
+          letterSpacing: '-0.01em',
+          color: colorByTone[tone],
+          lineHeight: 1.1,
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }

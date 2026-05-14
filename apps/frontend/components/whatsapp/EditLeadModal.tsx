@@ -33,7 +33,12 @@ export interface EditLeadModalLead {
   email?: string;
   service?: string;
   targetCountry?: string;
+  /** Agreed total service fee. String to preserve decimal precision. */
+  serviceFeeAmount?: string;
+  serviceFeeCurrency?: string;
 }
+
+const FEE_CURRENCIES = ['CAD', 'USD', 'GBP', 'EUR', 'AED', 'PKR'] as const;
 
 export function EditLeadModal(props: {
   open: boolean;
@@ -51,6 +56,8 @@ export function EditLeadModal(props: {
   const [email, setEmail] = useState('');
   const [service, setService] = useState('');
   const [targetCountry, setTargetCountry] = useState('');
+  const [serviceFeeAmount, setServiceFeeAmount] = useState('');
+  const [serviceFeeCurrency, setServiceFeeCurrency] = useState<string>('CAD');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,6 +70,8 @@ export function EditLeadModal(props: {
     setEmail(lead.email ?? '');
     setService(lead.service ?? '');
     setTargetCountry(lead.targetCountry ?? '');
+    setServiceFeeAmount(lead.serviceFeeAmount ?? '');
+    setServiceFeeCurrency(lead.serviceFeeCurrency ?? 'CAD');
     setError(null);
     setSubmitting(false);
   }, [open, lead]);
@@ -90,6 +99,14 @@ export function EditLeadModal(props: {
       }
       if ((targetCountry.trim() || undefined) !== (lead.targetCountry || undefined)) {
         changes.targetCountry = targetCountry.trim();
+      }
+      // Service fee — pass as string. Empty string clears the field
+      // server-side (patchLead converts "" → null on the body).
+      if (serviceFeeAmount.trim() !== (lead.serviceFeeAmount ?? '')) {
+        changes.serviceFeeAmount = serviceFeeAmount.trim();
+      }
+      if (serviceFeeCurrency !== (lead.serviceFeeCurrency ?? 'CAD')) {
+        changes.serviceFeeCurrency = serviceFeeCurrency;
       }
       // No-op save still counts as success — close the modal anyway.
       if (Object.keys(changes).length > 0) {
@@ -195,6 +212,60 @@ export function EditLeadModal(props: {
             placeholder="e.g. Canada"
           />
         </Field>
+      </div>
+
+      {/* Service fee — captured here so Finance has the agreed total
+          anchor when the first installment receipt comes through. Without
+          this, every handover would create a separate Invoice and the
+          lead's running balance can't be computed cleanly. */}
+      <div
+        style={{
+          marginTop: 16,
+          padding: '12px 14px',
+          borderRadius: 'var(--sos-radius-sm)',
+          background: 'var(--sos-surface-1)',
+          border: '1px solid var(--sos-border-subtle)',
+        }}
+      >
+        <div className="sos-eyebrow" style={{ marginBottom: 8 }}>
+          Agreed service fee
+        </div>
+        <div className="sos-text-muted" style={{ fontSize: 12, marginBottom: 10 }}>
+          Total amount the client agreed to pay for this service. Anchors a
+          single Invoice that every installment payment rolls up against —
+          finance sees &ldquo;paid X of Y&rdquo; cleanly. Leave blank if the
+          deal isn&apos;t priced yet.
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 120px)',
+            gap: 10,
+            alignItems: 'flex-end',
+          }}
+        >
+          <Field label="Fee amount">
+            <FormInput
+              value={serviceFeeAmount}
+              onChange={(e) => setServiceFeeAmount(e.target.value)}
+              placeholder="e.g. 5000"
+              inputMode="decimal"
+            />
+          </Field>
+          <Field label="Currency">
+            <select
+              className="sos-input"
+              value={serviceFeeCurrency}
+              onChange={(e) => setServiceFeeCurrency(e.target.value)}
+            >
+              {FEE_CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
       </div>
 
       {error ? (

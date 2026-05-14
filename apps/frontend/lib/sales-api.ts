@@ -36,6 +36,10 @@ export interface ApiLead {
   status: string; // LeadStatus enum from Prisma
   priority?: string | null; // HOT | WARM | COLD | null
   notes?: string | null;
+  /** Agreed total service fee. Decimal column → arrives as a string
+   *  over JSON to preserve precision. Null when the deal isn't priced. */
+  serviceFeeAmount?: string | null;
+  serviceFeeCurrency?: string | null;
   assignedEmployee?: { id: string; firstName: string; lastName: string } | null;
   createdAt: string;
   updatedAt: string;
@@ -179,6 +183,8 @@ export function adaptLead(api: ApiLead): Lead {
     nextAction: defaultNextAction(stage),
     salesNote: api.notes ?? undefined,
     tags: [],
+    serviceFeeAmount: api.serviceFeeAmount ?? undefined,
+    serviceFeeCurrency: api.serviceFeeCurrency ?? undefined,
   };
 }
 
@@ -296,6 +302,11 @@ export async function patchLead(
     email?: string;
     serviceInterest?: string;
     targetCountry?: string;
+    /** Agreed total service fee — the anchor for the lead's single
+     *  Invoice. Passed as a numeric string to preserve decimal precision
+     *  (e.g. "5000.00" rather than 5000). Set to "" to clear. */
+    serviceFeeAmount?: string;
+    serviceFeeCurrency?: string;
   },
 ): Promise<void> {
   const body: Record<string, unknown> = {};
@@ -308,6 +319,16 @@ export async function patchLead(
   if (changes.email !== undefined) body.email = changes.email || undefined;
   if (changes.serviceInterest !== undefined) body.serviceInterest = changes.serviceInterest || undefined;
   if (changes.targetCountry !== undefined) body.targetCountry = changes.targetCountry || undefined;
+  if (changes.serviceFeeAmount !== undefined) {
+    // Empty string means "clear it" — pass null so the backend column
+    // resets to NULL rather than persisting '0' or the string '""'.
+    body.serviceFeeAmount = changes.serviceFeeAmount.trim() === ''
+      ? null
+      : changes.serviceFeeAmount.trim();
+  }
+  if (changes.serviceFeeCurrency !== undefined) {
+    body.serviceFeeCurrency = changes.serviceFeeCurrency || null;
+  }
   await apiFetch(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 

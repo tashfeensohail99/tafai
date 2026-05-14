@@ -69,6 +69,20 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       logger: false, // suppress imapflow's default console output
     });
 
+    // ImapFlow emits 'error' on async socket failures (ETIMEOUT, ECONNRESET,
+    // TLS handshake aborts) *outside* the try/catch around connect/fetch.
+    // Without a listener, Node's default unhandled-'error' rule kills the
+    // whole process — that's what was crashing the backend roughly every
+    // 3 minutes when Hostinger's IMAP TLS connection idled out. Logging-
+    // only handler keeps the process alive; the try/catch below already
+    // surfaces the same error on the await chain so we don't lose
+    // diagnosis quality.
+    client.on('error', (err: Error) => {
+      this.log.warn(
+        `IMAP socket error (will recover on next poll): ${err.message}`,
+      );
+    });
+
     try {
       await client.connect();
       const lock = await client.getMailboxLock('INBOX');

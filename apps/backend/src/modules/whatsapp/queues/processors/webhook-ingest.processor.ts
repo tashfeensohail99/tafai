@@ -9,6 +9,7 @@ import {
   type Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
+import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { WhatsAppAssignmentService } from '../../routing/assignment.service';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
@@ -208,8 +209,13 @@ export class WebhookIngestProcessor extends WorkerHost {
           select: { id: true },
         });
         const { firstName, lastName } = splitProfileName(profileName, phone);
+        // Auto-created leads from inbound WhatsApp need the same
+        // referenceCode treatment as Sales-created leads — anything
+        // missing the column would fail the new NOT NULL constraint.
+        const referenceCode = await generateLeadReferenceCode(this.prisma);
         const newLead = await this.prisma.lead.create({
           data: {
+            referenceCode,
             firstName,
             lastName,
             phone,

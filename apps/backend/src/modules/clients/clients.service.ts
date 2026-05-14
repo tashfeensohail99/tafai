@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { generateOrphanClientReferenceCode } from '../../common/reference-codes/reference-codes';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateClientDto, ListClientsQueryDto, UpdateClientDto } from './clients.dto';
 
@@ -60,9 +61,14 @@ export class ClientsService {
 
   async create(dto: CreateClientDto, actorUserId: string) {
     await this.ensureUniqueClient(dto.phone, dto.email);
+    // Direct client create (not from a lead). Generate an orphan-series
+    // reference code (TIS-YYYY-01000+) so the customer has the same
+    // identifier shape as lead-derived clients but in a distinct range.
+    const referenceCode = await generateOrphanClientReferenceCode(this.prisma);
 
     const client = await this.prisma.client.create({
       data: {
+        referenceCode,
         branchId: dto.branchId,
         createdByUserId: actorUserId,
         firstName: dto.firstName,

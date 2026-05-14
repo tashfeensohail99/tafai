@@ -179,11 +179,11 @@ export class WhatsAppMessagesService {
     // Get the WhatsApp channel settings to build the Meta client
     const channel = await this.prisma.whatsAppChannel.findUnique({
       where: { id: thread.channelId },
-      select: { id: true },
+      select: { id: true, phoneNumberId: true, accessTokenEnc: true },
     });
     if (!channel) throw new NotFoundException('WhatsApp channel not found');
 
-    const metaClient = await this.metaFactory.forChannel(thread.channelId);
+    const metaClient = this.metaFactory.forChannel(channel);
 
     // Upload to Meta — returns reusable media_id
     const metaMediaId = await metaClient.uploadMedia(

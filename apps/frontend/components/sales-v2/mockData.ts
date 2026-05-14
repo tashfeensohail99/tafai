@@ -30,6 +30,9 @@ export type SlaStatus = 'ACTIVE' | 'OVERDUE' | 'COMPLETED' | 'UPCOMING';
 
 export interface Lead {
   id: string;
+  /** Sequential human-readable reference (TIS-YYYY-NNNNN). Same code
+   *  follows the customer Lead → Client. */
+  referenceCode?: string;
   firstName: string;
   lastName: string;
   phone: string;

@@ -388,7 +388,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
       </div>
 
       <PageHeader
-        eyebrow={`Lead profile · ${lead.id}`}
+        eyebrow={`Lead profile · ${lead.referenceCode ?? lead.id}`}
         title={
           <>
             {lead.firstName} {lead.lastName}

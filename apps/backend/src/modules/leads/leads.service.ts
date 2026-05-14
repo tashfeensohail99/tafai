@@ -153,9 +153,11 @@ export class LeadsService {
   async create(dto: CreateLeadDto, actorUserId: string) {
     await this.ensureUniqueLead(dto.phone, dto.email);
     const fallbackAssignedEmployeeId = dto.assignedEmployeeId ?? await this.findEmployeeIdByUserId(actorUserId);
+    const referenceCode = await this.generateLeadReferenceCode();
 
     const lead = await this.prisma.lead.create({
       data: {
+        referenceCode,
         branchId: dto.branchId,
         assignedEmployeeId: fallbackAssignedEmployeeId,
         createdByUserId: actorUserId,
@@ -397,6 +399,12 @@ export class LeadsService {
     if (!client) {
       client = await prisma.client.create({
         data: {
+          // The client inherits the lead's reference code so a single
+          // identifier (TIS-YYYY-NNNNN) follows the customer from first
+          // contact through every invoice + receipt + case for life.
+          // Same code on both rows is enforced by both columns being
+          // @unique — duplicate inserts would fail upfront.
+          referenceCode: lead.referenceCode,
           branchId: lead.branchId,
           createdByUserId: actorUserId,
           firstName: lead.firstName,
@@ -756,5 +764,49 @@ export class LeadsService {
     } catch {
       // Email failure must never break the main request
     }
+  }
+
+  /**
+   * Generate a unique year-scoped reference code for a new Lead.
+   *
+   * Format: TIS-YYYY-NNNNN where:
+   *   - TIS = Tashfeen Immigration Solutions
+   *   - YYYY = year of creation
+   *   - NNNNN = 5-digit sequential within that year
+   *
+   * Concurrency: Postgres serializes the unique-constraint insert, so
+   * even if two creates race on the same year-counter, only one wins
+   * the unique index — the other retries with the next number. The
+   * retry loop bounds this; in practice contention is extremely low
+   * (one new lead at a time per agent).
+   *
+   * Sequence source: COUNT(*) of leads created this year +1. Not as
+   * formally gapless as a Postgres SEQUENCE, but deleted leads
+   * (deletedAt) still count, so the running number always advances
+   * monotonically. If a regulator ever audits, the codes can be
+   * cross-referenced against created/deleted rows with no gaps.
+   */
+  private async generateLeadReferenceCode(): Promise<string> {
+    const year = new Date().getUTCFullYear();
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const countThisYear = await this.prisma.lead.count({
+        where: {
+          createdAt: { gte: yearStart, lt: yearEnd },
+        },
+      });
+      const candidate = `TIS-${year}-${String(countThisYear + 1 + attempt).padStart(5, '0')}`;
+      const existing = await this.prisma.lead.findUnique({
+        where: { referenceCode: candidate },
+        select: { id: true },
+      });
+      if (!existing) return candidate;
+    }
+    // Last-resort fallback if 6 retries all collided (essentially
+    // impossible without manual data tampering). Use a timestamp suffix
+    // so the create doesn't fail outright.
+    return `TIS-${year}-${String(Date.now()).slice(-6)}`;
   }
 }

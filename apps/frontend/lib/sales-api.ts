@@ -25,6 +25,9 @@ import type {
 
 export interface ApiLead {
   id: string;
+  /** Human-readable, sequential reference code (TIS-YYYY-NNNNN). Stays
+   *  with the lead through Client conversion — same code on both rows. */
+  referenceCode?: string | null;
   firstName: string;
   lastName: string;
   phone: string;
@@ -164,6 +167,7 @@ export function adaptLead(api: ApiLead): Lead {
   const stage = mapStatus(api.status);
   return {
     id: api.id,
+    referenceCode: api.referenceCode ?? undefined,
     firstName: api.firstName,
     lastName: api.lastName,
     phone: api.phone,

@@ -347,6 +347,59 @@ export async function cleanupOrphanHandovers(
   });
 }
 
+/**
+ * Receipt issued for a verified Payment. Created automatically by the
+ * backend when finance verifies a payment; can be downloaded as a PDF.
+ */
+export interface ApiReceipt {
+  id: string;
+  receiptNumber: string;
+  paymentId: string;
+  leadId: string | null;
+  clientId: string | null;
+  invoiceId: string;
+  amount: string;
+  currency: string;
+  paymentMethod: string | null;
+  transactionRef: string | null;
+  issuedByUserId: string;
+  issuedAt: string;
+  pdfStorageKey: string | null;
+  pdfGeneratedAt: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
+}
+
+/**
+ * GET the Receipt that was issued for a given finance handover. Returns
+ * null if finance hasn't verified the payment yet (receipt issuance is
+ * tied to verifyPayment — there's no receipt without a verified payment).
+ */
+export async function fetchReceiptForHandover(
+  handoverId: string,
+): Promise<ApiReceipt | null> {
+  try {
+    return await apiFetch<ApiReceipt | null>(
+      `/finance/handovers/${handoverId}/receipt`,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get a short-lived signed URL to download the receipt PDF. The backend
+ * regenerates the PDF on the fly if the stored key is missing — so this
+ * always returns a working URL when the underlying Receipt exists.
+ */
+export async function getReceiptDownloadUrl(
+  receiptId: string,
+): Promise<{ receiptNumber: string; url: string }> {
+  return apiFetch<{ receiptNumber: string; url: string }>(
+    `/finance/receipts/${receiptId}/download`,
+  );
+}
+
 /** Result of an admin-authorised handover deletion. */
 export interface AdminDeleteHandoverResult {
   handoverId: string;

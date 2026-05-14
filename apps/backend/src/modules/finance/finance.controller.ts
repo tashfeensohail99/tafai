@@ -239,4 +239,26 @@ export class FinanceController {
   ) {
     return this.financeService.adminDeleteHandover(id, dto, user.id);
   }
+
+  /**
+   * Get the Receipt issued for a finance handover (via its Payment).
+   * Returns null when finance hasn't verified the payment yet — the
+   * receipt is issued automatically inside verifyPayment.
+   */
+  @Get('handovers/:id/receipt')
+  @RequirePermissions('finance_handover.view_own')
+  async getHandoverReceipt(@Param('id', ParseUUIDPipe) id: string) {
+    return this.financeService.findReceiptByHandoverId(id);
+  }
+
+  /**
+   * Get a signed download URL for a Receipt PDF. If the stored key is
+   * missing (earlier failed render), the service regenerates on the fly
+   * before returning the URL.
+   */
+  @Get('receipts/:id/download')
+  @RequirePermissions('finance_handover.view_own')
+  async getReceiptDownloadUrl(@Param('id', ParseUUIDPipe) id: string) {
+    return this.financeService.getReceiptDownloadUrl(id);
+  }
 }

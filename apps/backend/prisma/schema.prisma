@@ -727,6 +727,11 @@ model Partner {
 
 model Lead {
   id                 String     @id @default(uuid())
+  /// Human-readable, sequential reference code (TIS-YYYY-NNNNN). Generated
+  /// on insert by leads.service. Stays with the lead through conversion —
+  /// the resulting Client inherits the same code so the customer carries
+  /// one identifier from first contact through final payment + processing.
+  referenceCode      String     @unique
   branchId           String?
   assignedEmployeeId String?
   createdByUserId    String?
@@ -778,6 +783,7 @@ model Lead {
   invoices            Invoice[]     @relation("LeadInvoices")
   followUps           FollowUp[]
   financeHandovers    FinanceHandover[]
+  receipts            Receipt[]
   timelineEvents      ActivityTimeline[]
   processingCases     ProcessingCase[]
   whatsappThread      WhatsAppThread? @relation("LeadWhatsAppThread")
@@ -851,6 +857,10 @@ model FollowUp {
 
 model Client {
   id                String       @id @default(uuid())
+  /// Inherits the originating Lead's referenceCode (TIS-YYYY-NNNNN) on
+  /// conversion. Same identifier carries the customer from first contact
+  /// through every invoice + receipt + processing case for life.
+  referenceCode     String       @unique
   branchId          String?
   createdByUserId   String?
   firstName         String
@@ -892,6 +902,7 @@ model Client {
   documents          ClientDocument[]
   appointments       Appointment[] @relation("ClientAppointments")
   invoices           Invoice[]     @relation("ClientInvoices")
+  receipts           Receipt[]
   timelineEvents     ActivityTimeline[]
   processingCases    ProcessingCase[]
   reminders          ClientReminder[]
@@ -1068,6 +1079,7 @@ model Invoice {
   lead     Lead?     @relation("LeadInvoices", fields: [leadId], references: [id])
   client   Client?   @relation("ClientInvoices", fields: [clientId], references: [id])
   payments Payment[]
+  receipts Receipt[]
   financeHandovers FinanceHandover[]
 
   @@index([leadId])
@@ -1095,10 +1107,52 @@ model Payment {
 
   invoice Invoice @relation(fields: [invoiceId], references: [id])
   financeHandover FinanceHandover?
+  receipt Receipt?
 
   @@index([invoiceId])
   @@index([status])
   @@map("payments")
+  @@schema("finance")
+}
+
+/// Formal receipt issued per verified Payment. One Receipt per Payment
+/// (enforced by the unique paymentId FK). Holds the sequential
+/// receiptNumber that's regulatory in most jurisdictions, plus the
+/// storage key for the rendered PDF. The PDF is a regeneratable artifact
+/// — the source of truth lives in this row.
+model Receipt {
+  id                String   @id @default(uuid())
+  receiptNumber     String   @unique
+  paymentId         String   @unique
+  leadId            String?
+  clientId          String?
+  invoiceId         String
+  amount            Decimal  @db.Decimal(12, 2)
+  currency          String
+  paymentMethod     String?
+  transactionRef    String?
+  issuedByUserId    String
+  issuedAt          DateTime @default(now())
+  // S3 key for the rendered PDF. NULL until the render completes; the
+  // download endpoint will trigger a regenerate if it's missing.
+  pdfStorageKey     String?
+  pdfGeneratedAt    DateTime?
+  voidedAt          DateTime?
+  voidReason        String?
+  voidedByUserId    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+  lead    Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  client  Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([clientId])
+  @@index([invoiceId])
+  @@index([issuedAt])
+  @@map("receipts")
   @@schema("finance")
 }
 

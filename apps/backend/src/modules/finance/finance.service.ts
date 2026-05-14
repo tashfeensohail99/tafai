@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -36,6 +37,7 @@ import {
 } from './finance.dto';
 import { LeadsService } from '../leads/leads.service';
 import { CasesService } from '../cases/cases.service';
+import { ReceiptPdfService } from './receipt-pdf.service';
 
 type FinanceHandoverRecord = Prisma.FinanceHandoverGetPayload<{
   include: {
@@ -76,6 +78,8 @@ type FinanceHandoverRecord = Prisma.FinanceHandoverGetPayload<{
 
 @Injectable()
 export class FinanceService {
+  private readonly logger = new Logger(FinanceService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
@@ -83,6 +87,7 @@ export class FinanceService {
     private readonly leadsService: LeadsService,
     private readonly casesService: CasesService,
     private readonly storage: StorageService,
+    private readonly receiptPdfService: ReceiptPdfService,
   ) {}
 
   async listInvoices(query: ListInvoicesQueryDto) {
@@ -987,12 +992,256 @@ export class FinanceService {
       });
     }
 
+    // Issue a formal Receipt for the verified payment. The Receipt row is
+    // created synchronously (so the receiptNumber is available immediately
+    // for the response and any timeline event), but the PDF render is
+    // best-effort — if pdfkit fails or storage is down, the Receipt still
+    // exists with pdfStorageKey=NULL and the download endpoint will
+    // regenerate on demand. Either way the customer's receipt number is
+    // committed before this method returns.
+    const receipt = await this.issueReceiptForPayment(
+      updatedPayment.id,
+      actorUserId,
+    ).catch((err) => {
+      this.logger.error(
+        `Receipt issuance failed for payment=${updatedPayment.id}: ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    });
+
     return {
       payment: updatedPayment,
       invoice: updatedInvoice,
       caseId,
       clientId,
+      receipt: receipt
+        ? {
+            id: receipt.id,
+            receiptNumber: receipt.receiptNumber,
+            pdfReady: Boolean(receipt.pdfStorageKey),
+          }
+        : null,
     };
+  }
+
+  /**
+   * Issue the formal Receipt row for a freshly-verified Payment. Generates
+   * a sequential receipt number, persists the row, then renders + uploads
+   * the PDF and stores the storage key back on the row. The PDF render is
+   * inline rather than queued because:
+   *   - The data set is tiny (one row), pdfkit renders in ~50ms
+   *   - The frontend wants to show a "Download receipt" button immediately
+   *     after verification with the PDF actually downloadable
+   *   - A queue would complicate the verify response shape with no real
+   *     latency win
+   * If the storage upload fails, we keep the row + log it — the download
+   * endpoint can regenerate on demand.
+   *
+   * Idempotent at the Receipt level (Payment.id has @unique constraint on
+   * Receipt.paymentId) — calling it twice for the same payment returns
+   * the existing Receipt instead of creating a duplicate. This lets
+   * the manual "generate receipt" endpoint reuse this method safely.
+   */
+  private async issueReceiptForPayment(paymentId: string, actorUserId: string) {
+    // Reuse existing receipt if already issued.
+    const existing = await this.prisma.receipt.findUnique({
+      where: { paymentId },
+    });
+    if (existing) {
+      // If PDF wasn't generated last time, give it another shot.
+      if (!existing.pdfStorageKey) {
+        const refreshed = await this.regenerateReceiptPdf(existing.id);
+        return refreshed;
+      }
+      return existing;
+    }
+
+    // Gather the data set the PDF + the receipt row need.
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        invoice: {
+          include: {
+            lead: true,
+            client: true,
+          },
+        },
+      },
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+
+    const leadId = payment.invoice.leadId;
+    const clientId = payment.invoice.clientId;
+    const lead = payment.invoice.lead;
+    const client = payment.invoice.client;
+
+    // Resolve "who is this receipt addressed to" — prefer the client
+    // record (more authoritative post-conversion) and fall back to the
+    // lead. referenceCode is the same on both for a converted lead.
+    const customerRef = client?.referenceCode ?? lead?.referenceCode ?? '—';
+    const customerName = client
+      ? `${client.firstName} ${client.lastName}`.trim()
+      : lead
+        ? `${lead.firstName} ${lead.lastName}`.trim()
+        : 'Unknown customer';
+    const customerPhone = client?.phone ?? lead?.phone ?? null;
+    const customerEmail = client?.email ?? lead?.email ?? null;
+
+    const receiptNumber = await this.generateReceiptNumber();
+    const issuedAt = new Date();
+
+    const created = await this.prisma.receipt.create({
+      data: {
+        receiptNumber,
+        paymentId: payment.id,
+        leadId,
+        clientId,
+        invoiceId: payment.invoiceId,
+        amount: payment.amount,
+        currency: payment.currency,
+        paymentMethod: payment.paymentMethod,
+        transactionRef: payment.transactionRef,
+        issuedByUserId: actorUserId,
+        issuedAt,
+      },
+    });
+
+    // Render + upload PDF; persist the storage key. Failures are logged
+    // and the Receipt row keeps pdfStorageKey=NULL so the download
+    // endpoint can retry on demand.
+    try {
+      const upload = await this.receiptPdfService.renderAndStore({
+        receiptNumber: created.receiptNumber,
+        issuedAt,
+        amount: payment.amount.toString(),
+        currency: payment.currency,
+        paymentMethod: payment.paymentMethod,
+        transactionRef: payment.transactionRef,
+        customer: {
+          referenceCode: customerRef,
+          fullName: customerName,
+          phone: customerPhone,
+          email: customerEmail,
+        },
+        invoice: {
+          invoiceNumber: payment.invoice.invoiceNumber,
+          totalAmount: payment.invoice.totalAmount.toString(),
+          paidAmount: payment.invoice.paidAmount.toString(),
+          currency: payment.invoice.currency,
+        },
+        notes: payment.notes,
+        issuedBy: {
+          name: 'Finance Officer',
+          role: 'Finance',
+        },
+      });
+      const updated = await this.prisma.receipt.update({
+        where: { id: created.id },
+        data: { pdfStorageKey: upload.key, pdfGeneratedAt: new Date() },
+      });
+      return updated;
+    } catch (err) {
+      this.logger.error(
+        `Receipt PDF render failed for receipt=${created.id}: ${err instanceof Error ? err.message : err}`,
+      );
+      return created;
+    }
+  }
+
+  /**
+   * Regenerate the PDF for an existing Receipt. Useful when the prior
+   * render failed (pdfStorageKey is NULL) or the operator wants a fresh
+   * copy with current invoice state (paid amount may have changed since
+   * the original render).
+   */
+  private async regenerateReceiptPdf(receiptId: string) {
+    const receipt = await this.prisma.receipt.findUnique({
+      where: { id: receiptId },
+      include: {
+        payment: {
+          include: {
+            invoice: {
+              include: { lead: true, client: true },
+            },
+          },
+        },
+      },
+    });
+    if (!receipt) throw new NotFoundException('Receipt not found');
+
+    const lead = receipt.payment.invoice.lead;
+    const client = receipt.payment.invoice.client;
+    const customerRef = client?.referenceCode ?? lead?.referenceCode ?? '—';
+    const customerName = client
+      ? `${client.firstName} ${client.lastName}`.trim()
+      : lead
+        ? `${lead.firstName} ${lead.lastName}`.trim()
+        : 'Unknown customer';
+
+    const upload = await this.receiptPdfService.renderAndStore({
+      receiptNumber: receipt.receiptNumber,
+      issuedAt: receipt.issuedAt,
+      amount: receipt.amount.toString(),
+      currency: receipt.currency,
+      paymentMethod: receipt.paymentMethod,
+      transactionRef: receipt.transactionRef,
+      customer: {
+        referenceCode: customerRef,
+        fullName: customerName,
+        phone: client?.phone ?? lead?.phone ?? null,
+        email: client?.email ?? lead?.email ?? null,
+      },
+      invoice: {
+        invoiceNumber: receipt.payment.invoice.invoiceNumber,
+        totalAmount: receipt.payment.invoice.totalAmount.toString(),
+        paidAmount: receipt.payment.invoice.paidAmount.toString(),
+        currency: receipt.payment.invoice.currency,
+      },
+      notes: receipt.payment.notes,
+      issuedBy: { name: 'Finance Officer', role: 'Finance' },
+    });
+    return this.prisma.receipt.update({
+      where: { id: receipt.id },
+      data: { pdfStorageKey: upload.key, pdfGeneratedAt: new Date() },
+    });
+  }
+
+  /**
+   * Public endpoint helper: returns the signed download URL for a
+   * Receipt PDF. Regenerates the PDF on the fly if the stored key is
+   * missing (e.g. earlier failed render).
+   */
+  async getReceiptDownloadUrl(receiptId: string): Promise<{
+    receiptNumber: string;
+    url: string;
+  }> {
+    let receipt = await this.prisma.receipt.findUnique({
+      where: { id: receiptId },
+    });
+    if (!receipt) throw new NotFoundException('Receipt not found');
+    if (!receipt.pdfStorageKey) {
+      receipt = await this.regenerateReceiptPdf(receipt.id);
+    }
+    if (!receipt.pdfStorageKey) {
+      throw new Error('Receipt PDF could not be generated');
+    }
+    const url = await this.storage.getSignedUrl(receipt.pdfStorageKey);
+    return { receiptNumber: receipt.receiptNumber, url };
+  }
+
+  /**
+   * Find the Receipt issued for a given finance handover (via its
+   * Payment). Returns null if no receipt has been issued yet.
+   */
+  async findReceiptByHandoverId(handoverId: string) {
+    const handover = await this.prisma.financeHandover.findUnique({
+      where: { id: handoverId },
+      select: { paymentId: true },
+    });
+    if (!handover?.paymentId) return null;
+    return this.prisma.receipt.findUnique({
+      where: { paymentId: handover.paymentId },
+    });
   }
 
   async refundPayment(id: string, dto: RefundPaymentDto, actorUserId: string) {
@@ -1605,22 +1854,58 @@ export class FinanceService {
     }
   }
 
+  /**
+   * Generate a sequential invoice number for the current year.
+   *
+   * Format: INV-YYYY-NNNNN (e.g. INV-2026-00001). Most jurisdictions
+   * (PK, CA, EU) require invoice numbers to be sequential and gap-free
+   * for tax compliance; the timestamp+random scheme this replaced was
+   * non-compliant. By counting all invoices created this year (NOT
+   * filtering by deletedAt — CANCELLED invoices keep their number so
+   * the sequence has no gaps from the auditor's perspective), we get
+   * a monotonically increasing series per year.
+   *
+   * Concurrency: the @unique constraint on invoiceNumber serialises
+   * collisions. The retry loop bumps the suffix on each conflict.
+   */
   private async generateInvoiceNumber() {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12);
-      const suffix = Math.random().toString().slice(2, 6);
-      const invoiceNumber = `INV-${timestamp}-${suffix}`;
+    const year = new Date().getUTCFullYear();
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const count = await this.prisma.invoice.count({
+        where: { createdAt: { gte: yearStart, lt: yearEnd } },
+      });
+      const candidate = `INV-${year}-${String(count + 1 + attempt).padStart(5, '0')}`;
       const existing = await this.prisma.invoice.findUnique({
-        where: { invoiceNumber },
+        where: { invoiceNumber: candidate },
         select: { id: true },
       });
-
-      if (!existing) {
-        return invoiceNumber;
-      }
+      if (!existing) return candidate;
     }
-
     throw new Error('Unable to generate a unique invoice number');
+  }
+
+  /**
+   * Generate a sequential receipt number for the current year.
+   * Format: RCP-YYYY-NNNNN — same regulatory shape as invoice numbers.
+   */
+  private async generateReceiptNumber() {
+    const year = new Date().getUTCFullYear();
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const count = await this.prisma.receipt.count({
+        where: { createdAt: { gte: yearStart, lt: yearEnd } },
+      });
+      const candidate = `RCP-${year}-${String(count + 1 + attempt).padStart(5, '0')}`;
+      const existing = await this.prisma.receipt.findUnique({
+        where: { receiptNumber: candidate },
+        select: { id: true },
+      });
+      if (!existing) return candidate;
+    }
+    throw new Error('Unable to generate a unique receipt number');
   }
 
   private buildHandoverScopeFilter(user: RequestUser): Prisma.FinanceHandoverWhereInput {

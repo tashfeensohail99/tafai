@@ -28,6 +28,8 @@ import {
 import {
   adminDeleteHandover,
   fetchHandoverById,
+  fetchReceiptForHandover,
+  getReceiptDownloadUrl,
   reviewHandover,
   verifyPayment,
   fmtAmount,
@@ -36,6 +38,7 @@ import {
   STATUS_LABEL,
   METHOD_LABEL,
   type ApiHandover,
+  type ApiReceipt,
 } from '@/lib/finance-api';
 import { AdminAuthDeleteModal } from './AdminAuthDeleteModal';
 
@@ -215,6 +218,9 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
   const [lastSaved, setLastSaved]            = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [adminDeleteOpen, setAdminDeleteOpen] = useState(false);
+  const [receipt, setReceipt] = useState<ApiReceipt | null>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receiptDownloading, setReceiptDownloading] = useState(false);
 
   useEffect(() => {
     fetchHandoverById(paymentId)
@@ -227,7 +233,48 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
         setFinanceNote(h.financeNotes ?? '');
       })
       .catch(() => setLoadError(true));
+
+    // Receipt is issued only after verifyPayment runs — fetch it
+    // alongside the handover so the "Download receipt" button appears
+    // automatically when this is a verified case.
+    setReceiptLoading(true);
+    fetchReceiptForHandover(paymentId)
+      .then(setReceipt)
+      .catch(() => setReceipt(null))
+      .finally(() => setReceiptLoading(false));
   }, [paymentId]);
+
+  /** Refetch the Receipt after verification succeeds so the download
+   *  button appears in-place without requiring a page reload. */
+  async function reloadReceipt() {
+    setReceiptLoading(true);
+    try {
+      const r = await fetchReceiptForHandover(paymentId);
+      setReceipt(r);
+    } finally {
+      setReceiptLoading(false);
+    }
+  }
+
+  /** Open the receipt PDF in a new tab using a signed URL. */
+  async function handleDownloadReceipt() {
+    if (!receipt) return;
+    setReceiptDownloading(true);
+    try {
+      const { url } = await getReceiptDownloadUrl(receipt.id);
+      // Open in a new tab; the signed URL is short-lived so we can't
+      // stash it in clipboard reliably.
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      showToast(
+        err instanceof Error
+          ? `Receipt download failed: ${err.message}`
+          : 'Receipt download failed.',
+      );
+    } finally {
+      setReceiptDownloading(false);
+    }
+  }
 
   const checklistDone     = Object.values(checklist).filter(Boolean).length;
   const checklistComplete = checklistDone === CHECKLIST_ITEMS.length;
@@ -331,12 +378,15 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
         showToast('Payment row missing after record step — please reopen the case.');
         return;
       }
-      // Step 2 — verify + create Client + create ProcessingCase.
+      // Step 2 — verify + create Client + create ProcessingCase + issue Receipt.
       await verifyPayment(paymentId, {
         verificationNote: financeNote || undefined,
       });
-      showToast('Payment verified · client created · case sent to Processing.');
-      setTimeout(() => router.push('/finance/intake'), 2000);
+      // Pull the freshly-issued receipt so the operator can download
+      // the PDF right away if they want to before the page navigates.
+      await reloadReceipt();
+      showToast('Payment verified · client created · receipt issued · case sent to Processing.');
+      setTimeout(() => router.push('/finance/intake'), 2500);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Verification failed';
       showToast(msg);
@@ -671,6 +721,23 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
                 Last saved: {lastSaved}
               </span>
             )}
+            {/* Receipt PDF — visible once payment has been verified and
+                the Receipt row has been issued by the backend (auto on
+                verifyPayment). Clicking opens a signed download URL in
+                a new tab. The receipt PDF has the Tashfeen letterhead,
+                customer reference code, payment details, and the
+                running invoice balance. */}
+            {receipt ? (
+              <SuccessButton
+                onClick={() => void handleDownloadReceipt()}
+                disabled={receiptDownloading || receiptLoading}
+                title={`Receipt ${receipt.receiptNumber}`}
+              >
+                {receiptDownloading
+                  ? 'Opening…'
+                  : `Download receipt (${receipt.receiptNumber})`}
+              </SuccessButton>
+            ) : null}
             {/* Step-up admin delete — available on every status (including
                 already-CANCELLED is the only one we hide it on since
                 there'd be nothing to delete). The actual authorisation

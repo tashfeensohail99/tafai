@@ -119,6 +119,18 @@ export class EmailService {
     });
   }
 
+  async sendLeadEmailVerification(opts: {
+    to: string;
+    leadName: string;
+    verifyUrl: string;
+  }): Promise<boolean> {
+    return this.sendMail({
+      to: opts.to,
+      subject: 'Verify your email — Tashfeen Immigration',
+      html: buildLeadVerificationEmail(opts),
+    });
+  }
+
   async sendAppointmentConfirmation(opts: {
     to: string;
     clientName: string;
@@ -311,4 +323,31 @@ function buildAppointmentEmail(opts: {
     <p style="font-size:13px;color:#64748b;">If you need to reschedule, please contact us at <a href="mailto:admin@tashfeengroup.com" style="color:#7c3aed;">admin@tashfeengroup.com</a></p>
   `;
   return baseTemplate('Appointment confirmed', content);
+}
+
+function buildLeadVerificationEmail(opts: {
+  leadName: string;
+  verifyUrl: string;
+}): string {
+  const content = `
+    <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Verify your email address</h2>
+    <p style="margin:0 0 24px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.leadName)}, please click the button below to confirm your email address for your Tashfeen Immigration enquiry.</p>
+
+    <div style="text-align:center;margin:32px 0;">
+      <a href="${escHtml(opts.verifyUrl)}"
+         style="display:inline-block;background:#7c3aed;color:#ffffff;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:700;letter-spacing:0.01em;">
+        Verify email address
+      </a>
+    </div>
+
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px;">
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.6;">
+        If the button above doesn't work, copy and paste this link into your browser:<br/>
+        <a href="${escHtml(opts.verifyUrl)}" style="color:#7c3aed;word-break:break-all;">${escHtml(opts.verifyUrl)}</a>
+      </p>
+    </div>
+
+    <p style="font-size:12px;color:#94a3b8;">This link expires in 48 hours. If you did not request this, you can safely ignore this email.</p>
+  `;
+  return baseTemplate('Verify your email — Tashfeen', content);
 }

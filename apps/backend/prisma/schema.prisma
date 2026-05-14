@@ -302,6 +302,8 @@ enum TimelineEventType {
   WHATSAPP_CONVERSATION_RESOLVED
   WHATSAPP_OPTED_OUT
   EMAIL_RECEIVED
+  EMAIL_VERIFICATION_SENT
+  EMAIL_VERIFIED
   @@schema("crm")
 }
 
@@ -747,6 +749,12 @@ model Lead {
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
   deletedAt          DateTime?
+
+  // --- Email verification ---------------------------------------------------
+  emailVerified          Boolean   @default(false)
+  emailVerificationToken String?   @unique
+  emailVerificationSentAt DateTime?
+  emailVerifiedAt        DateTime?
 
   // --- WhatsApp routing -----------------------------------------------------
   // Sticky routing: lifetime preferred employee for this lead. Set on first

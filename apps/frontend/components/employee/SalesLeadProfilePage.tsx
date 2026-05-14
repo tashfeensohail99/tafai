@@ -38,6 +38,7 @@ import {
   Save,
   Send,
   Shield,
+  ShieldCheck,
   Sparkles,
   Star,
   StickyNote,
@@ -86,6 +87,7 @@ import {
   fetchFollowUps,
   fetchAppointments,
   patchLead,
+  sendLeadEmailVerification,
   fetchLeadFiles,
   uploadLeadFile,
   getLeadFileUrl,
@@ -115,7 +117,7 @@ const STAGE_PROGRESS: LeadStage[] = [
   'SENT_TO_FINANCE',
 ];
 
-type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP';
+type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP' | 'VERIFICATION';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'OVERVIEW', label: 'Overview', Icon: ClipboardList },
@@ -124,6 +126,7 @@ const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'FOLLOWUPS', label: 'Follow-ups', Icon: Phone },
   { key: 'APPOINTMENTS', label: 'Appointments', Icon: CalendarClock },
   { key: 'NOTES', label: 'Notes & docs', Icon: StickyNote },
+  { key: 'VERIFICATION', label: 'Email verify', Icon: ShieldCheck },
 ];
 
 function priorityTone(p: Priority): BadgeTone {
@@ -374,6 +377,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
         FOLLOWUPS: leadFollowUps.length,
         APPOINTMENTS: leadAppointments.length,
         NOTES: salesNote ? 1 : 0,
+        VERIFICATION: lead.emailVerified ? 1 : 0,
       }} />
 
       {tab === 'OVERVIEW' ? (
@@ -408,6 +412,10 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
 
       {tab === 'WHATSAPP' ? (
         <WhatsAppLeadTab leadId={lead.id} leadPhone={lead.phone ?? null} />
+      ) : null}
+
+      {tab === 'VERIFICATION' ? (
+        <VerificationTab lead={lead} onVerified={(verified) => setLead((prev) => prev ? { ...prev, emailVerified: verified } : prev)} />
       ) : null}
 
       <ActionBar
@@ -1993,3 +2001,198 @@ function EmptyInline({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Verification Tab
+// ---------------------------------------------------------------------------
+
+function VerificationTab({
+  lead,
+  onVerified,
+}: {
+  lead: NonNullable<ReturnType<typeof getLead>>;
+  onVerified: (verified: boolean) => void;
+}) {
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSendVerification() {
+    if (!lead.email) return;
+    setSending(true);
+    setError(null);
+    try {
+      await sendLeadEmailVerification(lead.id);
+      setSent(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to send verification email');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const isVerified = lead.emailVerified === true;
+
+  return (
+    <GlassCard variant="strong" padded="lg">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+        <div>
+          <div className="sos-eyebrow">Email verification</div>
+          <h2 className="sos-title" style={{ fontSize: '17px', marginTop: '6px' }}>
+            Verify this lead&apos;s email address
+          </h2>
+          <p className="sos-text-muted" style={{ marginTop: '4px', fontSize: '13px' }}>
+            A verification link is sent to the lead&apos;s email. Once they click it, the address is marked as confirmed.
+          </p>
+        </div>
+        {isVerified ? (
+          <StatusBadge tone="success">
+            <ShieldCheck size={12} /> Verified
+          </StatusBadge>
+        ) : (
+          <StatusBadge tone="warning">
+            <Shield size={12} /> Not verified
+          </StatusBadge>
+        )}
+      </div>
+
+      {/* Status card */}
+      <div
+        style={{
+          marginTop: '24px',
+          padding: '20px',
+          borderRadius: 'var(--sos-radius-sm)',
+          background: isVerified ? 'var(--sos-status-success-soft)' : 'var(--sos-surface-1)',
+          border: `1px solid ${isVerified ? 'var(--sos-status-success-border)' : 'var(--sos-border-subtle)'}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+        }}
+      >
+        <div
+          style={{
+            width: '44px',
+            height: '44px',
+            borderRadius: '13px',
+            display: 'grid',
+            placeItems: 'center',
+            background: isVerified ? 'var(--sos-status-success-soft)' : 'var(--sos-brand-primary-soft)',
+            color: isVerified ? 'var(--sos-status-success)' : 'var(--sos-brand-primary-strong)',
+            border: `1px solid ${isVerified ? 'var(--sos-status-success-border)' : 'var(--sos-brand-primary-border)'}`,
+            flexShrink: 0,
+          }}
+        >
+          {isVerified ? <CheckCircle2 size={20} /> : <Mail size={20} />}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>
+            {isVerified ? 'Email address confirmed' : (lead.email ? lead.email : 'No email on file')}
+          </div>
+          <div className="sos-text-muted" style={{ marginTop: '4px', fontSize: '12.5px' }}>
+            {isVerified
+              ? `${lead.email} has been verified`
+              : lead.email
+                ? 'Verification email not yet sent or lead has not clicked the link'
+                : 'Add an email address to this lead before sending verification'}
+          </div>
+        </div>
+      </div>
+
+      {/* Action */}
+      {!isVerified && (
+        <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {!lead.email ? (
+            <div
+              style={{
+                padding: '14px 16px',
+                borderRadius: 'var(--sos-radius-sm)',
+                background: 'var(--sos-status-warning-soft)',
+                border: '1px solid var(--sos-status-warning-border)',
+                fontSize: '13px',
+                color: 'var(--sos-text-secondary)',
+              }}
+            >
+              No email address on file. Go to the Overview tab to add one before sending verification.
+            </div>
+          ) : sent ? (
+            <div
+              style={{
+                padding: '14px 16px',
+                borderRadius: 'var(--sos-radius-sm)',
+                background: 'var(--sos-status-success-soft)',
+                border: '1px solid var(--sos-status-success-border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                fontSize: '13px',
+                color: 'var(--sos-status-success)',
+                fontWeight: 600,
+              }}
+            >
+              <CheckCircle2 size={16} />
+              Verification email sent to {lead.email}. Waiting for the lead to click the link.
+            </div>
+          ) : null}
+
+          {error ? (
+            <div
+              style={{
+                padding: '12px 16px',
+                borderRadius: 'var(--sos-radius-sm)',
+                background: 'var(--sos-status-danger-soft)',
+                border: '1px solid var(--sos-status-danger-border)',
+                fontSize: '13px',
+                color: 'var(--sos-status-danger)',
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+
+          {lead.email && (
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <PrimaryButton
+                onClick={handleSendVerification}
+                disabled={sending || sent}
+                iconLeft={sending ? <Loader2 size={15} className="sos-spin" /> : <Send size={15} />}
+              >
+                {sending ? 'Sending…' : sent ? 'Email sent' : 'Send verification email'}
+              </PrimaryButton>
+              {sent && (
+                <GhostButton
+                  onClick={() => { setSent(false); setError(null); }}
+                  iconLeft={<Send size={14} />}
+                >
+                  Resend
+                </GhostButton>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Info */}
+      <div
+        style={{
+          marginTop: '24px',
+          padding: '14px 16px',
+          borderRadius: 'var(--sos-radius-sm)',
+          background: 'var(--sos-surface-1)',
+          border: '1px solid var(--sos-border-subtle)',
+          display: 'flex',
+          gap: '10px',
+          alignItems: 'flex-start',
+        }}
+      >
+        <Shield size={14} style={{ color: 'var(--sos-brand-primary-strong)', flexShrink: 0, marginTop: '2px' }} />
+        <p className="sos-text-muted" style={{ margin: 0, fontSize: '12.5px', lineHeight: 1.6 }}>
+          The verification link expires in 48 hours. If the lead does not receive the email, check the spam folder or resend.
+          Verified email addresses are shown with a green badge across the system.
+        </p>
+      </div>
+    </GlassCard>
+  );
+}
+
+// Helper used below for type inference
+function getLead() { return null as unknown as ReturnType<typeof adaptLead>; }
+import { adaptLead } from '@/lib/sales-api';

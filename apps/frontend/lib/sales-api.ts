@@ -29,6 +29,7 @@ export interface ApiLead {
   lastName: string;
   phone: string;
   email?: string | null;
+  emailVerified?: boolean;
   targetCountry?: string | null;
   serviceInterest?: string | null;
   sourceChannel?: string | null;
@@ -163,6 +164,7 @@ export function adaptLead(api: ApiLead): Lead {
     lastName: api.lastName,
     phone: api.phone,
     email: api.email ?? undefined,
+    emailVerified: api.emailVerified ?? false,
     source: mapSource(api.sourceChannel),
     service: api.serviceInterest ?? 'Immigration',
     targetCountry: api.targetCountry ?? '—',
@@ -283,6 +285,13 @@ export async function patchLead(
   if (changes.priority !== undefined) body.priority = mapPriorityToApi(changes.priority);
   if (changes.notes !== undefined) body.notes = changes.notes;
   await apiFetch(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export async function sendLeadEmailVerification(leadId: string): Promise<{ sent: boolean }> {
+  const data = await apiFetch<{ sent: boolean }>(`/leads/${leadId}/send-email-verification`, {
+    method: 'POST',
+  });
+  return data ?? { sent: false };
 }
 
 export async function fetchFollowUps(leadId?: string): Promise<FollowUp[]> {

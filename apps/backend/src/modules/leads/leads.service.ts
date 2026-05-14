@@ -3,8 +3,10 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuditAction, ClientStatus, LeadStatus, Prisma, TimelineEventType } from '@prisma/client';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -620,6 +622,90 @@ export class LeadsService {
     await this.storage.delete(record.fileKey);
     await this.prisma.leadFile.delete({ where: { id: fileId } });
     return { deleted: true };
+  }
+
+  // ── Email verification ──────────────────────────────────────────────────────
+
+  async sendEmailVerification(leadId: string, actorUserId: string): Promise<{ sent: boolean }> {
+    const lead = await this.prisma.lead.findUnique({
+      where: { id: leadId, deletedAt: null },
+      select: { id: true, firstName: true, lastName: true, email: true, emailVerified: true },
+    });
+
+    if (!lead) throw new NotFoundException('Lead not found');
+    if (!lead.email) throw new BadRequestException('Lead has no email address on file');
+    if (lead.emailVerified) throw new BadRequestException('Email is already verified');
+
+    const token = randomBytes(32).toString('hex');
+    const frontendUrl = process.env.FRONTEND_URL ?? 'https://frontend-production-08d4.up.railway.app';
+    const verifyUrl = `${frontendUrl}/verify-lead-email?token=${token}`;
+
+    await this.prisma.lead.update({
+      where: { id: leadId },
+      data: {
+        emailVerificationToken: token,
+        emailVerificationSentAt: new Date(),
+      },
+    });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: leadId,
+      leadId,
+      eventType: TimelineEventType.EMAIL_VERIFICATION_SENT,
+      description: `Verification email sent to ${lead.email}`,
+      actorUserId,
+    });
+
+    void this.email.sendLeadEmailVerification({
+      to: lead.email,
+      leadName: `${lead.firstName} ${lead.lastName}`,
+      verifyUrl,
+    });
+
+    return { sent: true };
+  }
+
+  async verifyLeadEmail(token: string): Promise<{ verified: boolean; leadName: string }> {
+    if (!token) throw new BadRequestException('Verification token is required');
+
+    const lead = await this.prisma.lead.findUnique({
+      where: { emailVerificationToken: token },
+      select: { id: true, firstName: true, lastName: true, emailVerified: true, emailVerificationSentAt: true },
+    });
+
+    if (!lead) throw new NotFoundException('Invalid or expired verification link');
+    if (lead.emailVerified) {
+      return { verified: true, leadName: `${lead.firstName} ${lead.lastName}` };
+    }
+
+    // Token expires after 48 hours
+    if (lead.emailVerificationSentAt) {
+      const ageMs = Date.now() - new Date(lead.emailVerificationSentAt).getTime();
+      if (ageMs > 48 * 60 * 60 * 1000) {
+        throw new BadRequestException('Verification link has expired. Please request a new one.');
+      }
+    }
+
+    await this.prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
+        emailVerificationToken: null,
+      },
+    });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: lead.id,
+      leadId: lead.id,
+      eventType: TimelineEventType.EMAIL_VERIFIED,
+      description: `Email address verified`,
+      actorUserId: null,
+    });
+
+    return { verified: true, leadName: `${lead.firstName} ${lead.lastName}` };
   }
 
   // ── Email helpers ──────────────────────────────────────────────────────────

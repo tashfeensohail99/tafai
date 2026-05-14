@@ -34,6 +34,7 @@ export interface Lead {
   lastName: string;
   phone: string;
   email?: string;
+  emailVerified?: boolean;
   source: LeadSource;
   service: string;
   targetCountry: string;

@@ -242,7 +242,44 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
     nextAction !== lead.nextAction ||
     (salesNote ?? '') !== (lead.salesNote ?? '');
 
-  const stageIdx = Math.max(0, STAGE_PROGRESS.indexOf(stage));
+  /**
+   * Derive the "effective" pipeline stage from the lead's actual finance
+   * activity, not just lead.status. Sales used to see "Contacted" on the
+   * progress bar even after a payment had been sent to finance because
+   * lead.status only flipped on full conversion. The handovers fetched
+   * by the Finance tab are the truth — when one exists, the lead is at
+   * least at "Sent to Finance" regardless of what status the column
+   * still says. Backend now also bumps lead.status forward when a
+   * handover is created (commit follows), but the frontend derivation
+   * is the belt to that suspenders: even on stale data or a missed
+   * write, the UI shows reality.
+   */
+  const derivedStage: LeadStage | null = (() => {
+    if (financeHandovers.length === 0) return null;
+    // Any verified or sent-to-processing handover → fully through the funnel.
+    if (
+      financeHandovers.some(
+        (h) => h.status === 'PAYMENT_VERIFIED' || h.status === 'SENT_TO_PROCESSING',
+      )
+    ) {
+      return 'SENT_TO_FINANCE';
+    }
+    // Any in-flight handover (submitted / in-review / payment recorded) →
+    // also Sent to Finance. The bar shows "done" at this column; the
+    // Finance tab tells the operator whether it's actually verified.
+    if (
+      financeHandovers.some(
+        (h) => h.status === 'SUBMITTED' || h.status === 'IN_REVIEW' || h.status === 'PAYMENT_RECORDED',
+      )
+    ) {
+      return 'SENT_TO_FINANCE';
+    }
+    // Only rejected/cancelled handovers exist — Sales tried to pay but
+    // bounced back; the lead is still in the payment phase.
+    return 'PAYMENT_INTERESTED';
+  })();
+  const effectiveStage: LeadStage = derivedStage ?? stage;
+  const stageIdx = Math.max(0, STAGE_PROGRESS.indexOf(effectiveStage));
   const stagePct = Math.round(((stageIdx + 1) / STAGE_PROGRESS.length) * 100);
 
   const phoneClean = lead.phone.replace(/[^+\d]/g, '');
@@ -398,7 +435,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
         meta={
           <IdentityStrip
             lead={lead}
-            stage={stage}
+            stage={effectiveStage}
             priority={priority}
             stageIdx={stageIdx}
             stagePct={stagePct}

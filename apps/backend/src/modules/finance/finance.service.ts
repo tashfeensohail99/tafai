@@ -10,6 +10,7 @@ import {
   AuditAction,
   FinanceHandoverStatus,
   InvoiceStatus,
+  LeadStatus,
   PaymentStatus,
   Prisma,
   TimelineEventType,
@@ -517,6 +518,31 @@ export class FinanceService {
       },
     });
 
+    // Push the lead's pipeline status forward so the UI's progress bar
+    // reflects that this lead has moved into the payment phase. We only
+    // bump from early stages — never downgrade an already-CONVERTED lead
+    // (post-verification) and never overwrite LOST/DUPLICATE/UNQUALIFIED
+    // which represent terminal sales decisions.
+    //
+    // Without this bump the lead profile keeps showing "Contacted" even
+    // after sales has shipped a receipt to finance, which is what the
+    // user complained about: "UI says it's contacted or appointment even
+    // though we have collected the payment".
+    await this.prisma.lead.updateMany({
+      where: {
+        id: lead.id,
+        status: {
+          in: [
+            LeadStatus.NEW,
+            LeadStatus.CONTACTED,
+            LeadStatus.QUALIFIED,
+            LeadStatus.FOLLOW_UP,
+          ],
+        },
+      },
+      data: { status: LeadStatus.PROPOSAL_SENT },
+    });
+
     return {
       ...created,
       receiptDownloadUrl: await this.getSignedReceiptUrl(created.receiptKey),
@@ -716,6 +742,29 @@ export class FinanceService {
         },
         include: this.financeHandoverInclude,
       });
+
+      // Push the lead's pipeline status back to FOLLOW_UP so the rep
+      // sees it in their queue again. Only downgrade from PROPOSAL_SENT
+      // (we set that on handover creation) — never overwrite CONVERTED,
+      // LOST, etc. If the lead has another live handover that hasn't
+      // been rejected, keep PROPOSAL_SENT (the rejected one is just
+      // one of multiple attempts).
+      const otherLiveHandovers = await this.prisma.financeHandover.count({
+        where: {
+          leadId: rejected.leadId,
+          id: { not: id },
+          status: { not: FinanceHandoverStatus.REJECTED },
+        },
+      });
+      if (otherLiveHandovers === 0) {
+        await this.prisma.lead.updateMany({
+          where: {
+            id: rejected.leadId,
+            status: LeadStatus.PROPOSAL_SENT,
+          },
+          data: { status: LeadStatus.FOLLOW_UP },
+        });
+      }
 
       await this.auditLog.log({
         actorUserId,

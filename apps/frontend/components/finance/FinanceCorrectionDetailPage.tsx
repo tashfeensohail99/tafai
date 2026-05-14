@@ -1,5 +1,5 @@
 ﻿'use client';
-// Finance Correction Detail â€” Screen 5b of 7.
+// Finance Correction Detail — Screen 5b of 7.
 // Shows a single REJECTED handover. Finance officer can add notes and re-open it.
 
 import { useState, useEffect } from 'react';
@@ -74,7 +74,7 @@ export function FinanceCorrectionDetailPage({ paymentId }: Props) {
   if (loading) {
     return (
       <div style={{ padding: 'var(--sos-space-8)', textAlign: 'center', color: 'var(--sos-muted)' }}>
-        Loading correctionâ€¦
+        Loading correction…
       </div>
     );
   }
@@ -107,11 +107,11 @@ export function FinanceCorrectionDetailPage({ paymentId }: Props) {
             Payment Details
           </p>
           <ReadOnlyRow label="Client" value={name} />
-          <ReadOnlyRow label="Service" value={handover.lead.serviceInterest ?? 'â€”'} />
-          <ReadOnlyRow label="Target Country" value={handover.lead.targetCountry ?? 'â€”'} />
+          <ReadOnlyRow label="Service" value={handover.lead.serviceInterest ?? '—'} />
+          <ReadOnlyRow label="Target Country" value={handover.lead.targetCountry ?? '—'} />
           <ReadOnlyRow label="Amount" value={fmtAmount(handover.submittedAmount, handover.currency)} />
           <ReadOnlyRow label="Method" value={METHOD_LABEL[handover.paymentMethod as keyof typeof METHOD_LABEL] ?? handover.paymentMethod} />
-          <ReadOnlyRow label="Reference" value={handover.transactionRef ?? 'â€”'} />
+          <ReadOnlyRow label="Reference" value={handover.transactionRef ?? '—'} />
           <ReadOnlyRow label="Submitted" value={fmtDateTime(handover.submittedAt)} />
           {handover.notes && <ReadOnlyRow label="Sales Notes" value={handover.notes} />}
         </div>
@@ -134,7 +134,7 @@ export function FinanceCorrectionDetailPage({ paymentId }: Props) {
                 label="Notes for Sales"
                 value={financeNotes}
                 onChange={(e) => setFinanceNotes(e.target.value)}
-                placeholder="Describe what needs to be corrected by Salesâ€¦"
+                placeholder="Describe what needs to be corrected by Sales…"
                 rows={4}
               />
               <ActionBar
@@ -145,7 +145,7 @@ export function FinanceCorrectionDetailPage({ paymentId }: Props) {
                 }
                 right={
                   <PrimaryButton onClick={handleReopen} disabled={saving || !financeNotes.trim()}>
-                    {saving ? 'Savingâ€¦' : 'Re-open for Verification'}
+                    {saving ? 'Saving…' : 'Re-open for Verification'}
                   </PrimaryButton>
                 }
               />

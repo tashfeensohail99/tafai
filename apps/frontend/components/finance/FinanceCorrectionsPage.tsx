@@ -1,5 +1,5 @@
 ﻿'use client';
-// Finance Corrections â€” Screen 5a of 7.
+// Finance Corrections — Screen 5a of 7.
 // Lists REJECTED handovers (sent back for correction).
 
 import Link from 'next/link';
@@ -49,12 +49,12 @@ function CorrectionRow({ handover }: { handover: ApiHandover }) {
             <StatusBadge tone="danger" size="sm">Rejected</StatusBadge>
           </div>
           <div style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-muted)', marginBottom: 4 }}>
-            {handover.lead.serviceInterest ?? 'â€”'} Â· {handover.lead.targetCountry ?? 'â€”'} Â·{' '}
+            {handover.lead.serviceInterest ?? '—'} Â· {handover.lead.targetCountry ?? '—'} Â·{' '}
             {fmtAmount(handover.submittedAmount, handover.currency)}
           </div>
           {handover.financeNotes && (
             <div style={{ fontSize: 'var(--sos-text-xs)', color: 'var(--sos-text-secondary)', marginTop: 4, fontStyle: 'italic' }}>
-              "{handover.financeNotes.slice(0, 80)}{handover.financeNotes.length > 80 ? 'â€¦' : ''}"
+              "{handover.financeNotes.slice(0, 80)}{handover.financeNotes.length > 80 ? '…' : ''}"
             </div>
           )}
         </div>
@@ -88,7 +88,7 @@ export function FinanceCorrectionsPage() {
       <PageHeader
         eyebrow="Finance"
         title="Corrections"
-        description="Cases rejected â€” awaiting resubmission from Sales"
+        description="Cases rejected — awaiting resubmission from Sales"
       />
 
       <GlassCard>

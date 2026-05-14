@@ -29,7 +29,7 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 ];
 
 /**
- * WhatsApp-style unified inbox Ã¢â‚¬â€ full-height split layout matching WhatsApp Web.
+ * WhatsApp-style unified inbox — full-height split layout matching WhatsApp Web.
  * Left: contact list with search + filter tabs. Right: live chat panel.
  */
 export default function SalesInboxPage() {
@@ -50,7 +50,7 @@ export default function SalesInboxPage() {
           ...(search ? { search } : {}),
         });
         setItems(res.items);
-        // Auto-select first thread on desktop only Ã¢â‚¬â€ on mobile we want the
+        // Auto-select first thread on desktop only — on mobile we want the
         // user to land on the list and tap-into a chat.
         if (!activeId && res.items.length > 0 && !isMobile) {
           setActiveId(res.items[0]!.id);
@@ -99,7 +99,7 @@ export default function SalesInboxPage() {
         minWidth: 0,
       }}
     >
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Left panel: contact list Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Left panel: contact list ── */}
       {showList ? (
       <div
         style={{
@@ -261,7 +261,7 @@ export default function SalesInboxPage() {
         >
           {loading ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
-              Loading chatsÃ¢â‚¬Â¦
+              Loading chats…
             </div>
           ) : items.length === 0 ? (
             <div
@@ -294,7 +294,7 @@ export default function SalesInboxPage() {
       </div>
       ) : null}
 
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Right panel: chat Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Right panel: chat ── */}
       {showChat ? (
       activeId ? (
         <WhatsAppChatPanel

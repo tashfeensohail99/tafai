@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * The WhatsApp chat panel Ã¢â‚¬â€ the single piece of UI that powers both:
+ * The WhatsApp chat panel — the single piece of UI that powers both:
  *   1. The "WhatsApp Chat" tab on the lead/client detail page.
  *   2. The standalone /sales/inbox conversation view.
  *
@@ -174,7 +174,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           fontSize: 14,
         }}
       >
-        Loading conversationÃ¢â‚¬Â¦
+        Loading conversation…
       </div>
     );
   }
@@ -226,7 +226,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         overflow: 'hidden',
       }}
     >
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Chat window Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Chat window ── */}
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <ChatHeader
           displayName={displayName}
@@ -240,7 +240,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           assignedTo={thread.lead?.assignedEmployee ?? null}
           onBack={onBack}
         />
-        {/* Quick actions strip Ã¢â‚¬â€ visible only when there's no right sidebar
+        {/* Quick actions strip — visible only when there's no right sidebar
             (i.e. on the inbox view). Lead-detail tab variant has its own
             sidebar with the same actions, so we skip the duplicate there. */}
         {hideSidePanel ? (
@@ -305,7 +305,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         />
       </div>
 
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Side panel (profile + CTAs) Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Side panel (profile + CTAs) ── */}
       {!hideSidePanel && (
         <SidePanel
           thread={thread}
@@ -513,7 +513,7 @@ function ChatHeader(props: {
  *
  * Important domain rule (see memory/domain_entities.md):
  * A contact stays a Lead until Finance verifies payment and sends the case
- * to Processing Ã¢â‚¬â€ that's the only path that creates a Client. Sales agents
+ * to Processing — that's the only path that creates a Client. Sales agents
  * never "convert to client" manually from the chat. The quick actions a
  * sales agent needs in the conversation are:
  *   - Book appointment
@@ -661,7 +661,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         >
           {message.body ??
             (message.templateName
-              ? `Ã°Å¸â€œâ€¹ Template: ${message.templateName}`
+              ? `📋 Template: ${message.templateName}`
               : `[${message.type.toLowerCase()}]`)}
         </div>
         <div
@@ -782,7 +782,7 @@ function ChatComposer(props: {
             if (!props.sending && props.value.trim()) props.onSend();
           }
         }}
-        placeholder={props.disabled ? 'Window closed Ã¢â‚¬â€ use template to reopen' : 'Type a message'}
+        placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
         rows={1}
         style={{
           flex: 1,

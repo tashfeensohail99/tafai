@@ -37,7 +37,7 @@ const STATUS_TABS: Array<{ key: StatusFilter; label: string }> = [
 ];
 
 function fmtRelative(iso: string | null): string {
-  if (!iso) return 'â€”';
+  if (!iso) return '—';
   const diff = Date.now() - new Date(iso).getTime();
   const min = Math.round(diff / 60_000);
   if (min < 60) return `${min}m ago`;
@@ -136,7 +136,7 @@ export function WhatsAppAdminPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <PageHeader
-        eyebrow="WhatsApp Â· Admin"
+        eyebrow="WhatsApp · Admin"
         title="All conversations"
         description="Every WhatsApp thread across the team. Filter, search, and reassign to a specific agent."
         actions={
@@ -237,7 +237,7 @@ export function WhatsAppAdminPage() {
         <input
           type="search"
           className="sos-input"
-          placeholder="Search name, phoneâ€¦"
+          placeholder="Search name, phone…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
@@ -312,8 +312,8 @@ export function WhatsAppAdminPage() {
                       ) : null}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
-                      {phone} Â· via {t.channel.label} Â· last activity {fmtRelative(t.lastMessageAt)}
-                      {t.lastMessagePreview ? ` â€” ${t.lastMessagePreview.slice(0, 80)}` : ''}
+                      {phone} · via {t.channel.label} · last activity {fmtRelative(t.lastMessageAt)}
+                      {t.lastMessagePreview ? ` — ${t.lastMessagePreview.slice(0, 80)}` : ''}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--sos-text-secondary)', marginTop: 4 }}>
                       {assignedName ? (
@@ -321,7 +321,7 @@ export function WhatsAppAdminPage() {
                       ) : (
                         <em style={{ color: 'var(--sos-text-muted)' }}>No agent assigned</em>
                       )}
-                      {t.unreadCount > 0 ? ` Â· ${t.unreadCount} unread` : ''}
+                      {t.unreadCount > 0 ? ` · ${t.unreadCount} unread` : ''}
                     </div>
                   </div>
                   {canReassign ? (
@@ -377,7 +377,7 @@ export function WhatsAppAdminPage() {
               </div>
               <div className="sos-text-muted" style={{ fontSize: 12.5, marginTop: 2 }}>
                 {reassignTarget.lead
-                  ? `${reassignTarget.lead.firstName} ${reassignTarget.lead.lastName} Â· ${reassignTarget.lead.phone}`
+                  ? `${reassignTarget.lead.firstName} ${reassignTarget.lead.lastName} · ${reassignTarget.lead.phone}`
                   : reassignTarget.waContactId}
               </div>
             </header>
@@ -399,11 +399,11 @@ export function WhatsAppAdminPage() {
                   value={reassignEmployee}
                   onChange={(e) => setReassignEmployee(e.target.value)}
                 >
-                  <option value="" disabled>Pick a WhatsApp inbox memberâ€¦</option>
+                  <option value="" disabled>Pick a WhatsApp inbox member…</option>
                   {eligibleTeam.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name} {m.effective === 'ONLINE' ? '(online)' : m.effective === 'AWAY' ? '(away)' : '(offline)'}
-                      {' Â· '}
+                      {' · '}
                       {m.openLeads} open
                     </option>
                   ))}
@@ -418,7 +418,7 @@ export function WhatsAppAdminPage() {
                   borderRadius: 'var(--sos-radius-sm)',
                 }}
               >
-                The selected agent also becomes this lead's sticky preference â€” any future inbound on the same number will come back to them.
+                The selected agent also becomes this lead's sticky preference — any future inbound on the same number will come back to them.
               </div>
               {reassignError ? (
                 <div className="sos-banner sos-banner--danger">{reassignError}</div>
@@ -437,7 +437,7 @@ export function WhatsAppAdminPage() {
                   disabled={!reassignEmployee || reassignBusy}
                   onClick={() => void handleReassign()}
                 >
-                  {reassignBusy ? 'Reassigningâ€¦' : 'Reassign'}
+                  {reassignBusy ? 'Reassigning…' : 'Reassign'}
                 </button>
               </div>
             </div>

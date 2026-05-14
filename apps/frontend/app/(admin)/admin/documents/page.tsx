@@ -70,8 +70,8 @@ const requirementColumns: DataTableColumn<RequirementRow>[] = [
 const documentColumns: DataTableColumn<DocumentRow>[] = [
   { key: 'name', header: 'Document', render: (row) => row.name },
   { key: 'client', header: 'Client', render: (row) => `${row.client.firstName} ${row.client.lastName}` },
-  { key: 'case', header: 'Case', render: (row) => row.case?.caseNumber ?? 'â€”' },
-  { key: 'requirement', header: 'Requirement', render: (row) => row.documentRequirement?.name ?? 'â€”' },
+  { key: 'case', header: 'Case', render: (row) => row.case?.caseNumber ?? '—' },
+  { key: 'requirement', header: 'Requirement', render: (row) => row.documentRequirement?.name ?? '—' },
   { key: 'status', header: 'Status', render: (row) => <StatusBadge type="document" status={row.status} /> },
   { key: 'file', header: 'File Key', render: (row) => row.fileKey },
 ];

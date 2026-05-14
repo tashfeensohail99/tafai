@@ -101,17 +101,17 @@ interface FinanceFormState {
 const salesColumns: DataTableColumn<SalesQueueRow>[] = [
   { key: 'lead', header: 'Lead', render: (row) => `${row.firstName} ${row.lastName}` },
   { key: 'phone', header: 'Phone', render: (row) => row.phone },
-  { key: 'service', header: 'Service', render: (row) => row.serviceInterest ?? 'â€”' },
-  { key: 'country', header: 'Target Country', render: (row) => row.targetCountry ?? 'â€”' },
+  { key: 'service', header: 'Service', render: (row) => row.serviceInterest ?? '—' },
+  { key: 'country', header: 'Target Country', render: (row) => row.targetCountry ?? '—' },
   { key: 'owner', header: 'Assigned', render: (row) => row.assignedEmployee ? `${row.assignedEmployee.firstName ?? ''} ${row.assignedEmployee.lastName ?? ''}`.trim() : 'Unassigned' },
   { key: 'activity', header: 'Activity', render: (row) => `${row._count?.appointments ?? 0} appts / ${row._count?.invoices ?? 0} invoices` },
 ];
 
 const financeColumns: DataTableColumn<FinanceQueueRow>[] = [
   { key: 'invoice', header: 'Invoice', render: (row) => row.invoice.invoiceNumber },
-  { key: 'owner', header: 'Owner', render: (row) => row.invoice.lead ? `${row.invoice.lead.firstName} ${row.invoice.lead.lastName}` : row.invoice.client ? `${row.invoice.client.firstName} ${row.invoice.client.lastName}` : 'â€”' },
+  { key: 'owner', header: 'Owner', render: (row) => row.invoice.lead ? `${row.invoice.lead.firstName} ${row.invoice.lead.lastName}` : row.invoice.client ? `${row.invoice.client.firstName} ${row.invoice.client.lastName}` : '—' },
   { key: 'amount', header: 'Amount', render: (row) => row.amount },
-  { key: 'method', header: 'Method', render: (row) => row.paymentMethod ?? 'â€”' },
+  { key: 'method', header: 'Method', render: (row) => row.paymentMethod ?? '—' },
   { key: 'status', header: 'Status', render: (row) => <StatusBadge type="payment" status={row.status} /> },
 ];
 
@@ -127,8 +127,8 @@ const processingColumns: DataTableColumn<ProcessingQueueRow>[] = [
 const pendingDocumentColumns: DataTableColumn<PendingDocumentRow>[] = [
   { key: 'document', header: 'Document', render: (row) => row.name },
   { key: 'client', header: 'Client', render: (row) => `${row.client.firstName} ${row.client.lastName}` },
-  { key: 'case', header: 'Case', render: (row) => row.case?.caseNumber ?? 'â€”' },
-  { key: 'requirement', header: 'Requirement', render: (row) => row.documentRequirement?.name ?? 'â€”' },
+  { key: 'case', header: 'Case', render: (row) => row.case?.caseNumber ?? '—' },
+  { key: 'requirement', header: 'Requirement', render: (row) => row.documentRequirement?.name ?? '—' },
   { key: 'status', header: 'Status', render: (row) => <StatusBadge type="document" status={row.status} /> },
 ];
 

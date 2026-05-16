@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import type { Job } from 'bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import type { Job, Queue } from 'bullmq';
 import {
   LeadStatus,
   WhatsAppMessageDirection,
@@ -16,6 +16,7 @@ import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
 import {
   WHATSAPP_QUEUE,
   WHATSAPP_WS_EVENTS,
+  type MediaDownloadJob,
   type WebhookIngestJob,
 } from '../queue-contracts';
 
@@ -102,6 +103,14 @@ export class WebhookIngestProcessor extends WorkerHost {
     private readonly timeline: ActivityTimelineService,
     private readonly assignment: WhatsAppAssignmentService,
     private readonly publisher: WhatsAppRealtimePublisher,
+    // Used to enqueue a re-host job for every inbound media (image / video
+    // / audio / document / sticker). Meta's CDN URLs expire ~5 min, so we
+    // copy the bytes to our own S3 bucket on first sight and persist the
+    // permanent URL on the message row. Without this, viewing old media
+    // becomes a roulette of "is the channel token still decryptable AND
+    // is Meta still hosting this asset" — both of which fail in practice.
+    @InjectQueue(WHATSAPP_QUEUE.MEDIA_DOWNLOAD)
+    private readonly mediaQueue: Queue<MediaDownloadJob>,
   ) {
     super();
   }
@@ -295,6 +304,38 @@ export class WebhookIngestProcessor extends WorkerHost {
         createdAt: new Date(Number(msg.timestamp) * 1000),
       },
     });
+
+    // For media types (image / video / audio / document / sticker) the
+    // payload contains a Meta media ID whose CDN URL is short-lived
+    // (~5 min). Enqueue a re-host job so MediaDownloadProcessor pulls the
+    // bytes once and stores them on our own bucket, then sets
+    // `mediaUrl` to the durable S3 key. Without this, viewing the media
+    // later in the inbox depends on the channel token still being
+    // decryptable AND Meta still hosting the asset — both fail in
+    // practice (token rotation kills the first, ~30d retention kills the
+    // second). jobId is stable so duplicate webhooks dedupe naturally.
+    if (decoded.mediaMeta) {
+      const job: MediaDownloadJob = {
+        messageId: message.id,
+        metaMediaId: decoded.mediaMeta.id,
+      };
+      try {
+        await this.mediaQueue.add('download', job, {
+          jobId: `media-${message.id}`,
+          removeOnComplete: { count: 100, age: 24 * 3600 },
+          removeOnFail: { count: 100 },
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5_000 },
+        });
+      } catch (err) {
+        // Enqueue failure shouldn't block the rest of the ingest flow —
+        // the message row is already persisted; worst case the media
+        // stays un-rehosted and falls back to streamMedia on-demand.
+        this.log.warn(
+          `media-download enqueue failed for ${message.id}: ${(err as Error).message}`,
+        );
+      }
+    }
 
     // Activity timeline — Lead-rooted or Client-rooted depending on linkage.
     await this.timeline.record({

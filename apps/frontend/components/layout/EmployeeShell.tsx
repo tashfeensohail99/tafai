@@ -140,7 +140,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
               <Sparkles size={18} />
             </div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tafsheen</div>
+              <div className="sos-sidebar__brand-name">Tashfeen</div>
               <div className="sos-sidebar__brand-tagline">Sales OS</div>
             </div>
             <button

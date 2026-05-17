@@ -4,8 +4,8 @@ import { ThemeProvider } from '@/components/layout/ThemeProvider';
 import { BackendWarmup } from '@/components/layout/BackendWarmup';
 
 export const metadata = {
-  title: 'Tafsheen – Immigration Solutions',
-  description: 'Tafsheen Immigration AI Platform',
+  title: 'Tashfeen – Immigration Solutions',
+  description: 'Tashfeen Immigration AI Platform',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

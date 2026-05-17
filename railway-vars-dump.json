@@ -1,0 +1,37 @@
+{
+  "data": {
+    "variables": {
+      "PORT": "3001",
+      "NODE_ENV": "production",
+      "JWT_SECRET": "tashfeen-imigration-sol-jwt-secret-2026-production-secure",
+      "JWT_EXPIRES_IN": "7d",
+      "DATABASE_URL": "postgresql://postgres.fpnoyngotalmtxnhjldh:Tafsheenmain@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=10",
+      "DATABASE_CONNECT_REQUIRED": "false",
+      "DATABASE_CONNECT_ON_STARTUP": "true",
+      "DIRECT_URL": "postgresql://postgres.fpnoyngotalmtxnhjldh:Tafsheenmain@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres",
+      "JWT_REFRESH_SECRET": "81c564f37ef9f3132d3482b7880c5f532d3af980108ef6158bdb99f3621daf9ac6cb92a0a469173fdc1d3276ceda6d907f3aeb4dfa4dd9d81ce36f4767d749f4",
+      "REDIS_URL": "redis://default:sspfpMLBPrjtwxpTSzeQrlGlTpcJXNua@redis.railway.internal:6379",
+      "JWT_REFRESH_EXPIRES_IN": "30d",
+      "META_GRAPH_API_VERSION": "v21.0",
+      "META_WEBHOOK_VERIFY_TOKEN": "b4f287d7b8a6154fd72fa44a3ede4887b275b53654bfa8c0",
+      "META_APP_SECRET": "TODO_paste_from_meta_dashboard",
+      "META_APP_ID": "TODO_paste_from_meta_dashboard",
+      "WHATSAPP_ENCRYPTION_KEY": "179a10fa904f236432718787c85dc4a29fcefac807723bbe46254d0ee562d752",
+      "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZwbm95bmdvdGFsbXR4bmhqbGRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgyODEyMzcsImV4cCI6MjA5Mzg1NzIzN30.C0PCPxOG3C6GAHsTQ9xPhSiYIW5fwNhN1baL--yd1-A",
+      "SUPABASE_URL": "https://fpnoyngotalmtxnhjldh.supabase.co",
+      "SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZwbm95bmdvdGFsbXR4bmhqbGRoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODI4MTIzNywiZXhwIjoyMDkzODU3MjM3fQ.V7zU_5lWyCQd9S1Q_OB2f8tAlI4AUfOqup6ygIlbMBg",
+      "RAILWAY_PUBLIC_DOMAIN": "backend-production-5a89.up.railway.app",
+      "RAILWAY_PRIVATE_DOMAIN": "backend.railway.internal",
+      "RAILWAY_PROJECT_NAME": "imigrationsol",
+      "RAILWAY_ENVIRONMENT_NAME": "production",
+      "RAILWAY_SERVICE_NAME": "backend",
+      "RAILWAY_PROJECT_ID": "43e86cbf-c8ce-4359-9c07-be426ea6daea",
+      "RAILWAY_ENVIRONMENT_ID": "72b43bf0-ef3d-478d-82f5-378b43297c8d",
+      "RAILWAY_SERVICE_ID": "e24b48dd-0d49-44ca-86e9-fbee22bdfab8",
+      "RAILWAY_STATIC_URL": "backend-production-5a89.up.railway.app",
+      "RAILWAY_ENVIRONMENT": "production",
+      "RAILWAY_SERVICE_BACKEND_URL": "backend-production-5a89.up.railway.app",
+      "RAILWAY_SERVICE_FRONTEND_URL": "frontend-production-08d4.up.railway.app"
+    }
+  }
+}

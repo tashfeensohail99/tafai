@@ -101,7 +101,7 @@ export default function LoginPage() {
             <Sparkles className="h-5 w-5" />
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 18, letterSpacing: '-0.01em' }}>Tafsheen</div>
+            <div style={{ fontWeight: 700, fontSize: 18, letterSpacing: '-0.01em' }}>Tashfeen</div>
             <div style={{ fontSize: 11, color: 'rgb(255 255 255 / 0.55)', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
               Sales Operating System
             </div>
@@ -113,7 +113,7 @@ export default function LoginPage() {
             One workspace, from first touch to finance handover.
           </h2>
           <p style={{ marginTop: 18, color: 'rgb(255 255 255 / 0.7)', fontSize: 15, lineHeight: 1.6, maxWidth: 480 }}>
-            Tafsheen helps your sales team move every assigned lead through follow-ups, appointments, and payment hand-offs without losing track.
+            Tashfeen helps your sales team move every assigned lead through follow-ups, appointments, and payment hand-offs without losing track.
           </p>
 
           <div style={{ marginTop: 32, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 480 }}>
@@ -147,7 +147,7 @@ export default function LoginPage() {
         </div>
 
         <div style={{ fontSize: 12, color: 'rgb(255 255 255 / 0.5)' }}>
-          © {new Date().getFullYear()} Tafsheen — Sales Workspace v2
+          © {new Date().getFullYear()} Tashfeen — Sales Workspace v2
         </div>
       </aside>
 
@@ -170,7 +170,7 @@ export default function LoginPage() {
               >
                 <Sparkles className="h-4 w-4" />
               </div>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Tafsheen</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Tashfeen</span>
             </div>
             <div className="ml-auto">
               <ThemeToggle />
@@ -267,7 +267,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="sos-input"
-                placeholder="you@tafsheen.com"
+                placeholder="you@tashfeen.com"
               />
             </div>
 
@@ -342,7 +342,7 @@ export default function LoginPage() {
           </form>
 
           <p style={{ marginTop: 22, fontSize: 12, color: 'var(--sos-text-faint)', textAlign: 'center' }}>
-            Tafsheen is a closed workspace. Contact your administrator if you need access.
+            Tashfeen is a closed workspace. Contact your administrator if you need access.
           </p>
         </div>
       </section>

@@ -111,7 +111,7 @@ function PortalSidebar({
           </div>
           <div className="sos-sidebar__brand-text">
             <div className="sos-sidebar__brand-name">Client Portal</div>
-            <div className="sos-sidebar__brand-tagline">Tafsheen Immigration</div>
+            <div className="sos-sidebar__brand-tagline">Tashfeen Immigration</div>
           </div>
           <button
             type="button"

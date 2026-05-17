@@ -229,7 +229,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               <Sparkles size={18} />
             </div>
             <div className="sos-sidebar__brand-text">
-              <div className="sos-sidebar__brand-name">Tafsheen</div>
+              <div className="sos-sidebar__brand-name">Tashfeen</div>
               <div className="sos-sidebar__brand-tagline">Admin OS</div>
             </div>
             <button

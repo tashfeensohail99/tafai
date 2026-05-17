@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Privacy Policy | Tafsheen',
-  description: 'Privacy policy for Tafsheen Immigration Solutions AI Platform.',
+  description: 'Privacy policy for Tashfeen Immigration Solutions AI Platform.',
 };
 
 export default function PrivacyPage() {
@@ -14,10 +14,10 @@ export default function PrivacyPage() {
             Privacy Policy
           </p>
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-            Tafsheen Privacy Policy
+            Tashfeen Privacy Policy
           </h1>
           <p className="text-base leading-7 text-slate-600">
-            This privacy policy explains how Tafsheen Immigration Solutions collects,
+            This privacy policy explains how Tashfeen Immigration Solutions collects,
             uses, and protects personal data when you use our platform.
           </p>
         </section>

@@ -1,5 +1,5 @@
 # Processing Module — System Design
-**Tafsheen Immigration Solutions · Independent Technical Plan**
+**Tashfeen Immigration Solutions · Independent Technical Plan**
 **Prepared:** May 2026 · For internal comparison before build
 
 ---

@@ -76,6 +76,16 @@ export class UsersController {
     return this.usersService.deactivate(id, user.id);
   }
 
+  @Post(':id/activate')
+  @RequirePermissions('users.deactivate')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.usersService.activate(id, user.id);
+  }
+
   /**
    * Admin sets a temporary password. The target user is forced to change it
    * on next login. Phase 1 stand-in for a real reset-via-email flow (which

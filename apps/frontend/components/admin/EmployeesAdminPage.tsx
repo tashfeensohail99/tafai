@@ -232,6 +232,7 @@ export function EmployeesAdminPage() {
   const [showPw, setShowPw]         = useState(false);
 
   const [deactivateTarget, setDeactivateTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [reactivateTarget, setReactivateTarget] = useState<{ userId: string; name: string } | null>(null);
 
   const [loading, setLoading]       = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -366,6 +367,43 @@ export function EmployeesAdminPage() {
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to deactivate user');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ── reactivate ────────────────────────────────────────────────────────────
+
+  async function handleReactivateClick(row: EmployeeRow) {
+    setError(null);
+    const fullName = `${row.firstName} ${row.lastName}`;
+    if (row.userId) {
+      setReactivateTarget({ userId: row.userId, name: fullName });
+      return;
+    }
+    try {
+      const detail = await apiFetch<EmployeeDetail>(`/employees/${row.id}`);
+      setReactivateTarget({ userId: detail.userId, name: fullName });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to resolve linked user account');
+    }
+  }
+
+  async function confirmReactivate() {
+    if (!reactivateTarget) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await apiFetch(`/users/${reactivateTarget.userId}/activate`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const name = reactivateTarget.name;
+      setReactivateTarget(null);
+      setSuccess(`${name} has been reactivated and can log in again.`);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to reactivate user');
     } finally {
       setSubmitting(false);
     }
@@ -853,13 +891,23 @@ export function EmployeesAdminPage() {
                           >
                             Edit
                           </button>
-                          <button
-                            onClick={() => void handleDeactivateClick(emp)}
-                            className="sos-btn sos-btn--ghost sos-btn--sm"
-                            style={{ color: 'var(--sos-status-danger)', borderColor: 'var(--sos-status-danger-border)' }}
-                          >
-                            Deactivate
-                          </button>
+                          {statusActive ? (
+                            <button
+                              onClick={() => void handleDeactivateClick(emp)}
+                              className="sos-btn sos-btn--ghost sos-btn--sm"
+                              style={{ color: 'var(--sos-status-danger)', borderColor: 'var(--sos-status-danger-border)' }}
+                            >
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => void handleReactivateClick(emp)}
+                              className="sos-btn sos-btn--ghost sos-btn--sm"
+                              style={{ color: 'var(--sos-status-success)', borderColor: 'var(--sos-status-success-border, var(--sos-divider))' }}
+                            >
+                              Reactivate
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -879,6 +927,16 @@ export function EmployeesAdminPage() {
         confirmLabel={submitting ? 'Deactivating…' : 'Yes, deactivate'}
         onConfirm={() => void confirmDeactivate()}
         onCancel={() => setDeactivateTarget(null)}
+      />
+
+      {/* ── Reactivate confirmation ── */}
+      <ConfirmationDialog
+        open={Boolean(reactivateTarget)}
+        title={`Reactivate ${reactivateTarget?.name ?? 'employee'}?`}
+        message="This will restore the linked user account to ACTIVE and allow them to log in again with their existing password."
+        confirmLabel={submitting ? 'Reactivating…' : 'Yes, reactivate'}
+        onConfirm={() => void confirmReactivate()}
+        onCancel={() => setReactivateTarget(null)}
       />
     </div>
   );

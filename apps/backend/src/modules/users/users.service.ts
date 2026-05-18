@@ -197,6 +197,29 @@ export class UsersService {
     });
   }
 
+  async activate(id: string, actorUserId: string) {
+    const user = await this.findById(id);
+
+    await this.prisma.userAccount.update({
+      where: { id },
+      data: {
+        status: 'ACTIVE',
+        // Unlock the account in case it was also locked out from failed logins
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.USER_REACTIVATED,
+      entityType: 'UserAccount',
+      entityId: id,
+      oldValues: { status: user.status },
+      newValues: { status: 'ACTIVE' },
+    });
+  }
+
   /**
    * Admin-set temp password. Forces a change on next login and revokes all
    * current sessions so an attacker holding an old token can't keep working.

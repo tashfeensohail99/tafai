@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api-client';
+import { getAccessToken } from '@/lib/auth-client';
 
 export type ServiceContractStatus = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 export type InstallmentStatus = 'PENDING' | 'INVOICED' | 'PAID' | 'OVERDUE' | 'CANCELLED';
@@ -42,11 +43,24 @@ export interface ApiServiceContract {
   signedDate: string | null;
   notes: string | null;
   status: ServiceContractStatus;
+  agreementKey: string | null;
+  agreementFileName: string | null;
+  agreementMimeType: string | null;
+  agreementSizeBytes: number | null;
   createdAt: string;
   updatedAt: string;
   lead: ApiContact | null;
   client: ApiContact | null;
   installments: ApiInstallment[];
+}
+
+export interface UploadAgreementInput {
+  leadId?: string;
+  clientId?: string;
+  totalAmount: number;
+  currency?: string;
+  signedDate?: string;
+  notes?: string;
 }
 
 export interface CreateInstallmentInput {
@@ -113,6 +127,53 @@ export async function generateInvoiceForInstallment(installmentId: string): Prom
   return apiFetch<{ id: string; invoiceNumber: string }>(
     `/finance/service-contracts/installments/${installmentId}/generate-invoice`,
     { method: 'POST', body: JSON.stringify({}) },
+  );
+}
+
+export async function uploadServiceAgreement(
+  input: UploadAgreementInput,
+  file: File,
+): Promise<ApiServiceContract> {
+  const token = getAccessToken();
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'https://backend-production-5a89.up.railway.app';
+  const form = new FormData();
+  form.append('file', file);
+  if (input.leadId) form.append('leadId', input.leadId);
+  if (input.clientId) form.append('clientId', input.clientId);
+  form.append('totalAmount', String(input.totalAmount));
+  if (input.currency) form.append('currency', input.currency);
+  if (input.signedDate) form.append('signedDate', input.signedDate);
+  if (input.notes) form.append('notes', input.notes);
+
+  const res = await fetch(`${base}/finance/service-contracts/upload-agreement`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `Upload failed (${res.status})`);
+  }
+  return res.json() as Promise<ApiServiceContract>;
+}
+
+export async function addInstallments(
+  contractId: string,
+  installments: CreateInstallmentInput[],
+): Promise<ApiServiceContract> {
+  return apiFetch<ApiServiceContract>(
+    `/finance/service-contracts/${contractId}/installments`,
+    { method: 'POST', body: JSON.stringify({ installments }) },
+  );
+}
+
+export async function getAgreementDownloadUrl(contractId: string): Promise<{
+  url: string;
+  fileName: string;
+  mimeType: string | null;
+}> {
+  return apiFetch<{ url: string; fileName: string; mimeType: string | null }>(
+    `/finance/service-contracts/${contractId}/agreement-url`,
   );
 }
 

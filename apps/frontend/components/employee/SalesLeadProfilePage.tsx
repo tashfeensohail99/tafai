@@ -98,6 +98,7 @@ import {
   type ApiLeadFile,
   type ApiLeadFinanceHandover,
 } from '@/lib/sales-api';
+import { LeadServiceAgreementSection } from '@/components/finance/LeadServiceAgreementSection';
 
 const STAGES: LeadStage[] = [
   'NEW',
@@ -500,6 +501,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
 
       {tab === 'FINANCE' ? (
         <FinanceTab
+          leadId={lead.id}
           handovers={financeHandovers}
           loading={financeLoading}
           serviceFeeAmount={lead.serviceFeeAmount}
@@ -2363,11 +2365,13 @@ function fmtAmount(amount: string, currency: string): string {
 }
 
 function FinanceTab({
+  leadId,
   handovers,
   loading,
   serviceFeeAmount,
   serviceFeeCurrency,
 }: {
+  leadId: string;
   handovers: ApiLeadFinanceHandover[];
   loading: boolean;
   /** The lead's agreed service fee (the anchor for the single Invoice).
@@ -2377,42 +2381,56 @@ function FinanceTab({
 }) {
   if (loading) {
     return (
-      <GlassCard variant="strong" padded="lg">
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '32px 16px',
-            color: 'var(--sos-text-muted)',
-            gap: 10,
-          }}
-        >
-          <Loader2 size={16} className="sos-spin" />
-          Loading finance history…
-        </div>
-      </GlassCard>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <LeadServiceAgreementSection
+          leadId={leadId}
+          defaultTotalAmount={serviceFeeAmount}
+          defaultCurrency={serviceFeeCurrency}
+        />
+        <GlassCard variant="strong" padded="lg">
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '32px 16px',
+              color: 'var(--sos-text-muted)',
+              gap: 10,
+            }}
+          >
+            <Loader2 size={16} className="sos-spin" />
+            Loading finance history…
+          </div>
+        </GlassCard>
+      </div>
     );
   }
 
   if (handovers.length === 0) {
     return (
-      <GlassCard variant="strong" padded="lg">
-        <div style={{ textAlign: 'center', padding: '36px 16px' }}>
-          <Wallet
-            size={36}
-            style={{ color: 'var(--sos-text-faint)', margin: '0 auto 12px' }}
-          />
-          <h3 className="sos-title" style={{ fontSize: '16px' }}>
-            Nothing sent to Finance yet
-          </h3>
-          <p className="sos-text-muted" style={{ marginTop: 6, fontSize: '13px' }}>
-            Once you upload a receipt and hand this lead to Finance, every
-            decision — approval, rejection, correction request — will show up
-            here with the finance officer&apos;s notes.
-          </p>
-        </div>
-      </GlassCard>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <LeadServiceAgreementSection
+          leadId={leadId}
+          defaultTotalAmount={serviceFeeAmount}
+          defaultCurrency={serviceFeeCurrency}
+        />
+        <GlassCard variant="strong" padded="lg">
+          <div style={{ textAlign: 'center', padding: '36px 16px' }}>
+            <Wallet
+              size={36}
+              style={{ color: 'var(--sos-text-faint)', margin: '0 auto 12px' }}
+            />
+            <h3 className="sos-title" style={{ fontSize: '16px' }}>
+              Nothing sent to Finance yet
+            </h3>
+            <p className="sos-text-muted" style={{ marginTop: 6, fontSize: '13px' }}>
+              Once you upload a receipt and hand this lead to Finance, every
+              decision — approval, rejection, correction request — will show up
+              here with the finance officer&apos;s notes.
+            </p>
+          </div>
+        </GlassCard>
+      </div>
     );
   }
 
@@ -2451,6 +2469,11 @@ function FinanceTab({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <LeadServiceAgreementSection
+        leadId={leadId}
+        defaultTotalAmount={serviceFeeAmount}
+        defaultCurrency={serviceFeeCurrency}
+      />
       {/* Contract / running-balance summary — the most important number on
           this tab. When the agreed fee is captured, we show paid-of-total
           progress; otherwise we just show what's been received so far. */}

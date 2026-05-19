@@ -10,10 +10,13 @@ import {
   ServiceContractStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import {
+  AddInstallmentsDto,
   CreateServiceContractDto,
   ListServiceContractsQueryDto,
   UpdateServiceContractDto,
+  UploadAgreementDto,
 } from './service-contracts.dto';
 
 const CONTACT_SELECT = {
@@ -25,9 +28,19 @@ const CONTACT_SELECT = {
   referenceCode: true,
 } as const;
 
+const ALLOWED_AGREEMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
 @Injectable()
 export class ServiceContractsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async findAll(query: ListServiceContractsQueryDto) {
     const where: Prisma.ServiceContractWhereInput = { deletedAt: null };
@@ -178,6 +191,126 @@ export class ServiceContractsService {
         signedDate: dto.signedDate ? new Date(dto.signedDate) : undefined,
       },
     });
+  }
+
+  /**
+   * Sales uploads the signed agreement PDF + total fee. Creates a DRAFT
+   * contract with no installments. Finance later fills the installment
+   * schedule via addInstallments().
+   */
+  async uploadAgreement(
+    input: UploadAgreementDto,
+    file: { buffer: Buffer; mimetype: string; originalname: string; size: number },
+    actorUserId: string,
+  ) {
+    if (!input.leadId && !input.clientId) {
+      throw new BadRequestException('Either leadId or clientId is required');
+    }
+    if (!file?.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Agreement file is required');
+    }
+    if (!ALLOWED_AGREEMENT_MIME_TYPES.has(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported file type: ${file.mimetype}. Use PDF or image (PNG/JPEG/WebP).`,
+      );
+    }
+
+    if (input.leadId) {
+      const lead = await this.prisma.lead.findFirst({
+        where: { id: input.leadId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!lead) throw new NotFoundException('Lead not found');
+    }
+    if (input.clientId) {
+      const client = await this.prisma.client.findFirst({
+        where: { id: input.clientId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!client) throw new NotFoundException('Client not found');
+    }
+
+    const uploaded = await this.storage.upload(
+      file.buffer,
+      file.mimetype,
+      'service-contracts',
+      file.originalname,
+    );
+
+    const contractNumber = await this.generateContractNumber();
+    return this.prisma.serviceContract.create({
+      data: {
+        contractNumber,
+        leadId: input.leadId,
+        clientId: input.clientId,
+        totalAmount: input.totalAmount.toString(),
+        currency: input.currency ?? 'CAD',
+        signedDate: input.signedDate ? new Date(input.signedDate) : undefined,
+        notes: input.notes,
+        status: ServiceContractStatus.DRAFT,
+        agreementKey: uploaded.key,
+        agreementFileName: file.originalname,
+        agreementMimeType: file.mimetype,
+        agreementSizeBytes: file.size,
+        createdByUserId: actorUserId,
+      },
+    });
+  }
+
+  /**
+   * Finance fills in the installment schedule on a DRAFT contract.
+   * Transitions the contract to ACTIVE. Installments are write-once for
+   * now — to change them, cancel the contract and create a new one.
+   */
+  async addInstallments(contractId: string, dto: AddInstallmentsDto) {
+    const contract = await this.findById(contractId);
+    if (contract.status === ServiceContractStatus.CANCELLED) {
+      throw new BadRequestException('Contract is cancelled');
+    }
+    if (contract.installments.length > 0) {
+      throw new BadRequestException('Installments already exist on this contract');
+    }
+
+    const sum = dto.installments.reduce((acc, i) => acc + Number(i.amount), 0);
+    const total = Number(contract.totalAmount);
+    if (Math.abs(sum - total) > 0.01) {
+      throw new BadRequestException(
+        `Installment amounts (${sum.toFixed(2)}) must sum to the contract total (${total.toFixed(2)})`,
+      );
+    }
+
+    const sequences = new Set(dto.installments.map((i) => i.sequence));
+    if (sequences.size !== dto.installments.length) {
+      throw new BadRequestException('Installment sequences must be unique');
+    }
+
+    await this.prisma.installment.createMany({
+      data: dto.installments.map((i) => ({
+        contractId: contract.id,
+        sequence: i.sequence,
+        dueDate: new Date(i.dueDate),
+        amount: i.amount.toString(),
+        description: i.description,
+      })),
+    });
+
+    return this.prisma.serviceContract.update({
+      where: { id: contract.id },
+      data: { status: ServiceContractStatus.ACTIVE },
+    });
+  }
+
+  async getAgreementDownloadUrl(contractId: string) {
+    const contract = await this.findById(contractId);
+    if (!contract.agreementKey) {
+      throw new NotFoundException('No agreement file attached to this contract');
+    }
+    const url = await this.storage.getSignedUrl(contract.agreementKey);
+    return {
+      url,
+      fileName: contract.agreementFileName ?? 'agreement',
+      mimeType: contract.agreementMimeType,
+    };
   }
 
   async generateInvoiceForInstallment(installmentId: string, actorUserId: string) {

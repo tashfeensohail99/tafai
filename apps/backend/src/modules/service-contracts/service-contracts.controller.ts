@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -7,18 +8,27 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
-import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import {
+  RequireAnyPermissions,
+  RequirePermissions,
+} from '../../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { ServiceContractsService } from './service-contracts.service';
 import {
+  AddInstallmentsDto,
   CreateServiceContractDto,
   ListServiceContractsQueryDto,
   UpdateServiceContractDto,
+  UploadAgreementDto,
 } from './service-contracts.dto';
 
 @Controller('finance/service-contracts')
@@ -60,5 +70,42 @@ export class ServiceContractsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.service.generateInvoiceForInstallment(installmentId, user.id);
+  }
+
+  /**
+   * Sales-side endpoint: upload the signed agreement PDF along with the
+   * total fee. Creates a DRAFT contract with no installments yet — Finance
+   * fills those in via POST /:id/installments after reviewing the PDF.
+   */
+  @Post('upload-agreement')
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    }),
+  )
+  uploadAgreement(
+    @Body() dto: UploadAgreementDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (!file) throw new BadRequestException('Agreement file is required');
+    return this.service.uploadAgreement(dto, file, user.id);
+  }
+
+  @Post(':id/installments')
+  @RequirePermissions('finance.create_invoice')
+  addInstallments(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddInstallmentsDto,
+  ) {
+    return this.service.addInstallments(id, dto);
+  }
+
+  @Get(':id/agreement-url')
+  @RequirePermissions('finance.view_all')
+  getAgreementUrl(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.getAgreementDownloadUrl(id);
   }
 }

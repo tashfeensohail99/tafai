@@ -99,3 +99,47 @@ export class ListServiceContractsQueryDto {
   @IsString()
   search?: string;
 }
+
+/**
+ * Body fields for the multipart upload that creates a DRAFT contract from
+ * a signed agreement PDF. The file itself comes via @UploadedFile() — this
+ * DTO holds the accompanying form fields. `enableImplicitConversion: true`
+ * in the global ValidationPipe lets us declare numeric/date fields here
+ * even though multipart FormData sends every value as a string.
+ */
+export class UploadAgreementDto {
+  @IsOptional()
+  @IsUUID()
+  leadId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  totalAmount!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  currency?: string;
+
+  @IsOptional()
+  @IsDateString()
+  signedDate?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
+
+export class AddInstallmentsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CreateInstallmentInput)
+  installments!: CreateInstallmentInput[];
+}

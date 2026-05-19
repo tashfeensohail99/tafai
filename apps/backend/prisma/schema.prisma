@@ -165,6 +165,23 @@ enum FinanceHandoverStatus {
   @@schema("finance")
 }
 
+enum ServiceContractStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  @@schema("finance")
+}
+
+enum InstallmentStatus {
+  PENDING
+  INVOICED
+  PAID
+  OVERDUE
+  CANCELLED
+  @@schema("finance")
+}
+
 enum AuditAction {
   // Auth
   USER_LOGIN
@@ -781,6 +798,7 @@ model Lead {
   referralPartner     Partner?     @relation(fields: [referralPartnerId], references: [id])
   appointments        Appointment[] @relation("LeadAppointments")
   invoices            Invoice[]     @relation("LeadInvoices")
+  serviceContracts    ServiceContract[] @relation("LeadServiceContracts")
   followUps           FollowUp[]
   financeHandovers    FinanceHandover[]
   receipts            Receipt[]
@@ -902,6 +920,7 @@ model Client {
   documents          ClientDocument[]
   appointments       Appointment[] @relation("ClientAppointments")
   invoices           Invoice[]     @relation("ClientInvoices")
+  serviceContracts   ServiceContract[] @relation("ClientServiceContracts")
   receipts           Receipt[]
   timelineEvents     ActivityTimeline[]
   processingCases    ProcessingCase[]
@@ -1062,6 +1081,11 @@ model Invoice {
   leadId          String?
   clientId        String?
   caseId          String?
+  /// If this invoice was auto-generated for a specific installment of a
+  /// signed service contract, this points back to that installment. NULL
+  /// for invoices created directly (the original pattern, predates
+  /// service contracts).
+  installmentId   String?       @unique
   invoiceNumber   String        @unique
   status          InvoiceStatus @default(DRAFT)
   currency        String        @default("CAD")
@@ -1078,6 +1102,7 @@ model Invoice {
 
   lead     Lead?     @relation("LeadInvoices", fields: [leadId], references: [id])
   client   Client?   @relation("ClientInvoices", fields: [clientId], references: [id])
+  installment Installment? @relation(fields: [installmentId], references: [id])
   payments Payment[]
   receipts Receipt[]
   financeHandovers FinanceHandover[]
@@ -1086,6 +1111,77 @@ model Invoice {
   @@index([clientId])
   @@index([status])
   @@map("invoices")
+  @@schema("finance")
+}
+
+/// A signed service contract between the firm and a lead/client. Captures
+/// the agreed total fee and the installment schedule. Each installment
+/// becomes an `Invoice` when its due-date arrives (or when manually
+/// triggered by Finance). Drives the per-installment billing loop the
+/// client expects ("Generate Next Installment Invoice" in the accounting
+/// flowchart).
+model ServiceContract {
+  id              String                @id @default(uuid())
+  /// Sequential reference SC-YYYY-NNNNN. Generated on insert.
+  contractNumber  String                @unique
+  /// Originating lead. Required at creation — the client record may not
+  /// exist yet at the moment of signing.
+  leadId          String?
+  /// Client after lead conversion. One of leadId/clientId is required.
+  clientId        String?
+  totalAmount     Decimal               @db.Decimal(12, 2)
+  currency        String                @default("CAD")
+  /// When the lead actually signed the agreement.
+  signedDate      DateTime?
+  /// Storage key for the uploaded agreement PDF (S3).
+  agreementKey       String?
+  agreementFileName  String?
+  agreementMimeType  String?
+  agreementSizeBytes Int?
+  status          ServiceContractStatus @default(DRAFT)
+  notes           String?
+  createdByUserId String
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  deletedAt       DateTime?
+
+  lead         Lead?         @relation("LeadServiceContracts", fields: [leadId], references: [id])
+  client       Client?       @relation("ClientServiceContracts", fields: [clientId], references: [id])
+  installments Installment[]
+
+  @@index([leadId])
+  @@index([clientId])
+  @@index([status])
+  @@map("service_contracts")
+  @@schema("finance")
+}
+
+/// One scheduled installment of a `ServiceContract`. Becomes an Invoice
+/// when generated (manually or by the scheduler). Status tracks the
+/// lifecycle independently from the Invoice (an installment can be
+/// PENDING with no Invoice yet, INVOICED with a draft Invoice waiting on
+/// payment, PAID once the linked Invoice's Payment is verified, etc.).
+model Installment {
+  id            String            @id @default(uuid())
+  contractId    String
+  sequence      Int
+  dueDate       DateTime
+  amount        Decimal           @db.Decimal(12, 2)
+  /// Human-readable label, e.g. "First installment on signing", "On visa
+  /// approval", "After medical exam".
+  description   String?
+  status        InstallmentStatus @default(PENDING)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  contract ServiceContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  invoice  Invoice?
+
+  @@unique([contractId, sequence])
+  @@index([contractId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("installments")
   @@schema("finance")
 }
 

@@ -206,9 +206,13 @@ export class LeadsController {
 // ---------------------------------------------------------------------------
 // Public controller — no auth guard — called by the /verify-lead-email
 // frontend page when the lead clicks the verification link in their email.
+//
+// Mounted at /public/leads (not /leads) on purpose — sharing /leads with the
+// authenticated LeadsController caused `verify-email` requests to match the
+// `:id` parameter route first and hit the JWT guard.
 // ---------------------------------------------------------------------------
 
-@Controller('leads')
+@Controller('public/leads')
 export class LeadVerificationController {
   constructor(private readonly leadsService: LeadsService) {}
 

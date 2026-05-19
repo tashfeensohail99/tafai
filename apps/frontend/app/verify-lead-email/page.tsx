@@ -28,7 +28,7 @@ function VerifyContent() {
     }
 
     const apiBase = process.env.NEXT_PUBLIC_API_URL ?? '';
-    const url = `${apiBase}/leads/verify-email?token=${encodeURIComponent(token)}`;
+    const url = `${apiBase}/public/leads/verify-email?token=${encodeURIComponent(token)}`;
 
     fetch(url, { cache: 'no-store' })
       .then(async (res) => {

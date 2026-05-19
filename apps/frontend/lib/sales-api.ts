@@ -6,6 +6,7 @@
  */
 
 import { apiFetch } from '@/lib/api-client';
+import { getAccessToken } from '@/lib/auth-client';
 import type {
   Lead,
   FollowUp,
@@ -434,7 +435,7 @@ export async function fetchLeadFiles(leadId: string): Promise<ApiLeadFile[]> {
 }
 
 export async function uploadLeadFile(leadId: string, file: File): Promise<ApiLeadFile> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  const token = getAccessToken();
   const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'https://backend-production-5a89.up.railway.app';
   const form = new FormData();
   form.append('file', file);

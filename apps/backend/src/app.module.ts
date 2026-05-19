@@ -23,6 +23,7 @@ import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { CasesModule } from './modules/cases/cases.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import { ServiceContractsModule } from './modules/service-contracts/service-contracts.module';
 import { FollowUpsModule } from './modules/follow-ups/follow-ups.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { ProcessingModule } from './modules/processing/processing.module';
@@ -61,6 +62,7 @@ import { EmailModule } from './modules/email/email.module';
     CasesModule,
     DocumentsModule,
     FinanceModule,
+    ServiceContractsModule,
     FollowUpsModule,
     ReportsModule,
     ProcessingModule,

@@ -656,7 +656,7 @@ export class LeadsService {
     if (lead.emailVerified) throw new BadRequestException('Email is already verified');
 
     const token = randomBytes(32).toString('hex');
-    const frontendUrl = process.env.FRONTEND_URL ?? 'https://frontend-production-08d4.up.railway.app';
+    const frontendUrl = process.env.FRONTEND_URL ?? 'https://tashfeengroup.com';
     const verifyUrl = `${frontendUrl}/verify-lead-email?token=${token}`;
 
     await this.prisma.lead.update({

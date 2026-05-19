@@ -8,14 +8,12 @@ import {
   Patch,
   Post,
   Query,
-  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import type { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import {
@@ -204,69 +202,16 @@ export class LeadsController {
 }
 
 // ---------------------------------------------------------------------------
-// Public controller — no auth guard — only used for the email verify link
+// Public controller — no auth guard — called by the /verify-lead-email
+// frontend page when the lead clicks the verification link in their email.
 // ---------------------------------------------------------------------------
 
 @Controller('leads')
 export class LeadVerificationController {
   constructor(private readonly leadsService: LeadsService) {}
 
-  /**
-   * GET /leads/verify-email?token=xxx
-   * Called when the lead clicks the verification link in their email.
-   * Returns an HTML confirmation page so the lead sees a friendly message.
-   */
   @Get('verify-email')
-  async confirmEmail(
-    @Query('token') token: string,
-    @Res() res: Response,
-  ): Promise<void> {
-    try {
-      const result = await this.leadsService.verifyLeadEmail(token);
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.send(buildVerifySuccessHtml(result.leadName));
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Verification failed. The link may be invalid or expired.';
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.status(400).send(buildVerifyErrorHtml(message));
-    }
+  async confirmEmail(@Query('token') token: string) {
+    return this.leadsService.verifyLeadEmail(token);
   }
-}
-
-function buildVerifySuccessHtml(leadName: string): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Email Verified — Tashfeen</title>
-<style>body{margin:0;background:#f4f4f7;font-family:Inter,Segoe UI,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;}
-.card{background:#fff;border-radius:16px;padding:48px 40px;max-width:480px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08);}
-.icon{font-size:56px;margin-bottom:16px;}.title{font-size:24px;font-weight:700;color:#0f172a;margin:0 0 8px;}
-.sub{font-size:14px;color:#64748b;line-height:1.6;}.badge{display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;font-size:13px;font-weight:600;padding:6px 14px;border-radius:999px;margin:20px 0;}
-.footer{margin-top:32px;font-size:12px;color:#94a3b8;}</style></head>
-<body><div class="card">
-<div class="icon">✅</div>
-<h1 class="title">Email Verified!</h1>
-<p class="sub">Hi <strong>${escapeHtml(leadName)}</strong>, your email address has been verified successfully.<br/>Our team will be in touch with you shortly.</p>
-<div class="badge">✓ Verified</div>
-<p class="footer">Tashfeen Immigration Solutions · tashfeengroup.com</p>
-</div></body></html>`;
-}
-
-function buildVerifyErrorHtml(message: string): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Verification Failed — Tashfeen</title>
-<style>body{margin:0;background:#f4f4f7;font-family:Inter,Segoe UI,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;}
-.card{background:#fff;border-radius:16px;padding:48px 40px;max-width:480px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08);}
-.icon{font-size:56px;margin-bottom:16px;}.title{font-size:24px;font-weight:700;color:#0f172a;margin:0 0 8px;}
-.sub{font-size:14px;color:#64748b;line-height:1.6;}.footer{margin-top:32px;font-size:12px;color:#94a3b8;}</style></head>
-<body><div class="card">
-<div class="icon">❌</div>
-<h1 class="title">Verification Failed</h1>
-<p class="sub">${escapeHtml(message)}</p>
-<p class="sub" style="margin-top:16px;">Please ask a consultant to resend the verification email.</p>
-<p class="footer">Tashfeen Immigration Solutions · tashfeengroup.com</p>
-</div></body></html>`;
-}
-
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Activity,
   ArrowLeft,
@@ -124,6 +124,16 @@ const STAGE_PROGRESS: LeadStage[] = [
 
 type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP' | 'VERIFICATION' | 'FINANCE';
 
+const TAB_KEYS: readonly TabKey[] = [
+  'OVERVIEW', 'ACTIVITY', 'FOLLOWUPS', 'APPOINTMENTS', 'NOTES', 'WHATSAPP', 'VERIFICATION', 'FINANCE',
+] as const;
+
+function parseTabFromUrl(value: string | null): TabKey {
+  if (!value) return 'OVERVIEW';
+  const upper = value.toUpperCase() as TabKey;
+  return TAB_KEYS.includes(upper) ? upper : 'OVERVIEW';
+}
+
 const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'OVERVIEW', label: 'Overview', Icon: ClipboardList },
   { key: 'WHATSAPP', label: 'WhatsApp', Icon: MessageSquare },
@@ -164,6 +174,8 @@ function stageBadgeTone(stage: LeadStage): BadgeTone {
 
 export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [lead, setLead] = useState<Lead | null>(null);
   const [leadFollowUps, setLeadFollowUps] = useState<FollowUp[]>([]);
   const [leadAppointments, setLeadAppointments] = useState<Appointment[]>([]);
@@ -174,7 +186,22 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   const [priority, setPriority] = useState<Priority>('MEDIUM');
   const [nextAction, setNextAction] = useState('');
   const [salesNote, setSalesNote] = useState('');
-  const [tab, setTab] = useState<TabKey>('OVERVIEW');
+
+  // Tabs are driven by the URL (`?tab=finance`) so refresh/back/forward and
+  // shared links land on the right tab. Default to OVERVIEW when no param.
+  const tab: TabKey = parseTabFromUrl(searchParams.get('tab'));
+  const setTab = (next: TabKey) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === 'OVERVIEW') {
+      params.delete('tab');
+    } else {
+      params.set('tab', next.toLowerCase());
+    }
+    const qs = params.toString();
+    // Cast through `as never` because Next.js typed routes can't statically
+    // verify a dynamic URL built from runtime params + search string.
+    router.replace((qs ? `${pathname}?${qs}` : pathname) as never, { scroll: false });
+  };
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [pinned, setPinned] = useState(false);
   const [copyHint, setCopyHint] = useState<string | null>(null);

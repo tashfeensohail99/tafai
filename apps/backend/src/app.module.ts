@@ -18,6 +18,7 @@ import { ServicesModule } from './modules/services/services.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { LeadsModule } from './modules/leads/leads.module';
+import { LeadImportsModule } from './modules/lead-imports/lead-imports.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { CasesModule } from './modules/cases/cases.module';
@@ -57,6 +58,7 @@ import { EmailModule } from './modules/email/email.module';
     CountriesModule,
     PartnersModule,
     LeadsModule,
+    LeadImportsModule,
     ClientsModule,
     AppointmentsModule,
     CasesModule,

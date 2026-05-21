@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import type { Route } from 'next';
 import {
   AlertTriangle,
+  ArrowUpDown,
   BadgeCheck,
   CalendarDays,
   ChevronRight,
-  TrendingUp,
+  MessageCircle,
+  Search,
   UserCheck,
   Users,
 } from 'lucide-react';
@@ -80,6 +80,27 @@ function presenceColor(p: AgentRow['presenceStatus']): string {
   return 'var(--sos-text-muted)';
 }
 
+/**
+ * Stable per-name gradient for avatar tiles. Same palette + hashing function
+ * the employees page uses so a sales rep's avatar looks identical on both
+ * /admin/sales and /admin/employees — visual continuity matters when admins
+ * pivot between the two views.
+ */
+function avatarGradient(name: string): string {
+  const colors: [string, string][] = [
+    ['#6366f1', '#8b5cf6'],
+    ['#0ea5e9', '#6366f1'],
+    ['#10b981', '#0ea5e9'],
+    ['#f59e0b', '#ef4444'],
+    ['#ec4899', '#8b5cf6'],
+    ['#14b8a6', '#3b82f6'],
+  ];
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
+  const [a, b] = colors[hash % colors.length]!;
+  return `linear-gradient(135deg, ${a}, ${b})`;
+}
+
 export function SalesOverviewPage() {
   const { user } = useAdminSession();
   const canView = user.permissions.includes('reports.view');
@@ -141,9 +162,9 @@ export function SalesOverviewPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <PageHeader
-        eyebrow="Sales · Admin"
+        eyebrow="Admin · Sales"
         title="Sales overview"
-        description="Per-agent KPIs across the full team. Balance workload, spot overdue follow-ups, track 30-day conversion."
+        description="Per-agent KPIs across the full team. Click any agent to see their assigned leads and a live timeline of every touch."
       />
 
       {/* Top totals */}
@@ -176,121 +197,177 @@ export function SalesOverviewPage() {
         />
       </div>
 
-      {/* Controls */}
+      {/* ── Controls bar — flatter, icon-led so the page feels integrated
+            with the employees page's filter row instead of a separate
+            disclosure card.                                              ── */}
       <GlassCard variant="soft" padded="md">
         <div
           style={{
             display: 'flex',
-            gap: 10,
+            gap: 12,
             flexWrap: 'wrap',
             alignItems: 'center',
           }}
         >
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 700,
-            color: 'var(--sos-text-muted)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-          }}
-        >
-          Sort by
-        </span>
-        <select
-          className="sos-select"
-          value={sortKey}
-          onChange={(e) => setSortKey(e.target.value as SortKey)}
-          style={{ maxWidth: 220 }}
-        >
-          <option value="assignedLeads">Assigned leads (high → low)</option>
-          <option value="conversionRate">Conversion rate (30d)</option>
-          <option value="overdueFollowUps">Overdue follow-ups</option>
-          <option value="upcomingAppointments">Upcoming appointments</option>
-          <option value="name">Name (A → Z)</option>
-        </select>
-        <input
-          type="search"
-          className="sos-input"
-          placeholder="Search agent…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ maxWidth: 220, marginLeft: 'auto' }}
-        />
+          <div
+            style={{
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              flex: '1 1 280px',
+              maxWidth: 360,
+            }}
+          >
+            <Search
+              size={14}
+              style={{
+                position: 'absolute',
+                left: 12,
+                color: 'var(--sos-text-muted)',
+              }}
+            />
+            <input
+              type="search"
+              className="sos-input"
+              placeholder="Search agent by name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ paddingLeft: 34, width: '100%' }}
+            />
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginLeft: 'auto',
+            }}
+          >
+            <ArrowUpDown size={14} style={{ color: 'var(--sos-text-muted)' }} />
+            <select
+              className="sos-select"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              style={{ minWidth: 220 }}
+            >
+              <option value="assignedLeads">Assigned leads (high → low)</option>
+              <option value="conversionRate">Conversion rate (30d)</option>
+              <option value="overdueFollowUps">Overdue follow-ups</option>
+              <option value="upcomingAppointments">Upcoming appointments</option>
+              <option value="name">Name (A → Z)</option>
+            </select>
+          </div>
         </div>
       </GlassCard>
 
-      {/* Agent table */}
+      {/* ── Agent table — same premium-glass pattern as /admin/employees:
+            header strip with eyebrow + count + new-agent-style action;
+            gradient avatars; hover row tint; numeric pill cells; trailing
+            Open button.                                                  ── */}
       <GlassCard variant="panel" padded={false}>
-        <div className="overflow-x-auto" style={{ borderRadius: 'var(--sos-radius-panel)' }}>
-          <table className="min-w-[760px] w-full">
-            <thead style={{ background: 'var(--sos-surface-1)' }}>
-              <tr>
-                {[
-                  'Agent',
-                  'Assigned',
-                  'New (30d)',
-                  'Converted (30d)',
-                  'Conv. rate',
-                  'Open follow-ups',
-                  'Overdue',
-                  'Upcoming appts',
-                  '', // chevron column — no header label, just a visual cue rows are clickable
-                ].map((h, i) => (
-                  <th
-                    key={i}
-                    className="whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide sm:px-4"
-                    style={{ color: 'var(--sos-text-muted)', letterSpacing: 'var(--sos-letter-eyebrow)' }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredAgents.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={9}
-                    className="px-4 py-10 text-center text-sm"
-                    style={{ color: 'var(--sos-text-muted)' }}
-                  >
-                    No agents match your filters.
-                  </td>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            padding: '18px 24px',
+            borderBottom: '1px solid var(--sos-divider)',
+          }}
+        >
+          <div>
+            <div className="sos-eyebrow">Sales team</div>
+            <h2 className="sos-title" style={{ fontSize: 16, marginTop: 4 }}>
+              All agents
+            </h2>
+          </div>
+          <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+            {filteredAgents.length} of {data.agents.length} agents
+          </span>
+        </div>
+
+        {filteredAgents.length === 0 ? (
+          <div
+            style={{
+              padding: '48px 24px',
+              textAlign: 'center',
+              color: 'var(--sos-text-muted)',
+              fontSize: 14,
+            }}
+          >
+            No agents match your filters.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: 920, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--sos-surface-1)' }}>
+                  {[
+                    'Agent',
+                    'Assigned',
+                    'New (30d)',
+                    'Converted (30d)',
+                    'Conv. rate',
+                    'Open follow-ups',
+                    'Overdue',
+                    'Upcoming appts',
+                    '',
+                  ].map((h, i) => (
+                    <th
+                      key={i}
+                      style={{
+                        padding: '10px 16px',
+                        textAlign: 'left',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        letterSpacing: '0.07em',
+                        textTransform: 'uppercase',
+                        color: 'var(--sos-text-muted)',
+                        whiteSpace: 'nowrap',
+                        borderBottom: '1px solid var(--sos-divider)',
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ) : (
-                filteredAgents.map((a) => (
+              </thead>
+              <tbody>
+                {filteredAgents.map((a) => (
                   <tr
                     key={a.employeeId}
                     onClick={() => {
                       window.location.href = `/admin/sales/${a.employeeId}`;
                     }}
                     style={{
-                      borderTop: '1px solid var(--sos-border-subtle)',
+                      borderBottom: '1px solid var(--sos-divider)',
                       cursor: 'pointer',
-                      transition: 'background 120ms',
+                      transition: 'background 140ms',
                     }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLTableRowElement).style.background =
-                        'rgba(255,255,255,0.025)';
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLTableRowElement).style.background = 'transparent';
-                    }}
+                    onMouseEnter={(e) =>
+                      ((e.currentTarget as HTMLTableRowElement).style.background =
+                        'var(--sos-surface-hover)')
+                    }
+                    onMouseLeave={(e) =>
+                      ((e.currentTarget as HTMLTableRowElement).style.background = 'transparent')
+                    }
                   >
-                    <td className="px-3 py-3 sm:px-4">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {/* Agent identity (gradient avatar + name + presence + WA badge) */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <div
                           style={{
-                            width: 32,
-                            height: 32,
+                            width: 36,
+                            height: 36,
                             borderRadius: '50%',
-                            background: 'var(--sos-brand-primary-soft)',
-                            color: 'var(--sos-brand-primary-strong)',
-                            display: 'grid',
-                            placeItems: 'center',
-                            fontSize: 11,
+                            flexShrink: 0,
+                            background: avatarGradient(a.name),
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 13,
                             fontWeight: 700,
+                            color: '#fff',
                             position: 'relative',
                           }}
                         >
@@ -300,8 +377,8 @@ export function SalesOverviewPage() {
                               position: 'absolute',
                               right: -2,
                               bottom: -2,
-                              width: 10,
-                              height: 10,
+                              width: 11,
+                              height: 11,
                               borderRadius: '50%',
                               background: presenceColor(a.presenceStatus),
                               border: '2px solid var(--sos-bg-elevated)',
@@ -310,57 +387,142 @@ export function SalesOverviewPage() {
                           />
                         </div>
                         <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
+                          <div
+                            style={{
+                              fontSize: 13.5,
+                              fontWeight: 600,
+                              color: 'var(--sos-text-primary)',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
                             {a.name}
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--sos-text-muted)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: 'var(--sos-text-muted)',
+                              marginTop: 4,
+                              display: 'flex',
+                              gap: 6,
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                            }}
+                          >
                             {a.whatsappInboxMember ? (
-                              <StatusBadge tone="info" size="sm">WA inbox</StatusBadge>
+                              <StatusBadge tone="accent" size="sm" dot={false}>
+                                <MessageCircle size={11} style={{ marginRight: 3 }} />
+                                WA inbox
+                              </StatusBadge>
                             ) : null}
                             <span>Active {fmtRelative(a.lastActivityAt)}</span>
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-3 sm:px-4" style={{ fontSize: 13, fontWeight: 600 }}>
-                      {a.assignedLeads}
+
+                    {/* Assigned (big number) */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill value={a.assignedLeads} tone="primary" />
                     </td>
-                    <td className="px-3 py-3 sm:px-4" style={{ fontSize: 13 }}>
-                      {a.newLeadsLast30d}
+
+                    {/* New (30d) */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill value={a.newLeadsLast30d} tone="muted" />
                     </td>
-                    <td className="px-3 py-3 sm:px-4" style={{ fontSize: 13 }}>
-                      {a.converted30d}
+
+                    {/* Converted (30d) */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill value={a.converted30d} tone={a.converted30d > 0 ? 'success' : 'muted'} />
                     </td>
-                    <td className="px-3 py-3 sm:px-4">
+
+                    {/* Conv. rate */}
+                    <td style={{ padding: '14px 16px' }}>
                       <ConversionPill rate={a.conversionRate} sample={a.newLeadsLast30d} />
                     </td>
-                    <td className="px-3 py-3 sm:px-4" style={{ fontSize: 13 }}>
-                      {a.openFollowUps}
+
+                    {/* Open follow-ups */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill value={a.openFollowUps} tone="muted" />
                     </td>
-                    <td
-                      className="px-3 py-3 sm:px-4"
-                      style={{
-                        fontSize: 13,
-                        fontWeight: a.overdueFollowUps > 0 ? 700 : 400,
-                        color: a.overdueFollowUps > 0 ? 'var(--sos-status-danger)' : 'inherit',
-                      }}
-                    >
-                      {a.overdueFollowUps}
+
+                    {/* Overdue */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill
+                        value={a.overdueFollowUps}
+                        tone={a.overdueFollowUps > 0 ? 'danger' : 'muted'}
+                      />
                     </td>
-                    <td className="px-3 py-3 sm:px-4" style={{ fontSize: 13 }}>
-                      {a.upcomingAppointments}
+
+                    {/* Upcoming appts */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill value={a.upcomingAppointments} tone="muted" />
                     </td>
-                    <td className="px-3 py-3 sm:px-4" style={{ width: 24, textAlign: 'right' }}>
-                      <ChevronRight size={14} style={{ color: 'var(--sos-text-faint)' }} />
+
+                    {/* Open action */}
+                    <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <span
+                          className="sos-btn sos-btn--ghost sos-btn--sm"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          Open
+                          <ChevronRight size={13} />
+                        </span>
+                      </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </GlassCard>
     </div>
+  );
+}
+
+/**
+ * Tone-able numeric pill — same shape as ConversionPill so all the numbers
+ * in a row look like a consistent family rather than a wall of bare digits.
+ * Zero values render in a muted tone so high-traffic agents read at a
+ * glance vs idle ones.
+ */
+function NumPill({
+  value,
+  tone,
+}: {
+  value: number;
+  tone: 'primary' | 'success' | 'danger' | 'muted';
+}) {
+  const palette = {
+    primary: { color: 'var(--sos-text-primary)', bg: 'rgba(255,255,255,0.045)' },
+    success: { color: 'var(--sos-status-success)', bg: 'var(--sos-status-success-soft)' },
+    danger:  { color: 'var(--sos-status-danger)',  bg: 'var(--sos-status-danger-soft)' },
+    muted:   { color: 'var(--sos-text-muted)',     bg: 'transparent' },
+  }[tone];
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 32,
+        padding: '3px 9px',
+        borderRadius: 6,
+        fontSize: 13,
+        fontWeight: tone === 'muted' ? 500 : 700,
+        background: palette.bg,
+        color: palette.color,
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      {value.toLocaleString()}
+    </span>
   );
 }
 

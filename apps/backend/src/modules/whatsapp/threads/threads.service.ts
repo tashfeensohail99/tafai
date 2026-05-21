@@ -42,6 +42,16 @@ export class WhatsAppThreadsService {
     const where: Prisma.WhatsAppThreadWhereInput = {};
     if (opts.status) where.status = opts.status;
 
+    // Hide threads whose lead has been soft-deleted (admin deletes a lead
+    // or a whole CSV import batch → the lead's row stays in the DB but
+    // gets deletedAt stamped, so the inbox should drop the thread). We use
+    // `OR` so we don't accidentally hide threads that have a client but no
+    // lead — those still show up.
+    where.OR = [
+      { lead: { is: { deletedAt: null } } },
+      { lead: null },
+    ];
+
     // Scope to caller's assigned leads unless they're allowed to see all
     // AND haven't explicitly asked for "mine only".
     if (!caller.canViewAll || opts.assignedToMe) {
@@ -50,10 +60,10 @@ export class WhatsAppThreadsService {
         // rather than throw, so the UI doesn't break.
         return { items: [], nextCursor: null };
       }
-      where.lead = { assignedEmployeeId: caller.employeeId };
+      where.lead = { assignedEmployeeId: caller.employeeId, deletedAt: null };
     } else if (opts.unassigned) {
       // Admin-only filter — only meaningful when canViewAll is true.
-      where.lead = { assignedEmployeeId: null };
+      where.lead = { assignedEmployeeId: null, deletedAt: null };
     }
 
     if (opts.search) {

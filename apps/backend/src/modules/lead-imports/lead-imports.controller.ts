@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -128,5 +129,22 @@ export class LeadImportsController {
   @RequirePermissions('leads.create')
   resume(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.setPaused(id, false);
+  }
+
+  /**
+   * Bulk-delete a batch and every Lead it created. Cascades soft-delete to
+   * the linked Lead rows so they vanish from the sales team's lead lists,
+   * the admin leads page, and the WhatsApp inbox (queries filter by
+   * lead.deletedAt). The batch row itself is also soft-deleted so it drops
+   * off this page.
+   */
+  @Delete(':id')
+  @RequirePermissions('leads.delete')
+  async deleteBatch(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    const result = await this.service.deleteBatch(id, user.id);
+    return { success: true, deletedLeads: result.deletedLeads };
   }
 }

@@ -148,6 +148,20 @@ export async function resumeImport(id: string): Promise<LeadImportBatch> {
   });
 }
 
+/**
+ * Bulk delete a batch and every Lead it created. Server cascades the
+ * soft-delete to the Lead rows so they vanish from sales + admin lead
+ * lists and WhatsApp inboxes. Returns the count of leads that were
+ * actually marked deleted (excludes DUPLICATE / INVALID rows which never
+ * created a lead, and IMPORTED leads that were already deleted).
+ */
+export async function deleteImport(id: string): Promise<{ success: true; deletedLeads: number }> {
+  return apiFetch<{ success: true; deletedLeads: number }>(
+    `/admin/lead-imports/${id}`,
+    { method: 'DELETE' },
+  );
+}
+
 export function downloadErrorsCsv(id: string, batchNumber: string): void {
   const token = getAccessToken();
   const url = `${baseUrl()}/admin/lead-imports/${id}/errors.csv`;

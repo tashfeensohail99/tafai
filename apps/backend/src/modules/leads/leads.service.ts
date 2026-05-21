@@ -368,6 +368,50 @@ export class LeadsService {
     return updated;
   }
 
+  /**
+   * Soft-delete a lead. Sets `deletedAt = NOW()`. Every list / search /
+   * detail query already filters `deletedAt: null` so the lead vanishes
+   * from sales + admin views, the lead-imports page (via its row's
+   * leadId staying intact but the lead itself dropping out), and the
+   * WhatsApp inbox queries that filter on `lead.deletedAt`.
+   *
+   * Related entities (WhatsApp thread, messages, follow-ups, appointments,
+   * invoices) are NOT cascade-deleted — their underlying records survive
+   * for forensics, but any UI surface that walks through `lead` will skip
+   * deleted leads because of the deletedAt filter.
+   *
+   * Hard delete is not exposed; if recovery is ever needed an admin can
+   * clear deletedAt directly in the DB.
+   */
+  async remove(id: string, actorUserId: string): Promise<void> {
+    // findById filters deletedAt:null, so this throws NotFound for an
+    // already-deleted lead — exactly the behaviour we want.
+    const existing = await this.findById(id);
+
+    await this.prisma.lead.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.LEAD_UPDATED,
+      entityType: 'Lead',
+      entityId: id,
+      oldValues: { deletedAt: null, status: existing.status },
+      newValues: { deletedAt: new Date().toISOString(), action: 'soft-delete' },
+    });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: id,
+      leadId: id,
+      eventType: TimelineEventType.NOTE_ADDED,
+      description: `Lead ${existing.referenceCode} deleted by admin`,
+      actorUserId,
+    });
+  }
+
   async assign(id: string, dto: AssignLeadDto, actorUserId: string) {
     const existing = await this.findById(id);
 

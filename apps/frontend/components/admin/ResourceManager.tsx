@@ -62,6 +62,17 @@ interface ResourceManagerProps<TRecord extends { id: string }> {
   exportPath?: string;
   /** Default filename to suggest if the server doesn't send one. */
   exportFilename?: string;
+  /**
+   * When set, the actions column also renders a Delete button. Click fires
+   * DELETE on `${endpoint}/${id}` after the user confirms. Pass a permission
+   * key to hide the button for users who lack it.
+   *
+   *   deletable={{ permission: 'leads.delete', confirmMessage: (r) => `Delete ${r.firstName}?` }}
+   */
+  deletable?: {
+    permission?: string;
+    confirmMessage?: (record: TRecord) => string;
+  };
 }
 
 export function ResourceManager<TRecord extends { id: string }>({
@@ -81,6 +92,7 @@ export function ResourceManager<TRecord extends { id: string }>({
   loadEditFormValues,
   exportPath,
   exportFilename,
+  deletable,
 }: ResourceManagerProps<TRecord>) {
   const { user } = useAdminSession();
   const [records, setRecords] = useState<TRecord[]>([]);
@@ -191,19 +203,55 @@ export function ResourceManager<TRecord extends { id: string }>({
     }
   }
 
+  // Per-row delete handler — shared between the inline Delete button and
+  // any future bulk-select UI. Confirmed with a native window.confirm so
+  // we don't have to ship a custom dialog component for this.
+  async function handleDelete(record: TRecord) {
+    if (!deletable) return;
+    const message =
+      deletable.confirmMessage?.(record) ??
+      `Delete this record? This action affects every view that lists it.`;
+    if (!window.confirm(message)) return;
+    try {
+      await apiFetch(`${endpoint}/${record.id}`, { method: 'DELETE' });
+      setRefreshKey((current) => current + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
+    }
+  }
+
+  const canDelete =
+    !!deletable &&
+    (!deletable.permission || user.permissions.includes(deletable.permission));
+
   const tableColumns: DataTableColumn<TRecord>[] = [
     ...columns,
     {
       key: 'actions',
       header: 'Actions',
       render: (record) => (
-        <button
-          onClick={() => void openEditForm(record)}
-          className="rounded-md border px-3 py-1 text-xs font-medium"
-          style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
-        >
-          Edit
-        </button>
+        <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+          <button
+            onClick={() => void openEditForm(record)}
+            className="rounded-md border px-3 py-1 text-xs font-medium"
+            style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}
+          >
+            Edit
+          </button>
+          {canDelete ? (
+            <button
+              onClick={() => void handleDelete(record)}
+              className="rounded-md border px-3 py-1 text-xs font-medium"
+              style={{
+                borderColor: 'var(--sos-status-danger, #dc2626)',
+                color: 'var(--sos-status-danger, #dc2626)',
+              }}
+              title="Delete (hides from all lists)"
+            >
+              Delete
+            </button>
+          ) : null}
+        </div>
       ),
     },
   ];

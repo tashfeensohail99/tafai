@@ -137,6 +137,22 @@ export class LeadsController {
     return this.leadsService.update(id, dto, user.id);
   }
 
+  /**
+   * Soft-delete a lead. The row stays in the DB but `deletedAt` is set,
+   * which removes it from every list / search / detail view (all queries
+   * filter `deletedAt: null`). Permission gated to `leads.delete` so only
+   * admin / super-admin roles can fire it.
+   */
+  @Delete(':id')
+  @RequirePermissions('leads.delete')
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    await this.leadsService.remove(id, user.id);
+    return { success: true };
+  }
+
   // ---------------------------------------------------------------------------
   // Lead file attachments
   // ---------------------------------------------------------------------------

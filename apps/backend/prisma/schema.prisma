@@ -896,6 +896,11 @@ model LeadImportBatch {
   pausedAt          DateTime?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
+  /// Soft-delete marker. When admin "deletes" a batch via the admin UI we
+  /// stamp this + cascade soft-delete every Lead created from this batch.
+  /// The row itself is kept so the audit trail (who uploaded what / when /
+  /// counts) survives — we just hide it from the lead-imports list.
+  deletedAt         DateTime?
 
   uploadedBy        UserAccount         @relation("LeadImportBatchUploadedBy", fields: [uploadedByUserId], references: [id])
   rows              LeadImportRow[]

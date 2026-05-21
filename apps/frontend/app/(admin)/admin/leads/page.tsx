@@ -192,6 +192,13 @@ export default function LeadsPage() {
           notes: detail.notes ?? '',
         };
       }}
+      deletable={{
+        permission: 'leads.delete',
+        confirmMessage: (record) =>
+          `Delete ${record.firstName} ${record.lastName} (${record.phone})?\n\n` +
+          `This hides the lead from the admin and sales lead lists and from the WhatsApp inbox. ` +
+          `The underlying row is kept for audit purposes.`,
+      }}
       transformFormToPayload={(form) => ({
         branchId: form.branchId || undefined,
         assignedEmployeeId: form.assignedEmployeeId || undefined,

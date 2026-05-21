@@ -198,6 +198,10 @@ export class LeadImportsService {
   async findAll(query: ListBatchesQueryDto) {
     return this.prisma.leadImportBatch.findMany({
       where: {
+        // Soft-deleted batches are hidden from the list — when admin deletes
+        // a batch we cascade soft-delete every Lead it created and stamp
+        // deletedAt on the batch row, so the batch vanishes from this view.
+        deletedAt: null,
         ...(query.status ? { status: query.status } : {}),
         ...(query.search
           ? {
@@ -219,7 +223,7 @@ export class LeadImportsService {
 
   async findById(id: string) {
     const batch = await this.prisma.leadImportBatch.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
       include: {
         uploadedBy: { select: { id: true, email: true } },
         // Per-agent breakdown via groupBy isn't expressible in this include;
@@ -228,6 +232,72 @@ export class LeadImportsService {
     });
     if (!batch) throw new NotFoundException('Batch not found');
     return batch;
+  }
+
+  /**
+   * Bulk-delete a batch and every Lead created from it. Soft-delete throughout
+   * — both the LeadImportBatch and the linked Lead rows have their deletedAt
+   * stamped, and downstream queries (admin/sales lead lists, WhatsApp inbox
+   * filtered on lead.deletedAt, lead-imports list) all skip deleted rows.
+   *
+   * Cascade scope: only leads whose import outcome was IMPORTED — those are
+   * the ones THIS batch actually created. DUPLICATE outcomes point to pre-
+   * existing leads owned by other sources, so we leave those alone. INVALID
+   * and FAILED outcomes never created a lead in the first place.
+   *
+   * Idempotent: calling twice has no effect on already-deleted rows because
+   * the WHERE clause matches `deletedAt: null`.
+   */
+  async deleteBatch(id: string, actorUserId: string): Promise<{ deletedLeads: number }> {
+    const batch = await this.findById(id);
+    // Collect lead ids the batch actually created. Using a Prisma findMany
+    // rather than a bulk updateMany-by-join because Prisma can't filter by
+    // a relation field in updateMany.
+    const importedRows = await this.prisma.leadImportRow.findMany({
+      where: { batchId: batch.id, outcome: 'IMPORTED' },
+      select: { leadId: true },
+    });
+    const leadIds = importedRows
+      .map((r) => r.leadId)
+      .filter((x): x is string => !!x);
+
+    const now = new Date();
+    // Wrap in a transaction so we don't end up with a half-deleted batch.
+    await this.prisma.$transaction([
+      ...(leadIds.length
+        ? [
+            this.prisma.lead.updateMany({
+              where: { id: { in: leadIds }, deletedAt: null },
+              data: { deletedAt: now },
+            }),
+          ]
+        : []),
+      this.prisma.leadImportBatch.update({
+        where: { id: batch.id },
+        data: { deletedAt: now },
+      }),
+    ]);
+
+    // Audit log entry on the batch — useful for "why did 188 leads disappear?"
+    // forensics later. Reuse the generic USER_UPDATED action since we don't
+    // have a LEAD_IMPORT_DELETED enum value (adding one would require an
+    // extra migration just for the log label).
+    await this.prisma.auditLog.create({
+      data: {
+        actorUserId,
+        action: 'USER_UPDATED' as Prisma.AuditLogCreateInput['action'],
+        entityType: 'LeadImportBatch',
+        entityId: batch.id,
+        oldValues: { deletedAt: null } as Prisma.InputJsonValue,
+        newValues: {
+          deletedAt: now.toISOString(),
+          batchNumber: batch.batchNumber,
+          cascadedLeads: leadIds.length,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return { deletedLeads: leadIds.length };
   }
 
   /**

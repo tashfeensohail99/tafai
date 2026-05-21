@@ -9,6 +9,7 @@ import {
   Loader2,
   Plus,
   Search,
+  Trash2,
 } from 'lucide-react';
 import {
   EmptyState,
@@ -20,6 +21,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
+  deleteImport,
   listImportBatches,
   type LeadImportBatch,
   type LeadImportStatus,
@@ -58,6 +60,30 @@ export function LeadImportsPage() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  /**
+   * Delete a batch + cascade soft-delete every lead it created. Two-step
+   * native confirm (uses the batch's imported count in the message so the
+   * admin sees exactly how many leads are about to disappear).
+   */
+  const handleDelete = async (batch: LeadImportBatch) => {
+    const total = batch.importedCount;
+    const msg =
+      `Delete batch ${batch.batchNumber} and ${total.toLocaleString()} imported lead${total === 1 ? '' : 's'}?\n\n` +
+      `This will also remove these leads from the sales team's CSV Leads list and from the WhatsApp inbox.\n\n` +
+      `Duplicate matches (which already existed before this batch) are NOT affected.`;
+    if (!window.confirm(msg)) return;
+    setDeletingId(batch.id);
+    try {
+      await deleteImport(batch.id);
+      setBatches((curr) => curr.filter((b) => b.id !== batch.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete batch');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -203,9 +229,43 @@ export function LeadImportsPage() {
                         {new Date(b.uploadedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
                       </td>
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                        <Link href={`/admin/lead-imports/${b.id}` as Route} className="sos-btn sos-btn--ghost sos-btn--sm">
-                          Open
-                        </Link>
+                        <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          <Link href={`/admin/lead-imports/${b.id}` as Route} className="sos-btn sos-btn--ghost sos-btn--sm">
+                            Open
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(b)}
+                            disabled={deletingId === b.id}
+                            title={`Delete batch + ${b.importedCount.toLocaleString()} leads`}
+                            aria-label="Delete batch"
+                            style={{
+                              all: 'unset',
+                              cursor: deletingId === b.id ? 'not-allowed' : 'pointer',
+                              padding: 6,
+                              borderRadius: 6,
+                              color: 'var(--sos-status-danger)',
+                              opacity: deletingId === b.id ? 0.5 : 1,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (deletingId !== b.id)
+                                (e.currentTarget as HTMLButtonElement).style.background =
+                                  'rgba(239,68,68,0.12)';
+                            }}
+                            onMouseLeave={(e) => {
+                              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                            }}
+                          >
+                            {deletingId === b.id ? (
+                              <Loader2 size={15} className="sos-spin" />
+                            ) : (
+                              <Trash2 size={15} />
+                            )}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -26,6 +26,8 @@ import {
   CalendarPlus,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Clock4,
   ExternalLink,
@@ -42,6 +44,7 @@ import {
   Sparkles,
   StickyNote,
   Upload,
+  Users,
   Wallet,
   X,
 } from 'lucide-react';
@@ -197,6 +200,25 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
   const [search, setSearch] = useState('');
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
 
+  // Layout state.
+  // `narrow`        — viewport too tight for the two-pane layout, so we
+  //                   stack the leads list above the timeline. Detected via
+  //                   matchMedia so we react to live resizes without a
+  //                   useState/event-listener boilerplate.
+  // `listCollapsed` — admin clicked the collapse arrow to give the timeline
+  //                   the full width. Independent from `narrow` so admins
+  //                   on wide screens can still collapse.
+  const [narrow, setNarrow] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 900px)');
+    const onChange = () => setNarrow(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
   // Lead-list load. Filter applied client-side because lead counts here are
   // bounded (a single agent's roster — usually < 300) and the server-side
   // search filter doesn't currently expose ref code matching.
@@ -272,7 +294,17 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
     'Sales';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 24,
+        minWidth: 0,
+        // Belt + braces — even if a nested grid child forgets minWidth:0,
+        // the page itself never grows horizontal scrollbars.
+        overflowX: 'hidden',
+      }}
+    >
       {/* ── Back link ── */}
       <Link
         href={'/admin/sales' as Route}
@@ -374,61 +406,177 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
         <MetricCard label="Stale (>7d)" value={kpis.stale7d} tone={kpis.stale7d > 0 ? 'warning' : 'neutral'} Icon={Clock4} />
       </div>
 
-      {/* ── Master / detail: leads (left) + timeline (right) ── */}
+      {/* ── Master / detail: leads (left) + timeline (right) ─────────────
+            Grid template flexes between three modes:
+              - narrow viewport (<900px) → single column, panes stack.
+              - listCollapsed=true      → 56px rail + 1fr timeline. The
+                rail shows just an expand chevron + lead count so the
+                timeline takes the full width.
+              - default                 → 1fr (clamped 320–380px) : 1.6fr,
+                so the leads list never exceeds a reading-comfortable
+                width and the timeline keeps the dominant space.
+            All scroll regions use sos-scroll for a premium thin scrollbar.
+            No element forces a min-width that exceeds the column, so
+            horizontal scrolling is eliminated.                            ── */}
       <div
         style={{
           display: 'grid',
           gap: 16,
-          gridTemplateColumns: 'minmax(320px, 1fr) minmax(360px, 1.4fr)',
+          gridTemplateColumns: narrow
+            ? '1fr'
+            : listCollapsed
+              ? '56px minmax(0, 1fr)'
+              : 'clamp(320px, 30vw, 380px) minmax(0, 1fr)',
           alignItems: 'stretch',
+          minWidth: 0,
         }}
       >
-        {/* Left pane: assigned leads */}
-        <GlassCard variant="panel" padded={false}>
-          <div
-            style={{
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--sos-divider)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <div style={{ flexShrink: 0 }}>
-              <div className="sos-eyebrow">Assigned leads</div>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: 'var(--sos-text-primary)',
-                }}
-              >
-                {filteredLeads.length} of {leads.length}
-              </div>
-            </div>
+        {/* Left pane: assigned leads (collapsible rail on wide screens) */}
+        <GlassCard variant="panel" padded={false} style={{ minWidth: 0 }}>
+          {/* Collapsed rail — narrow vertical sidebar with just an expand
+              affordance, a lead-count chip, and a search shortcut button. */}
+          {!narrow && listCollapsed ? (
             <div
               style={{
-                flex: 1,
-                position: 'relative',
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
+                gap: 12,
+                padding: '14px 0',
+                height: '100%',
               }}
             >
-              <Search
-                size={13}
-                style={{ position: 'absolute', left: 10, color: 'var(--sos-text-muted)' }}
-              />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name, phone, ref…"
-                className="sos-input"
-                style={{ paddingLeft: 30, width: '100%' }}
-              />
+              <button
+                type="button"
+                onClick={() => setListCollapsed(false)}
+                title="Expand leads list"
+                aria-label="Expand leads list"
+                style={{
+                  all: 'unset',
+                  cursor: 'pointer',
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--sos-text-muted)',
+                  transition: 'background 120ms, color 120ms',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = 'var(--sos-surface-hover)';
+                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-muted)';
+                }}
+              >
+                <ChevronRight size={16} />
+              </button>
+              <div
+                title={`${leads.length} leads`}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 4,
+                  color: 'var(--sos-text-muted)',
+                  fontSize: 11,
+                }}
+              >
+                <Users size={14} />
+                <span style={{ fontWeight: 700, color: 'var(--sos-text-primary)' }}>{leads.length}</span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderBottom: '1px solid var(--sos-divider)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ flexShrink: 0, minWidth: 0 }}>
+                  <div className="sos-eyebrow">Assigned leads</div>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: 'var(--sos-text-primary)',
+                    }}
+                  >
+                    {filteredLeads.length} of {leads.length}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 160,
+                    position: 'relative',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Search
+                    size={13}
+                    style={{ position: 'absolute', left: 10, color: 'var(--sos-text-muted)' }}
+                  />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search name, phone, ref…"
+                    className="sos-input"
+                    style={{ paddingLeft: 30, width: '100%' }}
+                  />
+                </div>
+                {!narrow ? (
+                  <button
+                    type="button"
+                    onClick={() => setListCollapsed(true)}
+                    title="Collapse list to give the timeline more room"
+                    aria-label="Collapse leads list"
+                    style={{
+                      all: 'unset',
+                      cursor: 'pointer',
+                      width: 30,
+                      height: 30,
+                      borderRadius: 8,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--sos-text-muted)',
+                      flexShrink: 0,
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'var(--sos-surface-hover)';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-primary)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-muted)';
+                    }}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                ) : null}
+              </div>
 
-          <div style={{ maxHeight: 560, overflowY: 'auto' }}>
+              <div
+                className="sos-scroll"
+                style={{
+                  // Tie to viewport so the panes feel like an integrated
+                  // dashboard instead of two fixed-height widgets pasted in.
+                  maxHeight: 'calc(100vh - 360px)',
+                  minHeight: 360,
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                }}
+              >
             {filteredLeads.length === 0 ? (
               <div
                 style={{
@@ -543,11 +691,13 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                 );
               })
             )}
-          </div>
+              </div>
+            </>
+          )}
         </GlassCard>
 
         {/* Right pane: activity timeline for the selected lead */}
-        <GlassCard variant="panel" padded={false}>
+        <GlassCard variant="panel" padded={false} style={{ minWidth: 0 }}>
           {selectedLeadId ? (
             <SelectedLeadTimelinePanel leadId={selectedLeadId} />
           ) : (
@@ -599,7 +749,7 @@ function SelectedLeadTimelinePanel({ leadId }: { leadId: string }) {
   }, [leadId]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 600 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <div
         style={{
           padding: '12px 16px',
@@ -611,7 +761,7 @@ function SelectedLeadTimelinePanel({ leadId }: { leadId: string }) {
           flexWrap: 'wrap',
         }}
       >
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div className="sos-eyebrow">Activity timeline</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)', marginTop: 2 }}>
             {loading
@@ -624,14 +774,27 @@ function SelectedLeadTimelinePanel({ leadId }: { leadId: string }) {
           target="_blank"
           rel="noopener noreferrer"
           className="sos-btn sos-btn--ghost sos-btn--sm"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
         >
           Open lead
           <ExternalLink size={12} />
         </Link>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 18px' }}>
+      <div
+        className="sos-scroll"
+        style={{
+          // Same viewport-driven height as the leads list so the two
+          // panes feel like a coordinated dashboard rather than
+          // disconnected widgets. minHeight prevents collapse on small
+          // datasets.
+          maxHeight: 'calc(100vh - 360px)',
+          minHeight: 360,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: '12px 18px',
+        }}
+      >
         {error ? (
           <div
             style={{

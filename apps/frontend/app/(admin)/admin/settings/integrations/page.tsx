@@ -546,7 +546,17 @@ export default function IntegrationsSettingsPage() {
     void reload();
   }, [reload]);
 
-  const activeChannel = channels[0] ?? null;
+  // The page shows ONE channel at a time. Pick the most relevant: prefer
+  // ACTIVE over PAUSED/REVOKED, and within the same status the most
+  // recently updated. Without this, the page silently shows whichever
+  // channel was created first — which is the wrong one whenever a fresh
+  // channel is added to replace a blocked/old one.
+  const activeChannel =
+    [...channels].sort((a, b) => {
+      if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+      if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    })[0] ?? null;
 
   async function handleTest() {
     if (!activeChannel) return;

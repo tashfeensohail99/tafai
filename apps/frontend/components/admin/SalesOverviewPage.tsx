@@ -1,10 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import type { Route } from 'next';
 import {
   AlertTriangle,
   BadgeCheck,
   CalendarDays,
+  ChevronRight,
   TrendingUp,
   UserCheck,
   Users,
@@ -232,9 +235,10 @@ export function SalesOverviewPage() {
                   'Open follow-ups',
                   'Overdue',
                   'Upcoming appts',
-                ].map((h) => (
+                  '', // chevron column — no header label, just a visual cue rows are clickable
+                ].map((h, i) => (
                   <th
-                    key={h}
+                    key={i}
                     className="whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide sm:px-4"
                     style={{ color: 'var(--sos-text-muted)', letterSpacing: 'var(--sos-letter-eyebrow)' }}
                   >
@@ -247,7 +251,7 @@ export function SalesOverviewPage() {
               {filteredAgents.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="px-4 py-10 text-center text-sm"
                     style={{ color: 'var(--sos-text-muted)' }}
                   >
@@ -258,7 +262,21 @@ export function SalesOverviewPage() {
                 filteredAgents.map((a) => (
                   <tr
                     key={a.employeeId}
-                    style={{ borderTop: '1px solid var(--sos-border-subtle)' }}
+                    onClick={() => {
+                      window.location.href = `/admin/sales/${a.employeeId}`;
+                    }}
+                    style={{
+                      borderTop: '1px solid var(--sos-border-subtle)',
+                      cursor: 'pointer',
+                      transition: 'background 120ms',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLTableRowElement).style.background =
+                        'rgba(255,255,255,0.025)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLTableRowElement).style.background = 'transparent';
+                    }}
                   >
                     <td className="px-3 py-3 sm:px-4">
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -331,6 +349,9 @@ export function SalesOverviewPage() {
                     </td>
                     <td className="px-3 py-3 sm:px-4" style={{ fontSize: 13 }}>
                       {a.upcomingAppointments}
+                    </td>
+                    <td className="px-3 py-3 sm:px-4" style={{ width: 24, textAlign: 'right' }}>
+                      <ChevronRight size={14} style={{ color: 'var(--sos-text-faint)' }} />
                     </td>
                   </tr>
                 ))

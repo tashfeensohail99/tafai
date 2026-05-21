@@ -351,18 +351,51 @@ export class LeadsService {
       newValues: dto,
     });
 
+    // Status transition gets its own dedicated timeline event with a
+    // status-specific eventType so the lead profile can render an icon
+    // tone that matches (CONVERTED = green, others = neutral). When the
+    // status didn't change we still record a generic LEAD_UPDATED so the
+    // timeline reflects "fields were edited" — diffs which fields the
+    // user touched are captured in metadata for forensics.
     if (dto.status && dto.status !== existing.status) {
       await this.activityTimeline.record({
         entityType: 'Lead',
         entityId: updated.id,
         leadId: updated.id,
         clientId: updated.convertedClientId ?? undefined,
-        eventType: dto.status === LeadStatus.CONVERTED ? TimelineEventType.LEAD_CONVERTED : TimelineEventType.NOTE_ADDED,
-        description: dto.status === LeadStatus.CONVERTED
-          ? 'Lead marked as converted'
-          : `Lead status changed from ${existing.status} to ${dto.status}`,
+        eventType:
+          dto.status === LeadStatus.CONVERTED
+            ? TimelineEventType.LEAD_CONVERTED
+            : dto.status === LeadStatus.CONTACTED
+              ? TimelineEventType.LEAD_CONTACTED
+              : dto.status === LeadStatus.QUALIFIED
+                ? TimelineEventType.LEAD_QUALIFIED
+                : TimelineEventType.LEAD_STATUS_CHANGED,
+        description:
+          dto.status === LeadStatus.CONVERTED
+            ? 'Lead marked as converted'
+            : `Lead status changed from ${existing.status} to ${dto.status}`,
         actorUserId,
+        metadata: { from: existing.status, to: dto.status },
       });
+    } else {
+      // No status change — record what (if anything) changed instead so the
+      // timeline still reflects the edit. Skip if the DTO was effectively a
+      // no-op (zero scalar fields supplied besides status === existing).
+      const changedFields = Object.entries(dto)
+        .filter(([k, v]) => v !== undefined && k !== 'status')
+        .map(([k]) => k);
+      if (changedFields.length > 0) {
+        await this.activityTimeline.record({
+          entityType: 'Lead',
+          entityId: updated.id,
+          leadId: updated.id,
+          eventType: TimelineEventType.LEAD_UPDATED,
+          description: `Lead updated: ${changedFields.slice(0, 4).join(', ')}${changedFields.length > 4 ? '…' : ''}`,
+          actorUserId,
+          metadata: { changedFields },
+        });
+      }
     }
 
     return updated;
@@ -406,7 +439,7 @@ export class LeadsService {
       entityType: 'Lead',
       entityId: id,
       leadId: id,
-      eventType: TimelineEventType.NOTE_ADDED,
+      eventType: TimelineEventType.LEAD_DELETED,
       description: `Lead ${existing.referenceCode} deleted by admin`,
       actorUserId,
     });
@@ -443,9 +476,12 @@ export class LeadsService {
     });
 
     // Audit + timeline writes are fire-and-await — each is cheap and we
-    // want the trail durable before returning.
+    // want the trail durable before returning. Both records are written
+    // per-lead so the per-lead activity tab still shows the delete event
+    // even on bulk operations (admin can't tell from the timeline whether
+    // a lead was deleted individually or in a batch — neither hurts).
     await Promise.all(
-      targets.map((t) =>
+      targets.flatMap((t) => [
         this.auditLog.log({
           actorUserId,
           action: AuditAction.LEAD_UPDATED,
@@ -454,7 +490,16 @@ export class LeadsService {
           oldValues: { deletedAt: null, status: t.status },
           newValues: { deletedAt: now.toISOString(), action: 'bulk-soft-delete' },
         }),
-      ),
+        this.activityTimeline.record({
+          entityType: 'Lead',
+          entityId: t.id,
+          leadId: t.id,
+          eventType: TimelineEventType.LEAD_DELETED,
+          description: `Lead ${t.referenceCode} deleted (bulk action)`,
+          actorUserId,
+          metadata: { bulk: true, batchSize: targets.length },
+        }),
+      ]),
     );
 
     return { deleted: targets.length };
@@ -719,7 +764,7 @@ export class LeadsService {
     const employee = await this.findEmployeeIdByUserId(user.id);
     void employee; // employee id not stored in lead_files, use userId directly
 
-    return this.prisma.leadFile.create({
+    const created = await this.prisma.leadFile.create({
       data: {
         leadId,
         uploadedByUserId: user.id,
@@ -737,6 +782,23 @@ export class LeadsService {
         createdAt: true,
       },
     });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: leadId,
+      leadId,
+      eventType: TimelineEventType.LEAD_FILE_UPLOADED,
+      description: `File uploaded: ${file.originalname}`,
+      actorUserId: user.id,
+      metadata: {
+        fileId: created.id,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+        sizeBytes: file.size,
+      },
+    });
+
+    return created;
   }
 
   async listLeadFiles(leadId: string, user: RequestUser) {
@@ -774,7 +836,7 @@ export class LeadsService {
 
     const record = await this.prisma.leadFile.findFirst({
       where: { id: fileId, leadId },
-      select: { id: true, fileKey: true, uploadedByUserId: true },
+      select: { id: true, fileKey: true, fileName: true, uploadedByUserId: true },
     });
     if (!record) throw new NotFoundException('File not found');
 
@@ -786,6 +848,17 @@ export class LeadsService {
 
     await this.storage.delete(record.fileKey);
     await this.prisma.leadFile.delete({ where: { id: fileId } });
+
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: leadId,
+      leadId,
+      eventType: TimelineEventType.LEAD_FILE_DELETED,
+      description: `File deleted: ${record.fileName}`,
+      actorUserId: user.id,
+      metadata: { fileId: record.id, fileName: record.fileName },
+    });
+
     return { deleted: true };
   }
 

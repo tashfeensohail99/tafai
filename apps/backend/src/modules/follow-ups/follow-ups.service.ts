@@ -249,14 +249,28 @@ export class FollowUpsService {
       newValues: dto,
     });
 
+    // If only the due date moved, log it as a reschedule with the old/new
+    // timestamps for context; otherwise fall back to a generic update event.
+    const dueAtChanged =
+      dto.dueAt &&
+      new Date(dto.dueAt).getTime() !== new Date(existing.dueAt).getTime();
     await this.activityTimeline.record({
       entityType: 'Lead',
       entityId: updated.leadId,
       leadId: updated.leadId,
-      eventType: TimelineEventType.NOTE_ADDED,
-      description: `Follow-up updated: ${updated.title}`,
+      eventType: dueAtChanged
+        ? TimelineEventType.FOLLOW_UP_RESCHEDULED
+        : TimelineEventType.NOTE_ADDED,
+      description: dueAtChanged
+        ? `Follow-up rescheduled: ${updated.title} → ${new Date(dto.dueAt!).toLocaleString()}`
+        : `Follow-up updated: ${updated.title}`,
       actorUserId: user.id,
-      metadata: { followUpId: updated.id },
+      metadata: {
+        followUpId: updated.id,
+        ...(dueAtChanged
+          ? { from: existing.dueAt?.toISOString(), to: new Date(dto.dueAt!).toISOString() }
+          : {}),
+      },
     });
 
     return updated;

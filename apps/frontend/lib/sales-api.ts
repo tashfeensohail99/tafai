@@ -365,6 +365,35 @@ export async function sendLeadEmailVerification(leadId: string): Promise<{ sent:
   return data ?? { sent: false };
 }
 
+/**
+ * One row in the activity timeline. Backend stores eventType as a Prisma
+ * enum — we keep it as a free string here so adding new server-side
+ * events doesn't break the frontend build before the type is regenerated.
+ * Unknown eventType strings fall through to a neutral renderer.
+ */
+export interface ActivityTimelineEntry {
+  id: string;
+  entityType: string;
+  entityId: string;
+  leadId: string | null;
+  clientId: string | null;
+  caseId: string | null;
+  eventType: string;
+  description: string;
+  actorUserId: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+
+export async function fetchLeadActivityTimeline(
+  leadId: string,
+): Promise<ActivityTimelineEntry[]> {
+  const data = await apiFetch<ActivityTimelineEntry[]>(
+    `/activity-timeline?leadId=${leadId}`,
+  );
+  return data ?? [];
+}
+
 export async function fetchFollowUps(leadId?: string): Promise<FollowUp[]> {
   const qs = leadId ? `?leadId=${leadId}` : '';
   const data = await apiFetch<ApiFollowUp[]>(`/follow-ups${qs}`);

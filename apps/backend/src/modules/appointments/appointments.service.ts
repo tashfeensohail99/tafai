@@ -295,8 +295,34 @@ export class AppointmentsService {
       newValues: dto,
     });
 
-    if (dto.status === AppointmentStatus.COMPLETED && existing.status !== AppointmentStatus.COMPLETED) {
-      await this.recordTimeline(updated.leadId, updated.clientId, updated.caseId, TimelineEventType.APPOINTMENT_COMPLETED, `Appointment completed: ${updated.title}`, actorUserId);
+    // Timeline events for every appointment-status transition so the lead
+    // profile reflects the lifecycle, not just completions.
+    if (dto.status && dto.status !== existing.status) {
+      if (dto.status === AppointmentStatus.COMPLETED) {
+        await this.recordTimeline(updated.leadId, updated.clientId, updated.caseId, TimelineEventType.APPOINTMENT_COMPLETED, `Appointment completed: ${updated.title}`, actorUserId);
+      } else if (dto.status === AppointmentStatus.CANCELLED) {
+        await this.recordTimeline(updated.leadId, updated.clientId, updated.caseId, TimelineEventType.APPOINTMENT_CANCELLED, `Appointment cancelled: ${updated.title}`, actorUserId);
+      } else if (dto.status === AppointmentStatus.NO_SHOW) {
+        await this.recordTimeline(updated.leadId, updated.clientId, updated.caseId, TimelineEventType.APPOINTMENT_NO_SHOW, `Customer no-show: ${updated.title}`, actorUserId);
+      }
+    }
+
+    // Reschedule — scheduledAt moved without a status change to CANCELLED.
+    // Compare timestamps via getTime() so a Date and an ISO string with the
+    // same instant don't false-positive as "rescheduled".
+    if (
+      dto.scheduledAt &&
+      new Date(dto.scheduledAt).getTime() !== new Date(existing.scheduledAt).getTime() &&
+      dto.status !== AppointmentStatus.CANCELLED
+    ) {
+      await this.recordTimeline(
+        updated.leadId,
+        updated.clientId,
+        updated.caseId,
+        TimelineEventType.APPOINTMENT_RESCHEDULED,
+        `Appointment rescheduled: ${updated.title} → ${new Date(dto.scheduledAt).toLocaleString()}`,
+        actorUserId,
+      );
     }
 
     return this.findById(id);
@@ -321,6 +347,15 @@ export class AppointmentsService {
       oldValues: { status: appointment.status },
       newValues: { status: AppointmentStatus.CANCELLED, cancellationReason: dto.cancellationReason },
     });
+
+    await this.recordTimeline(
+      appointment.leadId,
+      appointment.clientId,
+      appointment.caseId,
+      TimelineEventType.APPOINTMENT_CANCELLED,
+      `Appointment cancelled: ${appointment.title}${dto.cancellationReason ? ` (${dto.cancellationReason})` : ''}`,
+      actorUserId,
+    );
 
     return this.findById(id);
   }

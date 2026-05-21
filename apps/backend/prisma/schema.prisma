@@ -302,8 +302,24 @@ enum TimelineEventType {
   LEAD_QUALIFIED
   LEAD_ASSIGNED
   LEAD_CONVERTED
+  // Generic status transition (NEW → CONTACTED → QUALIFIED → … → CONVERTED/LOST).
+  // The legacy LEAD_CONTACTED / LEAD_QUALIFIED values are kept for back-compat
+  // and used when those specific stages are entered; LEAD_STATUS_CHANGED is
+  // the catch-all for any transition that doesn't have a dedicated event.
+  LEAD_STATUS_CHANGED
+  // Generic "lead row was edited" — phone, email, notes, service interest etc.
+  // Used by the Edit Lead modal so the timeline records "fields changed by X".
+  LEAD_UPDATED
+  // Admin soft-deleted the lead (sets deletedAt). Kept distinct from
+  // NOTE_ADDED so the timeline can render a dedicated icon + tone.
+  LEAD_DELETED
+  // Lead file attachments (passport, signed agreement, etc.).
+  LEAD_FILE_UPLOADED
+  LEAD_FILE_DELETED
   FOLLOW_UP_CREATED
   FOLLOW_UP_COMPLETED
+  // Follow-up `dueAt` moved without completing.
+  FOLLOW_UP_RESCHEDULED
   CLIENT_PROFILE_UPDATED
   CASE_OPENED
   CASE_STATUS_CHANGED
@@ -313,6 +329,10 @@ enum TimelineEventType {
   DOCUMENT_REJECTED
   APPOINTMENT_SCHEDULED
   APPOINTMENT_COMPLETED
+  // Appointment cancelled / rescheduled / customer no-show.
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+  APPOINTMENT_NO_SHOW
   PAYMENT_RECEIVED
   FINANCE_HANDOVER_SUBMITTED
   FINANCE_HANDOVER_REVIEWED

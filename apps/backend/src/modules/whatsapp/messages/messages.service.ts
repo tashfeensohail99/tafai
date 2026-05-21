@@ -119,9 +119,7 @@ export class WhatsAppMessagesService {
       );
     }
 
-    if (!caller.employeeId) {
-      throw new ForbiddenException('Only employees may send WhatsApp messages');
-    }
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
 
     const message = await this.prisma.whatsAppMessage.create({
       data: {
@@ -133,7 +131,7 @@ export class WhatsAppMessagesService {
         type: WhatsAppMessageType.TEXT,
         status: WhatsAppMessageStatus.QUEUED,
         body,
-        sentByEmployeeId: caller.employeeId,
+        sentByEmployeeId: senderEmployeeId,
         repliedToWaMessageId: input.contextWaMessageId ?? null,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
@@ -150,9 +148,7 @@ export class WhatsAppMessagesService {
 
   async sendTemplate(caller: CallerContext, input: SendTemplateInput) {
     const thread = await this.thread(caller, input.threadId);
-    if (!caller.employeeId) {
-      throw new ForbiddenException('Only employees may send WhatsApp messages');
-    }
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
     const message = await this.prisma.whatsAppMessage.create({
       data: {
         threadId: thread.id,
@@ -165,7 +161,7 @@ export class WhatsAppMessagesService {
         templateName: input.templateName,
         templateLanguage: input.language,
         payload: { components: input.components ?? [] } as unknown as Prisma.InputJsonValue,
-        sentByEmployeeId: caller.employeeId,
+        sentByEmployeeId: senderEmployeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
       select: this.publicSelect(),
@@ -184,9 +180,7 @@ export class WhatsAppMessagesService {
    */
   async sendMediaMessage(caller: CallerContext, input: SendMediaInput) {
     const thread = await this.thread(caller, input.threadId);
-    if (!caller.employeeId) {
-      throw new ForbiddenException('Only employees may send WhatsApp messages');
-    }
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
 
     // Free-form media messages are subject to the same 24-hour window rule
     // as text messages. Templates are exempt but they don't use this method.
@@ -300,7 +294,7 @@ export class WhatsAppMessagesService {
         // Mark voice notes so the outbound processor sends voice: true to Meta,
         // which renders the message as a voice note (waveform) not basic audio.
         ...(isVoiceNote ? { payload: { isVoiceNote: true } as unknown as Prisma.InputJsonValue } : {}),
-        sentByEmployeeId: caller.employeeId,
+        sentByEmployeeId: senderEmployeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
       select: this.publicSelect(),
@@ -339,6 +333,34 @@ export class WhatsAppMessagesService {
       await unlink(tmpIn).catch(() => {});
       await unlink(tmpOut).catch(() => {});
     }
+  }
+
+  /**
+   * Decide which employee gets stamped on the outgoing message's
+   * `sentByEmployeeId`. Two cases:
+   *
+   *   1. Caller IS an employee (sales agent, manager-in-pool, admin who's also
+   *      in the WhatsApp pool) — stamp them. The thread reads naturally as
+   *      that person speaking.
+   *
+   *   2. Caller is NOT an employee (super-admin / founder account with no
+   *      Employee row) intervening in a sales agent's thread — stamp the
+   *      thread's assigned agent so the conversation reads as one consistent
+   *      voice from the customer's side. The customer never sees the
+   *      attribution anyway (Meta only shows the business number) — this is
+   *      purely about how the internal CRM thread renders. Falls back to null
+   *      if neither caller nor thread has an employee (e.g. unassigned thread
+   *      hit by a super-admin), which the schema allows.
+   *
+   * Audit of who *actually* clicked send is preserved via the JWT auth log
+   * and ActivityTimeline, not via sentByEmployeeId.
+   */
+  private resolveSenderEmployeeId(
+    caller: CallerContext,
+    thread: { lead: { assignedEmployeeId: string | null } | null },
+  ): string | null {
+    if (caller.employeeId) return caller.employeeId;
+    return thread.lead?.assignedEmployeeId ?? null;
   }
 
   /** Look up the thread, enforcing the agent-scope rule. */

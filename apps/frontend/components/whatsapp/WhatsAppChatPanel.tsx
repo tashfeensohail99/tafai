@@ -98,6 +98,9 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [editLeadOpen, setEditLeadOpen] = useState(false);
+  // Fullscreen image viewer ("lightbox"). Holds the blob URL of the image
+  // the user just clicked; null = closed. Escape / click-backdrop closes.
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -469,7 +472,13 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               No messages yet
             </div>
           ) : (
-            messages.map((m) => <MessageBubble key={m.id} message={m} />)
+            messages.map((m) => (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                onImageClick={(url) => setLightboxUrl(url)}
+              />
+            ))
           )}
         </div>
         {/* Inline error banner — shown whenever a send (text or voice)
@@ -606,6 +615,111 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         onSaved={() => {
           setEditLeadOpen(false);
           void reload();
+        }}
+      />
+
+      {lightboxUrl ? (
+        <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+// ---- Image lightbox -----------------------------------------------------
+
+function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  // Escape-to-close + lock body scroll while the lightbox is up so the
+  // viewport doesn't scroll behind the dimmed overlay.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.92)',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 32,
+        cursor: 'zoom-out',
+      }}
+    >
+      {/* Close button — top right */}
+      <button
+        type="button"
+        title="Close (Esc)"
+        onClick={onClose}
+        style={{
+          all: 'unset',
+          position: 'absolute',
+          top: 16,
+          right: 16,
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          background: 'rgba(255,255,255,0.1)',
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+        }}
+      >
+        <X size={22} />
+      </button>
+      {/* Download button — bottom right. Uses an <a download> rather than a
+          button + JS so the browser handles the save dialog natively. */}
+      <a
+        href={url}
+        download
+        onClick={(e) => e.stopPropagation()}
+        title="Download"
+        style={{
+          position: 'absolute',
+          bottom: 24,
+          right: 24,
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          background: 'rgba(255,255,255,0.1)',
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          textDecoration: 'none',
+        }}
+      >
+        <Download size={20} />
+      </a>
+      {/* The image — stop click propagation so clicking the image itself
+          doesn't dismiss; the user has to click the backdrop or Esc/X. */}
+      <img
+        src={url}
+        alt="Preview"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: '100%',
+          maxHeight: '100%',
+          objectFit: 'contain',
+          borderRadius: 4,
+          cursor: 'default',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
         }}
       />
     </div>
@@ -1017,7 +1131,13 @@ function MediaUnavailableWithRetry({
 }
 
 /** Renders image / audio / video / document media inside a message bubble. */
-function MediaBubbleContent({ message }: { message: ChatMessage }) {
+function MediaBubbleContent({
+  message,
+  onImageClick,
+}: {
+  message: ChatMessage;
+  onImageClick?: (blobUrl: string) => void;
+}) {
   type AnyPayload = Record<string, { id?: string; filename?: string }>;
   const p = message.payload as AnyPayload | null;
   const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document';
@@ -1076,7 +1196,12 @@ function MediaBubbleContent({ message }: { message: ChatMessage }) {
           display: 'block',
           cursor: 'pointer',
         }}
-        onClick={() => window.open(blobUrl, '_blank')}
+        onClick={() => {
+          // Open the in-app lightbox if available, else fall back to a new tab
+          // (preserves behaviour for any embed that doesn't pass the callback).
+          if (onImageClick) onImageClick(blobUrl);
+          else window.open(blobUrl, '_blank');
+        }}
       />
     );
   }
@@ -1117,7 +1242,13 @@ function MediaBubbleContent({ message }: { message: ChatMessage }) {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  onImageClick,
+}: {
+  message: ChatMessage;
+  onImageClick?: (blobUrl: string) => void;
+}) {
   const isOut = message.direction === 'OUTBOUND';
   const isMedia = ['IMAGE', 'AUDIO', 'VIDEO', 'DOCUMENT'].includes(message.type);
   return (
@@ -1150,7 +1281,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           }}
         >
           {isMedia ? (
-            <MediaBubbleContent message={message} />
+            <MediaBubbleContent message={message} onImageClick={onImageClick} />
           ) : (
             message.body ??
               (message.templateName

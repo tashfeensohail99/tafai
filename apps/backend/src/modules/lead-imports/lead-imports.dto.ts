@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsEnum,
@@ -10,6 +10,21 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { LeadImportStatus } from '@prisma/client';
+
+/**
+ * multipart/form-data can't carry nested objects natively — the frontend
+ * JSON.stringify's the column mapping into a single form field. This
+ * transform unwraps it before class-validator runs ValidateNested against
+ * the ColumnMappingDto shape.
+ */
+function parseJsonField<T>(value: unknown): T | unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
 
 /**
  * Mapping from canonical lead field → spreadsheet column header.
@@ -34,6 +49,10 @@ export class ColumnMappingDto {
 export class StartImportDto {
   @IsString() @MaxLength(120) name!: string;
 
+  // multipart sends columnMapping as a JSON-encoded string — unwrap it
+  // before nested validation, otherwise class-validator complains
+  // "nested property columnMapping must be either object or array".
+  @Transform(({ value }) => parseJsonField<unknown>(value))
   @ValidateNested()
   @Type(() => ColumnMappingDto)
   columnMapping!: ColumnMappingDto;
@@ -43,7 +62,14 @@ export class StartImportDto {
   @MaxLength(2)
   defaultCountry?: string;
 
+  // Repeated form fields land as an array via multer; a single field
+  // arrives as a string. Coerce so class-validator's @IsArray is happy.
   @IsOptional()
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string' && value.length > 0) return [value];
+    return [];
+  })
   @IsArray()
   @IsUUID('4', { each: true })
   selectedAgentIds?: string[];

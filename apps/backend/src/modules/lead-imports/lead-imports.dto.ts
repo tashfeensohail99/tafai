@@ -1,4 +1,4 @@
-import { Transform, Type } from 'class-transformer';
+import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsEnum,
@@ -11,20 +11,6 @@ import {
 } from 'class-validator';
 import { LeadImportStatus } from '@prisma/client';
 
-/**
- * multipart/form-data can't carry nested objects natively — the frontend
- * JSON.stringify's the column mapping into a single form field. This
- * transform unwraps it before class-validator runs ValidateNested against
- * the ColumnMappingDto shape.
- */
-function parseJsonField<T>(value: unknown): T | unknown {
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
 
 /**
  * Mapping from canonical lead field → spreadsheet column header.
@@ -49,10 +35,25 @@ export class ColumnMappingDto {
 export class StartImportDto {
   @IsString() @MaxLength(120) name!: string;
 
-  // multipart sends columnMapping as a JSON-encoded string — unwrap it
-  // before nested validation, otherwise class-validator complains
-  // "nested property columnMapping must be either object or array".
-  @Transform(({ value }) => parseJsonField<unknown>(value))
+  // multipart sends columnMapping as a JSON-encoded string — parse and
+  // construct a real ColumnMappingDto instance here. Returning a plain
+  // object from @Transform doesn't carry class-validator metadata, so
+  // forbidNonWhitelisted on the outer pipe would reject every property
+  // as "should not exist". plainToInstance attaches the class identity
+  // so the decorators inside ColumnMappingDto are recognised.
+  @Transform(({ value }) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return plainToInstance(ColumnMappingDto, value);
+    }
+    if (typeof value === 'string') {
+      try {
+        return plainToInstance(ColumnMappingDto, JSON.parse(value));
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  })
   @ValidateNested()
   @Type(() => ColumnMappingDto)
   columnMapping!: ColumnMappingDto;

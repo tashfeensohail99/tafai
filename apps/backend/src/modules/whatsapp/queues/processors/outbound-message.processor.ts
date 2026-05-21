@@ -73,10 +73,15 @@ export class OutboundMessageProcessor extends WorkerHost {
       data: { status: WhatsAppMessageStatus.SENDING },
     });
 
-    const client = this.metaFactory.forChannel(message.channel);
-    const to = message.thread.waContactId;
-
     try {
+      // forChannel() decrypts the stored access token. If the
+      // WHATSAPP_ENCRYPTION_KEY env var was rotated AFTER the channel was
+      // saved, decrypt throws InvalidTag and — when this lived outside the
+      // try block — the message rotted in SENDING with no errorCode, BullMQ
+      // retried 5× silently and gave up. Keep it inside so the FAIL branch
+      // below stamps a real diagnosis on the message.
+      const client = this.metaFactory.forChannel(message.channel);
+      const to = message.thread.waContactId;
       const res = await this.dispatchSend(client, message, to);
       const waMessageId = res.messages?.[0]?.id ?? null;
       const now = new Date();
@@ -166,6 +171,37 @@ export class OutboundMessageProcessor extends WorkerHost {
         // Re-throw so BullMQ counts the attempt and applies retry policy.
         throw err;
       }
+
+      // Non-Meta throws — decrypt InvalidTag (encryption key rotated), bad
+      // channel config, code bugs. Stamp the message FAILED with a clear
+      // errorTitle so admin sees what happened instead of a forever-pending
+      // clock icon. Code "internal" tells the UI this isn't a Meta error.
+      const errMsg = (err as Error)?.message ?? 'unknown';
+      const isCryptoErr = /InvalidTag|Unsupported state|bad decrypt|auth tag/i.test(errMsg);
+      await this.prisma.whatsAppMessage.update({
+        where: { id: messageId },
+        data: {
+          status: WhatsAppMessageStatus.FAILED,
+          failedAt: new Date(),
+          errorCode: 'internal',
+          errorTitle: isCryptoErr
+            ? 'Channel credentials cannot be decrypted — re-save Meta access token'
+            : 'Internal worker error',
+          errorDetails: { message: errMsg } as Prisma.InputJsonValue,
+        },
+      });
+      const org = await this.prisma.organization.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      if (org) {
+        await this.publisher.publishToOrg(org.id, WHATSAPP_WS_EVENTS.MESSAGE_STATUS, {
+          threadId: message.threadId,
+          messageId: message.id,
+          status: 'FAILED',
+        });
+      }
+      this.log.error(`outbound ${messageId} failed (non-Meta): ${errMsg}`);
       throw err;
     }
   }

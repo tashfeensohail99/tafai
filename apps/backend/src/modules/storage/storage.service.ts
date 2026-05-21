@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
+import type { Readable } from 'node:stream';
 import { randomUUID } from 'crypto';
 
 export interface UploadResult {
@@ -144,6 +145,41 @@ export class StorageService {
 
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.s3, command, { expiresIn: this.signedUrlExpires });
+  }
+
+  /**
+   * Read object bytes back into memory. Counterpart to upload(); used by
+   * WhatsApp media streaming where the message's mediaUrl is an S3 key
+   * (from the media-download worker) and we want to serve the bytes
+   * through our authenticated endpoint rather than expose a signed URL.
+   */
+  async download(key: string): Promise<{ bytes: Buffer; mimeType: string | null }> {
+    if (this.mode === 'local') {
+      throw new Error(`[LOCAL] download not supported (key: ${key})`);
+    }
+
+    if (this.mode === 'supabase') {
+      const res = await fetch(
+        `${this.supabaseUrl}/storage/v1/object/${this.bucket}/${key}`,
+        { headers: { Authorization: `Bearer ${this.supabaseServiceKey}` } },
+      );
+      if (!res.ok) {
+        throw new Error(`Supabase download failed: ${res.status} ${await res.text()}`);
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      return { bytes: buf, mimeType: res.headers.get('content-type') };
+    }
+
+    const out = await this.s3.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    const body = out.Body as Readable | undefined;
+    if (!body) throw new Error(`S3 object body empty (key: ${key})`);
+    const chunks: Buffer[] = [];
+    for await (const chunk of body) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+    return { bytes: Buffer.concat(chunks), mimeType: out.ContentType ?? null };
   }
 
   async delete(key: string): Promise<void> {

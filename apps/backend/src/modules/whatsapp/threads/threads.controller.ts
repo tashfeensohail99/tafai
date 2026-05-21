@@ -24,6 +24,7 @@ import {
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { StorageService } from '../../storage/storage.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WhatsAppThreadsService } from './threads.service';
 
@@ -60,6 +61,7 @@ export class WhatsAppThreadsController {
     private readonly threads: WhatsAppThreadsService,
     private readonly prisma: PrismaService,
     private readonly metaFactory: WhatsAppMetaClientFactory,
+    private readonly storage: StorageService,
   ) {}
 
   @Get()
@@ -138,30 +140,42 @@ export class WhatsAppThreadsController {
       throw new HttpException('Message not found', HttpStatus.NOT_FOUND);
     }
 
-    // Extract the Meta media ID from the payload based on message type.
-    // Inbound messages: media ID is in payload.audio.id (set by webhook ingest).
-    // Outbound messages we sent: media ID is in mediaUrl as "meta:<id>".
     type MediaPayload = { id?: string; mime_type?: string; filename?: string };
     const p = message.payload as Record<string, MediaPayload> | null;
     const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document' | 'sticker';
     const mediaMeta = p?.[typeKey];
-    const metaMediaId =
-      mediaMeta?.id ??
-      (message.mediaUrl?.startsWith('meta:') ? message.mediaUrl.slice(5) : null);
 
-    if (!metaMediaId) {
-      throw new HttpException('No media ID for this message', HttpStatus.UNPROCESSABLE_ENTITY);
+    // Fast path — the media-download worker already re-hosted these bytes
+    // to S3 when the inbound message arrived. `mediaUrl` either holds an S3
+    // key (preferred — serve cached bytes) or a "meta:<id>" reference for
+    // outbound voice notes we sent (need to re-fetch from Meta).
+    const cachedKey =
+      message.mediaUrl && !message.mediaUrl.startsWith('meta:') && !message.mediaUrl.startsWith('http')
+        ? message.mediaUrl
+        : null;
+
+    let binary: Buffer;
+    let mimeType: string;
+    if (cachedKey) {
+      const cached = await this.storage.download(cachedKey);
+      binary = cached.bytes;
+      mimeType = message.mediaMimeType ?? cached.mimeType ?? 'application/octet-stream';
+    } else {
+      // Slow path — bytes are not cached, ask Meta. This only works if the
+      // channel's access token can still see the media (i.e., the media was
+      // received under the SAME WABA as the channel's current token).
+      const metaMediaId =
+        mediaMeta?.id ??
+        (message.mediaUrl?.startsWith('meta:') ? message.mediaUrl.slice(5) : null);
+      if (!metaMediaId) {
+        throw new HttpException('No media ID for this message', HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      const client = this.metaFactory.forChannel(message.channel);
+      const { url: cdnUrl, mime_type } = await client.getMediaUrl(metaMediaId);
+      binary = await client.downloadMedia(cdnUrl);
+      mimeType = message.mediaMimeType ?? mime_type ?? 'application/octet-stream';
     }
 
-    const client = this.metaFactory.forChannel(message.channel);
-
-    // Step 1: Resolve the temporary CDN URL from Meta.
-    const { url: cdnUrl, mime_type } = await client.getMediaUrl(metaMediaId);
-
-    // Step 2: Fetch the binary from Meta's CDN.
-    const binary = await client.downloadMedia(cdnUrl);
-
-    const mimeType = message.mediaMimeType ?? mime_type ?? 'application/octet-stream';
     const filename = mediaMeta?.filename ?? `${typeKey}.${mimeType.split('/')[1] ?? 'bin'}`;
 
     res.setHeader('Content-Type', mimeType);

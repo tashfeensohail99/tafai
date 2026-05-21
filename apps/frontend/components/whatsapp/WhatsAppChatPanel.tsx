@@ -21,6 +21,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
+  type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
@@ -32,15 +34,19 @@ import {
   CheckCheck,
   Clock4,
   Download,
+  File as FileIcon,
   FileText,
+  Image as ImageIcon,
   Mic,
   Phone,
   PhoneCall,
+  Plus,
   Send,
   Sparkles,
   Square,
   UserCog,
   UserPlus,
+  Video as VideoIcon,
   X,
 } from 'lucide-react';
 import {
@@ -209,6 +215,97 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     void (async () => {
       try {
         const real = await sendText(thread.id, body, { idempotencyKey });
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Failed to send';
+        setMessages((curr) =>
+          curr.map((m) =>
+            m.id === tempId
+              ? { ...m, status: 'FAILED', errorTitle: reason, failedAt: new Date().toISOString() }
+              : m,
+          ),
+        );
+        setError(reason);
+      }
+    })();
+  };
+
+  /**
+   * Send an image / video / document picked from the + attach menu.
+   *
+   * Optimistic UI mirrors the text path: insert a placeholder bubble the
+   * moment the user picks the file (with a local blob-URL preview for
+   * images so they SEE what they're about to send) and swap it for the
+   * server's authoritative copy once the upload + Meta forwarding completes.
+   *
+   * Uploads are bigger than text sends — the placeholder lets the user
+   * confirm they picked the right file while the upload runs, instead of
+   * staring at a blank composer for 2-5s wondering if anything happened.
+   */
+  const handleSendMedia = (file: File) => {
+    if (!thread) return;
+
+    const idempotencyKey =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const tempId = `temp-${idempotencyKey}`;
+    const mime = (file.type || '').toLowerCase();
+    const isImage = mime.startsWith('image/');
+    const isVideo = mime.startsWith('video/');
+    const tempType: 'IMAGE' | 'VIDEO' | 'DOCUMENT' = isImage
+      ? 'IMAGE'
+      : isVideo
+        ? 'VIDEO'
+        : 'DOCUMENT';
+    // Local blob URL — lets the bubble show a real preview for images/video
+    // and a working "download" link for documents while the upload is in
+    // flight. URL.revokeObjectURL is fine to skip; the temp message is
+    // short-lived (replaced on POST resolve) and the browser garbage-collects
+    // blob URLs when the page navigates away.
+    const previewUrl = URL.createObjectURL(file);
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      threadId: thread.id,
+      leadId: thread.leadId ?? null,
+      clientId: thread.clientId ?? null,
+      direction: 'OUTBOUND',
+      type: tempType,
+      status: 'QUEUED',
+      body: isImage || isVideo ? null : file.name,
+      // payload mirrors the inbound-message shape so MediaBubbleContent can
+      // resolve a filename for the document download link.
+      payload:
+        tempType === 'DOCUMENT'
+          ? ({ document: { filename: file.name } } as unknown)
+          : null,
+      mediaUrl: previewUrl,
+      mediaMimeType: file.type || null,
+      templateName: null,
+      templateLanguage: null,
+      sentByEmployeeId: null,
+      waMessageId: null,
+      repliedToWaMessageId: null,
+      errorCode: null,
+      errorTitle: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      failedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages((curr) => [...curr, tempMessage]);
+
+    void (async () => {
+      try {
+        const real = await sendMediaMessage(
+          thread.id,
+          file,
+          file.name,
+          undefined,
+          idempotencyKey,
+        );
         setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
       } catch (err) {
         const reason = err instanceof Error ? err.message : 'Failed to send';
@@ -417,6 +514,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onChange={setDraft}
           onSend={handleSend}
           onSendVoice={handleSendVoice}
+          onSendMedia={handleSendMedia}
           onOpenTemplate={() => setTemplateOpen(true)}
           disabled={!withinWindow}
           sending={sending}
@@ -925,13 +1023,20 @@ function MediaBubbleContent({ message }: { message: ChatMessage }) {
   const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document';
   // Inbound: media ID lives in payload.audio.id etc.
   // Outbound (voice notes we sent): media ID lives in mediaUrl as "meta:<id>", payload is null.
+  // Optimistic placeholder (just-picked + attach): mediaUrl is a "blob:" URL
+  // pointing at the local File, so we can preview without a backend round-trip.
+  const isOptimistic =
+    message.id.startsWith('temp-') && (message.mediaUrl?.startsWith('blob:') ?? false);
   const hasMedia = !!(p?.[typeKey]?.id) || !!(message.mediaUrl);
 
-  const { blobUrl, loading, error } = useMediaBlobUrl(
+  // Only fetch from the backend for already-persisted media — skip for temp
+  // bubbles since the blob URL is already in hand.
+  const { blobUrl: fetchedBlobUrl, loading, error } = useMediaBlobUrl(
     message.threadId,
     message.id,
-    hasMedia,
+    hasMedia && !isOptimistic,
   );
+  const blobUrl = isOptimistic ? message.mediaUrl : fetchedBlobUrl;
 
   const filename = p?.[typeKey]?.filename ?? `${typeKey}`;
 
@@ -943,7 +1048,7 @@ function MediaBubbleContent({ message }: { message: ChatMessage }) {
     );
   }
 
-  if (loading) {
+  if (loading && !isOptimistic) {
     return (
       <span style={{ fontSize: 13, color: 'var(--sos-text-faint)', fontStyle: 'italic' }}>
         Loading {typeKey}…
@@ -951,9 +1056,13 @@ function MediaBubbleContent({ message }: { message: ChatMessage }) {
     );
   }
 
-  if (error || !blobUrl) {
+  if (!isOptimistic && (error || !blobUrl)) {
     return <MediaUnavailableWithRetry threadId={message.threadId} messageId={message.id} />;
   }
+
+  // From here on: blobUrl is non-null (either from the backend fetch or the
+  // optimistic blob: URL stamped on the temp message).
+  if (!blobUrl) return null;
 
   if (message.type === 'IMAGE') {
     return (
@@ -1116,6 +1225,43 @@ function StatusIcon({
   );
 }
 
+// ---- Attach-menu item ---------------------------------------------------
+
+function AttachMenuItem(props: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={props.onClick}
+      style={{
+        all: 'unset',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '8px 12px',
+        borderRadius: 6,
+        color: 'var(--sos-text-primary)',
+        fontSize: 13,
+        transition: 'background 0.12s',
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+      }}
+    >
+      <span style={{ color: 'var(--wa-accent)' }}>{props.icon}</span>
+      {props.label}
+    </button>
+  );
+}
+
 // ---- Composer -----------------------------------------------------------
 
 function ChatComposer(props: {
@@ -1123,6 +1269,7 @@ function ChatComposer(props: {
   onChange: (v: string) => void;
   onSend: () => void;
   onSendVoice: (blob: Blob, mimeType: string) => void;
+  onSendMedia: (file: File) => void;
   onOpenTemplate: () => void;
   disabled: boolean;
   sending: boolean;
@@ -1132,6 +1279,52 @@ function ChatComposer(props: {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // + attach menu state
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const docInputRef = useRef<HTMLInputElement | null>(null);
+  const attachRootRef = useRef<HTMLDivElement | null>(null);
+
+  // Close attach menu on outside-click / Escape so it behaves like a
+  // proper dropdown rather than a stuck overlay.
+  useEffect(() => {
+    if (!attachMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!attachRootRef.current) return;
+      if (!attachRootRef.current.contains(e.target as Node)) {
+        setAttachMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAttachMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [attachMenuOpen]);
+
+  const pickFile = (kind: 'image' | 'video' | 'document') => {
+    setAttachMenuOpen(false);
+    const ref =
+      kind === 'image' ? imageInputRef : kind === 'video' ? videoInputRef : docInputRef;
+    // Reset so picking the SAME file twice in a row still fires onChange.
+    if (ref.current) {
+      ref.current.value = '';
+      ref.current.click();
+    }
+  };
+
+  const onFileChosen = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) props.onSendMedia(file);
+    // Allow re-selecting the same file later.
+    e.target.value = '';
+  };
 
   const startRecording = async () => {
     if (props.disabled) return;
@@ -1275,6 +1468,100 @@ function ChatComposer(props: {
       ) : (
         /* ── Normal compose mode ── */
         <>
+          {/* + attach menu — image / video / document */}
+          <div
+            ref={attachRootRef}
+            style={{ position: 'relative', flexShrink: 0 }}
+          >
+            <button
+              type="button"
+              title="Attach image, video, or document"
+              onClick={() => setAttachMenuOpen((o) => !o)}
+              disabled={props.disabled}
+              style={{
+                all: 'unset',
+                cursor: props.disabled ? 'not-allowed' : 'pointer',
+                color: attachMenuOpen ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 36, height: 36, borderRadius: '50%',
+                transition: 'background 0.15s, transform 0.15s',
+                transform: attachMenuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
+                opacity: props.disabled ? 0.4 : 1,
+              }}
+              onMouseEnter={(e) => {
+                if (!props.disabled)
+                  (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              }}
+            >
+              <Plus size={22} />
+            </button>
+
+            {attachMenuOpen ? (
+              <div
+                role="menu"
+                style={{
+                  position: 'absolute',
+                  bottom: 'calc(100% + 8px)',
+                  left: 0,
+                  minWidth: 180,
+                  background: 'var(--sos-surface-2, #1f2c33)',
+                  border: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.08))',
+                  borderRadius: 10,
+                  padding: 6,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                  zIndex: 50,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+              >
+                <AttachMenuItem
+                  icon={<ImageIcon size={18} />}
+                  label="Photo"
+                  onClick={() => pickFile('image')}
+                />
+                <AttachMenuItem
+                  icon={<VideoIcon size={18} />}
+                  label="Video"
+                  onClick={() => pickFile('video')}
+                />
+                <AttachMenuItem
+                  icon={<FileIcon size={18} />}
+                  label="Document"
+                  onClick={() => pickFile('document')}
+                />
+              </div>
+            ) : null}
+
+            {/* Hidden file inputs. Three of them so the OS file-picker
+                pre-filters to the correct media type — better UX than one
+                generic input that shows every file on the user's disk. */}
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              style={{ display: 'none' }}
+              onChange={onFileChosen}
+            />
+            <input
+              ref={videoInputRef}
+              type="file"
+              accept="video/mp4,video/3gpp"
+              style={{ display: 'none' }}
+              onChange={onFileChosen}
+            />
+            <input
+              ref={docInputRef}
+              type="file"
+              accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain"
+              style={{ display: 'none' }}
+              onChange={onFileChosen}
+            />
+          </div>
+
           {/* Template button */}
           <button
             type="button"

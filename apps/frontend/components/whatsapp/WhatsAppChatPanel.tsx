@@ -155,19 +155,73 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     return 'info';
   }, [thread?.slaDeadlineAt, thread?.firstAgentReplyAt, thread?.slaBreached]);
 
-  const handleSend = async () => {
+  const handleSend = () => {
     const body = draft.trim();
     if (!body || !thread) return;
-    setSending(true);
-    try {
-      const msg = await sendText(thread.id, body);
-      setMessages((curr) => [...curr, msg]);
-      setDraft('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send');
-    } finally {
-      setSending(false);
-    }
+
+    // Optimistic UI: render the bubble immediately with a clock icon and clear
+    // the composer before the backend round-trip finishes. The temp message
+    // shares the same wire shape as a real ChatMessage so the bubble renderer
+    // doesn't branch. When the POST resolves we swap the temp row for the
+    // server's authoritative copy (matched by tempId). When the realtime SENT
+    // event arrives, it patches the real row's status — no UI flicker because
+    // the temp and real bubbles look identical at that moment.
+    //
+    // Same pattern WhatsApp/iMessage/Slack use. Customer-side behaviour is
+    // unchanged — Meta only sees the message when the backend worker posts it,
+    // exactly as before.
+    const idempotencyKey =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const tempId = `temp-${idempotencyKey}`;
+    const nowIso = new Date().toISOString();
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      threadId: thread.id,
+      leadId: thread.leadId ?? null,
+      clientId: thread.clientId ?? null,
+      direction: 'OUTBOUND',
+      type: 'TEXT',
+      status: 'QUEUED',
+      body,
+      payload: null,
+      mediaUrl: null,
+      mediaMimeType: null,
+      templateName: null,
+      templateLanguage: null,
+      sentByEmployeeId: null,
+      waMessageId: null,
+      repliedToWaMessageId: null,
+      errorCode: null,
+      errorTitle: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      failedAt: null,
+      createdAt: nowIso,
+    };
+
+    setMessages((curr) => [...curr, tempMessage]);
+    setDraft('');
+
+    // Fire-and-forget — but track the result so we can swap or mark FAILED.
+    void (async () => {
+      try {
+        const real = await sendText(thread.id, body, { idempotencyKey });
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Failed to send';
+        setMessages((curr) =>
+          curr.map((m) =>
+            m.id === tempId
+              ? { ...m, status: 'FAILED', errorTitle: reason, failedAt: new Date().toISOString() }
+              : m,
+          ),
+        );
+        setError(reason);
+      }
+    })();
   };
 
   const handleSendVoice = async (blob: Blob, mimeType: string) => {

@@ -408,13 +408,15 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
 
       {/* ── Master / detail: leads (left) + timeline (right) ─────────────
             Grid template flexes between three modes:
-              - narrow viewport (<900px) → single column, panes stack.
-              - listCollapsed=true      → 56px rail + 1fr timeline. The
+              - narrow viewport (<=900px) → single column, panes stack.
+              - listCollapsed=true        → 56px rail + 1fr timeline. The
                 rail shows just an expand chevron + lead count so the
-                timeline takes the full width.
-              - default                 → 1fr (clamped 320–380px) : 1.6fr,
-                so the leads list never exceeds a reading-comfortable
-                width and the timeline keeps the dominant space.
+                timeline takes the full width. Useful when admin wants
+                to focus on a long activity history.
+              - default (wide)            → leads list dominates so every
+                row can show its full name, ref code, status badge, and
+                last-updated time without truncating. Timeline is the
+                slim companion column, clamped at ~28vw / max 340px.
             All scroll regions use sos-scroll for a premium thin scrollbar.
             No element forces a min-width that exceeds the column, so
             horizontal scrolling is eliminated.                            ── */}
@@ -426,7 +428,7 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
             ? '1fr'
             : listCollapsed
               ? '56px minmax(0, 1fr)'
-              : 'clamp(320px, 30vw, 380px) minmax(0, 1fr)',
+              : 'minmax(0, 1fr) clamp(260px, 28vw, 340px)',
           alignItems: 'stretch',
           minWidth: 0,
         }}

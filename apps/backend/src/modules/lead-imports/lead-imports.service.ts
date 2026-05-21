@@ -17,23 +17,60 @@ import type {
 } from './lead-imports.dto';
 
 /**
- * Header-name heuristics for the preview's "suggested mapping". We look at
- * each canonical lead field and pick the first header whose lower-cased
- * form contains any of the keywords below. Admin can override before they
- * trigger the actual import.
+ * Header-name heuristics for the preview's "suggested mapping". Two-stage
+ * match: first try exact (case-insensitive) matches against the keywords
+ * below, then fall back to substring matches. Substring-only used to grab
+ * `ad_name` as firstName because both contain "name" — exact `full_name`
+ * now wins firstName cleanly, and `ad_name` falls through to sourceLabel.
+ *
+ * Admin can override anything before triggering the import; this is just
+ * a "try to save a few clicks" pass.
  */
-const HEADER_HEURISTICS: Record<keyof ColumnMappingDto, string[]> = {
-  phone: ['phone', 'mobile', 'whatsapp', 'cell', 'contact number', 'number'],
-  firstName: ['first name', 'firstname', 'fname', 'name'],
-  lastName: ['last name', 'lastname', 'lname', 'surname'],
-  email: ['email', 'e-mail', 'mail'],
-  alternatePhone: ['alternate', 'secondary phone', 'alt phone', 'other phone'],
-  nationality: ['nationality', 'citizen'],
-  targetCountry: ['target country', 'country of interest', 'destination', 'country'],
-  serviceInterest: ['service', 'interested service', 'visa type', 'product'],
-  city: ['city', 'town', 'location'],
-  notes: ['notes', 'remarks', 'comment', 'description'],
-  sourceLabel: ['source', 'campaign', 'channel'],
+const HEADER_HEURISTICS: Record<keyof ColumnMappingDto, { exact: string[]; partial: string[] }> = {
+  phone: {
+    exact: ['phone', 'mobile', 'whatsapp', 'cell', 'contact', 'number', 'phone number', 'mobile number', 'contact number'],
+    partial: ['phone', 'mobile', 'whatsapp', 'cell'],
+  },
+  firstName: {
+    exact: ['first name', 'firstname', 'fname', 'full name', 'fullname', 'name', 'full_name'],
+    partial: ['first name', 'firstname', 'full name', 'fullname'],
+  },
+  lastName: {
+    exact: ['last name', 'lastname', 'lname', 'surname', 'family name'],
+    partial: ['last name', 'lastname', 'surname'],
+  },
+  email: {
+    exact: ['email', 'e-mail', 'mail', 'email address'],
+    partial: ['email', 'e-mail'],
+  },
+  alternatePhone: {
+    exact: ['alternate phone', 'alt phone', 'secondary phone', 'other phone'],
+    partial: ['alternate phone', 'alt phone', 'secondary phone'],
+  },
+  nationality: {
+    exact: ['nationality', 'citizenship'],
+    partial: ['nationality', 'citizen'],
+  },
+  targetCountry: {
+    exact: ['target country', 'country of interest', 'destination', 'destination country'],
+    partial: ['target country', 'country of interest', 'destination'],
+  },
+  serviceInterest: {
+    exact: ['service', 'service interest', 'interested service', 'visa type', 'product'],
+    partial: ['service', 'visa type'],
+  },
+  city: {
+    exact: ['city', 'town', 'location'],
+    partial: ['city'],
+  },
+  notes: {
+    exact: ['notes', 'remarks', 'comment', 'comments', 'description'],
+    partial: ['notes', 'remarks', 'comment'],
+  },
+  sourceLabel: {
+    exact: ['source', 'campaign', 'ad_name', 'ad name', 'ad', 'channel', 'utm_source', 'campaign name'],
+    partial: ['campaign', 'ad_name', 'ad name', 'utm_source'],
+  },
 };
 
 @Injectable()
@@ -55,14 +92,34 @@ export class LeadImportsService {
     const sampleRows = parsed.rows.slice(0, 10);
 
     const suggested: Partial<Record<keyof ColumnMappingDto, string>> = {};
-    const lowerHeaders = parsed.headers.map((h) => h.toLowerCase());
+    const lowerHeaders = parsed.headers.map((h) => h.toLowerCase().trim());
+    const used = new Set<number>();
+
+    // Pass 1: exact matches. A header used by one field doesn't get reused
+    // by another (avoids `ad_name` and `full_name` both fighting for the
+    // same column under firstName's substring rule).
     for (const field of Object.keys(HEADER_HEURISTICS) as Array<keyof ColumnMappingDto>) {
-      const keywords = HEADER_HEURISTICS[field];
-      const matchIdx = lowerHeaders.findIndex((h) =>
-        keywords.some((kw) => h === kw || h.includes(kw)),
+      const { exact } = HEADER_HEURISTICS[field];
+      const idx = lowerHeaders.findIndex(
+        (h, i) => !used.has(i) && exact.includes(h),
       );
-      if (matchIdx >= 0) {
-        suggested[field] = parsed.headers[matchIdx];
+      if (idx >= 0) {
+        suggested[field] = parsed.headers[idx];
+        used.add(idx);
+      }
+    }
+
+    // Pass 2: substring matches for anything still unmapped. Still respects
+    // the `used` set so we never double-bind.
+    for (const field of Object.keys(HEADER_HEURISTICS) as Array<keyof ColumnMappingDto>) {
+      if (suggested[field]) continue;
+      const { partial } = HEADER_HEURISTICS[field];
+      const idx = lowerHeaders.findIndex(
+        (h, i) => !used.has(i) && partial.some((kw) => h.includes(kw)),
+      );
+      if (idx >= 0) {
+        suggested[field] = parsed.headers[idx];
+        used.add(idx);
       }
     }
 

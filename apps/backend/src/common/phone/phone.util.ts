@@ -38,13 +38,17 @@ export function normalisePhone(
     return { ok: false, reason: 'empty' };
   }
 
-  // Strip common spreadsheet noise: "tel:", trailing "ext. NNN", non-printable
-  // characters that come from copy-paste, the literal apostrophe Excel
-  // sometimes prepends to numeric cells.
+  // Strip common spreadsheet noise:
+  //   "tel:"   — clickable-link prefix Excel sometimes adds
+  //   "p:"     — Meta Lead Ads / Facebook form export prefix (every phone
+  //              in a Meta export comes as "p:+923331120001")
+  //   trailing "ext. NNN" — Outlook contact dumps
+  //   leading quote — Excel-as-text artefact on numeric cells
+  //   zero-width whitespace — copy-paste from web pages
   let trimmed = input
     .trim()
     .replace(/^['"`]+/, '')
-    .replace(/^tel:/i, '')
+    .replace(/^(tel|p):\s*/i, '')
     .replace(/\s+ext\.?\s*\d+$/i, '')
     .replace(/[​-‏﻿]/g, '');
 

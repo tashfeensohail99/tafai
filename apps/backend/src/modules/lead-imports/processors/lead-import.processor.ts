@@ -205,9 +205,19 @@ export class LeadImportProcessor extends WorkerHost {
       return v || null;
     };
 
-    const firstName = cell(mapping.firstName) ?? 'WhatsApp';
-    const lastNameRaw = cell(mapping.lastName);
-    const lastName = lastNameRaw ?? normalised.e164.slice(-4);
+    // Name handling — accept either a split (firstName + lastName) or a
+    // single "full_name" mapped to firstName. When lastName is unmapped
+    // but firstName contains spaces, auto-split on the first whitespace
+    // so a row like "Zahid Aslam" becomes firstName="Zahid", lastName="Aslam"
+    // instead of firstName="Zahid Aslam", lastName=<phone tail>.
+    let firstName = cell(mapping.firstName) ?? 'WhatsApp';
+    let lastName = cell(mapping.lastName);
+    if (!lastName && firstName.includes(' ')) {
+      const parts = firstName.split(/\s+/);
+      firstName = parts[0]!;
+      lastName = parts.slice(1).join(' ');
+    }
+    if (!lastName) lastName = normalised.e164.slice(-4);
 
     try {
       const lead = await this.prisma.lead.create({

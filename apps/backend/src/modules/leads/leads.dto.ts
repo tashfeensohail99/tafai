@@ -1,5 +1,5 @@
 import {
-  IsBooleanString,
+  IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsNumberString,
@@ -39,10 +39,14 @@ export class ListLeadsQueryDto {
    * import (at least one `LeadImportRow` exists). This is more reliable than
    * filtering by sourceChannel='csv-upload' since custom source labels from
    * the mapping take precedence on the lead row itself.
+   *
+   * The query-string value arrives as the literal "true" or "false". The
+   * @Transform coerces to a boolean before validation, so @IsBoolean
+   * (NOT @IsBooleanString) matches the post-transform type.
    */
   @IsOptional()
-  @IsBooleanString()
   @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
   fromCsv?: boolean;
 }
 

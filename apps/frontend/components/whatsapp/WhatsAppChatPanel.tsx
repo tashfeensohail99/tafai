@@ -105,6 +105,15 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   // don't make the overlay flicker — only hide when the counter returns to 0.
   const dragCounterRef = useRef(0);
   const [dragHover, setDragHover] = useState(false);
+  // Media preview modal — picked from + menu or dropped on the chat. The user
+  // can add a caption before the actual upload kicks off. Cleared to null on
+  // send-or-cancel; the blob URL is revoked so the browser doesn't hold the
+  // file in memory after the modal closes.
+  const [pendingMedia, setPendingMedia] = useState<{
+    file: File;
+    previewUrl: string;
+    kind: 'image' | 'video' | 'document';
+  } | null>(null);
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -238,18 +247,36 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   };
 
   /**
-   * Send an image / video / document picked from the + attach menu.
+   * Triggered from the + attach menu and the drag-drop drop event. Opens the
+   * preview modal so the user can confirm the file and optionally add a
+   * caption before the upload kicks off. The actual send happens in
+   * confirmSendMedia below.
+   */
+  const handlePickMedia = (file: File) => {
+    if (!thread) return;
+    const mime = (file.type || '').toLowerCase();
+    const kind: 'image' | 'video' | 'document' = mime.startsWith('image/')
+      ? 'image'
+      : mime.startsWith('video/')
+        ? 'video'
+        : 'document';
+    setPendingMedia({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      kind,
+    });
+  };
+
+  /**
+   * Actually send a previewed media file (optionally with a caption typed in
+   * the preview modal).
    *
    * Optimistic UI mirrors the text path: insert a placeholder bubble the
-   * moment the user picks the file (with a local blob-URL preview for
-   * images so they SEE what they're about to send) and swap it for the
-   * server's authoritative copy once the upload + Meta forwarding completes.
-   *
-   * Uploads are bigger than text sends — the placeholder lets the user
-   * confirm they picked the right file while the upload runs, instead of
-   * staring at a blank composer for 2-5s wondering if anything happened.
+   * moment the user hits Send (with a local blob-URL preview for images so
+   * they SEE what they're about to send) and swap it for the server's
+   * authoritative copy once the upload + Meta forwarding completes.
    */
-  const handleSendMedia = (file: File) => {
+  const confirmSendMedia = (file: File, caption: string | undefined) => {
     if (!thread) return;
 
     const idempotencyKey =
@@ -265,12 +292,13 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       : isVideo
         ? 'VIDEO'
         : 'DOCUMENT';
-    // Local blob URL — lets the bubble show a real preview for images/video
-    // and a working "download" link for documents while the upload is in
-    // flight. URL.revokeObjectURL is fine to skip; the temp message is
-    // short-lived (replaced on POST resolve) and the browser garbage-collects
-    // blob URLs when the page navigates away.
     const previewUrl = URL.createObjectURL(file);
+    const trimmedCaption = caption?.trim() ? caption.trim() : undefined;
+    // For image/video, captions show under the media as a separate line
+    // (existing renderer reads message.body for the caption). For documents
+    // the body slot is the filename, so we put the caption in payload
+    // metadata instead — matches Meta's inbound shape.
+    const tempBody = isImage || isVideo ? trimmedCaption ?? null : file.name;
     const tempMessage: ChatMessage = {
       id: tempId,
       threadId: thread.id,
@@ -279,9 +307,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       direction: 'OUTBOUND',
       type: tempType,
       status: 'QUEUED',
-      body: isImage || isVideo ? null : file.name,
-      // payload mirrors the inbound-message shape so MediaBubbleContent can
-      // resolve a filename for the document download link.
+      body: tempBody,
       payload:
         tempType === 'DOCUMENT'
           ? ({ document: { filename: file.name } } as unknown)
@@ -303,6 +329,11 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     };
 
     setMessages((curr) => [...curr, tempMessage]);
+    // Tear down the preview modal AFTER the optimistic bubble lands so the
+    // transition feels like "image flies into the conversation" rather than
+    // "modal closes, nothing happens for 1s".
+    if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
+    setPendingMedia(null);
 
     void (async () => {
       try {
@@ -310,7 +341,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           thread.id,
           file,
           file.name,
-          undefined,
+          trimmedCaption,
           idempotencyKey,
         );
         setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
@@ -326,6 +357,11 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         setError(reason);
       }
     })();
+  };
+
+  const cancelPendingMedia = () => {
+    if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
+    setPendingMedia(null);
   };
 
   const handleSendVoice = async (blob: Blob, mimeType: string) => {
@@ -475,7 +511,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             setDragHover(false);
             if (!withinWindow) return;
             const file = e.dataTransfer.files?.[0];
-            if (file) handleSendMedia(file);
+            if (file) handlePickMedia(file);
           }}
           style={{
             flex: 1,
@@ -584,7 +620,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onChange={setDraft}
           onSend={handleSend}
           onSendVoice={handleSendVoice}
-          onSendMedia={handleSendMedia}
+          onSendMedia={handlePickMedia}
           onOpenTemplate={() => setTemplateOpen(true)}
           disabled={!withinWindow}
           sending={sending}
@@ -679,9 +715,226 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         }}
       />
 
+      {pendingMedia ? (
+        <MediaPreviewModal
+          file={pendingMedia.file}
+          previewUrl={pendingMedia.previewUrl}
+          kind={pendingMedia.kind}
+          onCancel={cancelPendingMedia}
+          onSend={(caption) => confirmSendMedia(pendingMedia.file, caption)}
+        />
+      ) : null}
+
       {lightboxUrl ? (
         <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
       ) : null}
+    </div>
+  );
+}
+
+// ---- Media preview modal (caption-before-send) --------------------------
+
+function MediaPreviewModal(props: {
+  file: File;
+  previewUrl: string;
+  kind: 'image' | 'video' | 'document';
+  onCancel: () => void;
+  onSend: (caption: string | undefined) => void;
+}) {
+  const [caption, setCaption] = useState('');
+
+  // Escape cancels, Enter (without shift) sends. Auto-focus the caption
+  // input on open so the user can type immediately.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') props.onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [props]);
+
+  const fmtBytes = (n: number) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={props.onCancel}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.85)',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--sos-surface-1, #111b21)',
+          borderRadius: 10,
+          width: 'min(600px, 100%)',
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.08))',
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
+            Send {props.kind}
+          </div>
+          <button
+            type="button"
+            onClick={props.onCancel}
+            title="Cancel (Esc)"
+            style={{
+              all: 'unset', cursor: 'pointer', color: 'var(--sos-text-muted)',
+              width: 28, height: 28, display: 'flex',
+              alignItems: 'center', justifyContent: 'center', borderRadius: '50%',
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Preview body */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: 'auto',
+            background: 'var(--wa-chat-bg, #0b141a)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          {props.kind === 'image' ? (
+            <img
+              src={props.previewUrl}
+              alt="Preview"
+              style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: 6 }}
+            />
+          ) : props.kind === 'video' ? (
+            <video
+              src={props.previewUrl}
+              controls
+              style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 6 }}
+            />
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '16px 20px',
+                background: 'var(--wa-bubble-out, #005c4b)',
+                borderRadius: 8,
+                color: 'var(--sos-text-primary)',
+                minWidth: 280,
+              }}
+            >
+              <FileIcon size={32} />
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: 360,
+                  }}
+                >
+                  {props.file.name}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                  {fmtBytes(props.file.size)}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Caption + send */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            gap: 8,
+            padding: 12,
+            borderTop: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.08))',
+            background: 'var(--wa-panel-header, #202c33)',
+          }}
+        >
+          <textarea
+            autoFocus
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                props.onSend(caption.trim() || undefined);
+              }
+            }}
+            placeholder="Add a caption…"
+            rows={1}
+            style={{
+              flex: 1,
+              background: 'var(--wa-composer-input-bg, #2a3942)',
+              color: 'var(--sos-text-primary)',
+              border: 'none',
+              borderRadius: 8,
+              padding: '9px 12px',
+              fontSize: 14,
+              lineHeight: '1.5',
+              resize: 'none',
+              outline: 'none',
+              maxHeight: 120,
+              fontFamily: 'inherit',
+            }}
+            onInput={(e) => {
+              const el = e.target as HTMLTextAreaElement;
+              el.style.height = 'auto';
+              el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => props.onSend(caption.trim() || undefined)}
+            title="Send (Enter)"
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              width: 40, height: 40, borderRadius: '50%',
+              background: 'var(--wa-accent)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <Send size={18} color="#fff" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

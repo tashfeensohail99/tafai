@@ -606,7 +606,12 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                       cursor: 'pointer',
                       display: 'block',
                       width: '100%',
-                      padding: '10px 16px',
+                      // 26px on the right so the StatusBadge clears the
+                      // 8px sos-scroll bar with comfortable breathing room
+                      // — fixes the "CONTACTE…" / "NEV" clipping the user
+                      // reported. Left side keeps 16px (no scrollbar there).
+                      padding: '10px 26px 10px 16px',
+                      boxSizing: 'border-box',
                       borderBottom: '1px solid var(--sos-divider)',
                       background: selected ? 'rgba(59,130,246,0.10)' : 'transparent',
                       borderLeft: selected

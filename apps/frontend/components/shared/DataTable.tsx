@@ -2,7 +2,9 @@ import type { ReactNode } from 'react';
 
 export interface DataTableColumn<T> {
   key: string;
-  header: string;
+  // ReactNode so callers can put a checkbox or icon in the header (used by
+  // ResourceManager's bulk-select column). Strings keep working as before.
+  header: ReactNode;
   render: (row: T) => ReactNode;
   className?: string;
 }

@@ -199,6 +199,13 @@ export default function LeadsPage() {
           `This hides the lead from the admin and sales lead lists and from the WhatsApp inbox. ` +
           `The underlying row is kept for audit purposes.`,
       }}
+      bulkDeletable={{
+        permission: 'leads.delete',
+        confirmMessage: (count) =>
+          `Delete ${count} selected lead${count === 1 ? '' : 's'}?\n\n` +
+          `Each lead disappears from the admin and sales lead lists and from the WhatsApp inbox. ` +
+          `The underlying rows are kept for audit purposes.`,
+      }}
       transformFormToPayload={(form) => ({
         branchId: form.branchId || undefined,
         assignedEmployeeId: form.assignedEmployeeId || undefined,

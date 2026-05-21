@@ -24,7 +24,14 @@ import {
 } from '../../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
-import { AssignLeadDto, ConvertLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
+import {
+  AssignLeadDto,
+  BulkDeleteLeadsDto,
+  ConvertLeadDto,
+  CreateLeadDto,
+  ListLeadsQueryDto,
+  UpdateLeadDto,
+} from './leads.dto';
 import { LeadsService } from './leads.service';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 
@@ -135,6 +142,22 @@ export class LeadsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.leadsService.update(id, dto, user.id);
+  }
+
+  /**
+   * Bulk soft-delete a set of leads picked via the admin UI's checkboxes.
+   * Mounted BEFORE @Delete(':id') so Nest's route matcher resolves
+   * /leads/bulk-delete to this handler rather than trying to parse
+   * "bulk-delete" as a UUID and 400ing.
+   */
+  @Post('bulk-delete')
+  @RequirePermissions('leads.delete')
+  async removeBulk(
+    @Body() dto: BulkDeleteLeadsDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    const result = await this.leadsService.removeBulk(dto.ids, user.id);
+    return { success: true, deleted: result.deleted };
   }
 
   /**

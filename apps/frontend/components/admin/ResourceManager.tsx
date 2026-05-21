@@ -73,6 +73,18 @@ interface ResourceManagerProps<TRecord extends { id: string }> {
     permission?: string;
     confirmMessage?: (record: TRecord) => string;
   };
+  /**
+   * When set, a checkbox column is added on the left of the table and a
+   * "Delete selected (N)" button appears in the header when any rows are
+   * picked. Click POSTs the selected IDs to `${endpoint}/bulk-delete`.
+   * Same permission gating as `deletable`.
+   *
+   *   bulkDeletable={{ permission: 'leads.delete', confirmMessage: (n) => `Delete ${n} leads?` }}
+   */
+  bulkDeletable?: {
+    permission?: string;
+    confirmMessage?: (count: number) => string;
+  };
 }
 
 export function ResourceManager<TRecord extends { id: string }>({
@@ -93,6 +105,7 @@ export function ResourceManager<TRecord extends { id: string }>({
   exportPath,
   exportFilename,
   deletable,
+  bulkDeletable,
 }: ResourceManagerProps<TRecord>) {
   const { user } = useAdminSession();
   const [records, setRecords] = useState<TRecord[]>([]);
@@ -108,6 +121,11 @@ export function ResourceManager<TRecord extends { id: string }>({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Bulk-select state. Set of record IDs the user has ticked. Cleared
+  // automatically whenever the records list reloads so stale IDs from a
+  // prior view don't leak into the next bulk action.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   async function loadRecords() {
     setLoading(true);
@@ -121,6 +139,10 @@ export function ResourceManager<TRecord extends { id: string }>({
       });
       const data = await apiFetch<TRecord[]>(`${endpoint}${query}`);
       setRecords(data);
+      // Drop any stale selection — a record might have been deleted by
+      // another admin in the interim, or the filter/search might have
+      // removed it from the visible set.
+      setSelectedIds(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load records');
     } finally {
@@ -220,11 +242,98 @@ export function ResourceManager<TRecord extends { id: string }>({
     }
   }
 
+  /**
+   * Fire the bulk-delete endpoint. Server expects POST `${endpoint}/bulk-delete`
+   * with body `{ ids: string[] }` and returns `{ success: true, deleted: N }`.
+   * We refresh after — the load clears selectedIds for us.
+   */
+  async function handleBulkDelete() {
+    if (!bulkDeletable || selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const message =
+      bulkDeletable.confirmMessage?.(ids.length) ??
+      `Delete ${ids.length} selected record${ids.length === 1 ? '' : 's'}? This affects every view that lists them.`;
+    if (!window.confirm(message)) return;
+    setBulkDeleting(true);
+    try {
+      await apiFetch(`${endpoint}/bulk-delete`, {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+      setRefreshKey((current) => current + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Bulk delete failed');
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
   const canDelete =
     !!deletable &&
     (!deletable.permission || user.permissions.includes(deletable.permission));
+  const canBulkDelete =
+    !!bulkDeletable &&
+    (!bulkDeletable.permission || user.permissions.includes(bulkDeletable.permission));
+
+  const allOnPageSelected =
+    records.length > 0 && records.every((r) => selectedIds.has(r.id));
+  const someSelected = selectedIds.size > 0 && !allOnPageSelected;
+
+  function toggleOne(id: string) {
+    setSelectedIds((curr) => {
+      const next = new Set(curr);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllOnPage() {
+    setSelectedIds((curr) => {
+      // If all visible rows are already picked, clicking the header
+      // checkbox clears the whole selection. Otherwise it selects every
+      // visible row (without touching any picks that may have been
+      // selected on a previous filter/page).
+      if (allOnPageSelected) return new Set();
+      const next = new Set(curr);
+      records.forEach((r) => next.add(r.id));
+      return next;
+    });
+  }
 
   const tableColumns: DataTableColumn<TRecord>[] = [
+    ...(canBulkDelete
+      ? [
+          {
+            key: '__select',
+            // The header is rendered as a checkbox via the special `_select_all_`
+            // marker which the table treats as a normal cell. Indeterminate
+            // state via ref so the header reflects partial selection.
+            header: (
+              <input
+                type="checkbox"
+                aria-label="Select all"
+                checked={allOnPageSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={toggleAllOnPage}
+                style={{ cursor: 'pointer' }}
+              />
+            ),
+            render: (record: TRecord) => (
+              <input
+                type="checkbox"
+                aria-label="Select row"
+                checked={selectedIds.has(record.id)}
+                onChange={() => toggleOne(record.id)}
+                onClick={(e) => e.stopPropagation()}
+                style={{ cursor: 'pointer' }}
+              />
+            ),
+          },
+        ]
+      : []),
     ...columns,
     {
       key: 'actions',
@@ -421,6 +530,51 @@ export function ResourceManager<TRecord extends { id: string }>({
           </div>
         </form>
         </GlassCard>
+      ) : null}
+
+      {/* Bulk-action bar — sticky above the table when any rows are
+          selected. Hidden otherwise so the page is clean for normal use. */}
+      {canBulkDelete && selectedIds.size > 0 ? (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            padding: '10px 14px',
+            background: 'var(--sos-status-danger-soft, rgba(239,68,68,0.12))',
+            border: '1px solid var(--sos-status-danger-border, rgba(239,68,68,0.35))',
+            borderRadius: 8,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ color: 'var(--sos-text-primary)' }}>
+            <strong>{selectedIds.size}</strong> selected
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              disabled={bulkDeleting}
+              className="sos-btn sos-btn--ghost sos-btn--sm"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleBulkDelete()}
+              disabled={bulkDeleting}
+              className="sos-btn sos-btn--sm"
+              style={{
+                background: 'var(--sos-status-danger, #dc2626)',
+                color: '#fff',
+                borderColor: 'var(--sos-status-danger, #dc2626)',
+              }}
+            >
+              {bulkDeleting ? 'Deleting…' : `Delete selected (${selectedIds.size})`}
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {loading ? (

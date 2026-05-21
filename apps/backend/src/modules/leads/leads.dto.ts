@@ -1,4 +1,8 @@
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsNotEmpty,
@@ -247,4 +251,19 @@ export class ConvertLeadDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+}
+
+/**
+ * Bulk soft-delete a set of leads from the admin "Delete selected" UI.
+ * Cap at 500 per call so the audit-log inserts stay quick and the
+ * payload stays under reasonable POST-body limits — admin can repeat
+ * if they need to nuke more than that in one sitting.
+ */
+export class BulkDeleteLeadsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('4', { each: true })
+  ids!: string[];
 }

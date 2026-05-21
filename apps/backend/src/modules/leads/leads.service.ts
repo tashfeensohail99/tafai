@@ -412,6 +412,54 @@ export class LeadsService {
     });
   }
 
+  /**
+   * Soft-delete a set of leads in a single transaction. Used by the
+   * "Delete selected" bulk action on the admin leads page. Returns the
+   * count actually marked deleted (excludes leads already deleted or not
+   * found, so the caller can show "Deleted N of M leads" if there were
+   * mismatches).
+   *
+   * Audit log is written once per lead so the trail stays granular —
+   * collapsing into a single bulk-event would hide the per-lead detail
+   * forensics later, and the volume here is admin-driven not automated
+   * so the row count stays sane.
+   */
+  async removeBulk(ids: string[], actorUserId: string): Promise<{ deleted: number }> {
+    if (ids.length === 0) return { deleted: 0 };
+    const now = new Date();
+
+    // Look up which IDs are actually still alive so we only audit-log the
+    // ones we successfully delete. updateMany doesn't tell us which rows
+    // matched, so this pre-fetch is cheap insurance.
+    const targets = await this.prisma.lead.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: { id: true, referenceCode: true, status: true },
+    });
+    if (targets.length === 0) return { deleted: 0 };
+
+    await this.prisma.lead.updateMany({
+      where: { id: { in: targets.map((t) => t.id) } },
+      data: { deletedAt: now },
+    });
+
+    // Audit + timeline writes are fire-and-await — each is cheap and we
+    // want the trail durable before returning.
+    await Promise.all(
+      targets.map((t) =>
+        this.auditLog.log({
+          actorUserId,
+          action: AuditAction.LEAD_UPDATED,
+          entityType: 'Lead',
+          entityId: t.id,
+          oldValues: { deletedAt: null, status: t.status },
+          newValues: { deletedAt: now.toISOString(), action: 'bulk-soft-delete' },
+        }),
+      ),
+    );
+
+    return { deleted: targets.length };
+  }
+
   async assign(id: string, dto: AssignLeadDto, actorUserId: string) {
     const existing = await this.findById(id);
 

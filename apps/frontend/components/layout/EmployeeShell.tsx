@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CirclePlus,
   ClipboardCheck,
+  FileSpreadsheet,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -50,6 +51,7 @@ const EmployeeSessionContext = createContext<EmployeeSessionContextValue | null>
 const SALES_NAV: DrawerMenuItem[] = [
   { label: 'Dashboard', href: '/sales', icon: LayoutDashboard, caption: 'Workspace overview' },
   { label: 'WhatsApp Inbox', href: '/sales/inbox', icon: MessageSquare, caption: 'Your assigned chats' },
+  { label: 'CSV Leads', href: '/sales/csv-leads', icon: FileSpreadsheet, caption: 'From spreadsheet uploads' },
   { label: 'Assigned Leads', href: '/sales/leads', icon: Users, caption: 'CRM & social media', badge: 12 },
   { label: 'Create New Lead', href: '/sales/create-lead', icon: CirclePlus, caption: 'Walk-in client' },
   { label: 'Follow Ups', href: '/sales/follow-ups', icon: PhoneCall, caption: 'Calls, WhatsApp, reminders', badge: 7 },
@@ -60,6 +62,7 @@ const SALES_NAV: DrawerMenuItem[] = [
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/sales') return { title: 'Sales Dashboard', subtitle: 'Your daily command center' };
   if (pathname.startsWith('/sales/inbox')) return { title: 'WhatsApp Inbox', subtitle: 'Your assigned conversations' };
+  if (pathname.startsWith('/sales/csv-leads')) return { title: 'CSV Leads', subtitle: 'Leads from spreadsheet uploads' };
   if (pathname.startsWith('/sales/leads/')) return { title: 'Lead Profile', subtitle: 'Edit progress, priority, and next action' };
   if (pathname === '/sales/leads') return { title: 'Assigned Leads', subtitle: 'Admin assigned and auto CRM leads' };
   if (pathname === '/sales/create-lead') return { title: 'Create New Lead', subtitle: 'Walk-in client intake' };

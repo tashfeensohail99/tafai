@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ClipboardList,
   Clock,
+  FileSpreadsheet,
   FileText,
   Flag,
   Handshake,
@@ -90,6 +91,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
     items: [
       { label: 'Sales overview', href: '/admin/sales', icon: Users, caption: 'Per-agent KPIs', permissionKey: 'reports.view' },
       { label: 'Leads', href: '/admin/leads', icon: Users, caption: 'All inbound', permissionKey: 'leads.view_all' },
+      { label: 'Lead Imports', href: '/admin/lead-imports', icon: FileSpreadsheet, caption: 'CSV/Excel bulk upload', permissionKey: 'leads.create' },
       { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageSquare, caption: 'All conversations', permissionKey: 'whatsapp.view_all_inboxes' },
       { label: 'Clients', href: '/admin/clients', icon: Users, caption: 'Converted accounts', permissionKey: 'clients.view_all' },
       { label: 'Appointments', href: '/admin/appointments', icon: CalendarDays, caption: 'Calendar', permissionKey: 'appointments.view_all' },
@@ -124,6 +126,8 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/branches')) return { title: 'Branches', subtitle: 'Office locations' };
   if (pathname.startsWith('/admin/partners')) return { title: 'Partners', subtitle: 'Referral network' };
   if (pathname.startsWith('/admin/sales')) return { title: 'Sales overview', subtitle: 'Per-agent KPIs' };
+  if (pathname.startsWith('/admin/lead-imports/')) return { title: 'Import detail', subtitle: 'Batch progress + per-agent distribution' };
+  if (pathname === '/admin/lead-imports') return { title: 'Lead Imports', subtitle: 'CSV/Excel bulk uploads' };
   if (pathname.startsWith('/admin/leads')) return { title: 'Leads', subtitle: 'All inbound' };
   if (pathname.startsWith('/admin/whatsapp')) return { title: 'WhatsApp conversations', subtitle: 'All threads' };
   if (pathname.startsWith('/admin/clients')) return { title: 'Clients', subtitle: 'Converted accounts' };

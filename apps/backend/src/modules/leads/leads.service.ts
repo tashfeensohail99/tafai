@@ -36,6 +36,17 @@ export class LeadsService {
         ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
         ...(query.branchId ? { branchId: query.branchId } : {}),
         ...(query.sourceChannel ? { sourceChannel: query.sourceChannel } : {}),
+        // CSV-origin filter: lead has at least one import-row with a
+        // successful (IMPORTED or DUPLICATE) outcome. DUPLICATE counts
+        // because the row matched a pre-existing lead and recorded the
+        // CSV touch — that lead has been "uploaded via CSV" too.
+        ...(query.fromCsv
+          ? {
+              importRows: {
+                some: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+              },
+            }
+          : {}),
         ...(!canViewAll
           ? {
               OR: [
@@ -63,8 +74,25 @@ export class LeadsService {
         referralPartner: {
           select: { id: true, companyName: true, referralCode: true },
         },
-        // _count dropped on list endpoints — three extra subqueries per row
-        // that nothing was rendering. Detail endpoint still returns them.
+        // CSV-origin metadata for tag rendering. Only included when the
+        // caller is asking for fromCsv leads — keeps the default list
+        // payload lean for everyone else.
+        ...(query.fromCsv
+          ? {
+              importRows: {
+                where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+                orderBy: { createdAt: 'desc' },
+                take: 1,
+                select: {
+                  id: true,
+                  createdAt: true,
+                  batch: {
+                    select: { id: true, batchNumber: true, name: true },
+                  },
+                },
+              },
+            }
+          : {}),
       },
       orderBy: { createdAt: 'desc' },
     });

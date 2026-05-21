@@ -1,4 +1,5 @@
 import {
+  IsBooleanString,
   IsEnum,
   IsNotEmpty,
   IsNumberString,
@@ -7,6 +8,7 @@ import {
   IsUUID,
   MaxLength,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { LeadStatus } from '@prisma/client';
 
 export class ListLeadsQueryDto {
@@ -31,6 +33,17 @@ export class ListLeadsQueryDto {
   @IsString()
   @MaxLength(100)
   sourceChannel?: string;
+
+  /**
+   * When true, restricts the list to leads that originated from a CSV/Excel
+   * import (at least one `LeadImportRow` exists). This is more reliable than
+   * filtering by sourceChannel='csv-upload' since custom source labels from
+   * the mapping take precedence on the lead row itself.
+   */
+  @IsOptional()
+  @IsBooleanString()
+  @Transform(({ value }) => value === 'true' || value === true)
+  fromCsv?: boolean;
 }
 
 export class CreateLeadDto {

@@ -30,49 +30,69 @@ export class MediaDownloadProcessor extends WorkerHost {
 
   override async process(job: Job<MediaDownloadJob>): Promise<void> {
     const { messageId, metaMediaId } = job.data;
-    const message = await this.prisma.whatsAppMessage.findUnique({
-      where: { id: messageId },
-      include: { channel: true },
-    });
-    if (!message) return;
+    try {
+      const message = await this.prisma.whatsAppMessage.findUnique({
+        where: { id: messageId },
+        include: { channel: true },
+      });
+      if (!message) {
+        this.log.warn(`media-download skipped: message ${messageId} not found`);
+        return;
+      }
 
-    const s3 = this.makeS3Client();
-    const bucket =
-      this.config.get<string>('app.whatsapp.mediaBucket') ||
-      this.config.get<string>('app.storage.bucket');
-    if (!s3 || !bucket) {
-      this.log.warn(`R2/S3 not configured; skipping media for message ${messageId}`);
-      return;
+      const s3 = this.makeS3Client();
+      const bucket =
+        this.config.get<string>('app.whatsapp.mediaBucket') ||
+        this.config.get<string>('app.storage.bucket');
+      if (!s3 || !bucket) {
+        // This is a config bug, not a per-message error — throw so BullMQ
+        // marks the job failed loudly instead of swallowing silently. Hard
+        // to notice when otherwise: messages just stay with mediaUrl=null.
+        const reason = !s3
+          ? 'S3 client unavailable (missing STORAGE_ENDPOINT/ACCESS_KEY/SECRET_KEY)'
+          : 'No bucket configured (set WHATSAPP_MEDIA_BUCKET or STORAGE_BUCKET)';
+        throw new Error(`media-download config error for message ${messageId}: ${reason}`);
+      }
+
+      const client = this.metaFactory.forChannel(message.channel);
+      const meta = await client.getMediaUrl(metaMediaId);
+      const bytes = await client.downloadMedia(meta.url);
+
+      const ext = meta.mime_type.split('/')[1] ?? 'bin';
+      const key = `whatsapp/media/${message.id}.${ext}`;
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: bytes,
+          ContentType: meta.mime_type,
+        }),
+      );
+      const publicBase =
+        this.config.get<string>('app.whatsapp.mediaPublicBaseUrl') ||
+        // No fallback for storage.publicBaseUrl exists; we leave just the key
+        // here and let the frontend prepend if needed.
+        '';
+      await this.prisma.whatsAppMessage.update({
+        where: { id: message.id },
+        data: {
+          mediaUrl: publicBase ? `${publicBase.replace(/\/$/, '')}/${key}` : key,
+          mediaMimeType: meta.mime_type,
+          mediaSizeBytes: meta.file_size,
+          mediaSha256: meta.sha256,
+        },
+      });
+      this.log.log(`media-download ok: message=${messageId} key=${key} bytes=${bytes.length}`);
+    } catch (err) {
+      // Log the actual error so it shows up in Railway logs. Re-throw so
+      // BullMQ records the job as failed (retries per the job's attempts
+      // config) and operators can see it in the failed-jobs view.
+      const message = (err as Error).message ?? String(err);
+      this.log.error(
+        `media-download FAILED: message=${messageId} metaMediaId=${metaMediaId} attempt=${job.attemptsMade + 1}/${job.opts.attempts ?? 1}: ${message}`,
+      );
+      throw err;
     }
-
-    const client = this.metaFactory.forChannel(message.channel);
-    const meta = await client.getMediaUrl(metaMediaId);
-    const bytes = await client.downloadMedia(meta.url);
-
-    const ext = meta.mime_type.split('/')[1] ?? 'bin';
-    const key = `whatsapp/media/${message.id}.${ext}`;
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        Body: bytes,
-        ContentType: meta.mime_type,
-      }),
-    );
-    const publicBase =
-      this.config.get<string>('app.whatsapp.mediaPublicBaseUrl') ||
-      // No fallback for storage.publicBaseUrl exists; we leave just the key
-      // here and let the frontend prepend if needed.
-      '';
-    await this.prisma.whatsAppMessage.update({
-      where: { id: message.id },
-      data: {
-        mediaUrl: publicBase ? `${publicBase.replace(/\/$/, '')}/${key}` : key,
-        mediaMimeType: meta.mime_type,
-        mediaSizeBytes: meta.file_size,
-        mediaSha256: meta.sha256,
-      },
-    });
   }
 
   private makeS3Client(): S3Client | null {

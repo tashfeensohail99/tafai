@@ -23,9 +23,12 @@ import {
 } from '../../../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
+import { WHATSAPP_QUEUE, type MediaDownloadJob } from '../queues/queue-contracts';
 import { WhatsAppThreadsService } from './threads.service';
 
 class ListThreadsDto {
@@ -62,6 +65,8 @@ export class WhatsAppThreadsController {
     private readonly prisma: PrismaService,
     private readonly metaFactory: WhatsAppMetaClientFactory,
     private readonly storage: StorageService,
+    @InjectQueue(WHATSAPP_QUEUE.MEDIA_DOWNLOAD)
+    private readonly mediaQueue: Queue<MediaDownloadJob>,
   ) {}
 
   @Get()
@@ -190,6 +195,65 @@ export class WhatsAppThreadsController {
     }
 
     res.end(binary);
+  }
+
+  /**
+   * Re-trigger the media-download worker for a single message. Useful when
+   * the original download failed (worker crash, transient Meta error,
+   * temporary S3 outage) and the bytes are still fetchable from Meta — for
+   * media that arrived under a still-valid channel token, this rescues the
+   * message from a "Media unavailable" state.
+   *
+   * Returns 202 with the enqueued job id. The worker updates the message
+   * row's `mediaUrl` when done; frontend can re-fetch after a short delay.
+   */
+  @HttpCode(202)
+  @Post(':threadId/messages/:messageId/refetch-media')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async refetchMedia(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+  ): Promise<{ enqueued: boolean; jobId: string }> {
+    const caller = await this.buildCallerContext(user);
+    await this.threads.getOrFail(caller, threadId);
+
+    const message = await this.prisma.whatsAppMessage.findUnique({
+      where: { id: messageId },
+      select: { id: true, threadId: true, type: true, payload: true, mediaUrl: true },
+    });
+    if (!message || message.threadId !== threadId) {
+      throw new HttpException('Message not found', HttpStatus.NOT_FOUND);
+    }
+
+    type MediaPayload = { id?: string };
+    const p = message.payload as Record<string, MediaPayload> | null;
+    const typeKey = message.type.toLowerCase();
+    const metaMediaId =
+      p?.[typeKey]?.id ??
+      (message.mediaUrl?.startsWith('meta:') ? message.mediaUrl.slice(5) : null);
+    if (!metaMediaId) {
+      throw new HttpException(
+        'No Meta media id on this message — cannot refetch',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    // Bumps the jobId so BullMQ doesn't dedupe against the original
+    // (which is likely still in the failed-jobs bucket).
+    const jobId = `media-${messageId}-retry-${Date.now()}`;
+    await this.mediaQueue.add(
+      'download',
+      { messageId, metaMediaId },
+      {
+        jobId,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { count: 100, age: 24 * 3600 },
+        removeOnFail: { count: 100 },
+      },
+    );
+    return { enqueued: true, jobId };
   }
 
   /**

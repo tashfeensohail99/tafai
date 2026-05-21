@@ -792,6 +792,72 @@ function useMediaBlobUrl(threadId: string, messageId: string, enabled: boolean):
   return { blobUrl, loading, error };
 }
 
+/**
+ * Shown when the media bytes can't be loaded. Lets the operator re-trigger
+ * the media-download worker — useful when the original download failed for
+ * a transient reason (Meta timeout, backend restart, etc.) and the bytes
+ * are still fetchable. Bytes that Meta no longer holds (>30 days, or wrong
+ * WABA token) won't recover; that surfaces as a second "Media unavailable".
+ */
+function MediaUnavailableWithRetry({
+  threadId,
+  messageId,
+}: {
+  threadId: string;
+  messageId: string;
+}) {
+  const [state, setState] = useState<'idle' | 'retrying' | 'queued' | 'failed'>('idle');
+
+  async function handleRetry() {
+    setState('retrying');
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+      const token = getAccessToken();
+      const res = await fetch(
+        `${apiBase}/whatsapp/threads/${threadId}/messages/${messageId}/refetch-media`,
+        {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setState('queued');
+      // Worker typically completes inside a couple seconds. Reload the
+      // chat after a short delay so the freshly-cached bytes render.
+      setTimeout(() => window.location.reload(), 4000);
+    } catch {
+      setState('failed');
+    }
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontStyle: 'italic', color: 'var(--sos-status-danger)' }}>
+      Media unavailable
+      {state === 'idle' ? (
+        <button
+          type="button"
+          onClick={() => void handleRetry()}
+          style={{
+            background: 'none',
+            border: '1px solid var(--sos-border)',
+            borderRadius: 4,
+            padding: '2px 8px',
+            fontSize: 11,
+            cursor: 'pointer',
+            color: 'var(--sos-text-secondary)',
+            fontStyle: 'normal',
+          }}
+        >
+          Retry
+        </button>
+      ) : null}
+      {state === 'retrying' ? <span style={{ fontSize: 11, fontStyle: 'normal' }}>retrying…</span> : null}
+      {state === 'queued' ? <span style={{ fontSize: 11, fontStyle: 'normal', color: 'var(--sos-status-success)' }}>queued — reloading…</span> : null}
+      {state === 'failed' ? <span style={{ fontSize: 11, fontStyle: 'normal' }}>retry failed</span> : null}
+    </span>
+  );
+}
+
 /** Renders image / audio / video / document media inside a message bubble. */
 function MediaBubbleContent({ message }: { message: ChatMessage }) {
   type AnyPayload = Record<string, { id?: string; filename?: string }>;
@@ -826,11 +892,7 @@ function MediaBubbleContent({ message }: { message: ChatMessage }) {
   }
 
   if (error || !blobUrl) {
-    return (
-      <span style={{ fontSize: 13, color: 'var(--sos-status-danger)', fontStyle: 'italic' }}>
-        Media unavailable
-      </span>
-    );
+    return <MediaUnavailableWithRetry threadId={message.threadId} messageId={message.id} />;
   }
 
   if (message.type === 'IMAGE') {

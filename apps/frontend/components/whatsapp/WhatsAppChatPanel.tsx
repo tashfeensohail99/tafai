@@ -101,6 +101,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   // Fullscreen image viewer ("lightbox"). Holds the blob URL of the image
   // the user just clicked; null = closed. Escape / click-backdrop closes.
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  // Drag-drop: counter (not bool) so nested children's dragenter/leave pairs
+  // don't make the overlay flicker — only hide when the counter returns to 0.
+  const dragCounterRef = useRef(0);
+  const [dragHover, setDragHover] = useState(false);
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -445,6 +449,34 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         {/* Messages */}
         <div
           ref={scrollRef}
+          onDragEnter={(e) => {
+            if (!withinWindow) return;
+            // Only react to file drags, not text-selection drags within the page.
+            if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+            e.preventDefault();
+            dragCounterRef.current += 1;
+            setDragHover(true);
+          }}
+          onDragOver={(e) => {
+            if (!withinWindow) return;
+            if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+            // Must preventDefault to allow drop. Setting dropEffect='copy' makes
+            // the OS cursor show the green "+" icon over the chat.
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }}
+          onDragLeave={() => {
+            dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+            if (dragCounterRef.current === 0) setDragHover(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            dragCounterRef.current = 0;
+            setDragHover(false);
+            if (!withinWindow) return;
+            const file = e.dataTransfer.files?.[0];
+            if (file) handleSendMedia(file);
+          }}
           style={{
             flex: 1,
             minHeight: 0,
@@ -455,6 +487,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             gap: 2,
             background: 'var(--wa-chat-bg)',
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.02'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+            position: 'relative',
           }}
         >
           {messages.length === 0 ? (
@@ -480,6 +513,34 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               />
             ))
           )}
+
+          {/* Drop-zone overlay — appears while the user is dragging a file
+              over the chat. Positioned absolutely inside the scroll
+              container so it covers messages without affecting layout. */}
+          {dragHover ? (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'rgba(0, 168, 132, 0.18)',
+                border: '2px dashed var(--wa-accent)',
+                borderRadius: 8,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 16,
+                fontWeight: 600,
+                color: 'var(--sos-text-primary)',
+                pointerEvents: 'none',
+                zIndex: 5,
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                <Plus size={32} />
+                Drop to send
+              </div>
+            </div>
+          ) : null}
         </div>
         {/* Inline error banner — shown whenever a send (text or voice)
             fails after the thread has already loaded. Without this

@@ -185,6 +185,16 @@ export class UsersService {
         where: { userId: id, revokedAt: null },
         data: { revokedAt: new Date() },
       }),
+      // Cascade to the linked employee row so they drop out of routing
+      // pools immediately. Defensive — the assignment queries also check
+      // user.status now, but keeping employee.isActive in sync means any
+      // legacy query that only inspects the employee row also sees them
+      // as off. updateMany is used because employee may not exist for
+      // non-employee users (no error if zero rows match).
+      this.prisma.employee.updateMany({
+        where: { userId: id, deletedAt: null },
+        data: { isActive: false },
+      }),
     ]);
 
     await this.auditLog.log({
@@ -200,15 +210,26 @@ export class UsersService {
   async activate(id: string, actorUserId: string) {
     const user = await this.findById(id);
 
-    await this.prisma.userAccount.update({
-      where: { id },
-      data: {
-        status: 'ACTIVE',
-        // Unlock the account in case it was also locked out from failed logins
-        failedLoginAttempts: 0,
-        lockedUntil: null,
-      },
-    });
+    await this.prisma.$transaction([
+      this.prisma.userAccount.update({
+        where: { id },
+        data: {
+          status: 'ACTIVE',
+          // Unlock the account in case it was also locked out from failed logins
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      }),
+      // Mirror the cascade from deactivate(): restore the employee's
+      // isActive flag. We deliberately do NOT restore whatsappInboxMember
+      // here — admins toggle that separately, and re-enabling someone
+      // shouldn't silently put them back in the WhatsApp routing pool
+      // if they were taken out for unrelated reasons.
+      this.prisma.employee.updateMany({
+        where: { userId: id, deletedAt: null },
+        data: { isActive: true },
+      }),
+    ]);
 
     await this.auditLog.log({
       actorUserId,

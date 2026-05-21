@@ -24,6 +24,8 @@
  *   - isActive = true
  *   - whatsappInboxMember = true
  *   - deletedAt = null
+ *   - linked UserAccount.status = ACTIVE (a deactivated user must not receive
+ *     new chats — they can't log in to respond, leads would rot)
  *
  * Idempotent: if the lead is already assigned, the engine returns without
  * changes. Manual reassignment via the API bypasses this engine entirely.
@@ -250,6 +252,9 @@ export class WhatsAppAssignmentService {
         isActive: true,
         whatsappInboxMember: true,
         deletedAt: null,
+        // Deactivated/suspended users can't log in — if we route to them
+        // the lead has nowhere to go. Always check user.status here too.
+        user: { status: 'ACTIVE' },
       },
       orderBy: { id: 'asc' },
       select: { id: true },

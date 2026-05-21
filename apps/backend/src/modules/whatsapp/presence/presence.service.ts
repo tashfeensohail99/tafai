@@ -92,7 +92,14 @@ export class WhatsAppPresenceService {
    */
   async listTeam() {
     const rows = await this.prisma.employee.findMany({
-      where: { isActive: true, deletedAt: null },
+      where: {
+        isActive: true,
+        deletedAt: null,
+        // Deactivated/suspended users shouldn't show up in the admin's
+        // reassign dropdown — picking one would route a chat to someone
+        // who can't log in to answer it.
+        user: { status: 'ACTIVE' },
+      },
       orderBy: [{ whatsappInboxMember: 'desc' }, { firstName: 'asc' }],
       select: {
         id: true,

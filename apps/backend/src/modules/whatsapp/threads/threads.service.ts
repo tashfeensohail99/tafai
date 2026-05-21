@@ -181,12 +181,15 @@ export class WhatsAppThreadsService {
         isActive: true,
         whatsappInboxMember: true,
         deletedAt: null,
+        // Same rule as the auto-assignment engine — never reassign to a
+        // user whose account is deactivated/suspended.
+        user: { status: 'ACTIVE' },
       },
       select: { id: true, firstName: true, lastName: true },
     });
     if (!target) {
       throw new BadRequestException(
-        'Target employee is not an active WhatsApp inbox member. Toggle WhatsApp Inbox on the employee profile first.',
+        'Target employee is not eligible (must be active, in the WhatsApp inbox pool, and have an active user account).',
       );
     }
 

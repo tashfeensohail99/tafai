@@ -1,5 +1,40 @@
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import FormData from 'form-data';
+import { Agent as HttpsAgent } from 'node:https';
+
+/**
+ * Module-scoped HTTPS agent with TCP keep-alive enabled. Every MetaCloudClient
+ * instance (one per channel, built fresh on every send by the factory) hands
+ * its axios call this same agent, so the socket pool to graph.facebook.com is
+ * shared across the whole process.
+ *
+ * Without keep-alive each send did a fresh TCP + TLS 1.3 handshake (~200-500ms
+ * of pure overhead on top of the actual request). With keep-alive the first
+ * send pays that once, subsequent sends reuse the warm socket and the
+ * worker→Meta leg drops to roughly one round-trip latency.
+ *
+ *   maxSockets: 16  — matches the BullMQ outbound concurrency, so a burst of
+ *                     parallel sends can each hold their own warm connection
+ *                     instead of fighting over a smaller pool.
+ *   keepAliveMsecs: send a TCP keep-alive probe every 30s on idle sockets so
+ *                     Meta's load balancer doesn't quietly drop them; cheap.
+ *   scheduling 'lifo': prefer the most-recently-used socket, which is the one
+ *                     most likely still alive on Meta's side.
+ *
+ * If Meta's edge closes a socket between sends, Node detects the dead socket
+ * on the next write and transparently opens a fresh one — worst case that
+ * single send is as slow as today (no benefit), then everything resumes warm.
+ *
+ * Safety: keep-alive is encouraged by Meta's docs for high-volume integrations
+ * and is the default for every browser. No rate-limit, no policy, no semantic
+ * change — same Authorization header, same payload, same retry behaviour.
+ */
+const metaHttpsAgent = new HttpsAgent({
+  keepAlive: true,
+  keepAliveMsecs: 30_000,
+  maxSockets: 16,
+  scheduling: 'lifo',
+});
 
 export interface MetaClientConfig {
   apiVersion: string;
@@ -86,6 +121,9 @@ export class MetaCloudClient {
         'Content-Type': 'application/json',
       },
       timeout: 15_000,
+      // Share the module-level keep-alive pool so we don't pay a TLS handshake
+      // on every send. See metaHttpsAgent at the top of this file.
+      httpsAgent: metaHttpsAgent,
     });
   }
 
@@ -287,6 +325,9 @@ export class MetaCloudClient {
           timeout: 60_000,
           maxBodyLength: 32 * 1024 * 1024,
           maxContentLength: 32 * 1024 * 1024,
+          // Share the keep-alive pool — multipart uploads benefit too, especially
+          // for back-to-back voice notes and image bursts.
+          httpsAgent: metaHttpsAgent,
         },
       );
       return res.data.id;

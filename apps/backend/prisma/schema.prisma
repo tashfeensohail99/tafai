@@ -67,6 +67,23 @@ enum FollowUpStatus {
   @@schema("crm")
 }
 
+enum LeadImportStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  PAUSED
+  @@schema("crm")
+}
+
+enum LeadImportRowOutcome {
+  IMPORTED
+  DUPLICATE
+  INVALID
+  FAILED
+  @@schema("crm")
+}
+
 enum FollowUpPriority {
   LOW
   MEDIUM
@@ -572,6 +589,7 @@ model UserAccount {
   partnerProfile    Partner?
   auditActorLogs    AuditLog[]           @relation("AuditActor")
   createdLeads      Lead[]               @relation("LeadCreatedBy")
+  uploadedLeadImportBatches LeadImportBatch[] @relation("LeadImportBatchUploadedBy")
   createdClients    Client[]             @relation("ClientCreatedBy")
   // Processing
   assignedProcessingCases      ProcessingCase[]             @relation("ProcessingCaseOfficer")
@@ -822,6 +840,104 @@ model Lead {
   @@map("leads")
   @@schema("crm")
   files               LeadFile[]
+  importRows          LeadImportRow[]
+}
+
+/// Bulk lead upload from CSV/Excel. Each upload creates one batch row.
+/// Counts are denormalised onto the batch for fast dashboard render —
+/// they're updated by the lead-import worker as each row is processed.
+model LeadImportBatch {
+  id              String                @id @default(uuid())
+  /// Sequential reference LB-YYYY-NNNNN. Generated on insert.
+  batchNumber     String                @unique
+  /// Human label admin sets when uploading. e.g. "May FB Ads".
+  name            String
+  uploadedByUserId String
+  uploadedAt      DateTime              @default(now())
+
+  // Source file (kept for forensics + re-download).
+  fileName        String
+  fileKey         String
+  fileMimeType    String?
+  fileSizeBytes   Int?
+
+  // Counts (live-updated by the worker)
+  totalRows       Int                   @default(0)
+  importedCount   Int                   @default(0)
+  duplicateCount  Int                   @default(0)
+  invalidCount    Int                   @default(0)
+  assignedCount   Int                   @default(0)
+
+  status          LeadImportStatus      @default(QUEUED)
+
+  /// The agent pool the admin chose at upload time. Subset of (or equal to)
+  /// the WhatsApp/sales pool. Empty means "use whoever is currently eligible".
+  selectedAgentIds  String[]            @default([])
+
+  /// CSV-header → lead-field map the admin applied at upload time.
+  /// Shape: { phone: "Mobile Number", firstName: "Name", country: "Country", ... }
+  columnMapping     Json
+
+  /// Default country code used when normalising phones in this batch
+  /// (e.g. "PK" turns "03331120001" into "+923331120001"). Per-batch
+  /// rather than global because admins sometimes upload mixed-origin lists.
+  defaultCountry    String              @default("PK")
+
+  /// Per-batch override of the global welcome message template. NULL = use
+  /// global default.
+  welcomeMessage    String?
+
+  /// Generated post-run CSV of every row that failed (with reason).
+  /// Downloadable from the batch detail page.
+  errorReportKey    String?
+
+  startedAt         DateTime?
+  completedAt       DateTime?
+  pausedAt          DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  uploadedBy        UserAccount         @relation("LeadImportBatchUploadedBy", fields: [uploadedByUserId], references: [id])
+  rows              LeadImportRow[]
+
+  @@index([uploadedByUserId])
+  @@index([status])
+  @@index([uploadedAt(sort: Desc)])
+  @@map("lead_import_batches")
+  @@schema("crm")
+}
+
+/// One row of one batch's source file, post-validation. Carries the
+/// original raw cell values for audit even when validation failed, and
+/// links to the resulting Lead (whether newly created or matched by dedupe).
+model LeadImportRow {
+  id                 String                @id @default(uuid())
+  batchId            String
+  /// 1-based row number in the original file (excluding header).
+  rowNumber          Int
+  /// Full original row as the parser read it — for diffing / forensics.
+  rawData            Json
+  /// Phone after normalisation to E.164. NULL when normalisation failed.
+  normalisedPhone    String?
+  outcome            LeadImportRowOutcome
+  errorMessage       String?
+  /// Set when outcome=IMPORTED (the lead we created) OR DUPLICATE (the
+  /// pre-existing lead this row's phone matched). NULL for INVALID/FAILED.
+  leadId             String?
+  /// The agent the round-robin engine picked for this row (NULL when
+  /// the row didn't create a new assignment — e.g. duplicate that kept
+  /// its existing assignee).
+  assignedEmployeeId String?
+  createdAt          DateTime              @default(now())
+
+  batch              LeadImportBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  lead               Lead?                 @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([batchId])
+  @@index([leadId])
+  @@index([outcome])
+  @@map("lead_import_rows")
+  @@schema("crm")
 }
 
 model LeadFile {

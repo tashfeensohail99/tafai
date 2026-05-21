@@ -235,6 +235,81 @@ export class LeadImportsService {
   }
 
   /**
+   * List the leads created by this batch — drives the "Leads in this batch"
+   * panel on the detail page. Pulls through LeadImportRow so we only return
+   * rows whose outcome was IMPORTED (those that became a Lead the batch
+   * actually owns); DUPLICATE / INVALID rows are not shown because they
+   * don't represent a deletable lead.
+   *
+   *   search   — case-insensitive against firstName / lastName / phone /
+   *              email / referenceCode. Empty string = no filter.
+   *   assignedEmployeeId — restrict to one agent. "unassigned" matches
+   *              rows whose assignedEmployeeId is null. Omit = all.
+   *
+   * Capped at 500 rows so the UI doesn't choke on huge batches; the search
+   * bar is the intended way to narrow down beyond that.
+   */
+  async listLeadsInBatch(
+    batchId: string,
+    opts: { search?: string; assignedEmployeeId?: string } = {},
+  ): Promise<
+    Array<{
+      id: string;
+      firstName: string;
+      lastName: string;
+      phone: string;
+      email: string | null;
+      status: string;
+      referenceCode: string;
+      assignedEmployee: { id: string; firstName: string; lastName: string } | null;
+      createdAt: Date;
+    }>
+  > {
+    await this.findById(batchId); // 404s if the batch is gone
+
+    const search = opts.search?.trim();
+    const where: Prisma.LeadWhereInput = {
+      deletedAt: null,
+      importRows: { some: { batchId, outcome: 'IMPORTED' } },
+      ...(opts.assignedEmployeeId === 'unassigned'
+        ? { assignedEmployeeId: null }
+        : opts.assignedEmployeeId
+          ? { assignedEmployeeId: opts.assignedEmployeeId }
+          : {}),
+      ...(search
+        ? {
+            OR: [
+              { firstName: { contains: search, mode: 'insensitive' } },
+              { lastName: { contains: search, mode: 'insensitive' } },
+              { phone: { contains: search } },
+              { email: { contains: search, mode: 'insensitive' } },
+              { referenceCode: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const leads = await this.prisma.lead.findMany({
+      where,
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        status: true,
+        referenceCode: true,
+        createdAt: true,
+        assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: [{ assignedEmployeeId: 'asc' }, { createdAt: 'asc' }],
+      take: 500,
+    });
+
+    return leads.map((l) => ({ ...l, status: l.status as string }));
+  }
+
+  /**
    * Bulk-delete a batch and every Lead created from it. Soft-delete throughout
    * — both the LeadImportBatch and the linked Lead rows have their deletedAt
    * stamped, and downstream queries (admin/sales lead lists, WhatsApp inbox

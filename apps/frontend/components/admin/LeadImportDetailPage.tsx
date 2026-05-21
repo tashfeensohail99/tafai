@@ -10,6 +10,9 @@ import {
   Loader2,
   Pause,
   Play,
+  Search,
+  Trash2,
+  X,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -20,12 +23,16 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
+  bulkDeleteLeads,
+  deleteLead,
   downloadErrorsCsv,
   getImportBatch,
+  listLeadsInBatch,
   pauseImport,
   resumeImport,
   type LeadImportBatch,
   type LeadImportStatus,
+  type LeadInBatch,
 } from '@/lib/lead-imports-api';
 
 interface Props {
@@ -48,6 +55,24 @@ export function LeadImportDetailPage({ batchId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<'pause' | 'resume' | null>(null);
+
+  // ----- Leads-in-batch panel state ------------------------------------------
+  // List of leads created by this batch; refreshed on search / agent-filter
+  // changes and after any delete. Capped at 500 server-side.
+  const [leads, setLeads] = useState<LeadInBatch[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsError, setLeadsError] = useState<string | null>(null);
+  // Search input is debounced — typing into it doesn't fire a query on every
+  // keystroke; we wait 300ms of inactivity before re-fetching.
+  const [searchInput, setSearchInput] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
+  // Selected agent filter. null = all; "unassigned" = unassigned bucket;
+  // otherwise an employee id from the per-agent breakdown.
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  // Bulk-select state for the leads table.
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -96,6 +121,96 @@ export function LeadImportDetailPage({ batchId }: Props) {
     } finally {
       setBusyAction(null);
     }
+  }
+
+  // Debounce search input → 300ms after the last keystroke, commit the
+  // value that drives the actual fetch.
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  // Fetch the leads list whenever the batch is loaded or the filters change.
+  // Drops any stale selectedLeadIds since the visible set may have shrunk.
+  const loadLeads = useCallback(async () => {
+    setLeadsLoading(true);
+    setLeadsError(null);
+    try {
+      const rows = await listLeadsInBatch(batchId, {
+        ...(searchDebounced.trim() ? { search: searchDebounced.trim() } : {}),
+        ...(agentFilter ? { assignedEmployeeId: agentFilter } : {}),
+      });
+      setLeads(rows);
+      setSelectedLeadIds(new Set());
+    } catch (err) {
+      setLeadsError(err instanceof Error ? err.message : 'Unable to load leads');
+    } finally {
+      setLeadsLoading(false);
+    }
+  }, [batchId, searchDebounced, agentFilter]);
+
+  useEffect(() => {
+    if (!batch) return;
+    void loadLeads();
+  }, [batch?.id, loadLeads]);
+
+  async function handleDeleteLead(lead: LeadInBatch) {
+    const msg =
+      `Delete ${lead.firstName} ${lead.lastName} (${lead.phone})?\n\n` +
+      `Removes the lead from the admin / sales lead lists and the WhatsApp inbox.`;
+    if (!window.confirm(msg)) return;
+    setDeletingId(lead.id);
+    try {
+      await deleteLead(lead.id);
+      // Drop the row locally so the UI updates without waiting for refetch.
+      setLeads((curr) => curr.filter((l) => l.id !== lead.id));
+      // Refresh the batch counters in the background (importedCount drops).
+      void load();
+    } catch (err) {
+      setLeadsError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleBulkDeleteLeads() {
+    if (selectedLeadIds.size === 0) return;
+    const ids = Array.from(selectedLeadIds);
+    const msg =
+      `Delete ${ids.length} selected lead${ids.length === 1 ? '' : 's'} from this batch?\n\n` +
+      `Each lead disappears from admin / sales lead lists and the WhatsApp inbox.`;
+    if (!window.confirm(msg)) return;
+    setBulkDeleting(true);
+    try {
+      await bulkDeleteLeads(ids);
+      // Optimistically drop the deleted rows; also refetch for safety.
+      setLeads((curr) => curr.filter((l) => !selectedLeadIds.has(l.id)));
+      setSelectedLeadIds(new Set());
+      void load();
+    } catch (err) {
+      setLeadsError(err instanceof Error ? err.message : 'Bulk delete failed');
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  function toggleLeadSelection(id: string) {
+    setSelectedLeadIds((curr) => {
+      const next = new Set(curr);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllLeads() {
+    setSelectedLeadIds((curr) => {
+      const allVisible = leads.every((l) => curr.has(l.id));
+      if (allVisible) return new Set();
+      const next = new Set(curr);
+      leads.forEach((l) => next.add(l.id));
+      return next;
+    });
   }
 
   if (loading && !batch) {
@@ -189,7 +304,8 @@ export function LeadImportDetailPage({ batchId }: Props) {
         </div>
       </GlassCard>
 
-      {/* Per-agent breakdown */}
+      {/* Per-agent breakdown — agent name is now a chip that filters the
+          Leads panel below. Click an agent to drill in; click "All" to clear. */}
       <GlassCard variant="panel" padded={false}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--sos-divider)' }}>
           <div className="sos-eyebrow">Round-robin distribution</div>
@@ -203,22 +319,260 @@ export function LeadImportDetailPage({ batchId }: Props) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--sos-surface-1)' }}>
-                {['Agent', 'Leads assigned'].map((h) => (
-                  <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '1px solid var(--sos-divider)' }}>
+                {['Agent', 'Leads assigned', ''].map((h, i) => (
+                  <th key={i} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '1px solid var(--sos-divider)' }}>
                     {h}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {batch.agentBreakdown.map((row) => (
-                <tr key={row.employeeId ?? 'unassigned'} style={{ borderBottom: '1px solid var(--sos-divider)' }}>
-                  <td style={{ padding: '12px 16px', fontSize: 13.5, color: 'var(--sos-text-primary)' }}>{row.employeeName}</td>
-                  <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600 }}>{row.count.toLocaleString()}</td>
-                </tr>
-              ))}
+              {batch.agentBreakdown.map((row) => {
+                const filterValue = row.employeeId ?? 'unassigned';
+                const active = agentFilter === filterValue;
+                return (
+                  <tr
+                    key={filterValue}
+                    style={{
+                      borderBottom: '1px solid var(--sos-divider)',
+                      background: active ? 'rgba(59,130,246,0.08)' : undefined,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => setAgentFilter(active ? null : filterValue)}
+                  >
+                    <td style={{ padding: '12px 16px', fontSize: 13.5, color: 'var(--sos-text-primary)' }}>{row.employeeName}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600 }}>{row.count.toLocaleString()}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                      {active ? 'Filtering ✓' : 'Click to filter'}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+        )}
+      </GlassCard>
+
+      {/* Leads in this batch — search + per-agent filter + delete */}
+      <GlassCard variant="panel" padded={false}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--sos-divider)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ flexShrink: 0 }}>
+            <div className="sos-eyebrow">Imported leads</div>
+            <h3 className="sos-title" style={{ fontSize: 16, marginTop: 4 }}>
+              {leads.length.toLocaleString()}
+              {agentFilter ? (
+                <span style={{ fontSize: 13, color: 'var(--sos-text-muted)', fontWeight: 400 }}>
+                  {' '}· filtered by {batch.agentBreakdown?.find((a) => (a.employeeId ?? 'unassigned') === agentFilter)?.employeeName ?? 'agent'}
+                </span>
+              ) : null}
+            </h3>
+          </div>
+          {/* Search input */}
+          <div style={{ flex: 1, minWidth: 220, position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <Search size={14} style={{ position: 'absolute', left: 12, color: 'var(--sos-text-muted)' }} />
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search by name, phone, email, or reference code…"
+              className="sos-input"
+              style={{ paddingLeft: 34, paddingRight: searchInput ? 32 : 12, width: '100%' }}
+            />
+            {searchInput ? (
+              <button
+                type="button"
+                onClick={() => setSearchInput('')}
+                title="Clear search"
+                aria-label="Clear search"
+                style={{
+                  all: 'unset',
+                  cursor: 'pointer',
+                  position: 'absolute',
+                  right: 8,
+                  padding: 4,
+                  color: 'var(--sos-text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+          </div>
+          {/* Clear agent filter shortcut */}
+          {agentFilter ? (
+            <button
+              type="button"
+              onClick={() => setAgentFilter(null)}
+              className="sos-btn sos-btn--ghost sos-btn--sm"
+              style={{ flexShrink: 0 }}
+            >
+              Clear agent filter
+            </button>
+          ) : null}
+        </div>
+
+        {/* Bulk-action bar */}
+        {selectedLeadIds.size > 0 ? (
+          <div
+            style={{
+              padding: '10px 20px',
+              background: 'var(--sos-status-danger-soft, rgba(239,68,68,0.12))',
+              borderBottom: '1px solid var(--sos-status-danger-border, rgba(239,68,68,0.35))',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              fontSize: 13,
+            }}
+          >
+            <div><strong>{selectedLeadIds.size}</strong> selected</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setSelectedLeadIds(new Set())}
+                disabled={bulkDeleting}
+                className="sos-btn sos-btn--ghost sos-btn--sm"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleBulkDeleteLeads()}
+                disabled={bulkDeleting}
+                className="sos-btn sos-btn--sm"
+                style={{
+                  background: 'var(--sos-status-danger, #dc2626)',
+                  color: '#fff',
+                  borderColor: 'var(--sos-status-danger, #dc2626)',
+                }}
+              >
+                {bulkDeleting ? 'Deleting…' : `Delete selected (${selectedLeadIds.size})`}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {leadsError ? (
+          <div style={{ padding: '12px 20px', fontSize: 13, color: 'var(--sos-status-danger)' }}>
+            {leadsError}
+          </div>
+        ) : null}
+
+        {leadsLoading && leads.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
+            Loading leads…
+          </div>
+        ) : leads.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
+            {searchInput || agentFilter
+              ? 'No leads match the current filters.'
+              : 'No leads imported by this batch yet.'}
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--sos-surface-1)' }}>
+                  <th style={{ padding: '10px 12px', width: 36 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible leads"
+                      checked={leads.length > 0 && leads.every((l) => selectedLeadIds.has(l.id))}
+                      ref={(el) => {
+                        if (!el) return;
+                        const any = leads.some((l) => selectedLeadIds.has(l.id));
+                        const all = leads.every((l) => selectedLeadIds.has(l.id));
+                        el.indeterminate = any && !all;
+                      }}
+                      onChange={toggleSelectAllLeads}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </th>
+                  {['Ref', 'Name', 'Phone', 'Email', 'Assigned', 'Status', ''].map((h, i) => (
+                    <th key={i} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '1px solid var(--sos-divider)', whiteSpace: 'nowrap' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {leads.map((lead) => {
+                  const selected = selectedLeadIds.has(lead.id);
+                  return (
+                    <tr
+                      key={lead.id}
+                      style={{
+                        borderBottom: '1px solid var(--sos-divider)',
+                        background: selected ? 'rgba(59,130,246,0.04)' : undefined,
+                      }}
+                    >
+                      <td style={{ padding: '10px 12px' }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${lead.firstName} ${lead.lastName}`}
+                          checked={selected}
+                          onChange={() => toggleLeadSelection(lead.id)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: 12.5, color: 'var(--sos-text-muted)', whiteSpace: 'nowrap' }}>
+                        {lead.referenceCode}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: 13.5, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap' }}>
+                        {lead.firstName} {lead.lastName}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, whiteSpace: 'nowrap' }}>{lead.phone}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--sos-text-secondary)' }}>
+                        {lead.email ?? '—'}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, whiteSpace: 'nowrap' }}>
+                        {lead.assignedEmployee
+                          ? `${lead.assignedEmployee.firstName} ${lead.assignedEmployee.lastName}`
+                          : <span style={{ color: 'var(--sos-text-muted)' }}>Unassigned</span>}
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <StatusBadge tone="neutral" size="sm">{lead.status}</StatusBadge>
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteLead(lead)}
+                          disabled={deletingId === lead.id}
+                          title="Delete lead"
+                          aria-label="Delete lead"
+                          style={{
+                            all: 'unset',
+                            cursor: deletingId === lead.id ? 'not-allowed' : 'pointer',
+                            padding: 6,
+                            borderRadius: 6,
+                            color: 'var(--sos-status-danger)',
+                            opacity: deletingId === lead.id ? 0.5 : 1,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (deletingId !== lead.id)
+                              (e.currentTarget as HTMLButtonElement).style.background =
+                                'rgba(239,68,68,0.12)';
+                          }}
+                          onMouseLeave={(e) => {
+                            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                          }}
+                        >
+                          {deletingId === lead.id ? (
+                            <Loader2 size={15} className="sos-spin" />
+                          ) : (
+                            <Trash2 size={15} />
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </GlassCard>
     </div>

@@ -117,6 +117,25 @@ export class LeadImportsController {
     sendCsvDownload(res, `${batch.batchNumber}-errors-${todayStamp()}.csv`, csv);
   }
 
+  /**
+   * List leads created by this batch. Drives the "Leads in this batch"
+   * panel on the detail page — admin can search by name/phone/email/ref,
+   * filter by assigned agent (or "unassigned"), and delete individual
+   * leads from the same view.
+   */
+  @Get(':id/leads')
+  @RequirePermissions('leads.create')
+  listLeads(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('search') search?: string,
+    @Query('assignedEmployeeId') assignedEmployeeId?: string,
+  ) {
+    return this.service.listLeadsInBatch(id, {
+      ...(search ? { search } : {}),
+      ...(assignedEmployeeId ? { assignedEmployeeId } : {}),
+    });
+  }
+
   @HttpCode(200)
   @Post(':id/pause')
   @RequirePermissions('leads.create')

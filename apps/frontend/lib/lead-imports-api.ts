@@ -162,6 +162,53 @@ export async function deleteImport(id: string): Promise<{ success: true; deleted
   );
 }
 
+export interface LeadInBatch {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string | null;
+  status: string;
+  referenceCode: string;
+  assignedEmployee: { id: string; firstName: string; lastName: string } | null;
+  createdAt: string;
+}
+
+/**
+ * List the leads created by a batch — drives the per-batch "Leads"
+ * panel. Server caps at 500 rows; combine with the search filter to
+ * narrow huge batches further.
+ *
+ *   assignedEmployeeId  pass the UUID to filter by an agent, or the
+ *                       literal "unassigned" to find leads with no
+ *                       assignee. Omit for all.
+ */
+export async function listLeadsInBatch(
+  batchId: string,
+  opts: { search?: string; assignedEmployeeId?: string } = {},
+): Promise<LeadInBatch[]> {
+  const qs = new URLSearchParams();
+  if (opts.search) qs.set('search', opts.search);
+  if (opts.assignedEmployeeId) qs.set('assignedEmployeeId', opts.assignedEmployeeId);
+  const suffix = qs.toString();
+  return apiFetch<LeadInBatch[]>(
+    `/admin/lead-imports/${batchId}/leads${suffix ? `?${suffix}` : ''}`,
+  );
+}
+
+/** Soft-delete a single lead. Used by the per-batch list's row delete button. */
+export async function deleteLead(leadId: string): Promise<{ success: true }> {
+  return apiFetch<{ success: true }>(`/leads/${leadId}`, { method: 'DELETE' });
+}
+
+/** Bulk-delete an explicit set of leads. Cap 500. */
+export async function bulkDeleteLeads(ids: string[]): Promise<{ success: true; deleted: number }> {
+  return apiFetch<{ success: true; deleted: number }>(`/leads/bulk-delete`, {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export function downloadErrorsCsv(id: string, batchNumber: string): void {
   const token = getAccessToken();
   const url = `${baseUrl()}/admin/lead-imports/${id}/errors.csv`;

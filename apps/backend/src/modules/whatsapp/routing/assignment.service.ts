@@ -112,17 +112,6 @@ export class WhatsAppAssignmentService {
         });
       }
 
-      // Already assigned — nothing to do (manual reassign takes priority).
-      if (lead.assignedEmployeeId) {
-        return {
-          leadId: lead.id,
-          threadId,
-          assignedEmployeeId: lead.assignedEmployeeId,
-          reason: null,
-          retryAt: null,
-        };
-      }
-
       // Per Tashfeen policy: assignment runs 24/7 including weekends.
       // Threads received after 6 PM, on Saturday, or on Sunday are still
       // distributed to the team; agents pick them up the next working morning
@@ -134,6 +123,34 @@ export class WhatsAppAssignmentService {
       // still get round-robined so the Monday hand-off works.
 
       const eligible = await this.loadEligibleEmployees(tx, org.organizationId);
+
+      // Already assigned — but only honor the assignment if that employee is
+      // STILL in the eligible pool. If the assigned employee has been taken
+      // out of the inbox (whatsappInboxMember=false), deactivated, or had
+      // their user account suspended, we need to re-route to someone who
+      // can actually answer. Without this check, leads stay glued to an
+      // agent who can't see or respond to them and new inbound messages
+      // pile up invisibly.
+      if (lead.assignedEmployeeId) {
+        const stillEligible = eligible.some((e) => e.id === lead.assignedEmployeeId);
+        if (stillEligible) {
+          return {
+            leadId: lead.id,
+            threadId,
+            assignedEmployeeId: lead.assignedEmployeeId,
+            reason: null,
+            retryAt: null,
+          };
+        }
+        this.log.log(
+          { leadId: lead.id, previousAssignee: lead.assignedEmployeeId },
+          'assignment: previous assignee no longer eligible, re-routing',
+        );
+        // Fall through with assignedEmployeeId treated as null. We do NOT
+        // null out lead.preferredEmployeeId here — sticky check below will
+        // also exclude ineligible employees, so it's harmless to leave it.
+      }
+
       if (eligible.length === 0) {
         this.log.log(
           { leadId: lead.id },

@@ -68,6 +68,7 @@ import {
   markThreadRead,
   sendMediaMessage,
   sendText,
+  type AdReferral,
   type ChatMessage,
   type ThreadDetail,
   type WhatsAppMessageStatus,
@@ -501,6 +502,17 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             onEditLead={() => setEditLeadOpen(true)}
             onBook={() => setBookOpen(true)}
             onFollowUp={() => setFollowUpOpen(true)}
+          />
+        ) : null}
+        {/* Click-to-WhatsApp ad attribution banner — shows when the thread's
+            latest inbound came in via a Facebook / Instagram ad click. Stays
+            sticky just under the header so agents always see which campaign
+            the customer engaged with, even after several follow-up messages. */}
+        {thread.adReferral ? (
+          <AdReferralBanner
+            referral={thread.adReferral}
+            at={thread.adReferralAt ?? null}
+            onOpenImage={(url) => setLightboxUrl(url)}
           />
         ) : null}
         {/* Messages */}
@@ -1768,6 +1780,263 @@ function QuickActionsBar({
   );
 }
 
+// ---- Click-to-WhatsApp ad referral cards -------------------------------
+
+/**
+ * Sticky banner under the chat header. Shows when the thread's MOST RECENT
+ * inbound came in via a click on a Facebook / Instagram WhatsApp ad. Stays
+ * visible across the whole chat session even after several follow-up
+ * messages, so agents always know "this contact replied through <ad>"
+ * while reading older history.
+ *
+ * Click the image / video thumbnail to open the lightbox (same one the
+ * media bubbles use). The "View ad" link opens Meta's source_url in a
+ * new tab if available.
+ */
+function AdReferralBanner({
+  referral,
+  at,
+  onOpenImage,
+}: {
+  referral: AdReferral;
+  at: string | null;
+  onOpenImage?: (url: string) => void;
+}) {
+  const thumb =
+    referral.thumbnail_url ||
+    referral.image_url ||
+    (referral.media_type === 'video' ? referral.video_url : undefined);
+  const headline = referral.headline?.trim() || 'WhatsApp ad';
+  const subtitle = referral.body?.trim() || referral.source_type || 'Click-to-WhatsApp ad';
+  const when = at ? new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
+  return (
+    <div
+      style={{
+        margin: '0 0',
+        padding: '10px 14px',
+        background:
+          'linear-gradient(90deg, rgba(24,119,242,0.20) 0%, rgba(24,119,242,0.06) 100%)',
+        borderBottom: '1px solid rgba(24,119,242,0.35)',
+        display: 'flex',
+        gap: 12,
+        alignItems: 'center',
+        flexShrink: 0,
+      }}
+    >
+      {thumb ? (
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            flexShrink: 0,
+            borderRadius: 6,
+            overflow: 'hidden',
+            position: 'relative',
+            background: '#000',
+            cursor: onOpenImage ? 'zoom-in' : 'default',
+          }}
+          onClick={() => onOpenImage?.(thumb)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={thumb}
+            alt="Ad thumbnail"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+          {referral.media_type === 'video' ? (
+            <span
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%,-50%)',
+                color: '#fff',
+                background: 'rgba(0,0,0,0.55)',
+                width: 24,
+                height: 24,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 12,
+              }}
+              aria-hidden
+            >
+              ▶
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            flexShrink: 0,
+            borderRadius: 6,
+            background: 'rgba(24,119,242,0.25)',
+            color: '#90caf9',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 700,
+            fontSize: 11,
+          }}
+        >
+          AD
+        </div>
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 10.5,
+            fontWeight: 700,
+            color: '#5b9dff',
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            marginBottom: 2,
+          }}
+        >
+          Replied from {referral.media_type === 'video' ? 'video ad' : referral.media_type === 'image' ? 'image ad' : 'ad'}
+        </div>
+        <div
+          style={{
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: 'var(--sos-text-primary)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {headline}
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--sos-text-muted)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            marginTop: 1,
+          }}
+        >
+          {subtitle}
+          {when ? ` · ${when}` : ''}
+        </div>
+      </div>
+      {referral.source_url ? (
+        <a
+          href={referral.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="sos-btn sos-btn--ghost sos-btn--sm"
+          style={{ flexShrink: 0, fontSize: 12 }}
+        >
+          View ad
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Compact per-message ad card — sits directly above a specific incoming
+ * message bubble when that message's payload included a `referral`. Used
+ * to mark exactly WHICH reply was triggered by the ad click, useful when
+ * the customer has been chatting for a while and a single thread now
+ * carries multiple referrals from different campaigns.
+ */
+function InlineAdReferralCard({
+  referral,
+  isOut,
+}: {
+  referral: AdReferral;
+  isOut: boolean;
+}) {
+  const thumb =
+    referral.thumbnail_url ||
+    referral.image_url ||
+    (referral.media_type === 'video' ? referral.video_url : undefined);
+  const headline = referral.headline?.trim() || 'WhatsApp ad';
+  const mediaLabel = referral.media_type === 'video' ? 'Video ad' : referral.media_type === 'image' ? 'Image ad' : 'Ad';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        maxWidth: '65%',
+        padding: '6px 10px',
+        marginBottom: 4,
+        borderRadius: 8,
+        background: 'rgba(24,119,242,0.12)',
+        border: '1px solid rgba(24,119,242,0.30)',
+        // Same side as the bubble so the card hangs over the message
+        // it belongs to, not the opposite side.
+        alignSelf: isOut ? 'flex-end' : 'flex-start',
+      }}
+    >
+      {thumb ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={thumb}
+          alt=""
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 4,
+            objectFit: 'cover',
+            flexShrink: 0,
+          }}
+        />
+      ) : (
+        <span
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 4,
+            background: 'rgba(24,119,242,0.30)',
+            color: '#90caf9',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 10,
+            fontWeight: 700,
+            flexShrink: 0,
+          }}
+        >
+          AD
+        </span>
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            color: '#5b9dff',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+          }}
+        >
+          From {mediaLabel.toLowerCase()}
+        </div>
+        <div
+          style={{
+            fontSize: 12.5,
+            color: 'var(--sos-text-primary)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            maxWidth: 280,
+          }}
+        >
+          {headline}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- Message bubble -----------------------------------------------------
 
 /** Fetch media binary from the backend proxy and return a blob URL. */
@@ -2031,6 +2300,14 @@ function MessageBubble({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
+      {/* Inline ad-context card — sits on the same side as the bubble and
+          identifies which click-to-WhatsApp ad triggered this specific
+          reply. Renders only on the exact message that carried the
+          referral; subsequent unattributed replies fall back to the
+          thread-level AdReferralBanner shown above the messages list. */}
+      {message.adReferral ? (
+        <InlineAdReferralCard referral={message.adReferral} isOut={isOut} />
+      ) : null}
       <div
         style={{
           maxWidth: '65%',

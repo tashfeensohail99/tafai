@@ -814,6 +814,32 @@ function ThreadRow({
                 compact
               />
             ) : null}
+            {item.adReferral ? (
+              <span
+                title={
+                  item.adReferral.headline
+                    ? `From ad: ${item.adReferral.headline}`
+                    : 'From WhatsApp ad'
+                }
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  fontSize: 9,
+                  fontWeight: 800,
+                  letterSpacing: '0.06em',
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  background: 'rgba(24,119,242,0.20)',
+                  color: '#5b9dff',
+                  border: '1px solid rgba(24,119,242,0.35)',
+                  textTransform: 'uppercase',
+                  flexShrink: 0,
+                }}
+              >
+                {item.adReferral.media_type === 'video' ? '▶ Ad' : 'Ad'}
+              </span>
+            ) : null}
           </span>
           {item.lastMessageAt && (
             <span

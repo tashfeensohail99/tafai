@@ -409,6 +409,7 @@ export class WhatsAppMessagesService {
       deliveredAt: true,
       readAt: true,
       failedAt: true,
+      adReferral: true,
       createdAt: true,
     } as const;
   }

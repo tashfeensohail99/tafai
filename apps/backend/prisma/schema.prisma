@@ -2311,6 +2311,18 @@ model WhatsAppThread {
   unreadCount       Int      @default(0)
   // Why the current assignment was made (sticky / round-robin / manual).
   lastAssignmentReason WhatsAppAssignmentReason?
+
+  // --- Click-to-WhatsApp ad attribution ---
+  // Populated when an inbound message arrives with a Meta `referral` block —
+  // i.e. the customer started the conversation by clicking a Facebook /
+  // Instagram WhatsApp ad. Meta only sends `referral` on the first message
+  // after the click, so we stamp it here on the thread so it stays
+  // surfaced in the inbox UI even on subsequent replies. If the same
+  // contact clicks a different ad later we overwrite — adReferralAt is
+  // always "the most recent ad they engaged via".
+  adReferral         Json?
+  adReferralAt       DateTime?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -2372,6 +2384,13 @@ model WhatsAppMessage {
 
   // For inbound replies that quote another message.
   repliedToWaMessageId String?
+
+  // Click-to-WhatsApp ad referral as sent by Meta on this specific message.
+  // Stored per-message because the same thread can see multiple ad clicks
+  // over its lifetime; the thread row carries the LATEST one for header
+  // display, this column lets us look up which exact reply was triggered
+  // by which ad. JSON shape matches Meta's `referral` object verbatim.
+  adReferral         Json?
 
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

@@ -52,6 +52,11 @@ export interface ThreadListItem {
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
+  /** Click-to-WhatsApp ad attribution — populated when the contact engaged
+   *  via a Facebook / Instagram WhatsApp ad. Drives the "AD" chip on the
+   *  thread list row so admin can spot ad-driven conversations at a glance. */
+  adReferral?: AdReferral | null;
+  adReferralAt?: string | null;
   channel: { id: string; label: string; displayNumber: string };
   lead: {
     id: string;
@@ -83,10 +88,34 @@ export interface ThreadListResponse {
   nextCursor: string | null;
 }
 
+/**
+ * Click-to-WhatsApp ad attribution. Meta sends this on the first inbound
+ * message after a customer clicks a Facebook / Instagram WhatsApp ad —
+ * we persist it on the thread (so the inbox UI can keep showing "replied
+ * from <ad>" on subsequent messages) and on the specific message that
+ * carried the click. All fields are optional because Meta's payload
+ * varies by ad creative.
+ */
+export interface AdReferral {
+  source_url?: string;
+  source_id?: string;
+  source_type?: string;
+  headline?: string;
+  body?: string;
+  media_type?: 'image' | 'video' | string;
+  image_url?: string;
+  video_url?: string;
+  thumbnail_url?: string;
+  ctwa_clid?: string;
+}
+
 export interface ThreadDetail extends ThreadListItem {
   channelId: string;
   leadId: string | null;
   clientId: string | null;
+  /** Most recent ad the contact engaged via — see AdReferral. */
+  adReferral?: AdReferral | null;
+  adReferralAt?: string | null;
   lead:
     | (ThreadListItem['lead'] & {
         email: string | null;
@@ -128,6 +157,9 @@ export interface ChatMessage {
   deliveredAt: string | null;
   readAt: string | null;
   failedAt: string | null;
+  /** Present when this specific message was triggered by a click-to-WhatsApp
+   *  ad click — the inbox renders an ad-context card above the bubble. */
+  adReferral?: AdReferral | null;
   createdAt: string;
 }
 

@@ -25,6 +25,26 @@ interface MetaContact {
   wa_id: string;
   profile?: { name?: string };
 }
+/**
+ * Click-to-WhatsApp ad attribution block. Meta sends this on the FIRST
+ * inbound message after a customer clicks a WhatsApp ad on Facebook /
+ * Instagram. Every field is technically optional in the spec but the
+ * permissive shape lets us persist whatever Meta sends without losing
+ * information that isn't on our typed list.
+ * See: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples#received-message-triggered-by-click-to-whatsapp-ads
+ */
+interface MetaReferral {
+  source_url?: string;
+  source_id?: string;
+  source_type?: 'ad' | 'post' | string;
+  headline?: string;
+  body?: string;
+  media_type?: 'image' | 'video' | string;
+  image_url?: string;
+  video_url?: string;
+  thumbnail_url?: string;
+  ctwa_clid?: string;
+}
 interface MetaMessage {
   id: string;
   from: string;
@@ -41,6 +61,7 @@ interface MetaMessage {
   interactive?: unknown;
   context?: { id: string; from?: string };
   reaction?: { message_id: string; emoji: string };
+  referral?: MetaReferral;
 }
 interface MetaStatus {
   id: string;
@@ -239,6 +260,18 @@ export class WebhookIngestProcessor extends WorkerHost {
       }
     }
 
+    // Click-to-WhatsApp ad referral. Meta only sends this on the first
+    // message after a customer clicks the ad — store it on both the
+    // thread (so the inbox can show "replied from <ad>" on subsequent
+    // messages too) and on the message itself (so we can ledger which
+    // exact reply each ad produced).
+    const referral = msg.referral
+      ? (msg.referral as unknown as Prisma.InputJsonValue)
+      : undefined;
+    const adReferralUpdate = referral
+      ? { adReferral: referral, adReferralAt: now }
+      : {};
+
     // Upsert thread by (channelId, waContactId). Both indexes exist.
     const thread = await this.prisma.whatsAppThread.upsert({
       where: { channelId_waContactId: { channelId, waContactId } },
@@ -252,6 +285,7 @@ export class WebhookIngestProcessor extends WorkerHost {
         lastMessageAt: now,
         lastMessagePreview: previewOf(msg),
         unreadCount: 1,
+        ...adReferralUpdate,
       },
       update: {
         // Keep linkage in sync (covers lead-to-client conversion).
@@ -264,6 +298,10 @@ export class WebhookIngestProcessor extends WorkerHost {
         status: 'OPEN',
         // Stamp firstInboundAt only if missing.
         firstInboundAt: undefined,
+        // Overwrite to the latest ad they came through. If they didn't
+        // click an ad this time the spread is {} and the previous
+        // attribution is preserved.
+        ...adReferralUpdate,
       },
     });
 
@@ -301,6 +339,11 @@ export class WebhookIngestProcessor extends WorkerHost {
         payload: decoded.payload as Prisma.InputJsonValue,
         mediaMimeType: decoded.mediaMeta?.mime_type ?? null,
         repliedToWaMessageId: msg.context?.id ?? null,
+        // Pin the click-to-WhatsApp ad attribution to the exact reply that
+        // arrived from the ad click. Subsequent replies from the same
+        // contact won't have it (Meta only sends `referral` once per
+        // click); the thread-level adReferral covers that case for the UI.
+        ...(referral ? { adReferral: referral } : {}),
         createdAt: new Date(Number(msg.timestamp) * 1000),
       },
     });

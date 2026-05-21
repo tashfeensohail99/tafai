@@ -316,7 +316,7 @@ export class ServiceContractsService {
   async generateInvoiceForInstallment(installmentId: string, actorUserId: string) {
     const installment = await this.prisma.installment.findUnique({
       where: { id: installmentId },
-      include: { contract: true },
+      include: { contract: true, invoice: { select: { id: true } } },
     });
     if (!installment) throw new NotFoundException('Installment not found');
     if (installment.invoice) {

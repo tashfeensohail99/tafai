@@ -41,6 +41,7 @@ import {
   Phone,
   PhoneCall,
   Plus,
+  Reply,
   Send,
   Sparkles,
   Square,
@@ -114,6 +115,9 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     previewUrl: string;
     kind: 'image' | 'video' | 'document';
   } | null>(null);
+  // Reply-to: the message currently being quoted by the composer. Cleared
+  // after a successful send or when the user clicks the X on the quote bar.
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -198,6 +202,11 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const tempId = `temp-${idempotencyKey}`;
     const nowIso = new Date().toISOString();
+    // If the user is replying to a message, stamp that message's waMessageId
+    // onto repliedToWaMessageId so the outgoing send shows up as a quote on
+    // the recipient's WhatsApp (Meta context.message_id). The backend already
+    // accepts contextWaMessageId and writes it to the same column.
+    const contextWaMessageId = replyingTo?.waMessageId ?? undefined;
     const tempMessage: ChatMessage = {
       id: tempId,
       threadId: thread.id,
@@ -214,7 +223,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       templateLanguage: null,
       sentByEmployeeId: null,
       waMessageId: null,
-      repliedToWaMessageId: null,
+      repliedToWaMessageId: contextWaMessageId ?? null,
       errorCode: null,
       errorTitle: null,
       sentAt: null,
@@ -226,11 +235,17 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
 
     setMessages((curr) => [...curr, tempMessage]);
     setDraft('');
+    // Clear the reply-target as soon as the send is fired — the bubble
+    // already carries the quoted context, no need for the bar to linger.
+    setReplyingTo(null);
 
     // Fire-and-forget — but track the result so we can swap or mark FAILED.
     void (async () => {
       try {
-        const real = await sendText(thread.id, body, { idempotencyKey });
+        const real = await sendText(thread.id, body, {
+          idempotencyKey,
+          ...(contextWaMessageId ? { contextWaMessageId } : {}),
+        });
         setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
       } catch (err) {
         const reason = err instanceof Error ? err.message : 'Failed to send';
@@ -546,6 +561,8 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                 key={m.id}
                 message={m}
                 onImageClick={(url) => setLightboxUrl(url)}
+                onReply={() => setReplyingTo(m)}
+                allMessages={messages}
               />
             ))
           )}
@@ -615,6 +632,53 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             </button>
           </div>
         ) : null}
+
+        {/* Reply-target quote bar — shown above the composer while the user
+            is composing a reply. Click X to cancel and send a normal
+            (non-reply) message instead. The quoted content is rendered
+            with the same QuotedMessagePreview component used inside
+            bubbles so the affordance is visually consistent. */}
+        {replyingTo ? (
+          <div
+            style={{
+              padding: '8px 14px',
+              background: 'var(--wa-panel-header)',
+              borderTop: '1px solid var(--sos-border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              flexShrink: 0,
+            }}
+          >
+            <Reply
+              size={16}
+              style={{ color: 'var(--wa-accent)', flexShrink: 0 }}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <QuotedMessagePreview quoted={replyingTo} />
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyingTo(null)}
+              aria-label="Cancel reply"
+              title="Cancel reply"
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                padding: 4,
+                color: 'var(--sos-text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+                flexShrink: 0,
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        ) : null}
+
         <ChatComposer
           value={draft}
           onChange={setDraft}
@@ -728,6 +792,60 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       {lightboxUrl ? (
         <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
       ) : null}
+    </div>
+  );
+}
+
+// ---- Quoted-message preview (inline, inside a bubble) -------------------
+
+function QuotedMessagePreview({ quoted }: { quoted: ChatMessage }) {
+  // Outbound-from-us = our agent. Inbound = the customer. The label colour
+  // mirrors WhatsApp: green-ish for our side, white for customer side.
+  const isQuotedOut = quoted.direction === 'OUTBOUND';
+  const author = isQuotedOut ? 'You' : 'Customer';
+  const preview = (() => {
+    if (quoted.type === 'TEXT') return quoted.body ?? '';
+    if (quoted.type === 'IMAGE') return quoted.body ? `📷 ${quoted.body}` : '📷 Photo';
+    if (quoted.type === 'VIDEO') return quoted.body ? `🎥 ${quoted.body}` : '🎥 Video';
+    if (quoted.type === 'AUDIO') return '🎤 Voice message';
+    if (quoted.type === 'DOCUMENT') return `📄 ${quoted.body ?? 'Document'}`;
+    if (quoted.type === 'TEMPLATE') return `📋 ${quoted.templateName ?? 'Template'}`;
+    return '';
+  })();
+
+  return (
+    <div
+      style={{
+        borderLeft: `3px solid ${isQuotedOut ? 'var(--wa-accent)' : '#a0a0a0'}`,
+        background: 'rgba(0,0,0,0.18)',
+        borderRadius: 4,
+        padding: '4px 8px',
+        marginBottom: 4,
+        fontSize: 12,
+        lineHeight: 1.3,
+        maxWidth: '100%',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          fontWeight: 600,
+          color: isQuotedOut ? 'var(--wa-accent)' : '#e0e0e0',
+          marginBottom: 2,
+        }}
+      >
+        {author}
+      </div>
+      <div
+        style={{
+          color: 'var(--sos-text-muted)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {preview || <span style={{ fontStyle: 'italic' }}>(no preview)</span>}
+      </div>
     </div>
   );
 }
@@ -1559,12 +1677,31 @@ function MediaBubbleContent({
 function MessageBubble({
   message,
   onImageClick,
+  onReply,
+  allMessages,
 }: {
   message: ChatMessage;
   onImageClick?: (blobUrl: string) => void;
+  onReply?: () => void;
+  /** Used to resolve the quoted message preview when this bubble is a reply. */
+  allMessages?: ChatMessage[];
 }) {
   const isOut = message.direction === 'OUTBOUND';
   const isMedia = ['IMAGE', 'AUDIO', 'VIDEO', 'DOCUMENT'].includes(message.type);
+  const [hovered, setHovered] = useState(false);
+  // Resolve the message this bubble is replying to, if any. Match by
+  // waMessageId since that's what Meta uses for cross-message references.
+  // Falls through to undefined if the original isn't in the loaded window.
+  const quoted = message.repliedToWaMessageId && allMessages
+    ? allMessages.find((m) => m.waMessageId === message.repliedToWaMessageId)
+    : undefined;
+  // FAILED-state messages can't be replied to (they don't have a waMessageId
+  // on Meta's side yet). Same for our own optimistic temp bubbles.
+  const canReply =
+    Boolean(onReply) &&
+    Boolean(message.waMessageId) &&
+    message.status !== 'FAILED' &&
+    !message.id.startsWith('temp-');
   return (
     <div
       style={{
@@ -1573,6 +1710,8 @@ function MessageBubble({
         alignItems: isOut ? 'flex-end' : 'flex-start',
         marginBottom: 2,
       }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div
         style={{
@@ -1585,6 +1724,36 @@ function MessageBubble({
           position: 'relative',
         }}
       >
+        {/* Hover Reply button — appears on the opposite side of the bubble
+            (outbound bubble = button on left, inbound bubble = button on
+            right). Hidden for FAILED / optimistic messages since they have
+            no waMessageId yet. */}
+        {hovered && canReply ? (
+          <button
+            type="button"
+            onClick={onReply}
+            title="Reply"
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              position: 'absolute',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              [isOut ? 'right' : 'left']: 'calc(100% + 6px)',
+              width: 28, height: 28, borderRadius: '50%',
+              background: 'var(--sos-surface-2, #1f2c33)',
+              color: 'var(--sos-text-muted)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+            }}
+          >
+            <Reply size={14} />
+          </button>
+        ) : null}
+        {/* If this message is a reply, render the quoted message above
+            the body. Click jumps to the original (browser native anchor
+            scroll-into-view via id). */}
+        {quoted ? <QuotedMessagePreview quoted={quoted} /> : null}
         <div
           style={{
             fontSize: 14,

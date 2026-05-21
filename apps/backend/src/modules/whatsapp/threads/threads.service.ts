@@ -81,6 +81,17 @@ export class WhatsAppThreadsService {
             status: true,
             assignedEmployeeId: true,
             assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+            // Most-recent CSV import touch — drives the CSV LEAD badge on
+            // the thread row in the WhatsApp inbox. Tooltip uses batch.name.
+            importRows: {
+              where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: {
+                id: true,
+                batch: { select: { id: true, batchNumber: true, name: true } },
+              },
+            },
           },
         },
         client: {
@@ -121,6 +132,16 @@ export class WhatsAppThreadsService {
             preferredEmployeeId: true,
             convertedClientId: true,
             assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+            // CSV-origin badge data — shown in the chat header.
+            importRows: {
+              where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: {
+                id: true,
+                batch: { select: { id: true, batchNumber: true, name: true } },
+              },
+            },
           },
         },
         client: {

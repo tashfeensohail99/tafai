@@ -21,6 +21,7 @@ import {
 } from '@/components/sales-v2/ui';
 import { apiFetch } from '@/lib/api-client';
 import { renderWelcomeMessage, waMeLink } from '@/lib/lead-imports-api';
+import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 /**
  * Sales agent view of leads sourced from CSV/Excel uploads. Each row gets
@@ -205,10 +206,11 @@ export function SalesCsvLeadsPage() {
                         <Link href={`/sales/leads/${lead.id}` as Route} style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
                           {lead.firstName} {lead.lastName}
                         </Link>
-                        <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)', marginTop: 2 }}>
-                          <CsvLeadBadge />
-                          {' · '}{lead.referenceCode}
-                          {lead.targetCountry ? ` · ${lead.targetCountry}` : ''}
+                        <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                          <CsvLeadBadge batchName={batch?.name} />
+                          <span>·</span>
+                          <span>{lead.referenceCode}</span>
+                          {lead.targetCountry ? <><span>·</span><span>{lead.targetCountry}</span></> : null}
                         </div>
                       </td>
                       <td style={{ padding: '14px 16px', fontSize: 13, fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
@@ -253,27 +255,3 @@ export function SalesCsvLeadsPage() {
   );
 }
 
-// Compact inline badge — same shape used in admin lead lists, and later
-// surfaced on the lead profile + WhatsApp inbox thread row (slice 8).
-function CsvLeadBadge() {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 3,
-        padding: '1px 6px',
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: '0.04em',
-        textTransform: 'uppercase',
-        background: 'var(--sos-brand-primary-soft)',
-        color: 'var(--sos-brand-primary-strong)',
-        border: '1px solid var(--sos-brand-primary-border)',
-        borderRadius: 4,
-      }}
-    >
-      CSV LEAD
-    </span>
-  );
-}

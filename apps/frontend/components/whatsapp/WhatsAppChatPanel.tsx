@@ -64,6 +64,7 @@ import {
   type WhatsAppMessageStatus,
 } from '@/lib/whatsapp';
 import { ConvertToClientModal } from './ConvertToClientModal';
+import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { BookAppointmentModal } from './BookAppointmentModal';
 import { AddFollowUpModal } from './AddFollowUpModal';
 import { EditLeadModal } from './EditLeadModal';
@@ -260,6 +261,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           firstAgentReplyAt={thread.firstAgentReplyAt}
           slaBreached={thread.slaBreached}
           assignedTo={thread.lead?.assignedEmployee ?? null}
+          csvBatchName={thread.lead?.importRows?.[0]?.batch.name ?? null}
           onBack={onBack}
         />
         {/* Quick actions strip — visible only when there's no right sidebar
@@ -477,6 +479,7 @@ function ChatHeader(props: {
   firstAgentReplyAt: string | null;
   slaBreached: boolean;
   assignedTo: { firstName: string; lastName: string } | null;
+  csvBatchName: string | null;
   onBack?: () => void;
 }) {
   return (
@@ -532,8 +535,11 @@ function ChatHeader(props: {
         {initialsOf(props.displayName)}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--sos-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {props.displayName}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 15, color: 'var(--sos-text-primary)', overflow: 'hidden' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {props.displayName}
+          </span>
+          {props.csvBatchName ? <CsvLeadBadge batchName={props.csvBatchName} /> : null}
         </div>
         <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 1 }}>
           {props.phone}

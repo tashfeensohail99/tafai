@@ -39,6 +39,7 @@ import { listThreads, reassignThread, type ThreadListItem, type WhatsAppThreadSt
 import { listTeamPresence, type TeamPresenceRow } from '@/lib/whatsapp-admin';
 import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
+import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Hooks + helpers
@@ -787,16 +788,32 @@ function ThreadRow({
         >
           <span
             style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
               fontSize: 14,
               fontWeight: item.unreadCount > 0 ? 600 : 400,
               color: 'var(--sos-text-primary)',
               overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              maxWidth: 170,
+              maxWidth: 200,
             }}
           >
-            {displayName}
+            <span
+              style={{
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: 170,
+              }}
+            >
+              {displayName}
+            </span>
+            {item.lead?.importRows && item.lead.importRows.length > 0 ? (
+              <CsvLeadBadge
+                batchName={item.lead.importRows[0]?.batch.name}
+                compact
+              />
+            ) : null}
           </span>
           {item.lastMessageAt && (
             <span

@@ -45,6 +45,20 @@ export interface ApiLead {
   serviceFeeAmount?: string | null;
   serviceFeeCurrency?: string | null;
   assignedEmployee?: { id: string; firstName: string; lastName: string } | null;
+  /** CSV upload touches for this lead — list view returns at most 1 (the
+   *  most recent), detail view returns the full history. Drives the
+   *  CSV LEAD badge wherever the lead is shown. */
+  importRows?: Array<{
+    id: string;
+    createdAt: string;
+    outcome?: 'IMPORTED' | 'DUPLICATE';
+    batch: {
+      id: string;
+      batchNumber: string;
+      name: string;
+      uploadedAt?: string;
+    };
+  }>;
   createdAt: string;
   updatedAt: string;
   _count?: { appointments: number; invoices: number; timelineEvents: number };
@@ -190,6 +204,13 @@ export function adaptLead(api: ApiLead): Lead {
     tags: [],
     serviceFeeAmount: api.serviceFeeAmount ?? undefined,
     serviceFeeCurrency: api.serviceFeeCurrency ?? undefined,
+    csvBatch: api.importRows?.[0]
+      ? {
+          id: api.importRows[0].batch.id,
+          batchNumber: api.importRows[0].batch.batchNumber,
+          name: api.importRows[0].batch.name,
+        }
+      : undefined,
   };
 }
 

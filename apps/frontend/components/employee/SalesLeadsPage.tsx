@@ -44,6 +44,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { fetchLeads } from '@/lib/sales-api';
+import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 type FilterKey =
   | 'ALL'
@@ -374,6 +375,7 @@ function LeadCard({ lead }: { lead: Lead }) {
               {lead.priority === 'HIGH' ? (
                 <Flame size={13} style={{ color: 'var(--sos-status-danger)' }} aria-label="High priority" />
               ) : null}
+              {lead.csvBatch ? <CsvLeadBadge batchName={lead.csvBatch.name} /> : null}
             </div>
             <div
               style={{

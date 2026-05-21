@@ -5,6 +5,7 @@ import { ResourceManager, type ResourceFieldOption } from '@/components/admin/Re
 import type { DataTableColumn } from '@/components/shared/DataTable';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { apiFetch } from '@/lib/api-client';
+import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 interface EmployeeOption {
   id: string;
@@ -34,6 +35,7 @@ interface LeadRecord {
   serviceInterest?: string | null;
   targetCountry?: string | null;
   assignedEmployee?: { firstName?: string | null; lastName?: string | null } | null;
+  importRows?: Array<{ id: string; batch: { id: string; batchNumber: string; name: string } }>;
 }
 
 interface LeadDetail extends LeadRecord {
@@ -45,7 +47,18 @@ interface LeadDetail extends LeadRecord {
 }
 
 const columns: DataTableColumn<LeadRecord>[] = [
-  { key: 'name', header: 'Lead', render: (row) => `${row.firstName} ${row.lastName}` },
+  {
+    key: 'name',
+    header: 'Lead',
+    render: (row) => (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        {row.firstName} {row.lastName}
+        {row.importRows && row.importRows.length > 0 ? (
+          <CsvLeadBadge batchName={row.importRows[0]?.batch.name} />
+        ) : null}
+      </span>
+    ),
+  },
   { key: 'phone', header: 'Phone', render: (row) => row.phone },
   { key: 'service', header: 'Service', render: (row) => row.serviceInterest ?? '—' },
   { key: 'country', header: 'Target Country', render: (row) => row.targetCountry ?? '—' },

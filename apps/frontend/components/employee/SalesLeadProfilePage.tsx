@@ -99,6 +99,7 @@ import {
   type ApiLeadFinanceHandover,
 } from '@/lib/sales-api';
 import { LeadServiceAgreementSection } from '@/components/finance/LeadServiceAgreementSection';
+import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 const STAGES: LeadStage[] = [
   'NEW',
@@ -418,9 +419,10 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
       <PageHeader
         eyebrow={`Lead profile · ${lead.referenceCode ?? lead.id}`}
         title={
-          <>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
             {lead.firstName} {lead.lastName}
-          </>
+            {lead.csvBatch ? <CsvLeadBadge batchName={lead.csvBatch.name} /> : null}
+          </span>
         }
         description={
           <>

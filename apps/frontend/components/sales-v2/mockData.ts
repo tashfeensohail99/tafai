@@ -56,6 +56,13 @@ export interface Lead {
    *  Edit Lead modal. Decimal precision preserved as a string. */
   serviceFeeAmount?: string;
   serviceFeeCurrency?: string;
+  /** Set when the lead came from a CSV/Excel upload. Used to render the
+   *  CSV LEAD badge in lists + the lead profile header. */
+  csvBatch?: {
+    id: string;
+    batchNumber: string;
+    name: string;
+  };
 }
 
 export type FollowUpType =

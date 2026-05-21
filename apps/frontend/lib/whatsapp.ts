@@ -61,6 +61,13 @@ export interface ThreadListItem {
     status: LeadStatus;
     assignedEmployeeId: string | null;
     assignedEmployee: { id: string; firstName: string; lastName: string } | null;
+    /** Most-recent CSV import touch — present when the lead was first
+     *  added through a bulk spreadsheet upload. Drives the CSV LEAD
+     *  badge on the thread row. */
+    importRows?: Array<{
+      id: string;
+      batch: { id: string; batchNumber: string; name: string };
+    }>;
   } | null;
   client: {
     id: string;

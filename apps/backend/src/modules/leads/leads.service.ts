@@ -74,25 +74,23 @@ export class LeadsService {
         referralPartner: {
           select: { id: true, companyName: true, referralCode: true },
         },
-        // CSV-origin metadata for tag rendering. Only included when the
-        // caller is asking for fromCsv leads — keeps the default list
-        // payload lean for everyone else.
-        ...(query.fromCsv
-          ? {
-              importRows: {
-                where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
-                orderBy: { createdAt: 'desc' },
-                take: 1,
-                select: {
-                  id: true,
-                  createdAt: true,
-                  batch: {
-                    select: { id: true, batchNumber: true, name: true },
-                  },
-                },
-              },
-            }
-          : {}),
+        // CSV-origin metadata for the CSV LEAD badge on every list view.
+        // Always included now (single-row lateral join — negligible cost
+        // versus the badge value of "see at a glance where this lead
+        // came from"). The frontend renders the badge whenever the array
+        // is non-empty.
+        importRows: {
+          where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            createdAt: true,
+            batch: {
+              select: { id: true, batchNumber: true, name: true },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -121,6 +119,20 @@ export class LeadsService {
         appointments: { orderBy: { scheduledAt: 'desc' }, take: 10 },
         invoices: { orderBy: { createdAt: 'desc' }, take: 10 },
         timelineEvents: { orderBy: { createdAt: 'desc' }, take: 20 },
+        // CSV-origin history — every batch the contact's phone appeared in.
+        // Surfaced in the lead profile header (CSV LEAD badge).
+        importRows: {
+          where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            createdAt: true,
+            outcome: true,
+            batch: {
+              select: { id: true, batchNumber: true, name: true, uploadedAt: true },
+            },
+          },
+        },
       },
     });
 
@@ -173,6 +185,20 @@ export class LeadsService {
         appointments: { orderBy: { scheduledAt: 'desc' }, take: 10 },
         invoices: { orderBy: { createdAt: 'desc' }, take: 10 },
         timelineEvents: { orderBy: { createdAt: 'desc' }, take: 20 },
+        // CSV-origin history — every batch the contact's phone appeared in.
+        // Surfaced in the lead profile header (CSV LEAD badge).
+        importRows: {
+          where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            createdAt: true,
+            outcome: true,
+            batch: {
+              select: { id: true, batchNumber: true, name: true, uploadedAt: true },
+            },
+          },
+        },
       },
     });
     if (!lead) throw new NotFoundException('Lead not found');

@@ -181,7 +181,12 @@ export class LeadImportsService {
       { batchId: batch.id },
       {
         jobId: `lead-import-${batch.id}`,
-        attempts: 1, // worker handles its own row-level errors; no retry on the whole batch
+        // 3 attempts with exponential backoff: handles the common case
+        // of a Railway redeploy killing the worker mid-batch. The worker
+        // is idempotent (skips rows where MAX(rowNumber) < startRow), so
+        // retries resume cleanly rather than re-importing.
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
         removeOnComplete: { count: 100, age: 7 * 24 * 3600 },
         removeOnFail: { count: 100 },
       },
@@ -283,7 +288,8 @@ export class LeadImportsService {
       { batchId: id },
       {
         jobId: `lead-import-${id}-resume-${Date.now()}`,
-        attempts: 1,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
         removeOnComplete: { count: 100, age: 7 * 24 * 3600 },
         removeOnFail: { count: 100 },
       },

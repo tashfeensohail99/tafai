@@ -38,10 +38,12 @@ import {
   FileText,
   Image as ImageIcon,
   Mic,
+  Camera,
   Phone,
   PhoneCall,
   Plus,
   Reply,
+  RotateCcw,
   Send,
   Sparkles,
   Square,
@@ -118,6 +120,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   // Reply-to: the message currently being quoted by the composer. Cleared
   // after a successful send or when the user clicks the X on the quote bar.
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  // Camera capture modal — opened from the + menu's Camera item. Closes
+  // after the user picks a captured photo, which is then handed off to the
+  // standard handlePickMedia → caption-modal → send flow.
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -685,6 +691,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onSend={handleSend}
           onSendVoice={handleSendVoice}
           onSendMedia={handlePickMedia}
+          onOpenCamera={() => setCameraOpen(true)}
           onOpenTemplate={() => setTemplateOpen(true)}
           disabled={!withinWindow}
           sending={sending}
@@ -786,6 +793,18 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           kind={pendingMedia.kind}
           onCancel={cancelPendingMedia}
           onSend={(caption) => confirmSendMedia(pendingMedia.file, caption)}
+        />
+      ) : null}
+
+      {cameraOpen ? (
+        <CameraCaptureModal
+          onCancel={() => setCameraOpen(false)}
+          onCapture={(file) => {
+            setCameraOpen(false);
+            // Funnel the captured photo through the same preview/caption
+            // flow as a normal pick — user can still cancel or add a caption.
+            handlePickMedia(file);
+          }}
         />
       ) : null}
 
@@ -1051,6 +1070,305 @@ function MediaPreviewModal(props: {
           >
             <Send size={18} color="#fff" />
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Camera capture modal -----------------------------------------------
+
+function CameraCaptureModal(props: {
+  onCancel: () => void;
+  onCapture: (file: File) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [captured, setCaptured] = useState<{ blob: Blob; previewUrl: string } | null>(null);
+  // facingMode preference — most mobile devices have both front + rear
+  // cameras; default to environment (rear) since that's what a sales agent
+  // usually wants when photographing a document. Desktop just uses whatever
+  // single camera is available, this hint is ignored.
+  const [facing, setFacing] = useState<'user' | 'environment'>('environment');
+
+  useEffect(() => {
+    let cancelled = false;
+    const start = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => undefined);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Camera unavailable';
+        setError(
+          /permission|denied|notallowed/i.test(msg)
+            ? 'Camera access was blocked. Allow camera in your browser settings.'
+            : `Camera error: ${msg}`,
+        );
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, [facing]);
+
+  // Escape closes the modal.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') props.onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [props]);
+
+  const capture = () => {
+    const v = videoRef.current;
+    if (!v || v.readyState < 2) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = v.videoWidth;
+    canvas.height = v.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(v, 0, 0);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        if (captured) URL.revokeObjectURL(captured.previewUrl);
+        setCaptured({ blob, previewUrl: URL.createObjectURL(blob) });
+      },
+      'image/jpeg',
+      0.92,
+    );
+  };
+
+  const retake = () => {
+    if (captured) URL.revokeObjectURL(captured.previewUrl);
+    setCaptured(null);
+  };
+
+  const useCaptured = () => {
+    if (!captured) return;
+    const file = new File([captured.blob], `camera-${Date.now()}.jpg`, {
+      type: 'image/jpeg',
+    });
+    // Cleanup local URL since the file is going to handlePickMedia which
+    // will create its own preview.
+    URL.revokeObjectURL(captured.previewUrl);
+    props.onCapture(file);
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={props.onCancel}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.92)',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--sos-surface-1, #111b21)',
+          borderRadius: 10,
+          width: 'min(640px, 100%)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.08))',
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
+            Take a photo
+          </div>
+          <button
+            type="button"
+            onClick={props.onCancel}
+            title="Cancel (Esc)"
+            style={{
+              all: 'unset', cursor: 'pointer', color: 'var(--sos-text-muted)',
+              width: 28, height: 28, display: 'flex',
+              alignItems: 'center', justifyContent: 'center', borderRadius: '50%',
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Viewport */}
+        <div
+          style={{
+            background: '#000',
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 320,
+            maxHeight: '60vh',
+          }}
+        >
+          {error ? (
+            <div
+              style={{
+                padding: 24,
+                color: 'var(--sos-status-danger, #f87171)',
+                textAlign: 'center',
+                fontSize: 13,
+              }}
+            >
+              {error}
+            </div>
+          ) : captured ? (
+            <img
+              src={captured.previewUrl}
+              alt="Captured"
+              style={{ maxWidth: '100%', maxHeight: '60vh', display: 'block' }}
+            />
+          ) : (
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              style={{
+                maxWidth: '100%',
+                maxHeight: '60vh',
+                display: 'block',
+                // Mirror the front camera since users expect their own
+                // image to be mirrored, like a real mirror.
+                transform: facing === 'user' ? 'scaleX(-1)' : 'none',
+              }}
+            />
+          )}
+        </div>
+
+        {/* Controls */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: 16,
+            gap: 12,
+            background: 'var(--wa-panel-header, #202c33)',
+          }}
+        >
+          {/* Left: facing-mode switch (only useful while in live preview) */}
+          {!captured && !error ? (
+            <button
+              type="button"
+              onClick={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))}
+              title="Switch camera"
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                color: 'var(--sos-text-muted)',
+                padding: 8,
+                borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <RotateCcw size={20} />
+            </button>
+          ) : (
+            <span style={{ width: 36 }} />
+          )}
+
+          {/* Centre: capture / retake */}
+          {captured ? (
+            <button
+              type="button"
+              onClick={retake}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                padding: '10px 20px',
+                borderRadius: 8,
+                background: 'transparent',
+                border: '1px solid var(--sos-border)',
+                color: 'var(--sos-text-primary)',
+                fontSize: 14,
+              }}
+            >
+              Retake
+            </button>
+          ) : !error ? (
+            <button
+              type="button"
+              onClick={capture}
+              title="Capture"
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                width: 64,
+                height: 64,
+                borderRadius: '50%',
+                background: '#fff',
+                border: '4px solid var(--wa-accent)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            />
+          ) : (
+            <span />
+          )}
+
+          {/* Right: use captured photo (only enabled once captured) */}
+          {captured ? (
+            <button
+              type="button"
+              onClick={useCaptured}
+              title="Use this photo"
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                padding: '10px 16px',
+                borderRadius: 8,
+                background: 'var(--wa-accent)',
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <Check size={16} />
+              Use photo
+            </button>
+          ) : (
+            <span style={{ width: 36 }} />
+          )}
         </div>
       </div>
     </div>
@@ -1884,6 +2202,7 @@ function ChatComposer(props: {
   onSend: () => void;
   onSendVoice: (blob: Blob, mimeType: string) => void;
   onSendMedia: (file: File) => void;
+  onOpenCamera: () => void;
   onOpenTemplate: () => void;
   disabled: boolean;
   sending: boolean;
@@ -2132,6 +2451,14 @@ function ChatComposer(props: {
                   gap: 2,
                 }}
               >
+                <AttachMenuItem
+                  icon={<Camera size={18} />}
+                  label="Camera"
+                  onClick={() => {
+                    setAttachMenuOpen(false);
+                    props.onOpenCamera();
+                  }}
+                />
                 <AttachMenuItem
                   icon={<ImageIcon size={18} />}
                   label="Photo"

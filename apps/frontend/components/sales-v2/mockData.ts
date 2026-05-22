@@ -112,8 +112,11 @@ export interface Appointment {
 }
 
 export const STAGE_LABEL: Record<LeadStage, string> = {
-  NEW: 'New',
-  ASSIGNED: 'Assigned',
+  // "Pending" = assigned but the agent hasn't sent a message yet. Becomes
+  // "Contacted" only after the first outbound reply (set by the WhatsApp
+  // outbound worker). Assignment alone never marks a lead contacted.
+  NEW: 'Pending',
+  ASSIGNED: 'Pending',
   CONTACTED: 'Contacted',
   NO_RESPONSE: 'No Response',
   MEETING_NEEDED: 'Meeting Needed',

@@ -293,9 +293,12 @@ export class WhatsAppAssignmentService {
         assignedEmployeeId,
         // First time this lead is routed, set preferred = sticky.
         ...(lead.preferredEmployeeId ? {} : { preferredEmployeeId: assignedEmployeeId }),
-        // Move the pipeline from NEW → CONTACTED on first auto-assignment so
-        // the lead surfaces in the agent's inbox under "engaged" filters.
-        status: 'CONTACTED',
+        // NOTE: assignment does NOT touch lead.status. A lead being routed to
+        // an agent is NOT the same as the agent having contacted them — it
+        // stays NEW ("Pending") until the agent actually sends a message, at
+        // which point the outbound worker flips NEW → CONTACTED. Previously
+        // this set CONTACTED on assignment, which made every assigned lead
+        // falsely read "Contacted" before anyone reached out.
       },
     });
     await tx.whatsAppThread.update({

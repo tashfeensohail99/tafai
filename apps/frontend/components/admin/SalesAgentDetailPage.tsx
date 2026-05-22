@@ -156,6 +156,20 @@ const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'danger' | 'n
   UNQUALIFIED: 'neutral',
 };
 
+// Friendly lead-status labels. NEW reads as "Pending" — assigned but the
+// agent hasn't sent a message yet — matching the sales lead list.
+const STATUS_LABEL: Record<string, string> = {
+  NEW: 'Pending',
+  CONTACTED: 'Contacted',
+  QUALIFIED: 'Qualified',
+  PROPOSAL_SENT: 'Proposal sent',
+  FOLLOW_UP: 'Follow-up',
+  CONVERTED: 'Converted',
+  LOST: 'Lost',
+  DUPLICATE: 'Duplicate',
+  UNQUALIFIED: 'Unqualified',
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -686,7 +700,7 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                           flexShrink: 0,
                         }}
                       >
-                        <StatusBadge tone={tone} size="sm">{lead.status}</StatusBadge>
+                        <StatusBadge tone={tone} size="sm">{STATUS_LABEL[lead.status] ?? lead.status}</StatusBadge>
                         <span
                           style={{ fontSize: 10.5, color: 'var(--sos-text-faint)' }}
                         >

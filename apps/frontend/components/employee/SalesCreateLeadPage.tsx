@@ -30,6 +30,8 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useEmployeeSession } from '@/components/layout/EmployeeShell';
 import { type LeadSource } from '@/components/sales-v2/mockData';
+import { POPULAR_COUNTRIES } from '@/lib/countries';
+import { CountrySelect } from '@/components/shared/CountrySelect';
 import {
   ButtonLink,
   Field,
@@ -81,16 +83,9 @@ const SERVICES = [
   'Permanent Residency',
   'Spouse Visa',
 ];
-const COUNTRIES = [
-  'Canada',
-  'Australia',
-  'United Kingdom',
-  'United States',
-  'Germany',
-  'Saudi Arabia',
-  'United Arab Emirates',
-  'Turkey',
-];
+// Quick-pick chips for the destinations we see most; the searchable
+// CountrySelect below covers every other country (Schengen states, etc.).
+const COUNTRIES = POPULAR_COUNTRIES;
 function displayNameFromEmail(email: string): string {
   const local = email.split('@')[0] ?? email;
   return local
@@ -798,6 +793,19 @@ function StepInterest({ form, update }: { form: FormState; update: UpdateFn }) {
               icon={<Globe2 size={13} />}
             />
           ))}
+        </div>
+        {/* Any other country (Schengen, etc.) via the searchable picker. */}
+        <div style={{ marginTop: 10 }}>
+          <CountrySelect
+            value={COUNTRIES.includes(form.country) ? '' : form.country}
+            onChange={(c) => update('country', c)}
+            placeholder="Search all countries…"
+          />
+          {form.country && !COUNTRIES.includes(form.country) ? (
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--sos-text-muted)' }}>
+              Selected: <strong style={{ color: 'var(--sos-text-primary)' }}>{form.country}</strong>
+            </div>
+          ) : null}
         </div>
       </Field>
     </div>

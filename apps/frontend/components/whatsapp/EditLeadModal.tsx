@@ -9,6 +9,7 @@ import {
   PrimaryButton,
 } from '@/components/sales-v2/ui';
 import { patchLead } from '@/lib/sales-api';
+import { CountrySelect } from '@/components/shared/CountrySelect';
 import { Modal } from './Modal';
 
 /**
@@ -206,10 +207,10 @@ export function EditLeadModal(props: {
           />
         </Field>
         <Field label="Target country">
-          <FormInput
+          <CountrySelect
             value={targetCountry}
-            onChange={(e) => setTargetCountry(e.target.value)}
-            placeholder="e.g. Canada"
+            onChange={setTargetCountry}
+            placeholder="Search all countries…"
           />
         </Field>
       </div>

@@ -56,6 +56,11 @@ export const WHATSAPP_WS_EVENTS = {
   THREAD_UPDATED: 'whatsapp.thread.updated',
   THREAD_ASSIGNED: 'whatsapp.thread.assigned',
   PRESENCE_CHANGED: 'whatsapp.presence.changed',
+  // Response-SLA sweeper: a thread is approaching its reply deadline, or has
+  // breached it. Frontends listening on the org channel surface a warning to
+  // the assigned agent + admins.
+  SLA_WARNING: 'whatsapp.sla.warning',
+  SLA_BREACH: 'whatsapp.sla.breach',
 } as const;
 
 export type WhatsAppWsEvent = (typeof WHATSAPP_WS_EVENTS)[keyof typeof WHATSAPP_WS_EVENTS];

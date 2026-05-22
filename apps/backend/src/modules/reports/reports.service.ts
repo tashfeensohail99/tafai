@@ -228,6 +228,8 @@ export class ReportsService {
           whatsappInboxMember: true,
           presenceStatus: true,
           lastActivityAt: true,
+          slaResponsesMet: true,
+          slaResponsesBreached: true,
         },
         orderBy: { firstName: 'asc' },
       }),
@@ -294,6 +296,10 @@ export class ReportsService {
     const agents = employees.map((e) => {
       const newLeads = newMap.get(e.id) ?? 0;
       const converted = convertedMap.get(e.id) ?? 0;
+      // Response-SLA score: on-time replies / total replies × 100. No history
+      // → 100, so every agent starts at the max and works to keep it.
+      const slaTotal = e.slaResponsesMet + e.slaResponsesBreached;
+      const slaScore = slaTotal === 0 ? 100 : Math.round((e.slaResponsesMet / slaTotal) * 100);
       return {
         employeeId: e.id,
         name: `${e.firstName} ${e.lastName}`.trim(),
@@ -308,6 +314,8 @@ export class ReportsService {
         openFollowUps: openFollowUpMap.get(e.id) ?? 0,
         overdueFollowUps: overdueFollowUpMap.get(e.id) ?? 0,
         upcomingAppointments: upcomingApptMap.get(e.id) ?? 0,
+        slaScore,
+        slaBreaches: e.slaResponsesBreached,
       };
     });
 

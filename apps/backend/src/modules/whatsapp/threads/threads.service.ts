@@ -129,11 +129,16 @@ export class WhatsAppThreadsService {
    * so "Active 30" stops being a lie that just reflected the first page size.
    *
    * Returns:
-   *   total        — every non-deleted thread the caller can see
-   *   active       — status OPEN (the working set)
-   *   unassigned   — admin-only: threads whose lead has no assignee yet
-   *   slaBreached  — threads flagged slaBreached
-   *   unread       — threads with unreadCount > 0
+   *   total           — every non-deleted thread the caller can see
+   *   active          — status OPEN (the working set)
+   *   unassigned      — admin-only: threads whose lead has no assignee yet
+   *   slaBreached     — threads flagged slaBreached (legacy first-response)
+   *   unread          — threads with unreadCount > 0
+   *   awaitingReply   — Response-SLA clock running (agent's turn)
+   *   approaching     — within the warn window, not yet overdue
+   *   overdue         — Response-SLA deadline already passed, still unanswered
+   *   slaScore        — caller's own on-time % (100 when no history); null for
+   *                     non-employees / admins viewing all
    */
   async stats(caller: CallerContext): Promise<{
     total: number;
@@ -141,16 +146,22 @@ export class WhatsAppThreadsService {
     unassigned: number;
     slaBreached: number;
     unread: number;
+    awaitingReply: number;
+    approaching: number;
+    overdue: number;
+    slaScore: number | null;
   }> {
+    const empty = {
+      total: 0, active: 0, unassigned: 0, slaBreached: 0, unread: 0,
+      awaitingReply: 0, approaching: 0, overdue: 0, slaScore: null as number | null,
+    };
     // Base visibility filter mirrors list(): drop soft-deleted leads, and
     // scope to the caller's own assigned leads when they can't view all.
     const base: Prisma.WhatsAppThreadWhereInput = {
       OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }],
     };
     if (!caller.canViewAll) {
-      if (!caller.employeeId) {
-        return { total: 0, active: 0, unassigned: 0, slaBreached: 0, unread: 0 };
-      }
+      if (!caller.employeeId) return empty;
       base.lead = { assignedEmployeeId: caller.employeeId, deletedAt: null };
       delete base.OR; // the lead filter already excludes deleted leads
     }
@@ -159,20 +170,47 @@ export class WhatsAppThreadsService {
       AND: [base, extra],
     });
 
-    const [total, active, slaBreached, unread, unassigned] = await Promise.all([
-      this.prisma.whatsAppThread.count({ where: base }),
-      this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
-      this.prisma.whatsAppThread.count({ where: and({ slaBreached: true }) }),
-      this.prisma.whatsAppThread.count({ where: and({ unreadCount: { gt: 0 } }) }),
-      // Unassigned only makes sense for admins who can view all threads.
-      caller.canViewAll
-        ? this.prisma.whatsAppThread.count({
-            where: and({ lead: { assignedEmployeeId: null, deletedAt: null } }),
-          })
-        : Promise.resolve(0),
-    ]);
+    const now = new Date();
+    // Pull warn window from org config so "approaching" matches the sweeper.
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { slaWarnBeforeSeconds: true },
+    });
+    const warnCutoff = new Date(now.getTime() + (org?.slaWarnBeforeSeconds ?? 60) * 1000);
 
-    return { total, active, unassigned, slaBreached, unread };
+    const [total, active, slaBreached, unread, unassigned, awaitingReply, overdue, approaching] =
+      await Promise.all([
+        this.prisma.whatsAppThread.count({ where: base }),
+        this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
+        this.prisma.whatsAppThread.count({ where: and({ slaBreached: true }) }),
+        this.prisma.whatsAppThread.count({ where: and({ unreadCount: { gt: 0 } }) }),
+        caller.canViewAll
+          ? this.prisma.whatsAppThread.count({
+              where: and({ lead: { assignedEmployeeId: null, deletedAt: null } }),
+            })
+          : Promise.resolve(0),
+        this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null } }) }),
+        this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null, lte: now } }) }),
+        this.prisma.whatsAppThread.count({
+          where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }),
+        }),
+      ]);
+
+    // Caller's own SLA score (on-time %). Only meaningful for an individual
+    // employee — admins see per-agent scores on the sales overview instead.
+    let slaScore: number | null = null;
+    if (caller.employeeId) {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: caller.employeeId },
+        select: { slaResponsesMet: true, slaResponsesBreached: true },
+      });
+      if (emp) {
+        const totalResp = emp.slaResponsesMet + emp.slaResponsesBreached;
+        slaScore = totalResp === 0 ? 100 : Math.round((emp.slaResponsesMet / totalResp) * 100);
+      }
+    }
+
+    return { total, active, unassigned, slaBreached, unread, awaitingReply, approaching, overdue, slaScore };
   }
 
   async getOrFail(caller: CallerContext, threadId: string) {

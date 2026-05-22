@@ -52,7 +52,14 @@ export class OutboundMessageProcessor extends WorkerHost {
       include: {
         channel: true,
         thread: {
-          select: { id: true, waContactId: true, firstAgentReplyAt: true, slaDeadlineAt: true },
+          select: {
+            id: true,
+            waContactId: true,
+            firstAgentReplyAt: true,
+            slaDeadlineAt: true,
+            responseDeadlineAt: true,
+            responseBreached: true,
+          },
         },
       },
     });
@@ -96,8 +103,43 @@ export class OutboundMessageProcessor extends WorkerHost {
         },
       });
 
+      // 1b) Rolling Response-SLA resolution. A genuine agent reply closes the
+      //     current pending window: stamp Met or Breached, move the assigned
+      //     agent's tally, and clear the clock so the next customer message
+      //     starts a fresh one. The auto-acknowledgement is flagged in its
+      //     payload and MUST NOT resolve the SLA — the customer still needs a
+      //     human reply for the window to count as met.
+      const isAutoAck =
+        (message.payload as { autoAck?: boolean } | null)?.autoAck === true;
+      if (!isAutoAck && message.thread.responseDeadlineAt) {
+        const creditEmployeeId = message.sentByEmployeeId; // resolved sender (assignee for super-admin sends)
+        // If the sweeper already counted this window as a breach, don't
+        // double-count — just clear the clock. Otherwise score it now.
+        if (!message.thread.responseBreached) {
+          const metOnTime = now <= message.thread.responseDeadlineAt;
+          if (creditEmployeeId) {
+            await this.prisma.employee.update({
+              where: { id: creditEmployeeId },
+              data: metOnTime
+                ? { slaResponsesMet: { increment: 1 } }
+                : { slaResponsesBreached: { increment: 1 } },
+            });
+          }
+        }
+        await this.prisma.whatsAppThread.update({
+          where: { id: message.threadId },
+          data: {
+            responseDeadlineAt: null,
+            responseDueSince: null,
+            responseWarned: false,
+            responseBreached: false,
+          },
+        });
+      }
+
       // 2) SLA + leadStage transitions (only on the conversation's FIRST agent reply).
-      if (!message.thread.firstAgentReplyAt && message.leadId) {
+      //    Skip for the auto-ack so it doesn't masquerade as the first human reply.
+      if (!isAutoAck && !message.thread.firstAgentReplyAt && message.leadId) {
         const breached = message.thread.slaDeadlineAt
           ? now > message.thread.slaDeadlineAt
           : false;

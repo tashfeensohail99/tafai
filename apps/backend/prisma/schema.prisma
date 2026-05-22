@@ -431,8 +431,24 @@ model Organization {
   hoursClose              String  @default("18:00")
   // Days of the week the team works. 0 = Sunday .. 6 = Saturday. Default Mon-Sat.
   workingDays             Int[]   @default([1, 2, 3, 4, 5, 6])
-  // First-response SLA target in seconds (Tashfeen: 60s).
+  // First-response SLA target in seconds (legacy; kept for back-compat).
   slaFirstResponseSeconds Int     @default(60)
+  // Unified Response-SLA target in seconds — applies to EVERY customer message
+  // awaiting an agent reply (first + all follow-ups). The clock only runs while
+  // it's the agent's turn (pause-on-customer). Tashfeen: 300s = 5 minutes.
+  slaResponseSeconds      Int     @default(300)
+  // How many minutes before the deadline the "approaching breach" warning
+  // fires (sweeper). Default: warn when 1 minute remains.
+  slaWarnBeforeSeconds    Int     @default(60)
+  // Deterrent threshold shown in the breach warning copy ("leads are
+  // reassigned after N SLA breaches"). We count breaches but do NOT auto-
+  // reassign yet — flipping that on later is a one-line change.
+  slaReassignThreshold    Int     @default(10)
+  // Auto-acknowledgement: instant personalised reply when a lead first
+  // messages. Does NOT satisfy the SLA — the agent must still reply. The
+  // template supports {firstName}, {agentName}, {businessName} placeholders.
+  autoAckEnabled          Boolean @default(true)
+  autoAckTemplate         String? @default("Hey {firstName}! 🌟 I'm {agentName} from {businessName} — you're in good hands. I've got your message and I'm right with you, give me just a moment! ✨")
   // Strict round-robin cursor — last Employee id picked. Engine selects the
   // next eligible employee with id > cursor (wrapping). Null = no cursor yet.
   rrCursorEmployeeId      String?
@@ -724,6 +740,14 @@ model Employee {
   // Skill tags used as a soft preference by the routing engine. Examples:
   // ["UK","Canada","StudentVisa","WorkPermit"].
   skills              String[]       @default([])
+
+  // --- Response-SLA scoring -----------------------------------------------
+  // Lifetime tallies of agent replies that landed within / outside the
+  // Response-SLA window. Score% = met / (met + breached) * 100, defaulting
+  // to 100 when there's no history yet — so every agent STARTS at 100 and
+  // works to keep it there. slaBreachCount drives the "10 breaches" warning.
+  slaResponsesMet     Int            @default(0)
+  slaResponsesBreached Int           @default(0)
 
   user        UserAccount  @relation(fields: [userId], references: [id])
   department  Department?  @relation(fields: [departmentId], references: [id])
@@ -2320,11 +2344,25 @@ model WhatsAppThread {
   // template message. Set/refreshed on every inbound.
   windowExpiresAt   DateTime?
   status            WhatsAppThreadStatus @default(OPEN)
-  // --- SLA tracking ---
+  // --- SLA tracking (legacy first-response) ---
   firstInboundAt    DateTime?
   firstAgentReplyAt DateTime?
   slaDeadlineAt     DateTime?
   slaBreached       Boolean  @default(false)
+
+  // --- Rolling Response-SLA (pause-on-customer) ---
+  // responseDeadlineAt is set whenever it becomes the agent's turn (a customer
+  // message arrives with no pending reply) and cleared when the agent replies.
+  // NULL = it's the customer's turn / resolved → no clock runs against the agent.
+  responseDeadlineAt  DateTime?
+  // When the current unanswered customer message arrived (the inbound that
+  // started this clock). Used for "waiting Xm" displays.
+  responseDueSince    DateTime?
+  // Sweeper bookkeeping for the CURRENT pending window so we don't double-fire:
+  responseWarned      Boolean  @default(false) // approaching-breach warning sent
+  responseBreached    Boolean  @default(false) // breach already counted
+  // Auto-acknowledgement: stamped once so we never double-send the greeting.
+  autoAckSentAt       DateTime?
   // --- Denormalized for inbox list ordering ---
   lastMessageAt     DateTime?
   lastMessagePreview String?

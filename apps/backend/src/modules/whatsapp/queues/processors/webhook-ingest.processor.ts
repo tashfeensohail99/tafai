@@ -8,15 +8,18 @@ import {
   WhatsAppMessageType,
   type Prisma,
 } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { WhatsAppAssignmentService } from '../../routing/assignment.service';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
+import { computeSlaDeadline, type BusinessHours } from '../../routing/business-hours';
 import {
   WHATSAPP_QUEUE,
   WHATSAPP_WS_EVENTS,
   type MediaDownloadJob,
+  type OutboundMessageJob,
   type WebhookIngestJob,
 } from '../queue-contracts';
 
@@ -132,6 +135,9 @@ export class WebhookIngestProcessor extends WorkerHost {
     // is Meta still hosting this asset" — both of which fail in practice.
     @InjectQueue(WHATSAPP_QUEUE.MEDIA_DOWNLOAD)
     private readonly mediaQueue: Queue<MediaDownloadJob>,
+    // Used to dispatch the personalised auto-acknowledgement reply.
+    @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
+    private readonly outboundQueue: Queue<OutboundMessageJob>,
   ) {
     super();
   }
@@ -405,6 +411,17 @@ export class WebhookIngestProcessor extends WorkerHost {
       this.log.error(`assignment failed for thread ${thread.id}: ${(err as Error).message}`);
     }
 
+    // Response-SLA clock + auto-acknowledgement. Runs AFTER assignment so the
+    // auto-ack can name the agent the lead was just routed to. Non-fatal —
+    // a failure here must never drop the inbound message we already saved.
+    try {
+      await this.startResponseClockAndAutoAck(thread.id);
+    } catch (err) {
+      this.log.error(
+        `response-SLA/auto-ack failed for thread ${thread.id}: ${(err as Error).message}`,
+      );
+    }
+
     // Realtime fanout to all agents in the org.
     const org = await this.prisma.organization.findFirst({
       orderBy: { createdAt: 'asc' },
@@ -418,6 +435,109 @@ export class WebhookIngestProcessor extends WorkerHost {
         messageId: message.id,
         direction: 'INBOUND',
       });
+    }
+  }
+
+  /**
+   * After an inbound message is saved + assigned:
+   *  1. Start the rolling Response-SLA clock if it's freshly the agent's turn
+   *     (responseDeadlineAt was null). If a clock is already running we leave
+   *     it — the earliest unanswered message owns the deadline, so a customer
+   *     firing off three messages doesn't get three clocks or a reset.
+   *  2. Send the personalised auto-acknowledgement once per thread. The
+   *     auto-ack is flagged in its payload so the outbound worker does NOT
+   *     treat it as the agent's reply — the SLA keeps running until a human
+   *     actually responds.
+   */
+  private async startResponseClockAndAutoAck(threadId: string): Promise<void> {
+    const thread = await this.prisma.whatsAppThread.findUnique({
+      where: { id: threadId },
+      select: {
+        id: true,
+        channelId: true,
+        leadId: true,
+        clientId: true,
+        waContactId: true,
+        responseDeadlineAt: true,
+        autoAckSentAt: true,
+        lead: {
+          select: {
+            firstName: true,
+            assignedEmployee: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
+    if (!thread) return;
+
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!org) return;
+
+    const now = new Date();
+    const hours: BusinessHours = {
+      timezone: org.timezone,
+      hoursOpen: org.hoursOpen,
+      hoursClose: org.hoursClose,
+      workingDays: org.workingDays,
+    };
+
+    // 1) Start the response clock only if not already awaiting a reply.
+    if (!thread.responseDeadlineAt) {
+      const deadline = computeSlaDeadline(hours, now, org.slaResponseSeconds);
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: {
+          responseDeadlineAt: deadline,
+          responseDueSince: now,
+          responseWarned: false,
+          responseBreached: false,
+        },
+      });
+    }
+
+    // 2) Auto-acknowledgement — once per thread, only when enabled and the
+    //    lead has a named assignee to greet them by.
+    const agent = thread.lead?.assignedEmployee;
+    if (
+      org.autoAckEnabled &&
+      !thread.autoAckSentAt &&
+      org.autoAckTemplate &&
+      agent &&
+      thread.leadId // greet leads; converted clients already know their rep
+    ) {
+      const body = org.autoAckTemplate
+        .replaceAll('{firstName}', thread.lead?.firstName?.trim() || 'there')
+        .replaceAll('{agentName}', agent.firstName)
+        .replaceAll('{businessName}', org.name);
+
+      const ack = await this.prisma.whatsAppMessage.create({
+        data: {
+          threadId: thread.id,
+          channelId: thread.channelId,
+          leadId: thread.leadId,
+          clientId: thread.clientId,
+          direction: WhatsAppMessageDirection.OUTBOUND,
+          type: WhatsAppMessageType.TEXT,
+          status: WhatsAppMessageStatus.QUEUED,
+          body,
+          // sentByEmployeeId stays null (system message) and the payload flag
+          // tells the outbound worker to skip SLA resolution for this send.
+          payload: { autoAck: true } as unknown as Prisma.InputJsonValue,
+          idempotencyKey: randomUUID(),
+        },
+      });
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { autoAckSentAt: now },
+      });
+      await this.outboundQueue.add(
+        'send',
+        { messageId: ack.id },
+        { jobId: ack.id },
+      );
+      this.log.log(`auto-ack queued for thread ${thread.id} (agent ${agent.firstName})`);
     }
   }
 

@@ -93,13 +93,20 @@ export class WhatsAppAssignmentService {
       // default) does not prevent this on its own — the explicit FOR UPDATE
       // does.
       //
-      // CRITICAL: this is a SELECT, so it MUST use $queryRaw, not $executeRaw.
+      // CRITICAL #1: this is a SELECT, so it MUST use $queryRaw, not $executeRaw.
       // $executeRaw is for statements that return a row COUNT (INSERT/UPDATE/
       // DELETE); handing it a SELECT makes Prisma throw "Execute returned
       // results, which is not allowed in SQL", which aborts the whole
-      // transaction and leaves EVERY lead unassigned. (That exact bug took
-      // assignment down for hours — never use $executeRaw for a SELECT.)
-      await tx.$queryRaw`SELECT 1 FROM crm.leads WHERE id = ${lead.id}::uuid FOR UPDATE`;
+      // transaction and leaves EVERY lead unassigned.
+      //
+      // CRITICAL #2: do NOT cast the parameter to ::uuid. `crm.leads.id` is a
+      // TEXT column (Prisma `String @id` with no `@db.Uuid`), so `id = $1::uuid`
+      // asks Postgres for a `text = uuid` operator that doesn't exist → error
+      // 42883, which also aborts the transaction and leaves every lead
+      // unassigned. Compare text-to-text: `id = ${lead.id}` (lead.id is already
+      // a string). Both of these bugs took assignment down for hours — the lock
+      // throwing is silently swallowed by the webhook's catch.
+      await tx.$queryRaw`SELECT 1 FROM crm.leads WHERE id = ${lead.id} FOR UPDATE`;
       const locked = await tx.lead.findUnique({
         where: { id: lead.id },
         select: { assignedEmployeeId: true, preferredEmployeeId: true },

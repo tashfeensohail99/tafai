@@ -121,6 +121,21 @@ const WINDOW_DURATION_MS = 24 * 60 * 60 * 1000;
 export class WebhookIngestProcessor extends WorkerHost {
   private readonly log = new Logger(WebhookIngestProcessor.name);
 
+  /**
+   * Per-phone in-process serialization for customer resolution. The webhook
+   * worker runs at concurrency 8 in a SINGLE process, so two messages from a
+   * brand-new contact arriving together would both find "no existing lead" and
+   * both create one — producing a duplicate orphan lead with no thread. This
+   * map chains async critical sections per phone so the same contact resolves
+   * one-at-a-time; different phones still run fully in parallel.
+   *
+   * Chosen over a DB lock deliberately: no raw SQL, no schema/migration, no new
+   * failure surface (a botched raw lock is exactly what caused the recent
+   * outage). Valid for the single backend instance we run today; if we ever
+   * scale to multiple replicas, replace this with pg_advisory_xact_lock(phone).
+   */
+  private readonly phoneLocks = new Map<string, Promise<void>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly timeline: ActivityTimelineService,
@@ -207,6 +222,36 @@ export class WebhookIngestProcessor extends WorkerHost {
     }
   }
 
+  /**
+   * Run an async critical section serialized per key, in-process. Different
+   * keys run concurrently; the same key runs strictly one-at-a-time via a
+   * promise chain. The lock is ALWAYS released in `finally`, so a throw inside
+   * `fn` can never deadlock the phone (the error still propagates to the
+   * caller). The map entry is dropped once nobody is queued behind us, so the
+   * map stays bounded to currently in-flight phones.
+   */
+  private async withPhoneLock<T>(phone: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.phoneLocks.get(phone) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The next caller for this phone waits on `mine` (resolved in our finally).
+    const chained = prior.then(() => mine);
+    this.phoneLocks.set(phone, chained);
+    await prior.catch(() => undefined); // wait our turn; never inherit prior errors
+    try {
+      return await fn();
+    } finally {
+      release();
+      // Only the last-in-line clears the entry; if someone chained after us
+      // they own the key now.
+      if (this.phoneLocks.get(phone) === chained) {
+        this.phoneLocks.delete(phone);
+      }
+    }
+  }
+
   private async ingestInboundMessage(
     channelId: string,
     msg: MetaMessage,
@@ -219,51 +264,60 @@ export class WebhookIngestProcessor extends WorkerHost {
 
     // Resolve customer: client > lead > new lead. We treat phone match as
     // identity. Phone has a UNIQUE constraint on Client and an index on Lead.
-    const existingClient = await this.prisma.client.findFirst({
-      where: { phone, deletedAt: null },
-      select: { id: true },
-    });
-    let leadId: string | null = null;
-    let clientId: string | null = existingClient?.id ?? null;
-    let createdLead = false;
-
-    if (!clientId) {
-      const existingLead = await this.prisma.lead.findFirst({
+    //
+    // The whole resolution runs under a per-phone in-process lock so two
+    // messages from the SAME brand-new contact arriving together can't both
+    // pass the "no existing lead" check and both create a lead (the duplicate
+    // orphan-lead race). The second job waits, then finds the lead the first
+    // one just created. Different phones lock on different keys and don't wait.
+    const { leadId, clientId, createdLead } = await this.withPhoneLock(phone, async () => {
+      const existingClient = await this.prisma.client.findFirst({
         where: { phone, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
         select: { id: true },
       });
-      if (existingLead) {
-        leadId = existingLead.id;
-      } else {
-        // Create a new Lead from the WhatsApp profile. Required fields:
-        // firstName, lastName, phone. branchId optional but we pick the
-        // first branch of the (single) Organization for proper bucketing.
-        const branch = await this.prisma.branch.findFirst({
-          orderBy: { createdAt: 'asc' },
+      let leadId: string | null = null;
+      const clientId: string | null = existingClient?.id ?? null;
+      let createdLead = false;
+
+      if (!clientId) {
+        const existingLead = await this.prisma.lead.findFirst({
+          where: { phone, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
           select: { id: true },
         });
-        const { firstName, lastName } = splitProfileName(profileName, phone);
-        // Auto-created leads from inbound WhatsApp need the same
-        // referenceCode treatment as Sales-created leads — anything
-        // missing the column would fail the new NOT NULL constraint.
-        const referenceCode = await generateLeadReferenceCode(this.prisma);
-        const newLead = await this.prisma.lead.create({
-          data: {
-            referenceCode,
-            firstName,
-            lastName,
-            phone,
-            sourceChannel: 'whatsapp',
-            status: LeadStatus.NEW,
-            ...(branch ? { branchId: branch.id } : {}),
-          },
-          select: { id: true },
-        });
-        leadId = newLead.id;
-        createdLead = true;
+        if (existingLead) {
+          leadId = existingLead.id;
+        } else {
+          // Create a new Lead from the WhatsApp profile. Required fields:
+          // firstName, lastName, phone. branchId optional but we pick the
+          // first branch of the (single) Organization for proper bucketing.
+          const branch = await this.prisma.branch.findFirst({
+            orderBy: { createdAt: 'asc' },
+            select: { id: true },
+          });
+          const { firstName, lastName } = splitProfileName(profileName, phone);
+          // Auto-created leads from inbound WhatsApp need the same
+          // referenceCode treatment as Sales-created leads — anything
+          // missing the column would fail the new NOT NULL constraint.
+          const referenceCode = await generateLeadReferenceCode(this.prisma);
+          const newLead = await this.prisma.lead.create({
+            data: {
+              referenceCode,
+              firstName,
+              lastName,
+              phone,
+              sourceChannel: 'whatsapp',
+              status: LeadStatus.NEW,
+              ...(branch ? { branchId: branch.id } : {}),
+            },
+            select: { id: true },
+          });
+          leadId = newLead.id;
+          createdLead = true;
+        }
       }
-    }
+      return { leadId, clientId, createdLead };
+    });
 
     // Click-to-WhatsApp ad referral. Meta only sends this on the first
     // message after a customer clicks the ad — store it on both the

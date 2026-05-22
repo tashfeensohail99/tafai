@@ -137,8 +137,11 @@ export class WhatsAppThreadsService {
    *   awaitingReply   — Response-SLA clock running (agent's turn)
    *   approaching     — within the warn window, not yet overdue
    *   overdue         — Response-SLA deadline already passed, still unanswered
-   *   slaScore        — caller's own on-time % (100 when no history); null for
-   *                     non-employees / admins viewing all
+   *   slaScore        — on-time %. For an agent: their own. For an admin /
+   *                     manager (canViewAll): the ORG-WIDE aggregate across
+   *                     every agent, so the dashboard shows a useful team
+   *                     number instead of a meaningless 100.
+   *   slaScoreScope   — 'self' | 'org' | null, so the UI can label it right.
    */
   async stats(caller: CallerContext): Promise<{
     total: number;
@@ -150,10 +153,12 @@ export class WhatsAppThreadsService {
     approaching: number;
     overdue: number;
     slaScore: number | null;
+    slaScoreScope: 'self' | 'org' | null;
   }> {
     const empty = {
       total: 0, active: 0, unassigned: 0, slaBreached: 0, unread: 0,
-      awaitingReply: 0, approaching: 0, overdue: 0, slaScore: null as number | null,
+      awaitingReply: 0, approaching: 0, overdue: 0,
+      slaScore: null as number | null, slaScoreScope: null as 'self' | 'org' | null,
     };
     // Base visibility filter mirrors list(): drop soft-deleted leads, and
     // scope to the caller's own assigned leads when they can't view all.
@@ -196,10 +201,22 @@ export class WhatsAppThreadsService {
         }),
       ]);
 
-    // Caller's own SLA score (on-time %). Only meaningful for an individual
-    // employee — admins see per-agent scores on the sales overview instead.
+    // SLA score. Admins / managers (canViewAll) get the ORG-WIDE aggregate so
+    // their dashboard shows a real team number rather than the personal-score
+    // fallback of 100. A plain agent gets their own score.
     let slaScore: number | null = null;
-    if (caller.employeeId) {
+    let slaScoreScope: 'self' | 'org' | null = null;
+    if (caller.canViewAll) {
+      const agg = await this.prisma.employee.aggregate({
+        where: { deletedAt: null },
+        _sum: { slaResponsesMet: true, slaResponsesBreached: true },
+      });
+      const met = agg._sum.slaResponsesMet ?? 0;
+      const breached = agg._sum.slaResponsesBreached ?? 0;
+      const totalResp = met + breached;
+      slaScore = totalResp === 0 ? 100 : Math.round((met / totalResp) * 100);
+      slaScoreScope = 'org';
+    } else if (caller.employeeId) {
       const emp = await this.prisma.employee.findUnique({
         where: { id: caller.employeeId },
         select: { slaResponsesMet: true, slaResponsesBreached: true },
@@ -207,10 +224,14 @@ export class WhatsAppThreadsService {
       if (emp) {
         const totalResp = emp.slaResponsesMet + emp.slaResponsesBreached;
         slaScore = totalResp === 0 ? 100 : Math.round((emp.slaResponsesMet / totalResp) * 100);
+        slaScoreScope = 'self';
       }
     }
 
-    return { total, active, unassigned, slaBreached, unread, awaitingReply, approaching, overdue, slaScore };
+    return {
+      total, active, unassigned, slaBreached, unread,
+      awaitingReply, approaching, overdue, slaScore, slaScoreScope,
+    };
   }
 
   async getOrFail(caller: CallerContext, threadId: string) {

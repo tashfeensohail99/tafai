@@ -197,8 +197,11 @@ export interface ThreadStats {
   approaching: number;
   /** Response-SLA deadline already passed, still unanswered. */
   overdue: number;
-  /** Caller's own on-time score (0–100, 100 with no history); null for admins/non-employees. */
+  /** On-time score (0–100). For an agent: their own. For an admin/manager:
+   *  the org-wide aggregate. null only when there's no employee context. */
   slaScore: number | null;
+  /** 'self' = the score is the agent's own; 'org' = org-wide aggregate (admin). */
+  slaScoreScope?: 'self' | 'org' | null;
 }
 
 /**

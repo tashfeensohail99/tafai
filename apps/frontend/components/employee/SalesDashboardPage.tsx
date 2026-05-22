@@ -136,6 +136,8 @@ export function SalesDashboardPage() {
   const slaAwaiting = slaStats?.awaitingReply ?? 0;
   const slaApproaching = slaStats?.approaching ?? 0;
   const slaOverdue = slaStats?.overdue ?? 0;
+  // Admins/managers see the org-wide aggregate; agents see their own.
+  const slaIsOrg = slaStats?.slaScoreScope === 'org';
   const handovers = leads.filter((l) => l.stage === 'SENT_TO_FINANCE').length;
 
   const upcomingAppointments = appointments
@@ -567,7 +569,7 @@ export function SalesDashboardPage() {
         <GlassCard variant="strong" padded="lg">
           <div className="sos-eyebrow">SLA Watch</div>
           <h2 className="sos-title" style={{ fontSize: '17px', marginTop: '6px' }}>
-            Your response score
+            {slaIsOrg ? 'Team response score' : 'Your response score'}
           </h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '20px' }}>
@@ -626,7 +628,7 @@ export function SalesDashboardPage() {
                 minWidth: 0,
               }}
             >
-              <SlaRow Icon={CheckCircle2} tone="var(--sos-status-success)" label="Awaiting your reply" value={slaAwaiting} />
+              <SlaRow Icon={CheckCircle2} tone="var(--sos-status-success)" label={slaIsOrg ? 'Awaiting reply (team)' : 'Awaiting your reply'} value={slaAwaiting} />
               <SlaRow Icon={TimerReset} tone="var(--sos-status-warning)" label="Approaching breach" value={slaApproaching} />
               <SlaRow Icon={CircleAlert} tone="var(--sos-status-danger)" label="Overdue now" value={slaOverdue} />
             </div>
@@ -655,13 +657,17 @@ export function SalesDashboardPage() {
             <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', lineHeight: 1.55 }}>
               {slaOverdue > 0 ? (
                 <>
-                  <strong style={{ color: 'var(--sos-status-danger)' }}>Reply now —</strong>{' '}
-                  you have {slaOverdue} conversation{slaOverdue === 1 ? '' : 's'} past the 5-minute SLA. Leads are reassigned after 10 SLA breaches.
+                  <strong style={{ color: 'var(--sos-status-danger)' }}>
+                    {slaIsOrg ? 'Action needed —' : 'Reply now —'}
+                  </strong>{' '}
+                  {slaIsOrg ? 'the team has' : 'you have'} {slaOverdue} conversation{slaOverdue === 1 ? '' : 's'} past the 5-minute SLA. Leads are reassigned after 10 SLA breaches.
                 </>
               ) : (
                 <>
                   <strong style={{ color: 'var(--sos-text-primary)' }}>Tip:</strong>{' '}
-                  Reply within 5 minutes while it&apos;s your turn — keep your score at 100. Leads are reassigned after 10 SLA breaches.
+                  {slaIsOrg
+                    ? 'Agents who reply within 5 minutes keep the team score high. Leads are reassigned after 10 SLA breaches.'
+                    : "Reply within 5 minutes while it's your turn — keep your score at 100. Leads are reassigned after 10 SLA breaches."}
                 </>
               )}
             </div>

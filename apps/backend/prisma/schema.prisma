@@ -457,7 +457,9 @@ model Organization {
   // Auto-acknowledgement: instant personalised reply when a lead first
   // messages. Does NOT satisfy the SLA — the agent must still reply. The
   // template supports {firstName}, {agentName}, {businessName} placeholders.
-  autoAckEnabled          Boolean @default(true)
+  // DISABLED by default per ops decision — flip to true (or set the column
+  // true on the org row) to re-enable; the feature code stays in place.
+  autoAckEnabled          Boolean @default(false)
   autoAckTemplate         String? @default("Hey {firstName}! 🌟 I'm {agentName} from {businessName} — you're in good hands. I've got your message and I'm right with you, give me just a moment! ✨")
   // Strict round-robin cursor — last Employee id picked. Engine selects the
   // next eligible employee with id > cursor (wrapping). Null = no cursor yet.

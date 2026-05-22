@@ -42,6 +42,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { fetchLeads, fetchFollowUps, fetchAppointments } from '@/lib/sales-api';
+import { getThreadStats, type ThreadStats } from '@/lib/whatsapp';
 import { useEffect, useState } from 'react';
 
 type StageKey = LeadStage;
@@ -94,6 +95,7 @@ export function SalesDashboardPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [slaStats, setSlaStats] = useState<ThreadStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -101,10 +103,12 @@ export function SalesDashboardPage() {
       fetchLeads(),
       fetchFollowUps(),
       fetchAppointments(),
-    ]).then(([l, f, a]) => {
+      getThreadStats().catch(() => null),
+    ]).then(([l, f, a, s]) => {
       setLeads(l);
       setFollowUps(f);
       setAppointments(a);
+      setSlaStats(s);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -115,16 +119,13 @@ export function SalesDashboardPage() {
 
   const dueToday = followUps.filter((f) => f.status === 'DUE_TODAY').length;
   const followOverdue = followUps.filter((f) => f.status === 'OVERDUE').length;
-  const followCompleted = followUps.filter((f) => f.status === 'COMPLETED').length;
-  const followDueWithinHour = followUps.filter((f) => {
-    if (f.status === 'COMPLETED' || f.status === 'OVERDUE') return false;
-    const due = new Date(f.dueAt).getTime();
-    const diff = due - Date.now();
-    return diff > 0 && diff <= 3_600_000;
-  }).length;
-  const slaOnTimePct = Math.round(
-    (followCompleted / Math.max(1, followCompleted + followOverdue)) * 100,
-  );
+  // Real Response-SLA picture (pause-on-customer) from the WhatsApp engine.
+  // slaScore starts at 100 with no history, so the ring reads full until a
+  // breach actually happens.
+  const slaScore = slaStats?.slaScore ?? 100;
+  const slaAwaiting = slaStats?.awaitingReply ?? 0;
+  const slaApproaching = slaStats?.approaching ?? 0;
+  const slaOverdue = slaStats?.overdue ?? 0;
   const handovers = leads.filter((l) => l.stage === 'SENT_TO_FINANCE').length;
 
   const upcomingAppointments = appointments
@@ -551,11 +552,13 @@ export function SalesDashboardPage() {
           </div>
         </GlassCard>
 
-        {/* SLA panel */}
+        {/* SLA panel — real Response-SLA (reply within 5 min while it's your
+            turn). The ring is the agent's on-time score; the rows are the
+            live "needs a reply" picture. */}
         <GlassCard variant="strong" padded="lg">
           <div className="sos-eyebrow">SLA Watch</div>
           <h2 className="sos-title" style={{ fontSize: '17px', marginTop: '6px' }}>
-            Time to first response
+            Your response score
           </h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '20px' }}>
@@ -567,7 +570,7 @@ export function SalesDashboardPage() {
                 width: '120px',
                 height: '120px',
                 borderRadius: '50%',
-                background: `conic-gradient(var(--sos-status-success) 0 ${slaOnTimePct}%, var(--sos-surface-progress-track) ${slaOnTimePct}% 100%)`,  
+                background: `conic-gradient(${slaScore >= 90 ? 'var(--sos-status-success)' : slaScore >= 70 ? 'var(--sos-status-warning)' : 'var(--sos-status-danger)'} 0 ${slaScore}%, var(--sos-surface-progress-track) ${slaScore}% 100%)`,
               }}
             >
               <div
@@ -588,7 +591,7 @@ export function SalesDashboardPage() {
                     color: 'var(--sos-text-primary)',
                   }}
                 >
-                  {slaOnTimePct}%
+                  {slaScore}%
                 </div>
                 <div
                   style={{
@@ -614,9 +617,9 @@ export function SalesDashboardPage() {
                 minWidth: 0,
               }}
             >
-              <SlaRow Icon={CheckCircle2} tone="var(--sos-status-success)" label="On-time touches" value={followCompleted} />
-              <SlaRow Icon={TimerReset} tone="var(--sos-status-warning)" label="Within next hour" value={followDueWithinHour} />
-              <SlaRow Icon={CircleAlert} tone="var(--sos-status-danger)" label="Overdue" value={followOverdue} />
+              <SlaRow Icon={CheckCircle2} tone="var(--sos-status-success)" label="Awaiting your reply" value={slaAwaiting} />
+              <SlaRow Icon={TimerReset} tone="var(--sos-status-warning)" label="Approaching breach" value={slaApproaching} />
+              <SlaRow Icon={CircleAlert} tone="var(--sos-status-danger)" label="Overdue now" value={slaOverdue} />
             </div>
           </div>
 
@@ -625,17 +628,33 @@ export function SalesDashboardPage() {
               marginTop: '20px',
               padding: '14px',
               borderRadius: 'var(--sos-radius-sm)',
-              background: 'var(--sos-surface-2)',
-              border: '1px solid var(--sos-border-subtle)',
+              background: slaOverdue > 0 ? 'var(--sos-status-danger-soft)' : 'var(--sos-surface-2)',
+              border: `1px solid ${slaOverdue > 0 ? 'var(--sos-status-danger-border, rgba(239,68,68,0.35))' : 'var(--sos-border-subtle)'}`,
               display: 'flex',
               alignItems: 'flex-start',
               gap: '10px',
             }}
           >
-            <Sparkles size={14} style={{ color: 'var(--sos-brand-primary-strong)', marginTop: 3 }} />
+            <Sparkles
+              size={14}
+              style={{
+                color: slaOverdue > 0 ? 'var(--sos-status-danger)' : 'var(--sos-brand-primary-strong)',
+                marginTop: 3,
+                flexShrink: 0,
+              }}
+            />
             <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', lineHeight: 1.55 }}>
-              <strong style={{ color: 'var(--sos-text-primary)' }}>Tip:</strong>{' '}
-              Respond within 30 minutes — leads contacted in the first hour close 4× more often.
+              {slaOverdue > 0 ? (
+                <>
+                  <strong style={{ color: 'var(--sos-status-danger)' }}>Reply now —</strong>{' '}
+                  you have {slaOverdue} conversation{slaOverdue === 1 ? '' : 's'} past the 5-minute SLA. Leads are reassigned after 10 SLA breaches.
+                </>
+              ) : (
+                <>
+                  <strong style={{ color: 'var(--sos-text-primary)' }}>Tip:</strong>{' '}
+                  Reply within 5 minutes while it&apos;s your turn — keep your score at 100. Leads are reassigned after 10 SLA breaches.
+                </>
+              )}
             </div>
           </div>
         </GlassCard>

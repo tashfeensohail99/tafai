@@ -191,6 +191,14 @@ export interface ThreadStats {
   unassigned: number;
   slaBreached: number;
   unread: number;
+  /** Response-SLA: conversations where it's currently the agent's turn. */
+  awaitingReply: number;
+  /** Within the warn window (about to breach), not yet overdue. */
+  approaching: number;
+  /** Response-SLA deadline already passed, still unanswered. */
+  overdue: number;
+  /** Caller's own on-time score (0–100, 100 with no history); null for admins/non-employees. */
+  slaScore: number | null;
 }
 
 /**

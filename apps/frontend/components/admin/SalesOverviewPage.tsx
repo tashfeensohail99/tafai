@@ -38,6 +38,10 @@ interface AgentRow {
   openFollowUps: number;
   overdueFollowUps: number;
   upcomingAppointments: number;
+  /** Response-SLA on-time score (0–100). Starts at 100 with no history. */
+  slaScore?: number;
+  /** Lifetime count of replies that breached the Response-SLA. */
+  slaBreaches?: number;
 }
 
 interface SalesOverview {
@@ -299,11 +303,12 @@ export function SalesOverviewPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', minWidth: 920, borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', minWidth: 1020, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--sos-surface-1)' }}>
                   {[
                     'Agent',
+                    'SLA score',
                     'Assigned',
                     'New (30d)',
                     'Converted (30d)',
@@ -420,6 +425,11 @@ export function SalesOverviewPage() {
                       </div>
                     </td>
 
+                    {/* Response-SLA score */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <SlaScorePill score={a.slaScore ?? 100} breaches={a.slaBreaches ?? 0} />
+                    </td>
+
                     {/* Assigned (big number) */}
                     <td style={{ padding: '14px 16px' }}>
                       <NumPill value={a.assignedLeads} tone="primary" />
@@ -523,6 +533,39 @@ function NumPill({
     >
       {value.toLocaleString()}
     </span>
+  );
+}
+
+/**
+ * Response-SLA score chip. Green ≥90, amber ≥70, red below. Shows the % and,
+ * when the agent has breaches, a small count so managers can see who's
+ * approaching the 10-breach reassignment line.
+ */
+function SlaScorePill({ score, breaches }: { score: number; breaches: number }) {
+  const color = score >= 90 ? 'var(--sos-status-success)' : score >= 70 ? 'var(--sos-status-warning)' : 'var(--sos-status-danger)';
+  const bg = score >= 90 ? 'var(--sos-status-success-soft)' : score >= 70 ? 'var(--sos-status-warning-soft)' : 'var(--sos-status-danger-soft)';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
+      <span
+        style={{
+          fontSize: 12.5,
+          fontWeight: 700,
+          padding: '3px 9px',
+          borderRadius: 999,
+          background: bg,
+          color,
+          whiteSpace: 'nowrap',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {score}%
+      </span>
+      {breaches > 0 ? (
+        <span style={{ fontSize: 10, color: 'var(--sos-text-faint)' }}>
+          {breaches} breach{breaches === 1 ? '' : 'es'}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

@@ -45,6 +45,7 @@ import {
 } from '@/components/sales-v2/ui';
 import { fetchLeads } from '@/lib/sales-api';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
+import { Modal } from '@/components/whatsapp/Modal';
 
 type FilterKey =
   | 'ALL'
@@ -382,99 +383,103 @@ export function SalesLeadsPage() {
         </div>
       </GlassCard>
 
-      {/* Advanced filter panel — toggled by the "Filters" button */}
-      {filtersOpen ? (
-        <GlassCard variant="soft" padded="md">
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 14,
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div className="sos-eyebrow">Filter leads</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
-                {filtered.length} of {leads.length} match
-              </span>
-              {activeFilterCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setDf(EMPTY_FILTERS)}
-                  className="sos-btn sos-btn--ghost sos-btn--sm"
-                >
-                  Clear all
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gap: 12,
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-            }}
-          >
-            <FilterSelect
-              label="Status"
-              value={df.stage}
-              onChange={(v) => setDf((p) => ({ ...p, stage: v }))}
-              options={STAGE_FILTER_OPTIONS}
-            />
-            <FilterSelect
-              label="Priority"
-              value={df.priority}
-              onChange={(v) => setDf((p) => ({ ...p, priority: v }))}
-              options={PRIORITY_FILTER_OPTIONS.map((p) => ({ value: p, label: PRIORITY_LABEL[p as keyof typeof PRIORITY_LABEL] ?? p }))}
-            />
-            <FilterSelect
-              label="Source"
-              value={df.source}
-              onChange={(v) => setDf((p) => ({ ...p, source: v }))}
-              options={SOURCE_FILTER_OPTIONS.map((s) => ({ value: s, label: SOURCE_LABEL[s as LeadSource] ?? s }))}
-            />
-            <FilterSelect
-              label="Assigned by"
-              value={df.assignmentType}
-              onChange={(v) => setDf((p) => ({ ...p, assignmentType: v }))}
-              options={[
-                { value: 'ADMIN', label: 'Admin' },
-                { value: 'AUTO_CRM', label: 'Auto CRM' },
-              ]}
-            />
-            <FilterSelect
-              label="SLA"
-              value={df.slaStatus}
-              onChange={(v) => setDf((p) => ({ ...p, slaStatus: v }))}
-              options={SLA_FILTER_OPTIONS}
-            />
-            <FilterSelect
-              label="Target country"
-              value={df.country}
-              onChange={(v) => setDf((p) => ({ ...p, country: v }))}
-              options={countryOptions.map((c) => ({ value: c, label: c }))}
-            />
-            <FilterSelect
-              label="Service"
-              value={df.service}
-              onChange={(v) => setDf((p) => ({ ...p, service: v }))}
-              options={serviceOptions.map((s) => ({ value: s, label: s }))}
-            />
-            <FilterSelect
-              label="Email verified"
-              value={df.emailVerified}
-              onChange={(v) => setDf((p) => ({ ...p, emailVerified: v }))}
-              options={[
-                { value: 'yes', label: 'Verified' },
-                { value: 'no', label: 'Not verified' },
-              ]}
-            />
-          </div>
-        </GlassCard>
-      ) : null}
+      {/* Advanced filter popup — opened by the "Filters" button. A modal so
+          the team picks filters without scrolling the page. */}
+      <Modal
+        open={filtersOpen}
+        title="Filter leads"
+        onClose={() => setFiltersOpen(false)}
+        width={640}
+        footer={
+          <>
+            <span
+              style={{
+                fontSize: 12.5,
+                color: 'var(--sos-text-muted)',
+                marginRight: 'auto',
+                alignSelf: 'center',
+              }}
+            >
+              <strong style={{ color: 'var(--sos-text-primary)' }}>{filtered.length}</strong> of {leads.length} match
+            </span>
+            <button
+              type="button"
+              onClick={() => setDf(EMPTY_FILTERS)}
+              disabled={activeFilterCount === 0}
+              className="sos-btn sos-btn--ghost"
+              style={{ opacity: activeFilterCount === 0 ? 0.5 : 1 }}
+            >
+              Clear all
+            </button>
+            <PrimaryButton onClick={() => setFiltersOpen(false)}>
+              Show {filtered.length} {filtered.length === 1 ? 'lead' : 'leads'}
+            </PrimaryButton>
+          </>
+        }
+      >
+        <div
+          style={{
+            display: 'grid',
+            gap: 14,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          }}
+        >
+          <FilterSelect
+            label="Status"
+            value={df.stage}
+            onChange={(v) => setDf((p) => ({ ...p, stage: v }))}
+            options={STAGE_FILTER_OPTIONS}
+          />
+          <FilterSelect
+            label="Priority"
+            value={df.priority}
+            onChange={(v) => setDf((p) => ({ ...p, priority: v }))}
+            options={PRIORITY_FILTER_OPTIONS.map((p) => ({ value: p, label: PRIORITY_LABEL[p as keyof typeof PRIORITY_LABEL] ?? p }))}
+          />
+          <FilterSelect
+            label="Source"
+            value={df.source}
+            onChange={(v) => setDf((p) => ({ ...p, source: v }))}
+            options={SOURCE_FILTER_OPTIONS.map((s) => ({ value: s, label: SOURCE_LABEL[s as LeadSource] ?? s }))}
+          />
+          <FilterSelect
+            label="Assigned by"
+            value={df.assignmentType}
+            onChange={(v) => setDf((p) => ({ ...p, assignmentType: v }))}
+            options={[
+              { value: 'ADMIN', label: 'Admin' },
+              { value: 'AUTO_CRM', label: 'Auto CRM' },
+            ]}
+          />
+          <FilterSelect
+            label="SLA"
+            value={df.slaStatus}
+            onChange={(v) => setDf((p) => ({ ...p, slaStatus: v }))}
+            options={SLA_FILTER_OPTIONS}
+          />
+          <FilterSelect
+            label="Target country"
+            value={df.country}
+            onChange={(v) => setDf((p) => ({ ...p, country: v }))}
+            options={countryOptions.map((c) => ({ value: c, label: c }))}
+          />
+          <FilterSelect
+            label="Service"
+            value={df.service}
+            onChange={(v) => setDf((p) => ({ ...p, service: v }))}
+            options={serviceOptions.map((s) => ({ value: s, label: s }))}
+          />
+          <FilterSelect
+            label="Email verified"
+            value={df.emailVerified}
+            onChange={(v) => setDf((p) => ({ ...p, emailVerified: v }))}
+            options={[
+              { value: 'yes', label: 'Verified' },
+              { value: 'no', label: 'Not verified' },
+            ]}
+          />
+        </div>
+      </Modal>
 
       {/* Lead grid */}
       {filtered.length === 0 ? (

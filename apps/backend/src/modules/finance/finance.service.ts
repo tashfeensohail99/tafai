@@ -523,6 +523,32 @@ export class FinanceService {
       },
     });
 
+    // Reward: a matured lead reaching finance banks `slaHandoverBonus` on-time
+    // "wins" for the sales agent who owned it — repairing their Response-SLA
+    // score for any past slow replies ("bank against breaches" model). Closing
+    // deals literally improves your standing. Non-fatal + best-effort.
+    try {
+      const owner = await this.prisma.lead.findUnique({
+        where: { id: lead.id },
+        select: { assignedEmployeeId: true },
+      });
+      if (owner?.assignedEmployeeId) {
+        const org = await this.prisma.organization.findFirst({
+          orderBy: { createdAt: 'asc' },
+          select: { slaHandoverBonus: true },
+        });
+        const bonus = org?.slaHandoverBonus ?? 5;
+        if (bonus > 0) {
+          await this.prisma.employee.update({
+            where: { id: owner.assignedEmployeeId },
+            data: { slaResponsesMet: { increment: bonus } },
+          });
+        }
+      }
+    } catch {
+      // A scoring hiccup must never block the handover itself.
+    }
+
     // Push the lead's pipeline status forward so the UI's progress bar
     // reflects that this lead has moved into the payment phase. We only
     // bump from early stages — never downgrade an already-CONVERTED lead

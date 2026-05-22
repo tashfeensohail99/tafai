@@ -429,8 +429,14 @@ model Organization {
   // Local-time business-hours window (24h "HH:MM").
   hoursOpen               String  @default("09:00")
   hoursClose              String  @default("18:00")
-  // Days of the week the team works. 0 = Sunday .. 6 = Saturday. Default Mon-Sat.
-  workingDays             Int[]   @default([1, 2, 3, 4, 5, 6])
+  // Optional mid-day break (24h "HH:MM"). The SLA clock PAUSES during this
+  // window and resumes at breakEnd — same way it pauses overnight. Null/empty
+  // = no break. Tashfeen: 12:30–14:00 lunch.
+  breakStart              String? @default("12:30")
+  breakEnd                String? @default("14:00")
+  // Days of the week the team works. 0 = Sunday .. 6 = Saturday.
+  // Tashfeen: Mon–Fri (Sat + Sun off).
+  workingDays             Int[]   @default([1, 2, 3, 4, 5])
   // First-response SLA target in seconds (legacy; kept for back-compat).
   slaFirstResponseSeconds Int     @default(60)
   // Unified Response-SLA target in seconds — applies to EVERY customer message
@@ -444,6 +450,10 @@ model Organization {
   // reassigned after N SLA breaches"). We count breaches but do NOT auto-
   // reassign yet — flipping that on later is a one-line change.
   slaReassignThreshold    Int     @default(10)
+  // Reward: when a lead is matured + sent to finance, the sales agent who
+  // owned it banks this many on-time "wins" — repairing their SLA score for
+  // past slow replies. Closing deals literally improves your standing.
+  slaHandoverBonus        Int     @default(5)
   // Auto-acknowledgement: instant personalised reply when a lead first
   // messages. Does NOT satisfy the SLA — the agent must still reply. The
   // template supports {firstName}, {agentName}, {businessName} placeholders.

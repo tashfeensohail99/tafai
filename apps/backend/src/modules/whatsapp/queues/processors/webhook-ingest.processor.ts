@@ -481,6 +481,8 @@ export class WebhookIngestProcessor extends WorkerHost {
       hoursOpen: org.hoursOpen,
       hoursClose: org.hoursClose,
       workingDays: org.workingDays,
+      breakStart: org.breakStart,
+      breakEnd: org.breakEnd,
     };
 
     // 1) Start the response clock only if not already awaiting a reply.

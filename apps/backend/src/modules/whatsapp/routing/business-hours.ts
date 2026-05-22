@@ -2,7 +2,13 @@
  * Business-hours math for SLA + after-hours routing.
  *
  * Stored per-org as { timezone, hoursOpen ('HH:MM'), hoursClose ('HH:MM'),
- * workingDays (number[] where 0=Sunday..6=Saturday) }.
+ * workingDays (number[] where 0=Sunday..6=Saturday) } plus an OPTIONAL mid-day
+ * break (breakStart / breakEnd, 'HH:MM').
+ *
+ * The SLA clock only advances during *working* time — it pauses overnight, on
+ * non-working days, AND during the lunch break. `computeSlaDeadline` consumes
+ * the SLA seconds across the working windows, rolling any remainder past a
+ * break / close / weekend into the next open window.
  */
 
 export interface BusinessHours {
@@ -10,6 +16,9 @@ export interface BusinessHours {
   hoursOpen: string; // 'HH:MM' local
   hoursClose: string; // 'HH:MM' local
   workingDays: number[]; // 0-6
+  // Optional mid-day break — both must be set for a break to apply.
+  breakStart?: string | null; // 'HH:MM' local
+  breakEnd?: string | null; // 'HH:MM' local
 }
 
 interface LocalParts {
@@ -22,7 +31,6 @@ interface LocalParts {
 }
 
 function partsInTimezone(date: Date, timezone: string): LocalParts {
-  // Intl.DateTimeFormat with the timezone gives us the local clock reading.
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     year: 'numeric',
@@ -53,44 +61,65 @@ function hhmmToMinutes(s: string): number {
   return (h ?? 0) * 60 + (m ?? 0);
 }
 
-/** True if `at` falls within the org's business hours. */
+/**
+ * The working minute-of-day intervals for a day, with the break carved out.
+ * No break → a single [open, close] interval. Break → two intervals:
+ * [open, breakStart] and [breakEnd, close]. Returned half-open: [start, end).
+ */
+function workingIntervals(hours: BusinessHours): Array<[number, number]> {
+  const open = hhmmToMinutes(hours.hoursOpen);
+  const close = hhmmToMinutes(hours.hoursClose);
+  const hasBreak =
+    !!hours.breakStart &&
+    !!hours.breakEnd &&
+    hhmmToMinutes(hours.breakStart) > open &&
+    hhmmToMinutes(hours.breakEnd) < close &&
+    hhmmToMinutes(hours.breakStart) < hhmmToMinutes(hours.breakEnd);
+  if (!hasBreak) return [[open, close]];
+  const bs = hhmmToMinutes(hours.breakStart!);
+  const be = hhmmToMinutes(hours.breakEnd!);
+  return [
+    [open, bs],
+    [be, close],
+  ];
+}
+
+/** True if `at` falls within a working interval on a working day. */
 export function isWithinBusinessHours(hours: BusinessHours, at: Date = new Date()): boolean {
   const p = partsInTimezone(at, hours.timezone);
   if (!hours.workingDays.includes(p.weekday)) return false;
   const minuteOfDay = p.hour * 60 + p.minute;
-  const open = hhmmToMinutes(hours.hoursOpen);
-  const close = hhmmToMinutes(hours.hoursClose);
-  return minuteOfDay >= open && minuteOfDay < close;
+  return workingIntervals(hours).some(([s, e]) => minuteOfDay >= s && minuteOfDay < e);
 }
 
 /**
- * Given a point in time and business hours, return the next instant where the
- * business is open. If `at` is already inside business hours, returns `at`.
- *
- * The math walks forward day-by-day in the target timezone, returning when we
- * hit a working day. The returned Date is converted back to UTC.
+ * Next instant the business is open. If `at` is already inside a working
+ * interval, returns `at`. Otherwise walks forward — to the next interval start
+ * (e.g. break end), or the next working day's opening — skipping non-working
+ * days. Returned as a UTC Date.
  */
 export function nextBusinessOpen(hours: BusinessHours, at: Date = new Date()): Date {
   if (isWithinBusinessHours(hours, at)) return at;
 
   const cursor = new Date(at);
-  // Walk up to 14 days forward (in case of holidays / 1-day weeks).
+  // Walk up to 14 days forward (covers weekends + holiday-length gaps).
   for (let i = 0; i < 14; i++) {
     const parts = partsInTimezone(cursor, hours.timezone);
-    const open = hhmmToMinutes(hours.hoursOpen);
-    const close = hhmmToMinutes(hours.hoursClose);
-    const minuteOfDay = parts.hour * 60 + parts.minute;
-    const isWorkingDay = hours.workingDays.includes(parts.weekday);
-
-    if (isWorkingDay && minuteOfDay < open) {
-      // Same day, before opening: jump to open time.
-      return setLocalTime(at, hours.timezone, parts.year, parts.month, parts.day, open);
+    if (hours.workingDays.includes(parts.weekday)) {
+      const minuteOfDay = parts.hour * 60 + parts.minute;
+      for (const [s, e] of workingIntervals(hours)) {
+        if (minuteOfDay < s) {
+          // Before this interval (pre-open, or mid-break before the 2nd window):
+          // jump to its start.
+          return setLocalTime(hours.timezone, parts.year, parts.month, parts.day, s);
+        }
+        if (minuteOfDay >= s && minuteOfDay < e) {
+          return cursor; // inside (guard above usually prevents reaching here)
+        }
+        // else past this interval → check the next one
+      }
     }
-    if (isWorkingDay && minuteOfDay < close) {
-      // Inside hours (shouldn't happen due to guard above), return now.
-      return at;
-    }
-    // Move to next day midnight local time.
+    // Past all of today's intervals / non-working day → next day midnight local.
     cursor.setUTCDate(cursor.getUTCDate() + 1);
     cursor.setUTCHours(0, 0, 0, 0);
   }
@@ -98,55 +127,73 @@ export function nextBusinessOpen(hours: BusinessHours, at: Date = new Date()): D
 }
 
 /**
- * Compute the SLA deadline for first agent reply, given:
- *  - the time the inbound arrived
- *  - the org's first-response SLA in seconds
- *  - the org's business hours
- *
- * Rule: SLA clock only advances during business hours. If the inbound arrived
- * outside hours, the clock starts at the next open.
+ * Compute the SLA deadline by consuming `slaSeconds` of WORKING time starting
+ * from the next open instant — rolling any remainder past a break, past
+ * closing, and over weekends into the next working window. So a 5-minute SLA
+ * on a message at 12:28 (2 min before the lunch break) lands at 14:03, and one
+ * at 17:58 lands at 09:03 the next working day.
  */
 export function computeSlaDeadline(
   hours: BusinessHours,
   inboundAt: Date,
   slaSeconds: number,
 ): Date {
-  const start = nextBusinessOpen(hours, inboundAt);
-  // For a 60-second SLA inside hours, this is just +60s. We assume the SLA is
-  // short enough not to wrap past closing; for longer SLAs we'd need to roll
-  // the remaining seconds into the next business day, which we don't need for
-  // a 1-minute target.
-  return new Date(start.getTime() + slaSeconds * 1000);
+  let cursor = nextBusinessOpen(hours, inboundAt);
+  let remainingMs = Math.max(0, slaSeconds) * 1000;
+  if (remainingMs === 0) return cursor;
+
+  // Bounded walk across working intervals.
+  for (let i = 0; i < 60; i++) {
+    const parts = partsInTimezone(cursor, hours.timezone);
+    const minuteOfDay = parts.hour * 60 + parts.minute;
+    const interval = workingIntervals(hours).find(
+      ([s, e]) => minuteOfDay >= s && minuteOfDay < e,
+    );
+    if (!interval) {
+      // Not inside a working interval (landed on a boundary / closed time) —
+      // advance to the next open and retry.
+      cursor = nextBusinessOpen(hours, cursor);
+      continue;
+    }
+    const intervalEnd = setLocalTime(
+      hours.timezone,
+      parts.year,
+      parts.month,
+      parts.day,
+      interval[1],
+    );
+    const msToEnd = intervalEnd.getTime() - cursor.getTime();
+    if (remainingMs <= msToEnd) {
+      return new Date(cursor.getTime() + remainingMs);
+    }
+    remainingMs -= msToEnd;
+    // Hop just past this interval's end so nextBusinessOpen returns the NEXT
+    // working window (break end, or next day's open).
+    cursor = nextBusinessOpen(hours, new Date(intervalEnd.getTime() + 1000));
+  }
+  return cursor;
 }
 
 function setLocalTime(
-  _reference: Date,
   timezone: string,
   year: number,
   month: number,
   day: number,
   totalMinutes: number,
 ): Date {
-  // Build a Date at the requested local clock in the target timezone, by
-  // searching for the UTC instant whose tz-projection matches.
   const targetH = Math.floor(totalMinutes / 60);
   const targetM = totalMinutes % 60;
-  // Start with a UTC guess: same Y/M/D at the requested HH:MM treated as UTC.
   let utc = new Date(Date.UTC(year, month - 1, day, targetH, targetM, 0, 0));
-  // Up to two iterations: compute drift between UTC guess and what the tz
-  // shows, and shift. This handles DST and offset.
   for (let i = 0; i < 2; i++) {
     const p = partsInTimezone(utc, timezone);
     const observedMin = p.hour * 60 + p.minute;
-    const desiredMin = totalMinutes;
     const dayDelta =
       (p.year - year) * 365 * 24 * 60 +
       (p.month - month) * 30 * 24 * 60 +
       (p.day - day) * 24 * 60;
-    const drift = observedMin + dayDelta - desiredMin;
+    const drift = observedMin + dayDelta - totalMinutes;
     if (drift === 0) break;
     utc = new Date(utc.getTime() - drift * 60 * 1000);
   }
   return utc;
-  // `reference` retained for API symmetry; not used.
 }

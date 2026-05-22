@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppRealtimePublisher } from '../realtime/publisher.service';
+import { WhatsAppAssignmentService } from './assignment.service';
 import { WHATSAPP_WS_EVENTS } from '../queues/queue-contracts';
 
 /**
@@ -41,6 +42,7 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
   constructor(
     private readonly prisma: PrismaService,
     private readonly publisher: WhatsAppRealtimePublisher,
+    private readonly assignment: WhatsAppAssignmentService,
   ) {}
 
   onModuleInit(): void {
@@ -63,6 +65,10 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
     if (this.running) return; // never overlap a slow sweep with the next tick
     this.running = true;
     try {
+      // Safety net: recover any open thread the webhook left unassigned. Runs
+      // first and unconditionally so an assignment stall self-heals in <=60s.
+      await this.recoverUnassignedThreads();
+
       const org = await this.prisma.organization.findFirst({
         orderBy: { createdAt: 'asc' },
         select: { id: true, slaWarnBeforeSeconds: true, slaReassignThreshold: true },
@@ -163,6 +169,53 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
       }
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Self-healing assignment recovery.
+   *
+   * Every inbound is assigned inline by the webhook worker, but that call is
+   * wrapped in a non-fatal try/catch (a failure there must never drop the
+   * message we already saved). The downside: a transient DB blip, a race, or a
+   * bug in the engine leaves the lead unassigned and SILENT — which is exactly
+   * how a stall once ran for hours before anyone noticed.
+   *
+   * This gives every still-unassigned open thread a second chance on every
+   * 60s tick. ensureAssigned is idempotent (no-ops on an already-assigned
+   * lead), so once the webhook path is healthy this is just one cheap COUNT-ish
+   * query returning nothing. Bounded to 50/tick so a large backlog drains over
+   * a few minutes instead of hammering the DB in one burst.
+   */
+  private async recoverUnassignedThreads(): Promise<void> {
+    const stuck = await this.prisma.whatsAppThread.findMany({
+      where: {
+        status: { not: 'ARCHIVED' },
+        lead: { is: { assignedEmployeeId: null, deletedAt: null } },
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+    });
+    if (stuck.length === 0) return;
+
+    let recovered = 0;
+    for (const t of stuck) {
+      try {
+        const outcome = await this.assignment.ensureAssigned(t.id);
+        if (outcome.assignedEmployeeId) recovered++;
+      } catch (err) {
+        // Surface loudly — if recovery itself fails the engine is broken and
+        // we WANT it in the logs, not swallowed like the webhook path.
+        this.log.error(
+          `assignment recovery failed for thread ${t.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    if (recovered > 0) {
+      this.log.warn(
+        `assignment recovery: re-assigned ${recovered} thread(s) the webhook left unassigned`,
+      );
     }
   }
 }

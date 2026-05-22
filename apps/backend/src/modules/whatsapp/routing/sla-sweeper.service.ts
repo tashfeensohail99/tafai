@@ -74,9 +74,21 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
 
       // Pull the (bounded) set of threads currently awaiting an agent reply
       // whose deadline is either already past or within the warn window.
+      //
+      // CRITICAL: exclude already-breached threads. A breach sets
+      // responseBreached=true but does NOT clear responseDeadlineAt (only an
+      // agent reply clears it), so a breached-but-unanswered thread would
+      // otherwise stay in this window forever, doing nothing — the breach path
+      // needs !responseBreached and the warn path needs !isPast, and a breached
+      // thread satisfies neither. With `take: 500` and no ORDER BY, those inert
+      // rows accumulate and can starve genuinely-new threads out of the page,
+      // so warnings/breaches silently stop firing. Filtering them here keeps the
+      // working set to threads that still need action. (Does not affect the
+      // "overdue" KPI, which keys off responseDeadlineAt, not this query.)
       const pending = await this.prisma.whatsAppThread.findMany({
         where: {
           responseDeadlineAt: { not: null, lte: warnCutoff },
+          responseBreached: false,
         },
         select: {
           id: true,

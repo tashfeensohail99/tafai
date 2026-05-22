@@ -27,10 +27,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  CheckCircle2,
   Inbox as InboxIcon,
   MessageSquare,
   RefreshCw,
   Search,
+  TimerReset,
   UserCog,
 } from 'lucide-react';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
@@ -189,7 +191,12 @@ export function WhatsAppAdminPage() {
   // show a blank.
   const activeCount = stats?.active ?? items.length;
   const unassignedCount = stats?.unassigned ?? items.filter((t) => !t.lead?.assignedEmployeeId).length;
-  const breachedCount = stats?.slaBreached ?? items.filter((t) => t.slaBreached).length;
+  // Response-SLA numbers (the source of truth). The legacy first-response
+  // "SLA breached" KPI was retired — it only scored the conversation's first
+  // reply and disagreed with these rolling figures, which confused the team.
+  const overdueCount = stats?.overdue ?? 0;
+  const approachingCount = stats?.approaching ?? 0;
+  const slaScore = stats?.slaScore ?? null;
   const totalUnread = stats?.unread ?? items.reduce((acc, t) => acc + t.unreadCount, 0);
 
   const eligibleTeam = useMemo(
@@ -255,10 +262,30 @@ export function WhatsAppAdminPage() {
             icon={<AlertTriangle size={12} />}
           />
           <AdminMetricChip
-            label="SLA breached"
-            value={breachedCount}
-            tone={breachedCount > 0 ? 'danger' : 'neutral'}
+            label="Overdue"
+            value={overdueCount}
+            tone={overdueCount > 0 ? 'danger' : 'neutral'}
             icon={<AlertTriangle size={12} />}
+          />
+          <AdminMetricChip
+            label="Approaching"
+            value={approachingCount}
+            tone={approachingCount > 0 ? 'warning' : 'neutral'}
+            icon={<TimerReset size={12} />}
+          />
+          <AdminMetricChip
+            label="SLA score"
+            value={slaScore === null ? '—' : `${slaScore}%`}
+            tone={
+              slaScore === null
+                ? 'neutral'
+                : slaScore >= 90
+                  ? 'info'
+                  : slaScore >= 75
+                    ? 'warning'
+                    : 'danger'
+            }
+            icon={<CheckCircle2 size={12} />}
           />
           <button
             type="button"
@@ -734,7 +761,7 @@ function AdminMetricChip({
   icon,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone: 'info' | 'warning' | 'danger' | 'neutral';
   icon?: React.ReactNode;
 }) {
@@ -950,20 +977,6 @@ function ThreadRow({
             {item.lastMessagePreview ?? ''}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            {item.slaBreached && (
-              <span
-                style={{
-                  background: '#ef4444',
-                  color: '#fff',
-                  borderRadius: 6,
-                  fontSize: 9,
-                  fontWeight: 700,
-                  padding: '1px 5px',
-                }}
-              >
-                SLA
-              </span>
-            )}
             {item.unreadCount > 0 && (
               <span
                 style={{

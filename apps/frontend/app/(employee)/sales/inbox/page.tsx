@@ -476,20 +476,6 @@ function ThreadRow({
               {item.lastMessagePreview ?? ''}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-              {item.slaBreached && (
-                <span
-                  style={{
-                    background: '#ef4444',
-                    color: '#fff',
-                    borderRadius: 6,
-                    fontSize: 9,
-                    fontWeight: 700,
-                    padding: '1px 5px',
-                  }}
-                >
-                  SLA
-                </span>
-              )}
               {item.unreadCount > 0 && (
                 <span
                   style={{

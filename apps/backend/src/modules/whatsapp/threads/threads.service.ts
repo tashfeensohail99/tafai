@@ -42,15 +42,19 @@ export class WhatsAppThreadsService {
     const where: Prisma.WhatsAppThreadWhereInput = {};
     if (opts.status) where.status = opts.status;
 
+    // Compound conditions are collected in an AND array so they COMPOSE rather
+    // than clobber each other. The soft-delete guard and the search filter both
+    // want an `OR`; assigning `where.OR` twice silently dropped the first —
+    // which let an admin search surface threads of soft-deleted leads. Keeping
+    // each as its own AND entry guarantees the delete guard always applies.
+    const and: Prisma.WhatsAppThreadWhereInput[] = [];
+
     // Hide threads whose lead has been soft-deleted (admin deletes a lead
     // or a whole CSV import batch → the lead's row stays in the DB but
     // gets deletedAt stamped, so the inbox should drop the thread). We use
     // `OR` so we don't accidentally hide threads that have a client but no
     // lead — those still show up.
-    where.OR = [
-      { lead: { is: { deletedAt: null } } },
-      { lead: null },
-    ];
+    and.push({ OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] });
 
     // Scope to caller's assigned leads unless they're allowed to see all
     // AND haven't explicitly asked for "mine only".
@@ -68,12 +72,16 @@ export class WhatsAppThreadsService {
 
     if (opts.search) {
       const q = opts.search.trim();
-      where.OR = [
-        { waContactId: { contains: q.replace(/\D/g, '') } },
-        { lead: { OR: [{ firstName: { contains: q, mode: 'insensitive' } }, { lastName: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } },
-        { client: { OR: [{ firstName: { contains: q, mode: 'insensitive' } }, { lastName: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } },
-      ];
+      and.push({
+        OR: [
+          { waContactId: { contains: q.replace(/\D/g, '') } },
+          { lead: { OR: [{ firstName: { contains: q, mode: 'insensitive' } }, { lastName: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } },
+          { client: { OR: [{ firstName: { contains: q, mode: 'insensitive' } }, { lastName: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } },
+        ],
+      });
     }
+
+    where.AND = and;
 
     const rows = await this.prisma.whatsAppThread.findMany({
       where,

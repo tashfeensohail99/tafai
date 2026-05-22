@@ -123,6 +123,58 @@ export class WhatsAppThreadsService {
     };
   }
 
+  /**
+   * True inbox counters for the KPI chips. Computed with COUNT queries over
+   * the whole table (scoped to the caller) — NOT from the paginated list —
+   * so "Active 30" stops being a lie that just reflected the first page size.
+   *
+   * Returns:
+   *   total        — every non-deleted thread the caller can see
+   *   active       — status OPEN (the working set)
+   *   unassigned   — admin-only: threads whose lead has no assignee yet
+   *   slaBreached  — threads flagged slaBreached
+   *   unread       — threads with unreadCount > 0
+   */
+  async stats(caller: CallerContext): Promise<{
+    total: number;
+    active: number;
+    unassigned: number;
+    slaBreached: number;
+    unread: number;
+  }> {
+    // Base visibility filter mirrors list(): drop soft-deleted leads, and
+    // scope to the caller's own assigned leads when they can't view all.
+    const base: Prisma.WhatsAppThreadWhereInput = {
+      OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }],
+    };
+    if (!caller.canViewAll) {
+      if (!caller.employeeId) {
+        return { total: 0, active: 0, unassigned: 0, slaBreached: 0, unread: 0 };
+      }
+      base.lead = { assignedEmployeeId: caller.employeeId, deletedAt: null };
+      delete base.OR; // the lead filter already excludes deleted leads
+    }
+
+    const and = (extra: Prisma.WhatsAppThreadWhereInput): Prisma.WhatsAppThreadWhereInput => ({
+      AND: [base, extra],
+    });
+
+    const [total, active, slaBreached, unread, unassigned] = await Promise.all([
+      this.prisma.whatsAppThread.count({ where: base }),
+      this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
+      this.prisma.whatsAppThread.count({ where: and({ slaBreached: true }) }),
+      this.prisma.whatsAppThread.count({ where: and({ unreadCount: { gt: 0 } }) }),
+      // Unassigned only makes sense for admins who can view all threads.
+      caller.canViewAll
+        ? this.prisma.whatsAppThread.count({
+            where: and({ lead: { assignedEmployeeId: null, deletedAt: null } }),
+          })
+        : Promise.resolve(0),
+    ]);
+
+    return { total, active, unassigned, slaBreached, unread };
+  }
+
   async getOrFail(caller: CallerContext, threadId: string) {
     const t = await this.prisma.whatsAppThread.findUnique({
       where: { id: threadId },

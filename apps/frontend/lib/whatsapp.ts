@@ -180,8 +180,26 @@ export function listThreads(opts: {
   unassigned?: boolean;
   search?: string;
   cursor?: string;
+  limit?: number;
 } = {}): Promise<ThreadListResponse> {
   return apiFetch<ThreadListResponse>(`/whatsapp/threads${buildQuery(opts)}`);
+}
+
+export interface ThreadStats {
+  total: number;
+  active: number;
+  unassigned: number;
+  slaBreached: number;
+  unread: number;
+}
+
+/**
+ * True inbox counters for the KPI chips — counted server-side over the whole
+ * table, NOT derived from the (paginated) thread list. Use this instead of
+ * `items.length`, which only ever reflects the loaded page.
+ */
+export function getThreadStats(): Promise<ThreadStats> {
+  return apiFetch<ThreadStats>('/whatsapp/threads/stats');
 }
 
 export function reassignThread(

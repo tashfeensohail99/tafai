@@ -76,6 +76,19 @@ export class WhatsAppThreadsController {
     return this.threads.list(caller, q);
   }
 
+  /**
+   * True inbox counters for the KPI chips (Active / Unassigned / SLA breached
+   * / Unread / Total). Computed with COUNT queries over the whole table so the
+   * numbers reflect reality, not the 30-item first page. Mounted BEFORE the
+   * @Get(':id') route so "stats" isn't parsed as a thread UUID.
+   */
+  @Get('stats')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async stats(@CurrentUser() user: RequestUser) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.stats(caller);
+  }
+
   @Get(':id')
   @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
   async get(

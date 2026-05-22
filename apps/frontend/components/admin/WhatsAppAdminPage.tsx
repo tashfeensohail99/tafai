@@ -35,7 +35,14 @@ import {
 } from 'lucide-react';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { useAdminSession } from '../layout/AdminShell';
-import { listThreads, reassignThread, type ThreadListItem, type WhatsAppThreadStatus } from '@/lib/whatsapp';
+import {
+  getThreadStats,
+  listThreads,
+  reassignThread,
+  type ThreadListItem,
+  type ThreadStats,
+  type WhatsAppThreadStatus,
+} from '@/lib/whatsapp';
 import { listTeamPresence, type TeamPresenceRow } from '@/lib/whatsapp-admin';
 import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
@@ -82,6 +89,15 @@ export function WhatsAppAdminPage() {
   const [team, setTeam] = useState<TeamPresenceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Pagination — the list endpoint is cursor-paginated; we load the first
+  // page on filter change and append further pages as the user scrolls.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // True inbox counters from the dedicated /stats endpoint — replaces the
+  // old items.length which capped every chip at the 30-item page size.
+  const [stats, setStats] = useState<ThreadStats | null>(null);
+  // Bigger first page so the list feels full before scroll kicks in.
+  const PAGE_SIZE = 50;
   const { socket } = useWhatsAppSocket();
   const isMobile = useIsMobile();
 
@@ -96,16 +112,20 @@ export function WhatsAppAdminPage() {
     if (!canViewAll) return;
     setLoading(true);
     try {
-      const [t, p] = await Promise.all([
+      const [t, p, st] = await Promise.all([
         listThreads({
           ...(filter !== 'ALL' ? { status: filter } : {}),
           ...(search ? { search } : {}),
           ...(unassignedOnly ? { unassigned: true } : {}),
+          limit: PAGE_SIZE,
         }),
         listTeamPresence().catch(() => [] as TeamPresenceRow[]),
+        getThreadStats().catch(() => null),
       ]);
       setItems(t.items);
+      setNextCursor(t.nextCursor);
       setTeam(p);
+      setStats(st);
       if (!activeId && t.items.length > 0 && !isMobile) {
         setActiveId(t.items[0]!.id);
       }
@@ -113,6 +133,30 @@ export function WhatsAppAdminPage() {
       setLoading(false);
     }
   }, [canViewAll, filter, search, unassignedOnly, activeId, isMobile]);
+
+  // Append the next page when the user scrolls near the bottom of the list.
+  // Guarded so we never fire two in-flight loads or load past the end.
+  const loadMore = useCallback(async () => {
+    if (!canViewAll || !nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const t = await listThreads({
+        ...(filter !== 'ALL' ? { status: filter } : {}),
+        ...(search ? { search } : {}),
+        ...(unassignedOnly ? { unassigned: true } : {}),
+        cursor: nextCursor,
+        limit: PAGE_SIZE,
+      });
+      // De-dupe by id in case a realtime reload raced with the append.
+      setItems((curr) => {
+        const seen = new Set(curr.map((i) => i.id));
+        return [...curr, ...t.items.filter((i) => !seen.has(i.id))];
+      });
+      setNextCursor(t.nextCursor);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [canViewAll, nextCursor, loadingMore, filter, search, unassignedOnly]);
 
   useEffect(() => {
     void reload();
@@ -140,18 +184,13 @@ export function WhatsAppAdminPage() {
     return () => clearTimeout(t);
   }, [confirmation]);
 
-  const totalUnread = useMemo(
-    () => items.reduce((acc, t) => acc + t.unreadCount, 0),
-    [items],
-  );
-  const unassignedCount = useMemo(
-    () => items.filter((t) => !t.lead?.assignedEmployeeId).length,
-    [items],
-  );
-  const breachedCount = useMemo(
-    () => items.filter((t) => t.slaBreached).length,
-    [items],
-  );
+  // KPI numbers come from the /stats endpoint (true totals). Fall back to
+  // the loaded page only while stats are still loading, so the chips never
+  // show a blank.
+  const activeCount = stats?.active ?? items.length;
+  const unassignedCount = stats?.unassigned ?? items.filter((t) => !t.lead?.assignedEmployeeId).length;
+  const breachedCount = stats?.slaBreached ?? items.filter((t) => t.slaBreached).length;
+  const totalUnread = stats?.unread ?? items.reduce((acc, t) => acc + t.unreadCount, 0);
 
   const eligibleTeam = useMemo(
     () => team.filter((t) => t.whatsappInboxMember).sort((a, b) => a.name.localeCompare(b.name)),
@@ -205,7 +244,7 @@ export function WhatsAppAdminPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <AdminMetricChip
             label="Active"
-            value={items.length}
+            value={activeCount}
             tone="info"
             icon={<MessageSquare size={12} />}
           />
@@ -451,7 +490,23 @@ export function WhatsAppAdminPage() {
             </div>
 
             {/* Thread list */}
-            <div style={{ flex: 1, overflowY: 'auto', background: 'var(--sos-surface-1)' }}>
+            <div
+              className="sos-scroll"
+              style={{ flex: 1, overflowY: 'auto', background: 'var(--sos-surface-1)' }}
+              onScroll={(e) => {
+                // Infinite scroll — when the user is within 240px of the
+                // bottom, pull the next cursor page. Cheap threshold check;
+                // loadMore() is self-guarding against double-fires.
+                const el = e.currentTarget;
+                if (
+                  nextCursor &&
+                  !loadingMore &&
+                  el.scrollHeight - el.scrollTop - el.clientHeight < 240
+                ) {
+                  void loadMore();
+                }
+              }}
+            >
               {loading && items.length === 0 ? (
                 <div
                   style={{
@@ -496,6 +551,25 @@ export function WhatsAppAdminPage() {
                   />
                 ))
               )}
+
+              {/* Load-more footer: spinner while fetching the next page,
+                  or a subtle "all caught up" marker once fully loaded. */}
+              {items.length > 0 ? (
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontSize: 11.5,
+                    color: 'var(--sos-text-faint)',
+                  }}
+                >
+                  {loadingMore
+                    ? 'Loading more…'
+                    : nextCursor
+                      ? 'Scroll for more'
+                      : `${items.length} conversation${items.length === 1 ? '' : 's'} loaded`}
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}

@@ -117,6 +117,16 @@ export function SalesDashboardPage() {
   const autoAssigned = leads.filter((l) => l.assignmentType === 'AUTO_CRM').length;
   const overdue = leads.filter((l) => l.slaStatus === 'OVERDUE').length;
 
+  // Real "assigned today" counts (was a hardcoded "+3 today" string).
+  const isToday = (iso?: string) => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  };
+  const adminToday = leads.filter((l) => l.assignmentType === 'ADMIN' && isToday(l.assignedAt)).length;
+  const autoToday = leads.filter((l) => l.assignmentType === 'AUTO_CRM' && isToday(l.assignedAt)).length;
+
   const dueToday = followUps.filter((f) => f.status === 'DUE_TODAY').length;
   const followOverdue = followUps.filter((f) => f.status === 'OVERDUE').length;
   // Real Response-SLA picture (pause-on-customer) from the WhatsApp engine.
@@ -249,7 +259,7 @@ export function SalesDashboardPage() {
           label="Admin assigned"
           value={adminAssigned}
           hint="Manually routed by admin"
-          delta="+3 today"
+          delta={adminToday > 0 ? `+${adminToday} today` : undefined}
           tone="info"
           Icon={Users}
           footer="Priority queue from the front desk"
@@ -258,7 +268,7 @@ export function SalesDashboardPage() {
           label="Auto-CRM assigned"
           value={autoAssigned}
           hint="Social media & website inflow"
-          delta="+5 today"
+          delta={autoToday > 0 ? `+${autoToday} today` : undefined}
           tone="accent"
           Icon={Sparkles}
           footer="Fresh inbound demand from digital channels"
@@ -279,8 +289,7 @@ export function SalesDashboardPage() {
         <MetricCard
           label="Ready for finance"
           value={handovers}
-          hint="Cases handed over today"
-          delta="+1 today"
+          hint="Leads sent to finance"
           tone="warm"
           Icon={Wallet}
           footer="Payment-ready leads waiting for verification"

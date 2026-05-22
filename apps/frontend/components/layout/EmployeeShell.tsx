@@ -32,6 +32,7 @@ import { ThemeToggle } from './ThemeToggle';
 import { PresencePill } from '@/components/whatsapp/PresencePill';
 import { logout as sessionLogout, useSession } from '@/lib/session';
 import { setMyPresence } from '@/lib/whatsapp';
+import { fetchMySalesStats, type MySalesStats } from '@/lib/sales-api';
 
 export interface EmployeeUser {
   id: string;
@@ -48,16 +49,32 @@ interface EmployeeSessionContextValue {
 
 const EmployeeSessionContext = createContext<EmployeeSessionContextValue | null>(null);
 
-const SALES_NAV: DrawerMenuItem[] = [
-  { label: 'Dashboard', href: '/sales', icon: LayoutDashboard, caption: 'Workspace overview' },
-  { label: 'WhatsApp Inbox', href: '/sales/inbox', icon: MessageSquare, caption: 'Your assigned chats' },
-  { label: 'CSV Leads', href: '/sales/csv-leads', icon: FileSpreadsheet, caption: 'From spreadsheet uploads' },
-  { label: 'Assigned Leads', href: '/sales/leads', icon: Users, caption: 'CRM & social media', badge: 12 },
-  { label: 'Create New Lead', href: '/sales/create-lead', icon: CirclePlus, caption: 'Walk-in client' },
-  { label: 'Follow Ups', href: '/sales/follow-ups', icon: PhoneCall, caption: 'Calls, WhatsApp, reminders', badge: 7 },
-  { label: 'Appointments', href: '/sales/appointments', icon: CalendarDays, caption: 'Meetings & visits' },
-  { label: 'Decisions', href: '/sales/decisions', icon: ClipboardCheck, caption: 'Payment handover' },
-];
+// Badges are filled from the live /leads/my-stats counts (null until loaded —
+// no badge shown rather than a stale placeholder number).
+function buildSalesNav(stats: MySalesStats | null): DrawerMenuItem[] {
+  return [
+    { label: 'Dashboard', href: '/sales', icon: LayoutDashboard, caption: 'Workspace overview' },
+    { label: 'WhatsApp Inbox', href: '/sales/inbox', icon: MessageSquare, caption: 'Your assigned chats' },
+    { label: 'CSV Leads', href: '/sales/csv-leads', icon: FileSpreadsheet, caption: 'From spreadsheet uploads' },
+    {
+      label: 'Assigned Leads',
+      href: '/sales/leads',
+      icon: Users,
+      caption: 'CRM & social media',
+      ...(stats && stats.assignedLeads > 0 ? { badge: stats.assignedLeads } : {}),
+    },
+    { label: 'Create New Lead', href: '/sales/create-lead', icon: CirclePlus, caption: 'Walk-in client' },
+    {
+      label: 'Follow Ups',
+      href: '/sales/follow-ups',
+      icon: PhoneCall,
+      caption: 'Calls, WhatsApp, reminders',
+      ...(stats && stats.openFollowUps > 0 ? { badge: stats.openFollowUps } : {}),
+    },
+    { label: 'Appointments', href: '/sales/appointments', icon: CalendarDays, caption: 'Meetings & visits' },
+    { label: 'Decisions', href: '/sales/decisions', icon: ClipboardCheck, caption: 'Payment handover' },
+  ];
+}
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/sales') return { title: 'Sales Dashboard', subtitle: 'Your daily command center' };
@@ -94,6 +111,24 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [stats, setStats] = useState<MySalesStats | null>(null);
+
+  // Live sidebar counters. Refetch on navigation so badges/SLA stay current
+  // as the agent works through their queue.
+  useEffect(() => {
+    if (session.status !== 'authed') return;
+    let cancelled = false;
+    fetchMySalesStats()
+      .then((s) => {
+        if (!cancelled) setStats(s);
+      })
+      .catch(() => {
+        /* sidebar badges are best-effort — never block the shell */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session.status, pathname]);
 
   useEffect(() => {
     if (session.status === 'unauthed') {
@@ -166,7 +201,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
 
           <div className="sos-sidebar__nav sos-scroll">
             <div className="sos-nav-section">Workspace</div>
-            <DrawerMenu items={SALES_NAV} onNavigate={() => setMobileOpen(false)} />
+            <DrawerMenu items={buildSalesNav(stats)} onNavigate={() => setMobileOpen(false)} />
 
             <div className="sos-nav-section" style={{ marginTop: '12px' }}>
               Resources
@@ -189,7 +224,9 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
                   lineHeight: 1.55,
                 }}
               >
-                Watch time-to-first-touch and stay ahead of overdue leads.
+                {stats && stats.overdueFollowUps > 0
+                  ? `${stats.overdueFollowUps} follow-up${stats.overdueFollowUps === 1 ? '' : 's'} overdue — clear them to lift your score.`
+                  : 'Reply on time to keep your response score high.'}
               </div>
               <div
                 style={{
@@ -202,10 +239,11 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
               >
                 <div
                   style={{
-                    width: '72%',
+                    width: `${stats?.slaScore ?? 100}%`,
                     height: '100%',
                     background: 'var(--sos-brand-gradient)',
                     borderRadius: '999px',
+                    transition: 'width 400ms',
                   }}
                 />
               </div>
@@ -218,8 +256,10 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
                   justifyContent: 'space-between',
                 }}
               >
-                <span>This week</span>
-                <span style={{ color: 'var(--sos-brand-accent)', fontWeight: 600 }}>72% on time</span>
+                <span>Response SLA</span>
+                <span style={{ color: 'var(--sos-brand-accent)', fontWeight: 600 }}>
+                  {stats?.slaScore ?? 100}% on time
+                </span>
               </div>
             </div>
           </div>

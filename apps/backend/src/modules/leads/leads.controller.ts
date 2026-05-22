@@ -50,6 +50,16 @@ export class LeadsController {
   }
 
   /**
+   * Lightweight per-employee counters for the sales sidebar badges + SLA
+   * tracker. Mounted before @Get(':id') so "my-stats" isn't parsed as a UUID.
+   */
+  @Get('my-stats')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  myStats(@CurrentUser() user: RequestUser) {
+    return this.leadsService.myStats(user.id);
+  }
+
+  /**
    * Stream a CSV of every lead the caller can see. Uses the same filtering as
    * GET / so admins get everything and agents get their own book.
    */

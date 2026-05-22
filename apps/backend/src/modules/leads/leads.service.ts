@@ -723,6 +723,38 @@ export class LeadsService {
     return employee?.id ?? null;
   }
 
+  /**
+   * Lightweight per-employee counters for the sales sidebar badges + SLA
+   * tracker — assigned leads, open / overdue follow-ups, and the agent's
+   * Response-SLA score. Cheap COUNT queries; safe to call on every page load.
+   */
+  async myStats(userId: string): Promise<{
+    assignedLeads: number;
+    openFollowUps: number;
+    overdueFollowUps: number;
+    slaScore: number;
+  }> {
+    const employeeId = await this.findEmployeeIdByUserId(userId);
+    if (!employeeId) {
+      return { assignedLeads: 0, openFollowUps: 0, overdueFollowUps: 0, slaScore: 100 };
+    }
+    const now = new Date();
+    const [assignedLeads, openFollowUps, overdueFollowUps, emp] = await Promise.all([
+      this.prisma.lead.count({ where: { assignedEmployeeId: employeeId, deletedAt: null } }),
+      this.prisma.followUp.count({ where: { assignedEmployeeId: employeeId, status: 'OPEN' } }),
+      this.prisma.followUp.count({
+        where: { assignedEmployeeId: employeeId, status: 'OPEN', dueAt: { lt: now } },
+      }),
+      this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { slaResponsesMet: true, slaResponsesBreached: true },
+      }),
+    ]);
+    const total = (emp?.slaResponsesMet ?? 0) + (emp?.slaResponsesBreached ?? 0);
+    const slaScore = total === 0 ? 100 : Math.round(((emp?.slaResponsesMet ?? 0) / total) * 100);
+    return { assignedLeads, openFollowUps, overdueFollowUps, slaScore };
+  }
+
   // ---------------------------------------------------------------------------
   // Lead file attachments
   // ---------------------------------------------------------------------------

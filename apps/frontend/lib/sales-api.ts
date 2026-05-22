@@ -394,6 +394,19 @@ export async function fetchLeadActivityTimeline(
   return data ?? [];
 }
 
+export interface MySalesStats {
+  assignedLeads: number;
+  openFollowUps: number;
+  overdueFollowUps: number;
+  slaScore: number;
+}
+
+/** Lightweight counts for the sales sidebar badges + SLA tracker. */
+export async function fetchMySalesStats(): Promise<MySalesStats> {
+  const data = await apiFetch<MySalesStats>('/leads/my-stats');
+  return data ?? { assignedLeads: 0, openFollowUps: 0, overdueFollowUps: 0, slaScore: 100 };
+}
+
 export async function fetchFollowUps(leadId?: string): Promise<FollowUp[]> {
   const qs = leadId ? `?leadId=${leadId}` : '';
   const data = await apiFetch<ApiFollowUp[]>(`/follow-ups${qs}`);

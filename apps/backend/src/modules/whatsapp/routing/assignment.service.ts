@@ -92,7 +92,14 @@ export class WhatsAppAssignmentService {
       // sees the committed assignment and honors it. Read Committed (Prisma's
       // default) does not prevent this on its own — the explicit FOR UPDATE
       // does.
-      await tx.$executeRaw`SELECT 1 FROM crm.leads WHERE id = ${lead.id}::uuid FOR UPDATE`;
+      //
+      // CRITICAL: this is a SELECT, so it MUST use $queryRaw, not $executeRaw.
+      // $executeRaw is for statements that return a row COUNT (INSERT/UPDATE/
+      // DELETE); handing it a SELECT makes Prisma throw "Execute returned
+      // results, which is not allowed in SQL", which aborts the whole
+      // transaction and leaves EVERY lead unassigned. (That exact bug took
+      // assignment down for hours — never use $executeRaw for a SELECT.)
+      await tx.$queryRaw`SELECT 1 FROM crm.leads WHERE id = ${lead.id}::uuid FOR UPDATE`;
       const locked = await tx.lead.findUnique({
         where: { id: lead.id },
         select: { assignedEmployeeId: true, preferredEmployeeId: true },

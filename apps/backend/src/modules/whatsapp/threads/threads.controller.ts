@@ -13,7 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { IsBooleanString, IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsBooleanString, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
@@ -49,6 +49,21 @@ class ListThreadsDto {
 
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
+
+  /**
+   * Page size for the cursor-paginated list. Query params arrive as strings,
+   * so coerce to a number before @IsInt runs. Bounded 1–100; the service
+   * also clamps defensively. MUST be declared here — the global
+   * ValidationPipe runs forbidNonWhitelisted, so an undeclared `limit`
+   * param would 400 the whole request (which is exactly what blanked the
+   * admin inbox).
+   */
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === undefined ? undefined : Number(value)))
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
 }
 
 class ReassignThreadDto {

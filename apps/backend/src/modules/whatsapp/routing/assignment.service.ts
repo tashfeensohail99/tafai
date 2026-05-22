@@ -84,6 +84,23 @@ export class WhatsAppAssignmentService {
       }
       const lead = thread.lead;
 
+      // Serialize concurrent assignment of the SAME lead. The webhook worker
+      // runs at concurrency 8, so two inbound messages arriving together would
+      // otherwise both read assignedEmployeeId=null and assign DIFFERENT agents
+      // (and double-advance the round-robin cursor). A row-level lock makes the
+      // second transaction wait for the first to commit; the re-read below then
+      // sees the committed assignment and honors it. Read Committed (Prisma's
+      // default) does not prevent this on its own — the explicit FOR UPDATE
+      // does.
+      await tx.$executeRaw`SELECT 1 FROM crm.leads WHERE id = ${lead.id}::uuid FOR UPDATE`;
+      const locked = await tx.lead.findUnique({
+        where: { id: lead.id },
+        select: { assignedEmployeeId: true, preferredEmployeeId: true },
+      });
+      // Use the post-lock values for the assignment decision.
+      lead.assignedEmployeeId = locked?.assignedEmployeeId ?? null;
+      lead.preferredEmployeeId = locked?.preferredEmployeeId ?? null;
+
       // Load org for business-hours + SLA + round-robin cursor.
       const org = await this.loadOrgFor(tx, lead.branchId);
       if (!org) {

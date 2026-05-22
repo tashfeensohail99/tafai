@@ -8,7 +8,6 @@ import {
   WhatsAppMessageType,
   type Prisma,
 } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
@@ -499,47 +498,53 @@ export class WebhookIngestProcessor extends WorkerHost {
       });
     }
 
-    // 2) Auto-acknowledgement — once per thread, only when enabled and the
-    //    lead has a named assignee to greet them by.
+    // 2) Auto-acknowledgement — once per thread, when enabled and the lead has
+    //    a named assignee to greet them by.
+    //
+    //    Concurrency: the webhook worker runs at concurrency 8, so a customer
+    //    firing off two messages in the same second (or Meta re-delivering)
+    //    spawns two process() runs for the SAME thread. A read-then-write
+    //    `!autoAckSentAt` check let both pass → two greetings (the bug). We
+    //    now CLAIM the ack atomically: updateMany gated on autoAckSentAt:null
+    //    only flips one row, so exactly one run wins and sends.
     const agent = thread.lead?.assignedEmployee;
-    if (
-      org.autoAckEnabled &&
-      !thread.autoAckSentAt &&
-      org.autoAckTemplate &&
-      agent &&
-      thread.leadId // greet leads; converted clients already know their rep
-    ) {
-      const body = org.autoAckTemplate
-        .replaceAll('{firstName}', thread.lead?.firstName?.trim() || 'there')
-        .replaceAll('{agentName}', agent.firstName)
-        .replaceAll('{businessName}', org.name);
-
-      const ack = await this.prisma.whatsAppMessage.create({
-        data: {
-          threadId: thread.id,
-          channelId: thread.channelId,
-          leadId: thread.leadId,
-          clientId: thread.clientId,
-          direction: WhatsAppMessageDirection.OUTBOUND,
-          type: WhatsAppMessageType.TEXT,
-          status: WhatsAppMessageStatus.QUEUED,
-          body,
-          // sentByEmployeeId stays null (system message) and the payload flag
-          // tells the outbound worker to skip SLA resolution for this send.
-          payload: { autoAck: true } as unknown as Prisma.InputJsonValue,
-          idempotencyKey: randomUUID(),
-        },
-      });
-      await this.prisma.whatsAppThread.update({
-        where: { id: thread.id },
+    if (org.autoAckEnabled && org.autoAckTemplate && agent && thread.leadId) {
+      const claim = await this.prisma.whatsAppThread.updateMany({
+        where: { id: thread.id, autoAckSentAt: null },
         data: { autoAckSentAt: now },
       });
-      await this.outboundQueue.add(
-        'send',
-        { messageId: ack.id },
-        { jobId: ack.id },
-      );
-      this.log.log(`auto-ack queued for thread ${thread.id} (agent ${agent.firstName})`);
+      if (claim.count === 1) {
+        // WhatsApp leads with no profile name are created as firstName
+        // "WhatsApp" — don't greet someone as "Hey WhatsApp!". Fall back to a
+        // neutral "there".
+        const raw = thread.lead?.firstName?.trim() ?? '';
+        const firstName = !raw || raw.toLowerCase() === 'whatsapp' ? 'there' : raw;
+        const body = org.autoAckTemplate
+          .replaceAll('{firstName}', firstName)
+          .replaceAll('{agentName}', agent.firstName)
+          .replaceAll('{businessName}', org.name);
+
+        const ack = await this.prisma.whatsAppMessage.create({
+          data: {
+            threadId: thread.id,
+            channelId: thread.channelId,
+            leadId: thread.leadId,
+            clientId: thread.clientId,
+            direction: WhatsAppMessageDirection.OUTBOUND,
+            type: WhatsAppMessageType.TEXT,
+            status: WhatsAppMessageStatus.QUEUED,
+            body,
+            // System message — sentByEmployeeId null; payload flag tells the
+            // outbound worker to skip SLA resolution for this send.
+            payload: { autoAck: true } as unknown as Prisma.InputJsonValue,
+            // Deterministic key — a second layer: even if two runs somehow
+            // both claimed, the unique constraint blocks a duplicate row.
+            idempotencyKey: `autoack-${thread.id}`,
+          },
+        });
+        await this.outboundQueue.add('send', { messageId: ack.id }, { jobId: ack.id });
+        this.log.log(`auto-ack queued for thread ${thread.id} (agent ${agent.firstName})`);
+      }
     }
   }
 

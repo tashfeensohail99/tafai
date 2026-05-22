@@ -63,6 +63,57 @@ const TABS: Array<{ key: FilterKey; label: string }> = [
   { key: 'APPOINTMENT', label: 'Appointment Needed' },
 ];
 
+// ── Advanced filter (the "Filters" panel) ──────────────────────────────────
+interface DetailFilters {
+  stage: string;          // '' = any. 'PENDING' groups NEW + ASSIGNED.
+  priority: string;       // '' | LOW | MEDIUM | HIGH
+  source: string;         // '' | LeadSource
+  assignmentType: string; // '' | ADMIN | AUTO_CRM
+  slaStatus: string;      // '' | ACTIVE | OVERDUE | UPCOMING | COMPLETED
+  country: string;        // '' | <targetCountry value>
+  service: string;        // '' | <service value>
+  emailVerified: string;  // '' | yes | no
+}
+const EMPTY_FILTERS: DetailFilters = {
+  stage: '', priority: '', source: '', assignmentType: '',
+  slaStatus: '', country: '', service: '', emailVerified: '',
+};
+
+const STAGE_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'PENDING', label: 'Pending' },
+  { value: 'CONTACTED', label: 'Contacted' },
+  { value: 'NO_RESPONSE', label: 'No Response' },
+  { value: 'MEETING_NEEDED', label: 'Meeting Needed' },
+  { value: 'APPOINTMENT_BOOKED', label: 'Appointment Booked' },
+  { value: 'PAYMENT_INTERESTED', label: 'Payment Interested' },
+  { value: 'RECEIPT_UPLOADED', label: 'Receipt Uploaded' },
+  { value: 'SENT_TO_FINANCE', label: 'Sent to Finance' },
+];
+const PRIORITY_FILTER_OPTIONS = ['HIGH', 'MEDIUM', 'LOW'];
+const SOURCE_FILTER_OPTIONS = ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'WEBSITE', 'REFERRAL', 'PHONE', 'WALK_IN'];
+const SLA_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'ACTIVE', label: 'On time' },
+  { value: 'UPCOMING', label: 'Upcoming' },
+  { value: 'OVERDUE', label: 'Overdue' },
+  { value: 'COMPLETED', label: 'Completed' },
+];
+
+/** Apply the advanced "Filters" panel selections on top of the tab + search. */
+function applyDetailFilters(leads: Lead[], f: DetailFilters): Lead[] {
+  let r = leads;
+  if (f.stage === 'PENDING') r = r.filter((l) => l.stage === 'NEW' || l.stage === 'ASSIGNED');
+  else if (f.stage) r = r.filter((l) => l.stage === f.stage);
+  if (f.priority) r = r.filter((l) => l.priority === f.priority);
+  if (f.source) r = r.filter((l) => l.source === f.source);
+  if (f.assignmentType) r = r.filter((l) => l.assignmentType === f.assignmentType);
+  if (f.slaStatus) r = r.filter((l) => l.slaStatus === f.slaStatus);
+  if (f.country) r = r.filter((l) => l.targetCountry === f.country);
+  if (f.service) r = r.filter((l) => l.service === f.service);
+  if (f.emailVerified === 'yes') r = r.filter((l) => l.emailVerified === true);
+  if (f.emailVerified === 'no') r = r.filter((l) => l.emailVerified !== true);
+  return r;
+}
+
 function applyFilter(leads: Lead[], key: FilterKey): Lead[] {
   switch (key) {
     case 'ADMIN':
@@ -134,6 +185,9 @@ export function SalesLeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<FilterKey>('ALL');
   const [query, setQuery] = useState('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [df, setDf] = useState<DetailFilters>(EMPTY_FILTERS);
+  const activeFilterCount = Object.values(df).filter(Boolean).length;
 
   useEffect(() => {
     fetchLeads()
@@ -142,8 +196,20 @@ export function SalesLeadsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Distinct country / service values present in the data — drive the
+  // dropdowns so they only ever show options that match real leads.
+  const countryOptions = useMemo(
+    () => Array.from(new Set(leads.map((l) => l.targetCountry).filter(Boolean))).sort(),
+    [leads],
+  );
+  const serviceOptions = useMemo(
+    () => Array.from(new Set(leads.map((l) => l.service).filter(Boolean))).sort(),
+    [leads],
+  );
+
   const filtered = useMemo(() => {
     let result = applyFilter(leads, tab);
+    result = applyDetailFilters(result, df);
     if (query.trim()) {
       const q = query.toLowerCase();
       result = result.filter(
@@ -151,11 +217,13 @@ export function SalesLeadsPage() {
           `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
           l.phone.toLowerCase().includes(q) ||
           l.service.toLowerCase().includes(q) ||
-          l.targetCountry.toLowerCase().includes(q),
+          l.targetCountry.toLowerCase().includes(q) ||
+          (l.referenceCode ?? '').toLowerCase().includes(q) ||
+          (l.email ?? '').toLowerCase().includes(q),
       );
     }
     return result;
-  }, [leads, tab, query]);
+  }, [leads, tab, query, df]);
 
   const counts = useMemo(
     () => ({
@@ -210,7 +278,12 @@ export function SalesLeadsPage() {
             >
               New Lead
             </ButtonLink>
-            <SecondaryButton iconLeft={<Sliders size={15} />}>Filters</SecondaryButton>
+            <SecondaryButton
+              iconLeft={<Sliders size={15} />}
+              onClick={() => setFiltersOpen((o) => !o)}
+            >
+              Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+            </SecondaryButton>
           </>
         }
       />
@@ -309,13 +382,107 @@ export function SalesLeadsPage() {
         </div>
       </GlassCard>
 
+      {/* Advanced filter panel — toggled by the "Filters" button */}
+      {filtersOpen ? (
+        <GlassCard variant="soft" padded="md">
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 14,
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div className="sos-eyebrow">Filter leads</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                {filtered.length} of {leads.length} match
+              </span>
+              {activeFilterCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setDf(EMPTY_FILTERS)}
+                  className="sos-btn sos-btn--ghost sos-btn--sm"
+                >
+                  Clear all
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gap: 12,
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            }}
+          >
+            <FilterSelect
+              label="Status"
+              value={df.stage}
+              onChange={(v) => setDf((p) => ({ ...p, stage: v }))}
+              options={STAGE_FILTER_OPTIONS}
+            />
+            <FilterSelect
+              label="Priority"
+              value={df.priority}
+              onChange={(v) => setDf((p) => ({ ...p, priority: v }))}
+              options={PRIORITY_FILTER_OPTIONS.map((p) => ({ value: p, label: PRIORITY_LABEL[p as keyof typeof PRIORITY_LABEL] ?? p }))}
+            />
+            <FilterSelect
+              label="Source"
+              value={df.source}
+              onChange={(v) => setDf((p) => ({ ...p, source: v }))}
+              options={SOURCE_FILTER_OPTIONS.map((s) => ({ value: s, label: SOURCE_LABEL[s as LeadSource] ?? s }))}
+            />
+            <FilterSelect
+              label="Assigned by"
+              value={df.assignmentType}
+              onChange={(v) => setDf((p) => ({ ...p, assignmentType: v }))}
+              options={[
+                { value: 'ADMIN', label: 'Admin' },
+                { value: 'AUTO_CRM', label: 'Auto CRM' },
+              ]}
+            />
+            <FilterSelect
+              label="SLA"
+              value={df.slaStatus}
+              onChange={(v) => setDf((p) => ({ ...p, slaStatus: v }))}
+              options={SLA_FILTER_OPTIONS}
+            />
+            <FilterSelect
+              label="Target country"
+              value={df.country}
+              onChange={(v) => setDf((p) => ({ ...p, country: v }))}
+              options={countryOptions.map((c) => ({ value: c, label: c }))}
+            />
+            <FilterSelect
+              label="Service"
+              value={df.service}
+              onChange={(v) => setDf((p) => ({ ...p, service: v }))}
+              options={serviceOptions.map((s) => ({ value: s, label: s }))}
+            />
+            <FilterSelect
+              label="Email verified"
+              value={df.emailVerified}
+              onChange={(v) => setDf((p) => ({ ...p, emailVerified: v }))}
+              options={[
+                { value: 'yes', label: 'Verified' },
+                { value: 'no', label: 'Not verified' },
+              ]}
+            />
+          </div>
+        </GlassCard>
+      ) : null}
+
       {/* Lead grid */}
       {filtered.length === 0 ? (
         <EmptyState
           title="No leads match this filter"
           description="Try clearing the search or switching to another tab to see more results."
           action={
-            <PrimaryButton onClick={() => { setTab('ALL'); setQuery(''); }}>
+            <PrimaryButton onClick={() => { setTab('ALL'); setQuery(''); setDf(EMPTY_FILTERS); }}>
               Reset filters
             </PrimaryButton>
           }
@@ -334,6 +501,47 @@ export function SalesLeadsPage() {
         </section>
       )}
     </div>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'var(--sos-text-muted)',
+        }}
+      >
+        {label}
+      </span>
+      <select
+        className="sos-select"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: '100%' }}
+      >
+        <option value="">Any</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

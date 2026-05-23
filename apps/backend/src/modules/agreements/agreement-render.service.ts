@@ -17,7 +17,7 @@ const LOGO_DATA_URI = `data:image/svg+xml;base64,${Buffer.from(LOGO_SVG).toStrin
  *  Explicit banner height keeps it compact (Puppeteer otherwise lets it grow
  *  to fill the top margin); the logo is sized to fill the band. */
 const HEADER_TEMPLATE = `<div style="width:100%;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-  <div style="background:#0b1f3a;height:58px;box-sizing:border-box;display:flex;align-items:center;padding:0 42px;"><img src="${LOGO_DATA_URI}" style="height:46px;display:block;"/></div>
+  <div style="background:#0b1f3a;height:82px;box-sizing:border-box;display:flex;align-items:center;padding:0 42px;"><img src="${LOGO_DATA_URI}" style="height:64px;display:block;"/></div>
   <div style="height:3px;background:#d6a84f;"></div>
 </div>`;
 
@@ -321,7 +321,7 @@ export class AgreementRenderService {
       displayHeaderFooter: true,
       headerTemplate: HEADER_TEMPLATE,
       footerTemplate: FOOTER_TEMPLATE,
-      margin: { top: '20mm', right: '0', bottom: '20mm', left: '0' },
+      margin: { top: '24mm', right: '0', bottom: '20mm', left: '0' },
     };
   }
 

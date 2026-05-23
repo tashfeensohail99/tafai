@@ -2,7 +2,12 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PresenceStatus } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 
-const HEARTBEAT_WINDOW_MS = 5 * 60 * 1000;
+// Presence windows (minutes). Activity-driven:
+//   active within 10 min        => ONLINE
+//   10–30 min since last action => AWAY
+//   beyond 30 min / no activity => OFFLINE
+const ONLINE_WINDOW_MIN = 10;
+const AWAY_WINDOW_MIN = 30;
 
 /**
  * Agent presence (ONLINE / AWAY / OFFLINE).
@@ -68,7 +73,9 @@ export class WhatsAppPresenceService {
       data: {
         presenceStatus: status,
         presenceChangedAt: now,
-        lastActivityAt: now,
+        // Manual OFFLINE / logout clears activity so they read OFFLINE
+        // instantly; ONLINE/AWAY count as a fresh activity ping.
+        lastActivityAt: status === PresenceStatus.OFFLINE ? null : now,
       },
     });
   }
@@ -139,10 +146,13 @@ export class WhatsAppPresenceService {
     presenceStatus: PresenceStatus;
     lastActivityAt: Date | null;
   }): PresenceStatus {
-    if (emp.presenceStatus === PresenceStatus.OFFLINE) return PresenceStatus.OFFLINE;
+    // Purely activity-driven so it reflects real CRM usage, not a stale manual
+    // toggle. Manual OFFLINE and logout clear lastActivityAt (see setExplicit),
+    // so they resolve to OFFLINE here too — no dependence on presenceStatus.
     if (!emp.lastActivityAt) return PresenceStatus.OFFLINE;
-    const idle = Date.now() - emp.lastActivityAt.getTime();
-    if (idle > HEARTBEAT_WINDOW_MS) return PresenceStatus.AWAY;
-    return emp.presenceStatus;
+    const idleMin = (Date.now() - emp.lastActivityAt.getTime()) / 60_000;
+    if (idleMin <= ONLINE_WINDOW_MIN) return PresenceStatus.ONLINE;
+    if (idleMin <= AWAY_WINDOW_MIN) return PresenceStatus.AWAY;
+    return PresenceStatus.OFFLINE;
   }
 }

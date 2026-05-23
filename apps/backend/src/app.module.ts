@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import appConfig from './config/app.config';
 import { PrismaModule } from './common/prisma/prisma.module';
+import { ActivityTrackerInterceptor } from './common/interceptors/activity-tracker.interceptor';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -74,6 +76,11 @@ import { EmailModule } from './modules/email/email.module';
     StorageModule,
     WhatsAppModule,
     EmailModule,
+  ],
+  providers: [
+    // Global: keep Employee.lastActivityAt fresh on every authenticated request
+    // so the admin "who's online" view reflects real, automatic activity.
+    { provide: APP_INTERCEPTOR, useClass: ActivityTrackerInterceptor },
   ],
 })
 export class AppModule {}

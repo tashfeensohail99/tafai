@@ -61,6 +61,8 @@ interface EmployeeRow {
   lastName: string;
   whatsappInboxMember?: boolean;
   skills?: string[];
+  /** Last authenticated activity — drives the live online/away/offline dot. */
+  lastActivityAt?: string | null;
   department?: { name?: string | null } | null;
   branch?: { name?: string | null } | null;
   user?: {
@@ -139,6 +141,27 @@ function roleBg(name: string): string {
 
 function initials(first: string, last: string): string {
   return ((first[0] ?? '') + (last[0] ?? '')).toUpperCase();
+}
+
+/**
+ * Live presence from lastActivityAt — mirrors the backend windows:
+ * active <= 10 min => Online, 10–30 min => Away, else / never => Offline.
+ */
+function presenceOf(lastActivityAt?: string | null): {
+  label: 'Online' | 'Away' | 'Offline';
+  color: string;
+  sub: string;
+} {
+  if (!lastActivityAt) return { label: 'Offline', color: '#9ca3af', sub: '' };
+  const mins = Math.floor((Date.now() - new Date(lastActivityAt).getTime()) / 60000);
+  const ago =
+    mins < 1 ? 'just now'
+    : mins < 60 ? `${mins}m ago`
+    : mins < 1440 ? `${Math.floor(mins / 60)}h ago`
+    : `${Math.floor(mins / 1440)}d ago`;
+  if (mins <= 10) return { label: 'Online', color: '#22c55e', sub: mins < 1 ? 'active now' : `active ${ago}` };
+  if (mins <= 30) return { label: 'Away', color: '#f59e0b', sub: `active ${ago}` };
+  return { label: 'Offline', color: '#9ca3af', sub: `last seen ${ago}` };
 }
 
 function avatarGradient(name: string): string {
@@ -265,6 +288,16 @@ export function EmployeesAdminPage() {
   useEffect(() => {
     if (!user.permissions.includes('employees.view_all')) return;
     void loadData();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live presence: re-fetch the roster every 30s so the online/away/offline
+  // dots and "active Xm ago" stay current without a manual reload.
+  useEffect(() => {
+    if (!user.permissions.includes('employees.view_all')) return;
+    const id = setInterval(() => {
+      apiFetch<EmployeeRow[]>('/employees').then(setEmployees).catch(() => undefined);
+    }, 30_000);
+    return () => clearInterval(id);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── permission guard ──────────────────────────────────────────────────────
@@ -494,6 +527,7 @@ export function EmployeesAdminPage() {
   // ── derived metrics ───────────────────────────────────────────────────────
 
   const totalCount    = employees.length;
+  const onlineCount   = employees.filter((e) => presenceOf(e.lastActivityAt).label === 'Online').length;
   const activeCount   = employees.filter((e) => e.user?.status === 'ACTIVE').length;
   const waPoolCount   = employees.filter((e) => e.whatsappInboxMember).length;
   const inactiveCount = employees.filter((e) => e.user?.status !== 'ACTIVE').length;
@@ -525,7 +559,8 @@ export function EmployeesAdminPage() {
       {/* ── KPI strip ── */}
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
         <MetricCard label="Total employees"    value={totalCount}    tone="info"    Icon={Users}         hint="All employee profiles" />
-        <MetricCard label="Active accounts"    value={activeCount}   tone="success" Icon={UserCheck}     hint="Status = ACTIVE" />
+        <MetricCard label="Online now"         value={onlineCount}   tone="success" Icon={UserCheck}     hint="Active in the last 10 min" />
+        <MetricCard label="Active accounts"    value={activeCount}   tone="info"    Icon={BadgeCheck}    hint="Status = ACTIVE" />
         <MetricCard label="WhatsApp pool"      value={waPoolCount}   tone="accent"  Icon={MessageCircle} hint="In round-robin pool" />
         <MetricCard
           label="Inactive / pending"
@@ -802,6 +837,7 @@ export function EmployeesAdminPage() {
                   const roleDisplay = emp.user?.userRoles?.[0]?.role.displayName ?? '';
                   const statusActive = emp.user?.status === 'ACTIVE';
                   const fullName = `${emp.firstName} ${emp.lastName}`;
+                  const pres = presenceOf(emp.lastActivityAt);
                   return (
                     <tr
                       key={emp.id}
@@ -812,13 +848,28 @@ export function EmployeesAdminPage() {
                       {/* Name + email */}
                       <td style={{ padding: '14px 16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <div style={{
-                            width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-                            background: avatarGradient(fullName),
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 13, fontWeight: 700, color: '#fff',
-                          }}>
-                            {initials(emp.firstName, emp.lastName)}
+                          <div style={{ position: 'relative', flexShrink: 0 }}>
+                            <div style={{
+                              width: 36, height: 36, borderRadius: '50%',
+                              background: avatarGradient(fullName),
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 13, fontWeight: 700, color: '#fff',
+                            }}>
+                              {initials(emp.firstName, emp.lastName)}
+                            </div>
+                            {/* Live presence dot (green online / amber away / grey offline) */}
+                            <span
+                              title={`${pres.label}${pres.sub ? ' · ' + pres.sub : ''}`}
+                              style={{
+                                position: 'absolute', bottom: -1, right: -1,
+                                width: 11, height: 11, borderRadius: '50%',
+                                background: pres.color,
+                                border: '2px solid var(--sos-surface-1)',
+                                boxShadow: pres.label === 'Online'
+                                  ? `0 0 0 2px color-mix(in srgb, ${pres.color} 35%, transparent)`
+                                  : 'none',
+                              }}
+                            />
                           </div>
                           <div>
                             <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap' }}>
@@ -826,6 +877,12 @@ export function EmployeesAdminPage() {
                             </div>
                             <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 2 }}>
                               {emp.user?.email ?? '—'}
+                            </div>
+                            <div style={{ fontSize: 11.5, marginTop: 3, fontWeight: 600, color: pres.color, display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                              {pres.label}
+                              {pres.sub ? (
+                                <span style={{ color: 'var(--sos-text-faint)', fontWeight: 400 }}>· {pres.sub}</span>
+                              ) : null}
                             </div>
                           </div>
                         </div>

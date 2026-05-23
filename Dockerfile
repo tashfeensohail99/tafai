@@ -50,5 +50,8 @@ USER appuser
 EXPOSE 3001
 
 ENTRYPOINT ["/sbin/tini", "--"]
-# Run migrations then start — migrate deploy is idempotent after baselining
-CMD ["sh", "-c", "(./node_modules/.bin/prisma migrate deploy && echo 'Migrations OK') || echo '[WARN] prisma migrate deploy failed — continuing startup'; node dist/main"]
+# Run migrations then start. Retry up to 5x (absorbs transient DB-at-boot
+# blips), then ABORT the boot if it still fails — so a failing migration
+# keeps the previous healthy release serving instead of booting with a
+# stale schema (which causes silent 500s). migrate deploy is idempotent.
+CMD ["sh", "-c", "n=0; until ./node_modules/.bin/prisma migrate deploy; do n=$((n+1)); if [ \"$n\" -ge 5 ]; then echo '[migrate] FAILED after 5 attempts - aborting boot'; exit 1; fi; echo \"[migrate] attempt $n failed; retrying in 5s\"; sleep 5; done; echo '[migrate] OK'; node dist/main"]

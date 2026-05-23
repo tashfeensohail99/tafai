@@ -160,6 +160,16 @@ export class AgreementsController {
     return this.agreements.submitToFinance(id, user.id);
   }
 
+  /** Re-derive the document from template + current bio + plan. */
+  @Post(':id/regenerate')
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
+  regenerateAgreement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.regenerate(id, user.id);
+  }
+
   // ─── Finance review ─────────────────────────────────────────────────────
 
   @Post(':id/approve')

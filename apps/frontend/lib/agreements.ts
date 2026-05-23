@@ -231,7 +231,12 @@ export function createAgreement(input: {
 
 export function updateAgreement(
   id: string,
-  input: { bioData?: BioDataInput; paymentPlan?: PaymentPlanInput; salesNotes?: string },
+  input: {
+    bioData?: BioDataInput;
+    paymentPlan?: PaymentPlanInput;
+    salesNotes?: string;
+    contentHtml?: string;
+  },
 ): Promise<AgreementSummary> {
   return apiFetch<AgreementSummary>(`/agreements/${id}`, {
     method: 'PATCH',
@@ -241,6 +246,11 @@ export function updateAgreement(
 
 export function submitAgreement(id: string): Promise<AgreementSummary> {
   return apiFetch<AgreementSummary>(`/agreements/${id}/submit`, { method: 'POST' });
+}
+
+/** Re-derive the document from template + current bio + plan. */
+export function regenerateAgreement(id: string): Promise<AgreementSummary> {
+  return apiFetch<AgreementSummary>(`/agreements/${id}/regenerate`, { method: 'POST' });
 }
 
 // ---- Finance review -----------------------------------------------------

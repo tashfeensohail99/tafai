@@ -194,8 +194,12 @@ export class AgreementsService {
       data.salesNotes = dto.salesNotes;
     }
 
-    // Regenerate the stored body so it always matches the records.
-    if (dto.paymentPlan || dto.bioData) {
+    if (dto.contentHtml !== undefined) {
+      // Sales edited the document directly — store it verbatim; it becomes
+      // the source of truth for the PDF.
+      data.contentHtml = dto.contentHtml;
+    } else if (dto.paymentPlan || dto.bioData) {
+      // Bio/plan changed without a manual edit — keep the document in sync.
       data.contentHtml = this.render.composeAgreementInner(
         template.bodyHtml,
         template.programTitle,
@@ -288,13 +292,17 @@ export class AgreementsService {
       where: { id: a.templateId },
     });
     if (template) {
-      const buffer = await this.render.renderAgreementPdf(
-        template.programTitle,
-        template.bodyHtml,
-        (a.bioData as AgreementBioData) ?? {},
-        plan,
-        a.agreementNumber,
-      );
+      const inner =
+        a.contentHtml && a.contentHtml.trim()
+          ? a.contentHtml
+          : this.render.composeAgreementInner(
+              template.bodyHtml,
+              template.programTitle,
+              (a.bioData as AgreementBioData) ?? {},
+              plan,
+              a.agreementNumber,
+            );
+      const buffer = await this.render.renderStoredPdf(template.programTitle, inner);
       const up = await this.storage.upload(
         buffer,
         'application/pdf',
@@ -510,13 +518,51 @@ export class AgreementsService {
     });
     if (!template) throw new NotFoundException('Agreement template missing');
 
-    return this.render.renderAgreementPdf(
-      template.programTitle,
+    const inner =
+      agreement.contentHtml && agreement.contentHtml.trim()
+        ? agreement.contentHtml
+        : this.render.composeAgreementInner(
+            template.bodyHtml,
+            template.programTitle,
+            (agreement.bioData as AgreementBioData) ?? {},
+            (agreement.paymentPlan as AgreementPlanData) ?? {},
+            agreement.agreementNumber,
+          );
+    return this.render.renderStoredPdf(template.programTitle, inner);
+  }
+
+  /** Re-derive the document from template + current bio + plan (discards
+   *  manual edits). Backs the "Regenerate from template + data" action. */
+  async regenerate(id: string, userId: string) {
+    const a = await this.prisma.agreement.findFirst({ where: { id, deletedAt: null } });
+    if (!a) throw new NotFoundException('Agreement not found');
+    if (!SALES_EDITABLE.includes(a.status)) {
+      throw new ConflictException(`Agreement is locked (status ${a.status}).`);
+    }
+    const template = await this.prisma.agreementTemplate.findUnique({
+      where: { id: a.templateId },
+    });
+    if (!template) throw new NotFoundException('Agreement template missing');
+    const contentHtml = this.render.composeAgreementInner(
       template.bodyHtml,
-      (agreement.bioData as AgreementBioData) ?? {},
-      (agreement.paymentPlan as AgreementPlanData) ?? {},
-      agreement.agreementNumber,
+      template.programTitle,
+      (a.bioData as AgreementBioData) ?? {},
+      (a.paymentPlan as AgreementPlanData) ?? {},
+      a.agreementNumber,
     );
+    const updated = await this.prisma.agreement.update({
+      where: { id },
+      data: { contentHtml },
+    });
+    await this.recordEvent(
+      id,
+      userId,
+      'DOCUMENT_REGENERATED',
+      'Document regenerated from template + data',
+      null,
+      null,
+    );
+    return updated;
   }
 
   /** Active templates for the Sales picker (minimal fields). */

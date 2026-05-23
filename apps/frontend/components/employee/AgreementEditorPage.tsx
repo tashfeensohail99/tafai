@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
   Eye,
+  FileText,
   Lock,
   Plus,
+  RotateCcw,
   Save,
   Send,
   Trash2,
@@ -27,6 +29,7 @@ import {
   AGREEMENT_CURRENCIES,
   getAgreement,
   previewAgreementPdf,
+  regenerateAgreement,
   submitAgreement,
   updateAgreement,
   type AgreementDetail,
@@ -72,7 +75,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'save' | 'preview' | 'submit' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'preview' | 'submit' | 'regen' | null>(null);
   const [dirty, setDirty] = useState(false);
 
   // editor state
@@ -83,6 +86,11 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const [discount, setDiscount] = useState('0');
   const [rows, setRows] = useState<Row[]>([]);
   const [salesNotes, setSalesNotes] = useState('');
+  // Document editor (uncontrolled contentEditable — remounted via docKey).
+  const docRef = useRef<HTMLDivElement>(null);
+  const [initialDoc, setInitialDoc] = useState('');
+  const [docKey, setDocKey] = useState(0);
+  const [docDirty, setDocDirty] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -105,6 +113,9 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
         })),
       );
       setSalesNotes(a.salesNotes ?? '');
+      setInitialDoc(a.contentHtml ?? '');
+      setDocDirty(false);
+      setDocKey((k) => k + 1);
       setDirty(false);
       setError(null);
     } catch (err) {
@@ -196,6 +207,9 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
         bioData: bio,
         paymentPlan: buildPlan(),
         salesNotes,
+        // Only send the document when Sales actually edited it; otherwise
+        // let the backend regenerate it from the (possibly changed) plan.
+        ...(docDirty ? { contentHtml: docRef.current?.innerHTML ?? '' } : {}),
       });
       setNotice('Saved.');
       setDirty(false);
@@ -208,7 +222,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
       setBusy(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agreementId, bio, buildPlan, salesNotes, load]);
+  }, [agreementId, bio, buildPlan, salesNotes, load, docDirty]);
 
   const handlePreview = async () => {
     setError(null);
@@ -245,6 +259,28 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submit failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!window.confirm('Rebuild the document from the template and the current payment plan? This discards manual text edits.')) {
+      return;
+    }
+    setError(null);
+    setBusy('regen');
+    try {
+      // Persist current bio/plan first so regeneration uses the latest data.
+      if (dirty) {
+        const ok = await save();
+        if (!ok) return;
+      }
+      await regenerateAgreement(agreementId);
+      setNotice('Document rebuilt from template + data.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Regenerate failed');
     } finally {
       setBusy(null);
     }
@@ -418,6 +454,66 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
             style={{ width: '100%', minHeight: 80 }}
           />
         </div>
+      </GlassCard>
+
+      {/* Document editor */}
+      <GlassCard variant="default">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+          <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FileText size={17} /> Agreement document
+          </h2>
+          {editable ? (
+            <SecondaryButton size="sm" iconLeft={<RotateCcw size={14} />} onClick={handleRegenerate} disabled={busy !== null}>
+              {busy === 'regen' ? 'Rebuilding…' : 'Regenerate from template + data'}
+            </SecondaryButton>
+          ) : null}
+        </div>
+        <div className="sos-help" style={{ marginBottom: 10 }}>
+          {editable
+            ? 'Edit the wording directly below — your edits become the PDF. The payment table comes from the plan above; if you change the plan, click “Regenerate” to refresh the figures (rebuilds the document and discards manual edits).'
+            : 'Read-only at this stage.'}
+        </div>
+        <div
+          key={docKey}
+          ref={docRef}
+          contentEditable={editable}
+          suppressContentEditableWarning
+          onInput={() => {
+            setDirty(true);
+            setDocDirty(true);
+          }}
+          dangerouslySetInnerHTML={{
+            __html: initialDoc || '<p>No document yet — set the payment plan and save, or click Regenerate.</p>',
+          }}
+          className="agreement-doc"
+          style={{
+            border: '1px solid var(--sos-border-subtle)',
+            borderRadius: 8,
+            padding: '20px 22px',
+            minHeight: 300,
+            maxHeight: 560,
+            overflowY: 'auto',
+            background: 'var(--sos-surface, #fff)',
+            color: 'var(--sos-text-primary)',
+            fontSize: 13.5,
+            lineHeight: 1.6,
+            outline: 'none',
+          }}
+        />
+        <style>{`
+          .agreement-doc h1 { font-size: 16px; font-weight: 700; margin: 14px 0 8px; }
+          .agreement-doc h2 { font-size: 15px; font-weight: 700; margin: 16px 0 6px; }
+          .agreement-doc h3 { font-size: 13.5px; font-weight: 700; margin: 12px 0 4px; }
+          .agreement-doc p { margin: 6px 0; }
+          .agreement-doc ul, .agreement-doc ol { margin: 6px 0 6px 20px; }
+          .agreement-doc li { margin: 3px 0; }
+          .agreement-doc table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
+          .agreement-doc th, .agreement-doc td { border: 1px solid var(--sos-border-subtle); padding: 6px 8px; text-align: left; }
+          .agreement-doc .sig { margin-top: 28px; display: flex; gap: 40px; }
+          .agreement-doc .sig .box { flex: 1; }
+          .agreement-doc .sig .line { border-top: 1px solid currentColor; margin-top: 36px; padding-top: 4px; font-size: 11px; }
+          .agreement-doc .token-missing { background: #fde68a; color: #92400e; padding: 0 3px; border-radius: 2px; }
+        `}</style>
       </GlassCard>
 
       {/* History */}

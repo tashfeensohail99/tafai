@@ -268,6 +268,15 @@ export class AgreementRenderService {
     return this.pdf.renderHtml(this.wrapDocument(programTitle, inner));
   }
 
+  /**
+   * Render an already-composed inner body — used when Sales has edited the
+   * agreement document directly (the stored contentHtml is the source of
+   * truth, not the template).
+   */
+  async renderStoredPdf(programTitle: string, innerHtml: string): Promise<Buffer> {
+    return this.pdf.renderHtml(this.wrapDocument(programTitle, innerHtml));
+  }
+
   // ─── Helpers ────────────────────────────────────────────────────────────
 
   private renderPaymentPlan(stages: PaymentStage[], currency: string): string {

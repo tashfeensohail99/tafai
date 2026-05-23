@@ -228,6 +228,10 @@ export class UpdateAgreementDto {
   @Type(() => PaymentPlanDto)
   paymentPlan?: PaymentPlanDto;
 
+  /** Sales-edited agreement document (HTML). When present it is stored
+   *  verbatim and becomes the source for the PDF (overrides regeneration). */
+  @IsOptional() @IsString() @MaxLength(200000) contentHtml?: string;
+
   @IsOptional() @IsString() @MaxLength(4000) salesNotes?: string;
 }
 

@@ -4,9 +4,12 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
+import { PresenceStatus, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { EmailService } from '../../email/email.service';
 import { WhatsAppRealtimePublisher } from '../realtime/publisher.service';
 import { WhatsAppAssignmentService } from './assignment.service';
+import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 import { WHATSAPP_WS_EVENTS } from '../queues/queue-contracts';
 
 /**
@@ -43,6 +46,7 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
     private readonly prisma: PrismaService,
     private readonly publisher: WhatsAppRealtimePublisher,
     private readonly assignment: WhatsAppAssignmentService,
+    private readonly email: EmailService,
   ) {}
 
   onModuleInit(): void {
@@ -71,9 +75,19 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
 
       const org = await this.prisma.organization.findFirst({
         orderBy: { createdAt: 'asc' },
-        select: { id: true, slaWarnBeforeSeconds: true, slaReassignThreshold: true },
       });
       if (!org) return;
+
+      // Presence accountability runs every tick, independent of SLA threads
+      // (so it must be BEFORE the no-pending early return below).
+      await this.enforcePresenceAccountability(org.id, {
+        timezone: org.timezone,
+        hoursOpen: org.hoursOpen,
+        hoursClose: org.hoursClose,
+        workingDays: org.workingDays,
+        breakStart: org.breakStart,
+        breakEnd: org.breakEnd,
+      });
 
       const now = new Date();
       const warnCutoff = new Date(now.getTime() + org.slaWarnBeforeSeconds * 1000);
@@ -216,6 +230,128 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
       this.log.warn(
         `assignment recovery: re-assigned ${recovered} thread(s) the webhook left unassigned`,
       );
+    }
+  }
+
+  /**
+   * Presence accountability (consequences for manual Away/Offline) — working
+   * hours only. Runs every 60s tick:
+   *   - accrues per-day Away/Offline minutes, reset at the Karachi day rollover;
+   *   - Away > 10 min continuous → one warning popup per episode;
+   *   - Offline > 2h cumulative → −2 SLA points (once/day) + email + popup;
+   *   - recovers the SLA penalty by +1 each day.
+   * The minute counters also feed the daily report (Slice 3).
+   */
+  private async enforcePresenceAccountability(
+    orgId: string,
+    hours: BusinessHours,
+  ): Promise<void> {
+    const now = new Date();
+    const withinHours = isWithinBusinessHours(hours, now);
+    // Karachi calendar day, 'YYYY-MM-DD' (en-CA yields ISO date order).
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: hours.timezone }).format(now);
+    const tickMin = WhatsAppSlaSweeperService.INTERVAL_MS / 60_000;
+
+    const emps = await this.prisma.employee.findMany({
+      where: { isActive: true, whatsappInboxMember: true, deletedAt: null, user: { status: 'ACTIVE' } },
+      select: {
+        id: true, firstName: true, lastName: true,
+        presenceStatus: true, presenceChangedAt: true,
+        awayMinutesToday: true, offlineMinutesToday: true, presenceCountersDate: true,
+        awayWarnedAt: true, offlinePenalizedDate: true, penaltyDecayDate: true, slaPenaltyPoints: true,
+        user: { select: { email: true } },
+      },
+    });
+
+    for (const e of emps) {
+      const data: Prisma.EmployeeUpdateInput = {};
+      let awayMin = e.awayMinutesToday;
+      let offMin = e.offlineMinutesToday;
+      let penalty = e.slaPenaltyPoints;
+      let touchedCounters = false;
+
+      // Day rollover — reset per-day accruals (offlinePenalizedDate is itself
+      // date-stamped so it self-resets via the != today check below).
+      if (e.presenceCountersDate !== today) {
+        awayMin = 0;
+        offMin = 0;
+        data.presenceCountersDate = today;
+        touchedCounters = true;
+      }
+
+      // Recover the SLA penalty by +1, once per day.
+      if (e.penaltyDecayDate !== today) {
+        if (penalty > 0) {
+          penalty -= 1;
+          data.slaPenaltyPoints = penalty;
+        }
+        data.penaltyDecayDate = today;
+      }
+
+      // Accrue minutes — working hours only.
+      if (withinHours && e.presenceStatus === PresenceStatus.AWAY) {
+        awayMin += tickMin;
+        touchedCounters = true;
+      } else if (withinHours && e.presenceStatus === PresenceStatus.OFFLINE) {
+        offMin += tickMin;
+        touchedCounters = true;
+      }
+      if (touchedCounters) {
+        data.awayMinutesToday = awayMin;
+        data.offlineMinutesToday = offMin;
+      }
+
+      // Away > 10 min continuous → one nudge popup per episode (working hours).
+      if (
+        withinHours &&
+        e.presenceStatus === PresenceStatus.AWAY &&
+        !e.awayWarnedAt &&
+        e.presenceChangedAt
+      ) {
+        const continuousMin = (now.getTime() - e.presenceChangedAt.getTime()) / 60_000;
+        if (continuousMin >= 10) {
+          data.awayWarnedAt = now;
+          await this.publisher.publishToOrg(orgId, WHATSAPP_WS_EVENTS.PRESENCE_AWAY_WARNING, {
+            employeeId: e.id,
+            minutes: Math.round(continuousMin),
+          });
+        }
+      }
+
+      // Offline > 2h cumulative working hours → −2 SLA points (once/day) + email + popup.
+      if (
+        e.presenceStatus === PresenceStatus.OFFLINE &&
+        offMin >= 120 &&
+        e.offlinePenalizedDate !== today
+      ) {
+        penalty += 2;
+        data.slaPenaltyPoints = penalty;
+        data.offlinePenalizedDate = today;
+        if (e.user?.email) {
+          this.email
+            .sendPresenceOfflineWarning({
+              to: e.user.email,
+              firstName: e.firstName,
+              offlineMinutes: offMin,
+              penaltyPoints: 2,
+            })
+            .catch((err) =>
+              this.log.warn(`offline-warning email failed for ${e.id}: ${(err as Error).message}`),
+            );
+        }
+        await this.publisher.publishToOrg(orgId, WHATSAPP_WS_EVENTS.PRESENCE_OFFLINE_PENALTY, {
+          employeeId: e.id,
+          offlineMinutes: Math.round(offMin),
+          penalty: 2,
+        });
+        this.log.warn(
+          `presence penalty: ${e.firstName} ${e.lastName} −2 SLA (offline ${Math.round(offMin)}m today)`,
+        );
+      }
+
+      if (Object.keys(data).length > 0) {
+        await this.prisma.employee.update({ where: { id: e.id }, data });
+      }
     }
   }
 }

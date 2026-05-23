@@ -762,6 +762,20 @@ model Employee {
   slaResponsesMet     Int            @default(0)
   slaResponsesBreached Int           @default(0)
 
+  // --- Presence accountability (consequences for manual Away/Offline) ------
+  // Penalty subtracted from the displayed SLA score; recovers +1 per day.
+  slaPenaltyPoints     Int       @default(0)
+  // Per-day minute accruals counted ONLY during working hours; reset when
+  // presenceCountersDate (Asia/Karachi 'YYYY-MM-DD') rolls to a new day.
+  awayMinutesToday     Int       @default(0)
+  offlineMinutesToday  Int       @default(0)
+  presenceCountersDate String?
+  // Once-per-episode Away nudge (>10 min continuous); cleared on leaving Away.
+  awayWarnedAt         DateTime?
+  // Once-per-day guards ('YYYY-MM-DD'): offline penalty applied / penalty decayed.
+  offlinePenalizedDate String?
+  penaltyDecayDate     String?
+
   user        UserAccount  @relation(fields: [userId], references: [id])
   department  Department?  @relation(fields: [departmentId], references: [id])
   branch      Branch?      @relation(fields: [branchId], references: [id])

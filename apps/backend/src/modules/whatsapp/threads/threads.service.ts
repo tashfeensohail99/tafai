@@ -235,20 +235,25 @@ export class WhatsAppThreadsService {
       const agg = await this.prisma.employee.aggregate({
         where: { deletedAt: null },
         _sum: { slaResponsesMet: true, slaResponsesBreached: true },
+        // Org-wide presence penalty = the average across agents, so the team
+        // score dips when people sit Offline during working hours.
+        _avg: { slaPenaltyPoints: true },
       });
       const met = agg._sum.slaResponsesMet ?? 0;
       const breached = agg._sum.slaResponsesBreached ?? 0;
       const totalResp = met + breached;
-      slaScore = totalResp === 0 ? 100 : Math.round((met / totalResp) * 100);
+      const base = totalResp === 0 ? 100 : Math.round((met / totalResp) * 100);
+      slaScore = Math.max(0, base - Math.round(agg._avg.slaPenaltyPoints ?? 0));
       slaScoreScope = 'org';
     } else if (caller.employeeId) {
       const emp = await this.prisma.employee.findUnique({
         where: { id: caller.employeeId },
-        select: { slaResponsesMet: true, slaResponsesBreached: true },
+        select: { slaResponsesMet: true, slaResponsesBreached: true, slaPenaltyPoints: true },
       });
       if (emp) {
         const totalResp = emp.slaResponsesMet + emp.slaResponsesBreached;
-        slaScore = totalResp === 0 ? 100 : Math.round((emp.slaResponsesMet / totalResp) * 100);
+        const base = totalResp === 0 ? 100 : Math.round((emp.slaResponsesMet / totalResp) * 100);
+        slaScore = Math.max(0, base - emp.slaPenaltyPoints);
         slaScoreScope = 'self';
       }
     }

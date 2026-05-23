@@ -119,6 +119,33 @@ export class EmailService {
     });
   }
 
+  async sendPresenceOfflineWarning(opts: {
+    to: string;
+    firstName: string;
+    offlineMinutes: number;
+    penaltyPoints: number;
+  }): Promise<boolean> {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:540px;margin:0 auto;color:#1f2937">
+        <h2 style="color:#b91c1c;margin-bottom:8px">You're Offline during working hours</h2>
+        <p>Hi ${opts.firstName},</p>
+        <p>Our system shows you've been marked <b>Offline</b> for over
+           <b>${Math.round(opts.offlineMinutes)} minutes</b> during today's working hours.</p>
+        <p>While Offline you don't receive new WhatsApp leads, and per company policy
+           this has reduced your SLA score by <b>${opts.penaltyPoints} point(s)</b> for
+           now (it recovers as you stay available).</p>
+        <p>Please switch back to <b>Online</b> in the Sales dashboard so you can receive
+           and reply to client chats.</p>
+        <p style="color:#6b7280;font-size:12px;margin-top:18px">
+           Tashfeen Immigration Solutions · automated availability notice</p>
+      </div>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: 'Action needed: you are Offline during working hours',
+      html,
+    });
+  }
+
   async sendLeadEmailVerification(opts: {
     to: string;
     leadName: string;

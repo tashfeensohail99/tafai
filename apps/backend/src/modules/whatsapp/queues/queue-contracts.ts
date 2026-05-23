@@ -61,6 +61,11 @@ export const WHATSAPP_WS_EVENTS = {
   // the assigned agent + admins.
   SLA_WARNING: 'whatsapp.sla.warning',
   SLA_BREACH: 'whatsapp.sla.breach',
+  // Presence accountability: agent has been Away > 10 min, or Offline > 2h in
+  // working hours (the latter also docks SLA points). Payload carries the
+  // employeeId so the agent's own shell shows the warning popup.
+  PRESENCE_AWAY_WARNING: 'whatsapp.presence.away_warning',
+  PRESENCE_OFFLINE_PENALTY: 'whatsapp.presence.offline_penalty',
 } as const;
 
 export type WhatsAppWsEvent = (typeof WHATSAPP_WS_EVENTS)[keyof typeof WHATSAPP_WS_EVENTS];

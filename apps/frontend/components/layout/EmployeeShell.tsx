@@ -30,6 +30,7 @@ import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/Drawer
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { PresencePill } from '@/components/whatsapp/PresencePill';
+import { PresenceWarnings } from '@/components/whatsapp/PresenceWarnings';
 import { logout as sessionLogout, useSession } from '@/lib/session';
 import { setMyPresence } from '@/lib/whatsapp';
 import { fetchMySalesStats, type MySalesStats } from '@/lib/sales-api';
@@ -170,6 +171,8 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
 
   return (
     <EmployeeSessionContext.Provider value={{ user, refreshUser: async () => {}, logout }}>
+      {/* Availability warning popups (Away > 10 min / Offline > 2h) */}
+      <PresenceWarnings />
       <div className="sos-shell">
         {/* Sidebar */}
         <aside className={`sos-sidebar sos-scroll ${mobileOpen ? 'is-open' : ''}`}>

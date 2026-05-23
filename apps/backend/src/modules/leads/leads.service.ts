@@ -747,11 +747,14 @@ export class LeadsService {
       }),
       this.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { slaResponsesMet: true, slaResponsesBreached: true },
+        select: { slaResponsesMet: true, slaResponsesBreached: true, slaPenaltyPoints: true },
       }),
     ]);
     const total = (emp?.slaResponsesMet ?? 0) + (emp?.slaResponsesBreached ?? 0);
-    const slaScore = total === 0 ? 100 : Math.round(((emp?.slaResponsesMet ?? 0) / total) * 100);
+    const base = total === 0 ? 100 : Math.round(((emp?.slaResponsesMet ?? 0) / total) * 100);
+    // Subtract the presence penalty (Offline-during-working-hours). Floors at 0;
+    // the penalty recovers +1/day so the score climbs back as they stay available.
+    const slaScore = Math.max(0, base - (emp?.slaPenaltyPoints ?? 0));
     return { assignedLeads, openFollowUps, overdueFollowUps, slaScore };
   }
 

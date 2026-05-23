@@ -28,6 +28,48 @@ export interface AgreementVars {
   CURRENCY?: string;
 }
 
+/** Applicant bio stored on an agreement (decoupled from the DTO layer). */
+export interface AgreementBioData {
+  applicantName?: string;
+  fatherName?: string;
+  cnic?: string;
+  passport?: string;
+  dob?: string;
+  nationality?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  fileNumber?: string;
+  agreementDate?: string;
+}
+
+/** Structured payment plan stored on an agreement. */
+export interface AgreementPlanData {
+  planType?: string;
+  currency?: string;
+  grossAmount?: number;
+  discountAmount?: number;
+  netPayable?: number;
+  taxAmount?: number;
+  installments?: Array<{
+    sequence?: number;
+    stage?: string;
+    amount?: number | null;
+    trigger?: string | null;
+    dueDate?: string | null;
+    notes?: string | null;
+  }>;
+  governmentFees?: Array<{
+    label?: string;
+    amount?: number;
+    currency?: string;
+    payableBy?: string;
+  }>;
+  refundable?: boolean;
+  refundPolicyText?: string;
+  notes?: string;
+}
+
 /**
  * Turns an agreement template (clause HTML with {{TOKENS}} + a
  * {{PAYMENT_PLAN}} slot) plus applicant data + a payment plan into a
@@ -144,6 +186,86 @@ export class AgreementRenderService {
     const inner = this.composeBody(bodyHtml, vars, stages, currency);
     const doc = this.wrapDocument(programTitle, inner);
     return this.pdf.renderHtml(doc);
+  }
+
+  // ─── Real agreement composition (from bio + structured plan) ─────────────
+
+  /** Map applicant bio + plan totals to the substitution variables. */
+  buildAgreementVars(
+    programTitle: string,
+    bio: AgreementBioData,
+    plan: AgreementPlanData,
+    agreementNumber?: string,
+  ): AgreementVars {
+    const currency = plan.currency ?? 'CAD';
+    const net = plan.netPayable ?? 0;
+    return {
+      AGREEMENT_NUMBER: agreementNumber ?? '',
+      AGREEMENT_DATE:
+        bio.agreementDate && bio.agreementDate.trim()
+          ? bio.agreementDate
+          : new Date().toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: 'long',
+              year: 'numeric',
+            }),
+      PROGRAM_TITLE: programTitle,
+      APPLICANT_NAME: bio.applicantName ?? '',
+      FATHER_NAME: bio.fatherName ?? '',
+      CNIC: bio.cnic ?? '',
+      PASSPORT: bio.passport ?? '',
+      DOB: bio.dob ?? '',
+      NATIONALITY: bio.nationality ?? '',
+      ADDRESS: bio.address ?? '',
+      PHONE: bio.phone ?? '',
+      EMAIL: bio.email ?? '',
+      FILE_NUMBER: bio.fileNumber ?? '',
+      TOTAL_AMOUNT: `${currency} ${this.formatMoney(net)}`,
+      CURRENCY: currency,
+    };
+  }
+
+  private planToStages(plan: AgreementPlanData): PaymentStage[] {
+    return (plan.installments ?? [])
+      .slice()
+      .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))
+      .map((s) => ({
+        label: s.stage ?? '',
+        amount: s.amount ?? null,
+        trigger: s.trigger ?? null,
+        dueDate: s.dueDate ?? null,
+      }));
+  }
+
+  /** Substituted inner HTML for an agreement (stored as contentHtml). */
+  composeAgreementInner(
+    bodyHtml: string,
+    programTitle: string,
+    bio: AgreementBioData,
+    plan: AgreementPlanData,
+    agreementNumber?: string,
+  ): string {
+    const vars = this.buildAgreementVars(programTitle, bio, plan, agreementNumber);
+    const stages = this.planToStages(plan);
+    return this.composeBody(bodyHtml, vars, stages, plan.currency ?? 'CAD');
+  }
+
+  /** Full branded PDF for a concrete agreement. */
+  async renderAgreementPdf(
+    programTitle: string,
+    bodyHtml: string,
+    bio: AgreementBioData,
+    plan: AgreementPlanData,
+    agreementNumber?: string,
+  ): Promise<Buffer> {
+    const inner = this.composeAgreementInner(
+      bodyHtml,
+      programTitle,
+      bio,
+      plan,
+      agreementNumber,
+    );
+    return this.pdf.renderHtml(this.wrapDocument(programTitle, inner));
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────

@@ -15,22 +15,35 @@ import {
   RequireAnyPermissions,
   RequirePermissions,
 } from '../../common/decorators/require-permissions.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequestUser } from '../../common/types/auth.types';
 import { AgreementTemplatesService } from './agreement-templates.service';
+import { AgreementsService } from './agreements.service';
 import {
+  CreateAgreementDto,
   CreateAgreementTemplateDto,
+  ListAgreementsQueryDto,
   ListTemplatesQueryDto,
   PreviewTemplateDto,
+  UpdateAgreementDto,
   UpdateAgreementTemplateDto,
 } from './agreements.dto';
 
+/** Permissions that grant a cross-agent view of agreements. */
+const VIEW_ALL_PERMS = ['finance.view_all', 'leads.view_all', 'settings.manage'];
+
 /**
- * Slice 1 — Agreement template authoring (admin/finance). Sales-side
- * authoring and the Finance review workflow are added in later slices.
+ * Agreement authoring. Template management (admin/finance) + Sales-side
+ * drafting with structured payment plans. The Finance review/approve
+ * workflow lands in the next slice.
  */
 @Controller('agreements')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class AgreementsController {
-  constructor(private readonly templates: AgreementTemplatesService) {}
+  constructor(
+    private readonly templates: AgreementTemplatesService,
+    private readonly agreements: AgreementsService,
+  ) {}
 
   @Get('templates')
   @RequireAnyPermissions('settings.manage', 'finance.view_all', 'finance.create_invoice')
@@ -43,6 +56,19 @@ export class AgreementsController {
   @RequireAnyPermissions('settings.manage', 'finance.view_all', 'finance.create_invoice')
   tokens() {
     return { tokens: this.templates.supportedTokens() };
+  }
+
+  /** Active templates for the Sales picker (minimal fields). */
+  @Get('templates/options')
+  @RequireAnyPermissions(
+    'leads.update',
+    'leads.create',
+    'finance.view_all',
+    'finance.create_invoice',
+    'settings.manage',
+  )
+  templateOptions() {
+    return this.agreements.templateOptions();
   }
 
   @Get('templates/:id')
@@ -76,5 +102,60 @@ export class AgreementsController {
   async previewTemplate(@Body() dto: PreviewTemplateDto) {
     const buffer = await this.templates.previewPdf(dto);
     return { bytes: buffer.length, pdfBase64: buffer.toString('base64') };
+  }
+
+  // ─── Agreements (Sales authoring) ───────────────────────────────────────
+  // NOTE: the ':id' routes below are declared AFTER every 'templates*' route
+  // so a path like /agreements/templates is never captured as an :id.
+
+  @Post()
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
+  createAgreement(
+    @Body() dto: CreateAgreementDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.createDraft(dto, user.id);
+  }
+
+  @Get()
+  @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
+  listAgreements(
+    @Query() query: ListAgreementsQueryDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    const canViewAll = user.permissions.some((p) => VIEW_ALL_PERMS.includes(p));
+    return this.agreements.list(query, user.id, canViewAll);
+  }
+
+  @Get(':id')
+  @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
+  getAgreement(@Param('id', ParseUUIDPipe) id: string) {
+    return this.agreements.get(id);
+  }
+
+  @Patch(':id')
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
+  updateAgreement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateAgreementDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.updateDraft(id, dto, user.id);
+  }
+
+  @Post(':id/preview')
+  @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
+  async previewAgreement(@Param('id', ParseUUIDPipe) id: string) {
+    const buffer = await this.agreements.previewPdf(id);
+    return { bytes: buffer.length, pdfBase64: buffer.toString('base64') };
+  }
+
+  @Post(':id/submit')
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
+  submitAgreement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.submitToFinance(id, user.id);
   }
 }

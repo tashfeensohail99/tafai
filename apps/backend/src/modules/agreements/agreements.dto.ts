@@ -2,6 +2,8 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -12,6 +14,10 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+
+/** Currencies the agreement payment plan accepts. */
+export const AGREEMENT_CURRENCIES = ['CAD', 'USD', 'EUR', 'GBP', 'AUD', 'PKR'] as const;
+export const PAYMENT_PLAN_TYPES = ['FULL', 'INSTALLMENT', 'MILESTONE'] as const;
 
 /**
  * A single row of a payment plan / Annexure-A schedule. Used both for a
@@ -140,4 +146,98 @@ export class PreviewTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => PaymentStageDto)
   defaultStages?: PaymentStageDto[];
+}
+
+// ─── Agreement authoring (Sales) ─────────────────────────────────────────
+
+/** Applicant bio substituted into {{TOKENS}}. Most fields optional — Sales
+ *  fills what the category needs; name is the minimum. */
+export class BioDataDto {
+  @IsString() @IsNotEmpty() @MaxLength(200) applicantName!: string;
+  @IsOptional() @IsString() @MaxLength(200) fatherName?: string;
+  @IsOptional() @IsString() @MaxLength(60) cnic?: string;
+  @IsOptional() @IsString() @MaxLength(60) passport?: string;
+  @IsOptional() @IsString() @MaxLength(60) dob?: string;
+  @IsOptional() @IsString() @MaxLength(120) nationality?: string;
+  @IsOptional() @IsString() @MaxLength(400) address?: string;
+  @IsOptional() @IsString() @MaxLength(60) phone?: string;
+  @IsOptional() @IsString() @MaxLength(160) email?: string;
+  @IsOptional() @IsString() @MaxLength(80) fileNumber?: string;
+  @IsOptional() @IsString() @MaxLength(60) agreementDate?: string;
+}
+
+/** One row of the payment schedule (Annexure A). */
+export class PaymentInstallmentDto {
+  @IsInt() @Min(1) sequence!: number;
+  @IsString() @IsNotEmpty() @MaxLength(200) stage!: string;
+  @IsNumber() @Min(0) amount!: number;
+  /** Free-text condition, e.g. "At signing", "Before filing", "On approval". */
+  @IsOptional() @IsString() @MaxLength(200) trigger?: string;
+  @IsOptional() @IsDateString() dueDate?: string;
+  @IsOptional() @IsString() @MaxLength(500) notes?: string;
+}
+
+/** Optional separate government / third-party costs (excluded from the fee). */
+export class GovernmentFeeDto {
+  @IsString() @IsNotEmpty() @MaxLength(200) label!: string;
+  @IsNumber() @Min(0) amount!: number;
+  @IsOptional() @IsString() @IsIn([...AGREEMENT_CURRENCIES]) currency?: string;
+  @IsOptional() @IsString() @MaxLength(120) payableBy?: string;
+}
+
+/** The full structured payment plan. Totals are validated server-side. */
+export class PaymentPlanDto {
+  @IsString() @IsIn([...PAYMENT_PLAN_TYPES]) planType!: string;
+  @IsString() @IsIn([...AGREEMENT_CURRENCIES]) currency!: string;
+  @IsNumber() @Min(0) grossAmount!: number;
+  @IsNumber() @Min(0) discountAmount!: number;
+  @IsNumber() @Min(0) netPayable!: number;
+  @IsOptional() @IsNumber() @Min(0) taxAmount?: number;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentInstallmentDto)
+  installments!: PaymentInstallmentDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GovernmentFeeDto)
+  governmentFees?: GovernmentFeeDto[];
+
+  @IsOptional() @IsBoolean() refundable?: boolean;
+  @IsOptional() @IsString() @MaxLength(2000) refundPolicyText?: string;
+  @IsOptional() @IsString() @MaxLength(2000) notes?: string;
+}
+
+/** Create a draft agreement from a template for a given lead. */
+export class CreateAgreementDto {
+  @IsString() @IsNotEmpty() leadId!: string;
+  @IsString() @IsNotEmpty() templateId!: string;
+}
+
+/** Update a draft agreement's bio / payment plan / sales notes. */
+export class UpdateAgreementDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BioDataDto)
+  bioData?: BioDataDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PaymentPlanDto)
+  paymentPlan?: PaymentPlanDto;
+
+  @IsOptional() @IsString() @MaxLength(4000) salesNotes?: string;
+}
+
+export class ListAgreementsQueryDto {
+  @IsOptional() @IsString() @MaxLength(40) status?: string;
+  @IsOptional() @IsString() leadId?: string;
+  @IsOptional() @IsString() clientId?: string;
+  @IsOptional() @IsString() @MaxLength(120) search?: string;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  mine?: boolean;
 }

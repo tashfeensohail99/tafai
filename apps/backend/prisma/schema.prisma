@@ -1517,6 +1517,14 @@ enum AgreementStatus {
   @@schema("finance")
 }
 
+enum PaymentPlanType {
+  FULL          // single full payment
+  INSTALLMENT   // fixed installments
+  MILESTONE     // milestone/stage-triggered payments
+
+  @@schema("finance")
+}
+
 /// Reusable per-category agreement template: the legal body (HTML with
 /// {{placeholders}} and a {{PAYMENT_PLAN}} slot) plus default Annexure-A stage
 /// labels. Seeded from the firm's drafts; admin-editable later. Referenced by
@@ -1551,9 +1559,13 @@ model Agreement {
   categoryKey             String
   status                  AgreementStatus @default(DRAFT)
   currency                String          @default("CAD")
+  /// Net payable (gross − discount). The single headline amount owed.
   totalAmount             Decimal         @default(0) @db.Decimal(12, 2)
+  grossAmount             Decimal         @default(0) @db.Decimal(12, 2)
+  discountAmount          Decimal         @default(0) @db.Decimal(12, 2)
+  paymentPlanType         PaymentPlanType?
   bioData                 Json            // { applicantName, cnic, address, email, phone, fileNumber, date }
-  paymentPlan             Json            // [{ label, amount, dueDate? }]
+  paymentPlan             Json            // { planType, currency, grossAmount, discountAmount, netPayable, installments[], ... }
   contentHtml             String          // edited agreement body (template + data, then edited)
   generatedPdfKey         String?
   generatedPdfAt          DateTime?
@@ -1562,6 +1574,10 @@ model Agreement {
   financeNotes            String?
   createdByUserId         String
   financeReviewedByUserId String?
+  /// Set when Finance approves: the plan is locked. Any later change reverts
+  /// status to Finance review and is recorded in agreement_events.
+  paymentPlanLockedAt        DateTime?
+  paymentPlanLockedByUserId  String?
   submittedAt             DateTime?
   reviewedAt              DateTime?
   sentAt                  DateTime?
@@ -1575,6 +1591,25 @@ model Agreement {
   @@index([status])
   @@index([categoryKey])
   @@map("agreements")
+  @@schema("finance")
+}
+
+/// Append-only change history for an agreement (created / updated / submitted /
+/// approved / plan-edited-after-lock …). Decoupled by id (no FK) like the rest
+/// of the agreement model. Gives Finance a full audit trail with before/after.
+model AgreementEvent {
+  id          String   @id @default(uuid())
+  agreementId String
+  actorUserId String?
+  type        String   // CREATED | UPDATED | SUBMITTED | APPROVED | CHANGES_REQUESTED | PLAN_RELOCKED | ...
+  summary     String
+  dataBefore  Json?
+  dataAfter   Json?
+  createdAt   DateTime @default(now())
+
+  @@index([agreementId])
+  @@index([createdAt])
+  @@map("agreement_events")
   @@schema("finance")
 }
 

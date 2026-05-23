@@ -33,6 +33,7 @@ import { ProcessingModule } from './modules/processing/processing.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { EmailModule } from './modules/email/email.module';
+import { PdfModule } from './modules/pdf/pdf.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { EmailModule } from './modules/email/email.module';
     StorageModule,
     WhatsAppModule,
     EmailModule,
+    PdfModule,
   ],
   providers: [
     // Global: keep Employee.lastActivityAt fresh on every authenticated request

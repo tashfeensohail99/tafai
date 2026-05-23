@@ -27,7 +27,17 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache openssl tini
+# openssl/tini for runtime + prisma; chromium + font/render deps power the
+# headless-Chrome PDF engine (puppeteer-core). The Alpine package ships a
+# prebuilt browser so we never download one at npm-install time.
+RUN apk add --no-cache \
+      openssl tini \
+      chromium nss freetype harfbuzz ca-certificates ttf-freefont
+
+# puppeteer-core launches the system Chromium at this path. The render
+# service also auto-detects, but pinning the env keeps startup deterministic.
+ENV CHROMIUM_PATH=/usr/bin/chromium-browser \
+    PUPPETEER_SKIP_DOWNLOAD=true
 
 # Copy entire node_modules from builder — avoids chasing transitive prisma deps
 COPY --from=builder /app/node_modules ./node_modules

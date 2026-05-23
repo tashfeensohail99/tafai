@@ -1500,6 +1500,85 @@ model FinanceHandover {
 }
 
 // =============================================================================
+// SERVICE AGREEMENTS (template-driven authoring → Sales → Finance → Client)
+// =============================================================================
+
+enum AgreementStatus {
+  DRAFT                // Sales drafting
+  SUBMITTED            // Sent to Finance for review
+  FINANCE_REVIEW       // Finance is reviewing
+  CHANGES_REQUESTED    // Finance bounced it back to Sales
+  APPROVED             // Finance approved
+  EDITED_PENDING_SALES // Finance edited payment terms; Sales must confirm
+  SENT                 // Sent to the client
+  SIGNED               // Client signed / accepted
+  CANCELLED
+
+  @@schema("finance")
+}
+
+/// Reusable per-category agreement template: the legal body (HTML with
+/// {{placeholders}} and a {{PAYMENT_PLAN}} slot) plus default Annexure-A stage
+/// labels. Seeded from the firm's drafts; admin-editable later. Referenced by
+/// id (no FK relation) to keep it decoupled.
+model AgreementTemplate {
+  id            String   @id @default(uuid())
+  categoryKey   String   @unique          // 'C11', 'C10', 'EB2_NIW', 'E2', ...
+  name          String                    // "C11 Business Permit – Canada"
+  programTitle  String                    // "C11 BUSINESS PERMIT FEDERAL PROGRAM – CANADA"
+  bodyHtml      String                    // clauses HTML w/ {{bio}} + {{PAYMENT_PLAN}}
+  defaultStages Json?                     // default stage labels for the payment plan
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("agreement_templates")
+  @@schema("finance")
+}
+
+/// A concrete agreement authored for a lead: applicant bio + structured payment
+/// plan + the edited document, moving Sales → Finance → Client. On approval/
+/// signing it materialises into a ServiceContract (the existing installment /
+/// invoice / payment / lead-to-client pipeline takes over downstream).
+/// leadId/clientId/templateId are id references (no FK) to stay decoupled.
+model Agreement {
+  id                      String          @id @default(uuid())
+  agreementNumber         String          @unique
+  leadId                  String
+  clientId                String?
+  templateId              String
+  categoryKey             String
+  status                  AgreementStatus @default(DRAFT)
+  currency                String          @default("CAD")
+  totalAmount             Decimal         @default(0) @db.Decimal(12, 2)
+  bioData                 Json            // { applicantName, cnic, address, email, phone, fileNumber, date }
+  paymentPlan             Json            // [{ label, amount, dueDate? }]
+  contentHtml             String          // edited agreement body (template + data, then edited)
+  generatedPdfKey         String?
+  generatedPdfAt          DateTime?
+  serviceContractId       String?
+  salesNotes              String?
+  financeNotes            String?
+  createdByUserId         String
+  financeReviewedByUserId String?
+  submittedAt             DateTime?
+  reviewedAt              DateTime?
+  sentAt                  DateTime?
+  signedAt                DateTime?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  deletedAt               DateTime?
+
+  @@index([leadId])
+  @@index([clientId])
+  @@index([status])
+  @@index([categoryKey])
+  @@map("agreements")
+  @@schema("finance")
+}
+
+// =============================================================================
 // AUDIT LOG
 // =============================================================================
 

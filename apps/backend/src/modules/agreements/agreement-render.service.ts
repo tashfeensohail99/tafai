@@ -13,9 +13,11 @@ const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="4
 </svg>`;
 const LOGO_DATA_URI = `data:image/svg+xml;base64,${Buffer.from(LOGO_SVG).toString('base64')}`;
 
-/** Branded running header (logo banner) repeated on every PDF page. */
+/** Branded running header (logo banner) repeated on every PDF page.
+ *  Explicit banner height keeps it compact (Puppeteer otherwise lets it grow
+ *  to fill the top margin); the logo is sized to fill the band. */
 const HEADER_TEMPLATE = `<div style="width:100%;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-  <div style="background:#0b1f3a;padding:7px 36px 9px;"><img src="${LOGO_DATA_URI}" style="height:40px;display:block;"/></div>
+  <div style="background:#0b1f3a;height:58px;box-sizing:border-box;display:flex;align-items:center;padding:0 42px;"><img src="${LOGO_DATA_URI}" style="height:46px;display:block;"/></div>
   <div style="height:3px;background:#d6a84f;"></div>
 </div>`;
 
@@ -319,7 +321,7 @@ export class AgreementRenderService {
       displayHeaderFooter: true,
       headerTemplate: HEADER_TEMPLATE,
       footerTemplate: FOOTER_TEMPLATE,
-      margin: { top: '26mm', right: '0', bottom: '20mm', left: '0' },
+      margin: { top: '20mm', right: '0', bottom: '20mm', left: '0' },
     };
   }
 

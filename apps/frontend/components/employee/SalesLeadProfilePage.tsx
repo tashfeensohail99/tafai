@@ -101,7 +101,7 @@ import {
   type ApiLeadFile,
   type ApiLeadFinanceHandover,
 } from '@/lib/sales-api';
-import { LeadServiceAgreementSection } from '@/components/finance/LeadServiceAgreementSection';
+import { LeadAgreementsTab } from '@/components/finance/LeadAgreementsTab';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 const STAGES: LeadStage[] = [
@@ -126,10 +126,10 @@ const STAGE_PROGRESS: LeadStage[] = [
   'SENT_TO_FINANCE',
 ];
 
-type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP' | 'VERIFICATION' | 'FINANCE';
+type TabKey = 'OVERVIEW' | 'ACTIVITY' | 'FOLLOWUPS' | 'APPOINTMENTS' | 'NOTES' | 'WHATSAPP' | 'VERIFICATION' | 'AGREEMENT' | 'FINANCE';
 
 const TAB_KEYS: readonly TabKey[] = [
-  'OVERVIEW', 'ACTIVITY', 'FOLLOWUPS', 'APPOINTMENTS', 'NOTES', 'WHATSAPP', 'VERIFICATION', 'FINANCE',
+  'OVERVIEW', 'ACTIVITY', 'FOLLOWUPS', 'APPOINTMENTS', 'NOTES', 'WHATSAPP', 'VERIFICATION', 'AGREEMENT', 'FINANCE',
 ] as const;
 
 function parseTabFromUrl(value: string | null): TabKey {
@@ -144,6 +144,7 @@ const TABS: Array<{ key: TabKey; label: string; Icon: typeof Activity }> = [
   { key: 'ACTIVITY', label: 'Activity', Icon: History },
   { key: 'FOLLOWUPS', label: 'Follow-ups', Icon: Phone },
   { key: 'APPOINTMENTS', label: 'Appointments', Icon: CalendarClock },
+  { key: 'AGREEMENT', label: 'Agreement', Icon: FileText },
   { key: 'FINANCE', label: 'Finance', Icon: Wallet },
   { key: 'NOTES', label: 'Notes & docs', Icon: StickyNote },
   { key: 'VERIFICATION', label: 'Email verify', Icon: ShieldCheck },
@@ -498,6 +499,8 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
         APPOINTMENTS: leadAppointments.length,
         NOTES: salesNote ? 1 : 0,
         VERIFICATION: lead.emailVerified ? 1 : 0,
+        AGREEMENT: 0,
+        FINANCE: financeHandovers.length,
       }} />
 
       {tab === 'OVERVIEW' ? (
@@ -538,9 +541,12 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
         <VerificationTab lead={lead} onVerified={(verified) => setLead((prev) => prev ? { ...prev, emailVerified: verified } : prev)} />
       ) : null}
 
+      {tab === 'AGREEMENT' ? (
+        <LeadAgreementsTab leadId={lead.id} />
+      ) : null}
+
       {tab === 'FINANCE' ? (
         <FinanceTab
-          leadId={lead.id}
           handovers={financeHandovers}
           loading={financeLoading}
           serviceFeeAmount={lead.serviceFeeAmount}
@@ -2473,13 +2479,11 @@ function fmtAmount(amount: string, currency: string): string {
 }
 
 function FinanceTab({
-  leadId,
   handovers,
   loading,
   serviceFeeAmount,
   serviceFeeCurrency,
 }: {
-  leadId: string;
   handovers: ApiLeadFinanceHandover[];
   loading: boolean;
   /** The lead's agreed service fee (the anchor for the single Invoice).
@@ -2490,11 +2494,6 @@ function FinanceTab({
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <LeadServiceAgreementSection
-          leadId={leadId}
-          defaultTotalAmount={serviceFeeAmount}
-          defaultCurrency={serviceFeeCurrency}
-        />
         <GlassCard variant="strong" padded="lg">
           <div
             style={{
@@ -2517,11 +2516,6 @@ function FinanceTab({
   if (handovers.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <LeadServiceAgreementSection
-          leadId={leadId}
-          defaultTotalAmount={serviceFeeAmount}
-          defaultCurrency={serviceFeeCurrency}
-        />
         <GlassCard variant="strong" padded="lg">
           <div style={{ textAlign: 'center', padding: '36px 16px' }}>
             <Wallet
@@ -2577,11 +2571,6 @@ function FinanceTab({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <LeadServiceAgreementSection
-        leadId={leadId}
-        defaultTotalAmount={serviceFeeAmount}
-        defaultCurrency={serviceFeeCurrency}
-      />
       {/* Contract / running-balance summary — the most important number on
           this tab. When the agreed fee is captured, we show paid-of-total
           progress; otherwise we just show what's been received so far. */}

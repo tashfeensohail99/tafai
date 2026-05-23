@@ -111,6 +111,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'WhatsApp Hours', href: '/admin/settings/whatsapp/hours', icon: Clock, caption: 'SLA + working hours', permissionKey: 'whatsapp.manage_settings' },
       { label: 'WhatsApp Team', href: '/admin/settings/whatsapp/team', icon: UsersRound, caption: 'Inbox roster', permissionKey: 'whatsapp.view_team_dashboard' },
       { label: 'Presence Report', href: '/admin/settings/whatsapp/presence-report', icon: ClipboardList, caption: 'Away/Offline accountability', permissionKey: 'whatsapp.view_all_inboxes' },
+      { label: 'Agreement Templates', href: '/admin/settings/agreements', icon: FileText, caption: 'Service agreement drafts', permissionKey: 'settings.manage' },
       { label: 'Integrations', href: '/admin/settings/integrations', icon: Plug2, caption: 'Meta API & external keys', permissionKey: 'settings.manage' },
       { label: 'Finance maintenance', href: '/admin/settings/finance', icon: Wrench, caption: 'Orphan cleanup & finance tools', permissionKey: 'settings.manage' },
     ],

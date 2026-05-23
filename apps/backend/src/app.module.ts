@@ -34,6 +34,7 @@ import { PortalModule } from './modules/portal/portal.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { EmailModule } from './modules/email/email.module';
 import { PdfModule } from './modules/pdf/pdf.module';
+import { AgreementsModule } from './modules/agreements/agreements.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { PdfModule } from './modules/pdf/pdf.module';
     WhatsAppModule,
     EmailModule,
     PdfModule,
+    AgreementsModule,
   ],
   providers: [
     // Global: keep Employee.lastActivityAt fresh on every authenticated request

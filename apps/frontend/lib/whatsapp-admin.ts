@@ -128,3 +128,29 @@ export interface TeamPresenceRow {
 export function listTeamPresence(): Promise<TeamPresenceRow[]> {
   return apiFetch<TeamPresenceRow[]>('/whatsapp/presence/team');
 }
+
+// ---- Presence daily report ----------------------------------------------
+
+export interface PresenceReportTodayRow {
+  employeeId: string;
+  name: string;
+  presence: 'ONLINE' | 'AWAY' | 'OFFLINE';
+  awayMinutes: number;
+  offlineMinutes: number;
+  penaltyPoints: number;
+  penalizedToday: boolean;
+}
+export interface PresenceReportHistoryRow {
+  name: string;
+  awayMinutes: number;
+  offlineMinutes: number;
+  penaltyApplied: number;
+}
+export interface PresenceDailyReport {
+  today: { date: string; rows: PresenceReportTodayRow[] };
+  history: Array<{ date: string; rows: PresenceReportHistoryRow[] }>;
+}
+
+export function fetchPresenceDailyReport(): Promise<PresenceDailyReport> {
+  return apiFetch<PresenceDailyReport>('/whatsapp/presence/daily-report');
+}

@@ -146,6 +146,45 @@ export class EmailService {
     });
   }
 
+  async sendDailyPresenceReport(opts: {
+    to: string;
+    date: string;
+    rows: Array<{ name: string; awayMinutes: number; offlineMinutes: number; penaltyApplied: number }>;
+  }): Promise<boolean> {
+    const fmt = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
+    const flagged = opts.rows
+      .filter((r) => r.awayMinutes > 0 || r.offlineMinutes > 0 || r.penaltyApplied > 0)
+      .sort((a, b) => b.offlineMinutes - a.offlineMinutes || b.awayMinutes - a.awayMinutes);
+    const cell = 'padding:8px;border:1px solid #e5e7eb';
+    const body =
+      flagged.length === 0
+        ? '<p>Everyone stayed Online during working hours today.</p>'
+        : `<table style="border-collapse:collapse;width:100%;font-size:13px">
+             <thead><tr style="background:#f3f4f6;text-align:left">
+               <th style="${cell}">Agent</th><th style="${cell}">Away</th>
+               <th style="${cell}">Offline</th><th style="${cell}">SLA penalty</th>
+             </tr></thead><tbody>
+             ${flagged
+               .map(
+                 (r) => `<tr>
+               <td style="${cell}">${r.name}</td>
+               <td style="${cell}">${fmt(r.awayMinutes)}</td>
+               <td style="${cell};color:${r.offlineMinutes >= 120 ? '#b91c1c' : '#1f2937'}">${fmt(r.offlineMinutes)}</td>
+               <td style="${cell}">${r.penaltyApplied > 0 ? `−${r.penaltyApplied}` : '—'}</td>
+             </tr>`,
+               )
+               .join('')}
+             </tbody></table>`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:660px;margin:0 auto;color:#1f2937">
+        <h2 style="margin-bottom:4px">Daily presence report — ${opts.date}</h2>
+        <p style="color:#6b7280;margin-top:0">Manual Away / Offline time during working hours (9–6, Mon–Fri). Offline &gt; 2h costs SLA points.</p>
+        ${body}
+        <p style="color:#6b7280;font-size:12px;margin-top:18px">Tashfeen Immigration Solutions · automated daily report</p>
+      </div>`;
+    return this.sendMail({ to: opts.to, subject: `Daily presence report — ${opts.date}`, html });
+  }
+
   async sendLeadEmailVerification(opts: {
     to: string;
     leadName: string;

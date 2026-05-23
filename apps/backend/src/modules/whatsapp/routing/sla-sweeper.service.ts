@@ -78,16 +78,18 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
       });
       if (!org) return;
 
-      // Presence accountability runs every tick, independent of SLA threads
-      // (so it must be BEFORE the no-pending early return below).
-      await this.enforcePresenceAccountability(org.id, {
+      // Presence accountability + daily report run every tick, independent of
+      // SLA threads (so they must be BEFORE the no-pending early return below).
+      const hours: BusinessHours = {
         timezone: org.timezone,
         hoursOpen: org.hoursOpen,
         hoursClose: org.hoursClose,
         workingDays: org.workingDays,
         breakStart: org.breakStart,
         breakEnd: org.breakEnd,
-      });
+      };
+      await this.enforcePresenceAccountability(org.id, hours);
+      await this.maybeSendDailyReport(hours);
 
       const now = new Date();
       const warnCutoff = new Date(now.getTime() + org.slaWarnBeforeSeconds * 1000);
@@ -353,5 +355,74 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
         await this.prisma.employee.update({ where: { id: e.id }, data });
       }
     }
+  }
+
+  /**
+   * End-of-day presence report (6 PM, working days only): snapshot each agent's
+   * Away/Offline working-hours minutes + any SLA penalty applied today, store it
+   * for history, and email the summary to the admin. Idempotent — only the first
+   * sweep after 18:00 with no snapshot for today does the work.
+   */
+  private async maybeSendDailyReport(hours: BusinessHours): Promise<void> {
+    const now = new Date();
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: hours.timezone }).format(now);
+    const hour = parseInt(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: hours.timezone,
+        hour: '2-digit',
+        hour12: false,
+      }).format(now),
+      10,
+    );
+    if (hour < 18) return; // before 6 PM
+
+    // Working days only (skip weekends/holidays-off).
+    const wd = new Intl.DateTimeFormat('en-US', { timeZone: hours.timezone, weekday: 'short' }).format(now);
+    const wdMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    if (!hours.workingDays.includes(wdMap[wd] ?? -1)) return;
+
+    // Already compiled today? (the snapshot rows are the marker)
+    const existing = await this.prisma.presenceDailyReport.count({ where: { reportDate: today } });
+    if (existing > 0) return;
+
+    const emps = await this.prisma.employee.findMany({
+      where: { isActive: true, whatsappInboxMember: true, deletedAt: null, user: { status: 'ACTIVE' } },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        awayMinutesToday: true,
+        offlineMinutesToday: true,
+        offlinePenalizedDate: true,
+      },
+    });
+    if (emps.length === 0) return;
+
+    const rows = emps.map((e) => ({
+      employeeId: e.id,
+      reportDate: today,
+      employeeName: `${e.firstName} ${e.lastName}`.trim(),
+      awayMinutes: e.awayMinutesToday,
+      offlineMinutes: e.offlineMinutesToday,
+      penaltyApplied: e.offlinePenalizedDate === today ? 2 : 0,
+    }));
+    await this.prisma.presenceDailyReport.createMany({ data: rows, skipDuplicates: true });
+
+    const to = process.env.PRESENCE_REPORT_EMAIL ?? 'admin@tashfeengroup.com';
+    this.email
+      .sendDailyPresenceReport({
+        to,
+        date: today,
+        rows: rows.map((r) => ({
+          name: r.employeeName,
+          awayMinutes: r.awayMinutes,
+          offlineMinutes: r.offlineMinutes,
+          penaltyApplied: r.penaltyApplied,
+        })),
+      })
+      .catch((err) =>
+        this.log.warn(`daily presence report email failed: ${(err as Error).message}`),
+      );
+    this.log.log(`presence daily report compiled + emailed for ${today} (${rows.length} agents)`);
   }
 }

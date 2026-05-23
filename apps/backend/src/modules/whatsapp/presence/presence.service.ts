@@ -137,6 +137,61 @@ export class WhatsAppPresenceService {
     }));
   }
 
+  /**
+   * Admin daily presence-accountability report:
+   *   - today: LIVE per-agent Away/Offline working-hours minutes + current
+   *     SLA penalty (from the accumulators the sweeper maintains);
+   *   - history: the last ~10 end-of-day snapshots (from presence_daily_reports).
+   */
+  async dailyReport() {
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { timezone: true },
+    });
+    const tz = org?.timezone ?? 'Asia/Karachi';
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+
+    const emps = await this.prisma.employee.findMany({
+      where: { isActive: true, whatsappInboxMember: true, deletedAt: null, user: { status: 'ACTIVE' } },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      select: {
+        id: true, firstName: true, lastName: true, presenceStatus: true,
+        awayMinutesToday: true, offlineMinutesToday: true,
+        slaPenaltyPoints: true, offlinePenalizedDate: true,
+      },
+    });
+    const todayRows = emps.map((e) => ({
+      employeeId: e.id,
+      name: `${e.firstName} ${e.lastName}`.trim(),
+      presence: e.presenceStatus,
+      awayMinutes: e.awayMinutesToday,
+      offlineMinutes: e.offlineMinutesToday,
+      penaltyPoints: e.slaPenaltyPoints,
+      penalizedToday: e.offlinePenalizedDate === today,
+    }));
+
+    const snaps = await this.prisma.presenceDailyReport.findMany({
+      where: { reportDate: { not: today } },
+      orderBy: [{ reportDate: 'desc' }, { offlineMinutes: 'desc' }],
+      take: 300,
+    });
+    const byDate = new Map<string, Array<{ name: string; awayMinutes: number; offlineMinutes: number; penaltyApplied: number }>>();
+    for (const s of snaps) {
+      if (!byDate.has(s.reportDate)) byDate.set(s.reportDate, []);
+      byDate.get(s.reportDate)!.push({
+        name: s.employeeName,
+        awayMinutes: s.awayMinutes,
+        offlineMinutes: s.offlineMinutes,
+        penaltyApplied: s.penaltyApplied,
+      });
+    }
+    const history = [...byDate.entries()]
+      .slice(0, 10)
+      .map(([date, rows]) => ({ date, rows }));
+
+    return { today: { date: today, rows: todayRows }, history };
+  }
+
   static computeEffective(emp: {
     presenceStatus: PresenceStatus;
     lastActivityAt: Date | null;

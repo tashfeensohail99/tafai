@@ -796,6 +796,25 @@ model Employee {
   @@schema("core")
 }
 
+/// End-of-day snapshot of an agent's manual-presence accountability, written by
+/// the 6 PM job. Denormalised (employeeName stored) so the historical report
+/// stays accurate even if the employee is later renamed or removed.
+model PresenceDailyReport {
+  id             String   @id @default(uuid())
+  employeeId     String
+  reportDate     String   // 'YYYY-MM-DD' (Asia/Karachi)
+  employeeName   String
+  awayMinutes    Int      @default(0)
+  offlineMinutes Int      @default(0)
+  penaltyApplied Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  @@unique([employeeId, reportDate])
+  @@index([reportDate])
+  @@map("presence_daily_reports")
+  @@schema("core")
+}
+
 model Partner {
   id              String        @id @default(uuid())
   organizationId  String

@@ -50,4 +50,11 @@ export class WhatsAppPresenceController {
   async team() {
     return this.presence.listTeam();
   }
+
+  /** Admin daily presence-accountability report: today's live numbers + history. */
+  @Get('daily-report')
+  @RequirePermissions('whatsapp.view_all_inboxes')
+  async dailyReport() {
+    return this.presence.dailyReport();
+  }
 }

@@ -7,6 +7,7 @@ import {
   Bell,
   ChevronRight,
   FileSignature,
+  FileText,
   History,
   Inbox,
   LayoutDashboard,
@@ -59,6 +60,7 @@ const FinanceSessionContext = createContext<FinanceSessionContextValue | null>(n
 
 const FINANCE_NAV: DrawerMenuItem[] = [
   { label: 'Dashboard', href: '/finance', icon: LayoutDashboard, caption: 'Officer overview' },
+  { label: 'Agreements', href: '/finance/agreements', icon: FileText, caption: 'Review & approve from Sales' },
   { label: 'Contracts', href: '/finance/contracts', icon: FileSignature, caption: 'Service contracts + installments' },
   { label: 'Intake Queue', href: '/finance/intake', icon: Inbox, caption: 'Cases from Sales', badge: 3 },
   { label: 'Corrections', href: '/finance/corrections', icon: MessageSquareWarning, caption: 'Sent back to Sales', badge: 2 },
@@ -69,6 +71,8 @@ const FINANCE_NAV: DrawerMenuItem[] = [
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/finance') return { title: 'Finance Dashboard', subtitle: 'Your verification queue today' };
+  if (pathname.startsWith('/finance/agreements/')) return { title: 'Agreement Review', subtitle: 'Approve, request changes, generate the contract' };
+  if (pathname === '/finance/agreements') return { title: 'Agreements', subtitle: 'Submitted by Sales for review' };
   if (pathname.startsWith('/finance/contracts/')) return { title: 'Service Contract', subtitle: 'Installment schedule + invoice generation' };
   if (pathname === '/finance/contracts') return { title: 'Service Contracts', subtitle: 'Signed agreements + installment plans' };
   if (pathname.startsWith('/finance/intake/')) return { title: 'Payment Verification', subtitle: 'Verify the receipt and amount' };

@@ -243,6 +243,26 @@ export function submitAgreement(id: string): Promise<AgreementSummary> {
   return apiFetch<AgreementSummary>(`/agreements/${id}/submit`, { method: 'POST' });
 }
 
+// ---- Finance review -----------------------------------------------------
+
+export function approveAgreement(id: string): Promise<AgreementSummary> {
+  return apiFetch<AgreementSummary>(`/agreements/${id}/approve`, { method: 'POST' });
+}
+
+export function requestAgreementChanges(
+  id: string,
+  note: string,
+): Promise<AgreementSummary> {
+  return apiFetch<AgreementSummary>(`/agreements/${id}/request-changes`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export function getAgreementPdfUrl(id: string): Promise<{ url: string }> {
+  return apiFetch<{ url: string }>(`/agreements/${id}/pdf-url`, { cache: 'no-store' });
+}
+
 export async function previewAgreementPdf(id: string): Promise<Blob> {
   const res = await apiFetch<{ bytes: number; pdfBase64: string }>(
     `/agreements/${id}/preview`,

@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Eye,
-  FileText,
-  Lock,
+  Pencil,
   Plus,
   RotateCcw,
   Save,
@@ -27,9 +27,9 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   AGREEMENT_CURRENCIES,
+  composeAgreementDocument,
   getAgreement,
   previewAgreementPdf,
-  regenerateAgreement,
   submitAgreement,
   updateAgreement,
   type AgreementDetail,
@@ -43,42 +43,34 @@ import {
 const EDITABLE: AgreementStatus[] = ['DRAFT', 'CHANGES_REQUESTED', 'EDITED_PENDING_SALES'];
 
 const STATUS_TONE: Record<AgreementStatus, BadgeTone> = {
-  DRAFT: 'neutral',
-  SUBMITTED: 'info',
-  FINANCE_REVIEW: 'info',
-  CHANGES_REQUESTED: 'warning',
-  APPROVED: 'success',
-  EDITED_PENDING_SALES: 'warning',
-  SENT: 'info',
-  SIGNED: 'success',
-  CANCELLED: 'neutral',
+  DRAFT: 'neutral', SUBMITTED: 'info', FINANCE_REVIEW: 'info', CHANGES_REQUESTED: 'warning',
+  APPROVED: 'success', EDITED_PENDING_SALES: 'warning', SENT: 'info', SIGNED: 'success', CANCELLED: 'neutral',
 };
 
-interface Row {
-  stage: string;
-  amount: string;
-  trigger: string;
-  dueDate: string;
-  notes: string;
+// Lifecycle stepper stages + which statuses map to each.
+const STEPS = ['Draft', 'Finance review', 'Approved', 'Sent', 'Signed'] as const;
+function stepIndex(s: AgreementStatus): number {
+  if (s === 'SUBMITTED' || s === 'FINANCE_REVIEW') return 1;
+  if (s === 'APPROVED') return 2;
+  if (s === 'SENT') return 3;
+  if (s === 'SIGNED') return 4;
+  return 0; // DRAFT / CHANGES_REQUESTED / EDITED_PENDING_SALES / CANCELLED
 }
 
-const num = (s: string): number => {
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
-};
+interface Row { stage: string; amount: string; trigger: string; dueDate: string; notes: string; }
+const num = (s: string): number => { const n = parseFloat(s); return Number.isFinite(n) ? n : 0; };
 const cents = (n: number) => Math.round(n * 100);
-const money = (n: number) =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const [data, setData] = useState<AgreementDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'save' | 'preview' | 'submit' | 'regen' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'preview' | 'submit' | null>(null);
   const [dirty, setDirty] = useState(false);
 
-  // editor state
+  // form state
   const [bio, setBio] = useState<BioDataInput>({ applicantName: '' });
   const [planType, setPlanType] = useState<PaymentPlanType>('INSTALLMENT');
   const [currency, setCurrency] = useState('CAD');
@@ -86,35 +78,31 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const [discount, setDiscount] = useState('0');
   const [rows, setRows] = useState<Row[]>([]);
   const [salesNotes, setSalesNotes] = useState('');
-  // Document editor (uncontrolled contentEditable — remounted via docKey).
+  const [showMore, setShowMore] = useState(false);
+
+  // document edit mode
+  const [manual, setManual] = useState(false);
   const docRef = useRef<HTMLDivElement>(null);
-  const [initialDoc, setInitialDoc] = useState('');
   const [docKey, setDocKey] = useState(0);
-  const [docDirty, setDocDirty] = useState(false);
+  const [manualHtml, setManualHtml] = useState('');
 
   const load = useCallback(async () => {
     try {
       const a = await getAgreement(agreementId);
       setData(a);
       const plan = (a.paymentPlan ?? {}) as Partial<PaymentPlanInput>;
-      const incomingBio = (a.bioData ?? {}) as BioDataInput;
-      setBio({ ...incomingBio, applicantName: incomingBio.applicantName ?? '' });
+      const b = (a.bioData ?? {}) as BioDataInput;
+      setBio({ ...b, applicantName: b.applicantName ?? '' });
       setPlanType((plan.planType as PaymentPlanType) ?? 'INSTALLMENT');
       setCurrency(plan.currency ?? a.currency ?? 'CAD');
       setGross(String(plan.grossAmount ?? Number(a.grossAmount) ?? 0));
       setDiscount(String(plan.discountAmount ?? Number(a.discountAmount) ?? 0));
-      setRows(
-        (plan.installments ?? []).map((i) => ({
-          stage: i.stage ?? '',
-          amount: i.amount == null ? '' : String(i.amount),
-          trigger: i.trigger ?? '',
-          dueDate: i.dueDate ? i.dueDate.slice(0, 10) : '',
-          notes: i.notes ?? '',
-        })),
-      );
+      setRows((plan.installments ?? []).map((i) => ({
+        stage: i.stage ?? '', amount: i.amount == null ? '' : String(i.amount),
+        trigger: i.trigger ?? '', dueDate: i.dueDate ? i.dueDate.slice(0, 10) : '', notes: i.notes ?? '',
+      })));
       setSalesNotes(a.salesNotes ?? '');
-      setInitialDoc(a.contentHtml ?? '');
-      setDocDirty(false);
+      setManual(false);
       setDocKey((k) => k + 1);
       setDirty(false);
       setError(null);
@@ -125,418 +113,332 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
     }
   }, [agreementId]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   const editable = data ? EDITABLE.includes(data.status) : false;
   const netPayable = Math.max(0, num(gross) - num(discount));
   const installmentSum = rows.reduce((acc, r) => acc + num(r.amount), 0);
-  const balanced =
-    planType === 'FULL'
-      ? rows.length <= 1 && (rows.length === 0 || cents(installmentSum) === cents(netPayable))
-      : rows.length >= 1 && cents(installmentSum) === cents(netPayable);
+  const balanced = planType === 'FULL'
+    ? rows.length <= 1 && (rows.length === 0 || cents(installmentSum) === cents(netPayable))
+    : rows.length >= 1 && cents(installmentSum) === cents(netPayable);
   const diff = cents(installmentSum) - cents(netPayable);
 
-  // ── mutate helpers (mark dirty) ─────────────────────────────────────────
-  const touch = () => setDirty(true);
-  const setBioField = (k: keyof BioDataInput, v: string) => {
-    setBio((p) => ({ ...p, [k]: v }));
-    touch();
-  };
-  const setRow = (i: number, patch: Partial<Row>) => {
-    setRows((p) => p.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-    touch();
-  };
-  const addRow = () => {
-    setRows((p) => [...p, { stage: '', amount: '', trigger: '', dueDate: '', notes: '' }]);
-    touch();
-  };
-  const removeRow = (i: number) => {
-    setRows((p) => p.filter((_, j) => j !== i));
-    touch();
-  };
+  const installments = useMemo<PaymentInstallmentInput[]>(() =>
+    rows.filter((r) => r.stage.trim() || r.amount.trim()).map((r, i) => ({
+      sequence: i + 1, stage: r.stage.trim() || `Stage ${i + 1}`, amount: num(r.amount),
+      trigger: r.trigger.trim() || null, dueDate: r.dueDate ? new Date(r.dueDate).toISOString() : null,
+      notes: r.notes.trim() || null,
+    })), [rows]);
 
-  const buildPlan = useCallback((): PaymentPlanInput => {
-    const installments: PaymentInstallmentInput[] = rows
-      .filter((r) => r.stage.trim() || r.amount.trim())
-      .map((r, i) => ({
-        sequence: i + 1,
-        stage: r.stage.trim() || `Stage ${i + 1}`,
-        amount: num(r.amount),
-        trigger: r.trigger.trim() || null,
-        dueDate: r.dueDate ? new Date(r.dueDate).toISOString() : null,
-        notes: r.notes.trim() || null,
-      }));
-    return {
-      planType,
-      currency,
-      grossAmount: num(gross),
-      discountAmount: num(discount),
-      netPayable,
-      installments,
-    };
-  }, [rows, planType, currency, gross, discount, netPayable]);
+  // Live-composed document (matches the PDF). Used for the preview + saved.
+  const composedHtml = useMemo(() => {
+    if (!data?.template) return data?.contentHtml ?? '';
+    return composeAgreementDocument(
+      data.template.bodyHtml, bio,
+      { currency, netPayable, installments },
+      { agreementNumber: data.agreementNumber, programTitle: data.template.programTitle },
+    );
+  }, [data, bio, currency, netPayable, installments]);
+
+  // What the preview shows: manual edits, else the live composition (or, when
+  // locked, the stored document).
+  const previewHtml = manual ? manualHtml : editable ? composedHtml : data?.contentHtml || composedHtml;
+
+  // ── form mutators ──
+  const touch = () => setDirty(true);
+  const setBioField = (k: keyof BioDataInput, v: string) => { setBio((p) => ({ ...p, [k]: v })); touch(); };
+  const setRow = (i: number, patch: Partial<Row>) => { setRows((p) => p.map((r, j) => (j === i ? { ...r, ...patch } : r))); touch(); };
+  const addRow = () => { setRows((p) => [...p, { stage: '', amount: '', trigger: '', dueDate: '', notes: '' }]); touch(); };
+  const removeRow = (i: number) => { setRows((p) => p.filter((_, j) => j !== i)); touch(); };
 
   const validate = (): string | null => {
-    if (!bio.applicantName.trim()) return 'Applicant name is required.';
-    if (num(discount) > num(gross)) return 'Discount cannot exceed the gross amount.';
-    if (planType === 'FULL') {
-      if (rows.length > 1) return 'A full-payment plan can have at most one installment.';
-    } else if (rows.filter((r) => r.stage.trim() || r.amount.trim()).length < 1) {
-      return 'Add at least one installment / milestone.';
-    }
-    if (!balanced) {
-      return planType === 'FULL'
-        ? 'The single payment must equal the net payable.'
-        : 'Installment amounts must add up to the net payable.';
-    }
+    if (!bio.applicantName.trim()) return 'Add the applicant name.';
+    if (num(discount) > num(gross)) return 'Discount can’t exceed the total agreed amount.';
+    if (planType !== 'FULL' && installments.length < 1) return 'Add at least one installment.';
+    if (!balanced) return planType === 'FULL'
+      ? 'The single payment must equal the net payable.'
+      : 'Installment amounts must add up to the net payable.';
     return null;
   };
+  const validationError = validate();
 
   const save = useCallback(async (): Promise<boolean> => {
     const v = validate();
-    if (v) {
-      setError(v);
-      return false;
-    }
-    setBusy('save');
-    setError(null);
+    if (v) { setError(v); return false; }
+    setBusy('save'); setError(null);
     try {
+      const contentHtml = manual ? (docRef.current?.innerHTML ?? manualHtml) : composedHtml;
       await updateAgreement(agreementId, {
         bioData: bio,
-        paymentPlan: buildPlan(),
+        paymentPlan: { planType, currency, grossAmount: num(gross), discountAmount: num(discount), netPayable, installments },
         salesNotes,
-        // Only send the document when Sales actually edited it; otherwise
-        // let the backend regenerate it from the (possibly changed) plan.
-        ...(docDirty ? { contentHtml: docRef.current?.innerHTML ?? '' } : {}),
+        contentHtml,
       });
-      setNotice('Saved.');
-      setDirty(false);
-      await load();
-      return true;
+      setNotice('Saved.'); setDirty(false); await load(); return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
-      return false;
-    } finally {
-      setBusy(null);
-    }
+      setError(err instanceof Error ? err.message : 'Save failed'); return false;
+    } finally { setBusy(null); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agreementId, bio, buildPlan, salesNotes, load, docDirty]);
+  }, [agreementId, bio, planType, currency, gross, discount, netPayable, installments, salesNotes, manual, composedHtml, manualHtml, load]);
 
   const handlePreview = async () => {
     setError(null);
-    if (editable && dirty) {
-      const ok = await save();
-      if (!ok) return;
-    }
+    if (editable && dirty) { const ok = await save(); if (!ok) return; }
     setBusy('preview');
     try {
       const blob = await previewAgreementPdf(agreementId);
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank', 'noopener');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Preview failed');
-    } finally {
-      setBusy(null);
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Preview failed'); }
+    finally { setBusy(null); }
   };
 
   const handleSubmit = async () => {
     setError(null);
-    if (dirty) {
-      const ok = await save();
-      if (!ok) return;
-    }
-    if (!window.confirm('Submit this agreement to Finance for review? You won’t be able to edit it until Finance responds.')) {
-      return;
-    }
+    if (dirty) { const ok = await save(); if (!ok) return; }
+    if (!window.confirm('Submit to Finance? You won’t be able to edit until Finance responds.')) return;
     setBusy('submit');
-    try {
-      await submitAgreement(agreementId);
-      setNotice('Submitted to Finance.');
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Submit failed');
-    } finally {
-      setBusy(null);
-    }
+    try { await submitAgreement(agreementId); setNotice('Submitted to Finance.'); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Submit failed'); }
+    finally { setBusy(null); }
   };
 
-  const handleRegenerate = async () => {
-    if (!window.confirm('Rebuild the document from the template and the current payment plan? This discards manual text edits.')) {
-      return;
-    }
-    setError(null);
-    setBusy('regen');
-    try {
-      // Persist current bio/plan first so regeneration uses the latest data.
-      if (dirty) {
-        const ok = await save();
-        if (!ok) return;
-      }
-      await regenerateAgreement(agreementId);
-      setNotice('Document rebuilt from template + data.');
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Regenerate failed');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const enterManual = () => { setManualHtml(composedHtml); setManual(true); setDocKey((k) => k + 1); touch(); };
+  const resetToData = () => { setManual(false); setDocKey((k) => k + 1); touch(); };
+
+  if (loading) return <div className="sos-text-muted" style={{ padding: 40, textAlign: 'center' }}>Loading…</div>;
+  if (!data) return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
 
   const balanceColor = balanced ? 'var(--sos-status-success)' : 'var(--sos-status-danger)';
-
-  if (loading) {
-    return <div className="sos-text-muted" style={{ padding: 32, textAlign: 'center' }}>Loading…</div>;
-  }
-  if (!data) {
-    return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
-  }
+  const curStep = stepIndex(data.status);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <PageHeader
-        eyebrow={`Agreement · ${data.agreementNumber}`}
+        eyebrow={`Agreement · ${data.agreementNumber} · ${data.categoryKey}`}
         title={data.template?.programTitle ?? data.categoryKey}
-        description={
-          data.lead
-            ? `Applicant lead: ${data.lead.firstName} ${data.lead.lastName} · ${data.lead.referenceCode}`
-            : undefined
-        }
+        description={data.lead ? `${data.lead.firstName} ${data.lead.lastName} · ${data.lead.referenceCode}` : undefined}
       />
 
-      {/* Action bar */}
+      {/* Stepper + actions */}
       <GlassCard variant="default">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <StatusBadge tone={STATUS_TONE[data.status]} dot>
-              {data.status.replace(/_/g, ' ').toLowerCase()}
-            </StatusBadge>
-            {!editable ? (
-              <span className="sos-text-faint" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                <Lock size={13} /> Locked — read-only at this stage
-              </span>
-            ) : null}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {STEPS.map((label, i) => {
+              const done = i < curStep, cur = i === curStep;
+              return (
+                <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 999,
+                    fontSize: 10, fontWeight: 700,
+                    background: done ? 'var(--sos-status-success)' : cur ? 'var(--sos-accent, #6366f1)' : 'var(--sos-surface-1, #e5e7eb)',
+                    color: done || cur ? '#fff' : 'var(--sos-text-faint)',
+                  }}>{done ? <Check size={11} /> : i + 1}</span>
+                  <span style={{ fontSize: 12, fontWeight: cur ? 700 : 500, color: cur ? 'var(--sos-text-primary)' : 'var(--sos-text-faint)' }}>{label}</span>
+                  {i < STEPS.length - 1 ? <span style={{ width: 16, height: 1, background: 'var(--sos-border-subtle)', margin: '0 2px' }} /> : null}
+                </span>
+              );
+            })}
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <StatusBadge tone={STATUS_TONE[data.status]} dot>{data.status.replace(/_/g, ' ').toLowerCase()}</StatusBadge>
             <ButtonLink href="/sales/agreements" variant="ghost" size="sm">Back</ButtonLink>
             <SecondaryButton size="sm" iconLeft={<Eye size={15} />} onClick={handlePreview} disabled={busy !== null}>
               {busy === 'preview' ? 'Rendering…' : 'Preview PDF'}
             </SecondaryButton>
             {editable ? (
               <>
-                <PrimaryButton size="sm" iconLeft={<Save size={15} />} onClick={() => void save()} disabled={busy !== null}>
+                <PrimaryButton size="sm" iconLeft={<Save size={15} />} onClick={() => void save()} disabled={busy !== null || !dirty}>
                   {busy === 'save' ? 'Saving…' : 'Save'}
                 </PrimaryButton>
-                <PrimaryButton size="sm" iconLeft={<Send size={15} />} onClick={handleSubmit} disabled={busy !== null || !balanced}>
+                <PrimaryButton size="sm" iconLeft={<Send size={15} />} onClick={handleSubmit} disabled={busy !== null || !!validationError}>
                   {busy === 'submit' ? 'Submitting…' : 'Submit to Finance'}
                 </PrimaryButton>
               </>
             ) : null}
           </div>
         </div>
-        {error ? (
-          <div className="sos-banner sos-banner--danger" style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <AlertTriangle size={16} /> {error}
+        {/* What's-next bar */}
+        {editable ? (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+            {validationError ? (
+              <><AlertTriangle size={14} color="var(--sos-status-warning)" /><span className="sos-text-secondary">Next: {validationError}</span></>
+            ) : (
+              <><CheckCircle2 size={14} color="var(--sos-status-success)" /><span style={{ color: 'var(--sos-status-success)', fontWeight: 600 }}>Ready to submit to Finance.</span></>
+            )}
           </div>
         ) : null}
-        {notice && !error ? (
-          <div className="sos-banner sos-banner--success" style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <CheckCircle2 size={16} /> {notice}
-          </div>
-        ) : null}
+        {error ? <div className="sos-banner sos-banner--danger" style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}><AlertTriangle size={16} /> {error}</div> : null}
+        {notice && !error ? <div className="sos-banner sos-banner--success" style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}><CheckCircle2 size={16} /> {notice}</div> : null}
+        {data.financeNotes ? <div className="sos-banner sos-banner--warning" style={{ marginTop: 10 }}>Finance note: {data.financeNotes}</div> : null}
       </GlassCard>
 
-      {/* Applicant bio */}
-      <GlassCard variant="default">
-        <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', marginTop: 0 }}>Applicant</h2>
-        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-          <FormInput label="Full name" required value={bio.applicantName} disabled={!editable} onChange={(e) => setBioField('applicantName', e.target.value)} />
-          <FormInput label="Father / guardian" value={bio.fatherName ?? ''} disabled={!editable} onChange={(e) => setBioField('fatherName', e.target.value)} />
-          <FormInput label="CNIC" value={bio.cnic ?? ''} disabled={!editable} onChange={(e) => setBioField('cnic', e.target.value)} />
-          <FormInput label="Passport" value={bio.passport ?? ''} disabled={!editable} onChange={(e) => setBioField('passport', e.target.value)} />
-          <FormInput label="Date of birth" value={bio.dob ?? ''} disabled={!editable} placeholder="01 Jan 1990" onChange={(e) => setBioField('dob', e.target.value)} />
-          <FormInput label="Nationality" value={bio.nationality ?? ''} disabled={!editable} onChange={(e) => setBioField('nationality', e.target.value)} />
-          <FormInput label="Phone" value={bio.phone ?? ''} disabled={!editable} onChange={(e) => setBioField('phone', e.target.value)} />
-          <FormInput label="Email" value={bio.email ?? ''} disabled={!editable} onChange={(e) => setBioField('email', e.target.value)} />
-          <FormInput label="File number" value={bio.fileNumber ?? ''} disabled={!editable} onChange={(e) => setBioField('fileNumber', e.target.value)} />
-          <FormInput label="Agreement date" value={bio.agreementDate ?? ''} disabled={!editable} placeholder="leave blank for today" onChange={(e) => setBioField('agreementDate', e.target.value)} />
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <FormInput label="Address" value={bio.address ?? ''} disabled={!editable} onChange={(e) => setBioField('address', e.target.value)} />
-        </div>
-      </GlassCard>
-
-      {/* Payment plan */}
-      <GlassCard variant="default">
-        <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', marginTop: 0 }}>Payment plan</h2>
-        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
-          <FormSelect
-            label="Plan type"
-            value={planType}
-            disabled={!editable}
-            onChange={(e) => { setPlanType(e.target.value as PaymentPlanType); touch(); }}
-            options={[
-              { value: 'FULL', label: 'Full payment' },
-              { value: 'INSTALLMENT', label: 'Installments' },
-              { value: 'MILESTONE', label: 'Milestone-based' },
-            ]}
-          />
-          <FormSelect
-            label="Currency"
-            value={currency}
-            disabled={!editable}
-            onChange={(e) => { setCurrency(e.target.value); touch(); }}
-            options={AGREEMENT_CURRENCIES.map((c) => ({ value: c, label: c }))}
-          />
-          <FormInput label="Total agreed (gross)" inputMode="decimal" value={gross} disabled={!editable} onChange={(e) => { setGross(e.target.value); touch(); }} />
-          <FormInput label="Discount" inputMode="decimal" value={discount} disabled={!editable} onChange={(e) => { setDiscount(e.target.value); touch(); }} />
-          <FormInput label="Net payable" value={`${currency} ${money(netPayable)}`} disabled hint="Auto: gross − discount" />
-        </div>
-
-        {/* Installments */}
-        <div style={{ marginTop: 18 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <label className="sos-label" style={{ margin: 0 }}>
-              {planType === 'MILESTONE' ? 'Milestones' : planType === 'FULL' ? 'Payment' : 'Installments'}
-            </label>
-            {editable && !(planType === 'FULL' && rows.length >= 1) ? (
-              <GhostButton size="sm" iconLeft={<Plus size={14} />} onClick={addRow}>Add {planType === 'MILESTONE' ? 'milestone' : 'installment'}</GhostButton>
-            ) : null}
-          </div>
-
-          {rows.length === 0 ? (
-            <div className="sos-text-faint" style={{ fontSize: 12.5, padding: '6px 0' }}>
-              No rows yet. {planType === 'FULL' ? 'Full payment uses the net payable.' : 'Add at least one row that sums to the net payable.'}
+      {/* Studio: form (left) + live preview (right) */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        {/* LEFT — form */}
+        <div style={{ flex: '1 1 360px', minWidth: 320, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Applicant */}
+          <GlassCard variant="default">
+            <SectionHead n={1} title="Applicant details" />
+            <FormInput label="Full name" required value={bio.applicantName} disabled={!editable} onChange={(e) => setBioField('applicantName', e.target.value)} />
+            <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 10 }}>
+              <FormInput label="CNIC" value={bio.cnic ?? ''} disabled={!editable} onChange={(e) => setBioField('cnic', e.target.value)} />
+              <FormInput label="Passport" value={bio.passport ?? ''} disabled={!editable} onChange={(e) => setBioField('passport', e.target.value)} />
+              <FormInput label="Nationality" value={bio.nationality ?? ''} disabled={!editable} onChange={(e) => setBioField('nationality', e.target.value)} />
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {rows.map((r, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1.4fr 1fr auto', gap: 8, alignItems: 'center' }}>
-                  <input className="sos-input" placeholder="Stage / label" value={r.stage} disabled={!editable} onChange={(e) => setRow(i, { stage: e.target.value })} />
-                  <input className="sos-input" placeholder="Amount" inputMode="decimal" value={r.amount} disabled={!editable} onChange={(e) => setRow(i, { amount: e.target.value })} />
-                  <input className="sos-input" placeholder="Trigger (e.g. At signing)" value={r.trigger} disabled={!editable} onChange={(e) => setRow(i, { trigger: e.target.value })} />
-                  <input className="sos-input" type="date" value={r.dueDate} disabled={!editable} onChange={(e) => setRow(i, { dueDate: e.target.value })} />
-                  {editable ? (
-                    <GhostButton size="sm" onClick={() => removeRow(i)} aria-label="Remove">
-                      <Trash2 size={15} />
-                    </GhostButton>
-                  ) : <span />}
-                </div>
-              ))}
+            <div style={{ marginTop: 10 }}>
+              <FormInput label="Address" value={bio.address ?? ''} disabled={!editable} onChange={(e) => setBioField('address', e.target.value)} />
             </div>
-          )}
-
-          {/* Balance indicator */}
-          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-            {balanced ? <CheckCircle2 size={15} color={balanceColor} /> : <AlertTriangle size={15} color={balanceColor} />}
-            <span style={{ color: balanceColor, fontWeight: 600 }}>
-              Scheduled {currency} {money(installmentSum)} / {currency} {money(netPayable)}
-            </span>
-            {!balanced && diff !== 0 ? (
-              <span className="sos-text-faint">
-                ({diff > 0 ? 'over' : 'short'} by {currency} {money(Math.abs(diff) / 100)})
-              </span>
-            ) : null}
-          </div>
-        </div>
-
-        {/* Sales notes */}
-        <div style={{ marginTop: 16 }}>
-          <label className="sos-label">Sales notes (internal)</label>
-          <textarea
-            className="sos-textarea"
-            value={salesNotes}
-            disabled={!editable}
-            onChange={(e) => { setSalesNotes(e.target.value); touch(); }}
-            style={{ width: '100%', minHeight: 80 }}
-          />
-        </div>
-      </GlassCard>
-
-      {/* Document editor */}
-      <GlassCard variant="default">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
-          <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <FileText size={17} /> Agreement document
-          </h2>
-          {editable ? (
-            <SecondaryButton size="sm" iconLeft={<RotateCcw size={14} />} onClick={handleRegenerate} disabled={busy !== null}>
-              {busy === 'regen' ? 'Rebuilding…' : 'Regenerate from template + data'}
-            </SecondaryButton>
-          ) : null}
-        </div>
-        <div className="sos-help" style={{ marginBottom: 10 }}>
-          {editable
-            ? 'Edit the wording directly below — your edits become the PDF. The payment table comes from the plan above; if you change the plan, click “Regenerate” to refresh the figures (rebuilds the document and discards manual edits).'
-            : 'Read-only at this stage.'}
-        </div>
-        <div
-          key={docKey}
-          ref={docRef}
-          contentEditable={editable}
-          suppressContentEditableWarning
-          onInput={() => {
-            setDirty(true);
-            setDocDirty(true);
-          }}
-          dangerouslySetInnerHTML={{
-            __html: initialDoc || '<p>No document yet — set the payment plan and save, or click Regenerate.</p>',
-          }}
-          className="agreement-doc"
-          style={{
-            border: '1px solid var(--sos-border-subtle)',
-            borderRadius: 8,
-            padding: '20px 22px',
-            minHeight: 300,
-            maxHeight: 560,
-            overflowY: 'auto',
-            background: 'var(--sos-surface, #fff)',
-            color: 'var(--sos-text-primary)',
-            fontSize: 13.5,
-            lineHeight: 1.6,
-            outline: 'none',
-          }}
-        />
-        <style>{`
-          .agreement-doc h1 { font-size: 16px; font-weight: 700; margin: 14px 0 8px; }
-          .agreement-doc h2 { font-size: 15px; font-weight: 700; margin: 16px 0 6px; }
-          .agreement-doc h3 { font-size: 13.5px; font-weight: 700; margin: 12px 0 4px; }
-          .agreement-doc p { margin: 6px 0; }
-          .agreement-doc ul, .agreement-doc ol { margin: 6px 0 6px 20px; }
-          .agreement-doc li { margin: 3px 0; }
-          .agreement-doc table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
-          .agreement-doc th, .agreement-doc td { border: 1px solid var(--sos-border-subtle); padding: 6px 8px; text-align: left; }
-          .agreement-doc .sig { margin-top: 28px; display: flex; gap: 40px; }
-          .agreement-doc .sig .box { flex: 1; }
-          .agreement-doc .sig .line { border-top: 1px solid currentColor; margin-top: 36px; padding-top: 4px; font-size: 11px; }
-          .agreement-doc .token-missing { background: #fde68a; color: #92400e; padding: 0 3px; border-radius: 2px; }
-        `}</style>
-      </GlassCard>
-
-      {/* History */}
-      {data.events.length > 0 ? (
-        <GlassCard variant="default" padded={false}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-            <h3 className="sos-title" style={{ fontSize: 'var(--sos-text-base)', margin: 0 }}>History</h3>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {data.events.map((ev) => (
-              <div key={ev.id} style={{ padding: '10px 18px', borderBottom: '1px solid var(--sos-border-subtle)', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ fontSize: 13, color: 'var(--sos-text-secondary)' }}>
-                  <strong style={{ fontFamily: 'monospace', fontSize: 11, marginRight: 8 }}>{ev.type}</strong>
-                  {ev.summary}
-                </span>
-                <span className="sos-text-faint" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                  {new Date(ev.createdAt).toLocaleString('en-GB')}
-                </span>
+            <button type="button" onClick={() => setShowMore((v) => !v)} className="sos-text-secondary"
+              style={{ marginTop: 10, background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, padding: 0, textDecoration: 'underline' }}>
+              {showMore ? 'Hide extra fields' : 'More details (father, DOB, phone, email, file #, date)'}
+            </button>
+            {showMore ? (
+              <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 10 }}>
+                <FormInput label="Father / guardian" value={bio.fatherName ?? ''} disabled={!editable} onChange={(e) => setBioField('fatherName', e.target.value)} />
+                <FormInput label="Date of birth" value={bio.dob ?? ''} placeholder="01 Jan 1990" disabled={!editable} onChange={(e) => setBioField('dob', e.target.value)} />
+                <FormInput label="Phone" value={bio.phone ?? ''} disabled={!editable} onChange={(e) => setBioField('phone', e.target.value)} />
+                <FormInput label="Email" value={bio.email ?? ''} disabled={!editable} onChange={(e) => setBioField('email', e.target.value)} />
+                <FormInput label="File number" value={bio.fileNumber ?? ''} disabled={!editable} onChange={(e) => setBioField('fileNumber', e.target.value)} />
+                <FormInput label="Agreement date" value={bio.agreementDate ?? ''} placeholder="today" disabled={!editable} onChange={(e) => setBioField('agreementDate', e.target.value)} />
               </div>
-            ))}
-          </div>
-        </GlassCard>
-      ) : null}
+            ) : null}
+          </GlassCard>
+
+          {/* Payment plan */}
+          <GlassCard variant="default">
+            <SectionHead n={2} title="Payment plan" />
+            <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
+              <FormSelect label="Plan type" value={planType} disabled={!editable}
+                onChange={(e) => { setPlanType(e.target.value as PaymentPlanType); touch(); }}
+                options={[{ value: 'FULL', label: 'Full payment' }, { value: 'INSTALLMENT', label: 'Installments' }, { value: 'MILESTONE', label: 'Milestone-based' }]} />
+              <FormSelect label="Currency" value={currency} disabled={!editable}
+                onChange={(e) => { setCurrency(e.target.value); touch(); }}
+                options={AGREEMENT_CURRENCIES.map((c) => ({ value: c, label: c }))} />
+              <FormInput label="Total agreed" inputMode="decimal" value={gross} disabled={!editable} onChange={(e) => { setGross(e.target.value); touch(); }} />
+              <FormInput label="Discount" inputMode="decimal" value={discount} disabled={!editable} onChange={(e) => { setDiscount(e.target.value); touch(); }} />
+            </div>
+            {/* Net payable highlight */}
+            <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'var(--sos-surface-1, rgba(99,102,241,0.06))', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+              <span className="sos-text-faint" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Net payable</span>
+              <span style={{ fontSize: 20, fontWeight: 800, color: 'var(--sos-text-primary)' }}>{currency} {money(netPayable)}</span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 6px' }}>
+              <label className="sos-label" style={{ margin: 0 }}>{planType === 'MILESTONE' ? 'Milestones' : planType === 'FULL' ? 'Payment' : 'Installments'}</label>
+              {editable && !(planType === 'FULL' && rows.length >= 1) ? (
+                <GhostButton size="sm" iconLeft={<Plus size={14} />} onClick={addRow}>Add</GhostButton>
+              ) : null}
+            </div>
+            {rows.length === 0 ? (
+              <div className="sos-text-faint" style={{ fontSize: 12.5, padding: '4px 0' }}>
+                {planType === 'FULL' ? 'Full payment uses the net payable.' : 'Add rows that sum to the net payable.'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {rows.map((r, i) => (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.4fr auto', gap: 6, alignItems: 'center' }}>
+                    <input className="sos-input" placeholder="Stage" value={r.stage} disabled={!editable} onChange={(e) => setRow(i, { stage: e.target.value })} />
+                    <input className="sos-input" placeholder="Amount" inputMode="decimal" value={r.amount} disabled={!editable} onChange={(e) => setRow(i, { amount: e.target.value })} />
+                    <input className="sos-input" placeholder="When (e.g. At signing)" value={r.trigger} disabled={!editable} onChange={(e) => setRow(i, { trigger: e.target.value })} />
+                    {editable ? <GhostButton size="sm" onClick={() => removeRow(i)} aria-label="Remove"><Trash2 size={14} /></GhostButton> : <span />}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+              {balanced ? <CheckCircle2 size={14} color={balanceColor} /> : <AlertTriangle size={14} color={balanceColor} />}
+              <span style={{ color: balanceColor, fontWeight: 600 }}>Scheduled {currency} {money(installmentSum)} / {currency} {money(netPayable)}</span>
+              {!balanced && diff !== 0 ? <span className="sos-text-faint">({diff > 0 ? 'over' : 'short'} {currency} {money(Math.abs(diff) / 100)})</span> : null}
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label className="sos-label">Sales notes (internal)</label>
+              <textarea className="sos-textarea" value={salesNotes} disabled={!editable}
+                onChange={(e) => { setSalesNotes(e.target.value); touch(); }} style={{ width: '100%', minHeight: 60 }} />
+            </div>
+          </GlassCard>
+        </div>
+
+        {/* RIGHT — live preview */}
+        <div style={{ flex: '1 1 460px', minWidth: 340, position: 'sticky', top: 12, alignSelf: 'flex-start' }}>
+          <GlassCard variant="default" padded={false}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Eye size={15} className="sos-text-faint" />
+                <span className="sos-title" style={{ fontSize: 'var(--sos-text-base)', margin: 0 }}>Live preview</span>
+                <span className="sos-text-faint" style={{ fontSize: 11 }}>— exactly what the PDF will say</span>
+              </div>
+              {editable ? (
+                manual ? (
+                  <GhostButton size="sm" iconLeft={<RotateCcw size={13} />} onClick={resetToData}>Reset to data</GhostButton>
+                ) : (
+                  <GhostButton size="sm" iconLeft={<Pencil size={13} />} onClick={enterManual}>Edit text</GhostButton>
+                )
+              ) : null}
+            </div>
+            {manual ? (
+              <div className="sos-text-faint" style={{ fontSize: 11.5, padding: '6px 16px 0' }}>
+                Editing text directly. Changes to the form above won’t flow in until you click “Reset to data”.
+              </div>
+            ) : null}
+            <div style={{ padding: 16, maxHeight: '72vh', overflowY: 'auto', background: 'var(--sos-surface-2, #f1f3f9)' }}>
+              {/* Paper */}
+              <div style={{ background: '#fff', borderRadius: 6, boxShadow: '0 1px 6px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                <div style={{ background: '#0b1f3a', color: '#f8fafc', padding: '12px 22px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontWeight: 800, letterSpacing: '1px', fontSize: 13 }}>TASHFEEN</span>
+                  <span style={{ fontSize: 9, letterSpacing: '2px', color: '#cbd5e1' }}>IMMIGRATION SOLUTIONS</span>
+                </div>
+                <div style={{ height: 3, background: '#d6a84f' }} />
+                <div
+                  key={docKey}
+                  ref={docRef}
+                  contentEditable={editable && manual}
+                  suppressContentEditableWarning
+                  onInput={manual ? () => { setDirty(true); setManualHtml(docRef.current?.innerHTML ?? ''); } : undefined}
+                  className="agreement-doc"
+                  style={{ padding: '20px 24px', color: '#1a1d29', fontSize: 12.5, lineHeight: 1.6, outline: 'none', minHeight: 200 }}
+                  dangerouslySetInnerHTML={{
+                    __html: `<h1 class="doc-title">${escapeTitle(data.template?.programTitle ?? '')}</h1>` +
+                      (previewHtml || '<p class="sos-text-faint">Fill the form to build the document…</p>'),
+                  }}
+                />
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+      </div>
+
+      <style>{`
+        .agreement-doc h1.doc-title { font-size: 14px; text-align: center; text-transform: uppercase; letter-spacing: .5px; margin: 4px 0 14px; }
+        .agreement-doc h2 { font-size: 13.5px; font-weight: 700; margin: 14px 0 5px; }
+        .agreement-doc h3 { font-size: 12.5px; font-weight: 700; margin: 11px 0 4px; }
+        .agreement-doc p { margin: 6px 0; }
+        .agreement-doc ul, .agreement-doc ol { margin: 6px 0 6px 18px; }
+        .agreement-doc li { margin: 3px 0; }
+        .agreement-doc table.payplan { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 11.5px; }
+        .agreement-doc table.payplan th, .agreement-doc table.payplan td { border: 1px solid #c9cee0; padding: 6px 8px; text-align: left; }
+        .agreement-doc table.payplan th { background: #0b1f3a; color: #fff; }
+        .agreement-doc table.payplan tr.total td { font-weight: 700; background: #f1f3f9; }
+        .agreement-doc .token-missing { background: #fde68a; color: #92400e; padding: 0 3px; border-radius: 2px; }
+        .agreement-doc .sig { margin-top: 28px; display: flex; justify-content: space-between; gap: 40px; }
+        .agreement-doc .sig .box { flex: 1; }
+        .agreement-doc .sig .line { border-top: 1px solid #1a1d29; margin-top: 36px; padding-top: 4px; font-size: 10px; color: #5a6080; }
+      `}</style>
     </div>
   );
+}
+
+function SectionHead({ n, title }: { n: number; title: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, borderRadius: 999, background: 'var(--sos-accent, #6366f1)', color: '#fff', fontSize: 12, fontWeight: 700 }}>{n}</span>
+      <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-lg)', margin: 0 }}>{title}</h2>
+    </div>
+  );
+}
+
+function escapeTitle(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

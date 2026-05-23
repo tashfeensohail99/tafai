@@ -451,7 +451,7 @@ export class AgreementsService {
     const [template, lead, events] = await Promise.all([
       this.prisma.agreementTemplate.findUnique({
         where: { id: agreement.templateId },
-        select: { id: true, name: true, categoryKey: true, programTitle: true },
+        select: { id: true, name: true, categoryKey: true, programTitle: true, bodyHtml: true },
       }),
       this.prisma.lead.findUnique({
         where: { id: agreement.leadId },

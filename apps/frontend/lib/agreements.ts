@@ -191,7 +191,7 @@ export interface AgreementDetail extends AgreementSummary {
   salesNotes: string | null;
   financeNotes: string | null;
   paymentPlanLockedAt: string | null;
-  template: { id: string; name: string; categoryKey: string; programTitle: string } | null;
+  template: { id: string; name: string; categoryKey: string; programTitle: string; bodyHtml: string } | null;
   lead: {
     id: string;
     firstName: string;
@@ -286,4 +286,76 @@ function base64ToPdfBlob(b64: string): Blob {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new Blob([bytes], { type: 'application/pdf' });
+}
+
+// ---- Client-side document composition (mirrors the backend render so the
+//      live preview matches the generated PDF exactly) ---------------------
+
+function escapeHtml(v: string): string {
+  return v
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const fmtMoney = (n: number): string =>
+  (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+function renderPlanTableHtml(
+  installments: PaymentInstallmentInput[],
+  currency: string,
+): string {
+  if (!installments || installments.length === 0) {
+    return '<p><em>Payment plan to be inserted.</em></p>';
+  }
+  const rows = installments
+    .map((s, i) => {
+      const amount = s.amount != null ? `${currency} ${fmtMoney(s.amount)}` : '—';
+      const when =
+        (s.trigger && s.trigger.trim()) ||
+        (s.dueDate ? new Date(s.dueDate).toLocaleDateString('en-GB') : '—');
+      return `<tr><td>${i + 1}</td><td>${escapeHtml(s.stage || '')}</td><td>${amount}</td><td>${escapeHtml(when)}</td></tr>`;
+    })
+    .join('');
+  const total = installments.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+  return `<table class="payplan"><thead><tr><th>#</th><th>Stage</th><th>Amount</th><th>Trigger / Due</th></tr></thead><tbody>${rows}<tr class="total"><td colspan="2">Total</td><td>${currency} ${fmtMoney(total)}</td><td></td></tr></tbody></table>`;
+}
+
+/** Substitute bio + plan into a template body — same rules as the server. */
+export function composeAgreementDocument(
+  bodyHtml: string,
+  bio: BioDataInput,
+  plan: { currency: string; netPayable: number; installments: PaymentInstallmentInput[] },
+  meta: { agreementNumber: string; programTitle: string },
+): string {
+  const currency = plan.currency || 'CAD';
+  const vars: Record<string, string> = {
+    AGREEMENT_NUMBER: meta.agreementNumber || '',
+    AGREEMENT_DATE:
+      bio.agreementDate && bio.agreementDate.trim()
+        ? bio.agreementDate
+        : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
+    PROGRAM_TITLE: meta.programTitle || '',
+    APPLICANT_NAME: bio.applicantName || '',
+    FATHER_NAME: bio.fatherName || '',
+    CNIC: bio.cnic || '',
+    PASSPORT: bio.passport || '',
+    DOB: bio.dob || '',
+    NATIONALITY: bio.nationality || '',
+    ADDRESS: bio.address || '',
+    PHONE: bio.phone || '',
+    EMAIL: bio.email || '',
+    FILE_NUMBER: bio.fileNumber || '',
+    TOTAL_AMOUNT: `${currency} ${fmtMoney(plan.netPayable)}`,
+    CURRENCY: currency,
+  };
+  let out = bodyHtml.replace(/\{\{\s*PAYMENT_PLAN\s*\}\}/g, renderPlanTableHtml(plan.installments, currency));
+  out = out.replace(/\{\{\s*([A-Z0-9_]+)\s*\}\}/g, (_m, k: string) => {
+    const v = vars[k];
+    if (v != null && v !== '') return escapeHtml(v);
+    return `<span class="token-missing">[${k}]</span>`;
+  });
+  return out;
 }

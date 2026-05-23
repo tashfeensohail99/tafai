@@ -25,6 +25,7 @@ import {
   ListAgreementsQueryDto,
   ListTemplatesQueryDto,
   PreviewTemplateDto,
+  RequestChangesDto,
   UpdateAgreementDto,
   UpdateAgreementTemplateDto,
 } from './agreements.dto';
@@ -157,5 +158,32 @@ export class AgreementsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.agreements.submitToFinance(id, user.id);
+  }
+
+  // ─── Finance review ─────────────────────────────────────────────────────
+
+  @Post(':id/approve')
+  @RequireAnyPermissions('finance.create_invoice', 'finance.verify_payment', 'settings.manage')
+  approveAgreement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.approve(id, user.id);
+  }
+
+  @Post(':id/request-changes')
+  @RequireAnyPermissions('finance.create_invoice', 'finance.verify_payment', 'settings.manage')
+  requestChanges(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RequestChangesDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.requestChanges(id, user.id, dto.note);
+  }
+
+  @Get(':id/pdf-url')
+  @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
+  getPdfUrl(@Param('id', ParseUUIDPipe) id: string) {
+    return this.agreements.getPdfUrl(id);
   }
 }

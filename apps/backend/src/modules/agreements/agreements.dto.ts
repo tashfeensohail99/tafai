@@ -241,3 +241,9 @@ export class ListAgreementsQueryDto {
   @IsBoolean()
   mine?: boolean;
 }
+
+// ─── Finance review ──────────────────────────────────────────────────────
+
+export class RequestChangesDto {
+  @IsString() @IsNotEmpty() @MaxLength(2000) note!: string;
+}

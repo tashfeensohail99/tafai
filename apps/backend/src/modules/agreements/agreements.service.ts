@@ -4,8 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AgreementStatus, PaymentPlanType, Prisma } from '@prisma/client';
+import {
+  AgreementStatus,
+  PaymentPlanType,
+  Prisma,
+  ServiceContractStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import {
   AgreementRenderService,
   type AgreementBioData,
@@ -17,6 +23,12 @@ import {
   PaymentPlanDto,
   UpdateAgreementDto,
 } from './agreements.dto';
+
+/** Statuses a Finance reviewer can act on. */
+const FINANCE_ACTIONABLE: AgreementStatus[] = [
+  AgreementStatus.SUBMITTED,
+  AgreementStatus.FINANCE_REVIEW,
+];
 
 /** Statuses where Sales may still edit the draft. */
 const SALES_EDITABLE: AgreementStatus[] = [
@@ -39,6 +51,7 @@ export class AgreementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly render: AgreementRenderService,
+    private readonly storage: StorageService,
   ) {}
 
   // ─── Sales authoring ─────────────────────────────────────────────────────
@@ -242,6 +255,181 @@ export class AgreementsService {
     );
 
     return updated;
+  }
+
+  // ─── Finance review ──────────────────────────────────────────────────────
+
+  /**
+   * Finance approves: re-validate, lock the plan, materialise the ledger
+   * (ServiceContract + Installments) once, and generate + store the final
+   * PDF from the approved record.
+   */
+  async approve(id: string, userId: string) {
+    const a = await this.prisma.agreement.findFirst({ where: { id, deletedAt: null } });
+    if (!a) throw new NotFoundException('Agreement not found');
+    if (!FINANCE_ACTIONABLE.includes(a.status)) {
+      throw new ConflictException(`Cannot approve from status ${a.status}.`);
+    }
+
+    const plan = (a.paymentPlan as AgreementPlanData) ?? {};
+    this.assertPlanBalances({
+      planType: plan.planType ?? 'INSTALLMENT',
+      grossAmount: plan.grossAmount ?? 0,
+      discountAmount: plan.discountAmount ?? 0,
+      netPayable: plan.netPayable ?? Number(a.totalAmount.toString()),
+      installments: plan.installments ?? [],
+    });
+
+    const serviceContractId =
+      a.serviceContractId ?? (await this.materializeServiceContract(a, plan, userId));
+
+    let pdfKey = a.generatedPdfKey;
+    const template = await this.prisma.agreementTemplate.findUnique({
+      where: { id: a.templateId },
+    });
+    if (template) {
+      const buffer = await this.render.renderAgreementPdf(
+        template.programTitle,
+        template.bodyHtml,
+        (a.bioData as AgreementBioData) ?? {},
+        plan,
+        a.agreementNumber,
+      );
+      const up = await this.storage.upload(
+        buffer,
+        'application/pdf',
+        'agreements',
+        `${a.agreementNumber}.pdf`,
+      );
+      pdfKey = up.key;
+    }
+
+    const now = new Date();
+    const updated = await this.prisma.agreement.update({
+      where: { id },
+      data: {
+        status: AgreementStatus.APPROVED,
+        financeReviewedByUserId: userId,
+        reviewedAt: now,
+        paymentPlanLockedAt: now,
+        paymentPlanLockedByUserId: userId,
+        serviceContractId,
+        generatedPdfKey: pdfKey ?? undefined,
+        generatedPdfAt: pdfKey ? now : undefined,
+      },
+    });
+
+    await this.recordEvent(
+      id,
+      userId,
+      'APPROVED',
+      'Approved by Finance; payment plan locked and ledger contract created',
+      null,
+      { serviceContractId } as unknown as Prisma.InputJsonValue,
+    );
+    return updated;
+  }
+
+  /** Finance bounces it back to Sales with a note (unlocks for editing). */
+  async requestChanges(id: string, userId: string, note: string) {
+    const a = await this.prisma.agreement.findFirst({ where: { id, deletedAt: null } });
+    if (!a) throw new NotFoundException('Agreement not found');
+    if (!FINANCE_ACTIONABLE.includes(a.status)) {
+      throw new ConflictException(`Cannot request changes from status ${a.status}.`);
+    }
+    const updated = await this.prisma.agreement.update({
+      where: { id },
+      data: {
+        status: AgreementStatus.CHANGES_REQUESTED,
+        financeNotes: note,
+        financeReviewedByUserId: userId,
+        reviewedAt: new Date(),
+      },
+    });
+    await this.recordEvent(
+      id,
+      userId,
+      'CHANGES_REQUESTED',
+      `Finance requested changes: ${note}`,
+      null,
+      null,
+    );
+    return updated;
+  }
+
+  /** Signed URL for the generated final PDF (Finance / Sales download). */
+  async getPdfUrl(id: string): Promise<{ url: string }> {
+    const a = await this.prisma.agreement.findFirst({
+      where: { id, deletedAt: null },
+      select: { generatedPdfKey: true },
+    });
+    if (!a) throw new NotFoundException('Agreement not found');
+    if (!a.generatedPdfKey) {
+      throw new BadRequestException('No generated PDF yet — approve the agreement first.');
+    }
+    return { url: await this.storage.getSignedUrl(a.generatedPdfKey) };
+  }
+
+  private async materializeServiceContract(
+    a: {
+      leadId: string;
+      clientId: string | null;
+      agreementNumber: string;
+      currency: string;
+      totalAmount: Prisma.Decimal;
+    },
+    plan: AgreementPlanData,
+    userId: string,
+  ): Promise<string> {
+    const net = Number(a.totalAmount.toString());
+    const approvalDate = new Date();
+    let rows = plan.installments ?? [];
+    if (rows.length === 0) {
+      rows = [{ sequence: 1, stage: 'Full payment', amount: net, trigger: null, dueDate: null }];
+    }
+    const contractNumber = await this.generateContractNumber();
+    const contract = await this.prisma.serviceContract.create({
+      data: {
+        contractNumber,
+        leadId: a.leadId,
+        clientId: a.clientId ?? undefined,
+        totalAmount: a.totalAmount,
+        currency: a.currency,
+        signedDate: approvalDate,
+        status: ServiceContractStatus.ACTIVE,
+        notes: `Auto-created from agreement ${a.agreementNumber}`,
+        createdByUserId: userId,
+        installments: {
+          create: rows.map((i, idx) => ({
+            sequence: i.sequence ?? idx + 1,
+            dueDate: i.dueDate ? new Date(i.dueDate) : approvalDate,
+            amount: i.amount ?? 0,
+            description:
+              (i.stage ?? `Stage ${idx + 1}`) + (i.trigger ? ` — ${i.trigger}` : ''),
+          })),
+        },
+      },
+      select: { id: true },
+    });
+    return contract.id;
+  }
+
+  private async generateContractNumber(): Promise<string> {
+    const year = new Date().getUTCFullYear();
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const count = await this.prisma.serviceContract.count({
+        where: { createdAt: { gte: yearStart, lt: yearEnd } },
+      });
+      const candidate = `SC-${year}-${String(count + 1 + attempt).padStart(5, '0')}`;
+      const existing = await this.prisma.serviceContract.findUnique({
+        where: { contractNumber: candidate },
+        select: { id: true },
+      });
+      if (!existing) return candidate;
+    }
+    throw new Error('Unable to generate a unique contract number');
   }
 
   // ─── Reads ───────────────────────────────────────────────────────────────

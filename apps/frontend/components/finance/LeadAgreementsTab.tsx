@@ -7,7 +7,7 @@ import { FilePlus2, FileText } from 'lucide-react';
 import {
   GlassCard,
   StatusBadge,
-  ButtonLink,
+  PrimaryButton,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
@@ -15,6 +15,7 @@ import {
   type AgreementStatus,
   type AgreementSummary,
 } from '@/lib/agreements';
+import { CreateAgreementModal } from './CreateAgreementModal';
 
 const STATUS_TONE: Record<AgreementStatus, BadgeTone> = {
   DRAFT: 'neutral',
@@ -38,6 +39,7 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
   const [rows, setRows] = useState<AgreementSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     listAgreements({ leadId })
@@ -47,7 +49,8 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
   }, [leadId]);
 
   return (
-    <GlassCard variant="strong" padded="lg">
+    <>
+      <GlassCard variant="strong" padded="lg">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
         <div>
           <div className="sos-eyebrow">Service agreement</div>
@@ -55,14 +58,9 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
             Agreements for this lead
           </h3>
         </div>
-        <ButtonLink
-          href={`/sales/agreements/new?leadId=${leadId}` as Route}
-          variant="primary"
-          size="sm"
-          iconLeft={<FilePlus2 size={14} />}
-        >
+        <PrimaryButton size="sm" iconLeft={<FilePlus2 size={14} />} onClick={() => setModalOpen(true)}>
           Create Agreement
-        </ButtonLink>
+        </PrimaryButton>
       </div>
 
       {error ? (
@@ -120,6 +118,12 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
           ))}
         </div>
       )}
-    </GlassCard>
+      </GlassCard>
+      <CreateAgreementModal
+        open={modalOpen}
+        leadId={leadId}
+        onClose={() => setModalOpen(false)}
+      />
+    </>
   );
 }

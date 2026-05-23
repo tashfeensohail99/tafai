@@ -417,13 +417,12 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
           >
             All follow-ups
           </ButtonLink>
-          <ButtonLink
-            href={`/sales/agreements/new?leadId=${lead.id}` as Route}
-            variant="secondary"
+          <SecondaryButton
             iconLeft={<FileText size={14} />}
+            onClick={() => setTab('AGREEMENT')}
           >
             Create Agreement
-          </ButtonLink>
+          </SecondaryButton>
         </div>
       </div>
 

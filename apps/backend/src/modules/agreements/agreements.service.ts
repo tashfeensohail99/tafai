@@ -588,24 +588,19 @@ export class AgreementsService {
       );
     }
     const installments = plan.installments ?? [];
-    const sum = installments.reduce((acc, i) => acc + cents(Number(i.amount) || 0), 0);
-
-    if (plan.planType === 'FULL') {
-      if (installments.length > 1) {
-        throw new BadRequestException('A full-payment plan can have at most one installment.');
-      }
-      if (installments.length === 1 && sum !== cents(plan.netPayable)) {
-        throw new BadRequestException('The single payment must equal the net payable.');
+    if (installments.length === 0) {
+      // No schedule rows: only valid as a single full payment of the net.
+      // Plan type is otherwise just a label — any rows that sum to the net
+      // are accepted regardless of type.
+      if (plan.planType !== 'FULL') {
+        throw new BadRequestException('Add at least one installment / milestone.');
       }
       return;
     }
-    // INSTALLMENT / MILESTONE
-    if (installments.length < 1) {
-      throw new BadRequestException('Add at least one installment / milestone.');
-    }
+    const sum = installments.reduce((acc, i) => acc + cents(Number(i.amount) || 0), 0);
     if (sum !== cents(plan.netPayable)) {
       throw new BadRequestException(
-        'The installment amounts must add up to the net payable.',
+        'The payment amounts must add up to the net payable.',
       );
     }
   }

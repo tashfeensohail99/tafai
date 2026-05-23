@@ -118,9 +118,11 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const editable = data ? EDITABLE.includes(data.status) : false;
   const netPayable = Math.max(0, num(gross) - num(discount));
   const installmentSum = rows.reduce((acc, r) => acc + num(r.amount), 0);
-  const balanced = planType === 'FULL'
-    ? rows.length <= 1 && (rows.length === 0 || cents(installmentSum) === cents(netPayable))
-    : rows.length >= 1 && cents(installmentSum) === cents(netPayable);
+  // The schedule balances when the rows sum to the net payable. With no rows,
+  // only a single full payment is valid. Plan type is just a label otherwise.
+  const balanced = rows.length === 0
+    ? planType === 'FULL'
+    : cents(installmentSum) === cents(netPayable);
   const diff = cents(installmentSum) - cents(netPayable);
 
   const installments = useMemo<PaymentInstallmentInput[]>(() =>
@@ -154,10 +156,8 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const validate = (): string | null => {
     if (!bio.applicantName.trim()) return 'Add the applicant name.';
     if (num(discount) > num(gross)) return 'Discount can’t exceed the total agreed amount.';
-    if (planType !== 'FULL' && installments.length < 1) return 'Add at least one installment.';
-    if (!balanced) return planType === 'FULL'
-      ? 'The single payment must equal the net payable.'
-      : 'Installment amounts must add up to the net payable.';
+    if (rows.length === 0 && planType !== 'FULL') return 'Add at least one installment.';
+    if (!balanced) return 'Payment amounts must add up to the net payable.';
     return null;
   };
   const validationError = validate();
@@ -312,7 +312,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
             <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
               <FormSelect label="Plan type" value={planType} disabled={!editable}
                 onChange={(e) => { setPlanType(e.target.value as PaymentPlanType); touch(); }}
-                options={[{ value: 'FULL', label: 'Full payment' }, { value: 'INSTALLMENT', label: 'Installments' }, { value: 'MILESTONE', label: 'Milestone-based' }]} />
+                options={[{ value: 'FULL', label: 'Single payment' }, { value: 'INSTALLMENT', label: 'Installments' }, { value: 'MILESTONE', label: 'Milestone-based' }]} />
               <FormSelect label="Currency" value={currency} disabled={!editable}
                 onChange={(e) => { setCurrency(e.target.value); touch(); }}
                 options={AGREEMENT_CURRENCIES.map((c) => ({ value: c, label: c }))} />
@@ -327,7 +327,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 6px' }}>
               <label className="sos-label" style={{ margin: 0 }}>{planType === 'MILESTONE' ? 'Milestones' : planType === 'FULL' ? 'Payment' : 'Installments'}</label>
-              {editable && !(planType === 'FULL' && rows.length >= 1) ? (
+              {editable ? (
                 <GhostButton size="sm" iconLeft={<Plus size={14} />} onClick={addRow}>Add</GhostButton>
               ) : null}
             </div>

@@ -86,6 +86,9 @@ export function WhatsAppAdminPage() {
 
   const [filter, setFilter] = useState<Filter>('ALL');
   const [unassignedOnly, setUnassignedOnly] = useState(false);
+  // Admin filter: '' = all agents, otherwise an employeeId to scope the list to
+  // that agent's assigned conversations (e.g. "Iffat's chats").
+  const [agentFilter, setAgentFilter] = useState<string>('');
   const [search, setSearch] = useState('');
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [team, setTeam] = useState<TeamPresenceRow[]>([]);
@@ -119,6 +122,7 @@ export function WhatsAppAdminPage() {
           ...(filter !== 'ALL' ? { status: filter } : {}),
           ...(search ? { search } : {}),
           ...(unassignedOnly ? { unassigned: true } : {}),
+          ...(agentFilter ? { employeeId: agentFilter } : {}),
           limit: PAGE_SIZE,
         }),
         listTeamPresence().catch(() => [] as TeamPresenceRow[]),
@@ -134,7 +138,7 @@ export function WhatsAppAdminPage() {
     } finally {
       setLoading(false);
     }
-  }, [canViewAll, filter, search, unassignedOnly, activeId, isMobile]);
+  }, [canViewAll, filter, search, unassignedOnly, agentFilter, activeId, isMobile]);
 
   // Append the next page when the user scrolls near the bottom of the list.
   // Guarded so we never fire two in-flight loads or load past the end.
@@ -146,6 +150,7 @@ export function WhatsAppAdminPage() {
         ...(filter !== 'ALL' ? { status: filter } : {}),
         ...(search ? { search } : {}),
         ...(unassignedOnly ? { unassigned: true } : {}),
+        ...(agentFilter ? { employeeId: agentFilter } : {}),
         cursor: nextCursor,
         limit: PAGE_SIZE,
       });
@@ -158,7 +163,7 @@ export function WhatsAppAdminPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [canViewAll, nextCursor, loadingMore, filter, search, unassignedOnly]);
+  }, [canViewAll, nextCursor, loadingMore, filter, search, unassignedOnly, agentFilter]);
 
   useEffect(() => {
     void reload();
@@ -499,7 +504,11 @@ export function WhatsAppAdminPage() {
                 <input
                   type="checkbox"
                   checked={unassignedOnly}
-                  onChange={(e) => setUnassignedOnly(e.target.checked)}
+                  onChange={(e) => {
+                    setUnassignedOnly(e.target.checked);
+                    // Mutually exclusive with the per-agent filter.
+                    if (e.target.checked) setAgentFilter('');
+                  }}
                 />
                 Unassigned only
                 {unassignedOnly && unassignedCount > 0 ? (
@@ -514,6 +523,47 @@ export function WhatsAppAdminPage() {
                   </span>
                 ) : null}
               </label>
+            </div>
+
+            {/* Admin-only: filter the list by assigned agent (e.g. "Iffat's chats") */}
+            <div
+              style={{
+                padding: '6px 12px',
+                borderBottom: '1px solid var(--sos-border-subtle)',
+                background: 'var(--wa-panel-header)',
+                flexShrink: 0,
+              }}
+            >
+              <select
+                value={agentFilter}
+                onChange={(e) => {
+                  setAgentFilter(e.target.value);
+                  // Mutually exclusive with the unassigned-only toggle.
+                  if (e.target.value) setUnassignedOnly(false);
+                }}
+                style={{
+                  width: '100%',
+                  fontSize: 12,
+                  padding: '6px 8px',
+                  background: 'var(--wa-composer-input-bg)',
+                  color: 'var(--sos-text-primary)',
+                  border: '1px solid var(--sos-border-subtle)',
+                  borderRadius: 6,
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+                title="Show conversations assigned to a specific agent"
+              >
+                <option value="">All agents</option>
+                {[...team]
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                      {m.whatsappInboxMember ? '' : ' (not in pool)'}
+                    </option>
+                  ))}
+              </select>
             </div>
 
             {/* Thread list */}

@@ -6,6 +6,8 @@ interface ThreadListOptions {
   status?: 'OPEN' | 'PENDING' | 'RESOLVED' | 'ARCHIVED';
   assignedToMe?: boolean;
   unassigned?: boolean;
+  /** Admin filter: only threads whose lead is assigned to this employee. */
+  employeeId?: string;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -68,17 +70,32 @@ export class WhatsAppThreadsService {
     } else if (opts.unassigned) {
       // Admin-only filter — only meaningful when canViewAll is true.
       where.lead = { assignedEmployeeId: null, deletedAt: null };
+    } else if (opts.employeeId) {
+      // Admin-only filter — show only one agent's conversations.
+      where.lead = { assignedEmployeeId: opts.employeeId, deletedAt: null };
     }
 
     if (opts.search) {
       const q = opts.search.trim();
-      and.push({
-        OR: [
-          { waContactId: { contains: q.replace(/\D/g, '') } },
-          { lead: { OR: [{ firstName: { contains: q, mode: 'insensitive' } }, { lastName: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } },
-          { client: { OR: [{ firstName: { contains: q, mode: 'insensitive' } }, { lastName: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } },
-        ],
-      });
+      const digits = q.replace(/\D/g, '');
+      // Name search (works for partial first/last name, case-insensitive).
+      const or: Prisma.WhatsAppThreadWhereInput[] = [
+        { lead: { firstName: { contains: q, mode: 'insensitive' } } },
+        { lead: { lastName: { contains: q, mode: 'insensitive' } } },
+        { client: { firstName: { contains: q, mode: 'insensitive' } } },
+        { client: { lastName: { contains: q, mode: 'insensitive' } } },
+      ];
+      // Number search — ONLY when the query actually contains digits. The old
+      // code always added `waContactId contains digitsOf(q)`, which for a NAME
+      // query became `contains ''` → matches EVERY row → search returned
+      // everything (the "search not working" bug). Require >= 3 digits so a
+      // stray digit in a name doesn't broaden the match either.
+      if (digits.length >= 3) {
+        or.push({ waContactId: { contains: digits } });
+        or.push({ lead: { phone: { contains: digits } } });
+        or.push({ client: { phone: { contains: digits } } });
+      }
+      and.push({ OR: or });
     }
 
     where.AND = and;

@@ -178,6 +178,8 @@ export function listThreads(opts: {
   status?: WhatsAppThreadStatus;
   assignedToMe?: boolean;
   unassigned?: boolean;
+  /** Admin: filter to one agent's assigned conversations. */
+  employeeId?: string;
   search?: string;
   cursor?: string;
   limit?: number;

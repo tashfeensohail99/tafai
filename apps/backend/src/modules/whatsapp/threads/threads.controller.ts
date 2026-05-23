@@ -51,6 +51,15 @@ class ListThreadsDto {
   @IsOptional() @IsString() cursor?: string;
 
   /**
+   * Admin filter: only threads whose lead is assigned to this employee. Lets an
+   * admin view a single agent's conversations (e.g. "Iffat's chats"). Only
+   * honored for callers with whatsapp.view_all_inboxes. MUST be declared here —
+   * the global ValidationPipe runs forbidNonWhitelisted, so an undeclared param
+   * would 400 the whole request.
+   */
+  @IsOptional() @IsUUID() employeeId?: string;
+
+  /**
    * Page size for the cursor-paginated list. Query params arrive as strings,
    * so coerce to a number before @IsInt runs. Bounded 1–100; the service
    * also clamps defensively. MUST be declared here — the global

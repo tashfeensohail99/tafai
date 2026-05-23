@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CirclePlus,
   ClipboardCheck,
+  FileText,
   FileSpreadsheet,
   LayoutDashboard,
   LogOut,
@@ -74,6 +75,7 @@ function buildSalesNav(stats: MySalesStats | null): DrawerMenuItem[] {
     },
     { label: 'Appointments', href: '/sales/appointments', icon: CalendarDays, caption: 'Meetings & visits' },
     { label: 'Decisions', href: '/sales/decisions', icon: ClipboardCheck, caption: 'Payment handover' },
+    { label: 'Agreements', href: '/sales/agreements', icon: FileText, caption: 'Service agreements' },
   ];
 }
 
@@ -88,6 +90,9 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/sales/follow-ups') return { title: 'Follow Ups', subtitle: 'Calls, WhatsApp and reminders' };
   if (pathname === '/sales/appointments') return { title: 'Appointments', subtitle: 'Bookings, consultations, and visits' };
   if (pathname === '/sales/decisions') return { title: 'Decisions', subtitle: 'Book next meeting or hand over to finance' };
+  if (pathname.startsWith('/sales/agreements/new')) return { title: 'New Agreement', subtitle: 'Pick a category to start' };
+  if (pathname.startsWith('/sales/agreements/')) return { title: 'Agreement', subtitle: 'Bio, payment plan, and review' };
+  if (pathname === '/sales/agreements') return { title: 'Agreements', subtitle: 'Your service agreements' };
   return { title: 'Sales Workspace', subtitle: '' };
 }
 

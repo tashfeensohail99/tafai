@@ -25,6 +25,7 @@ import {
   Clock4,
   Copy,
   ExternalLink,
+  FileText,
   Flame,
   Globe2,
   History,
@@ -414,6 +415,13 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
             iconLeft={<ExternalLink size={14} />}
           >
             All follow-ups
+          </ButtonLink>
+          <ButtonLink
+            href={`/sales/agreements/new?leadId=${lead.id}` as Route}
+            variant="secondary"
+            iconLeft={<FileText size={14} />}
+          >
+            Create Agreement
           </ButtonLink>
         </div>
       </div>

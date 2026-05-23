@@ -742,9 +742,10 @@ model Employee {
   // --- WhatsApp inbox membership + presence + skills -----------------------
   // True if this employee participates in WhatsApp round-robin assignment.
   whatsappInboxMember Boolean        @default(false)
-  // Explicit toggle set by the agent. Effective presence is computed by
-  // combining this with lastActivityAt + business-hours.
-  presenceStatus      PresenceStatus @default(OFFLINE)
+  // Manual availability toggle set by the agent (Online/Away/Offline). Drives
+  // the topbar pill AND lead routing (Away/Offline = no new leads). Defaults to
+  // ONLINE so a new agent receives leads unless they deliberately opt out.
+  presenceStatus      PresenceStatus @default(ONLINE)
   // Last WebSocket / REST heartbeat. >5min idle => effectively AWAY.
   lastActivityAt      DateTime?
   // Last time the user explicitly flipped their presence.

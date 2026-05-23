@@ -38,6 +38,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  PresenceStatus,
   WhatsAppAssignmentReason,
   type Lead,
   type Prisma,
@@ -149,19 +150,21 @@ export class WhatsAppAssignmentService {
       // where they left off. Business hours + working-days are used ONLY for
       // SLA-clock math (already applied above) and for the after-hours
       // auto-ack template (separate worker, not gated here). NO business-
-      // hours or weekend gate here. Presence is a UI signal, not a routing
-      // filter — agents who marked themselves OFFLINE for the night/weekend
-      // still get round-robined so the Monday hand-off works.
+      // Business hours / weekend are NOT a routing gate (24/7 distribution).
+      // Presence IS now a gate for NEW leads: only ONLINE agents receive new
+      // round-robin/sticky assignments. Away/Offline agents are skipped for new
+      // leads but KEEP their existing chats (handled by the base-pool check
+      // below) so they can resume with their clients when they're back.
 
+      // Base pool: everyone who CAN own a WhatsApp chat (active, in the inbox
+      // pool, account active) — presence-agnostic. Used to decide whether an
+      // EXISTING assignment is still valid.
       const eligible = await this.loadEligibleEmployees(tx, org.organizationId);
 
-      // Already assigned — but only honor the assignment if that employee is
-      // STILL in the eligible pool. If the assigned employee has been taken
-      // out of the inbox (whatsappInboxMember=false), deactivated, or had
-      // their user account suspended, we need to re-route to someone who
-      // can actually answer. Without this check, leads stay glued to an
-      // agent who can't see or respond to them and new inbound messages
-      // pile up invisibly.
+      // Already assigned — keep it as long as the assignee is still in the BASE
+      // pool. Presence (Away/Offline) does NOT drop an existing chat: the agent
+      // keeps their clients and picks them up when back online. We only re-route
+      // if they were deactivated, removed from the inbox pool, or suspended.
       if (lead.assignedEmployeeId) {
         const stillEligible = eligible.some((e) => e.id === lead.assignedEmployeeId);
         if (stillEligible) {
@@ -177,22 +180,25 @@ export class WhatsAppAssignmentService {
           { leadId: lead.id, previousAssignee: lead.assignedEmployeeId },
           'assignment: previous assignee no longer eligible, re-routing',
         );
-        // Fall through with assignedEmployeeId treated as null. We do NOT
-        // null out lead.preferredEmployeeId here — sticky check below will
-        // also exclude ineligible employees, so it's harmless to leave it.
+        // Fall through to re-route. preferredEmployeeId is left as-is; the
+        // sticky check below also requires the agent to be online.
       }
 
-      if (eligible.length === 0) {
+      // NEW-lead pool: base pool restricted to ONLINE agents. Away/Offline
+      // agents do not receive new leads.
+      const onlinePool = eligible.filter((e) => e.presenceStatus === PresenceStatus.ONLINE);
+
+      if (onlinePool.length === 0) {
         this.log.log(
-          { leadId: lead.id },
-          'assignment: no eligible employees (no whatsappInboxMember=true active employees)',
+          { leadId: lead.id, basePool: eligible.length },
+          'assignment: no ONLINE agents — leaving unassigned until someone comes online (sweeper will pick up)',
         );
         return { leadId: lead.id, threadId, assignedEmployeeId: null, reason: null, retryAt: null };
       }
 
-      // 1. Sticky — does the lead's preferred employee qualify?
+      // 1. Sticky — preferred employee, but only if they're online.
       const sticky = lead.preferredEmployeeId
-        ? eligible.find((e) => e.id === lead.preferredEmployeeId)
+        ? onlinePool.find((e) => e.id === lead.preferredEmployeeId)
         : undefined;
       if (sticky) {
         await this.applyAssignment(tx, threadId, lead, sticky.id, WhatsAppAssignmentReason.STICKY);
@@ -205,8 +211,8 @@ export class WhatsAppAssignmentService {
         };
       }
 
-      // 2. Strict round-robin: smallest id strictly greater than cursor.
-      const pick = pickRoundRobin(eligible, org.rrCursorEmployeeId);
+      // 2. Strict round-robin among ONLINE agents.
+      const pick = pickRoundRobin(onlinePool, org.rrCursorEmployeeId);
       await this.applyAssignment(
         tx,
         threadId,
@@ -294,7 +300,7 @@ export class WhatsAppAssignmentService {
   private async loadEligibleEmployees(
     tx: Prisma.TransactionClient,
     _organizationId: string,
-  ): Promise<{ id: string }[]> {
+  ): Promise<{ id: string; presenceStatus: PresenceStatus }[]> {
     const rows = await tx.employee.findMany({
       where: {
         isActive: true,
@@ -305,7 +311,9 @@ export class WhatsAppAssignmentService {
         user: { status: 'ACTIVE' },
       },
       orderBy: { id: 'asc' },
-      select: { id: true },
+      // presenceStatus drives the ONLINE-only gate for NEW leads (Away/Offline
+      // agents are skipped for new assignments but keep their existing chats).
+      select: { id: true, presenceStatus: true },
     });
     return rows;
   }

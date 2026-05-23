@@ -2,12 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PresenceStatus } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 
-// Presence windows (minutes). Activity-driven:
-//   active within 10 min        => ONLINE
-//   10–30 min since last action => AWAY
-//   beyond 30 min / no activity => OFFLINE
-const ONLINE_WINDOW_MIN = 10;
-const AWAY_WINDOW_MIN = 30;
+// Presence is the agent's MANUAL availability (Online/Away/Offline). It drives
+// the topbar pill + routing. Real-time *activity* (lastActivityAt, updated by
+// the global interceptor) is a SEPARATE signal shown on /admin/employees — the
+// two-systems split the team asked for.
 
 /**
  * Agent presence (ONLINE / AWAY / OFFLINE).
@@ -73,9 +71,6 @@ export class WhatsAppPresenceService {
       data: {
         presenceStatus: status,
         presenceChangedAt: now,
-        // Manual OFFLINE / logout clears activity so they read OFFLINE
-        // instantly; ONLINE/AWAY count as a fresh activity ping.
-        lastActivityAt: status === PresenceStatus.OFFLINE ? null : now,
       },
     });
   }
@@ -146,13 +141,8 @@ export class WhatsAppPresenceService {
     presenceStatus: PresenceStatus;
     lastActivityAt: Date | null;
   }): PresenceStatus {
-    // Purely activity-driven so it reflects real CRM usage, not a stale manual
-    // toggle. Manual OFFLINE and logout clear lastActivityAt (see setExplicit),
-    // so they resolve to OFFLINE here too — no dependence on presenceStatus.
-    if (!emp.lastActivityAt) return PresenceStatus.OFFLINE;
-    const idleMin = (Date.now() - emp.lastActivityAt.getTime()) / 60_000;
-    if (idleMin <= ONLINE_WINDOW_MIN) return PresenceStatus.ONLINE;
-    if (idleMin <= AWAY_WINDOW_MIN) return PresenceStatus.AWAY;
-    return PresenceStatus.OFFLINE;
+    // The pill + team dashboard reflect the agent's MANUAL availability choice.
+    // (Real activity is shown separately on /admin/employees via lastActivityAt.)
+    return emp.presenceStatus;
   }
 }

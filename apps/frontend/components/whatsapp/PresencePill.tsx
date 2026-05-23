@@ -103,6 +103,16 @@ export function PresencePill() {
               role="menuitem"
               onClick={async () => {
                 setOpen(false);
+                // Warn before going unavailable — it stops new leads and costs
+                // SLA points. Current chats are kept either way.
+                if (s === 'AWAY' || s === 'OFFLINE') {
+                  const ok = window.confirm(
+                    s === 'OFFLINE'
+                      ? "Go Offline?\n\nYou won't receive NEW WhatsApp leads. Staying Offline over 2 hours during working hours costs SLA points. Your current chats stay with you so you can resume them."
+                      : "Set yourself Away?\n\nYou won't receive NEW WhatsApp leads while Away, and staying Away will cost SLA points. Your current chats stay with you.",
+                  );
+                  if (!ok) return;
+                }
                 try {
                   const updated = await setMyPresence(s);
                   setPresence(updated);

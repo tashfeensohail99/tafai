@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WHATSAPP_QUEUE } from './queue-contracts';
+import { META_LEADGEN_QUEUE } from '../../meta-leads/queue-contracts';
 
 /**
  * BullMQ wiring for the WhatsApp module.
@@ -54,6 +55,8 @@ const DEFAULT_JOB_OPTS = {
       { name: WHATSAPP_QUEUE.TEMPLATE_SYNC },
       { name: WHATSAPP_QUEUE.CAMPAIGN_DISPATCH },
       { name: WHATSAPP_QUEUE.CAMPAIGN_RECIPIENT },
+      // Meta Lead Ads (forked off the shared webhook → meta-leads module).
+      { name: META_LEADGEN_QUEUE },
     ),
   ],
   exports: [BullModule],

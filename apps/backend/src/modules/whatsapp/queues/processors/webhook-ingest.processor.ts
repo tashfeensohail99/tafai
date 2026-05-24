@@ -21,6 +21,7 @@ import {
   type OutboundMessageJob,
   type WebhookIngestJob,
 } from '../queue-contracts';
+import { META_LEADGEN_QUEUE, type MetaLeadgenJob } from '../../../meta-leads/queue-contracts';
 
 // ---- Meta webhook payload types (subset; full spec at developers.facebook.com)
 interface MetaContact {
@@ -152,6 +153,10 @@ export class WebhookIngestProcessor extends WorkerHost {
     // Used to dispatch the personalised auto-acknowledgement reply.
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundQueue: Queue<OutboundMessageJob>,
+    // Meta Lead Ads ride the same webhook/app as WhatsApp; we fork their
+    // `page`/`leadgen` events onto this queue (handled by the meta-leads module).
+    @InjectQueue(META_LEADGEN_QUEUE)
+    private readonly metaLeadgenQueue: Queue<MetaLeadgenJob>,
   ) {
     super();
   }
@@ -175,6 +180,30 @@ export class WebhookIngestProcessor extends WorkerHost {
     }
 
     const payload = event.rawPayload as unknown as MetaWebhookPayload;
+
+    // Meta Lead Ads arrive on the SAME app + callback URL as WhatsApp (Meta
+    // allows only one webhook URL per app) but with object='page' and a
+    // 'leadgen' change. Fork those onto the meta-leadgen queue instead of
+    // dropping them as "unsupported".
+    if ((payload as { object?: string })?.object === 'page') {
+      try {
+        await this.metaLeadgenQueue.add(
+          'leadgen',
+          { webhookEventId },
+          { jobId: `leadgen-${webhookEventId}` },
+        );
+      } catch (err) {
+        // Don't mark processed — let BullMQ retry the ingest so the lead isn't lost.
+        this.log.error(`failed to enqueue leadgen job for ${webhookEventId}: ${(err as Error).message}`);
+        throw err;
+      }
+      await this.prisma.whatsAppWebhookEvent.update({
+        where: { id: webhookEventId },
+        data: { processedAt: new Date() },
+      });
+      return;
+    }
+
     if (payload?.object !== 'whatsapp_business_account') {
       await this.prisma.whatsAppWebhookEvent.update({
         where: { id: webhookEventId },

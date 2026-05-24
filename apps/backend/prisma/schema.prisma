@@ -358,6 +358,8 @@ enum TimelineEventType {
   EMAIL_RECEIVED
   EMAIL_VERIFICATION_SENT
   EMAIL_VERIFIED
+  // --- Meta Lead Ads ---
+  META_LEAD_CREATED
   @@schema("crm")
 }
 
@@ -931,6 +933,48 @@ model Lead {
   @@schema("crm")
   files               LeadFile[]
   importRows          LeadImportRow[]
+  metaSubmissions     MetaLeadSubmission[]
+}
+
+/// Meta (Facebook/Instagram) Lead Ads form submission. One row per leadgen
+/// event from Meta's webhook. `leadgenId` is unique → idempotency for Meta's
+/// webhook retries + dedupe guard. The matched/created Lead carries
+/// sourceChannel='meta-lead-form'; this row holds the campaign/form/ad
+/// attribution + the raw answers, surfaced on the lead detail UI and used for
+/// Meta Lead Form campaign performance reporting.
+model MetaLeadSubmission {
+  id            String    @id @default(uuid())
+  leadId        String
+  leadgenId     String    @unique
+  formId        String?
+  formName      String?
+  adId          String?
+  adName        String?
+  adsetId       String?
+  adsetName     String?
+  campaignId    String?
+  campaignName  String?
+  pageId        String?
+  platform      String?
+  isOrganic     Boolean?
+  /// True when this submission matched an EXISTING lead instead of creating a
+  /// new one (repeat customer). Lets admin surface duplicate submissions.
+  isDuplicate   Boolean   @default(false)
+  /// Customer's answers — the raw Meta `field_data` array of {name, values}.
+  formAnswers   Json?
+  /// Full Graph API lead response, kept for forensics / re-mapping.
+  rawPayload    Json?
+  /// Meta's `created_time` for the submission.
+  metaCreatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([campaignId])
+  @@index([formId])
+  @@map("lead_meta_submissions")
+  @@schema("crm")
 }
 
 /// Bulk lead upload from CSV/Excel. Each upload creates one batch row.

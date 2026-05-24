@@ -21,6 +21,7 @@ import { CountriesModule } from './modules/countries/countries.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { LeadImportsModule } from './modules/lead-imports/lead-imports.module';
+import { MetaLeadsModule } from './modules/meta-leads/meta-leads.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { CasesModule } from './modules/cases/cases.module';
@@ -63,6 +64,7 @@ import { AgreementsModule } from './modules/agreements/agreements.module';
     PartnersModule,
     LeadsModule,
     LeadImportsModule,
+    MetaLeadsModule,
     ClientsModule,
     AppointmentsModule,
     CasesModule,

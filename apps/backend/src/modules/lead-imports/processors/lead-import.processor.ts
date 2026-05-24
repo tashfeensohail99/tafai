@@ -4,6 +4,7 @@ import type { Job } from 'bullmq';
 import { LeadImportRowOutcome, LeadImportStatus, LeadStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
+import { LeadAssignmentService } from '../../lead-assignment/lead-assignment.service';
 import { generateLeadReferenceCode } from '../../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../../common/phone/phone.util';
 import { parseSpreadsheet } from '../parsers/spreadsheet-parser';
@@ -50,6 +51,7 @@ export class LeadImportProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly leadAssignment: LeadAssignmentService,
   ) {
     super();
   }
@@ -287,47 +289,12 @@ export class LeadImportProcessor extends WorkerHost {
   }
 
   /**
-   * Pick the next round-robin agent.
-   *
-   * Eligibility matches the WhatsApp assignment engine (employee.isActive,
-   * whatsappInboxMember, user.status=ACTIVE, deletedAt IS NULL) so a CSV
-   * import and a live WhatsApp inbound use the same agent pool.
-   *
-   * If `selectedAgentIds` is non-empty, the eligible set is further
-   * restricted to those ids — lets admin run a targeted import to a
-   * specific sub-team (e.g. only the UK-visa specialists).
-   *
-   * Uses Organization.rrCursorEmployeeId so distribution is continuous
-   * across imports + WhatsApp chats. Returns null if no eligible agent
-   * exists — caller stores the lead as unassigned in that case.
+   * Pick the next round-robin agent. Delegates to the shared
+   * LeadAssignmentService so CSV imports, Meta Lead Forms, and live WhatsApp
+   * all advance the same Organization.rrCursorEmployeeId cursor (fair overall
+   * distribution). `selectedAgentIds` restricts the pool to a sub-team.
    */
   private async pickNextAgent(selectedAgentIds: string[]): Promise<string | null> {
-    return this.prisma.$transaction(async (tx) => {
-      const eligible = await tx.employee.findMany({
-        where: {
-          isActive: true,
-          whatsappInboxMember: true,
-          deletedAt: null,
-          user: { status: 'ACTIVE' },
-          ...(selectedAgentIds.length > 0 ? { id: { in: selectedAgentIds } } : {}),
-        },
-        orderBy: { id: 'asc' },
-        select: { id: true },
-      });
-      if (eligible.length === 0) return null;
-
-      const org = await tx.organization.findFirst({ orderBy: { createdAt: 'asc' } });
-      if (!org) return eligible[0]!.id;
-
-      const cursor = org.rrCursorEmployeeId;
-      const next = cursor ? eligible.find((e) => e.id > cursor) : eligible[0];
-      const pick = next ?? eligible[0]!;
-
-      await tx.organization.update({
-        where: { id: org.id },
-        data: { rrCursorEmployeeId: pick.id },
-      });
-      return pick.id;
-    });
+    return this.leadAssignment.pickNextAgent(selectedAgentIds);
   }
 }

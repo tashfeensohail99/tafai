@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   CheckCircle2,
+  ChevronDown,
   Download,
   Loader2,
   Megaphone,
@@ -10,6 +11,7 @@ import {
   Pencil,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   UserPlus,
   Users,
@@ -173,6 +175,7 @@ export default function LeadsPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showAllAds, setShowAllAds] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const debFilters = useDebounced(filters, 250);
   const tableRef = useRef<HTMLDivElement>(null);
@@ -275,11 +278,6 @@ export default function LeadsPage() {
     ? ads.find((a) => a.sourceId === filters.adSourceId) ?? null
     : null;
 
-  const activeFilterCount = useMemo(
-    () => Object.keys(filters).filter((k) => filters[k as keyof LeadFilters] !== undefined).length,
-    [filters],
-  );
-
   async function handleDelete(lead: AdminLead) {
     if (
       !window.confirm(
@@ -349,6 +347,27 @@ export default function LeadsPage() {
 
   const maxAdLeads = Math.max(1, ...ads.map((a) => a.leads));
   const visibleAds = showAllAds ? ads : ads.slice(0, 6);
+
+  const employeeName = (id: string) => {
+    const e = employees.find((x) => x.id === id);
+    return e ? `${e.firstName} ${e.lastName}`.trim() : 'Agent';
+  };
+
+  // Active filter chips (everything except free-text search + the ad, which
+  // gets its own labelled chip). Keeps the applied filters visible after the
+  // panel is collapsed and lets each one be cleared individually.
+  const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+  if (filters.status) chips.push({ key: 'status', label: `Status: ${statusLabel(filters.status)}`, onClear: () => setFilter('status', '') });
+  if (filters.sourceChannel) chips.push({ key: 'sourceChannel', label: `Source: ${filters.sourceChannel}`, onClear: () => setFilter('sourceChannel', '') });
+  if (filters.serviceInterest) chips.push({ key: 'serviceInterest', label: `Service: ${filters.serviceInterest}`, onClear: () => setFilter('serviceInterest', '') });
+  if (filters.targetCountry) chips.push({ key: 'targetCountry', label: `Country: ${filters.targetCountry}`, onClear: () => setFilter('targetCountry', '') });
+  if (filters.assignedEmployeeId) chips.push({ key: 'assignedEmployeeId', label: `Agent: ${employeeName(filters.assignedEmployeeId)}`, onClear: () => setFilter('assignedEmployeeId', '') });
+  if (filters.createdFrom) chips.push({ key: 'createdFrom', label: `From ${filters.createdFrom}`, onClear: () => setFilter('createdFrom', '') });
+  if (filters.createdTo) chips.push({ key: 'createdTo', label: `To ${filters.createdTo}`, onClear: () => setFilter('createdTo', '') });
+  if (filters.fromAd && !filters.adSourceId) chips.push({ key: 'fromAd', label: 'From ads', onClear: () => setFilter('fromAd', '') });
+
+  const advancedCount = chips.length + (activeAd ? 1 : 0);
+  const anyActive = advancedCount > 0 || !!filters.search;
 
   const kpis: Array<{ label: string; value: number; hint?: string; delta?: string; tone: MetricTone; Icon: typeof Users }> =
     stats
@@ -499,122 +518,156 @@ export default function LeadsPage() {
         )}
       </GlassCard>
 
-      {/* ── Filter bar ───────────────────────────────────────────────────── */}
+      {/* ── Search + smart filters ───────────────────────────────────────── */}
       <GlassCard variant="default">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <FormInput
-            label="Search"
-            placeholder="Name, email or phone…"
-            iconLeft={<Search size={15} />}
-            value={filters.search ?? ''}
-            onChange={(e) => setFilter('search', e.target.value)}
-          />
-          <FormSelect
-            label="Status"
-            value={filters.status ?? ''}
-            onChange={(e) => setFilter('status', e.target.value)}
-            options={[{ value: '', label: 'All statuses' }, ...LEAD_STATUSES.map(([v, l]) => ({ value: v, label: l }))]}
-          />
-          <FormSelect
-            label="Source"
-            value={filters.sourceChannel ?? ''}
-            onChange={(e) => setFilter('sourceChannel', e.target.value)}
-            options={[{ value: '', label: 'All sources' }, ...facets.sources.map((s) => ({ value: s, label: s }))]}
-          />
-          <FormSelect
-            label="Service"
-            value={filters.serviceInterest ?? ''}
-            onChange={(e) => setFilter('serviceInterest', e.target.value)}
-            options={[{ value: '', label: 'All services' }, ...facets.services.map((s) => ({ value: s, label: s }))]}
-          />
-          <FormSelect
-            label="Target country"
-            value={filters.targetCountry ?? ''}
-            onChange={(e) => setFilter('targetCountry', e.target.value)}
-            options={[{ value: '', label: 'All countries' }, ...facets.countries.map((c) => ({ value: c, label: c }))]}
-          />
-          <FormSelect
-            label="Assigned agent"
-            value={filters.assignedEmployeeId ?? ''}
-            onChange={(e) => setFilter('assignedEmployeeId', e.target.value)}
-            options={[
-              { value: '', label: 'All agents' },
-              ...employees.map((emp) => ({ value: emp.id, label: `${emp.firstName} ${emp.lastName}`.trim() })),
-            ]}
-          />
-          <FormInput
-            label="Created from"
-            type="date"
-            value={filters.createdFrom ?? ''}
-            onChange={(e) => setFilter('createdFrom', e.target.value)}
-          />
-          <FormInput
-            label="Created to"
-            type="date"
-            value={filters.createdTo ?? ''}
-            onChange={(e) => setFilter('createdTo', e.target.value)}
-          />
-        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <FormInput
+              placeholder="Search by name, email or phone…"
+              iconLeft={<Search size={16} />}
+              value={filters.search ?? ''}
+              onChange={(e) => setFilter('search', e.target.value)}
+            />
+          </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-          <label
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((v) => !v)}
+            aria-expanded={filtersOpen}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 8,
-              padding: '7px 12px',
-              borderRadius: 'var(--sos-radius-pill)',
-              border: `1px solid ${filters.fromAd ? 'var(--sos-brand-accent-border)' : 'var(--sos-border-subtle)'}`,
-              background: filters.fromAd ? 'var(--sos-brand-accent-soft)' : 'transparent',
-              color: filters.fromAd ? 'var(--sos-brand-accent)' : 'var(--sos-text-secondary)',
+              height: 42,
+              padding: '0 14px',
+              borderRadius: 'var(--sos-radius-input)',
+              border: `1px solid ${filtersOpen || advancedCount ? 'var(--sos-brand-primary-border)' : 'var(--sos-border)'}`,
+              background: filtersOpen || advancedCount ? 'var(--sos-brand-primary-soft)' : 'var(--sos-bg-input)',
+              color: filtersOpen || advancedCount ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)',
               cursor: 'pointer',
-              fontSize: 13,
-              fontWeight: 500,
+              fontSize: 13.5,
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
             }}
           >
-            <input
-              type="checkbox"
-              checked={!!filters.fromAd}
-              onChange={(e) => setFilter('fromAd', e.target.checked ? true : '')}
-              style={{ accentColor: 'var(--sos-brand-accent)' }}
-            />
-            <Megaphone size={14} /> From ads only
-          </label>
-
-          {activeAd ? (
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '6px 8px 6px 12px',
-                borderRadius: 'var(--sos-radius-pill)',
-                background: 'var(--sos-brand-primary-soft)',
-                color: 'var(--sos-brand-primary-strong)',
-                border: '1px solid var(--sos-brand-primary-border)',
-                fontSize: 12.5,
-                fontWeight: 600,
-                maxWidth: 360,
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Ad: {adName(activeAd)}</span>
-              <button onClick={clearAd} aria-label="Clear ad filter" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'inline-flex' }}>
-                <X size={14} />
-              </button>
-            </span>
-          ) : null}
+            <SlidersHorizontal size={16} />
+            Filters
+            {advancedCount > 0 ? (
+              <span style={{ display: 'inline-grid', placeItems: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: 'var(--sos-brand-primary)', color: 'var(--sos-text-on-accent)', fontSize: 11, fontWeight: 700 }}>
+                {advancedCount}
+              </span>
+            ) : null}
+            <ChevronDown size={15} style={{ transform: filtersOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }} />
+          </button>
 
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
             <span className="sos-text-faint" style={{ fontSize: 12 }}>
               {tableLoading ? 'Loading…' : `${fmtNum(rows.length)} lead${rows.length === 1 ? '' : 's'}`}
             </span>
-            {activeFilterCount > 0 ? (
+            {anyActive ? (
               <GhostButton size="sm" onClick={() => setFilters({})} iconLeft={<RotateCcw size={14} />}>
-                Reset filters
+                Reset
               </GhostButton>
             ) : null}
           </span>
         </div>
+
+        {/* Applied filters — visible even when the panel is collapsed. */}
+        {chips.length > 0 || activeAd ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+            {activeAd ? (
+              <span style={chipStyle(true)}>
+                <Megaphone size={12} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240 }}>Ad: {adName(activeAd)}</span>
+                <button onClick={clearAd} aria-label="Clear ad filter" style={chipClearStyle}><X size={13} /></button>
+              </span>
+            ) : null}
+            {chips.map((c) => (
+              <span key={c.key} style={chipStyle(false)}>
+                {c.label}
+                <button onClick={c.onClear} aria-label={`Clear ${c.label}`} style={chipClearStyle}><X size={13} /></button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        {/* Collapsible advanced filter panel. */}
+        {filtersOpen ? (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--sos-border-subtle)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+              <FormSelect
+                label="Status"
+                value={filters.status ?? ''}
+                onChange={(e) => setFilter('status', e.target.value)}
+                options={[{ value: '', label: 'All statuses' }, ...LEAD_STATUSES.map(([v, l]) => ({ value: v, label: l }))]}
+              />
+              <FormSelect
+                label="Source"
+                value={filters.sourceChannel ?? ''}
+                onChange={(e) => setFilter('sourceChannel', e.target.value)}
+                options={[{ value: '', label: 'All sources' }, ...facets.sources.map((s) => ({ value: s, label: s }))]}
+              />
+              <FormSelect
+                label="Service"
+                value={filters.serviceInterest ?? ''}
+                onChange={(e) => setFilter('serviceInterest', e.target.value)}
+                options={[{ value: '', label: 'All services' }, ...facets.services.map((s) => ({ value: s, label: s }))]}
+              />
+              <FormSelect
+                label="Target country"
+                value={filters.targetCountry ?? ''}
+                onChange={(e) => setFilter('targetCountry', e.target.value)}
+                options={[{ value: '', label: 'All countries' }, ...facets.countries.map((c) => ({ value: c, label: c }))]}
+              />
+              <FormSelect
+                label="Assigned agent"
+                value={filters.assignedEmployeeId ?? ''}
+                onChange={(e) => setFilter('assignedEmployeeId', e.target.value)}
+                options={[
+                  { value: '', label: 'All agents' },
+                  ...employees.map((emp) => ({ value: emp.id, label: `${emp.firstName} ${emp.lastName}`.trim() })),
+                ]}
+              />
+              <FormInput
+                label="Created from"
+                type="date"
+                value={filters.createdFrom ?? ''}
+                onChange={(e) => setFilter('createdFrom', e.target.value)}
+              />
+              <FormInput
+                label="Created to"
+                type="date"
+                value={filters.createdTo ?? ''}
+                onChange={(e) => setFilter('createdTo', e.target.value)}
+              />
+            </div>
+
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                marginTop: 12,
+                padding: '7px 12px',
+                borderRadius: 'var(--sos-radius-pill)',
+                border: `1px solid ${filters.fromAd ? 'var(--sos-brand-accent-border)' : 'var(--sos-border-subtle)'}`,
+                background: filters.fromAd ? 'var(--sos-brand-accent-soft)' : 'transparent',
+                color: filters.fromAd ? 'var(--sos-brand-accent)' : 'var(--sos-text-secondary)',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 500,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={!!filters.fromAd}
+                onChange={(e) => { if (!e.target.checked) clearAd(); else setFilter('fromAd', true); }}
+                style={{ accentColor: 'var(--sos-brand-accent)' }}
+              />
+              <Megaphone size={14} /> From ads only
+            </label>
+          </div>
+        ) : null}
       </GlassCard>
 
       {/* ── Bulk action bar ──────────────────────────────────────────────── */}
@@ -787,4 +840,29 @@ const iconBtn: CSSProperties = {
   background: 'var(--sos-surface-2)',
   color: 'var(--sos-text-secondary)',
   cursor: 'pointer',
+};
+
+function chipStyle(primary: boolean): CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 6px 5px 12px',
+    borderRadius: 'var(--sos-radius-pill)',
+    background: primary ? 'var(--sos-brand-primary-soft)' : 'var(--sos-surface-2)',
+    color: primary ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)',
+    border: `1px solid ${primary ? 'var(--sos-brand-primary-border)' : 'var(--sos-border-subtle)'}`,
+    fontSize: 12.5,
+    fontWeight: 600,
+  };
+}
+
+const chipClearStyle: CSSProperties = {
+  background: 'none',
+  border: 'none',
+  color: 'inherit',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  padding: 2,
+  borderRadius: 6,
 };

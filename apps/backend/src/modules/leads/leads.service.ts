@@ -176,16 +176,34 @@ export class LeadsService {
         converted: number;
       }>
     >(Prisma.sql`
-      SELECT t."adReferral"->>'source_id'   AS "sourceId",
-             t."adReferral"->>'headline'    AS headline,
-             t."adReferral"->>'source_type' AS "sourceType",
-             t."adReferral"->>'source_url'  AS "sourceUrl",
-             count(*)::int AS leads,
-             count(*) FILTER (WHERE l.status::text IN ('CONTACTED','QUALIFIED','PROPOSAL_SENT','FOLLOW_UP','CONVERTED'))::int AS contacted,
-             count(*) FILTER (WHERE l.status::text = 'CONVERTED')::int AS converted
-      FROM crm.leads l JOIN whatsapp.threads t ON t."leadId" = l.id
-      WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
-      GROUP BY 1, 2, 3, 4
+      SELECT mode() WITHIN GROUP (ORDER BY sub.source_id)   AS "sourceId",
+             mode() WITHIN GROUP (ORDER BY sub.headline)    AS headline,
+             mode() WITHIN GROUP (ORDER BY sub.source_type) AS "sourceType",
+             mode() WITHIN GROUP (ORDER BY sub.source_url)  AS "sourceUrl",
+             count(DISTINCT sub.lead_id)::int AS leads,
+             (count(DISTINCT sub.lead_id) FILTER (WHERE sub.status IN ('CONTACTED','QUALIFIED','PROPOSAL_SENT','FOLLOW_UP','CONVERTED')))::int AS contacted,
+             (count(DISTINCT sub.lead_id) FILTER (WHERE sub.status = 'CONVERTED'))::int AS converted
+      FROM (
+        SELECT l.id AS lead_id,
+               l.status::text AS status,
+               t."adReferral"->>'source_id'   AS source_id,
+               t."adReferral"->>'headline'    AS headline,
+               t."adReferral"->>'source_type' AS source_type,
+               t."adReferral"->>'source_url'  AS source_url,
+               -- Collapse every row for one ad together. source_id is the
+               -- stable Meta ad identifier; only when it's absent do we fall
+               -- back to the headline (then a single "unknown" bucket) so the
+               -- same ad never fragments across source_url / source_type drift.
+               COALESCE(
+                 t."adReferral"->>'source_id',
+                 t."adReferral"->>'headline',
+                 'unknown'
+               ) AS grp
+        FROM crm.leads l
+        JOIN whatsapp.threads t ON t."leadId" = l.id
+        WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
+      ) sub
+      GROUP BY sub.grp
       ORDER BY leads DESC`);
     return rows.map((r) => ({
       sourceId: r.sourceId,

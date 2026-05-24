@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   CheckCircle2,
   Download,
@@ -175,6 +175,14 @@ export default function LeadsPage() {
   const [showAllAds, setShowAllAds] = useState(false);
 
   const debFilters = useDebounced(filters, 250);
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  function selectAd(row: AdPerformanceRow) {
+    if (!row.sourceId) return;
+    setFilters((f) => ({ ...f, fromAd: true, adSourceId: row.sourceId! }));
+    // Let the filter chip render, then bring the (now filtered) table into view.
+    setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  }
 
   // ── Boot: KPIs, ad leaderboard, agent options, filter facets ──────────────
   useEffect(() => {
@@ -447,7 +455,7 @@ export default function LeadsPage() {
                     return (
                       <tr
                         key={`${row.sourceId ?? 'none'}-${i}`}
-                        onClick={() => clickable && setFilters((f) => ({ ...f, fromAd: true, adSourceId: row.sourceId! }))}
+                        onClick={() => selectAd(row)}
                         style={{
                           cursor: clickable ? 'pointer' : 'default',
                           background: active ? 'var(--sos-brand-accent-soft)' : undefined,
@@ -630,6 +638,7 @@ export default function LeadsPage() {
       ) : null}
 
       {/* ── Leads table ──────────────────────────────────────────────────── */}
+      <div ref={tableRef} style={{ scrollMarginTop: 12 }}>
       <GlassCard variant="default" padded={false}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
@@ -755,6 +764,7 @@ export default function LeadsPage() {
           </table>
         </div>
       </GlassCard>
+      </div>
 
       <EditLeadModal
         open={editLead !== null}

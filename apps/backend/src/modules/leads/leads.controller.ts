@@ -59,6 +59,20 @@ export class LeadsController {
     return this.leadsService.myStats(user.id);
   }
 
+  /** KPI summary for the admin leads dashboard (total, by status, from ads). */
+  @Get('stats')
+  @RequirePermissions('leads.view_all')
+  stats() {
+    return this.leadsService.getStats();
+  }
+
+  /** Per-ad lead leaderboard (Click-to-WhatsApp attribution → funnel). */
+  @Get('ad-performance')
+  @RequirePermissions('leads.view_all')
+  adPerformance() {
+    return this.leadsService.getAdPerformance();
+  }
+
   /**
    * Stream a CSV of every lead the caller can see. Uses the same filtering as
    * GET / so admins get everything and agents get their own book.

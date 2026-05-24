@@ -52,6 +52,40 @@ export class ListLeadsQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   fromCsv?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  serviceInterest?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  targetCountry?: string;
+
+  /** ISO date — filters leads created on/after. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  createdFrom?: string;
+
+  /** ISO date — filters leads created on/before (inclusive of that day). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  createdTo?: string;
+
+  /** Only leads that arrived via a Click-to-WhatsApp ad. */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  fromAd?: boolean;
+
+  /** Restrict to one ad (Meta source_id from the leaderboard). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  adSourceId?: string;
 }
 
 export class CreateLeadDto {

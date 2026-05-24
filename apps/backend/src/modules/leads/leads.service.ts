@@ -29,43 +29,48 @@ export class LeadsService {
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
     const canViewAll = user.permissions.includes('leads.view_all');
 
+    const where: Prisma.LeadWhereInput = {
+      deletedAt: null,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
+      ...(query.branchId ? { branchId: query.branchId } : {}),
+      ...(query.sourceChannel ? { sourceChannel: { equals: query.sourceChannel, mode: 'insensitive' } } : {}),
+      ...(query.serviceInterest ? { serviceInterest: { equals: query.serviceInterest, mode: 'insensitive' } } : {}),
+      ...(query.targetCountry ? { targetCountry: { equals: query.targetCountry, mode: 'insensitive' } } : {}),
+      ...this.createdRange(query),
+      // CSV-origin filter: lead has at least one import-row with a
+      // successful (IMPORTED or DUPLICATE) outcome.
+      ...(query.fromCsv
+        ? { importRows: { some: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } } } }
+        : {}),
+      ...(!canViewAll
+        ? {
+            OR: [
+              { assignedEmployee: { userId: user.id } },
+              { createdByUserId: user.id },
+            ],
+          }
+        : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { firstName: { contains: query.search, mode: 'insensitive' } },
+              { lastName: { contains: query.search, mode: 'insensitive' } },
+              { email: { contains: query.search, mode: 'insensitive' } },
+              { phone: { contains: query.search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    // Ad filters require a join through the WhatsApp thread's JSON referral —
+    // resolve the matching lead ids first, then constrain the query.
+    if (query.fromAd || query.adSourceId) {
+      where.id = { in: await this.adLeadIds(query.adSourceId) };
+    }
+
     return this.prisma.lead.findMany({
-      where: {
-        deletedAt: null,
-        ...(query.status ? { status: query.status } : {}),
-        ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
-        ...(query.branchId ? { branchId: query.branchId } : {}),
-        ...(query.sourceChannel ? { sourceChannel: query.sourceChannel } : {}),
-        // CSV-origin filter: lead has at least one import-row with a
-        // successful (IMPORTED or DUPLICATE) outcome. DUPLICATE counts
-        // because the row matched a pre-existing lead and recorded the
-        // CSV touch — that lead has been "uploaded via CSV" too.
-        ...(query.fromCsv
-          ? {
-              importRows: {
-                some: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
-              },
-            }
-          : {}),
-        ...(!canViewAll
-          ? {
-              OR: [
-                { assignedEmployee: { userId: user.id } },
-                { createdByUserId: user.id },
-              ],
-            }
-          : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { firstName: { contains: query.search, mode: 'insensitive' } },
-                { lastName: { contains: query.search, mode: 'insensitive' } },
-                { email: { contains: query.search, mode: 'insensitive' } },
-                { phone: { contains: query.search, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
+      where,
       include: {
         assignedEmployee: {
           select: { id: true, firstName: true, lastName: true },
@@ -94,6 +99,103 @@ export class LeadsService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  private createdRange(query: ListLeadsQueryDto): Prisma.LeadWhereInput {
+    if (!query.createdFrom && !query.createdTo) return {};
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (query.createdFrom) createdAt.gte = new Date(query.createdFrom);
+    if (query.createdTo) {
+      const to = new Date(query.createdTo);
+      to.setHours(23, 59, 59, 999);
+      createdAt.lte = to;
+    }
+    return { createdAt };
+  }
+
+  /** Lead ids that arrived via a Click-to-WhatsApp ad (optionally one ad). */
+  private async adLeadIds(adSourceId?: string): Promise<string[]> {
+    const filter = adSourceId
+      ? Prisma.sql`AND t."adReferral"->>'source_id' = ${adSourceId}`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT l.id FROM crm.leads l
+      JOIN whatsapp.threads t ON t."leadId" = l.id
+      WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL ${filter}
+    `);
+    return rows.map((r) => r.id);
+  }
+
+  /** KPI summary for the admin leads dashboard. */
+  async getStats() {
+    const byStatusRows = await this.prisma.$queryRaw<Array<{ status: string; n: number }>>(Prisma.sql`
+      SELECT status::text AS status, count(*)::int AS n
+      FROM crm.leads WHERE "deletedAt" IS NULL GROUP BY status`);
+    const byStatus: Record<string, number> = {};
+    let total = 0;
+    for (const r of byStatusRows) {
+      byStatus[r.status] = Number(r.n);
+      total += Number(r.n);
+    }
+
+    const fromAdsRows = await this.prisma.$queryRaw<Array<{ n: number }>>(Prisma.sql`
+      SELECT count(DISTINCT l.id)::int AS n FROM crm.leads l
+      JOIN whatsapp.threads t ON t."leadId" = l.id
+      WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL`);
+    const fromAds = Number(fromAdsRows[0]?.n ?? 0);
+
+    const recentRows = await this.prisma.$queryRaw<Array<{ d: string; n: number }>>(Prisma.sql`
+      SELECT to_char(date_trunc('day', "createdAt"), 'YYYY-MM-DD') AS d, count(*)::int AS n
+      FROM crm.leads WHERE "deletedAt" IS NULL AND "createdAt" >= now() - interval '14 days'
+      GROUP BY 1 ORDER BY 1`);
+    const recent = recentRows.map((r) => ({ date: r.d, count: Number(r.n) }));
+
+    const converted = byStatus['CONVERTED'] ?? 0;
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      total,
+      byStatus,
+      converted,
+      conversionRate: total ? Math.round((converted / total) * 1000) / 10 : 0,
+      fromAds,
+      newToday: recent.find((r) => r.date === today)?.count ?? 0,
+      recent,
+    };
+  }
+
+  /** Per-ad leaderboard: Click-to-WhatsApp attribution → lead funnel. */
+  async getAdPerformance() {
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        sourceId: string | null;
+        headline: string | null;
+        sourceType: string | null;
+        sourceUrl: string | null;
+        leads: number;
+        contacted: number;
+        converted: number;
+      }>
+    >(Prisma.sql`
+      SELECT t."adReferral"->>'source_id'   AS "sourceId",
+             t."adReferral"->>'headline'    AS headline,
+             t."adReferral"->>'source_type' AS "sourceType",
+             t."adReferral"->>'source_url'  AS "sourceUrl",
+             count(*)::int AS leads,
+             count(*) FILTER (WHERE l.status::text IN ('CONTACTED','QUALIFIED','PROPOSAL_SENT','FOLLOW_UP','CONVERTED'))::int AS contacted,
+             count(*) FILTER (WHERE l.status::text = 'CONVERTED')::int AS converted
+      FROM crm.leads l JOIN whatsapp.threads t ON t."leadId" = l.id
+      WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
+      GROUP BY 1, 2, 3, 4
+      ORDER BY leads DESC`);
+    return rows.map((r) => ({
+      sourceId: r.sourceId,
+      headline: r.headline,
+      sourceType: r.sourceType,
+      sourceUrl: r.sourceUrl,
+      leads: Number(r.leads),
+      contacted: Number(r.contacted),
+      converted: Number(r.converted),
+    }));
   }
 
   async findByIdAccessible(id: string, user: RequestUser) {

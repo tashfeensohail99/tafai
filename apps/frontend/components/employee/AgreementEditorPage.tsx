@@ -5,8 +5,10 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  ChevronDown,
   Eye,
   FileText,
+  MessageSquare,
   Pencil,
   Plus,
   RotateCcw,
@@ -80,6 +82,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [salesNotes, setSalesNotes] = useState('');
   const [showMore, setShowMore] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   // document edit mode
   const [manual, setManual] = useState(false);
@@ -272,8 +275,95 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
         ) : null}
         {error ? <div className="sos-banner sos-banner--danger" style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}><AlertTriangle size={16} /> {error}</div> : null}
         {notice && !error ? <div className="sos-banner sos-banner--success" style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}><CheckCircle2 size={16} /> {notice}</div> : null}
-        {data.financeNotes ? <div className="sos-banner sos-banner--warning" style={{ marginTop: 10 }}>Finance note: {data.financeNotes}</div> : null}
       </GlassCard>
+
+      {/* Finance review — bounce-back note + discussion thread */}
+      {(data.status === 'CHANGES_REQUESTED' && data.financeNotes) || data.events.length > 0 ? (
+        <GlassCard variant="default" padded={false}>
+          {data.status === 'CHANGES_REQUESTED' && data.financeNotes ? (
+            <div
+              style={{
+                padding: '14px 18px',
+                borderBottom: data.events.length > 0 ? '1px solid var(--sos-border-subtle)' : undefined,
+                display: 'flex',
+                gap: 10,
+                alignItems: 'flex-start',
+                background: 'var(--sos-status-warning-soft)',
+              }}
+            >
+              <AlertTriangle size={18} style={{ color: 'var(--sos-status-warning)', flexShrink: 0, marginTop: 1 }} />
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--sos-text-primary)' }}>
+                  Finance requested changes
+                </div>
+                <div className="sos-text-secondary" style={{ fontSize: 13, marginTop: 3, whiteSpace: 'pre-wrap' }}>
+                  {data.financeNotes}
+                </div>
+                <div className="sos-text-faint" style={{ fontSize: 12, marginTop: 6 }}>
+                  Update the agreement below, then <strong>Submit to Finance</strong> again. Use “Notes for Finance”
+                  to reply with what you changed.
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {data.events.length > 0 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowHistory((v) => !v)}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '12px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  color: 'var(--sos-text-secondary)',
+                }}
+              >
+                <MessageSquare size={15} />
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+                  Review history &amp; discussion ({data.events.length})
+                </span>
+                <ChevronDown
+                  size={15}
+                  style={{ marginLeft: 'auto', transform: showHistory ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }}
+                />
+              </button>
+              {showHistory ? (
+                <div style={{ borderTop: '1px solid var(--sos-border-subtle)' }}>
+                  {data.events.map((ev) => (
+                    <div
+                      key={ev.id}
+                      style={{
+                        padding: '10px 18px',
+                        borderBottom: '1px solid var(--sos-border-subtle)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                      }}
+                    >
+                      <span style={{ fontSize: 13, color: 'var(--sos-text-secondary)' }}>
+                        <strong style={{ fontFamily: 'monospace', fontSize: 11, marginRight: 8, color: 'var(--sos-text-faint)' }}>
+                          {ev.type}
+                        </strong>
+                        {ev.summary}
+                      </span>
+                      <span className="sos-text-faint" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                        {new Date(ev.createdAt).toLocaleString('en-GB')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </GlassCard>
+      ) : null}
 
       {/* Studio: form (left) + live preview (right) */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -355,7 +445,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
             </div>
 
             <div style={{ marginTop: 14 }}>
-              <label className="sos-label">Sales notes (internal)</label>
+              <label className="sos-label">Notes for Finance (shown during review · not shown to client)</label>
               <textarea className="sos-textarea" value={salesNotes} disabled={!editable}
                 onChange={(e) => { setSalesNotes(e.target.value); touch(); }} style={{ width: '100%', minHeight: 60 }} />
             </div>

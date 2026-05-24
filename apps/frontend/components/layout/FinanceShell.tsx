@@ -18,7 +18,6 @@ import {
   Search,
   Send,
   Sparkles,
-  Wallet,
   X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -33,13 +32,6 @@ import {
 import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/DrawerMenu';
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
-import {
-  collectedToday,
-  countByStatus,
-  fmtAmount,
-  readyForProcessingCount,
-  verifiedTodayCount,
-} from '@/components/finance-v1/mockData';
 import { logout as sessionLogout, useSession } from '@/lib/session';
 import { fetchAgreementReviewCounts } from '@/lib/agreements';
 
@@ -159,14 +151,6 @@ export function FinanceShell({ children }: { children: ReactNode }) {
     it.href === '/finance/agreements' && reviewCount ? { ...it, badge: reviewCount } : it,
   );
 
-  // Mini-panel data for the sidebar
-  const collected = collectedToday();
-  const verifiedCount = verifiedTodayCount();
-  const readyCount = readyForProcessingCount();
-  const newFromSales = countByStatus('NEW_FROM_SALES');
-  const dailyTarget = 15;
-  const progressPct = Math.min(100, Math.round((verifiedCount / dailyTarget) * 100));
-
   return (
     <FinanceSessionContext.Provider value={{ user, refreshUser: async () => {}, logout }}>
       <div className="sos-shell">
@@ -201,86 +185,6 @@ export function FinanceShell({ children }: { children: ReactNode }) {
           <div className="sos-sidebar__nav sos-scroll">
             <div className="sos-nav-section">Workspace</div>
             <DrawerMenu items={navItems} onNavigate={() => setMobileOpen(false)} />
-
-            <div className="sos-nav-section" style={{ marginTop: '12px' }}>
-              Today
-            </div>
-            <div className="sos-sidebar__panel">
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '12.5px',
-                  fontWeight: 600,
-                  color: 'var(--sos-sidebar-text-strong)',
-                }}
-              >
-                <Wallet size={14} style={{ color: 'var(--sos-brand-accent)' }} />
-                Collected today
-              </div>
-              <div
-                style={{
-                  marginTop: '6px',
-                  fontSize: '20px',
-                  fontWeight: 700,
-                  letterSpacing: '-0.02em',
-                  color: 'var(--sos-sidebar-text-strong)',
-                }}
-              >
-                {fmtAmount(collected.amount, collected.currency)}
-              </div>
-              <div
-                style={{
-                  fontSize: '11px',
-                  color: 'var(--sos-sidebar-text-muted)',
-                  marginTop: '2px',
-                }}
-              >
-                {verifiedCount} of {dailyTarget} verified
-              </div>
-              <div
-                style={{
-                  marginTop: '10px',
-                  height: '6px',
-                  background: 'var(--sos-sidebar-progress-bg)',
-                  borderRadius: '999px',
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    width: progressPct + '%',
-                    height: '100%',
-                    background: 'var(--sos-brand-gradient)',
-                    borderRadius: '999px',
-                  }}
-                />
-              </div>
-              <div
-                style={{
-                  marginTop: '10px',
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: '8px',
-                  fontSize: '11px',
-                  color: 'var(--sos-sidebar-text-muted)',
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 700, color: 'var(--sos-sidebar-text-strong)' }}>
-                    {newFromSales}
-                  </div>
-                  <div>New from Sales</div>
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, color: 'var(--sos-sidebar-text-strong)' }}>
-                    {readyCount}
-                  </div>
-                  <div>Ready to send</div>
-                </div>
-              </div>
-            </div>
           </div>
 
           <div className="sos-sidebar__user">

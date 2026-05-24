@@ -572,7 +572,7 @@ export class AgreementsService {
     return { ...agreement, template, lead, events };
   }
 
-  list(query: ListAgreementsQueryDto, userId: string, canViewAll: boolean) {
+  async list(query: ListAgreementsQueryDto, userId: string, canViewAll: boolean) {
     const where: Prisma.AgreementWhereInput = { deletedAt: null };
     if (!canViewAll || query.mine) where.createdByUserId = userId;
     if (query.status && this.isStatus(query.status)) where.status = query.status;
@@ -582,7 +582,7 @@ export class AgreementsService {
       where.agreementNumber = { contains: query.search.trim(), mode: 'insensitive' };
     }
 
-    return this.prisma.agreement.findMany({
+    const rows = await this.prisma.agreement.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: 200,
@@ -602,9 +602,24 @@ export class AgreementsService {
         createdAt: true,
         updatedAt: true,
         submittedAt: true,
-        lead: { select: { firstName: true, lastName: true, referenceCode: true } },
       },
     });
+
+    // Attach the lead's name + reference code for the Applicant/Ref columns.
+    // Agreement has no Prisma `lead` relation (just a leadId column), so we
+    // resolve them in a second query and merge — a relation select would throw.
+    const leadIds = [...new Set(rows.map((r) => r.leadId).filter(Boolean))];
+    const leads = leadIds.length
+      ? await this.prisma.lead.findMany({
+          where: { id: { in: leadIds } },
+          select: { id: true, firstName: true, lastName: true, referenceCode: true },
+        })
+      : [];
+    const leadMap = new Map(leads.map((l) => [l.id, l]));
+    return rows.map((r) => ({
+      ...r,
+      lead: r.leadId ? leadMap.get(r.leadId) ?? null : null,
+    }));
   }
 
   async previewPdf(id: string): Promise<Buffer> {

@@ -9,7 +9,8 @@ export type LeadSource =
   | 'WEBSITE'
   | 'WHATSAPP'
   | 'REFERRAL'
-  | 'PHONE';
+  | 'PHONE'
+  | 'META_LEAD_FORM';
 
 export type AssignmentType = 'ADMIN' | 'AUTO_CRM';
 
@@ -134,6 +135,7 @@ export const SOURCE_LABEL: Record<LeadSource, string> = {
   WHATSAPP: 'WhatsApp',
   REFERRAL: 'Referral',
   PHONE: 'Phone Call',
+  META_LEAD_FORM: 'Meta Lead Form',
 };
 
 export const PRIORITY_LABEL: Record<Priority, string> = {
@@ -233,6 +235,8 @@ export function sourceBadgeClass(s: LeadSource): string {
       return 'sv-b-violet';
     case 'WHATSAPP':
       return 'sv-b-success';
+    case 'META_LEAD_FORM':
+      return 'sv-b-info';
     case 'REFERRAL':
       return 'sv-b-warning';
     case 'PHONE':

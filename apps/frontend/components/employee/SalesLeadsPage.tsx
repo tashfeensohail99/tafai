@@ -91,7 +91,7 @@ const STAGE_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'SENT_TO_FINANCE', label: 'Sent to Finance' },
 ];
 const PRIORITY_FILTER_OPTIONS = ['HIGH', 'MEDIUM', 'LOW'];
-const SOURCE_FILTER_OPTIONS = ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'WEBSITE', 'REFERRAL', 'PHONE', 'WALK_IN'];
+const SOURCE_FILTER_OPTIONS = ['WHATSAPP', 'META_LEAD_FORM', 'FACEBOOK', 'INSTAGRAM', 'WEBSITE', 'REFERRAL', 'PHONE', 'WALK_IN'];
 const SLA_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'ACTIVE', label: 'On time' },
   { value: 'UPCOMING', label: 'Upcoming' },
@@ -166,6 +166,7 @@ function sourceTone(s: LeadSource): BadgeTone {
     case 'INSTAGRAM': return 'pink';
     case 'WEBSITE': return 'violet';
     case 'WHATSAPP': return 'success';
+    case 'META_LEAD_FORM': return 'accent';
     case 'REFERRAL': return 'warning';
     case 'PHONE': return 'cyan';
     case 'WALK_IN':

@@ -152,6 +152,9 @@ function mapSource(ch: string | null | undefined): LeadSource {
     case 'REFERRAL':  return 'REFERRAL';
     case 'PHONE':     return 'PHONE';
     case 'WALK_IN':   return 'WALK_IN';
+    case 'META':
+    case 'META-LEAD-FORM':
+    case 'META_LEAD_FORM': return 'META_LEAD_FORM';
     default:          return 'PHONE';
   }
 }

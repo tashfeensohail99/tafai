@@ -261,6 +261,24 @@ export class AgreementsService {
     return updated;
   }
 
+  /** Soft-delete a draft so Sales can clean up unwanted drafts. Blocked once
+   *  the agreement is approved or has materialised a contract. */
+  async softDelete(id: string, userId: string) {
+    const a = await this.prisma.agreement.findFirst({ where: { id, deletedAt: null } });
+    if (!a) throw new NotFoundException('Agreement not found');
+    const finalised: AgreementStatus[] = [
+      AgreementStatus.APPROVED,
+      AgreementStatus.SENT,
+      AgreementStatus.SIGNED,
+    ];
+    if (a.serviceContractId || finalised.includes(a.status)) {
+      throw new ConflictException('This agreement is approved/finalised and cannot be deleted.');
+    }
+    await this.prisma.agreement.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.recordEvent(id, userId, 'DELETED', 'Agreement deleted', null, null);
+    return { ok: true };
+  }
+
   // ─── Finance review ──────────────────────────────────────────────────────
 
   /**

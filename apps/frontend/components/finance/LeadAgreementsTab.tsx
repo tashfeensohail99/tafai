@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import type { Route } from 'next';
-import { FilePlus2, FileText } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { FilePlus2, FileText, Pencil, Trash2 } from 'lucide-react';
 import {
   GlassCard,
   StatusBadge,
   PrimaryButton,
+  GhostButton,
+  ButtonLink,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
+  deleteAgreement,
   listAgreements,
   type AgreementStatus,
   type AgreementSummary,
@@ -40,13 +41,31 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
+    setLoading(true);
     listAgreements({ leadId })
       .then(setRows)
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load agreements'))
       .finally(() => setLoading(false));
   }, [leadId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const handleDelete = async (id: string, number: string) => {
+    if (!window.confirm(`Delete agreement ${number}? This can’t be undone.`)) return;
+    setDeletingId(id);
+    setError(null);
+    try {
+      await deleteAgreement(id);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <>
@@ -87,35 +106,47 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {rows.map((a) => (
-            <Link
-              key={a.id}
-              href={`/sales/agreements/${a.id}` as Route}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                padding: '12px 14px',
-                background: 'var(--sos-surface-1)',
-                borderRadius: 'var(--sos-radius-sm)',
-                border: '1px solid var(--sos-border-subtle)',
-                flexWrap: 'wrap',
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', fontFamily: 'monospace' }}>
-                  {a.agreementNumber}
-                </span>
-                <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
-                  {a.categoryKey} · {a.currency} {a.totalAmount}
-                </span>
+          {rows.map((a) => {
+            const locked = ['APPROVED', 'SENT', 'SIGNED'].includes(a.status);
+            return (
+              <div
+                key={a.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  padding: '12px 14px',
+                  background: 'var(--sos-surface-1)',
+                  borderRadius: 'var(--sos-radius-sm)',
+                  border: '1px solid var(--sos-border-subtle)',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 150 }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', fontFamily: 'monospace' }}>
+                    {a.agreementNumber}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                    {a.categoryKey} · {a.currency} {a.totalAmount}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <StatusBadge tone={STATUS_TONE[a.status]} size="sm" dot>
+                    {a.status.replace(/_/g, ' ').toLowerCase()}
+                  </StatusBadge>
+                  <ButtonLink href={`/sales/agreements/${a.id}`} variant="secondary" size="sm" iconLeft={<Pencil size={13} />}>
+                    {locked ? 'View' : 'Edit'}
+                  </ButtonLink>
+                  {!locked ? (
+                    <GhostButton size="sm" onClick={() => void handleDelete(a.id, a.agreementNumber)} disabled={deletingId === a.id} aria-label="Delete agreement">
+                      <Trash2 size={14} />
+                    </GhostButton>
+                  ) : null}
+                </div>
               </div>
-              <StatusBadge tone={STATUS_TONE[a.status]} size="sm" dot>
-                {a.status.replace(/_/g, ' ').toLowerCase()}
-              </StatusBadge>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       )}
       </GlassCard>

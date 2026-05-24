@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   Eye,
+  FileText,
   Pencil,
   Plus,
   RotateCcw,
@@ -409,6 +410,29 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
           </GlassCard>
         </div>
       </div>
+
+      {/* Closing action bar — generate the document / submit */}
+      <GlassCard variant="default">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12.5 }}>
+            {editable && validationError ? (
+              <span className="sos-text-secondary"><AlertTriangle size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{validationError}</span>
+            ) : (
+              <span style={{ color: 'var(--sos-status-success)', fontWeight: 600 }}><CheckCircle2 size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Generate the agreement PDF{editable ? ', then submit to Finance.' : '.'}</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <PrimaryButton iconLeft={<FileText size={15} />} onClick={handlePreview} disabled={busy !== null}>
+              {busy === 'preview' ? 'Generating…' : 'Generate Agreement'}
+            </PrimaryButton>
+            {editable ? (
+              <PrimaryButton iconLeft={<Send size={15} />} onClick={handleSubmit} disabled={busy !== null || !!validationError}>
+                {busy === 'submit' ? 'Submitting…' : 'Submit to Finance'}
+              </PrimaryButton>
+            ) : null}
+          </div>
+        </div>
+      </GlassCard>
 
       <style>{`
         .agreement-doc h1.doc-title { font-size: 14px; text-align: center; text-transform: uppercase; letter-spacing: .5px; margin: 4px 0 14px; }

@@ -253,6 +253,11 @@ export function regenerateAgreement(id: string): Promise<AgreementSummary> {
   return apiFetch<AgreementSummary>(`/agreements/${id}/regenerate`, { method: 'POST' });
 }
 
+/** Soft-delete a draft agreement (blocked once approved / has a contract). */
+export function deleteAgreement(id: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/agreements/${id}`, { method: 'DELETE' });
+}
+
 // ---- Finance review -----------------------------------------------------
 
 export function approveAgreement(id: string): Promise<AgreementSummary> {

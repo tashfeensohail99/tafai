@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -168,6 +169,15 @@ export class AgreementsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.agreements.regenerate(id, user.id);
+  }
+
+  @Delete(':id')
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
+  deleteAgreement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.softDelete(id, user.id);
   }
 
   // ─── Finance review ─────────────────────────────────────────────────────

@@ -211,6 +211,47 @@ export class EmailService {
       html: buildAppointmentEmail(opts),
     });
   }
+
+  /** Finance bounced an agreement back to the Sales author with a note. */
+  async sendAgreementChangesRequested(opts: {
+    to: string;
+    salesName: string;
+    agreementNumber: string;
+    leadName?: string | null;
+    note: string;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Finance requested changes</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.salesName)}, Finance reviewed agreement <b>${escHtml(opts.agreementNumber)}</b>${opts.leadName ? ` for ${escHtml(opts.leadName)}` : ''} and asked for changes before it can be approved.</p>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:16px;margin-bottom:20px;">
+        <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:0.04em;">Finance note</p>
+        <p style="margin:0;font-size:13px;color:#92400e;white-space:pre-wrap;line-height:1.6;">${escHtml(opts.note)}</p>
+      </div>
+      <a href="https://tashfeengroup.com/sales/agreements" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open the agreement →</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `Changes requested — agreement ${opts.agreementNumber}`,
+      html: baseTemplate('Finance requested changes', content),
+    });
+  }
+
+  /** Finance approved an agreement (locks the plan + creates the ledger). */
+  async sendAgreementApproved(opts: {
+    to: string;
+    salesName: string;
+    agreementNumber: string;
+    leadName?: string | null;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Agreement approved</h2>
+      <p style="margin:0 0 20px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.salesName)}, Finance approved agreement <b>${escHtml(opts.agreementNumber)}</b>${opts.leadName ? ` for ${escHtml(opts.leadName)}` : ''}. The payment plan is locked and the service contract + installment ledger were created. Finance now takes it forward with the client.</p>
+      <a href="https://tashfeengroup.com/sales/agreements" style="display:inline-block;background:#16a34a;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">View agreement →</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `Approved — agreement ${opts.agreementNumber}`,
+      html: baseTemplate('Agreement approved', content),
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

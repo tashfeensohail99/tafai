@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -12,6 +13,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { EmailService } from '../email/email.service';
 import {
   AgreementRenderService,
   type AgreementBioData,
@@ -48,11 +50,64 @@ interface BalanceCheckPlan {
 
 @Injectable()
 export class AgreementsService {
+  private readonly log = new Logger(AgreementsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly render: AgreementRenderService,
     private readonly storage: StorageService,
+    private readonly email: EmailService,
   ) {}
+
+  /**
+   * Email the Sales author of an agreement on a review decision. Non-fatal:
+   * a notification failure must never roll back the review action itself.
+   */
+  private async notifyAuthor(
+    createdByUserId: string | null,
+    kind: 'changes' | 'approved',
+    ctx: { agreementNumber: string; leadId?: string | null; note?: string },
+  ): Promise<void> {
+    try {
+      if (!createdByUserId) return;
+      const user = await this.prisma.userAccount.findUnique({
+        where: { id: createdByUserId },
+        select: { email: true },
+      });
+      if (!user?.email) return;
+      const emp = await this.prisma.employee.findFirst({
+        where: { userId: createdByUserId },
+        select: { firstName: true },
+      });
+      const salesName = emp?.firstName ?? user.email.split('@')[0] ?? 'there';
+      let leadName: string | null = null;
+      if (ctx.leadId) {
+        const lead = await this.prisma.lead.findUnique({
+          where: { id: ctx.leadId },
+          select: { firstName: true, lastName: true },
+        });
+        if (lead) leadName = `${lead.firstName} ${lead.lastName}`.trim();
+      }
+      if (kind === 'changes') {
+        await this.email.sendAgreementChangesRequested({
+          to: user.email,
+          salesName,
+          agreementNumber: ctx.agreementNumber,
+          leadName,
+          note: ctx.note ?? '',
+        });
+      } else {
+        await this.email.sendAgreementApproved({
+          to: user.email,
+          salesName,
+          agreementNumber: ctx.agreementNumber,
+          leadName,
+        });
+      }
+    } catch (err) {
+      this.log.warn(`agreement author notification failed: ${(err as Error).message}`);
+    }
+  }
 
   // ─── Sales authoring ─────────────────────────────────────────────────────
 
@@ -353,6 +408,10 @@ export class AgreementsService {
       null,
       { serviceContractId } as unknown as Prisma.InputJsonValue,
     );
+    await this.notifyAuthor(a.createdByUserId, 'approved', {
+      agreementNumber: a.agreementNumber,
+      leadId: a.leadId,
+    });
     return updated;
   }
 
@@ -380,6 +439,11 @@ export class AgreementsService {
       null,
       null,
     );
+    await this.notifyAuthor(a.createdByUserId, 'changes', {
+      agreementNumber: a.agreementNumber,
+      leadId: a.leadId,
+      note,
+    });
     return updated;
   }
 

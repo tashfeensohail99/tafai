@@ -65,7 +65,7 @@ export function AgreementsListPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
               <thead>
                 <tr>
-                  {['Number', 'Category', 'Status', 'Net', 'Updated'].map((c) => (
+                  {['Number', 'Applicant', 'Ref', 'Category', 'Status', 'Net', 'Updated'].map((c) => (
                     <th key={c} style={{ textAlign: 'left', padding: '10px 16px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--sos-text-faint)', borderBottom: '1px solid var(--sos-border-subtle)', whiteSpace: 'nowrap' }}>
                       {c}
                     </th>
@@ -80,6 +80,8 @@ export function AgreementsListPage() {
                     style={{ borderBottom: '1px solid var(--sos-border-subtle)', cursor: 'pointer' }}
                   >
                     <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12.5, color: 'var(--sos-text-secondary)', whiteSpace: 'nowrap' }}>{a.agreementNumber}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap' }}>{a.lead ? `${a.lead.firstName} ${a.lead.lastName}`.trim() : '—'}</td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12, color: 'var(--sos-text-faint)', whiteSpace: 'nowrap' }}>{a.lead?.referenceCode ?? '—'}</td>
                     <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--sos-text-secondary)' }}>{a.categoryKey}</td>
                     <td style={{ padding: '12px 16px' }}>
                       <StatusBadge tone={STATUS_TONE[a.status]} size="sm" dot>

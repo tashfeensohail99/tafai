@@ -74,13 +74,24 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
         <div>
           <div className="sos-eyebrow">Service agreement</div>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)', marginTop: 4 }}>
-            Agreements for this lead
+            Agreement for this lead
           </h3>
         </div>
-        <PrimaryButton size="sm" iconLeft={<FilePlus2 size={14} />} onClick={() => setModalOpen(true)}>
+        <PrimaryButton
+          size="sm"
+          iconLeft={<FilePlus2 size={14} />}
+          onClick={() => setModalOpen(true)}
+          disabled={rows.length > 0}
+        >
           Create Agreement
         </PrimaryButton>
       </div>
+
+      {rows.length > 0 ? (
+        <div className="sos-text-faint" style={{ fontSize: 12, marginBottom: 10 }}>
+          Only one agreement per lead. Delete the current one to start a different category.
+        </div>
+      ) : null}
 
       {error ? (
         <div className="sos-banner sos-banner--danger" style={{ marginBottom: 12 }}>{error}</div>

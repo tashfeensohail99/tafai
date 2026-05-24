@@ -135,6 +135,22 @@ export class AgreementsService {
     });
     if (!lead) throw new NotFoundException('Lead not found');
 
+    // One agreement per lead. A lead may have at most one non-deleted
+    // agreement; to start over, the existing one must be deleted first.
+    // Approved/finalised agreements can't be deleted, which correctly blocks
+    // a second agreement once a deal is locked.
+    const existingAgreement = await this.prisma.agreement.findFirst({
+      where: { leadId: dto.leadId, deletedAt: null },
+      select: { agreementNumber: true, status: true },
+    });
+    if (existingAgreement) {
+      throw new ConflictException(
+        `This lead already has an agreement (${existingAgreement.agreementNumber} — ` +
+          `${existingAgreement.status.replace(/_/g, ' ').toLowerCase()}). ` +
+          'Open or delete it before creating a new one.',
+      );
+    }
+
     const bioData: AgreementBioData = {
       applicantName: `${lead.firstName} ${lead.lastName}`.trim(),
       nationality: lead.nationality ?? undefined,
@@ -586,6 +602,7 @@ export class AgreementsService {
         createdAt: true,
         updatedAt: true,
         submittedAt: true,
+        lead: { select: { firstName: true, lastName: true, referenceCode: true } },
       },
     });
   }

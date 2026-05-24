@@ -173,6 +173,8 @@ export interface AgreementSummary {
   createdAt: string;
   updatedAt: string;
   submittedAt: string | null;
+  /** The lead this agreement belongs to — for the Applicant + Ref columns. */
+  lead?: { firstName: string; lastName: string; referenceCode: string } | null;
 }
 
 export interface AgreementEvent {

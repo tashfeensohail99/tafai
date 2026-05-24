@@ -11,12 +11,14 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock,
+  FileText,
   Inbox,
   MessageSquareWarning,
   Receipt,
   Send,
   Wallet,
 } from 'lucide-react';
+import { fetchAgreementReviewCounts } from '@/lib/agreements';
 import {
   ButtonLink,
   GlassCard,
@@ -73,13 +75,19 @@ export function FinanceDashboardPage() {
   const session = useSession();
   const [handovers, setHandovers] = useState<ApiHandover[]>([]);
   const [revenue, setRevenue] = useState<ApiRevenueByService | null>(null);
+  const [agreementsToReview, setAgreementsToReview] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([fetchHandovers(), fetchRevenueByService()])
-      .then(([h, r]) => {
+    Promise.all([
+      fetchHandovers(),
+      fetchRevenueByService(),
+      fetchAgreementReviewCounts().catch(() => ({ financeToReview: 0, salesChangesRequested: 0 })),
+    ])
+      .then(([h, r, c]) => {
         setHandovers(h);
         setRevenue(r);
+        setAgreementsToReview(c.financeToReview);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -157,6 +165,18 @@ export function FinanceDashboardPage() {
           gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
         }}
       >
+        <MetricCard
+          label="Agreements to review"
+          value={agreementsToReview}
+          hint="Submitted by Sales"
+          tone={agreementsToReview > 0 ? 'warm' : 'success'}
+          Icon={FileText}
+          footer={
+            <Link href={'/finance/agreements' as Route} style={{ color: 'var(--sos-brand-accent)', fontWeight: 600, textDecoration: 'none' }}>
+              Review &amp; approve →
+            </Link>
+          }
+        />
         <MetricCard
           label="New from Sales"
           value={newFromSales}

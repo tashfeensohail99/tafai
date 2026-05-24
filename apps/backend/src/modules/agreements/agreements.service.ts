@@ -715,6 +715,32 @@ export class AgreementsService {
     };
   }
 
+  /**
+   * Counts for the sidebar badges + dashboard widget:
+   *   financeToReview      — agreements submitted/under review (Finance queue)
+   *   salesChangesRequested — this user's agreements bounced back for changes
+   */
+  async reviewCounts(
+    userId: string,
+  ): Promise<{ financeToReview: number; salesChangesRequested: number }> {
+    const [financeToReview, salesChangesRequested] = await Promise.all([
+      this.prisma.agreement.count({
+        where: {
+          deletedAt: null,
+          status: { in: [AgreementStatus.SUBMITTED, AgreementStatus.FINANCE_REVIEW] },
+        },
+      }),
+      this.prisma.agreement.count({
+        where: {
+          deletedAt: null,
+          status: AgreementStatus.CHANGES_REQUESTED,
+          createdByUserId: userId,
+        },
+      }),
+    ]);
+    return { financeToReview, salesChangesRequested };
+  }
+
   private summariseUpdate(dto: UpdateAgreementDto): string {
     const parts: string[] = [];
     if (dto.paymentPlan) parts.push('payment plan');

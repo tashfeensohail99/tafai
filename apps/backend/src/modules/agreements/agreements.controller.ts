@@ -129,6 +129,16 @@ export class AgreementsController {
     return this.agreements.list(query, user.id, canViewAll);
   }
 
+  /**
+   * Counts for sidebar badges (Finance "to review", Sales "needs changes").
+   * Declared before ':id' so the literal path isn't parsed as a UUID.
+   */
+  @Get('review-counts')
+  @RequireAnyPermissions('leads.update', 'finance.view_all', 'finance.create_invoice', 'settings.manage')
+  reviewCounts(@CurrentUser() user: RequestUser) {
+    return this.agreements.reviewCounts(user.id);
+  }
+
   @Get(':id')
   @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
   getAgreement(@Param('id', ParseUUIDPipe) id: string) {

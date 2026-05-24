@@ -35,6 +35,7 @@ import { PresenceWarnings } from '@/components/whatsapp/PresenceWarnings';
 import { logout as sessionLogout, useSession } from '@/lib/session';
 import { setMyPresence } from '@/lib/whatsapp';
 import { fetchMySalesStats, type MySalesStats } from '@/lib/sales-api';
+import { fetchAgreementReviewCounts } from '@/lib/agreements';
 
 export interface EmployeeUser {
   id: string;
@@ -118,6 +119,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
   const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [stats, setStats] = useState<MySalesStats | null>(null);
+  const [changesCount, setChangesCount] = useState(0);
 
   // Live sidebar counters. Refetch on navigation so badges/SLA stay current
   // as the agent works through their queue.
@@ -131,6 +133,12 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
       .catch(() => {
         /* sidebar badges are best-effort — never block the shell */
       });
+    // "Agreements needing changes" badge — Finance bounced them back to me.
+    fetchAgreementReviewCounts()
+      .then((c) => {
+        if (!cancelled) setChangesCount(c.salesChangesRequested);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -209,7 +217,12 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
 
           <div className="sos-sidebar__nav sos-scroll">
             <div className="sos-nav-section">Workspace</div>
-            <DrawerMenu items={buildSalesNav(stats)} onNavigate={() => setMobileOpen(false)} />
+            <DrawerMenu
+              items={buildSalesNav(stats).map((it) =>
+                it.href === '/sales/agreements' && changesCount ? { ...it, badge: changesCount } : it,
+              )}
+              onNavigate={() => setMobileOpen(false)}
+            />
 
             <div className="sos-nav-section" style={{ marginTop: '12px' }}>
               Resources

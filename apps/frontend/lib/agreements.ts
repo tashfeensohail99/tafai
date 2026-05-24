@@ -219,6 +219,17 @@ export function getAgreement(id: string): Promise<AgreementDetail> {
   return apiFetch<AgreementDetail>(`/agreements/${id}`, { cache: 'no-store' });
 }
 
+export interface AgreementReviewCounts {
+  /** Agreements submitted / under review — the Finance queue badge. */
+  financeToReview: number;
+  /** This user's agreements bounced back for changes — the Sales badge. */
+  salesChangesRequested: number;
+}
+
+export function fetchAgreementReviewCounts(): Promise<AgreementReviewCounts> {
+  return apiFetch<AgreementReviewCounts>('/agreements/review-counts', { cache: 'no-store' });
+}
+
 export function createAgreement(input: {
   leadId: string;
   templateId: string;

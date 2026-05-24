@@ -41,6 +41,7 @@ import {
   verifiedTodayCount,
 } from '@/components/finance-v1/mockData';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { fetchAgreementReviewCounts } from '@/lib/agreements';
 
 export interface FinanceUser {
   id: string;
@@ -62,10 +63,10 @@ const FINANCE_NAV: DrawerMenuItem[] = [
   { label: 'Dashboard', href: '/finance', icon: LayoutDashboard, caption: 'Officer overview' },
   { label: 'Agreements', href: '/finance/agreements', icon: FileText, caption: 'Review & approve from Sales' },
   { label: 'Contracts', href: '/finance/contracts', icon: FileSignature, caption: 'Service contracts + installments' },
-  { label: 'Intake Queue', href: '/finance/intake', icon: Inbox, caption: 'Cases from Sales', badge: 3 },
-  { label: 'Corrections', href: '/finance/corrections', icon: MessageSquareWarning, caption: 'Sent back to Sales', badge: 2 },
+  { label: 'Intake Queue', href: '/finance/intake', icon: Inbox, caption: 'Cases from Sales' },
+  { label: 'Corrections', href: '/finance/corrections', icon: MessageSquareWarning, caption: 'Sent back to Sales' },
   { label: 'Receipts', href: '/finance/receipts', icon: Receipt, caption: 'Confirm + issue' },
-  { label: 'Send to Processing', href: '/finance/handover', icon: Send, caption: 'Ready cases', badge: 2 },
+  { label: 'Send to Processing', href: '/finance/handover', icon: Send, caption: 'Ready cases' },
   { label: 'Payment History', href: '/finance/history', icon: History, caption: 'Searchable audit log' },
 ];
 
@@ -106,6 +107,17 @@ export function FinanceShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
+
+  // Live "Agreements to review" badge — refetch on navigation.
+  useEffect(() => {
+    if (session.status !== 'authed') return;
+    let cancelled = false;
+    fetchAgreementReviewCounts()
+      .then((c) => { if (!cancelled) setReviewCount(c.financeToReview); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [session.status, pathname]);
 
   useEffect(() => {
     if (session.status === 'unauthed') {
@@ -143,6 +155,9 @@ export function FinanceShell({ children }: { children: ReactNode }) {
 
   const { title, subtitle } = getPageTitle(pathname);
   const initials = emailHandle.slice(0, 2).toUpperCase();
+  const navItems = FINANCE_NAV.map((it) =>
+    it.href === '/finance/agreements' && reviewCount ? { ...it, badge: reviewCount } : it,
+  );
 
   // Mini-panel data for the sidebar
   const collected = collectedToday();
@@ -185,7 +200,7 @@ export function FinanceShell({ children }: { children: ReactNode }) {
 
           <div className="sos-sidebar__nav sos-scroll">
             <div className="sos-nav-section">Workspace</div>
-            <DrawerMenu items={FINANCE_NAV} onNavigate={() => setMobileOpen(false)} />
+            <DrawerMenu items={navItems} onNavigate={() => setMobileOpen(false)} />
 
             <div className="sos-nav-section" style={{ marginTop: '12px' }}>
               Today

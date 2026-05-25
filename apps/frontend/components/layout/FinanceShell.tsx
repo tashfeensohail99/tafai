@@ -64,6 +64,7 @@ const FINANCE_NAV: DrawerMenuItem[] = [
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/finance') return { title: 'Finance Dashboard', subtitle: 'Your verification queue today' };
+  if (pathname.startsWith('/finance/clients/')) return { title: 'Customer Profile', subtitle: 'Bio, agreement, ledger, invoices, payments, receipts' };
   if (pathname.startsWith('/finance/agreements/')) return { title: 'Agreement Review', subtitle: 'Approve, request changes, generate the contract' };
   if (pathname === '/finance/agreements') return { title: 'Agreements', subtitle: 'Submitted by Sales for review' };
   if (pathname.startsWith('/finance/contracts/')) return { title: 'Service Contract', subtitle: 'Installment schedule + invoice generation' };

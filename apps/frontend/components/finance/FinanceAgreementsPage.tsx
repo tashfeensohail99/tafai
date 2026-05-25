@@ -62,7 +62,7 @@ export function FinanceAgreementsPage() {
           </thead>
           <tbody>
             {list.map((a) => (
-              <tr key={a.id} onClick={() => router.push(`/finance/agreements/${a.id}` as Route)} style={{ borderBottom: '1px solid var(--sos-border-subtle)', cursor: 'pointer' }}>
+              <tr key={a.id} onClick={() => router.push(`/finance/clients/${a.leadId}` as Route)} style={{ borderBottom: '1px solid var(--sos-border-subtle)', cursor: 'pointer' }}>
                 <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12.5, color: 'var(--sos-text-secondary)', whiteSpace: 'nowrap' }}>{a.agreementNumber}</td>
                 <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap' }}>{a.lead ? `${a.lead.firstName} ${a.lead.lastName}`.trim() : '—'}</td>
                 <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12, color: 'var(--sos-text-faint)', whiteSpace: 'nowrap' }}>{a.lead?.referenceCode ?? '—'}</td>

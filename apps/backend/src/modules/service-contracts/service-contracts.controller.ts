@@ -94,6 +94,27 @@ export class ServiceContractsController {
     return this.service.uploadAgreement(dto, file, user.id);
   }
 
+  /**
+   * Finance uploads the SIGNED agreement PDF onto an existing contract (the
+   * one auto-created at approval) → marks contract ACTIVE + agreement SIGNED.
+   */
+  @Post(':id/upload-signed')
+  @RequireAnyPermissions('finance.create_invoice', 'finance.verify_payment', 'settings.manage')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    }),
+  )
+  uploadSigned(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (!file) throw new BadRequestException('Signed agreement file is required');
+    return this.service.uploadSignedToContract(id, file, user.id);
+  }
+
   @Post(':id/installments')
   @RequirePermissions('finance.create_invoice')
   addInstallments(

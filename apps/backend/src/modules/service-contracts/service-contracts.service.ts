@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AgreementStatus,
   InstallmentStatus,
   InvoiceStatus,
   Prisma,
@@ -298,6 +299,62 @@ export class ServiceContractsService {
       where: { id: contract.id },
       data: { status: ServiceContractStatus.ACTIVE },
     });
+  }
+
+  /**
+   * Finance uploads the SIGNED agreement PDF onto an EXISTING contract (the
+   * one auto-created when the agreement was approved). Stores the file, marks
+   * the contract ACTIVE/signed, and flips the linked Agreement to SIGNED —
+   * completing the lifecycle (approved → sent → signed).
+   */
+  async uploadSignedToContract(
+    contractId: string,
+    file: { buffer: Buffer; mimetype: string; originalname: string; size: number },
+    _actorUserId: string,
+  ) {
+    if (!file?.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Signed agreement file is required');
+    }
+    if (!ALLOWED_AGREEMENT_MIME_TYPES.has(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported file type: ${file.mimetype}. Use PDF or image (PNG/JPEG/WebP).`,
+      );
+    }
+    const contract = await this.prisma.serviceContract.findFirst({
+      where: { id: contractId, deletedAt: null },
+      select: { id: true, status: true, signedDate: true },
+    });
+    if (!contract) throw new NotFoundException('Service contract not found');
+
+    const uploaded = await this.storage.upload(
+      file.buffer,
+      file.mimetype,
+      'service-contracts',
+      file.originalname,
+    );
+
+    const updated = await this.prisma.serviceContract.update({
+      where: { id: contractId },
+      data: {
+        agreementKey: uploaded.key,
+        agreementFileName: file.originalname,
+        agreementMimeType: file.mimetype,
+        agreementSizeBytes: file.size,
+        signedDate: contract.signedDate ?? new Date(),
+        status:
+          contract.status === ServiceContractStatus.DRAFT
+            ? ServiceContractStatus.ACTIVE
+            : contract.status,
+      },
+    });
+
+    // Mark the originating agreement SIGNED — the lifecycle ends here.
+    await this.prisma.agreement.updateMany({
+      where: { serviceContractId: contractId, deletedAt: null },
+      data: { status: AgreementStatus.SIGNED, signedAt: new Date() },
+    });
+
+    return updated;
   }
 
   async getAgreementDownloadUrl(contractId: string) {

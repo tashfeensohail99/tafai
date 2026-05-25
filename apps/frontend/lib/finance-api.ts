@@ -296,9 +296,12 @@ export async function verifyPayment(
   paymentId: string,
   opts?: { verificationNote?: string },
 ): Promise<unknown> {
+  // Backend VerifyPaymentDto only accepts `notes`, and the global ValidationPipe
+  // (forbidNonWhitelisted) rejects unknown keys — sending `verificationNote`
+  // 400s and aborts the whole verification. Map it to `notes` (omit when empty).
   return apiFetch(`/finance/payments/${paymentId}/verify`, {
     method: 'POST',
-    body: JSON.stringify(opts ?? {}),
+    body: JSON.stringify(opts?.verificationNote ? { notes: opts.verificationNote } : {}),
   });
 }
 

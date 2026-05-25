@@ -32,7 +32,7 @@ export function FinanceReportsPage() {
   if (loading) return <div className="sos-text-muted" style={{ padding: 40, textAlign: 'center' }}>Loading report…</div>;
   if (!data) return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
 
-  const { totals, revenue, counts, byService, currency: ccy } = data;
+  const { cash, receivables, revenue, counts, byService, currency: ccy } = data;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -44,15 +44,23 @@ export function FinanceReportsPage() {
 
       {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}
 
-      {/* Money position */}
+      {/* Cash actuals — the whole book */}
       <div>
-        <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Money position</div>
+        <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Cash — actuals</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-          <MetricCard label="Fees contracted" value={money(totals.fees, ccy)} tone="accent" Icon={Wallet} />
-          <MetricCard label="Collected" value={money(totals.collected, ccy)} tone="success" Icon={ReceiptIcon} />
-          <MetricCard label="Outstanding" value={money(totals.outstanding, ccy)} tone={totals.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
-          <MetricCard label="Spent on clients" value={money(totals.expenses, ccy)} tone={totals.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} />
-          <MetricCard label="Margin (cash)" value={money(totals.marginCash, ccy)} tone={totals.marginCash >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint={`Projected ${money(totals.marginProjected, ccy)} once fully collected`} />
+          <MetricCard label="Collected" value={money(cash.collected, ccy)} tone="success" Icon={ReceiptIcon} />
+          <MetricCard label="Spent on clients" value={money(cash.expenses, ccy)} tone={cash.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} />
+          <MetricCard label="Margin" value={money(cash.margin, ccy)} tone={cash.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint="collected − expenses" />
+        </div>
+      </div>
+
+      {/* Receivables — active contracts only */}
+      <div>
+        <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Receivables — active contracts</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
+          <MetricCard label="Fees contracted" value={money(receivables.fees, ccy)} tone="accent" Icon={Wallet} />
+          <MetricCard label="Collected on contracts" value={money(receivables.collected, ccy)} tone="success" Icon={ReceiptIcon} />
+          <MetricCard label="Outstanding" value={money(receivables.outstanding, ccy)} tone={receivables.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
         </div>
       </div>
 

@@ -187,17 +187,39 @@ export class FinanceService {
       [...agrLeads, ...scLeads, ...hoLeads].map((r) => r.leadId).filter((x): x is string => !!x),
     ).size;
 
+    // AR (receivables) is scoped to active service contracts only — historical
+    // payments without a contract must NOT distort "outstanding". So we sum
+    // only what's been collected from contract owners and compare to fees.
+    const contractOwners = await this.prisma.serviceContract.findMany({
+      where: { deletedAt: null },
+      select: { leadId: true, clientId: true },
+    });
+    const cLeadIds = [...new Set(contractOwners.map((c) => c.leadId).filter((x): x is string => !!x))];
+    const cClientIds = [...new Set(contractOwners.map((c) => c.clientId).filter((x): x is string => !!x))];
+    const contractPaidAgg =
+      cLeadIds.length || cClientIds.length
+        ? await this.prisma.invoice.aggregate({
+            _sum: { paidAmount: true },
+            where: { OR: [{ leadId: { in: cLeadIds } }, { clientId: { in: cClientIds } }] },
+          })
+        : { _sum: { paidAmount: null } };
+    const collectedAgainstContracts = dec(contractPaidAgg._sum.paidAmount);
+
     return {
       currency: 'CAD',
-      totals: {
-        fees,
+      // Cash actuals — real money in/out, the whole book.
+      cash: {
         collected,
-        outstanding: Math.max(0, fees - collected),
         expenses,
-        marginCash: collected - expenses, // what we've actually kept so far
-        marginProjected: fees - expenses, // expected margin once fully collected
+        margin: collected - expenses, // what the firm has actually kept
       },
-      revenue: revenue.totals, // { month, ytd, allTime }
+      // Receivables — scoped to active service contracts (the agreement flow).
+      receivables: {
+        fees,
+        collected: collectedAgainstContracts,
+        outstanding: Math.max(0, fees - collectedAgainstContracts),
+      },
+      revenue: revenue.totals, // { month, ytd, allTime } — verified payments
       counts: { customers, contracts: contractsCount, receipts: receiptsCount },
       byService: revenue.byService,
     };

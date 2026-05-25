@@ -43,6 +43,11 @@ export function FinanceReportsPage() {
       />
 
       {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}
+      {data.mixedCurrency ? (
+        <div className="sos-banner sos-banner--warning" style={{ fontSize: 13 }}>
+          ⚠︎ Payments span more than one currency. These rolled-up totals mix currencies and are indicative only — read per-customer figures for accuracy.
+        </div>
+      ) : null}
 
       {/* Cash actuals — the whole book */}
       <div>

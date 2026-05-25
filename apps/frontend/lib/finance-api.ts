@@ -426,6 +426,8 @@ export async function fetchReceipts(search?: string): Promise<ApiIssuedReceipt[]
 /** Firm-wide finance report (Insight layer). */
 export interface FinanceReportsSummary {
   currency: string;
+  /** True when paid invoices span >1 currency — rolled-up totals are then indicative only. */
+  mixedCurrency?: boolean;
   // Cash — money actually received vs spent.
   cash: { collected: number; expenses: number; margin: number };
   // Receivables — SIGNED agreements only (client committed).

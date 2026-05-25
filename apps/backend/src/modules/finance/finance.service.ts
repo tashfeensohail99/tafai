@@ -215,8 +215,20 @@ export class FinanceService {
     const collectedOnSigned = dec(signedPaidAgg._sum.paidAmount);
     const pipelineValue = pipelineAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
 
+    // Currency integrity: a single rolled-up total must not silently span
+    // currencies. Derive the real currency from the data; flag if >1 is in
+    // play so the UI can warn instead of presenting a meaningless sum.
+    const ccyGroups = await this.prisma.invoice.groupBy({
+      by: ['currency'],
+      where: { deletedAt: null, paidAmount: { gt: 0 } },
+      _sum: { paidAmount: true },
+    });
+    const currency = [...ccyGroups].sort((a, b) => dec(b._sum.paidAmount) - dec(a._sum.paidAmount))[0]?.currency ?? 'CAD';
+    const mixedCurrency = ccyGroups.length > 1;
+
     return {
-      currency: 'CAD',
+      currency,
+      mixedCurrency,
       // Cash — money actually received vs spent.
       cash: { collected, expenses, margin: collected - expenses },
       // Receivables — SIGNED agreements only (client committed).
@@ -1456,6 +1468,18 @@ export class FinanceService {
       data: {
         paidAmount: newPaidAmount.toString(),
         status: newPaidAmount === 0 ? InvoiceStatus.SENT : InvoiceStatus.PARTIALLY_PAID,
+      },
+    });
+
+    // Void the receipt issued for this payment — a refunded payment must not
+    // leave a live receipt standing, or receipts no longer reconcile with cash
+    // collected. (Voided receipts are excluded from the issued-receipts ledger.)
+    await this.prisma.receipt.updateMany({
+      where: { paymentId: id, voidedAt: null },
+      data: {
+        voidedAt: new Date(),
+        voidReason: dto.notes ? `Payment refunded: ${dto.notes}` : 'Payment refunded',
+        voidedByUserId: actorUserId,
       },
     });
 

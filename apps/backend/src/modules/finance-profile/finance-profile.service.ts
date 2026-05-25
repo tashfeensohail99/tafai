@@ -137,6 +137,8 @@ export class FinanceProfileService {
         status: i.status,
         paidAmount: covered,
         paidStatus: fullyPaid ? 'PAID' : covered > 0 ? 'PARTIALLY_PAID' : overdue ? 'OVERDUE' : 'DUE',
+        // Revenue recognition (accrual): when this milestone was delivered.
+        recognizedAt: i.recognizedAt,
       };
     });
     const installmentsPaid = installmentsView.filter((i) => i.paidStatus === 'PAID').length;

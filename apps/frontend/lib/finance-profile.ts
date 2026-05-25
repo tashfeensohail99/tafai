@@ -71,7 +71,7 @@ export interface FinanceCustomerProfile {
   clientId: string | null;
   agreement: FinanceProfileAgreement | null;
   contract: FinanceProfileContract | null;
-  installments: Array<{ id: string; sequence: number; dueDate: string; amount: number; status: string; description: string | null; paidAmount: number; paidStatus: string }>;
+  installments: Array<{ id: string; sequence: number; dueDate: string; amount: number; status: string; description: string | null; paidAmount: number; paidStatus: string; recognizedAt: string | null }>;
   invoices: Array<{ id: string; invoiceNumber: string; status: string; currency: string; totalAmount: number; paidAmount: number; dueDate: string | null; createdAt: string }>;
   payments: Array<{ id: string; amount: number; currency: string; status: string; paymentMethod: string | null; paidAt: string | null; verifiedAt: string | null }>;
   receipts: Array<{ id: string; receiptNumber: string; amount: number; currency: string; issuedAt: string }>;
@@ -162,6 +162,7 @@ export function createExpense(payload: {
   category?: ExpenseCategory;
   description: string;
   amount: string;
+  taxAmount?: string;
   currency?: string;
   billable?: boolean;
   incurredAt?: string;

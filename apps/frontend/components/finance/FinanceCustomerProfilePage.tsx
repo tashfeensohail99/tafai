@@ -42,7 +42,7 @@ import {
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
-import { fetchHandoverById, reviewHandover, verifyPayment, type ApiHandover } from '@/lib/finance-api';
+import { fetchHandoverById, recognizeInstallment, reviewHandover, verifyPayment, type ApiHandover } from '@/lib/finance-api';
 
 const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }> = [
   { value: 'GOVERNMENT_FEE', label: 'Government fee' },
@@ -147,6 +147,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('GOVERNMENT_FEE');
   const [expDesc, setExpDesc] = useState('');
   const [expAmount, setExpAmount] = useState('');
+  const [expTax, setExpTax] = useState('');
   const [expBillable, setExpBillable] = useState(false);
   const expFileRef = useRef<HTMLInputElement>(null);
 
@@ -321,7 +322,24 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     setExpCategory('GOVERNMENT_FEE');
     setExpDesc('');
     setExpAmount('');
+    setExpTax('');
     setExpBillable(false);
+  };
+
+  // Revenue recognition (#1): mark a milestone delivered → its amount becomes
+  // EARNED revenue; cash collected ahead of this is deferred (a liability).
+  const handleRecognize = async (installmentId: string, recognize: boolean) => {
+    setBusy('recognize');
+    setError(null);
+    try {
+      await recognizeInstallment(installmentId, recognize);
+      setNotice(recognize ? 'Milestone marked delivered — revenue recognized.' : 'Recognition reversed.');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not update recognition');
+    } finally {
+      setBusy(null);
+    }
   };
 
   const handleAddExpense = async () => {
@@ -344,6 +362,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         category: expCategory,
         description: expDesc.trim(),
         amount: String(amount),
+        ...(expTax && Number(expTax) > 0 ? { taxAmount: String(Number(expTax)) } : {}),
         currency: data.totals.currency,
         billable: expBillable,
         ...receipt,
@@ -541,9 +560,25 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             </h3>
           </div>
           <Table
-            head={['#', 'Stage', 'Amount', 'Paid', 'Due', 'Status']}
+            head={['#', 'Stage', 'Amount', 'Paid', 'Due', 'Status', 'Revenue']}
             empty={contract ? 'No installments.' : 'No service contract yet (created on approval).'}
-            rows={data.installments.map((i) => [i.sequence, i.description ?? '—', money(i.amount, totals.currency), money(i.paidAmount, totals.currency), fmtDate(i.dueDate), <StatusBadge key="s" tone={tone(i.paidStatus)} size="sm" dot={false}>{label(i.paidStatus)}</StatusBadge>])}
+            rows={data.installments.map((i) => [
+              i.sequence,
+              i.description ?? '—',
+              money(i.amount, totals.currency),
+              money(i.paidAmount, totals.currency),
+              fmtDate(i.dueDate),
+              <StatusBadge key="s" tone={tone(i.paidStatus)} size="sm" dot={false}>{label(i.paidStatus)}</StatusBadge>,
+              i.recognizedAt ? (
+                <SecondaryButton key="r" size="sm" onClick={() => void handleRecognize(i.id, false)} disabled={busy !== null}>
+                  Earned ✓
+                </SecondaryButton>
+              ) : (
+                <SecondaryButton key="r" size="sm" onClick={() => void handleRecognize(i.id, true)} disabled={busy !== null}>
+                  Mark delivered
+                </SecondaryButton>
+              ),
+            ])}
           />
         </GlassCard>
       ) : null}
@@ -773,6 +808,16 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     onChange={(e) => setExpAmount(e.target.value)}
                     hint={`Currency ${totals.currency}`}
                     required
+                  />
+                  <FormInput
+                    label="Input tax (optional)"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={expTax}
+                    onChange={(e) => setExpTax(e.target.value)}
+                    hint="recoverable GST/HST (ITC)"
                   />
                   <FormInput
                     label="Description"

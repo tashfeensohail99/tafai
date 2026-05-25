@@ -434,6 +434,9 @@ export interface FinanceReportsSummary {
   receivables: { fees: number; collected: number; outstanding: number };
   // Pipeline — agreements in progress, NOT yet money.
   pipeline: { agreements: number; value: number };
+  // Accrual: revenue earned (delivered milestones) vs deferred (cash held for
+  // undelivered work — a liability) vs accrued (delivered, not yet collected).
+  recognition?: { earned: number; deferred: number; accrued: number };
   revenue: { month: number; ytd: number; allTime: number };
   counts: { payingCustomers: number; signed: number; receipts: number };
   byService: Array<{ service: string; month: number; ytd: number; allTime: number }>;
@@ -441,6 +444,85 @@ export interface FinanceReportsSummary {
 
 export async function fetchFinanceReports(): Promise<FinanceReportsSummary> {
   return apiFetch<FinanceReportsSummary>('/finance/reports/summary');
+}
+
+/** AR aging — outstanding invoices bucketed by days overdue, per currency. */
+export interface AgingReport {
+  asOf: string;
+  buckets: Array<{
+    currency: string;
+    current: number;
+    d1_30: number;
+    d31_60: number;
+    d61_90: number;
+    d90_plus: number;
+    total: number;
+  }>;
+  invoices: Array<{
+    invoiceId: string;
+    invoiceNumber: string;
+    customer: string;
+    currency: string;
+    outstanding: number;
+    dueDate: string | null;
+    daysOverdue: number;
+    bucket: 'current' | 'd1_30' | 'd31_60' | 'd61_90' | 'd90_plus';
+  }>;
+}
+
+export async function fetchAgingReport(): Promise<AgingReport> {
+  return apiFetch<AgingReport>('/finance/reports/aging');
+}
+
+/** GST/HST tax report — output tax (invoices) − input tax (expenses) per currency. */
+export interface TaxReport {
+  from: string | null;
+  to: string | null;
+  byCurrency: Array<{ currency: string; outputTax: number; inputTax: number; netPayable: number }>;
+}
+
+export async function fetchTaxReport(from?: string, to?: string): Promise<TaxReport> {
+  const qs = new URLSearchParams();
+  if (from) qs.set('from', from);
+  if (to) qs.set('to', to);
+  const s = qs.toString();
+  return apiFetch<TaxReport>(`/finance/reports/tax${s ? `?${s}` : ''}`);
+}
+
+/** Issued credit notes (refund/correction contra-documents). */
+export interface ApiCreditNote {
+  id: string;
+  creditNoteNumber: string;
+  amount: number;
+  currency: string;
+  reason: string | null;
+  issuedAt: string;
+  invoiceNumber: string | null;
+  customer: string;
+}
+
+export async function fetchCreditNotes(search?: string): Promise<ApiCreditNote[]> {
+  const qs = search && search.trim() ? `?search=${encodeURIComponent(search.trim())}` : '';
+  return apiFetch<ApiCreditNote[]>(`/finance/credit-notes${qs}`);
+}
+
+/** Mark/unmark a contract milestone (installment) delivered → earned revenue. */
+export async function recognizeInstallment(
+  installmentId: string,
+  recognize: boolean,
+): Promise<unknown> {
+  return apiFetch(`/finance/installments/${installmentId}/recognize`, {
+    method: 'POST',
+    body: JSON.stringify({ recognize }),
+  });
+}
+
+/** Set/clear the accounting period-lock (book-close) date (admin). */
+export async function lockPeriod(date: string | null): Promise<unknown> {
+  return apiFetch('/finance/reports/lock-period', {
+    method: 'POST',
+    body: JSON.stringify({ date }),
+  });
 }
 
 /** Result of an admin-authorised handover deletion. */

@@ -123,6 +123,13 @@ export class FinanceController {
     return this.financeService.getReportsSummary();
   }
 
+  /** Accounts-receivable aging: outstanding invoices bucketed by days overdue. */
+  @Get('reports/aging')
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
+  getAgingReport() {
+    return this.financeService.getAgingReport();
+  }
+
   @Get('handovers')
   @RequireAnyPermissions('finance_handover.view_all', 'finance_handover.view_own')
   listHandovers(@Query() query: ListFinanceHandoversQueryDto, @CurrentUser() user: RequestUser) {

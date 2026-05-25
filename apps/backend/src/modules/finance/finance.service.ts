@@ -317,6 +317,105 @@ export class FinanceService {
     };
   }
 
+  /**
+   * Accounts-receivable aging — every invoice with an outstanding balance,
+   * bucketed by how overdue it is (current / 1-30 / 31-60 / 61-90 / 90+ days)
+   * against its due date. Grouped per currency (we never sum across
+   * currencies). This is the standard receivables view a CA opens first:
+   * who owes us, how much, and how stale it is.
+   */
+  async getAgingReport() {
+    const dec = (d: Prisma.Decimal | number | null | undefined): number =>
+      d == null ? 0 : Number(d.toString());
+
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: [InvoiceStatus.SENT, InvoiceStatus.PARTIALLY_PAID] },
+      },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        currency: true,
+        totalAmount: true,
+        paidAmount: true,
+        dueDate: true,
+        createdAt: true,
+        lead: { select: { firstName: true, lastName: true } },
+        client: { select: { firstName: true, lastName: true } },
+      },
+    });
+
+    const now = Date.now();
+    const DAY = 86_400_000;
+    type Bucket = {
+      currency: string;
+      current: number;
+      d1_30: number;
+      d31_60: number;
+      d61_90: number;
+      d90_plus: number;
+      total: number;
+    };
+    const byCurrency = new Map<string, Bucket>();
+    const rows: Array<{
+      invoiceId: string;
+      invoiceNumber: string;
+      customer: string;
+      currency: string;
+      outstanding: number;
+      dueDate: Date | null;
+      daysOverdue: number;
+      bucket: keyof Omit<Bucket, 'currency' | 'total'>;
+    }> = [];
+
+    for (const inv of invoices) {
+      const outstanding = dec(inv.totalAmount) - dec(inv.paidAmount);
+      if (Math.round(outstanding * 100) <= 0) continue; // fully settled / credit
+
+      // Use due date when set; fall back to issue date so undated invoices
+      // still age rather than hiding in "current" forever.
+      const anchor = (inv.dueDate ?? inv.createdAt).getTime();
+      const daysOverdue = Math.floor((now - anchor) / DAY);
+      const bucketKey: keyof Omit<Bucket, 'currency' | 'total'> =
+        daysOverdue <= 0
+          ? 'current'
+          : daysOverdue <= 30
+            ? 'd1_30'
+            : daysOverdue <= 60
+              ? 'd31_60'
+              : daysOverdue <= 90
+                ? 'd61_90'
+                : 'd90_plus';
+
+      const b =
+        byCurrency.get(inv.currency) ??
+        { currency: inv.currency, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0, total: 0 };
+      b[bucketKey] += outstanding;
+      b.total += outstanding;
+      byCurrency.set(inv.currency, b);
+
+      const c = inv.client ?? inv.lead;
+      rows.push({
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customer: c ? `${c.firstName} ${c.lastName}`.trim() : '—',
+        currency: inv.currency,
+        outstanding,
+        dueDate: inv.dueDate,
+        daysOverdue: Math.max(0, daysOverdue),
+        bucket: bucketKey,
+      });
+    }
+
+    rows.sort((a, b) => b.daysOverdue - a.daysOverdue || b.outstanding - a.outstanding);
+    return {
+      asOf: new Date(),
+      buckets: Array.from(byCurrency.values()).sort((a, b) => b.total - a.total),
+      invoices: rows,
+    };
+  }
+
   async getQueue(query: ListFinanceQueueQueryDto) {
     return this.prisma.payment.findMany({
       where: {
@@ -480,6 +579,31 @@ export class FinanceService {
 
   async updateInvoice(id: string, dto: UpdateInvoiceDto, actorUserId: string) {
     const existing = await this.findInvoiceById(id);
+
+    // Immutability: once an invoice carries money (a verified payment / issued
+    // receipt), its financial figures and currency are frozen. Corrections go
+    // via a credit note + a fresh invoice, never by editing an issued document
+    // — otherwise the receipt no longer reconciles to the invoice. Non-financial
+    // fields (notes, due date, status) stay editable.
+    const carriesMoney =
+      Number(existing.paidAmount) > 0 ||
+      existing.status === InvoiceStatus.PAID ||
+      existing.status === InvoiceStatus.PARTIALLY_PAID;
+    if (carriesMoney) {
+      const ch = (a: unknown, b: unknown) => a !== undefined && Number(a) !== Number(b);
+      const financialChange =
+        ch(dto.subtotal, existing.subtotal) ||
+        ch(dto.taxAmount, existing.taxAmount) ||
+        ch(dto.discountAmount, existing.discountAmount) ||
+        ch(dto.totalAmount, existing.totalAmount) ||
+        (dto.currency !== undefined && dto.currency !== existing.currency);
+      if (financialChange) {
+        throw new BadRequestException(
+          'This invoice has recorded payments — its amounts and currency are locked. Issue a credit note and a new invoice to correct it.',
+        );
+      }
+    }
+
     const subtotal = dto.subtotal !== undefined ? Number(dto.subtotal) : Number(existing.subtotal);
     const taxAmount = dto.taxAmount !== undefined ? Number(dto.taxAmount) : Number(existing.taxAmount);
     const discountAmount = dto.discountAmount !== undefined ? Number(dto.discountAmount) : Number(existing.discountAmount);
@@ -518,6 +642,15 @@ export class FinanceService {
 
   async recordPayment(dto: CreatePaymentDto, actorUserId: string) {
     const invoice = await this.findInvoiceById(dto.invoiceId);
+
+    // A payment must be in the same currency as the invoice it settles —
+    // mixing currencies on one invoice corrupts paidAmount (we don't carry an
+    // FX rate to convert). Default to the invoice currency when unspecified.
+    if (dto.currency && dto.currency !== invoice.currency) {
+      throw new BadRequestException(
+        `Payment currency (${dto.currency}) must match the invoice currency (${invoice.currency}).`,
+      );
+    }
 
     const payment = await this.prisma.payment.create({
       data: {
@@ -1048,6 +1181,15 @@ export class FinanceService {
       );
     }
 
+    // Currency integrity: the payment must settle the invoice in the same
+    // currency, or adding amount→paidAmount silently mixes currencies.
+    if (payment.currency !== payment.invoice.currency) {
+      throw new BadRequestException(
+        `Payment currency (${payment.currency}) does not match the invoice currency (${payment.invoice.currency}). It cannot be verified against this invoice.`,
+      );
+    }
+
+    // Verifying the first payment converts the originating lead into a client.
     let clientId = payment.invoice.clientId;
     if (!clientId && payment.invoice.leadId) {
       const conversion = await this.leadsService.convertToClient(payment.invoice.leadId, actorUserId);
@@ -1056,6 +1198,18 @@ export class FinanceService {
 
     const newPaidAmount = Number(payment.invoice.paidAmount) + Number(payment.amount);
     const totalAmount = Number(payment.invoice.totalAmount);
+
+    // Overpayment guard: the books must never show paidAmount > totalAmount.
+    // Compare in integer cents so float noise / a legacy ±1¢ rounding gap
+    // doesn't trip it — only a genuine overpayment (more than a cent over the
+    // remaining balance) is rejected.
+    if (Math.round(newPaidAmount * 100) > Math.round(totalAmount * 100) + 1) {
+      const balance = Math.max(0, totalAmount - Number(payment.invoice.paidAmount));
+      throw new BadRequestException(
+        `This payment (${Number(payment.amount).toLocaleString()} ${payment.currency}) exceeds the invoice balance of ${balance.toLocaleString()} ${payment.invoice.currency}. Adjust the amount or split it across invoices.`,
+      );
+    }
+
     const invoiceStatus = newPaidAmount >= totalAmount ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
     const paymentStatus = newPaidAmount >= totalAmount ? PaymentStatus.PAID : PaymentStatus.PARTIAL;
 
@@ -2002,8 +2156,13 @@ export class FinanceService {
     const org = await this.prisma.organization.findFirst({ orderBy: { createdAt: 'asc' }, select: { taxRatePercent: true } });
     const rate = Number(org?.taxRatePercent ?? 0);
     const gross = Number(agreedAmount ?? handover.submittedAmount.toString());
-    const net = rate > 0 ? gross / (1 + rate / 100) : gross;
-    const tax = gross - net;
+    // Round the net first, then derive tax as the REMAINDER (gross − net) and
+    // stamp totalAmount = gross, so subtotal + tax always ties back to the
+    // agreed fee to the cent. (Previously net and tax were rounded
+    // independently, so net + tax could drift ±0.01 from the fee and strand
+    // an invoice a penny short of PAID.)
+    const net = rate > 0 ? Math.round((gross / (1 + rate / 100)) * 100) / 100 : gross;
+    const tax = Math.round((gross - net) * 100) / 100;
 
     return this.createInvoice(
       {
@@ -2011,6 +2170,7 @@ export class FinanceService {
         subtotal: net.toFixed(2),
         taxAmount: tax.toFixed(2),
         discountAmount: '0',
+        totalAmount: gross.toFixed(2),
         currency: agreedCurrency ?? handover.currency,
         dueDate,
         notes: agreedAmount

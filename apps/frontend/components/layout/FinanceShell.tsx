@@ -16,8 +16,8 @@ import {
   MessageSquareWarning,
   Receipt,
   Search,
-  Send,
   Sparkles,
+  Users,
   X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -51,31 +51,37 @@ interface FinanceSessionContextValue {
 
 const FinanceSessionContext = createContext<FinanceSessionContextValue | null>(null);
 
-const FINANCE_NAV: DrawerMenuItem[] = [
-  { label: 'Dashboard', href: '/finance', icon: LayoutDashboard, caption: 'Officer overview' },
+// Grouped by purpose so the sidebar reads top-to-bottom like the money
+// lifecycle: act on what's in front of you (Work), then browse the books
+// (Records). Verification already opens the Processing case automatically,
+// so there's no separate "Send to Processing" step.
+const WORK_NAV: DrawerMenuItem[] = [
+  { label: 'Dashboard', href: '/finance', icon: LayoutDashboard, caption: 'Overview & queues' },
   { label: 'Agreements', href: '/finance/agreements', icon: FileText, caption: 'Review & approve from Sales' },
-  { label: 'Contracts', href: '/finance/contracts', icon: FileSignature, caption: 'Service contracts + installments' },
-  { label: 'Intake Queue', href: '/finance/intake', icon: Inbox, caption: 'Cases from Sales' },
+  { label: 'Verify Payments', href: '/finance/intake', icon: Inbox, caption: 'Confirm client receipts' },
   { label: 'Corrections', href: '/finance/corrections', icon: MessageSquareWarning, caption: 'Sent back to Sales' },
-  { label: 'Receipts', href: '/finance/receipts', icon: Receipt, caption: 'Confirm + issue' },
-  { label: 'Send to Processing', href: '/finance/handover', icon: Send, caption: 'Ready cases' },
+];
+const RECORDS_NAV: DrawerMenuItem[] = [
+  { label: 'Customers', href: '/finance/clients', icon: Users, caption: 'Profiles, ledgers & expenses' },
+  { label: 'Contracts', href: '/finance/contracts', icon: FileSignature, caption: 'Service contracts + installments' },
+  { label: 'Receipts', href: '/finance/receipts', icon: Receipt, caption: 'Issued payment receipts' },
   { label: 'Payment History', href: '/finance/history', icon: History, caption: 'Searchable audit log' },
 ];
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/finance') return { title: 'Finance Dashboard', subtitle: 'Your verification queue today' };
-  if (pathname.startsWith('/finance/clients/')) return { title: 'Customer Profile', subtitle: 'Bio, agreement, ledger, invoices, payments, receipts' };
+  if (pathname.startsWith('/finance/clients/')) return { title: 'Customer Profile', subtitle: 'Bio, agreement, ledger, invoices, payments, expenses, receipts' };
+  if (pathname === '/finance/clients') return { title: 'Customers', subtitle: 'Search and open a customer profile' };
   if (pathname.startsWith('/finance/agreements/')) return { title: 'Agreement Review', subtitle: 'Approve, request changes, generate the contract' };
   if (pathname === '/finance/agreements') return { title: 'Agreements', subtitle: 'Submitted by Sales for review' };
   if (pathname.startsWith('/finance/contracts/')) return { title: 'Service Contract', subtitle: 'Installment schedule + invoice generation' };
   if (pathname === '/finance/contracts') return { title: 'Service Contracts', subtitle: 'Signed agreements + installment plans' };
   if (pathname.startsWith('/finance/intake/')) return { title: 'Payment Verification', subtitle: 'Verify the receipt and amount' };
-  if (pathname === '/finance/intake') return { title: 'Finance Intake', subtitle: 'Cases handed over by Sales' };
+  if (pathname === '/finance/intake') return { title: 'Verify Payments', subtitle: 'Client receipts awaiting confirmation' };
   if (pathname.startsWith('/finance/corrections/')) return { title: 'Correction Thread', subtitle: 'Conversation with Sales' };
   if (pathname === '/finance/corrections') return { title: 'Corrections', subtitle: 'Sent back to Sales for fixing' };
   if (pathname.startsWith('/finance/receipts/')) return { title: 'Receipt Confirmation', subtitle: 'Generate and issue the receipt' };
-  if (pathname === '/finance/receipts') return { title: 'Receipts', subtitle: 'Issue final payment receipts' };
-  if (pathname === '/finance/handover') return { title: 'Send to Processing', subtitle: 'Verified cases awaiting handover' };
+  if (pathname === '/finance/receipts') return { title: 'Receipts', subtitle: 'Issued payment receipts' };
   if (pathname === '/finance/history') return { title: 'Payment History', subtitle: 'All verified, rejected, and refunded payments' };
   return { title: 'Finance Workspace', subtitle: '' };
 }
@@ -148,7 +154,7 @@ export function FinanceShell({ children }: { children: ReactNode }) {
 
   const { title, subtitle } = getPageTitle(pathname);
   const initials = emailHandle.slice(0, 2).toUpperCase();
-  const navItems = FINANCE_NAV.map((it) =>
+  const workItems = WORK_NAV.map((it) =>
     it.href === '/finance/agreements' && reviewCount ? { ...it, badge: reviewCount } : it,
   );
 
@@ -184,8 +190,10 @@ export function FinanceShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="sos-sidebar__nav sos-scroll">
-            <div className="sos-nav-section">Workspace</div>
-            <DrawerMenu items={navItems} onNavigate={() => setMobileOpen(false)} />
+            <div className="sos-nav-section">Work</div>
+            <DrawerMenu items={workItems} onNavigate={() => setMobileOpen(false)} />
+            <div className="sos-nav-section">Records</div>
+            <DrawerMenu items={RECORDS_NAV} onNavigate={() => setMobileOpen(false)} />
           </div>
 
           <div className="sos-sidebar__user">

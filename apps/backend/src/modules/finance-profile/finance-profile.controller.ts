@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequireAnyPermissions } from '../../common/decorators/require-permissions.decorator';
@@ -13,6 +13,13 @@ import { FinanceProfileService } from './finance-profile.service';
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class FinanceProfileController {
   constructor(private readonly service: FinanceProfileService) {}
+
+  /** Searchable customer list (the Finance "Customers" home). */
+  @Get()
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
+  listCustomers(@Query('search') search?: string) {
+    return this.service.listCustomers(search);
+  }
 
   @Get(':leadId')
   @RequireAnyPermissions('finance.view_all', 'settings.manage')

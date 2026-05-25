@@ -748,17 +748,18 @@ export function FinanceReceiptsPage() {
           don&apos;t persist. To actually move a verified payment forward,
           use{' '}
           <a
-            href="/finance/handover"
+            href="/finance/intake"
             style={{
               color: 'var(--sos-brand-primary-strong)',
               textDecoration: 'underline',
               fontWeight: 600,
             }}
           >
-            Finance → Handover → Send to Processing
+            Finance → Verify Payments
           </a>
-          , which is fully wired (creates the Invoice / Payment / Case rows
-          and shows on the lead&apos;s Finance tab).
+          , which is fully wired (verifies the payment, issues the receipt,
+          creates the client + processing case, and shows on the lead&apos;s
+          Finance tab).
         </div>
       </div>
 

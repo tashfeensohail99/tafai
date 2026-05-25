@@ -147,11 +147,11 @@ export function FinanceDashboardPage() {
               Corrections ({correctionRequired})
             </ButtonLink>
             <ButtonLink
-              href={'/finance/handover' as Route}
+              href={'/finance/clients' as Route}
               variant="ghost"
               iconRight={<ArrowRight size={14} />}
             >
-              Send to Processing
+              Customers
             </ButtonLink>
           </>
         }

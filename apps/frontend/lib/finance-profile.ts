@@ -84,6 +84,31 @@ export function fetchFinanceCustomerProfile(leadId: string): Promise<FinanceCust
   return apiFetch<FinanceCustomerProfile>(`/finance/customer/${leadId}`, { cache: 'no-store' });
 }
 
+export interface FinanceCustomerRow {
+  leadId: string;
+  referenceCode: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  serviceInterest: string | null;
+  targetCountry: string | null;
+  status: string;
+  agreementStatus: string | null;
+  hasContract: boolean;
+  contractStatus: string | null;
+  processingStage: string | null;
+  fee: number;
+  paid: number;
+  outstanding: number;
+  currency: string;
+}
+
+/** Searchable customer list — the Finance "Customers" home. */
+export function fetchFinanceCustomers(search?: string): Promise<FinanceCustomerRow[]> {
+  const qs = search && search.trim() ? `?search=${encodeURIComponent(search.trim())}` : '';
+  return apiFetch<FinanceCustomerRow[]>(`/finance/customer${qs}`, { cache: 'no-store' });
+}
+
 /** Finance uploads the signed agreement PDF onto the customer's contract. */
 export async function uploadSignedAgreement(contractId: string, file: File): Promise<void> {
   const fd = new FormData();

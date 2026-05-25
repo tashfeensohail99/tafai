@@ -251,4 +251,120 @@ export class FinanceProfileService {
       },
     };
   }
+
+  /**
+   * Searchable customer list that powers the Finance "Customers" screen — the
+   * home base that opens the 360° profile. A "customer" here is any lead that
+   * has entered the finance flow: it has an agreement, a service contract, or a
+   * payment handover. Money figures (fee/paid/outstanding) are computed in a
+   * handful of batched queries (no per-row N+1), so the list stays fast.
+   */
+  async listCustomers(search?: string) {
+    const s = search?.trim();
+
+    // 1) Candidate leadIds: anyone with an agreement / contract / handover.
+    const [agrLeads, scLeads, hoLeads] = await Promise.all([
+      this.prisma.agreement.findMany({ where: { deletedAt: null }, select: { leadId: true }, distinct: ['leadId'] }),
+      this.prisma.serviceContract.findMany({ where: { deletedAt: null, leadId: { not: null } }, select: { leadId: true }, distinct: ['leadId'] }),
+      this.prisma.financeHandover.findMany({ select: { leadId: true }, distinct: ['leadId'] }),
+    ]);
+    const candidateIds = [
+      ...new Set(
+        [...agrLeads, ...scLeads, ...hoLeads].map((r) => r.leadId).filter((x): x is string => !!x),
+      ),
+    ];
+    if (candidateIds.length === 0) return [];
+
+    // 2) The leads themselves (with optional search across name/phone/ref/email).
+    const leads = await this.prisma.lead.findMany({
+      where: {
+        id: { in: candidateIds },
+        deletedAt: null,
+        ...(s
+          ? {
+              OR: [
+                { firstName: { contains: s, mode: 'insensitive' } },
+                { lastName: { contains: s, mode: 'insensitive' } },
+                { phone: { contains: s } },
+                { referenceCode: { contains: s, mode: 'insensitive' } },
+                { email: { contains: s, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        referenceCode: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        status: true,
+        serviceInterest: true,
+        targetCountry: true,
+        convertedClientId: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (leads.length === 0) return [];
+
+    const ids = leads.map((l) => l.id);
+    const clientIds = leads.map((l) => l.convertedClientId).filter((x): x is string => !!x);
+    const ownerOr = [{ leadId: { in: ids } }, { clientId: { in: clientIds } }];
+
+    // 3) Batch the money + status data for every listed lead.
+    const [contracts, agreements, invoices, cases] = await Promise.all([
+      this.prisma.serviceContract.findMany({
+        where: { OR: ownerOr, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { leadId: true, clientId: true, totalAmount: true, currency: true, status: true },
+      }),
+      this.prisma.agreement.findMany({
+        where: { leadId: { in: ids }, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { leadId: true, totalAmount: true, currency: true, status: true },
+      }),
+      this.prisma.invoice.findMany({
+        where: { OR: ownerOr },
+        select: { leadId: true, clientId: true, paidAmount: true },
+      }),
+      this.prisma.processingCase.findMany({
+        where: { leadId: { in: ids } },
+        orderBy: { createdAt: 'desc' },
+        select: { leadId: true, stage: true },
+      }),
+    ]);
+
+    // First match wins (queries are ordered newest-first).
+    const matchesOwner = (row: { leadId: string | null; clientId: string | null }, lead: (typeof leads)[number]) =>
+      row.leadId === lead.id || (!!lead.convertedClientId && row.clientId === lead.convertedClientId);
+
+    return leads.map((lead) => {
+      const contract = contracts.find((c) => matchesOwner(c, lead));
+      const agreement = agreements.find((a) => a.leadId === lead.id);
+      const paid = invoices
+        .filter((i) => matchesOwner(i, lead))
+        .reduce((sum, i) => sum + num(i.paidAmount), 0);
+      const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
+      const stage = cases.find((c) => c.leadId === lead.id)?.stage ?? null;
+      return {
+        leadId: lead.id,
+        referenceCode: lead.referenceCode,
+        firstName: lead.firstName,
+        lastName: lead.lastName,
+        phone: lead.phone,
+        serviceInterest: lead.serviceInterest,
+        targetCountry: lead.targetCountry,
+        status: lead.status,
+        agreementStatus: agreement?.status ?? null,
+        hasContract: !!contract,
+        contractStatus: contract?.status ?? null,
+        processingStage: stage,
+        fee,
+        paid,
+        outstanding: Math.max(0, fee - paid),
+        currency: contract?.currency || agreement?.currency || 'CAD',
+      };
+    });
+  }
 }

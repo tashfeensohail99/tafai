@@ -216,6 +216,9 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
 
   const balanceColor = balanced ? 'var(--sos-status-success)' : 'var(--sos-status-danger)';
   const curStep = stepIndex(data.status);
+  // SIGNED is terminal — the whole track is complete, so every step (incl.
+  // the last "Signed" one) renders green/done rather than the active blue.
+  const allDone = data.status === 'SIGNED';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -230,7 +233,9 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             {STEPS.map((label, i) => {
-              const done = i < curStep, cur = i === curStep;
+              const done = allDone || i < curStep;
+              const cur = !allDone && i === curStep;
+              const finalDone = allDone && i === STEPS.length - 1; // the achieved "Signed" end state
               return (
                 <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <span style={{
@@ -239,7 +244,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
                     background: done ? 'var(--sos-status-success)' : cur ? 'var(--sos-accent, #6366f1)' : 'var(--sos-surface-1, #e5e7eb)',
                     color: done || cur ? '#fff' : 'var(--sos-text-faint)',
                   }}>{done ? <Check size={11} /> : i + 1}</span>
-                  <span style={{ fontSize: 12, fontWeight: cur ? 700 : 500, color: cur ? 'var(--sos-text-primary)' : 'var(--sos-text-faint)' }}>{label}</span>
+                  <span style={{ fontSize: 12, fontWeight: cur || finalDone ? 700 : 500, color: cur ? 'var(--sos-text-primary)' : finalDone ? 'var(--sos-status-success)' : 'var(--sos-text-faint)' }}>{label}</span>
                   {i < STEPS.length - 1 ? <span style={{ width: 16, height: 1, background: 'var(--sos-border-subtle)', margin: '0 2px' }} /> : null}
                 </span>
               );

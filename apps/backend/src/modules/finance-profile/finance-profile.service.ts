@@ -76,6 +76,30 @@ export class FinanceProfileService {
     const paid = invoices.reduce((s, i) => s + num(i.paidAmount), 0);
     const currency = contract?.currency || agreement?.currency || 'CAD';
 
+    // Allocate total verified payments across the installment schedule in
+    // order (AR waterfall) so the ledger shows precise "paid X of Y" without
+    // touching the payment pipeline. Installments arrive ordered by sequence.
+    let remaining = paid;
+    const now = Date.now();
+    const installmentsView = (contract?.installments ?? []).map((i) => {
+      const amount = num(i.amount);
+      const covered = Math.max(0, Math.min(remaining, amount));
+      remaining -= covered;
+      const fullyPaid = amount > 0 && covered >= amount - 0.005;
+      const overdue = !fullyPaid && i.dueDate ? new Date(i.dueDate).getTime() < now : false;
+      return {
+        id: i.id,
+        sequence: i.sequence,
+        dueDate: i.dueDate,
+        amount,
+        description: i.description,
+        status: i.status,
+        paidAmount: covered,
+        paidStatus: fullyPaid ? 'PAID' : covered > 0 ? 'PARTIALLY_PAID' : overdue ? 'OVERDUE' : 'DUE',
+      };
+    });
+    const installmentsPaid = installmentsView.filter((i) => i.paidStatus === 'PAID').length;
+
     return {
       lead: {
         id: lead.id,
@@ -121,14 +145,7 @@ export class FinanceProfileService {
             agreementFileName: contract.agreementFileName,
           }
         : null,
-      installments: (contract?.installments ?? []).map((i) => ({
-        id: i.id,
-        sequence: i.sequence,
-        dueDate: i.dueDate,
-        amount: num(i.amount),
-        status: i.status,
-        description: i.description,
-      })),
+      installments: installmentsView,
       invoices: invoices.map((i) => ({
         id: i.id,
         invoiceNumber: i.invoiceNumber,
@@ -155,7 +172,14 @@ export class FinanceProfileService {
         currency: r.currency,
         issuedAt: r.issuedAt,
       })),
-      totals: { fee, paid, outstanding: Math.max(0, fee - paid), currency },
+      totals: {
+        fee,
+        paid,
+        outstanding: Math.max(0, fee - paid),
+        currency,
+        installmentsPaid,
+        installmentsTotal: installmentsView.length,
+      },
     };
   }
 }

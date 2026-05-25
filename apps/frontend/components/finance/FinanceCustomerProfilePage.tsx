@@ -178,7 +178,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       {/* Money strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
         <MetricCard label="Total fee" value={money(totals.fee, totals.currency)} tone="accent" Icon={Wallet} />
-        <MetricCard label="Paid" value={money(totals.paid, totals.currency)} tone="success" Icon={CheckCircle2} hint={`${data.receipts.length} receipt(s)`} />
+        <MetricCard label="Paid" value={money(totals.paid, totals.currency)} tone="success" Icon={CheckCircle2} hint={totals.installmentsTotal > 0 ? `${totals.installmentsPaid} of ${totals.installmentsTotal} installments paid` : `${data.receipts.length} receipt(s)`} />
         <MetricCard label="Outstanding" value={money(totals.outstanding, totals.currency)} tone={totals.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
       </div>
 
@@ -288,12 +288,15 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         <GlassCard variant="default" padded={false}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <FileText size={15} className="sos-text-faint" />
-            <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Installment ledger {contract ? `· ${contract.contractNumber}` : ''}</h3>
+            <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>
+              Installment ledger {contract ? `· ${contract.contractNumber}` : ''}
+              {totals.installmentsTotal > 0 ? <span className="sos-text-faint" style={{ fontWeight: 400 }}> · paid {totals.installmentsPaid}/{totals.installmentsTotal}</span> : null}
+            </h3>
           </div>
           <Table
-            head={['#', 'Stage', 'Amount', 'Due', 'Status']}
+            head={['#', 'Stage', 'Amount', 'Paid', 'Due', 'Status']}
             empty={contract ? 'No installments.' : 'No service contract yet (created on approval).'}
-            rows={data.installments.map((i) => [i.sequence, i.description ?? '—', money(i.amount, totals.currency), fmtDate(i.dueDate), <StatusBadge key="s" tone={tone(i.status)} size="sm" dot={false}>{label(i.status)}</StatusBadge>])}
+            rows={data.installments.map((i) => [i.sequence, i.description ?? '—', money(i.amount, totals.currency), money(i.paidAmount, totals.currency), fmtDate(i.dueDate), <StatusBadge key="s" tone={tone(i.paidStatus)} size="sm" dot={false}>{label(i.paidStatus)}</StatusBadge>])}
           />
         </GlassCard>
       ) : null}

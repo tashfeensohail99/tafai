@@ -49,11 +49,11 @@ export interface FinanceCustomerProfile {
   clientId: string | null;
   agreement: FinanceProfileAgreement | null;
   contract: FinanceProfileContract | null;
-  installments: Array<{ id: string; sequence: number; dueDate: string; amount: number; status: string; description: string | null }>;
+  installments: Array<{ id: string; sequence: number; dueDate: string; amount: number; status: string; description: string | null; paidAmount: number; paidStatus: string }>;
   invoices: Array<{ id: string; invoiceNumber: string; status: string; currency: string; totalAmount: number; paidAmount: number; dueDate: string | null; createdAt: string }>;
   payments: Array<{ id: string; amount: number; currency: string; status: string; paymentMethod: string | null; paidAt: string | null; verifiedAt: string | null }>;
   receipts: Array<{ id: string; receiptNumber: string; amount: number; currency: string; issuedAt: string }>;
-  totals: { fee: number; paid: number; outstanding: number; currency: string };
+  totals: { fee: number; paid: number; outstanding: number; currency: string; installmentsPaid: number; installmentsTotal: number };
 }
 
 export function fetchFinanceCustomerProfile(leadId: string): Promise<FinanceCustomerProfile> {

@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import {
   ButtonLink,
+  FormInput,
+  FormSelect,
+  GhostButton,
   GlassCard,
   MetricCard,
   PageHeader,
@@ -27,10 +30,33 @@ import {
 import {
   fetchFinanceCustomerProfile,
   getContractAgreementUrl,
+  recordCustomerPayment,
   uploadSignedAgreement,
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
+
+const PAYMENT_METHODS: Array<{ value: string; label: string }> = [
+  { value: 'BANK', label: 'Bank Transfer' },
+  { value: 'CASH', label: 'Cash' },
+  { value: 'CARD', label: 'Card' },
+  { value: 'CHEQUE', label: 'Cheque' },
+  { value: 'MOBILE', label: 'Mobile Payment' },
+  { value: 'WIRE', label: 'Wire Transfer' },
+  { value: 'ONLINE', label: 'Online' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+/** Safe base64 encoder — chunked to avoid a stack overflow on large files. */
+function fileToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
 type TabKey = 'overview' | 'agreement' | 'ledger' | 'invoices' | 'payments' | 'receipts';
 const TABS: Array<[TabKey, string]> = [
@@ -80,6 +106,15 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [tab, setTab] = useState<TabKey>('overview');
   const [busy, setBusy] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const payFileRef = useRef<HTMLInputElement>(null);
+
+  // Record-payment form (Payments tab)
+  const [payOpen, setPayOpen] = useState(false);
+  const [payFile, setPayFile] = useState<File | null>(null);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState('BANK');
+  const [payRef, setPayRef] = useState('');
+  const [payNote, setPayNote] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -139,6 +174,52 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Send failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const resetPayForm = () => {
+    setPayOpen(false);
+    setPayFile(null);
+    setPayAmount('');
+    setPayMethod('BANK');
+    setPayRef('');
+    setPayNote('');
+  };
+
+  // Open the form, prefilling the amount with the next unpaid installment.
+  const openPayForm = () => {
+    if (!data) return;
+    const nextDue = data.installments.find((i) => i.paidStatus !== 'PAID');
+    setPayAmount(nextDue ? String(nextDue.amount) : '');
+    setPayOpen(true);
+  };
+
+  const handleRecordPayment = async () => {
+    if (!data || !payFile) { setError('Choose a receipt file first.'); return; }
+    const amount = Number(payAmount);
+    if (!Number.isFinite(amount) || amount <= 0) { setError('Enter a valid payment amount.'); return; }
+    setBusy('record');
+    setError(null);
+    try {
+      const base64 = fileToBase64(await payFile.arrayBuffer());
+      await recordCustomerPayment({
+        leadId: data.lead.id,
+        submittedAmount: String(amount),
+        currency: data.totals.currency,
+        paymentMethod: payMethod,
+        transactionRef: payRef.trim() || undefined,
+        notes: payNote.trim() || undefined,
+        receiptFileName: payFile.name,
+        receiptMimeType: payFile.type || 'application/octet-stream',
+        receiptContentBase64: base64,
+      });
+      resetPayForm();
+      setNotice('Payment recorded. Confirm it below to verify and update the ledger.');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not record payment');
     } finally {
       setBusy(null);
     }
@@ -319,6 +400,87 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       {/* PAYMENTS */}
       {tab === 'payments' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Record payment */}
+          <GlassCard variant="default">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Upload size={16} className="sos-text-faint" />
+                <div>
+                  <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Record a payment</h3>
+                  <div className="sos-text-faint" style={{ fontSize: 12, marginTop: 2 }}>
+                    Upload the client&apos;s receipt + amount. It lands in the queue below to confirm.
+                  </div>
+                </div>
+              </div>
+              {payOpen ? (
+                <GhostButton size="sm" onClick={resetPayForm} disabled={busy !== null}>Cancel</GhostButton>
+              ) : (
+                <PrimaryButton size="sm" iconLeft={<Upload size={14} />} onClick={openPayForm}>Record payment</PrimaryButton>
+              )}
+            </div>
+            {payOpen ? (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--sos-border-subtle)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))' }}>
+                  <FormInput
+                    label="Amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                    hint={totals.installmentsTotal > 0 ? `Next due prefilled · paid ${totals.installmentsPaid}/${totals.installmentsTotal}` : `Currency ${totals.currency}`}
+                    required
+                  />
+                  <FormSelect
+                    label="Method"
+                    value={payMethod}
+                    onChange={(e) => setPayMethod(e.target.value)}
+                    options={PAYMENT_METHODS}
+                  />
+                  <FormInput
+                    label="Reference (optional)"
+                    placeholder="Txn / cheque no."
+                    value={payRef}
+                    onChange={(e) => setPayRef(e.target.value)}
+                  />
+                  <FormInput
+                    label="Note (optional)"
+                    placeholder="Anything Finance should know"
+                    value={payNote}
+                    onChange={(e) => setPayNote(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Receipt</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <SecondaryButton size="sm" iconLeft={<FileText size={14} />} onClick={() => payFileRef.current?.click()} disabled={busy !== null}>
+                      {payFile ? 'Change file' : 'Choose receipt'}
+                    </SecondaryButton>
+                    <span className="sos-text-muted" style={{ fontSize: 13 }}>{payFile ? payFile.name : 'PDF or image of the proof of payment'}</span>
+                    <input
+                      ref={payFileRef}
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setPayFile(f); }}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <PrimaryButton
+                    size="sm"
+                    iconLeft={busy === 'record' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />}
+                    onClick={() => void handleRecordPayment()}
+                    disabled={busy !== null || !payFile || !payAmount}
+                  >
+                    {busy === 'record' ? 'Recording…' : 'Record payment'}
+                  </PrimaryButton>
+                </div>
+              </div>
+            ) : null}
+          </GlassCard>
+
           <GlassCard variant="default" padded={false}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Wallet size={15} className="sos-text-faint" />

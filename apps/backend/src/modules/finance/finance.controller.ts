@@ -150,8 +150,11 @@ export class FinanceController {
     return this.financeService.recordPayment(dto, user.id);
   }
 
+  // Sales "hand over" a receipt (finance_handover.create); Finance can also
+  // record a payment straight from a customer profile (finance.record_payment)
+  // — both land the same FinanceHandover in the verification queue.
   @Post('handovers')
-  @RequirePermissions('finance_handover.create')
+  @RequireAnyPermissions('finance_handover.create', 'finance.record_payment')
   createHandover(@Body() dto: CreateFinanceHandoverDto, @CurrentUser() user: RequestUser) {
     return this.financeService.createHandover(dto, user);
   }

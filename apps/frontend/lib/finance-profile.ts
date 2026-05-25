@@ -79,3 +79,29 @@ export function getContractAgreementUrl(contractId: string): Promise<{ url: stri
     cache: 'no-store',
   });
 }
+
+/**
+ * Record a payment from the customer profile: uploads the receipt proof and
+ * the amount as a FinanceHandover (status SUBMITTED). This reuses the exact
+ * intake pipeline Sales uses — Finance then confirms it from the "Payment
+ * submissions" list (→ /finance/intake/:id) which records + verifies the
+ * payment, advancing the ledger's "paid X of Y". Works the same for the
+ * first payment and every installment after it.
+ */
+export function recordCustomerPayment(payload: {
+  leadId: string;
+  submittedAmount: string;
+  currency?: string;
+  paymentMethod?: string;
+  transactionRef?: string;
+  notes?: string;
+  receiptFileName: string;
+  receiptMimeType?: string;
+  receiptContentBase64: string;
+}): Promise<{ id: string }> {
+  return apiFetch<{ id: string }>('/finance/handovers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}

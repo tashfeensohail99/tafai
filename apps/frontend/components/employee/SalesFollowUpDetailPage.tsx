@@ -528,7 +528,6 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <OriginalScheduleCard followUp={followUp} />
-          <HandoffCard leadId={followUp.leadId} />
           {otherFollowUps.length > 0 ? (
             <RelatedFollowUpsCard items={otherFollowUps.slice(0, 4)} />
           ) : null}
@@ -769,11 +768,11 @@ function QuickActionRow({
           </p>
         </div>
         <ButtonLink
-          href={`/sales/decisions?leadId=${leadId}` as Route}
+          href={`/sales/leads/${leadId}` as Route}
           variant="primary"
           iconRight={<Send size={14} />}
         >
-          Move to Decision
+          Open lead
         </ButtonLink>
       </div>
 
@@ -1037,59 +1036,6 @@ function Mini({ label, value }: { label: string; value: string }) {
   );
 }
 
-function HandoffCard({ leadId }: { leadId: string }) {
-  return (
-    <GlassCard variant="default" padded="md">
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: '12px',
-          padding: '14px',
-          borderRadius: 'var(--sos-radius-sm)',
-          background: 'var(--sos-status-success-soft)',
-          border: '1px solid var(--sos-status-success-border)',
-        }}
-      >
-        <div
-          style={{
-            width: '36px',
-            height: '36px',
-            borderRadius: '11px',
-            display: 'grid',
-            placeItems: 'center',
-            background: 'var(--sos-status-success-soft)',
-            color: 'var(--sos-status-success)',
-            border: '1px solid var(--sos-status-success-border)',
-            flexShrink: 0,
-          }}
-        >
-          <Wallet size={16} />
-        </div>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="sos-eyebrow">Pay-now hand-off</div>
-          <p
-            className="sos-text-secondary"
-            style={{ marginTop: '4px', fontSize: '12.5px', lineHeight: 1.55 }}
-          >
-            If this follow-up resolves into a payment, jump to Decisions to upload the
-            receipt and notify finance.
-          </p>
-        </div>
-      </div>
-      <div style={{ marginTop: '14px' }}>
-        <ButtonLink
-          href={`/sales/decisions?leadId=${leadId}` as Route}
-          variant="success"
-          fullWidth
-          iconRight={<ArrowRight size={15} />}
-        >
-          Open Decisions
-        </ButtonLink>
-      </div>
-    </GlassCard>
-  );
-}
 
 function RelatedFollowUpsCard({ items }: { items: FollowUp[] }) {
   return (

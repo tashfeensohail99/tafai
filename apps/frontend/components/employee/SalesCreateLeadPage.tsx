@@ -288,12 +288,12 @@ export function SalesCreateLeadPage() {
         }),
       });
       // If they came from the inbox via Convert-to-Lead, drop them back
-      // into the same chat — now linked to a real Lead — instead of
-      // bouncing to /sales/decisions.
+      // into the same chat — now linked to a real Lead. Otherwise go to the
+      // leads list to start working the new lead.
       if (whatsAppThreadId) {
         router.push('/sales/inbox' as Route);
       } else {
-        router.push('/sales/decisions');
+        router.push('/sales/leads' as Route);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to create lead';

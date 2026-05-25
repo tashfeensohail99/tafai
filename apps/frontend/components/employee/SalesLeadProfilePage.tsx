@@ -968,13 +968,6 @@ function QuickActionRail({
       tone: 'var(--sos-status-violet)',
       href: '/sales/appointments',
     },
-    {
-      Icon: Send,
-      title: 'Send to Finance',
-      caption: 'Hand off receipt for verification',
-      tone: 'var(--sos-status-success)',
-      href: `/sales/decisions?leadId=${leadId}`,
-    },
   ];
 
   return (
@@ -1269,55 +1262,6 @@ function OverviewTab({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <SnapshotCard lead={lead} />
 
-        <GlassCard variant="default" padded="md">
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: '12px',
-              padding: '14px',
-              borderRadius: 'var(--sos-radius-sm)',
-              background: 'var(--sos-status-success-soft)',
-              border: '1px solid var(--sos-status-success-border)',
-            }}
-          >
-            <div
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '11px',
-                display: 'grid',
-                placeItems: 'center',
-                background: 'var(--sos-status-success-soft)',
-                color: 'var(--sos-status-success)',
-                border: '1px solid var(--sos-status-success-border)',
-                flexShrink: 0,
-              }}
-            >
-              <Wallet size={16} />
-            </div>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div className="sos-eyebrow">Pay-now hand-off</div>
-              <p
-                className="sos-text-secondary"
-                style={{ marginTop: '4px', fontSize: '12.5px', lineHeight: 1.55 }}
-              >
-                When the client is ready to pay, jump to Decisions to upload the receipt and
-                notify finance.
-              </p>
-            </div>
-          </div>
-          <div style={{ marginTop: '14px' }}>
-            <ButtonLink
-              href={`/sales/decisions?leadId=${lead.id}` as Route}
-              variant="success"
-              fullWidth
-              iconRight={<ArrowRight size={15} />}
-            >
-              Open Decisions
-            </ButtonLink>
-          </div>
-        </GlassCard>
 
         <GlassCard variant="soft" padded="md">
           <div
@@ -2678,7 +2622,7 @@ function FinanceTab({
             >
               {latest.financeNotes
                 ? `Finance note: "${latest.financeNotes}"`
-                : 'No finance note was attached. Open the verification detail in /finance/corrections for context.'}
+                : 'No finance note was attached.'}
             </div>
             <div className="sos-text-muted" style={{ marginTop: 6, fontSize: 11.5 }}>
               {latest.reviewedAt

@@ -13,7 +13,6 @@ import {
   Clock,
   FileText,
   Inbox,
-  MessageSquareWarning,
   Receipt,
   Send,
   Wallet,
@@ -98,7 +97,6 @@ export function FinanceDashboardPage() {
   const underVerificationMine = handovers.filter(
     (h) => h.status === 'IN_REVIEW' && h.reviewedByUserId === userId,
   ).length;
-  const correctionRequired = handovers.filter((h) => h.status === 'REJECTED').length;
   const readyForProcessing = handovers.filter((h) => h.status === 'PAYMENT_VERIFIED').length;
   const collectedAllTime = revenue?.totals.allTime ?? 0;
   const verifiedCount = handovers.filter((h) => h.status === 'PAYMENT_VERIFIED' || h.status === 'SENT_TO_PROCESSING').length;
@@ -138,13 +136,6 @@ export function FinanceDashboardPage() {
               iconLeft={<Inbox size={15} />}
             >
               Customers
-            </ButtonLink>
-            <ButtonLink
-              href={'/finance/corrections' as Route}
-              variant="secondary"
-              iconLeft={<MessageSquareWarning size={15} />}
-            >
-              Corrections ({correctionRequired})
             </ButtonLink>
           </>
         }
@@ -193,18 +184,6 @@ export function FinanceDashboardPage() {
           tone="warm"
           Icon={Wallet}
           footer="Payment recorded by sales"
-        />
-        <MetricCard
-          label="Correction required"
-          value={correctionRequired}
-          hint="Sent back to Sales"
-          tone={correctionRequired > 0 ? 'warning' : 'success'}
-          Icon={MessageSquareWarning}
-          footer={
-            correctionRequired > 0
-              ? 'Sales is fixing — re-enter when resubmitted'
-              : 'No pending corrections'
-          }
         />
         <MetricCard
           label="Ready for processing"

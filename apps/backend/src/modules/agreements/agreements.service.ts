@@ -109,6 +109,70 @@ export class AgreementsService {
     }
   }
 
+  /** Active finance users to alert on submission (fallback: super_admin). */
+  private async financeRecipientEmails(): Promise<string[]> {
+    const users = await this.prisma.userAccount.findMany({
+      where: {
+        status: 'ACTIVE',
+        deletedAt: null,
+        userRoles: { some: { role: { name: { in: ['finance', 'finance_manager'] } } } },
+      },
+      select: { email: true },
+    });
+    let emails = users.map((u) => u.email).filter(Boolean);
+    if (emails.length === 0) {
+      // No finance users yet — fall back to super_admin so the alert isn't lost.
+      const admins = await this.prisma.userAccount.findMany({
+        where: {
+          status: 'ACTIVE',
+          deletedAt: null,
+          userRoles: { some: { role: { name: 'super_admin' } } },
+        },
+        select: { email: true },
+      });
+      emails = admins.map((u) => u.email).filter(Boolean);
+    }
+    return [...new Set(emails)];
+  }
+
+  /**
+   * Email the finance team when Sales submits / re-submits for review — so a
+   * fixed agreement arriving back isn't just a silent badge bump. Non-fatal.
+   */
+  private async notifyFinanceOfSubmission(
+    agreement: { agreementNumber: string; leadId: string | null; financeNotes: string | null },
+    submitterUserId: string,
+    resubmitted: boolean,
+  ): Promise<void> {
+    try {
+      const to = await this.financeRecipientEmails();
+      if (to.length === 0) return;
+      const emp = await this.prisma.employee.findFirst({
+        where: { userId: submitterUserId },
+        select: { firstName: true, lastName: true },
+      });
+      const salesName = emp ? `${emp.firstName} ${emp.lastName}`.trim() : 'Sales';
+      let leadName: string | null = null;
+      if (agreement.leadId) {
+        const lead = await this.prisma.lead.findUnique({
+          where: { id: agreement.leadId },
+          select: { firstName: true, lastName: true },
+        });
+        if (lead) leadName = `${lead.firstName} ${lead.lastName}`.trim();
+      }
+      await this.email.sendAgreementSubmittedToFinance({
+        to,
+        agreementNumber: agreement.agreementNumber,
+        leadName,
+        salesName,
+        resubmitted,
+        note: resubmitted ? agreement.financeNotes : null,
+      });
+    } catch (err) {
+      this.log.warn(`finance submission notification failed: ${(err as Error).message}`);
+    }
+  }
+
   // ─── Sales authoring ─────────────────────────────────────────────────────
 
   async createDraft(dto: CreateAgreementDto, userId: string) {
@@ -327,6 +391,14 @@ export class AgreementsService {
       'Submitted to Finance for review',
       null,
       { agreementNumber: existing.agreementNumber },
+    );
+
+    // Alert the finance team. `existing` still holds the pre-update status, so
+    // CHANGES_REQUESTED means this is a re-submission after a bounce.
+    await this.notifyFinanceOfSubmission(
+      existing,
+      userId,
+      existing.status === AgreementStatus.CHANGES_REQUESTED,
     );
 
     return updated;
@@ -602,6 +674,7 @@ export class AgreementsService {
         createdAt: true,
         updatedAt: true,
         submittedAt: true,
+        financeNotes: true,
       },
     });
 

@@ -68,7 +68,12 @@ export function FinanceAgreementsPage() {
                 <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12, color: 'var(--sos-text-faint)', whiteSpace: 'nowrap' }}>{a.lead?.referenceCode ?? '—'}</td>
                 <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--sos-text-secondary)' }}>{a.categoryKey}</td>
                 <td style={{ padding: '12px 16px' }}>
-                  <StatusBadge tone={STATUS_TONE[a.status]} size="sm" dot>{a.status.replace(/_/g, ' ').toLowerCase()}</StatusBadge>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <StatusBadge tone={STATUS_TONE[a.status]} size="sm" dot>{a.status.replace(/_/g, ' ').toLowerCase()}</StatusBadge>
+                    {a.financeNotes && (a.status === 'SUBMITTED' || a.status === 'FINANCE_REVIEW') ? (
+                      <StatusBadge tone="warm" size="sm" dot={false}>Resubmitted</StatusBadge>
+                    ) : null}
+                  </span>
                 </td>
                 <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--sos-text-secondary)', whiteSpace: 'nowrap' }}>{a.currency} {a.totalAmount}</td>
                 <td style={{ padding: '12px 16px', fontSize: 12, color: 'var(--sos-text-faint)', whiteSpace: 'nowrap' }}>{a.submittedAt ? new Date(a.submittedAt).toLocaleDateString('en-GB') : '—'}</td>

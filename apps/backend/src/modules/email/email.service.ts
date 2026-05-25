@@ -252,6 +252,42 @@ export class EmailService {
       html: baseTemplate('Agreement approved', content),
     });
   }
+
+  /** Sales submitted / re-submitted an agreement → alert the finance team. */
+  async sendAgreementSubmittedToFinance(opts: {
+    to: string | string[];
+    agreementNumber: string;
+    leadName?: string | null;
+    salesName: string;
+    resubmitted: boolean;
+    note?: string | null;
+  }): Promise<boolean> {
+    const heading = opts.resubmitted
+      ? 'Agreement re-submitted after changes'
+      : 'New agreement submitted for review';
+    const lead = opts.leadName ? ` for <b>${escHtml(opts.leadName)}</b>` : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">${heading}</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">${escHtml(opts.salesName)} ${
+        opts.resubmitted ? 'made the requested changes and re-submitted' : 'submitted'
+      } agreement <b>${escHtml(opts.agreementNumber)}</b>${lead}. It's ${
+        opts.resubmitted ? 'back in' : 'in'
+      } your review queue.</p>
+      ${
+        opts.resubmitted && opts.note
+          ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px;margin-bottom:20px;">
+               <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:0.04em;">Your earlier note</p>
+               <p style="margin:0;font-size:13px;color:#92400e;white-space:pre-wrap;line-height:1.6;">${escHtml(opts.note)}</p>
+             </div>`
+          : ''
+      }
+      <a href="https://tashfeengroup.com/finance/agreements" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Review now →</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `${opts.resubmitted ? 'Re-submitted' : 'New'} — agreement ${opts.agreementNumber} to review`,
+      html: baseTemplate(heading, content),
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

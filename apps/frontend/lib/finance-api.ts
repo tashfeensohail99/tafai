@@ -420,6 +420,26 @@ export async function fetchReceipts(search?: string): Promise<ApiIssuedReceipt[]
   return apiFetch<ApiIssuedReceipt[]>(`/finance/receipts${qs}`);
 }
 
+/** Firm-wide finance report (Insight layer). */
+export interface FinanceReportsSummary {
+  currency: string;
+  totals: {
+    fees: number;
+    collected: number;
+    outstanding: number;
+    expenses: number;
+    marginCash: number;
+    marginProjected: number;
+  };
+  revenue: { month: number; ytd: number; allTime: number };
+  counts: { customers: number; contracts: number; receipts: number };
+  byService: Array<{ service: string; month: number; ytd: number; allTime: number }>;
+}
+
+export async function fetchFinanceReports(): Promise<FinanceReportsSummary> {
+  return apiFetch<FinanceReportsSummary>('/finance/reports/summary');
+}
+
 /** Result of an admin-authorised handover deletion. */
 export interface AdminDeleteHandoverResult {
   handoverId: string;

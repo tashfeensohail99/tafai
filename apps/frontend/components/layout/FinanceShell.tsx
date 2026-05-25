@@ -4,6 +4,7 @@
 // useTheme via ThemeToggle in the topbar.
 
 import {
+  BarChart3,
   Bell,
   ChevronRight,
   FileSignature,
@@ -67,6 +68,9 @@ const RECORDS_NAV: DrawerMenuItem[] = [
   { label: 'Receipts', href: '/finance/receipts', icon: Receipt, caption: 'Issued payment receipts' },
   { label: 'Payment History', href: '/finance/history', icon: History, caption: 'Searchable audit log' },
 ];
+const INSIGHT_NAV: DrawerMenuItem[] = [
+  { label: 'Reports', href: '/finance/reports', icon: BarChart3, caption: 'Revenue, cost & margin' },
+];
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/finance') return { title: 'Finance Dashboard', subtitle: 'Your verification queue today' };
@@ -83,6 +87,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/finance/receipts/')) return { title: 'Receipt Confirmation', subtitle: 'Generate and issue the receipt' };
   if (pathname === '/finance/receipts') return { title: 'Receipts', subtitle: 'Issued payment receipts' };
   if (pathname === '/finance/history') return { title: 'Payment History', subtitle: 'All verified, rejected, and refunded payments' };
+  if (pathname === '/finance/reports') return { title: 'Reports', subtitle: 'Revenue, cost & margin across all customers' };
   return { title: 'Finance Workspace', subtitle: '' };
 }
 
@@ -194,6 +199,8 @@ export function FinanceShell({ children }: { children: ReactNode }) {
             <DrawerMenu items={workItems} onNavigate={() => setMobileOpen(false)} />
             <div className="sos-nav-section">Records</div>
             <DrawerMenu items={RECORDS_NAV} onNavigate={() => setMobileOpen(false)} />
+            <div className="sos-nav-section">Insight</div>
+            <DrawerMenu items={INSIGHT_NAV} onNavigate={() => setMobileOpen(false)} />
           </div>
 
           <div className="sos-sidebar__user">

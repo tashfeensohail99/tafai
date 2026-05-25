@@ -157,6 +157,52 @@ export class FinanceService {
    * `serviceType`. Returns totals for this month, year-to-date, and
    * all-time so the admin Finance page can show a quick rollup card.
    */
+  /**
+   * Firm-wide finance report — the Insight layer. Pairs the revenue side
+   * (collected, by service) with the cost side (expenses) to surface margin,
+   * plus the AR position (fees vs collected = outstanding). All figures are
+   * computed from the same rows the rest of the app uses, so they reconcile.
+   */
+  async getReportsSummary() {
+    const dec = (d: Prisma.Decimal | number | null | undefined): number =>
+      d == null ? 0 : Number(d.toString());
+
+    const [revenue, paidAgg, feesAgg, expenseAgg, contractsCount, receiptsCount, agrLeads, scLeads, hoLeads] =
+      await Promise.all([
+        this.getRevenueByService(),
+        this.prisma.invoice.aggregate({ _sum: { paidAmount: true } }),
+        this.prisma.serviceContract.aggregate({ _sum: { totalAmount: true }, where: { deletedAt: null } }),
+        this.prisma.expense.aggregate({ _sum: { amount: true }, where: { deletedAt: null } }),
+        this.prisma.serviceContract.count({ where: { deletedAt: null } }),
+        this.prisma.receipt.count({ where: { voidedAt: null } }),
+        this.prisma.agreement.findMany({ where: { deletedAt: null }, select: { leadId: true }, distinct: ['leadId'] }),
+        this.prisma.serviceContract.findMany({ where: { deletedAt: null, leadId: { not: null } }, select: { leadId: true }, distinct: ['leadId'] }),
+        this.prisma.financeHandover.findMany({ select: { leadId: true }, distinct: ['leadId'] }),
+      ]);
+
+    const collected = dec(paidAgg._sum.paidAmount);
+    const fees = dec(feesAgg._sum.totalAmount);
+    const expenses = dec(expenseAgg._sum.amount);
+    const customers = new Set(
+      [...agrLeads, ...scLeads, ...hoLeads].map((r) => r.leadId).filter((x): x is string => !!x),
+    ).size;
+
+    return {
+      currency: 'CAD',
+      totals: {
+        fees,
+        collected,
+        outstanding: Math.max(0, fees - collected),
+        expenses,
+        marginCash: collected - expenses, // what we've actually kept so far
+        marginProjected: fees - expenses, // expected margin once fully collected
+      },
+      revenue: revenue.totals, // { month, ytd, allTime }
+      counts: { customers, contracts: contractsCount, receipts: receiptsCount },
+      byService: revenue.byService,
+    };
+  }
+
   async getRevenueByService(): Promise<{
     asOf: Date;
     totals: { month: number; ytd: number; allTime: number };

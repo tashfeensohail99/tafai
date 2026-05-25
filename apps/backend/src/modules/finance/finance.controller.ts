@@ -116,6 +116,13 @@ export class FinanceController {
     return this.financeService.getRevenueByService();
   }
 
+  /** Firm-wide finance report: revenue + cost + margin + AR position. */
+  @Get('reports/summary')
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
+  getReportsSummary() {
+    return this.financeService.getReportsSummary();
+  }
+
   @Get('handovers')
   @RequireAnyPermissions('finance_handover.view_all', 'finance_handover.view_own')
   listHandovers(@Query() query: ListFinanceHandoversQueryDto, @CurrentUser() user: RequestUser) {

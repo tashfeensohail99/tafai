@@ -2546,14 +2546,17 @@ function ChatComposer(props: {
           noiseSuppression: true,
         },
       });
-      // Meta's WhatsApp Cloud API only accepts audio in: audio/aac,
-      // audio/mp4, audio/mpeg, audio/amr, audio/ogg (opus). It does NOT
-      // accept audio/webm — recording in webm and shipping it to Meta
-      // always 4xxs. Probe in order of preference and bail if the
-      // browser can't produce any Meta-compatible format.
+      // The server re-encodes every voice note to Ogg/Opus with ffmpeg
+      // before handing it to Meta, so we just need ANY format the browser
+      // can actually produce — the backend normalises it. (Raw
+      // MediaRecorder output — WebM, MP4, even Chrome's mislabeled "ogg" —
+      // sniffs as video/* on Meta's side and fails delivery with 131053,
+      // which is exactly why the transcode exists.) Order by fidelity:
       const candidates = [
-        'audio/ogg;codecs=opus',  // Chrome / Firefox → uploads as audio/ogg
-        'audio/mp4',              // Safari / iOS
+        'audio/webm;codecs=opus', // Chrome / Edge / Firefox (Opus, best quality)
+        'audio/ogg;codecs=opus',  // Firefox native Ogg/Opus
+        'audio/mp4',              // Safari / iOS (AAC)
+        'audio/webm',
         'audio/aac',
         'audio/mpeg',
       ];

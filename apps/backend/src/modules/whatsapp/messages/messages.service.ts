@@ -224,20 +224,42 @@ export class WhatsAppMessagesService {
     let uploadMimeType = input.mimeType;
     let uploadFilename = input.filename;
 
-    if (isVoiceNote && !input.mimeType.toLowerCase().includes('ogg')) {
+    if (isVoiceNote) {
+      // ALWAYS transcode voice notes to clean Ogg/Opus — never trust the
+      // browser's declared MIME. Raw MediaRecorder output is wrapped in
+      // containers Meta's media pipeline rejects:
+      //   • Chrome / Edge record WebM/Opus       → sniffs as video/webm
+      //   • Safari / iOS record MP4/AAC          → sniffs as video/mp4
+      //   • Chrome even mislabels its WebM blob as "audio/ogg;codecs=opus"
+      // In every case Meta ACCEPTS the upload (we declare a valid audio
+      // type) but then fails DELIVERY with error 131053 "Media upload
+      // error … on processing it is of type application/octet-stream".
+      // Re-muxing through ffmpeg yields a single-stream Ogg/Opus file that
+      // libmagic — and therefore Meta — identifies as audio/ogg. Verified
+      // empirically: ffmpeg output → audio/ogg (accepted); every raw
+      // browser blob → video/webm | video/mp4 (rejected).
       try {
         uploadBuffer = await this.transcodeVoiceToOgg(input.file);
+        if (uploadBuffer.length < 64) {
+          throw new Error(`transcode produced only ${uploadBuffer.length} bytes`);
+        }
         uploadMimeType = 'audio/ogg';
         uploadFilename = 'voice-note.ogg';
         this.logger.debug(
           `Transcoded voice note from ${input.mimeType} → audio/ogg (${input.file.length} → ${uploadBuffer.length} bytes)`,
         );
       } catch (err) {
+        // A voice note that can't be transcoded cannot be delivered — the
+        // raw blob is guaranteed to 131053 on Meta's side. Fail loudly now
+        // so the agent gets an immediate, actionable error instead of a
+        // message that silently rots to FAILED minutes later via webhook.
         const reason = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `Voice note transcode failed (${reason}), uploading original ${input.mimeType} as-is`,
+        this.logger.error(
+          `Voice note transcode failed for thread=${thread.id} (${reason})`,
         );
-        // Fall back to original — Meta may still accept it as basic audio
+        throw new BadGatewayException(
+          'Voice note could not be processed for sending. Please try again.',
+        );
       }
     }
 
@@ -296,12 +318,11 @@ export class WhatsAppMessagesService {
         // Content-Type and the processor knows the actual uploaded format.
         mediaMimeType: uploadMimeType,
         body: input.caption ?? null,
-        // Mark as a voice note ONLY when the uploaded file is actually OGG/OPUS
-        // — Meta rejects voice:true for any other format. If we couldn't
-        // transcode to OGG (e.g. an mp4 recording + ffmpeg unavailable), the
-        // message still sends, but as a basic audio attachment rather than a
-        // voice note — far better than failing outright.
-        ...(isVoiceNote && uploadMimeType.toLowerCase().includes('ogg')
+        // Mark as a voice note so the outbound worker sends voice:true (Meta
+        // renders waveform + auto-play). By this point a voice note is
+        // guaranteed to be Ogg/Opus — the transcode above either succeeded
+        // or threw, so we never flag a non-Ogg file as a voice note.
+        ...(isVoiceNote
           ? { payload: { isVoiceNote: true } as unknown as Prisma.InputJsonValue }
           : {}),
         sentByEmployeeId: senderEmployeeId,
@@ -328,16 +349,30 @@ export class WhatsAppMessagesService {
     const tmpOut = join(tmpdir(), `vn-out-${randomUUID()}.ogg`);
     try {
       await writeFile(tmpIn, input);
-      await execFileAsync(FFMPEG_BIN, [
-        '-y',           // overwrite output
-        '-i', tmpIn,
-        '-c:a', 'libopus',
-        '-ac', '1',     // mono (Meta requirement)
-        '-ar', '16000', // 16 kHz — standard for voice
-        '-application', 'voip',
-        '-b:a', '32k',
-        tmpOut,
-      ]);
+      // No input format hint — ffmpeg sniffs the container from the bytes,
+      // so this handles WebM, MP4, Ogg, etc. transparently. Output is
+      // mono Opus-in-Ogg, the format WhatsApp voice notes require.
+      try {
+        await execFileAsync(FFMPEG_BIN, [
+          '-hide_banner',
+          '-y',           // overwrite output
+          '-i', tmpIn,
+          '-c:a', 'libopus',
+          '-ac', '1',     // mono (Meta voice-note requirement)
+          '-ar', '16000', // 16 kHz — standard for speech
+          '-application', 'voip',
+          '-b:a', '32k',
+          tmpOut,
+        ]);
+      } catch (e) {
+        // execFile rejects with the captured stderr — surface its tail so
+        // a broken/missing binary or undecodable input is diagnosable.
+        const stderr = (e as { stderr?: unknown }).stderr;
+        const tail = stderr
+          ? ` — ${String(stderr).trim().split('\n').slice(-2).join(' ')}`
+          : ` — ${(e as Error).message}`;
+        throw new Error(`ffmpeg transcode failed${tail}`);
+      }
       return await readFile(tmpOut);
     } finally {
       await unlink(tmpIn).catch(() => {});

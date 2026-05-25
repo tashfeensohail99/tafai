@@ -43,7 +43,7 @@ export class FinanceProfileService {
       ? [{ leadId }, { clientId }]
       : [{ leadId }];
 
-    const [agreement, contract, invoices, payments, receipts] = await Promise.all([
+    const [agreement, contract, invoices, payments, receipts, handovers, processingCase] = await Promise.all([
       this.prisma.agreement.findFirst({
         where: { leadId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -70,6 +70,25 @@ export class FinanceProfileService {
       this.prisma.invoice.findMany({ where: { OR: ownerOr }, orderBy: { createdAt: 'desc' } }),
       this.prisma.payment.findMany({ where: { invoice: { OR: ownerOr } }, orderBy: { createdAt: 'desc' } }),
       this.prisma.receipt.findMany({ where: { OR: ownerOr }, orderBy: { issuedAt: 'desc' } }),
+      this.prisma.financeHandover.findMany({
+        where: { leadId },
+        orderBy: { submittedAt: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          submittedAmount: true,
+          currency: true,
+          paymentId: true,
+          receiptFileName: true,
+          submittedAt: true,
+          reviewedAt: true,
+        },
+      }),
+      this.prisma.processingCase.findFirst({
+        where: { leadId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, stage: true, service: true, targetCountry: true, slaStatus: true },
+      }),
     ]);
 
     const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
@@ -172,6 +191,25 @@ export class FinanceProfileService {
         currency: r.currency,
         issuedAt: r.issuedAt,
       })),
+      handovers: handovers.map((h) => ({
+        id: h.id,
+        status: h.status,
+        amount: num(h.submittedAmount),
+        currency: h.currency,
+        verified: !!h.paymentId,
+        receiptFileName: h.receiptFileName,
+        submittedAt: h.submittedAt,
+        reviewedAt: h.reviewedAt,
+      })),
+      processingCase: processingCase
+        ? {
+            id: processingCase.id,
+            stage: processingCase.stage,
+            service: processingCase.service,
+            targetCountry: processingCase.targetCountry,
+            slaStatus: processingCase.slaStatus,
+          }
+        : null,
       totals: {
         fee,
         paid,

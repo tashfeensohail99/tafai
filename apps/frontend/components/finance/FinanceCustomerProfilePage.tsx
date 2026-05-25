@@ -168,6 +168,9 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         actions={
           <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
             <StatusBadge tone={tone(lead.status)} dot>{label(lead.status)}</StatusBadge>
+            {data.processingCase ? (
+              <StatusBadge tone="violet" dot>In processing · {label(data.processingCase.stage)}</StatusBadge>
+            ) : null}
           </span>
         }
       />
@@ -216,6 +219,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             {idTile('Assigned agent', agent)}
             {idTile('Lead since', fmtDate(lead.createdAt))}
             {idTile('Stage', label(lead.status))}
+            {data.processingCase ? idTile('Processing', `${label(data.processingCase.stage)} · ${data.processingCase.service}`) : null}
           </div>
         </GlassCard>
       ) : null}
@@ -314,13 +318,36 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
 
       {/* PAYMENTS */}
       {tab === 'payments' ? (
-        <GlassCard variant="default" padded={false}>
-          <Table
-            head={['Amount', 'Method', 'Status', 'Paid', 'Verified']}
-            empty="No payments recorded yet."
-            rows={data.payments.map((p) => [money(p.amount, p.currency), p.paymentMethod ?? '—', <StatusBadge key="s" tone={tone(p.status)} size="sm" dot={false}>{label(p.status)}</StatusBadge>, fmtDate(p.paidAt), fmtDate(p.verifiedAt)])}
-          />
-        </GlassCard>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <GlassCard variant="default" padded={false}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Wallet size={15} className="sos-text-faint" />
+              <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Payment submissions</h3>
+              <span className="sos-text-faint" style={{ fontSize: 12 }}>· receipts awaiting / past verification</span>
+            </div>
+            <Table
+              head={['Amount', 'Receipt', 'Status', 'Submitted', '']}
+              empty="No payment proof submitted yet. When the client pays, the receipt is recorded here for Finance to confirm."
+              rows={data.handovers.map((h) => [
+                money(h.amount, h.currency),
+                h.receiptFileName ?? '—',
+                <StatusBadge key="s" tone={tone(h.status)} size="sm" dot={false}>{label(h.status)}</StatusBadge>,
+                fmtDate(h.submittedAt),
+                <ButtonLink key="a" href={`/finance/intake/${h.id}` as Route} variant={h.verified ? 'ghost' : 'primary'} size="sm">{h.verified ? 'Open' : 'Confirm →'}</ButtonLink>,
+              ])}
+            />
+          </GlassCard>
+          <GlassCard variant="default" padded={false}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+              <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Verified payments</h3>
+            </div>
+            <Table
+              head={['Amount', 'Method', 'Status', 'Paid', 'Verified']}
+              empty="No verified payments yet."
+              rows={data.payments.map((p) => [money(p.amount, p.currency), p.paymentMethod ?? '—', <StatusBadge key="s" tone={tone(p.status)} size="sm" dot={false}>{label(p.status)}</StatusBadge>, fmtDate(p.paidAt), fmtDate(p.verifiedAt)])}
+            />
+          </GlassCard>
+        </div>
       ) : null}
 
       {/* RECEIPTS */}

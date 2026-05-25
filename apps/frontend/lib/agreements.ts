@@ -289,6 +289,11 @@ export function requestAgreementChanges(
   });
 }
 
+/** Finance emails the approved agreement PDF to the client → status SENT. */
+export function sendAgreementToClient(id: string): Promise<AgreementSummary> {
+  return apiFetch<AgreementSummary>(`/agreements/${id}/send`, { method: 'POST' });
+}
+
 export function getAgreementPdfUrl(id: string): Promise<{ url: string }> {
   return apiFetch<{ url: string }>(`/agreements/${id}/pdf-url`, { cache: 'no-store' });
 }

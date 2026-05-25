@@ -211,6 +211,16 @@ export class AgreementsController {
     return this.agreements.requestChanges(id, user.id, dto.note);
   }
 
+  /** Finance sends the approved agreement PDF to the client → status SENT. */
+  @Post(':id/send')
+  @RequireAnyPermissions('finance.create_invoice', 'finance.verify_payment', 'settings.manage')
+  sendToClient(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.sendToClient(id, user.id);
+  }
+
   @Get(':id/pdf-url')
   @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
   getPdfUrl(@Param('id', ParseUUIDPipe) id: string) {

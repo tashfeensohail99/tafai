@@ -535,6 +535,55 @@ export class AgreementsService {
     return updated;
   }
 
+  /**
+   * Finance sends the approved agreement PDF to the client (attached by email)
+   * → status SENT. Re-sendable while SENT. The signed copy comes back via the
+   * customer profile's signed-agreement upload.
+   */
+  async sendToClient(id: string, userId: string) {
+    const a = await this.prisma.agreement.findFirst({ where: { id, deletedAt: null } });
+    if (!a) throw new NotFoundException('Agreement not found');
+    const sendable: AgreementStatus[] = [AgreementStatus.APPROVED, AgreementStatus.SENT];
+    if (!sendable.includes(a.status)) {
+      throw new ConflictException(`Cannot send from status ${a.status}. Approve the agreement first.`);
+    }
+    if (!a.generatedPdfKey) {
+      throw new ConflictException('No generated PDF to send — re-approve to regenerate it.');
+    }
+
+    const bio = (a.bioData as { email?: string; applicantName?: string }) ?? {};
+    const lead = a.leadId
+      ? await this.prisma.lead.findUnique({
+          where: { id: a.leadId },
+          select: { firstName: true, lastName: true, email: true },
+        })
+      : null;
+    const to = lead?.email || bio.email || null;
+    if (!to) {
+      throw new BadRequestException('No client email on file — add an email to the lead first.');
+    }
+    const clientName = lead ? `${lead.firstName} ${lead.lastName}`.trim() : bio.applicantName ?? 'Client';
+
+    const file = await this.storage.download(a.generatedPdfKey);
+    const ok = await this.email.sendAgreementToClient({
+      to,
+      clientName,
+      agreementNumber: a.agreementNumber,
+      pdf: file.bytes,
+      fileName: `${a.agreementNumber}.pdf`,
+    });
+    if (!ok) {
+      throw new ConflictException('Could not send the email (SMTP not configured or the send failed).');
+    }
+
+    const updated = await this.prisma.agreement.update({
+      where: { id },
+      data: { status: AgreementStatus.SENT, sentAt: new Date() },
+    });
+    await this.recordEvent(id, userId, 'SENT', `Agreement sent to client (${to})`, null, null);
+    return updated;
+  }
+
   /** Signed URL for the generated final PDF (Finance / Sales download). */
   async getPdfUrl(id: string): Promise<{ url: string }> {
     const a = await this.prisma.agreement.findFirst({

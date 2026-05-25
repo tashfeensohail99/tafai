@@ -10,6 +10,7 @@ import {
   FileText,
   Loader2,
   Receipt as ReceiptIcon,
+  Send,
   Upload,
   Wallet,
 } from 'lucide-react';
@@ -29,7 +30,7 @@ import {
   uploadSignedAgreement,
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
-import { getAgreementPdfUrl } from '@/lib/agreements';
+import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
 
 type TabKey = 'overview' | 'agreement' | 'ledger' | 'invoices' | 'payments' | 'receipts';
 const TABS: Array<[TabKey, string]> = [
@@ -128,6 +129,21 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     }
   };
 
+  const handleSend = async () => {
+    if (!data?.agreement) return;
+    setBusy('send');
+    setError(null);
+    try {
+      await sendAgreementToClient(data.agreement.id);
+      setNotice('Agreement emailed to the client.');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Send failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (loading) return <div className="sos-text-muted" style={{ padding: 40, textAlign: 'center' }}>Loading customer…</div>;
   if (!data) return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
 
@@ -215,6 +231,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                 <div>
                   <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--sos-text-primary)' }}>{agreement.agreementNumber}</div>
                   <div className="sos-text-faint" style={{ fontSize: 12, marginTop: 2 }}>{money(agreement.totalAmount, agreement.currency)} net</div>
+                  {agreement.sentAt ? <div className="sos-text-faint" style={{ fontSize: 11, marginTop: 2 }}>Sent to client {fmtDate(agreement.sentAt)}</div> : null}
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <StatusBadge tone={tone(agreement.status)} dot>{label(agreement.status)}</StatusBadge>
@@ -223,6 +240,11 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                   ) : null}
                   {agreement.hasPdf ? (
                     <SecondaryButton size="sm" iconLeft={busy === 'agreement-pdf' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={14} />} onClick={() => void openUrl('agreement-pdf')} disabled={busy !== null}>Final PDF</SecondaryButton>
+                  ) : null}
+                  {agreement.status === 'APPROVED' || agreement.status === 'SENT' ? (
+                    <PrimaryButton size="sm" iconLeft={busy === 'send' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={14} />} onClick={() => void handleSend()} disabled={busy !== null}>
+                      {busy === 'send' ? 'Sending…' : agreement.status === 'SENT' ? 'Resend to client' : 'Send to client'}
+                    </PrimaryButton>
                   ) : null}
                 </div>
               </div>

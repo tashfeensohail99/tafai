@@ -8,6 +8,7 @@ export interface SendMailOptions {
   subject: string;
   html: string;
   replyTo?: string;
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
 }
 
 @Injectable()
@@ -61,6 +62,7 @@ export class EmailService {
         subject: opts.subject,
         html:    opts.html,
         replyTo: opts.replyTo,
+        ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
       });
       this.logger.log(`Email sent: "${opts.subject}" → ${String(opts.to)} (${info.messageId})`);
       return true;
@@ -286,6 +288,34 @@ export class EmailService {
       to: opts.to,
       subject: `${opts.resubmitted ? 'Re-submitted' : 'New'} — agreement ${opts.agreementNumber} to review`,
       html: baseTemplate(heading, content),
+    });
+  }
+
+  /** Send the approved agreement PDF to the client for review + signature. */
+  async sendAgreementToClient(opts: {
+    to: string;
+    clientName: string;
+    agreementNumber: string;
+    pdf: Buffer;
+    fileName: string;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Your service agreement</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:#64748b;">Dear ${escHtml(opts.clientName)}, please find your service agreement <b>${escHtml(opts.agreementNumber)}</b> attached.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:20px;">
+        <p style="margin:0;font-size:13.5px;color:#0f172a;line-height:1.7;">
+          1. Review the attached agreement.<br/>
+          2. Sign it.<br/>
+          3. Return the signed copy by replying to this email, or to your Tashfeen representative.
+        </p>
+      </div>
+      <p style="font-size:13px;color:#64748b;">If you have any questions, just reply to this email or contact us at
+        <a href="mailto:admin@tashfeengroup.com" style="color:#7c3aed;">admin@tashfeengroup.com</a>.</p>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `Your service agreement — ${opts.agreementNumber}`,
+      html: baseTemplate('Your service agreement', content),
+      attachments: [{ filename: opts.fileName, content: opts.pdf, contentType: 'application/pdf' }],
     });
   }
 }

@@ -147,6 +147,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('GOVERNMENT_FEE');
   const [expDesc, setExpDesc] = useState('');
   const [expAmount, setExpAmount] = useState('');
+  const [expBillable, setExpBillable] = useState(false);
   const expFileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -320,6 +321,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     setExpCategory('GOVERNMENT_FEE');
     setExpDesc('');
     setExpAmount('');
+    setExpBillable(false);
   };
 
   const handleAddExpense = async () => {
@@ -343,6 +345,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         description: expDesc.trim(),
         amount: String(amount),
         currency: data.totals.currency,
+        billable: expBillable,
         ...receipt,
       });
       resetExpForm();
@@ -421,8 +424,8 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         <MetricCard label="Total fee" value={money(totals.fee, totals.currency)} tone="accent" Icon={Wallet} />
         <MetricCard label="Paid" value={money(totals.paid, totals.currency)} tone="success" Icon={CheckCircle2} hint={totals.installmentsTotal > 0 ? `${totals.installmentsPaid} of ${totals.installmentsTotal} installments paid` : `${data.receipts.length} receipt(s)`} />
         <MetricCard label="Outstanding" value={money(totals.outstanding, totals.currency)} tone={totals.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
-        <MetricCard label="Spent on client" value={money(totals.expenses, totals.currency)} tone={totals.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} hint={`${data.expenses.length} expense(s)`} />
-        <MetricCard label="Margin" value={money(totals.margin, totals.currency)} tone={totals.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint="fee − expenses" />
+        <MetricCard label="Spent on client" value={money(totals.expenses, totals.currency)} tone={totals.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} hint={totals.billableExpenses > 0 ? `${money(totals.absorbedExpenses, totals.currency)} absorbed · ${money(totals.billableExpenses, totals.currency)} billable` : `${data.expenses.length} expense(s)`} />
+        <MetricCard label="Margin" value={money(totals.margin, totals.currency)} tone={totals.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint="fee − absorbed costs" />
       </div>
 
       {/* Tabs */}
@@ -795,6 +798,10 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     />
                   </div>
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--sos-text-secondary)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={expBillable} onChange={(e) => setExpBillable(e.target.checked)} />
+                  Billable to client — client reimburses this (recoverable; doesn&apos;t reduce margin)
+                </label>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <PrimaryButton
                     size="sm"
@@ -822,7 +829,10 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
               empty="No expenses recorded for this client yet."
               rows={data.expenses.map((e) => [
                 fmtDate(e.incurredAt),
-                <StatusBadge key="c" tone="neutral" size="sm" dot={false}>{expenseCatLabel(e.category)}</StatusBadge>,
+                <span key="c" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <StatusBadge tone="neutral" size="sm" dot={false}>{expenseCatLabel(e.category)}</StatusBadge>
+                  {e.billable ? <StatusBadge tone="info" size="sm" dot={false}>billable</StatusBadge> : null}
+                </span>,
                 e.description,
                 money(e.amount, e.currency),
                 e.hasReceipt ? (

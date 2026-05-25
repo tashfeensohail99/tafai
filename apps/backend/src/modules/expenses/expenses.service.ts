@@ -27,6 +27,7 @@ export class ExpensesService {
     description: string;
     amount: Prisma.Decimal;
     currency: string;
+    billable: boolean;
     incurredAt: Date;
     receiptFileName: string | null;
     receiptKey: string | null;
@@ -38,6 +39,7 @@ export class ExpensesService {
       description: e.description,
       amount: num(e.amount),
       currency: e.currency,
+      billable: e.billable,
       incurredAt: e.incurredAt,
       receiptFileName: e.receiptFileName,
       hasReceipt: !!e.receiptKey,
@@ -79,6 +81,7 @@ export class ExpensesService {
         description: dto.description,
         amount: dto.amount,
         currency: dto.currency ?? 'CAD',
+        billable: dto.billable ?? false,
         incurredAt: dto.incurredAt ? new Date(dto.incurredAt) : new Date(),
         receiptKey,
         receiptFileName: dto.receiptFileName ?? null,

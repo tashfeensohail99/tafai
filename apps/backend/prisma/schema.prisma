@@ -460,6 +460,10 @@ model Organization {
   // must be VERIFIED by a different finance officer than the one who recorded
   // it. 0 disables the control. Default 100,000.
   makerCheckerThreshold   Decimal @default(100000) @db.Decimal(12, 2)
+  // Sales-tax / VAT / GST rate applied to invoices, as a percentage. 0 = the
+  // firm doesn't charge tax (default). When > 0, invoices compute tax on the
+  // net and show it as a separate line.
+  taxRatePercent          Decimal @default(0) @db.Decimal(5, 2)
   // Auto-acknowledgement: instant personalised reply when a lead first
   // messages. Does NOT satisfy the SLA — the agent must still reply. The
   // template supports {firstName}, {agentName}, {businessName} placeholders.
@@ -1593,6 +1597,10 @@ model Expense {
   description      String
   amount           Decimal         @db.Decimal(12, 2)
   currency         String          @default("CAD")
+  /// Rebillable disbursement (client reimburses) vs absorbed firm cost.
+  /// Billable expenses are recoverable — they do NOT reduce margin and are
+  /// owed by the client. Absorbed (default) reduce margin as a true cost.
+  billable         Boolean         @default(false)
   incurredAt       DateTime        @default(now())
   receiptKey       String?
   receiptFileName  String?

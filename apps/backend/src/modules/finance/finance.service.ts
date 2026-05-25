@@ -11,6 +11,7 @@ import {
   AgreementStatus,
   AuditAction,
   FinanceHandoverStatus,
+  InstallmentStatus,
   InvoiceStatus,
   LeadStatus,
   PaymentStatus,
@@ -193,7 +194,8 @@ export class FinanceService {
       await Promise.all([
         this.getRevenueByService(),
         this.prisma.invoice.aggregate({ _sum: { paidAmount: true }, where: { deletedAt: null } }),
-        this.prisma.expense.aggregate({ _sum: { amount: true }, where: { deletedAt: null } }),
+        // Only ABSORBED expenses are a cost; billable disbursements are recoverable.
+        this.prisma.expense.aggregate({ _sum: { amount: true }, where: { deletedAt: null, billable: false } }),
         this.prisma.receipt.count({ where: { voidedAt: null } }),
         // A real customer = money received (lead→client conversion fires on the
         // first verified payment).
@@ -1140,6 +1142,17 @@ export class FinanceService {
       return null;
     });
 
+    // Keep the contract's installment schedule in sync with what's actually
+    // been paid, so installment.status is real + auditable rather than only a
+    // read-time calc. Best-effort — must never block a verified payment.
+    try {
+      await this.syncInstallmentStatuses(clientId, updatedInvoice.leadId);
+    } catch (err) {
+      this.logger.error(
+        `Installment status sync failed for payment=${updatedPayment.id}: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
     return {
       payment: updatedPayment,
       invoice: updatedInvoice,
@@ -1980,15 +1993,23 @@ export class FinanceService {
       where: { id: handover.leadId },
       select: { serviceFeeAmount: true, serviceFeeCurrency: true },
     });
-    const agreedAmount = lead?.serviceFeeAmount
-      ? lead.serviceFeeAmount.toString()
-      : null;
+    const agreedAmount = lead?.serviceFeeAmount ? lead.serviceFeeAmount.toString() : null;
     const agreedCurrency = lead?.serviceFeeCurrency ?? null;
+
+    // Tax: treat the figure as tax-INCLUSIVE so the invoice total still equals
+    // the agreed fee / cash received, and break out the tax portion when the
+    // org has a rate set. Rate 0 (default) → net == gross, tax 0 (unchanged).
+    const org = await this.prisma.organization.findFirst({ orderBy: { createdAt: 'asc' }, select: { taxRatePercent: true } });
+    const rate = Number(org?.taxRatePercent ?? 0);
+    const gross = Number(agreedAmount ?? handover.submittedAmount.toString());
+    const net = rate > 0 ? gross / (1 + rate / 100) : gross;
+    const tax = gross - net;
+
     return this.createInvoice(
       {
         leadId: handover.leadId,
-        subtotal: agreedAmount ?? handover.submittedAmount.toString(),
-        taxAmount: '0',
+        subtotal: net.toFixed(2),
+        taxAmount: tax.toFixed(2),
         discountAmount: '0',
         currency: agreedCurrency ?? handover.currency,
         dueDate,
@@ -2076,6 +2097,42 @@ export class FinanceService {
    * Concurrency: the @unique constraint on invoiceNumber serialises
    * collisions. The retry loop bumps the suffix on each conflict.
    */
+  /**
+   * Re-derive each installment's status from total verified paid (the AR
+   * waterfall — allocate paid across installments in sequence) and persist it,
+   * so the contract schedule's own status reflects reality and isn't just a
+   * read-time calculation. Idempotent; only writes when a status changes.
+   */
+  private async syncInstallmentStatuses(clientId: string | null, leadId: string | null) {
+    const ownerOr: Array<{ leadId: string } | { clientId: string }> = [];
+    if (leadId) ownerOr.push({ leadId });
+    if (clientId) ownerOr.push({ clientId });
+    if (ownerOr.length === 0) return;
+
+    const contract = await this.prisma.serviceContract.findFirst({
+      where: { OR: ownerOr, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: { installments: { orderBy: { sequence: 'asc' } } },
+    });
+    if (!contract) return;
+
+    const paidAgg = await this.prisma.invoice.aggregate({
+      _sum: { paidAmount: true },
+      where: { deletedAt: null, OR: ownerOr },
+    });
+    let remaining = Number(paidAgg._sum.paidAmount ?? 0);
+
+    for (const inst of contract.installments) {
+      const amount = Number(inst.amount);
+      const covered = Math.max(0, Math.min(remaining, amount));
+      remaining -= covered;
+      const status = amount > 0 && covered >= amount - 0.005 ? InstallmentStatus.PAID : InstallmentStatus.PENDING;
+      if (inst.status !== status) {
+        await this.prisma.installment.update({ where: { id: inst.id }, data: { status } });
+      }
+    }
+  }
+
   /** Monotonic INV-YYYY-NNNNN via the document_sequences counter (never reused). */
   private generateInvoiceNumber() {
     return this.numbering.next('INV');

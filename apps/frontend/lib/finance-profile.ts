@@ -59,6 +59,7 @@ export interface FinanceProfileExpense {
   description: string;
   amount: number;
   currency: string;
+  billable: boolean;
   incurredAt: string;
   receiptFileName: string | null;
   hasReceipt: boolean;
@@ -77,7 +78,7 @@ export interface FinanceCustomerProfile {
   handovers: Array<{ id: string; status: string; amount: number; currency: string; verified: boolean; receiptFileName: string | null; submittedAt: string; reviewedAt: string | null }>;
   processingCase: { id: string; stage: string; service: string; targetCountry: string; slaStatus: string } | null;
   expenses: FinanceProfileExpense[];
-  totals: { fee: number; paid: number; outstanding: number; currency: string; installmentsPaid: number; installmentsTotal: number; expenses: number; margin: number };
+  totals: { fee: number; paid: number; outstanding: number; currency: string; installmentsPaid: number; installmentsTotal: number; expenses: number; billableExpenses: number; absorbedExpenses: number; margin: number };
 }
 
 export function fetchFinanceCustomerProfile(leadId: string): Promise<FinanceCustomerProfile> {
@@ -162,6 +163,7 @@ export function createExpense(payload: {
   description: string;
   amount: string;
   currency?: string;
+  billable?: boolean;
   incurredAt?: string;
   receiptFileName?: string;
   receiptMimeType?: string;

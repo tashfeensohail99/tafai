@@ -104,6 +104,7 @@ export class FinanceProfileService {
           description: true,
           amount: true,
           currency: true,
+          billable: true,
           incurredAt: true,
           receiptFileName: true,
           receiptKey: true,
@@ -140,6 +141,10 @@ export class FinanceProfileService {
     });
     const installmentsPaid = installmentsView.filter((i) => i.paidStatus === 'PAID').length;
     const totalExpenses = expenses.reduce((s, e) => s + num(e.amount), 0);
+    // Billable disbursements are recoverable (client reimburses) → not a cost.
+    // Only absorbed expenses reduce margin.
+    const billableExpenses = expenses.filter((e) => e.billable).reduce((s, e) => s + num(e.amount), 0);
+    const absorbedExpenses = totalExpenses - billableExpenses;
 
     return {
       lead: {
@@ -238,6 +243,7 @@ export class FinanceProfileService {
         description: e.description,
         amount: num(e.amount),
         currency: e.currency,
+        billable: e.billable,
         incurredAt: e.incurredAt,
         receiptFileName: e.receiptFileName,
         hasReceipt: !!e.receiptKey,
@@ -251,9 +257,11 @@ export class FinanceProfileService {
         installmentsPaid,
         installmentsTotal: installmentsView.length,
         expenses: totalExpenses,
-        // Projected margin on the contract: what we keep after third-party
-        // costs. Negative is possible (spent more than the fee) — surfaced so.
-        margin: fee - totalExpenses,
+        billableExpenses,
+        absorbedExpenses,
+        // Margin = fee minus ABSORBED costs only. Billable disbursements are
+        // recoverable (client reimburses), so they don't reduce margin.
+        margin: fee - absorbedExpenses,
       },
     };
   }

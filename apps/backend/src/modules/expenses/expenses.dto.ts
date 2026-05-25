@@ -1,6 +1,7 @@
 import { ExpenseCategory } from '@prisma/client';
 import {
   IsBase64,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNotEmpty,
@@ -39,6 +40,11 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsDateString()
   incurredAt?: string;
+
+  /** Rebillable to the client (recoverable) vs absorbed firm cost (default). */
+  @IsOptional()
+  @IsBoolean()
+  billable?: boolean;
 
   // Optional proof-of-spend receipt (base64), mirroring the handover upload.
   @IsOptional()

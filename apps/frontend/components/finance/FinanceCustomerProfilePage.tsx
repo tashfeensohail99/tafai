@@ -5,12 +5,15 @@ import type { Route } from 'next';
 import {
   AlertTriangle,
   CheckCircle2,
+  Coins,
   Download,
   FileSignature,
   FileText,
   Loader2,
   Receipt as ReceiptIcon,
   Send,
+  Trash2,
+  TrendingUp,
   Upload,
   Wallet,
 } from 'lucide-react';
@@ -28,13 +31,28 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
+  createExpense,
+  deleteExpense,
   fetchFinanceCustomerProfile,
   getContractAgreementUrl,
+  getExpenseReceiptUrl,
   recordCustomerPayment,
   uploadSignedAgreement,
+  type ExpenseCategory,
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
+
+const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }> = [
+  { value: 'GOVERNMENT_FEE', label: 'Government fee' },
+  { value: 'EMBASSY', label: 'Embassy / consulate' },
+  { value: 'MEDICAL', label: 'Medical / biometrics' },
+  { value: 'TRANSLATION', label: 'Translation / attestation' },
+  { value: 'COURIER', label: 'Courier / shipping' },
+  { value: 'THIRD_PARTY', label: 'Third-party vendor' },
+  { value: 'OTHER', label: 'Other' },
+];
+const expenseCatLabel = (c: string) => EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? label(c);
 
 const PAYMENT_METHODS: Array<{ value: string; label: string }> = [
   { value: 'BANK', label: 'Bank Transfer' },
@@ -58,13 +76,14 @@ function fileToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-type TabKey = 'overview' | 'agreement' | 'ledger' | 'invoices' | 'payments' | 'receipts';
+type TabKey = 'overview' | 'agreement' | 'ledger' | 'invoices' | 'payments' | 'expenses' | 'receipts';
 const TABS: Array<[TabKey, string]> = [
   ['overview', 'Overview'],
   ['agreement', 'Agreement'],
   ['ledger', 'Ledger'],
   ['invoices', 'Invoices'],
   ['payments', 'Payments'],
+  ['expenses', 'Expenses'],
   ['receipts', 'Receipts'],
 ];
 
@@ -115,6 +134,14 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [payMethod, setPayMethod] = useState('BANK');
   const [payRef, setPayRef] = useState('');
   const [payNote, setPayNote] = useState('');
+
+  // Add-expense form (Expenses tab)
+  const [expOpen, setExpOpen] = useState(false);
+  const [expFile, setExpFile] = useState<File | null>(null);
+  const [expCategory, setExpCategory] = useState<ExpenseCategory>('GOVERNMENT_FEE');
+  const [expDesc, setExpDesc] = useState('');
+  const [expAmount, setExpAmount] = useState('');
+  const expFileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -225,6 +252,74 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     }
   };
 
+  const resetExpForm = () => {
+    setExpOpen(false);
+    setExpFile(null);
+    setExpCategory('GOVERNMENT_FEE');
+    setExpDesc('');
+    setExpAmount('');
+  };
+
+  const handleAddExpense = async () => {
+    if (!data) return;
+    if (!expDesc.trim()) { setError('Add a short description for the expense.'); return; }
+    const amount = Number(expAmount);
+    if (!Number.isFinite(amount) || amount <= 0) { setError('Enter a valid expense amount.'); return; }
+    setBusy('expense');
+    setError(null);
+    try {
+      const receipt = expFile
+        ? {
+            receiptFileName: expFile.name,
+            receiptMimeType: expFile.type || 'application/octet-stream',
+            receiptContentBase64: fileToBase64(await expFile.arrayBuffer()),
+          }
+        : {};
+      await createExpense({
+        leadId: data.lead.id,
+        category: expCategory,
+        description: expDesc.trim(),
+        amount: String(amount),
+        currency: data.totals.currency,
+        ...receipt,
+      });
+      resetExpForm();
+      setNotice('Expense recorded.');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not record expense');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDeleteExpense = async (id: string) => {
+    setBusy(`expense-del:${id}`);
+    setError(null);
+    try {
+      await deleteExpense(id);
+      setNotice('Expense removed.');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not remove expense');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openExpenseReceipt = async (id: string) => {
+    setBusy(`expense-receipt:${id}`);
+    setError(null);
+    try {
+      const { url } = await getExpenseReceiptUrl(id);
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open receipt');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (loading) return <div className="sos-text-muted" style={{ padding: 40, textAlign: 'center' }}>Loading customer…</div>;
   if (!data) return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
 
@@ -264,6 +359,8 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         <MetricCard label="Total fee" value={money(totals.fee, totals.currency)} tone="accent" Icon={Wallet} />
         <MetricCard label="Paid" value={money(totals.paid, totals.currency)} tone="success" Icon={CheckCircle2} hint={totals.installmentsTotal > 0 ? `${totals.installmentsPaid} of ${totals.installmentsTotal} installments paid` : `${data.receipts.length} receipt(s)`} />
         <MetricCard label="Outstanding" value={money(totals.outstanding, totals.currency)} tone={totals.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
+        <MetricCard label="Spent on client" value={money(totals.expenses, totals.currency)} tone={totals.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} hint={`${data.expenses.length} expense(s)`} />
+        <MetricCard label="Margin" value={money(totals.margin, totals.currency)} tone={totals.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint="fee − expenses" />
       </div>
 
       {/* Tabs */}
@@ -507,6 +604,111 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
               head={['Amount', 'Method', 'Status', 'Paid', 'Verified']}
               empty="No verified payments yet."
               rows={data.payments.map((p) => [money(p.amount, p.currency), p.paymentMethod ?? '—', <StatusBadge key="s" tone={tone(p.status)} size="sm" dot={false}>{label(p.status)}</StatusBadge>, fmtDate(p.paidAt), fmtDate(p.verifiedAt)])}
+            />
+          </GlassCard>
+        </div>
+      ) : null}
+
+      {/* EXPENSES */}
+      {tab === 'expenses' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Add expense */}
+          <GlassCard variant="default">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Coins size={16} className="sos-text-faint" />
+                <div>
+                  <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Record an expense</h3>
+                  <div className="sos-text-faint" style={{ fontSize: 12, marginTop: 2 }}>
+                    Costs paid on the client&apos;s behalf — government fees, medical, courier, etc.
+                  </div>
+                </div>
+              </div>
+              {expOpen ? (
+                <GhostButton size="sm" onClick={resetExpForm} disabled={busy !== null}>Cancel</GhostButton>
+              ) : (
+                <PrimaryButton size="sm" iconLeft={<Coins size={14} />} onClick={() => setExpOpen(true)}>Add expense</PrimaryButton>
+              )}
+            </div>
+            {expOpen ? (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--sos-border-subtle)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))' }}>
+                  <FormSelect
+                    label="Category"
+                    value={expCategory}
+                    onChange={(e) => setExpCategory(e.target.value as ExpenseCategory)}
+                    options={EXPENSE_CATEGORIES}
+                  />
+                  <FormInput
+                    label="Amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={expAmount}
+                    onChange={(e) => setExpAmount(e.target.value)}
+                    hint={`Currency ${totals.currency}`}
+                    required
+                  />
+                  <FormInput
+                    label="Description"
+                    placeholder="What was this for?"
+                    value={expDesc}
+                    onChange={(e) => setExpDesc(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Receipt (optional)</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <SecondaryButton size="sm" iconLeft={<FileText size={14} />} onClick={() => expFileRef.current?.click()} disabled={busy !== null}>
+                      {expFile ? 'Change file' : 'Attach receipt'}
+                    </SecondaryButton>
+                    <span className="sos-text-muted" style={{ fontSize: 13 }}>{expFile ? expFile.name : 'PDF or image of the proof of spend'}</span>
+                    <input
+                      ref={expFileRef}
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setExpFile(f); }}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <PrimaryButton
+                    size="sm"
+                    iconLeft={busy === 'expense' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Coins size={14} />}
+                    onClick={() => void handleAddExpense()}
+                    disabled={busy !== null || !expDesc || !expAmount}
+                  >
+                    {busy === 'expense' ? 'Saving…' : 'Save expense'}
+                  </PrimaryButton>
+                </div>
+              </div>
+            ) : null}
+          </GlassCard>
+
+          <GlassCard variant="default" padded={false}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Coins size={15} className="sos-text-faint" />
+              <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>
+                Expense ledger
+                {totals.expenses > 0 ? <span className="sos-text-faint" style={{ fontWeight: 400 }}> · {money(totals.expenses, totals.currency)} total</span> : null}
+              </h3>
+            </div>
+            <Table
+              head={['Date', 'Category', 'Description', 'Amount', 'Receipt', '']}
+              empty="No expenses recorded for this client yet."
+              rows={data.expenses.map((e) => [
+                fmtDate(e.incurredAt),
+                <StatusBadge key="c" tone="neutral" size="sm" dot={false}>{expenseCatLabel(e.category)}</StatusBadge>,
+                e.description,
+                money(e.amount, e.currency),
+                e.hasReceipt ? (
+                  <SecondaryButton key="r" size="sm" iconLeft={busy === `expense-receipt:${e.id}` ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />} onClick={() => void openExpenseReceipt(e.id)} disabled={busy !== null}>Receipt</SecondaryButton>
+                ) : <span className="sos-text-faint" style={{ fontSize: 12 }}>—</span>,
+                <GhostButton key="d" size="sm" iconLeft={busy === `expense-del:${e.id}` ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Trash2 size={13} />} onClick={() => void handleDeleteExpense(e.id)} disabled={busy !== null}>Remove</GhostButton>,
+              ])}
             />
           </GlassCard>
         </div>

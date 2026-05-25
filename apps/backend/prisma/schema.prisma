@@ -1543,6 +1543,51 @@ model FinanceHandover {
   @@schema("finance")
 }
 
+enum ExpenseCategory {
+  GOVERNMENT_FEE // visa / immigration / application fees paid to a government
+  EMBASSY        // embassy / consulate charges
+  MEDICAL        // medicals, biometrics
+  TRANSLATION    // document translation / attestation
+  COURIER        // shipping / courier of documents
+  THIRD_PARTY    // any other paid vendor on the client's behalf
+  OTHER
+
+  @@schema("finance")
+}
+
+/// Money the firm spends ON BEHALF of a customer (cost side of the ledger) —
+/// government/embassy fees, medical, translation, courier, etc. Pairs with
+/// the revenue side (invoices/payments) to give a per-client margin. Decoupled
+/// like Agreement: plain leadId/clientId/caseId columns, no Prisma relations,
+/// so it never forces back-relations onto Lead/Client/ProcessingCase. Soft
+/// deletable; an optional receipt of the spend can be attached.
+model Expense {
+  id               String          @id @default(uuid())
+  leadId           String
+  clientId         String?
+  caseId           String?
+  category         ExpenseCategory @default(OTHER)
+  description      String
+  amount           Decimal         @db.Decimal(12, 2)
+  currency         String          @default("CAD")
+  incurredAt       DateTime        @default(now())
+  receiptKey       String?
+  receiptFileName  String?
+  receiptMimeType  String?
+  receiptSizeBytes Int?
+  createdByUserId  String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  deletedAt        DateTime?
+
+  @@index([leadId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([category])
+  @@map("expenses")
+  @@schema("finance")
+}
+
 // =============================================================================
 // SERVICE AGREEMENTS (template-driven authoring → Sales → Finance → Client)
 // =============================================================================

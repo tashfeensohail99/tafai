@@ -44,6 +44,27 @@ export interface FinanceProfileContract {
   agreementFileName: string | null;
 }
 
+export type ExpenseCategory =
+  | 'GOVERNMENT_FEE'
+  | 'EMBASSY'
+  | 'MEDICAL'
+  | 'TRANSLATION'
+  | 'COURIER'
+  | 'THIRD_PARTY'
+  | 'OTHER';
+
+export interface FinanceProfileExpense {
+  id: string;
+  category: ExpenseCategory;
+  description: string;
+  amount: number;
+  currency: string;
+  incurredAt: string;
+  receiptFileName: string | null;
+  hasReceipt: boolean;
+  createdAt: string;
+}
+
 export interface FinanceCustomerProfile {
   lead: FinanceProfileLead;
   clientId: string | null;
@@ -55,7 +76,8 @@ export interface FinanceCustomerProfile {
   receipts: Array<{ id: string; receiptNumber: string; amount: number; currency: string; issuedAt: string }>;
   handovers: Array<{ id: string; status: string; amount: number; currency: string; verified: boolean; receiptFileName: string | null; submittedAt: string; reviewedAt: string | null }>;
   processingCase: { id: string; stage: string; service: string; targetCountry: string; slaStatus: string } | null;
-  totals: { fee: number; paid: number; outstanding: number; currency: string; installmentsPaid: number; installmentsTotal: number };
+  expenses: FinanceProfileExpense[];
+  totals: { fee: number; paid: number; outstanding: number; currency: string; installmentsPaid: number; installmentsTotal: number; expenses: number; margin: number };
 }
 
 export function fetchFinanceCustomerProfile(leadId: string): Promise<FinanceCustomerProfile> {
@@ -102,6 +124,42 @@ export function recordCustomerPayment(payload: {
   return apiFetch<{ id: string }>('/finance/handovers', {
     method: 'POST',
     body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}
+
+// ─── Expenses (cost side of the ledger) ────────────────────────────────────
+
+/** Record an expense incurred on the client's behalf (optional receipt). */
+export function createExpense(payload: {
+  leadId: string;
+  category?: ExpenseCategory;
+  description: string;
+  amount: string;
+  currency?: string;
+  incurredAt?: string;
+  receiptFileName?: string;
+  receiptMimeType?: string;
+  receiptContentBase64?: string;
+}): Promise<{ id: string }> {
+  return apiFetch<{ id: string }>('/finance/expenses', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}
+
+/** Soft-delete an expense (reversible). */
+export function deleteExpense(id: string): Promise<{ id: string; deleted: boolean }> {
+  return apiFetch<{ id: string; deleted: boolean }>(`/finance/expenses/${id}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}
+
+/** Signed URL to download an expense's attached receipt. */
+export function getExpenseReceiptUrl(id: string): Promise<{ url: string; fileName: string }> {
+  return apiFetch<{ url: string; fileName: string }>(`/finance/expenses/${id}/receipt-url`, {
     cache: 'no-store',
   });
 }

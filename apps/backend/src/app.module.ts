@@ -29,6 +29,7 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { ServiceContractsModule } from './modules/service-contracts/service-contracts.module';
 import { FinanceProfileModule } from './modules/finance-profile/finance-profile.module';
+import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FollowUpsModule } from './modules/follow-ups/follow-ups.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { ProcessingModule } from './modules/processing/processing.module';
@@ -73,6 +74,7 @@ import { AgreementsModule } from './modules/agreements/agreements.module';
     FinanceModule,
     ServiceContractsModule,
     FinanceProfileModule,
+    ExpensesModule,
     FollowUpsModule,
     ReportsModule,
     ProcessingModule,

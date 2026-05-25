@@ -43,7 +43,7 @@ export class FinanceProfileService {
       ? [{ leadId }, { clientId }]
       : [{ leadId }];
 
-    const [agreement, contract, invoices, payments, receipts, handovers, processingCase] = await Promise.all([
+    const [agreement, contract, invoices, payments, receipts, handovers, processingCase, expenses] = await Promise.all([
       this.prisma.agreement.findFirst({
         where: { leadId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -89,6 +89,21 @@ export class FinanceProfileService {
         orderBy: { createdAt: 'desc' },
         select: { id: true, stage: true, service: true, targetCountry: true, slaStatus: true },
       }),
+      this.prisma.expense.findMany({
+        where: { OR: ownerOr, deletedAt: null },
+        orderBy: { incurredAt: 'desc' },
+        select: {
+          id: true,
+          category: true,
+          description: true,
+          amount: true,
+          currency: true,
+          incurredAt: true,
+          receiptFileName: true,
+          receiptKey: true,
+          createdAt: true,
+        },
+      }),
     ]);
 
     const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
@@ -118,6 +133,7 @@ export class FinanceProfileService {
       };
     });
     const installmentsPaid = installmentsView.filter((i) => i.paidStatus === 'PAID').length;
+    const totalExpenses = expenses.reduce((s, e) => s + num(e.amount), 0);
 
     return {
       lead: {
@@ -210,6 +226,17 @@ export class FinanceProfileService {
             slaStatus: processingCase.slaStatus,
           }
         : null,
+      expenses: expenses.map((e) => ({
+        id: e.id,
+        category: e.category,
+        description: e.description,
+        amount: num(e.amount),
+        currency: e.currency,
+        incurredAt: e.incurredAt,
+        receiptFileName: e.receiptFileName,
+        hasReceipt: !!e.receiptKey,
+        createdAt: e.createdAt,
+      })),
       totals: {
         fee,
         paid,
@@ -217,6 +244,10 @@ export class FinanceProfileService {
         currency,
         installmentsPaid,
         installmentsTotal: installmentsView.length,
+        expenses: totalExpenses,
+        // Projected margin on the contract: what we keep after third-party
+        // costs. Negative is possible (spent more than the fee) — surfaced so.
+        margin: fee - totalExpenses,
       },
     };
   }

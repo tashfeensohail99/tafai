@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { AgreementStatus, Prisma } from '@prisma/client';
+import { AgreementStatus, FinanceHandoverStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 /** Coerce a Prisma Decimal (or number/null) to a plain number for the UI. */
@@ -314,7 +314,7 @@ export class FinanceProfileService {
     const ownerOr = [{ leadId: { in: ids } }, { clientId: { in: clientIds } }];
 
     // 3) Batch the money + status data for every listed lead.
-    const [contracts, agreements, invoices, cases] = await Promise.all([
+    const [contracts, agreements, invoices, cases, pendingHandovers] = await Promise.all([
       this.prisma.serviceContract.findMany({
         where: { OR: ownerOr, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -334,7 +334,17 @@ export class FinanceProfileService {
         orderBy: { createdAt: 'desc' },
         select: { leadId: true, stage: true },
       }),
+      // Payments recorded but not yet verified — the "to verify" worklist.
+      this.prisma.financeHandover.findMany({
+        where: {
+          leadId: { in: ids },
+          status: { in: [FinanceHandoverStatus.SUBMITTED, FinanceHandoverStatus.IN_REVIEW, FinanceHandoverStatus.PAYMENT_RECORDED] },
+        },
+        select: { leadId: true },
+        distinct: ['leadId'],
+      }),
     ]);
+    const pendingLeadIds = new Set(pendingHandovers.map((h) => h.leadId));
 
     // First match wins (queries are ordered newest-first).
     const matchesOwner = (row: { leadId: string | null; clientId: string | null }, lead: (typeof leads)[number]) =>
@@ -361,6 +371,7 @@ export class FinanceProfileService {
         hasContract: !!contract,
         contractStatus: contract?.status ?? null,
         processingStage: stage,
+        hasPendingPayment: pendingLeadIds.has(lead.id),
         fee,
         paid,
         outstanding: Math.max(0, fee - paid),

@@ -28,6 +28,7 @@ function tone(status: string): BadgeTone {
 
 /** The single most-advanced state to show as the customer's "phase". */
 function phaseOf(c: FinanceCustomerRow): { text: string; badgeTone: BadgeTone } {
+  if (c.hasPendingPayment) return { text: 'Payment to verify', badgeTone: 'warning' };
   if (c.processingStage) return { text: `Processing · ${label(c.processingStage)}`, badgeTone: 'violet' };
   if (c.hasContract) return { text: c.contractStatus ? label(c.contractStatus) : 'Active', badgeTone: tone(c.contractStatus ?? 'ACTIVE') };
   if (c.agreementStatus) return { text: `Agreement · ${label(c.agreementStatus)}`, badgeTone: tone(c.agreementStatus) };

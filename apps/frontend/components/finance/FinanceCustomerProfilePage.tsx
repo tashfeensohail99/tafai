@@ -42,6 +42,7 @@ import {
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
+import { fetchHandoverById, reviewHandover, verifyPayment, type ApiHandover } from '@/lib/finance-api';
 
 const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }> = [
   { value: 'GOVERNMENT_FEE', label: 'Government fee' },
@@ -134,6 +135,11 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [payMethod, setPayMethod] = useState('BANK');
   const [payRef, setPayRef] = useState('');
   const [payNote, setPayNote] = useState('');
+
+  // Inline payment verification (Payments tab)
+  const [verifyId, setVerifyId] = useState<string | null>(null);
+  const [verifyDetail, setVerifyDetail] = useState<ApiHandover | null>(null);
+  const [verifyNote, setVerifyNote] = useState('');
 
   // Add-expense form (Expenses tab)
   const [expOpen, setExpOpen] = useState(false);
@@ -247,6 +253,62 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not record payment');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // ── Inline payment verification ──────────────────────────────────────────
+  const openVerify = async (id: string) => {
+    setVerifyId(id);
+    setVerifyDetail(null);
+    setVerifyNote('');
+    setError(null);
+    try {
+      setVerifyDetail(await fetchHandoverById(id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load this payment');
+    }
+  };
+  const closeVerify = () => { setVerifyId(null); setVerifyDetail(null); setVerifyNote(''); };
+
+  const doVerify = async () => {
+    const h = verifyDetail;
+    if (!h) return;
+    setBusy('verify');
+    setError(null);
+    try {
+      // Record the payment first if it hasn't been (one click does both),
+      // then verify → converts the client, issues the receipt, updates ledger.
+      let paymentId = h.payment?.id;
+      if (h.status === 'SUBMITTED' || h.status === 'IN_REVIEW') {
+        const updated = await reviewHandover(h.id, 'RECORD_PAYMENT', { financeNotes: verifyNote || undefined });
+        paymentId = updated.payment?.id ?? undefined;
+      }
+      if (!paymentId) throw new Error('No payment row to verify — reopen the case.');
+      await verifyPayment(paymentId, { verificationNote: verifyNote || undefined });
+      setNotice('Payment verified — client, receipt and ledger updated.');
+      closeVerify();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Verification failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doReject = async () => {
+    const h = verifyDetail;
+    if (!h) return;
+    setBusy('reject');
+    setError(null);
+    try {
+      await reviewHandover(h.id, 'REJECT', { financeNotes: verifyNote || undefined });
+      setNotice('Payment proof rejected.');
+      closeVerify();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reject');
     } finally {
       setBusy(null);
     }
@@ -578,22 +640,81 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             ) : null}
           </GlassCard>
 
+          {/* Inline verification — review the receipt + confirm the money,
+              right here on the customer's profile. */}
+          {verifyId ? (
+            <GlassCard variant="default">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+                <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Verify payment</h3>
+                <GhostButton size="sm" onClick={closeVerify} disabled={busy !== null}>Cancel</GhostButton>
+              </div>
+              {!verifyDetail ? (
+                <div className="sos-text-muted" style={{ padding: 24, textAlign: 'center' }}>Loading receipt…</div>
+              ) : (
+                <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'minmax(0, 1.3fr) minmax(0, 1fr)' }}>
+                  {/* Receipt viewer */}
+                  <div>
+                    <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Receipt · {verifyDetail.receiptFileName}</div>
+                    {verifyDetail.receiptDownloadUrl && (verifyDetail.receiptMimeType ?? '').startsWith('image/') ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={verifyDetail.receiptDownloadUrl} alt={`Receipt — ${verifyDetail.receiptFileName}`} style={{ width: '100%', maxHeight: 420, objectFit: 'contain', borderRadius: 8, border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-bg-glass-subtle)' }} />
+                    ) : verifyDetail.receiptDownloadUrl && verifyDetail.receiptMimeType === 'application/pdf' ? (
+                      <iframe src={verifyDetail.receiptDownloadUrl} title="Receipt" style={{ width: '100%', height: 420, border: '1px solid var(--sos-border-subtle)', borderRadius: 8, background: '#fff' }} />
+                    ) : verifyDetail.receiptDownloadUrl ? (
+                      <a href={verifyDetail.receiptDownloadUrl} target="_blank" rel="noreferrer" className="sos-text-link" style={{ fontSize: 13 }}>Download receipt</a>
+                    ) : (
+                      <div className="sos-text-muted" style={{ fontSize: 13 }}>No receipt file.</div>
+                    )}
+                  </div>
+                  {/* Details + actions */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {idTile('Amount', money(Number(verifyDetail.submittedAmount), verifyDetail.currency))}
+                    {idTile('Method', verifyDetail.paymentMethod ?? '—')}
+                    {idTile('Submitted', fmtDate(verifyDetail.submittedAt))}
+                    {verifyDetail.notes ? idTile('Note', verifyDetail.notes) : null}
+                    <div>
+                      <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Finance note (optional)</div>
+                      <textarea value={verifyNote} onChange={(e) => setVerifyNote(e.target.value)} rows={2} placeholder="Anything to record with this verification" style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--sos-border)', background: 'var(--sos-input-bg)', color: 'var(--sos-text-primary)', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }} />
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--sos-text-faint)', lineHeight: 1.5 }}>⚖︎ Large payments must be verified by a different officer than the one who recorded them.</div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <PrimaryButton size="sm" iconLeft={busy === 'verify' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle2 size={14} />} onClick={() => void doVerify()} disabled={busy !== null}>
+                        {busy === 'verify' ? 'Verifying…' : 'Verify payment'}
+                      </PrimaryButton>
+                      <SecondaryButton size="sm" onClick={() => void doReject()} disabled={busy !== null}>{busy === 'reject' ? 'Rejecting…' : 'Reject'}</SecondaryButton>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </GlassCard>
+          ) : null}
+
           <GlassCard variant="default" padded={false}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Wallet size={15} className="sos-text-faint" />
               <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Payment submissions</h3>
-              <span className="sos-text-faint" style={{ fontSize: 12 }}>· receipts awaiting / past verification</span>
+              <span className="sos-text-faint" style={{ fontSize: 12 }}>· awaiting / past verification</span>
             </div>
             <Table
               head={['Amount', 'Receipt', 'Status', 'Submitted', '']}
-              empty="No payment proof submitted yet. When the client pays, the receipt is recorded here for Finance to confirm."
-              rows={data.handovers.map((h) => [
-                money(h.amount, h.currency),
-                h.receiptFileName ?? '—',
-                <StatusBadge key="s" tone={tone(h.status)} size="sm" dot={false}>{label(h.status)}</StatusBadge>,
-                fmtDate(h.submittedAt),
-                <ButtonLink key="a" href={`/finance/intake/${h.id}` as Route} variant={h.verified ? 'ghost' : 'primary'} size="sm">{h.verified ? 'Open' : 'Confirm →'}</ButtonLink>,
-              ])}
+              empty="No payment recorded yet. When the client pays, record the receipt above, then verify it here."
+              rows={data.handovers.map((h) => {
+                const done = ['PAYMENT_VERIFIED', 'SENT_TO_PROCESSING'].includes(h.status);
+                const action = done
+                  ? <StatusBadge key="a" tone="success" size="sm" dot={false}>Verified</StatusBadge>
+                  : h.status === 'REJECTED'
+                    ? <StatusBadge key="a" tone="danger" size="sm" dot={false}>Rejected</StatusBadge>
+                    : h.status === 'CANCELLED'
+                      ? <span key="a" className="sos-text-faint">—</span>
+                      : <PrimaryButton key="a" size="sm" onClick={() => void openVerify(h.id)} disabled={busy !== null}>Review &amp; verify</PrimaryButton>;
+                return [
+                  money(h.amount, h.currency),
+                  h.receiptFileName ?? '—',
+                  <StatusBadge key="s" tone={tone(h.status)} size="sm" dot={false}>{label(h.status)}</StatusBadge>,
+                  fmtDate(h.submittedAt),
+                  action,
+                ];
+              })}
             />
           </GlassCard>
           <GlassCard variant="default" padded={false}>

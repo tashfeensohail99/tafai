@@ -10,7 +10,6 @@ import {
   FileSignature,
   FileText,
   History,
-  Inbox,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -59,7 +58,6 @@ const FinanceSessionContext = createContext<FinanceSessionContextValue | null>(n
 const WORK_NAV: DrawerMenuItem[] = [
   { label: 'Dashboard', href: '/finance', icon: LayoutDashboard, caption: 'Overview & queues' },
   { label: 'Agreements', href: '/finance/agreements', icon: FileText, caption: 'Review & approve from Sales' },
-  { label: 'Verify Payments', href: '/finance/intake', icon: Inbox, caption: 'Confirm client receipts' },
   { label: 'Corrections', href: '/finance/corrections', icon: MessageSquareWarning, caption: 'Sent back to Sales' },
 ];
 const RECORDS_NAV: DrawerMenuItem[] = [
@@ -80,8 +78,6 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/finance/agreements') return { title: 'Agreements', subtitle: 'Submitted by Sales for review' };
   if (pathname.startsWith('/finance/contracts/')) return { title: 'Service Contract', subtitle: 'Installment schedule + invoice generation' };
   if (pathname === '/finance/contracts') return { title: 'Service Contracts', subtitle: 'Signed agreements + installment plans' };
-  if (pathname.startsWith('/finance/intake/')) return { title: 'Payment Verification', subtitle: 'Verify the receipt and amount' };
-  if (pathname === '/finance/intake') return { title: 'Verify Payments', subtitle: 'Client receipts awaiting confirmation' };
   if (pathname.startsWith('/finance/corrections/')) return { title: 'Correction Thread', subtitle: 'Conversation with Sales' };
   if (pathname === '/finance/corrections') return { title: 'Corrections', subtitle: 'Sent back to Sales for fixing' };
   if (pathname.startsWith('/finance/receipts/')) return { title: 'Receipt Confirmation', subtitle: 'Generate and issue the receipt' };

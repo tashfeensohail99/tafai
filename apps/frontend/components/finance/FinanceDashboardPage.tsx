@@ -133,11 +133,11 @@ export function FinanceDashboardPage() {
         actions={
           <>
             <ButtonLink
-              href={'/finance/intake' as Route}
+              href={'/finance/clients' as Route}
               variant="primary"
               iconLeft={<Inbox size={15} />}
             >
-              Open intake queue
+              Customers
             </ButtonLink>
             <ButtonLink
               href={'/finance/corrections' as Route}
@@ -145,13 +145,6 @@ export function FinanceDashboardPage() {
               iconLeft={<MessageSquareWarning size={15} />}
             >
               Corrections ({correctionRequired})
-            </ButtonLink>
-            <ButtonLink
-              href={'/finance/clients' as Route}
-              variant="ghost"
-              iconRight={<ArrowRight size={14} />}
-            >
-              Customers
             </ButtonLink>
           </>
         }
@@ -270,24 +263,24 @@ function MyQueueCard({ items }: { items: ApiHandover[] }) {
         }}
       >
         <div>
-          <div className="sos-eyebrow">My verification queue</div>
+          <div className="sos-eyebrow">Payments to verify</div>
           <h2 className="sos-title" style={{ fontSize: '17px', marginTop: '6px' }}>
-            Sorted by SLA — most urgent first
+            {items.length} awaiting verification
           </h2>
           <p
             className="sos-text-muted"
             style={{ marginTop: '4px', fontSize: '13px' }}
           >
-            New cases from Sales and ones you've already started reviewing.
+            Recorded payments not yet verified — open the customer to confirm.
           </p>
         </div>
         <ButtonLink
-          href={'/finance/intake' as Route}
+          href={'/finance/clients' as Route}
           variant="ghost"
           size="sm"
           iconRight={<ArrowRight size={13} />}
         >
-          Open full queue
+          All customers
         </ButtonLink>
       </div>
 
@@ -320,7 +313,7 @@ function QueueRow({ item }: { item: ApiHandover }) {
   const initials = initialsOf(name);
   return (
     <Link
-      href={`/finance/intake/${item.id}` as Route}
+      href={`/finance/clients/${item.lead.id}` as Route}
       style={{ textDecoration: 'none', display: 'block' }}
     >
       <div
@@ -454,7 +447,7 @@ function ProblemPileCard({ items }: { items: ApiHandover[] }) {
           {items.slice(0, 4).map((p) => (
             <Link
               key={p.id}
-              href={`/finance/intake/${p.id}` as Route}
+              href={`/finance/clients/${p.lead.id}` as Route}
               style={{ textDecoration: 'none' }}
             >
               <div

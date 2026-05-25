@@ -97,6 +97,7 @@ export interface FinanceCustomerRow {
   hasContract: boolean;
   contractStatus: string | null;
   processingStage: string | null;
+  hasPendingPayment: boolean;
   fee: number;
   paid: number;
   outstanding: number;
@@ -129,11 +130,10 @@ export function getContractAgreementUrl(contractId: string): Promise<{ url: stri
 
 /**
  * Record a payment from the customer profile: uploads the receipt proof and
- * the amount as a FinanceHandover (status SUBMITTED). This reuses the exact
- * intake pipeline Sales uses — Finance then confirms it from the "Payment
- * submissions" list (→ /finance/intake/:id) which records + verifies the
- * payment, advancing the ledger's "paid X of Y". Works the same for the
- * first payment and every installment after it.
+ * the amount as a FinanceHandover (status SUBMITTED). Finance then verifies it
+ * inline from the same profile's "Payment submissions" list (Review & verify),
+ * which records + verifies the payment and advances the ledger's "paid X of Y".
+ * Works the same for the first payment and every installment after it.
  */
 export function recordCustomerPayment(payload: {
   leadId: string;

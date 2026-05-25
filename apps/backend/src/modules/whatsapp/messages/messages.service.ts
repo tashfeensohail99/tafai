@@ -15,8 +15,13 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFile, readFile, unlink } from 'node:fs/promises';
+import ffmpegStatic from 'ffmpeg-static';
 
 const execFileAsync = promisify(execFile);
+// Bundled static ffmpeg binary (ships in node_modules for the build platform),
+// so voice-note transcoding works regardless of whether the host image has a
+// system ffmpeg. Falls back to a PATH `ffmpeg` if the package resolves null.
+const FFMPEG_BIN = ffmpegStatic ?? 'ffmpeg';
 import {
   Prisma,
   WhatsAppMessageDirection,
@@ -291,9 +296,14 @@ export class WhatsAppMessagesService {
         // Content-Type and the processor knows the actual uploaded format.
         mediaMimeType: uploadMimeType,
         body: input.caption ?? null,
-        // Mark voice notes so the outbound processor sends voice: true to Meta,
-        // which renders the message as a voice note (waveform) not basic audio.
-        ...(isVoiceNote ? { payload: { isVoiceNote: true } as unknown as Prisma.InputJsonValue } : {}),
+        // Mark as a voice note ONLY when the uploaded file is actually OGG/OPUS
+        // — Meta rejects voice:true for any other format. If we couldn't
+        // transcode to OGG (e.g. an mp4 recording + ffmpeg unavailable), the
+        // message still sends, but as a basic audio attachment rather than a
+        // voice note — far better than failing outright.
+        ...(isVoiceNote && uploadMimeType.toLowerCase().includes('ogg')
+          ? { payload: { isVoiceNote: true } as unknown as Prisma.InputJsonValue }
+          : {}),
         sentByEmployeeId: senderEmployeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
@@ -318,7 +328,7 @@ export class WhatsAppMessagesService {
     const tmpOut = join(tmpdir(), `vn-out-${randomUUID()}.ogg`);
     try {
       await writeFile(tmpIn, input);
-      await execFileAsync('ffmpeg', [
+      await execFileAsync(FFMPEG_BIN, [
         '-y',           // overwrite output
         '-i', tmpIn,
         '-c:a', 'libopus',

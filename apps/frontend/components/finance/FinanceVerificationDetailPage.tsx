@@ -726,6 +726,26 @@ export function FinanceVerificationDetailPage({ paymentId }: Props) {
         </div>
       </div>
 
+      {/* Four-eyes notice — segregation of duties. Policy-agnostic copy (no
+          hard-coded amount) so it stays accurate if the threshold changes. */}
+      {handover.status !== 'PAYMENT_VERIFIED' && handover.status !== 'REJECTED' ? (
+        <div
+          style={{
+            display: 'flex', gap: 8, alignItems: 'flex-start',
+            padding: '10px 14px', borderRadius: 'var(--sos-radius-md)',
+            background: 'var(--sos-bg-glass-subtle)', border: '1px solid var(--sos-border-subtle)',
+            fontSize: 12.5, color: 'var(--sos-text-secondary)', lineHeight: 1.5,
+          }}
+        >
+          <span aria-hidden style={{ fontWeight: 700, color: 'var(--sos-text-muted)' }}>⚖︎</span>
+          <span>
+            <strong>Segregation of duties.</strong> Large payments must be verified by a
+            different officer than the one who recorded them. If verification is blocked,
+            ask another finance officer to confirm this one.
+          </span>
+        </div>
+      ) : null}
+
       {/* Sticky action bar — actions are status-aware so the operator
           can't accidentally re-verify a case that's already moved on
           to Processing, or click Reject on a handover that's already

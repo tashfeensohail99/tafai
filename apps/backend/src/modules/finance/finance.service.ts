@@ -1009,6 +1009,22 @@ export class FinanceService {
       throw new BadRequestException('Only pending payments can be verified');
     }
 
+    // Maker-checker (segregation of duties): at/above the org threshold, the
+    // officer who RECORDED the payment cannot also VERIFY it — a different
+    // finance officer must. Skips when the threshold is 0 (disabled) or no
+    // recorder is tracked (payment not created via a handover).
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { makerCheckerThreshold: true },
+    });
+    const threshold = Number(org?.makerCheckerThreshold ?? 0);
+    const recorder = payment.financeHandover?.reviewedByUserId ?? null;
+    if (threshold > 0 && Number(payment.amount) >= threshold && recorder && recorder === actorUserId) {
+      throw new ForbiddenException(
+        `Four-eyes check: this payment (${Number(payment.amount).toLocaleString()} ${payment.currency}) is at or above the ${threshold.toLocaleString()} ${payment.currency} threshold, and you recorded it. A different finance officer must verify it.`,
+      );
+    }
+
     let clientId = payment.invoice.clientId;
     if (!clientId && payment.invoice.leadId) {
       const conversion = await this.leadsService.convertToClient(payment.invoice.leadId, actorUserId);

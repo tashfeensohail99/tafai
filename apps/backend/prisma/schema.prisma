@@ -456,6 +456,10 @@ model Organization {
   // owned it banks this many on-time "wins" — repairing their SLA score for
   // past slow replies. Closing deals literally improves your standing.
   slaHandoverBonus        Int     @default(5)
+  // Maker-checker (segregation of duties): a payment at or above this amount
+  // must be VERIFIED by a different finance officer than the one who recorded
+  // it. 0 disables the control. Default 100,000.
+  makerCheckerThreshold   Decimal @default(100000) @db.Decimal(12, 2)
   // Auto-acknowledgement: instant personalised reply when a lead first
   // messages. Does NOT satisfy the SLA — the agent must still reply. The
   // template supports {firstName}, {agentName}, {businessName} placeholders.

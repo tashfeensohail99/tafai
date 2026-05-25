@@ -59,6 +59,9 @@ export interface FinanceProfileExpense {
   description: string;
   amount: number;
   currency: string;
+  baseAmount: number;
+  baseCurrency: string;
+  fxRate: number;
   billable: boolean;
   incurredAt: string;
   receiptFileName: string | null;
@@ -73,7 +76,7 @@ export interface FinanceCustomerProfile {
   contract: FinanceProfileContract | null;
   installments: Array<{ id: string; sequence: number; dueDate: string; amount: number; status: string; description: string | null; paidAmount: number; paidStatus: string; recognizedAt: string | null }>;
   invoices: Array<{ id: string; invoiceNumber: string; status: string; currency: string; totalAmount: number; paidAmount: number; dueDate: string | null; createdAt: string }>;
-  payments: Array<{ id: string; amount: number; currency: string; status: string; paymentMethod: string | null; paidAt: string | null; verifiedAt: string | null }>;
+  payments: Array<{ id: string; amount: number; currency: string; baseAmount: number; baseCurrency: string; fxRate: number; status: string; paymentMethod: string | null; paidAt: string | null; verifiedAt: string | null }>;
   receipts: Array<{ id: string; receiptNumber: string; amount: number; currency: string; issuedAt: string }>;
   handovers: Array<{ id: string; status: string; amount: number; currency: string; verified: boolean; receiptFileName: string | null; submittedAt: string; reviewedAt: string | null }>;
   processingCase: { id: string; stage: string; service: string; targetCountry: string; slaStatus: string } | null;

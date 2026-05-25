@@ -448,6 +448,30 @@ export async function fetchFinanceReports(): Promise<FinanceReportsSummary> {
   return apiFetch<FinanceReportsSummary>('/finance/reports/summary');
 }
 
+/** Live FX rates to the base currency (CAD): "1 CAD = rates[ccy]". */
+export interface FxRatesResponse {
+  base: string;
+  rates: Record<string, number>;
+  source: string;
+  asOf: string;
+}
+
+export async function fetchFxRates(): Promise<FxRatesResponse> {
+  return apiFetch<FxRatesResponse>('/finance/fx/rates');
+}
+
+/** Convert a foreign amount to CAD given the rates map (1 CAD = rates[ccy]). */
+export function toBaseCAD(amount: number, currency: string, rates: Record<string, number>): number {
+  const ccy = (currency || 'CAD').toUpperCase();
+  if (ccy === 'CAD') return Math.round(amount * 100) / 100;
+  const rate = rates[ccy];
+  if (!rate || rate <= 0) return amount;
+  return Math.round((amount / rate) * 100) / 100;
+}
+
+/** Currencies offered in the finance pickers (base first, then PKR for PK ops). */
+export const FINANCE_CURRENCIES = ['CAD', 'PKR', 'USD', 'GBP', 'EUR', 'AED', 'SAR', 'INR', 'AUD'] as const;
+
 /** AR aging — outstanding invoices bucketed by days overdue, per currency. */
 export interface AgingReport {
   asOf: string;

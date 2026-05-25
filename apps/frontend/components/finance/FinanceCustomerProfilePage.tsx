@@ -42,7 +42,9 @@ import {
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
-import { fetchHandoverById, recognizeInstallment, reviewHandover, verifyPayment, type ApiHandover } from '@/lib/finance-api';
+import { fetchHandoverById, fetchFxRates, recognizeInstallment, reviewHandover, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
+
+const CURRENCY_OPTIONS = FINANCE_CURRENCIES.map((c) => ({ value: c, label: c }));
 
 const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }> = [
   { value: 'GOVERNMENT_FEE', label: 'Government fee' },
@@ -129,6 +131,9 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const payFileRef = useRef<HTMLInputElement>(null);
 
   // Record-payment form (Payments tab)
+  const [fxRates, setFxRates] = useState<Record<string, number>>({});
+  const [payCurrency, setPayCurrency] = useState('CAD');
+  const [expCurrency, setExpCurrency] = useState('CAD');
   const [payOpen, setPayOpen] = useState(false);
   const [payFile, setPayFile] = useState<File | null>(null);
   const [payAmount, setPayAmount] = useState('');
@@ -163,6 +168,16 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   }, [leadId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Live FX rates (1 CAD = rates[ccy]) for the currency pickers + CAD preview.
+  useEffect(() => { fetchFxRates().then((r) => setFxRates(r.rates)).catch(() => {}); }, []);
+
+  // CAD equivalent of a typed foreign amount, or null when not convertible yet.
+  const cadOf = (amountStr: string, ccy: string): number | null => {
+    const n = Number(amountStr);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return toBaseCAD(n, ccy, fxRates);
+  };
 
   const openUrl = async (kind: 'agreement-pdf' | 'signed') => {
     if (!data) return;
@@ -218,6 +233,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     setPayOpen(false);
     setPayFile(null);
     setPayAmount('');
+    setPayCurrency('CAD');
     setPayMethod('BANK');
     setPayRef('');
     setPayNote('');
@@ -242,7 +258,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       await recordCustomerPayment({
         leadId: data.lead.id,
         submittedAmount: String(amount),
-        currency: data.totals.currency,
+        currency: payCurrency,
         paymentMethod: payMethod,
         transactionRef: payRef.trim() || undefined,
         notes: payNote.trim() || undefined,
@@ -323,6 +339,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     setExpDesc('');
     setExpAmount('');
     setExpTax('');
+    setExpCurrency('CAD');
     setExpBillable(false);
   };
 
@@ -363,7 +380,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         description: expDesc.trim(),
         amount: String(amount),
         ...(expTax && Number(expTax) > 0 ? { taxAmount: String(Number(expTax)) } : {}),
-        currency: data.totals.currency,
+        currency: expCurrency,
         billable: expBillable,
         ...receipt,
       });
@@ -626,8 +643,14 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     inputMode="decimal"
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
-                    hint={totals.installmentsTotal > 0 ? `Next due prefilled · paid ${totals.installmentsPaid}/${totals.installmentsTotal}` : `Currency ${totals.currency}`}
+                    hint={totals.installmentsTotal > 0 ? `Next due prefilled · paid ${totals.installmentsPaid}/${totals.installmentsTotal}` : 'Amount received (as on the bank slip)'}
                     required
+                  />
+                  <FormSelect
+                    label="Currency received"
+                    value={payCurrency}
+                    onChange={(e) => setPayCurrency(e.target.value)}
+                    options={CURRENCY_OPTIONS}
                   />
                   <FormSelect
                     label="Method"
@@ -648,6 +671,12 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     onChange={(e) => setPayNote(e.target.value)}
                   />
                 </div>
+                {payCurrency !== 'CAD' && cadOf(payAmount, payCurrency) != null ? (
+                  <div className="sos-banner sos-banner--info" style={{ fontSize: 12.5 }}>
+                    ≈ <strong>CAD {cadOf(payAmount, payCurrency)!.toLocaleString()}</strong>
+                    {fxRates[payCurrency] ? ` · live rate 1 CAD = ${fxRates[payCurrency].toLocaleString()} ${payCurrency}` : ''} — booked to the ledger in CAD.
+                  </div>
+                ) : null}
                 <div>
                   <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Receipt</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -806,8 +835,14 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     inputMode="decimal"
                     value={expAmount}
                     onChange={(e) => setExpAmount(e.target.value)}
-                    hint={`Currency ${totals.currency}`}
+                    hint="Amount spent"
                     required
+                  />
+                  <FormSelect
+                    label="Currency"
+                    value={expCurrency}
+                    onChange={(e) => setExpCurrency(e.target.value)}
+                    options={CURRENCY_OPTIONS}
                   />
                   <FormInput
                     label="Input tax (optional)"
@@ -827,6 +862,12 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     required
                   />
                 </div>
+                {expCurrency !== 'CAD' && cadOf(expAmount, expCurrency) != null ? (
+                  <div className="sos-banner sos-banner--info" style={{ fontSize: 12.5 }}>
+                    ≈ <strong>CAD {cadOf(expAmount, expCurrency)!.toLocaleString()}</strong>
+                    {fxRates[expCurrency] ? ` · live rate 1 CAD = ${fxRates[expCurrency].toLocaleString()} ${expCurrency}` : ''} — recorded in CAD.
+                  </div>
+                ) : null}
                 <div>
                   <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Receipt (optional)</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

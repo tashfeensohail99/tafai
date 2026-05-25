@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
-export type DocumentSeries = 'INV' | 'RCP' | 'SC' | 'AGR';
+export type DocumentSeries = 'INV' | 'RCP' | 'SC' | 'AGR' | 'CN';
 
 /**
  * Monotonic, gapless per-year document numbers (INV/RCP/SC/AGR), backed by the

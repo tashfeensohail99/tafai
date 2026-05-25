@@ -1,5 +1,6 @@
 import {
   IsBase64,
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsEnum,
@@ -12,6 +13,20 @@ import {
   MinLength,
 } from 'class-validator';
 import { FinanceHandoverStatus, InvoiceStatus, PaymentStatus } from '@prisma/client';
+
+/** Mark/unmark a contract milestone (installment) as delivered → earned revenue. */
+export class RecognizeInstallmentDto {
+  @IsOptional()
+  @IsBoolean()
+  recognize?: boolean;
+}
+
+/** Set or clear the accounting period-lock (book-close) date. */
+export class LockPeriodDto {
+  @IsOptional()
+  @IsDateString()
+  date?: string | null;
+}
 
 export enum FinanceHandoverReviewAction {
   MARK_IN_REVIEW = 'MARK_IN_REVIEW',

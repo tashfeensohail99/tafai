@@ -464,6 +464,10 @@ model Organization {
   // firm doesn't charge tax (default). When > 0, invoices compute tax on the
   // net and show it as a separate line.
   taxRatePercent          Decimal @default(0) @db.Decimal(5, 2)
+  // Period lock (book close): payments/invoices effective-dated before this
+  // instant are rejected, so a closed accounting period can't be altered.
+  // NULL = no lock (default).
+  booksLockedBefore       DateTime?
   // Auto-acknowledgement: instant personalised reply when a lead first
   // messages. Does NOT satisfy the SLA — the agent must still reply. The
   // template supports {firstName}, {agentName}, {businessName} placeholders.
@@ -1385,6 +1389,7 @@ model Invoice {
   installment Installment? @relation(fields: [installmentId], references: [id])
   payments Payment[]
   receipts Receipt[]
+  creditNotes CreditNote[]
   financeHandovers FinanceHandover[]
 
   @@index([leadId])
@@ -1451,6 +1456,12 @@ model Installment {
   /// approval", "After medical exam".
   description   String?
   status        InstallmentStatus @default(PENDING)
+  /// Revenue recognition (accrual): set when this milestone / performance
+  /// obligation is actually delivered. Revenue is EARNED at this point
+  /// regardless of when cash arrived; until then, cash collected against the
+  /// contract is unearned (deferred) revenue — a liability, not income.
+  recognizedAt       DateTime?
+  recognizedByUserId String?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
@@ -1534,6 +1545,37 @@ model Receipt {
   @@schema("finance")
 }
 
+/// Credit note — the contra-document a CA expects when money is returned or an
+/// invoice is reduced (refund, cancellation, billing correction). Issued with
+/// its own sequential number (CN-YYYY-NNNNN) and dated in the period the
+/// reversal happens, so the original invoice/receipt stay intact and the
+/// refund shows as an explicit negative entry rather than silently vanishing.
+model CreditNote {
+  id               String    @id @default(uuid())
+  creditNoteNumber String    @unique
+  invoiceId        String
+  /// The payment being reversed, when the credit note stems from a refund.
+  paymentId        String?
+  leadId           String?
+  clientId         String?
+  amount           Decimal   @db.Decimal(12, 2)
+  currency         String
+  reason           String?
+  issuedByUserId   String
+  issuedAt         DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+  @@index([clientId])
+  @@index([leadId])
+  @@index([issuedAt])
+  @@map("credit_notes")
+  @@schema("finance")
+}
+
 model FinanceHandover {
   id               String                @id @default(uuid())
   leadId           String
@@ -1597,6 +1639,10 @@ model Expense {
   description      String
   amount           Decimal         @db.Decimal(12, 2)
   currency         String          @default("CAD")
+  /// Recoverable input tax (GST/HST/VAT) paid on this expense — claimable as
+  /// an input tax credit (ITC) and netted against output tax in the tax
+  /// report. 0 when no tax applies or it isn't recoverable.
+  taxAmount        Decimal         @default(0) @db.Decimal(12, 2)
   /// Rebillable disbursement (client reimburses) vs absorbed firm cost.
   /// Billable expenses are recoverable — they do NOT reduce margin and are
   /// owed by the client. Absorbed (default) reduce margin as a true cost.

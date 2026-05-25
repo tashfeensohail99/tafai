@@ -26,6 +26,7 @@ export class ExpensesService {
     category: string;
     description: string;
     amount: Prisma.Decimal;
+    taxAmount?: Prisma.Decimal;
     currency: string;
     billable: boolean;
     incurredAt: Date;
@@ -38,6 +39,7 @@ export class ExpensesService {
       category: e.category,
       description: e.description,
       amount: num(e.amount),
+      taxAmount: num(e.taxAmount),
       currency: e.currency,
       billable: e.billable,
       incurredAt: e.incurredAt,
@@ -80,6 +82,7 @@ export class ExpensesService {
         category: dto.category ?? 'OTHER',
         description: dto.description,
         amount: dto.amount,
+        taxAmount: dto.taxAmount ?? '0',
         currency: dto.currency ?? 'CAD',
         billable: dto.billable ?? false,
         incurredAt: dto.incurredAt ? new Date(dto.incurredAt) : new Date(),

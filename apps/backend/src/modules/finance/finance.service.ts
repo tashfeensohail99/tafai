@@ -190,7 +190,7 @@ export class FinanceService {
       : [];
     const signedClientIds = [...new Set(signedLeads.map((l) => l.convertedClientId).filter((x): x is string => !!x))];
 
-    const [revenue, paidAgg, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPaidAgg] =
+    const [revenue, paidAgg, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPaidAgg, earnedAgg] =
       await Promise.all([
         this.getRevenueByService(),
         this.prisma.invoice.aggregate({ _sum: { paidAmount: true }, where: { deletedAt: null } }),
@@ -210,12 +210,19 @@ export class FinanceService {
               where: { deletedAt: null, OR: [{ leadId: { in: signedLeadIds } }, { clientId: { in: signedClientIds } }] },
             })
           : Promise.resolve({ _sum: { paidAmount: null } }),
+        // Revenue EARNED = installments whose milestone has been delivered
+        // (recognizedAt set). Cash collected beyond this is unearned (deferred).
+        this.prisma.installment.aggregate({ _sum: { amount: true }, where: { recognizedAt: { not: null } } }),
       ]);
 
     const collected = dec(paidAgg._sum.paidAmount);
     const expenses = dec(expenseAgg._sum.amount);
     const collectedOnSigned = dec(signedPaidAgg._sum.paidAmount);
     const pipelineValue = pipelineAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
+    // Accrual view: earned (delivered milestones) vs received (cash) → the gap
+    // is either deferred revenue (cash ahead of delivery, a liability) or
+    // accrued/unbilled (delivery ahead of cash, an asset).
+    const earned = dec(earnedAgg._sum.amount);
 
     // Currency integrity: a single rolled-up total must not silently span
     // currencies. Derive the real currency from the data; flag if >1 is in
@@ -241,7 +248,14 @@ export class FinanceService {
       },
       // Pipeline — agreements in progress, NOT yet money.
       pipeline: { agreements: pipelineAgreements.length, value: pipelineValue },
-      revenue: revenue.totals, // { month, ytd, allTime } — verified payments
+      // Accrual: revenue earned (delivered milestones) vs deferred (cash held
+      // for undelivered work — a liability) vs accrued (delivered, not yet paid).
+      recognition: {
+        earned,
+        deferred: Math.max(0, collected - earned),
+        accrued: Math.max(0, earned - collected),
+      },
+      revenue: revenue.totals, // { month, ytd, allTime } — cash collected (verified payments)
       counts: { payingCustomers, signed: signedAgreements.length, receipts: receiptsCount },
       byService: revenue.byService,
     };
@@ -651,6 +665,9 @@ export class FinanceService {
         `Payment currency (${dto.currency}) must match the invoice currency (${invoice.currency}).`,
       );
     }
+
+    // Period lock: can't book a payment dated into a closed accounting period.
+    await this.assertPeriodOpen(dto.paidAt ? new Date(dto.paidAt) : new Date());
 
     const payment = await this.prisma.payment.create({
       data: {
@@ -1189,6 +1206,10 @@ export class FinanceService {
       );
     }
 
+    // Period lock: don't recognize cash into a closed period (covers payments
+    // created via any path, including the handover/profile flow).
+    await this.assertPeriodOpen(payment.paidAt ?? new Date());
+
     // Verifying the first payment converts the originating lead into a client.
     let clientId = payment.invoice.clientId;
     if (!clientId && payment.invoice.leadId) {
@@ -1650,16 +1671,38 @@ export class FinanceService {
       },
     });
 
+    // Issue a sequential credit note — the CA-standard contra-document for a
+    // refund. The original invoice + receipt stay intact (immutable audit
+    // trail); this records the reversal as its own dated, numbered negative
+    // entry in the period the refund actually happens.
+    const creditNote = await this.prisma.creditNote.create({
+      data: {
+        creditNoteNumber: await this.numbering.next('CN'),
+        invoiceId: payment.invoiceId,
+        paymentId: id,
+        leadId: payment.invoice.leadId,
+        clientId: payment.invoice.clientId,
+        amount: payment.amount,
+        currency: payment.currency,
+        reason: dto.notes ?? 'Payment refunded',
+        issuedByUserId: actorUserId,
+      },
+    });
+
     await this.auditLog.log({
       actorUserId,
       action: AuditAction.PAYMENT_REFUNDED,
       entityType: 'Payment',
       entityId: id,
       oldValues: { status: payment.status },
-      newValues: { status: PaymentStatus.REFUNDED, notes: dto.notes },
+      newValues: {
+        status: PaymentStatus.REFUNDED,
+        notes: dto.notes,
+        creditNoteNumber: creditNote.creditNoteNumber,
+      },
     });
 
-    return updatedPayment;
+    return { ...updatedPayment, creditNoteNumber: creditNote.creditNoteNumber };
   }
 
   /**
@@ -2294,6 +2337,184 @@ export class FinanceService {
   }
 
   /** Monotonic INV-YYYY-NNNNN via the document_sequences counter (never reused). */
+  /**
+   * Revenue recognition (#1, accrual). Mark a contract milestone/installment
+   * delivered → its amount becomes EARNED revenue. Recognizing cannot exceed
+   * what was contracted; un-recognizing (recognize=false) corrects a mistake.
+   */
+  async recognizeInstallment(id: string, recognize: boolean, actorUserId: string) {
+    const inst = await this.prisma.installment.findUnique({
+      where: { id },
+      select: { id: true, recognizedAt: true, amount: true, description: true },
+    });
+    if (!inst) throw new NotFoundException('Installment not found');
+
+    const updated = await this.prisma.installment.update({
+      where: { id },
+      data: recognize
+        ? { recognizedAt: new Date(), recognizedByUserId: actorUserId }
+        : { recognizedAt: null, recognizedByUserId: null },
+      select: { id: true, recognizedAt: true, recognizedByUserId: true, amount: true },
+    });
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.INVOICE_UPDATED, // no dedicated recognition action in the enum
+      entityType: 'Installment',
+      entityId: id,
+      oldValues: { recognizedAt: inst.recognizedAt },
+      newValues: { recognizedAt: updated.recognizedAt, recognized: recognize },
+    });
+
+    return updated;
+  }
+
+  /**
+   * GST/HST tax report (#2). Output tax billed on issued invoices minus
+   * recoverable input tax (ITCs) on expenses = net tax payable, per currency,
+   * over an optional [from, to] window. The figures a CA needs to file a return.
+   */
+  async getTaxReport(from?: string, to?: string) {
+    const dec = (d: Prisma.Decimal | number | null | undefined): number =>
+      d == null ? 0 : Number(d.toString());
+    const fromDate = from ? new Date(from) : undefined;
+    const toDate = to ? new Date(to) : undefined;
+    const range =
+      fromDate || toDate
+        ? { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) }
+        : undefined;
+
+    const [invoices, expenses] = await Promise.all([
+      this.prisma.invoice.findMany({
+        where: {
+          deletedAt: null,
+          status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.CANCELLED] },
+          ...(range ? { createdAt: range } : {}),
+        },
+        select: { currency: true, taxAmount: true },
+      }),
+      this.prisma.expense.findMany({
+        where: { deletedAt: null, ...(range ? { incurredAt: range } : {}) },
+        select: { currency: true, taxAmount: true },
+      }),
+    ]);
+
+    const map = new Map<
+      string,
+      { currency: string; outputTax: number; inputTax: number; netPayable: number }
+    >();
+    const get = (ccy: string) =>
+      map.get(ccy) ?? { currency: ccy, outputTax: 0, inputTax: 0, netPayable: 0 };
+    for (const inv of invoices) {
+      const m = get(inv.currency);
+      m.outputTax += dec(inv.taxAmount);
+      map.set(inv.currency, m);
+    }
+    for (const e of expenses) {
+      const m = get(e.currency);
+      m.inputTax += dec(e.taxAmount);
+      map.set(e.currency, m);
+    }
+    for (const m of map.values()) m.netPayable = m.outputTax - m.inputTax;
+
+    return {
+      from: fromDate ?? null,
+      to: toDate ?? null,
+      byCurrency: Array.from(map.values()).sort((a, b) => b.outputTax - a.outputTax),
+    };
+  }
+
+  /** Issued credit-notes ledger (#3) — newest first, optional text search. */
+  async listCreditNotes(search?: string) {
+    const where: Prisma.CreditNoteWhereInput = {};
+    if (search?.trim()) {
+      where.OR = [
+        { creditNoteNumber: { contains: search.trim(), mode: 'insensitive' } },
+        { reason: { contains: search.trim(), mode: 'insensitive' } },
+      ];
+    }
+    const notes = await this.prisma.creditNote.findMany({
+      where,
+      orderBy: { issuedAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        creditNoteNumber: true,
+        amount: true,
+        currency: true,
+        reason: true,
+        issuedAt: true,
+        leadId: true,
+        clientId: true,
+        invoice: { select: { invoiceNumber: true } },
+      },
+    });
+    const leadIds = [...new Set(notes.map((n) => n.leadId).filter((x): x is string => !!x))];
+    const clientIds = [...new Set(notes.map((n) => n.clientId).filter((x): x is string => !!x))];
+    const [leads, clients] = await Promise.all([
+      leadIds.length
+        ? this.prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, firstName: true, lastName: true } })
+        : Promise.resolve([]),
+      clientIds.length
+        ? this.prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, firstName: true, lastName: true } })
+        : Promise.resolve([]),
+    ]);
+    const ln = new Map(leads.map((l) => [l.id, `${l.firstName} ${l.lastName}`.trim()]));
+    const cn = new Map(clients.map((c) => [c.id, `${c.firstName} ${c.lastName}`.trim()]));
+    return notes.map((n) => ({
+      id: n.id,
+      creditNoteNumber: n.creditNoteNumber,
+      amount: Number(n.amount.toString()),
+      currency: n.currency,
+      reason: n.reason,
+      issuedAt: n.issuedAt,
+      invoiceNumber: n.invoice?.invoiceNumber ?? null,
+      customer:
+        (n.clientId && cn.get(n.clientId)) || (n.leadId && ln.get(n.leadId)) || '—',
+    }));
+  }
+
+  /** Period lock (#8). Set/clear the book-close date (admin). */
+  async setBooksLockedBefore(dateStr: string | null, actorUserId: string) {
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, booksLockedBefore: true },
+    });
+    if (!org) throw new NotFoundException('Organization not found');
+    const updated = await this.prisma.organization.update({
+      where: { id: org.id },
+      data: { booksLockedBefore: dateStr ? new Date(dateStr) : null },
+      select: { booksLockedBefore: true },
+    });
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.INVOICE_UPDATED,
+      entityType: 'Organization',
+      entityId: org.id,
+      oldValues: { booksLockedBefore: org.booksLockedBefore },
+      newValues: { booksLockedBefore: updated.booksLockedBefore },
+    });
+    return updated;
+  }
+
+  /**
+   * Period-lock guard (#8): reject any money entry effective-dated into a
+   * closed accounting period. NULL date or no lock → always open.
+   */
+  private async assertPeriodOpen(effectiveDate: Date | null | undefined): Promise<void> {
+    if (!effectiveDate) return;
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { booksLockedBefore: true },
+    });
+    const lock = org?.booksLockedBefore ?? null;
+    if (lock && effectiveDate < lock) {
+      throw new BadRequestException(
+        `The accounting period is closed — entries dated before ${lock.toISOString().slice(0, 10)} are locked. Use a current date, or ask an admin to move the book-close date.`,
+      );
+    }
+  }
+
   private generateInvoiceNumber() {
     return this.numbering.next('INV');
   }

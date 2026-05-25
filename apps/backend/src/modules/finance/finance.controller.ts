@@ -31,6 +31,8 @@ import {
   ListFinanceHandoversQueryDto,
   ListFinanceQueueQueryDto,
   ListInvoicesQueryDto,
+  LockPeriodDto,
+  RecognizeInstallmentDto,
   RefundPaymentDto,
   UpdateFinanceHandoverDto,
   UpdateInvoiceDto,
@@ -128,6 +130,38 @@ export class FinanceController {
   @RequireAnyPermissions('finance.view_all', 'settings.manage')
   getAgingReport() {
     return this.financeService.getAgingReport();
+  }
+
+  /** GST/HST tax report: output tax (invoices) − input tax (expenses), per currency. */
+  @Get('reports/tax')
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
+  getTaxReport(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.financeService.getTaxReport(from, to);
+  }
+
+  /** Set/clear the accounting period-lock (book-close) date. Admin only. */
+  @Post('reports/lock-period')
+  @RequirePermissions('settings.manage')
+  lockPeriod(@Body() dto: LockPeriodDto, @CurrentUser() user: RequestUser) {
+    return this.financeService.setBooksLockedBefore(dto.date ?? null, user.id);
+  }
+
+  /** Issued credit-notes ledger. */
+  @Get('credit-notes')
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
+  listCreditNotes(@Query('search') search?: string) {
+    return this.financeService.listCreditNotes(search);
+  }
+
+  /** Mark/unmark a contract milestone delivered (revenue recognition). */
+  @Post('installments/:id/recognize')
+  @RequirePermissions('finance.verify_payment')
+  recognizeInstallment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RecognizeInstallmentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.recognizeInstallment(id, dto.recognize ?? true, user.id);
   }
 
   @Get('handovers')

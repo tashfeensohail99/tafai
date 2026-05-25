@@ -32,6 +32,11 @@ export class CreateExpenseDto {
   @IsNumberString()
   amount!: string;
 
+  /** Recoverable input tax (GST/HST/VAT) included in/charged on this expense. */
+  @IsOptional()
+  @IsNumberString()
+  taxAmount?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(10)

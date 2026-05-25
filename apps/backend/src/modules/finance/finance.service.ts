@@ -18,6 +18,7 @@ import {
   TimelineEventType,
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { NumberingService } from '../../common/numbering/numbering.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
@@ -89,6 +90,7 @@ export class FinanceService {
     private readonly casesService: CasesService,
     private readonly storage: StorageService,
     private readonly receiptPdfService: ReceiptPdfService,
+    private readonly numbering: NumberingService,
   ) {}
 
   async listInvoices(query: ListInvoicesQueryDto) {
@@ -190,7 +192,7 @@ export class FinanceService {
     const [revenue, paidAgg, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPaidAgg] =
       await Promise.all([
         this.getRevenueByService(),
-        this.prisma.invoice.aggregate({ _sum: { paidAmount: true } }),
+        this.prisma.invoice.aggregate({ _sum: { paidAmount: true }, where: { deletedAt: null } }),
         this.prisma.expense.aggregate({ _sum: { amount: true }, where: { deletedAt: null } }),
         this.prisma.receipt.count({ where: { voidedAt: null } }),
         // A real customer = money received (lead→client conversion fires on the
@@ -203,7 +205,7 @@ export class FinanceService {
         signedLeadIds.length || signedClientIds.length
           ? this.prisma.invoice.aggregate({
               _sum: { paidAmount: true },
-              where: { OR: [{ leadId: { in: signedLeadIds } }, { clientId: { in: signedClientIds } }] },
+              where: { deletedAt: null, OR: [{ leadId: { in: signedLeadIds } }, { clientId: { in: signedClientIds } }] },
             })
           : Promise.resolve({ _sum: { paidAmount: null } }),
       ]);
@@ -246,6 +248,7 @@ export class FinanceService {
     // switch to a $queryRaw with COALESCE on the service columns.
     const payments = await this.prisma.payment.findMany({
       where: {
+        deletedAt: null,
         status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
         verifiedAt: { not: null },
       },
@@ -2049,44 +2052,14 @@ export class FinanceService {
    * Concurrency: the @unique constraint on invoiceNumber serialises
    * collisions. The retry loop bumps the suffix on each conflict.
    */
-  private async generateInvoiceNumber() {
-    const year = new Date().getUTCFullYear();
-    const yearStart = new Date(Date.UTC(year, 0, 1));
-    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const count = await this.prisma.invoice.count({
-        where: { createdAt: { gte: yearStart, lt: yearEnd } },
-      });
-      const candidate = `INV-${year}-${String(count + 1 + attempt).padStart(5, '0')}`;
-      const existing = await this.prisma.invoice.findUnique({
-        where: { invoiceNumber: candidate },
-        select: { id: true },
-      });
-      if (!existing) return candidate;
-    }
-    throw new Error('Unable to generate a unique invoice number');
+  /** Monotonic INV-YYYY-NNNNN via the document_sequences counter (never reused). */
+  private generateInvoiceNumber() {
+    return this.numbering.next('INV');
   }
 
-  /**
-   * Generate a sequential receipt number for the current year.
-   * Format: RCP-YYYY-NNNNN — same regulatory shape as invoice numbers.
-   */
-  private async generateReceiptNumber() {
-    const year = new Date().getUTCFullYear();
-    const yearStart = new Date(Date.UTC(year, 0, 1));
-    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const count = await this.prisma.receipt.count({
-        where: { createdAt: { gte: yearStart, lt: yearEnd } },
-      });
-      const candidate = `RCP-${year}-${String(count + 1 + attempt).padStart(5, '0')}`;
-      const existing = await this.prisma.receipt.findUnique({
-        where: { receiptNumber: candidate },
-        select: { id: true },
-      });
-      if (!existing) return candidate;
-    }
-    throw new Error('Unable to generate a unique receipt number');
+  /** Monotonic RCP-YYYY-NNNNN — same regulatory shape, never reused. */
+  private generateReceiptNumber() {
+    return this.numbering.next('RCP');
   }
 
   private buildHandoverScopeFilter(user: RequestUser): Prisma.FinanceHandoverWhereInput {

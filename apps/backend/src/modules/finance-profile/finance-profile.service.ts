@@ -67,8 +67,8 @@ export class FinanceProfileService {
         orderBy: { createdAt: 'desc' },
         include: { installments: { orderBy: { sequence: 'asc' } } },
       }),
-      this.prisma.invoice.findMany({ where: { OR: ownerOr }, orderBy: { createdAt: 'desc' } }),
-      this.prisma.payment.findMany({ where: { invoice: { OR: ownerOr } }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.invoice.findMany({ where: { OR: ownerOr, deletedAt: null }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.payment.findMany({ where: { deletedAt: null, invoice: { OR: ownerOr } }, orderBy: { createdAt: 'desc' } }),
       this.prisma.receipt.findMany({ where: { OR: ownerOr }, orderBy: { issuedAt: 'desc' } }),
       this.prisma.financeHandover.findMany({
         where: { leadId },
@@ -332,7 +332,7 @@ export class FinanceProfileService {
         select: { leadId: true, totalAmount: true, currency: true, status: true },
       }),
       this.prisma.invoice.findMany({
-        where: { OR: ownerOr },
+        where: { OR: ownerOr, deletedAt: null },
         select: { leadId: true, clientId: true, paidAmount: true },
       }),
       this.prisma.processingCase.findMany({

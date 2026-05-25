@@ -1335,6 +1335,20 @@ model Appointment {
 // FINANCE
 // =============================================================================
 
+/// Monotonic, gapless per-year counter for regulated document numbers
+/// (INV/RCP/SC/AGR). Unlike a row COUNT(), this never decrements when rows
+/// are voided/removed, so a number is issued exactly once — an audit
+/// requirement. Incremented atomically via INSERT ... ON CONFLICT.
+model DocumentSequence {
+  series    String
+  year      Int
+  lastValue Int    @default(0)
+
+  @@id([series, year])
+  @@map("document_sequences")
+  @@schema("finance")
+}
+
 model Invoice {
   id              String        @id @default(uuid())
   leadId          String?
@@ -1358,6 +1372,9 @@ model Invoice {
   createdByUserId String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  /// Soft-delete / void marker. Financial documents are never hard-deleted —
+  /// corrections go via void + reversing entry so the audit trail is intact.
+  deletedAt       DateTime?
 
   lead     Lead?     @relation("LeadInvoices", fields: [leadId], references: [id])
   client   Client?   @relation("ClientInvoices", fields: [clientId], references: [id])
@@ -1459,6 +1476,8 @@ model Payment {
   receiptKey       String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+  /// Soft-delete / void marker — payments are never hard-deleted (audit).
+  deletedAt        DateTime?
 
   invoice Invoice @relation(fields: [invoiceId], references: [id])
   financeHandover FinanceHandover?

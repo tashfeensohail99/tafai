@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import appConfig from './config/app.config';
 import { PrismaModule } from './common/prisma/prisma.module';
+import { NumberingModule } from './common/numbering/numbering.module';
 import { ActivityTrackerInterceptor } from './common/interceptors/activity-tracker.interceptor';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -53,6 +54,7 @@ import { AgreementsModule } from './modules/agreements/agreements.module';
       },
     ]),
     PrismaModule,
+    NumberingModule,
     HealthModule,
     AuthModule,
     UsersModule,

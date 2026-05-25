@@ -11,6 +11,7 @@ import {
   ServiceContractStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { NumberingService } from '../../common/numbering/numbering.service';
 import { StorageService } from '../storage/storage.service';
 import {
   AddInstallmentsDto,
@@ -41,6 +42,7 @@ export class ServiceContractsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly numbering: NumberingService,
   ) {}
 
   async findAll(query: ListServiceContractsQueryDto) {
@@ -420,39 +422,11 @@ export class ServiceContractsService {
     });
   }
 
-  private async generateContractNumber() {
-    const year = new Date().getUTCFullYear();
-    const yearStart = new Date(Date.UTC(year, 0, 1));
-    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const count = await this.prisma.serviceContract.count({
-        where: { createdAt: { gte: yearStart, lt: yearEnd } },
-      });
-      const candidate = `SC-${year}-${String(count + 1 + attempt).padStart(5, '0')}`;
-      const existing = await this.prisma.serviceContract.findUnique({
-        where: { contractNumber: candidate },
-        select: { id: true },
-      });
-      if (!existing) return candidate;
-    }
-    throw new Error('Unable to generate a unique contract number');
+  private generateContractNumber() {
+    return this.numbering.next('SC');
   }
 
-  private async generateInvoiceNumber() {
-    const year = new Date().getUTCFullYear();
-    const yearStart = new Date(Date.UTC(year, 0, 1));
-    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const count = await this.prisma.invoice.count({
-        where: { createdAt: { gte: yearStart, lt: yearEnd } },
-      });
-      const candidate = `INV-${year}-${String(count + 1 + attempt).padStart(5, '0')}`;
-      const existing = await this.prisma.invoice.findUnique({
-        where: { invoiceNumber: candidate },
-        select: { id: true },
-      });
-      if (!existing) return candidate;
-    }
-    throw new Error('Unable to generate a unique invoice number');
+  private generateInvoiceNumber() {
+    return this.numbering.next('INV');
   }
 }

@@ -1,26 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
-import PDFDocument from 'pdfkit';
 import { StorageService } from '../storage/storage.service';
+import { PdfRenderService } from '../pdf/pdf.service';
+import { brandedPdfOptions } from '../pdf/branding';
 
 /**
- * Renders payment receipts as PDF documents using pdfkit and stores the
- * result via StorageService. Chosen for:
- *   - Pure-JS (no Chromium / Playwright runtime overhead)
- *   - Streaming API → no temp files
- *   - Stable output (regenerating the same receipt gives byte-identical PDFs
- *     except timestamps, which matters for legal compliance)
+ * Renders payment receipts as branded A4 PDFs through the shared headless-Chrome
+ * engine, so the receipt carries the SAME letterhead as agreements — the
+ * Tashfeen logo banner header and the contact/address footer (see pdf/branding).
  *
- * Layout target: A4 (210 × 297 mm). Margins 50pt all sides. Tashfeen
- * Immigration Solutions branded header + a clear payment summary grid
- * + invoice context + footer with terms. Plain text, no images, so the
- * PDF renders identically on every viewer without external font/image
- * dependencies.
+ * The body shows: receipt number, date, client ID, client name, the payment
+ * received (in the original currency it was received in, e.g. PKR, with the CAD
+ * equivalent), the invoice it was applied against, and the balance remaining.
  */
 export interface ReceiptPdfInput {
   receiptNumber: string;
   issuedAt: Date;
   amount: string;
   currency: string;
+  /** CAD equivalent + rate, when the payment was received in a foreign currency. */
+  baseAmount?: string | null;
+  baseCurrency?: string | null;
+  fxRate?: string | null;
   paymentMethod: string | null;
   transactionRef: string | null;
   customer: {
@@ -46,20 +46,18 @@ export interface ReceiptPdfInput {
 export class ReceiptPdfService {
   private readonly logger = new Logger(ReceiptPdfService.name);
 
-  constructor(private readonly storage: StorageService) {}
+  constructor(
+    private readonly storage: StorageService,
+    private readonly pdf: PdfRenderService,
+  ) {}
 
   /**
-   * Render the receipt to a PDF buffer, upload to storage, return the
-   * storage key. Caller is responsible for persisting the key on the
-   * Receipt row. Idempotent at the storage level — re-running produces
-   * a new key (each generation is a separate artifact), but the
-   * Receipt row should be updated so historical links keep working.
+   * Render the receipt to a PDF buffer, upload to storage, return the key.
+   * Caller persists the key on the Receipt row.
    */
-  async renderAndStore(input: ReceiptPdfInput): Promise<{
-    key: string;
-    sizeBytes: number;
-  }> {
-    const buffer = await this.renderToBuffer(input);
+  async renderAndStore(input: ReceiptPdfInput): Promise<{ key: string; sizeBytes: number }> {
+    const html = this.buildHtml(input);
+    const buffer = await this.pdf.renderHtml(html, brandedPdfOptions());
     const upload = await this.storage.upload(
       buffer,
       'application/pdf',
@@ -69,224 +67,114 @@ export class ReceiptPdfService {
     return { key: upload.key, sizeBytes: upload.sizeBytes };
   }
 
-  private renderToBuffer(input: ReceiptPdfInput): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: 'A4', margin: 50 });
-      const chunks: Buffer[] = [];
-      doc.on('data', (c: Buffer) => chunks.push(c));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-
-      try {
-        this.drawHeader(doc);
-        this.drawTitleBlock(doc, input);
-        this.drawCustomerBlock(doc, input);
-        this.drawPaymentBlock(doc, input);
-        this.drawInvoiceContext(doc, input);
-        if (input.notes) this.drawNotes(doc, input.notes);
-        this.drawFooter(doc, input);
-        doc.end();
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  // ─── Sections ─────────────────────────────────────────────────────────
-
-  private drawHeader(doc: PDFKit.PDFDocument) {
-    // Branded header bar with company name and tagline.
-    doc
-      .fillColor('#0d1226')
-      .rect(50, 50, 495, 70)
-      .fill();
-
-    doc
-      .fillColor('#ffffff')
-      .fontSize(20)
-      .font('Helvetica-Bold')
-      .text('TASHFEEN IMMIGRATION SOLUTIONS', 65, 65);
-
-    doc
-      .fillColor('#b3b9d4')
-      .fontSize(10)
-      .font('Helvetica')
-      .text('Visa & Immigration Services', 65, 92)
-      .text('www.tashfeengroup.com', 65, 105);
-
-    // Reset fill colour for the rest of the doc.
-    doc.fillColor('#0d1226');
-  }
-
-  private drawTitleBlock(doc: PDFKit.PDFDocument, input: ReceiptPdfInput) {
-    const y = 140;
-    doc
-      .fontSize(22)
-      .font('Helvetica-Bold')
-      .text('PAYMENT RECEIPT', 50, y);
-
-    doc
-      .fontSize(10)
-      .font('Helvetica')
-      .fillColor('#5a6080')
-      .text(`Receipt no.    ${input.receiptNumber}`, 50, y + 32)
-      .text(`Issued on      ${this.formatDate(input.issuedAt)}`, 50, y + 47)
-      .text(
-        `Customer ref.  ${input.customer.referenceCode}`,
-        50,
-        y + 62,
-      );
-
-    doc.fillColor('#0d1226');
-  }
-
-  private drawCustomerBlock(doc: PDFKit.PDFDocument, input: ReceiptPdfInput) {
-    const y = 230;
-    doc.lineWidth(1).strokeColor('#dadfee').moveTo(50, y).lineTo(545, y).stroke();
-    doc
-      .fontSize(11)
-      .font('Helvetica-Bold')
-      .text('Received from', 50, y + 12);
-    doc
-      .fontSize(12)
-      .font('Helvetica')
-      .fillColor('#0d1226')
-      .text(input.customer.fullName, 50, y + 28);
-
-    let line = y + 44;
-    doc.fontSize(10).fillColor('#5a6080');
-    if (input.customer.phone) {
-      doc.text(`Phone:  ${input.customer.phone}`, 50, line);
-      line += 14;
-    }
-    if (input.customer.email) {
-      doc.text(`Email:  ${input.customer.email}`, 50, line);
-    }
-    doc.fillColor('#0d1226');
-  }
-
-  private drawPaymentBlock(doc: PDFKit.PDFDocument, input: ReceiptPdfInput) {
-    const y = 330;
-    doc.lineWidth(1).strokeColor('#dadfee').moveTo(50, y).lineTo(545, y).stroke();
-    doc
-      .fontSize(11)
-      .font('Helvetica-Bold')
-      .text('Payment received', 50, y + 12);
-
-    // Big amount line — the headline number, in the payment's currency.
-    doc
-      .fontSize(28)
-      .font('Helvetica-Bold')
-      .fillColor('#0d1226')
-      .text(
-        `${input.currency} ${this.formatMoney(input.amount)}`,
-        50,
-        y + 32,
-      );
-
-    // Two-column detail grid below the amount.
-    const detailY = y + 78;
-    doc.fontSize(10).font('Helvetica').fillColor('#5a6080');
-    doc.text('Method:', 50, detailY);
-    doc
-      .font('Helvetica-Bold')
-      .fillColor('#0d1226')
-      .text(input.paymentMethod ?? '—', 130, detailY);
-
-    doc
-      .font('Helvetica')
-      .fillColor('#5a6080')
-      .text('Reference:', 320, detailY);
-    doc
-      .font('Helvetica-Bold')
-      .fillColor('#0d1226')
-      .text(input.transactionRef ?? '—', 395, detailY);
-  }
-
-  private drawInvoiceContext(doc: PDFKit.PDFDocument, input: ReceiptPdfInput) {
-    const y = 460;
-    doc.lineWidth(1).strokeColor('#dadfee').moveTo(50, y).lineTo(545, y).stroke();
-    doc
-      .fontSize(11)
-      .font('Helvetica-Bold')
-      .fillColor('#0d1226')
-      .text('Applied against invoice', 50, y + 12);
-
+  private buildHtml(input: ReceiptPdfInput): string {
     const total = Number(input.invoice.totalAmount);
     const paid = Number(input.invoice.paidAmount);
     const remaining = Math.max(0, total - paid);
+    const fullyPaid = remaining < 0.005;
 
-    const labelX = 50;
-    const valueX = 200;
-    let row = y + 32;
-    doc.fontSize(10);
+    // The big headline amount is what the client actually paid, in the currency
+    // they paid in. When that's not CAD, show the CAD equivalent beneath.
+    const paidLine = `${this.esc(input.currency)} ${this.money(input.amount)}`;
+    const showBase =
+      input.baseAmount != null &&
+      input.baseCurrency != null &&
+      input.baseCurrency !== input.currency;
+    const baseLine = showBase
+      ? `≈ ${this.esc(input.baseCurrency!)} ${this.money(input.baseAmount!)}${
+          input.fxRate ? ` &nbsp;·&nbsp; 1 ${this.esc(input.baseCurrency!)} = ${this.money(input.fxRate)} ${this.esc(input.currency)}` : ''
+        }`
+      : '';
 
-    const drawRow = (label: string, value: string, bold = false) => {
-      doc.font('Helvetica').fillColor('#5a6080').text(label, labelX, row);
-      doc
-        .font(bold ? 'Helvetica-Bold' : 'Helvetica')
-        .fillColor('#0d1226')
-        .text(value, valueX, row);
-      row += 16;
-    };
-    drawRow('Invoice number', input.invoice.invoiceNumber);
-    drawRow(
-      'Invoice total',
-      `${input.invoice.currency} ${this.formatMoney(input.invoice.totalAmount)}`,
-    );
-    drawRow(
-      'Paid to date',
-      `${input.invoice.currency} ${this.formatMoney(input.invoice.paidAmount)}`,
-      true,
-    );
-    drawRow(
-      'Balance remaining',
-      remaining === 0
-        ? 'PAID IN FULL'
-        : `${input.invoice.currency} ${this.formatMoney(String(remaining))}`,
-      true,
-    );
+    const detailRow = (label: string, value: string, strong = false) => `
+      <tr>
+        <td style="padding:5px 0;color:#64748b;font-size:11px;">${label}</td>
+        <td style="padding:5px 0;text-align:right;color:#0f172a;font-size:11px;${strong ? 'font-weight:700;' : ''}">${value}</td>
+      </tr>`;
+
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<style>
+  *{box-sizing:border-box;}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;color:#0f172a;margin:0;padding:4mm 16mm 0;font-size:12px;}
+  .title{font-size:22px;font-weight:800;letter-spacing:.5px;color:#0b1f3a;margin:4px 0 2px;}
+  .sub{font-size:11px;color:#64748b;margin:0 0 14px;}
+  .meta{width:100%;border-collapse:collapse;margin:0 0 18px;}
+  .meta td{padding:3px 0;font-size:11px;}
+  .meta .k{color:#64748b;width:120px;}
+  .meta .v{color:#0f172a;font-weight:600;}
+  .section{border-top:1px solid #e2e8f0;padding-top:10px;margin-top:6px;}
+  .label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:4px;}
+  .amount{font-size:30px;font-weight:800;color:#0b1f3a;line-height:1.1;}
+  .amount-base{font-size:12px;color:#64748b;margin-top:3px;}
+  .grid{display:flex;gap:24px;margin-top:10px;}
+  .grid .col{flex:1;}
+  .inv{width:100%;border-collapse:collapse;margin-top:6px;}
+  .balance{margin-top:12px;background:${fullyPaid ? '#ecfdf5' : '#fff7ed'};border:1px solid ${fullyPaid ? '#a7f3d0' : '#fed7aa'};
+           border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;}
+  .balance .bl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;}
+  .balance .bv{font-size:18px;font-weight:800;color:${fullyPaid ? '#047857' : '#b45309'};}
+  .notes{margin-top:14px;font-size:11px;color:#475569;}
+  .issued{margin-top:18px;font-size:9.5px;color:#94a3b8;text-align:center;line-height:1.6;}
+  .stamp{display:inline-block;margin-top:8px;border:2px solid ${fullyPaid ? '#047857' : '#0b1f3a'};color:${fullyPaid ? '#047857' : '#0b1f3a'};
+         border-radius:6px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:1px;transform:rotate(-3deg);}
+</style></head>
+<body>
+  <div class="title">PAYMENT RECEIPT</div>
+  <div class="sub">Official acknowledgement of payment received — Tashfeen Immigration Solutions</div>
+
+  <table class="meta">
+    <tr><td class="k">Receipt no.</td><td class="v">${this.esc(input.receiptNumber)}</td>
+        <td class="k" style="text-align:right;">Date</td><td class="v" style="text-align:right;">${this.esc(this.formatDate(input.issuedAt))}</td></tr>
+    <tr><td class="k">Client ID</td><td class="v">${this.esc(input.customer.referenceCode)}</td>
+        <td class="k" style="text-align:right;">Invoice</td><td class="v" style="text-align:right;">${this.esc(input.invoice.invoiceNumber)}</td></tr>
+  </table>
+
+  <div class="section">
+    <div class="label">Received from</div>
+    <div style="font-size:15px;font-weight:700;color:#0f172a;">${this.esc(input.customer.fullName)}</div>
+    <div style="font-size:11px;color:#64748b;margin-top:2px;">
+      ${input.customer.phone ? `Phone: ${this.esc(input.customer.phone)}` : ''}
+      ${input.customer.phone && input.customer.email ? ' &nbsp;·&nbsp; ' : ''}
+      ${input.customer.email ? `Email: ${this.esc(input.customer.email)}` : ''}
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="col section">
+      <div class="label">Payment received</div>
+      <div class="amount">${paidLine}</div>
+      ${baseLine ? `<div class="amount-base">${baseLine}</div>` : ''}
+      <span class="stamp">${fullyPaid ? 'PAID IN FULL' : 'RECEIVED WITH THANKS'}</span>
+    </div>
+    <div class="col section">
+      <div class="label">Payment details</div>
+      <table class="inv">
+        ${detailRow('Method', this.esc(input.paymentMethod ?? '—'))}
+        ${detailRow('Reference', this.esc(input.transactionRef ?? '—'))}
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">Applied against invoice (CAD)</div>
+    <table class="inv">
+      ${detailRow('Invoice total', `${this.esc(input.invoice.currency)} ${this.money(input.invoice.totalAmount)}`)}
+      ${detailRow('Paid to date', `${this.esc(input.invoice.currency)} ${this.money(input.invoice.paidAmount)}`, true)}
+    </table>
+    <div class="balance">
+      <div class="bl">Balance remaining</div>
+      <div class="bv">${fullyPaid ? 'NIL — PAID IN FULL' : `${this.esc(input.invoice.currency)} ${this.money(String(remaining))}`}</div>
+    </div>
+  </div>
+
+  ${input.notes ? `<div class="notes"><strong>Notes:</strong> ${this.esc(input.notes)}</div>` : ''}
+
+  <div class="issued">
+    Issued by ${this.esc(input.issuedBy.name)} (${this.esc(input.issuedBy.role)}).
+    This is a computer-generated receipt — quote the receipt number above to verify its authenticity.
+  </div>
+</body></html>`;
   }
-
-  private drawNotes(doc: PDFKit.PDFDocument, notes: string) {
-    const y = 610;
-    doc.lineWidth(1).strokeColor('#dadfee').moveTo(50, y).lineTo(545, y).stroke();
-    doc
-      .fontSize(11)
-      .font('Helvetica-Bold')
-      .fillColor('#0d1226')
-      .text('Notes', 50, y + 12);
-    doc
-      .fontSize(10)
-      .font('Helvetica')
-      .fillColor('#5a6080')
-      .text(notes, 50, y + 30, { width: 495 });
-  }
-
-  private drawFooter(doc: PDFKit.PDFDocument, input: ReceiptPdfInput) {
-    const y = 740;
-    doc.lineWidth(1).strokeColor('#dadfee').moveTo(50, y).lineTo(545, y).stroke();
-    doc
-      .fontSize(9)
-      .font('Helvetica')
-      .fillColor('#5a6080')
-      .text(
-        `Issued by ${input.issuedBy.name} (${input.issuedBy.role}) · Tashfeen Immigration Solutions`,
-        50,
-        y + 10,
-        { width: 495, align: 'center' },
-      );
-    doc
-      .fontSize(8)
-      .text(
-        'This receipt is computer-generated. For verification of authenticity quote the receipt number.',
-        50,
-        y + 28,
-        { width: 495, align: 'center' },
-      );
-  }
-
-  // ─── Formatters ────────────────────────────────────────────────────────
 
   private formatDate(date: Date): string {
     return date.toLocaleString('en-GB', {
@@ -299,12 +187,18 @@ export class ReceiptPdfService {
     });
   }
 
-  private formatMoney(amountStr: string): string {
+  private money(amountStr: string): string {
     const n = Number(amountStr);
     if (Number.isNaN(n)) return amountStr;
-    return n.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+    return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  private esc(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }

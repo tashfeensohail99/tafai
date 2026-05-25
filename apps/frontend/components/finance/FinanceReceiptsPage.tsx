@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
-import { Download, Loader2, Receipt as ReceiptIcon, Search } from 'lucide-react';
+import { Download, Loader2, Receipt as ReceiptIcon, Search, Send } from 'lucide-react';
 import {
   GlassCard,
   MetricCard,
@@ -17,6 +17,7 @@ import {
 import {
   fetchReceipts,
   getReceiptDownloadUrl,
+  sendReceiptToClient,
   METHOD_LABEL,
   type ApiIssuedReceipt,
 } from '@/lib/finance-api';
@@ -37,6 +38,8 @@ export function FinanceReceiptsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [sending, setSending] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async (q: string) => {
@@ -75,6 +78,20 @@ export function FinanceReceiptsPage() {
     }
   };
 
+  const sendToClient = async (id: string) => {
+    setSending(id);
+    setError(null);
+    setNotice(null);
+    try {
+      const { to } = await sendReceiptToClient(id);
+      setNotice(`Receipt emailed to ${to}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send the receipt');
+    } finally {
+      setSending(null);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader
@@ -106,6 +123,7 @@ export function FinanceReceiptsPage() {
       </div>
 
       {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}
+      {notice ? <div className="sos-banner sos-banner--success">{notice}</div> : null}
 
       <GlassCard variant="default" padded={false}>
         {loading ? (
@@ -149,14 +167,24 @@ export function FinanceReceiptsPage() {
                     <td style={tdRight}>{money(r.amount, r.currency)}</td>
                     <td style={td}>{fmtDate(r.issuedAt)}</td>
                     <td style={{ ...tdRight }}>
-                      <SecondaryButton
-                        size="sm"
-                        iconLeft={downloading === r.id ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />}
-                        onClick={() => void download(r.id)}
-                        disabled={downloading !== null}
-                      >
-                        PDF
-                      </SecondaryButton>
+                      <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <SecondaryButton
+                          size="sm"
+                          iconLeft={downloading === r.id ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />}
+                          onClick={() => void download(r.id)}
+                          disabled={downloading !== null || sending !== null}
+                        >
+                          PDF
+                        </SecondaryButton>
+                        <SecondaryButton
+                          size="sm"
+                          iconLeft={sending === r.id ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={13} />}
+                          onClick={() => void sendToClient(r.id)}
+                          disabled={downloading !== null || sending !== null}
+                        >
+                          Send
+                        </SecondaryButton>
+                      </div>
                     </td>
                   </tr>
                 ))}

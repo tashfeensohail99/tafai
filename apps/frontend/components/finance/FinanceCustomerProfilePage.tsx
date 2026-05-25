@@ -42,7 +42,7 @@ import {
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
-import { fetchHandoverById, fetchFxRates, recognizeInstallment, reviewHandover, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
+import { fetchHandoverById, fetchFxRates, getReceiptDownloadUrl, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
 
 const CURRENCY_OPTIONS = FINANCE_CURRENCIES.map((c) => ({ value: c, label: c }));
 
@@ -354,6 +354,33 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not update recognition');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleReceiptDownload = async (id: string) => {
+    setBusy('rcpt-dl');
+    setError(null);
+    try {
+      const { url } = await getReceiptDownloadUrl(id);
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open the receipt');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleReceiptSend = async (id: string) => {
+    setBusy('rcpt-send');
+    setError(null);
+    setNotice(null);
+    try {
+      const { to } = await sendReceiptToClient(id);
+      setNotice(`Receipt emailed to ${to}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send the receipt');
     } finally {
       setBusy(null);
     }
@@ -939,9 +966,21 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Receipts issued</h3>
           </div>
           <Table
-            head={['Receipt', 'Amount', 'Issued']}
+            head={['Receipt', 'Amount', 'Issued', '']}
             empty="No receipts issued yet."
-            rows={data.receipts.map((r) => [<span key="n" style={{ fontFamily: 'monospace', fontSize: 12.5 }}>{r.receiptNumber}</span>, money(r.amount, r.currency), fmtDate(r.issuedAt)])}
+            rows={data.receipts.map((r) => [
+              <span key="n" style={{ fontFamily: 'monospace', fontSize: 12.5 }}>{r.receiptNumber}</span>,
+              money(r.amount, r.currency),
+              fmtDate(r.issuedAt),
+              <div key="a" style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end', width: '100%' }}>
+                <SecondaryButton size="sm" iconLeft={<Download size={13} />} onClick={() => void handleReceiptDownload(r.id)} disabled={busy !== null}>
+                  PDF
+                </SecondaryButton>
+                <SecondaryButton size="sm" iconLeft={busy === 'rcpt-send' ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={13} />} onClick={() => void handleReceiptSend(r.id)} disabled={busy !== null}>
+                  Send to client
+                </SecondaryButton>
+              </div>,
+            ])}
           />
         </GlassCard>
       ) : null}

@@ -326,4 +326,14 @@ export class FinanceController {
   async getReceiptDownloadUrl(@Param('id', ParseUUIDPipe) id: string) {
     return this.financeService.getReceiptDownloadUrl(id);
   }
+
+  /** Email the official receipt PDF to the client. */
+  @Post('receipts/:id/send')
+  @RequireAnyPermissions('finance.record_payment', 'finance.view_all')
+  async sendReceiptToClient(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.financeService.sendReceiptToClient(id, user.id);
+  }
 }

@@ -318,6 +318,30 @@ export class EmailService {
       attachments: [{ filename: opts.fileName, content: opts.pdf, contentType: 'application/pdf' }],
     });
   }
+
+  /** Send the official payment receipt PDF to the client. */
+  async sendReceiptToClient(opts: {
+    to: string;
+    clientName: string;
+    receiptNumber: string;
+    amountLabel: string;
+    pdf: Buffer;
+    fileName: string;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Payment received — thank you</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:#64748b;">Dear ${escHtml(opts.clientName)}, we confirm receipt of your payment of <b>${escHtml(opts.amountLabel)}</b>. Your official receipt <b>${escHtml(opts.receiptNumber)}</b> is attached.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:20px;">
+        <p style="margin:0;font-size:13.5px;color:#0f172a;line-height:1.7;">Please keep this receipt for your records — it shows the amount received and any balance remaining on your file.</p>
+      </div>
+      <p style="font-size:13px;color:#64748b;">Any questions? Just reply to this email or contact your Tashfeen representative.</p>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `Payment receipt — ${opts.receiptNumber}`,
+      html: baseTemplate('Payment receipt', content),
+      attachments: [{ filename: opts.fileName, content: opts.pdf, contentType: 'application/pdf' }],
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

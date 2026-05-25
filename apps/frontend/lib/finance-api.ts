@@ -423,6 +423,14 @@ export async function fetchReceipts(search?: string): Promise<ApiIssuedReceipt[]
   return apiFetch<ApiIssuedReceipt[]>(`/finance/receipts${qs}`);
 }
 
+/** Email the official receipt PDF to the client. */
+export async function sendReceiptToClient(receiptId: string): Promise<{ sent: boolean; to: string }> {
+  return apiFetch<{ sent: boolean; to: string }>(`/finance/receipts/${receiptId}/send`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
 /** Firm-wide finance report (Insight layer). */
 export interface FinanceReportsSummary {
   currency: string;

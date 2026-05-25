@@ -41,6 +41,7 @@ import {
 } from './finance.dto';
 import { LeadsService } from '../leads/leads.service';
 import { CasesService } from '../cases/cases.service';
+import { EmailService } from '../email/email.service';
 import { ReceiptPdfService } from './receipt-pdf.service';
 
 type FinanceHandoverRecord = Prisma.FinanceHandoverGetPayload<{
@@ -94,6 +95,7 @@ export class FinanceService {
     private readonly receiptPdfService: ReceiptPdfService,
     private readonly numbering: NumberingService,
     private readonly fx: FxService,
+    private readonly email: EmailService,
   ) {}
 
   async listInvoices(query: ListInvoicesQueryDto) {
@@ -1450,6 +1452,9 @@ export class FinanceService {
         issuedAt,
         amount: payment.amount.toString(),
         currency: payment.currency,
+        baseAmount: payment.baseAmount?.toString() ?? null,
+        baseCurrency: payment.baseCurrency ?? null,
+        fxRate: payment.fxRate?.toString() ?? null,
         paymentMethod: payment.paymentMethod,
         transactionRef: payment.transactionRef,
         customer: {
@@ -1518,6 +1523,9 @@ export class FinanceService {
       issuedAt: receipt.issuedAt,
       amount: receipt.amount.toString(),
       currency: receipt.currency,
+      baseAmount: receipt.payment.baseAmount?.toString() ?? null,
+      baseCurrency: receipt.payment.baseCurrency ?? null,
+      fxRate: receipt.payment.fxRate?.toString() ?? null,
       paymentMethod: receipt.paymentMethod,
       transactionRef: receipt.transactionRef,
       customer: {
@@ -1539,6 +1547,72 @@ export class FinanceService {
       where: { id: receipt.id },
       data: { pdfStorageKey: upload.key, pdfGeneratedAt: new Date() },
     });
+  }
+
+  /**
+   * Email the official receipt PDF to the client. Ensures the PDF exists
+   * (regenerates if missing), then attaches it to a branded email. Refuses
+   * voided receipts and clients with no email on file.
+   */
+  async sendReceiptToClient(receiptId: string, actorUserId: string): Promise<{ sent: boolean; to: string }> {
+    const receipt = await this.prisma.receipt.findUnique({
+      where: { id: receiptId },
+      include: { payment: { include: { invoice: { include: { lead: true, client: true } } } } },
+    });
+    if (!receipt) throw new NotFoundException('Receipt not found');
+    if (receipt.voidedAt) {
+      throw new BadRequestException('This receipt has been voided and cannot be sent.');
+    }
+
+    const lead = receipt.payment.invoice.lead;
+    const client = receipt.payment.invoice.client;
+    const to = client?.email || lead?.email || null;
+    if (!to) {
+      throw new BadRequestException('No client email on file — add an email to the client/lead first.');
+    }
+    const clientName = client
+      ? `${client.firstName} ${client.lastName}`.trim()
+      : lead
+        ? `${lead.firstName} ${lead.lastName}`.trim()
+        : 'Client';
+
+    // Make sure a rendered PDF exists, then pull its bytes to attach.
+    if (!receipt.pdfStorageKey) {
+      await this.regenerateReceiptPdf(receiptId);
+    }
+    const fresh = await this.prisma.receipt.findUnique({
+      where: { id: receiptId },
+      select: { pdfStorageKey: true, receiptNumber: true, amount: true, currency: true },
+    });
+    if (!fresh?.pdfStorageKey) {
+      throw new BadRequestException('Could not generate the receipt PDF to send. Try again.');
+    }
+    const file = await this.storage.download(fresh.pdfStorageKey);
+
+    const amountLabel = `${fresh.currency} ${Number(fresh.amount).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+    const ok = await this.email.sendReceiptToClient({
+      to,
+      clientName,
+      receiptNumber: fresh.receiptNumber,
+      amountLabel,
+      pdf: file.bytes,
+      fileName: `${fresh.receiptNumber}.pdf`,
+    });
+    if (!ok) {
+      throw new BadRequestException('Could not send the email (SMTP not configured or the send failed).');
+    }
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.INVOICE_UPDATED,
+      entityType: 'Receipt',
+      entityId: receiptId,
+      newValues: { sentTo: to, receiptNumber: fresh.receiptNumber },
+    });
+    return { sent: true, to };
   }
 
   /**

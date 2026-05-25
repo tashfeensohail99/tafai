@@ -84,11 +84,17 @@ export class FinanceProfileService {
           reviewedAt: true,
         },
       }),
-      this.prisma.processingCase.findFirst({
-        where: { leadId },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true, stage: true, service: true, targetCountry: true, slaStatus: true },
-      }),
+      // The "in processing" indicator reads the CRM Case that verifyPayment
+      // actually opens (createFromVerifiedPayment), keyed by the converted
+      // client — not the separate ProcessingCase model which this flow never
+      // populates. Null until the customer has been converted + a case opened.
+      clientId
+        ? this.prisma.case.findFirst({
+            where: { clientId, deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true, status: true, serviceType: true, targetCountry: true },
+          })
+        : Promise.resolve(null),
       this.prisma.expense.findMany({
         where: { OR: ownerOr, deletedAt: null },
         orderBy: { incurredAt: 'desc' },
@@ -220,10 +226,10 @@ export class FinanceProfileService {
       processingCase: processingCase
         ? {
             id: processingCase.id,
-            stage: processingCase.stage,
-            service: processingCase.service,
-            targetCountry: processingCase.targetCountry,
-            slaStatus: processingCase.slaStatus,
+            stage: processingCase.status, // CaseStatus (OPEN/DOCUMENTATION/PROCESSING/…)
+            service: processingCase.serviceType ?? '',
+            targetCountry: processingCase.targetCountry ?? '',
+            slaStatus: '',
           }
         : null,
       expenses: expenses.map((e) => ({

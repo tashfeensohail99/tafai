@@ -386,18 +386,71 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     setPendingMedia(null);
   };
 
-  const handleSendVoice = async (blob: Blob, mimeType: string) => {
+  const handleSendVoice = (blob: Blob, mimeType: string) => {
     if (!thread) return;
-    setSending(true);
-    try {
-      const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const msg = await sendMediaMessage(thread.id, blob, `voice-note.${ext}`);
-      setMessages((curr) => [...curr, msg]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send voice message');
-    } finally {
-      setSending(false);
-    }
+    // Optimistic send — mirror the image/document path so the voice bubble
+    // appears INSTANTLY (playable from a local blob URL) instead of blocking
+    // the composer for ~7-8s on the upload + transcode + Meta-forwarding
+    // round-trip. The heavy lifting happens in the background; we swap the
+    // placeholder for the server's authoritative copy when it returns.
+    const idempotencyKey =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const tempId = `temp-${idempotencyKey}`;
+    const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const previewUrl = URL.createObjectURL(blob);
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      threadId: thread.id,
+      leadId: thread.leadId ?? null,
+      clientId: thread.clientId ?? null,
+      direction: 'OUTBOUND',
+      type: 'AUDIO',
+      status: 'QUEUED',
+      body: null,
+      payload: { isVoiceNote: true } as unknown as ChatMessage['payload'],
+      mediaUrl: previewUrl,
+      mediaMimeType: mimeType || null,
+      templateName: null,
+      templateLanguage: null,
+      sentByEmployeeId: null,
+      waMessageId: null,
+      repliedToWaMessageId: null,
+      errorCode: null,
+      errorTitle: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      failedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages((curr) => [...curr, tempMessage]);
+
+    void (async () => {
+      try {
+        const real = await sendMediaMessage(
+          thread.id,
+          blob,
+          `voice-note.${ext}`,
+          undefined,
+          idempotencyKey,
+        );
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+        URL.revokeObjectURL(previewUrl);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Failed to send voice message';
+        setMessages((curr) =>
+          curr.map((m) =>
+            m.id === tempId
+              ? { ...m, status: 'FAILED', errorTitle: reason, failedAt: new Date().toISOString() }
+              : m,
+          ),
+        );
+        setError(reason);
+      }
+    })();
   };
 
   if (loading && !thread) {

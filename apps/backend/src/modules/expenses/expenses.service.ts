@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { FxService } from '../../common/fx/fx.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateExpenseDto } from './expenses.dto';
 
@@ -18,6 +19,7 @@ export class ExpensesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly fx: FxService,
   ) {}
 
   /** Shape returned to the UI (Decimal → number). */
@@ -28,6 +30,9 @@ export class ExpensesService {
     amount: Prisma.Decimal;
     taxAmount?: Prisma.Decimal;
     currency: string;
+    baseAmount?: Prisma.Decimal | null;
+    baseCurrency?: string;
+    fxRate?: Prisma.Decimal | null;
     billable: boolean;
     incurredAt: Date;
     receiptFileName: string | null;
@@ -41,6 +46,11 @@ export class ExpensesService {
       amount: num(e.amount),
       taxAmount: num(e.taxAmount),
       currency: e.currency,
+      // CAD equivalent (base) + the rate used, so the UI can show universal CAD
+      // while still showing the original foreign amount.
+      baseAmount: e.baseAmount != null ? num(e.baseAmount) : num(e.amount),
+      baseCurrency: e.baseCurrency ?? 'CAD',
+      fxRate: e.fxRate != null ? num(e.fxRate) : 1,
       billable: e.billable,
       incurredAt: e.incurredAt,
       receiptFileName: e.receiptFileName,
@@ -74,6 +84,19 @@ export class ExpensesService {
       receiptSizeBytes = upload.sizeBytes;
     }
 
+    // Multi-currency at source: an expense may be incurred in a foreign
+    // currency (often PKR). Keep the original amount/currency and convert to
+    // the firm's base currency (CAD) at the live rate, stamping the rate.
+    const origCurrency = (dto.currency ?? 'CAD').toUpperCase();
+    let conv: { baseAmount: number; baseCurrency: string; rate: number };
+    try {
+      conv = await this.fx.convertToBase(Number(dto.amount), origCurrency);
+    } catch {
+      throw new BadRequestException(
+        `Could not get an exchange rate for ${origCurrency} → CAD. Try again, or enter the amount in CAD.`,
+      );
+    }
+
     const created = await this.prisma.expense.create({
       data: {
         leadId: dto.leadId,
@@ -83,7 +106,10 @@ export class ExpensesService {
         description: dto.description,
         amount: dto.amount,
         taxAmount: dto.taxAmount ?? '0',
-        currency: dto.currency ?? 'CAD',
+        currency: origCurrency,
+        baseAmount: conv.baseAmount.toString(),
+        baseCurrency: conv.baseCurrency,
+        fxRate: conv.rate.toString(),
         billable: dto.billable ?? false,
         incurredAt: dto.incurredAt ? new Date(dto.incurredAt) : new Date(),
         receiptKey,

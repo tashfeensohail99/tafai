@@ -104,6 +104,9 @@ export class FinanceProfileService {
           description: true,
           amount: true,
           currency: true,
+          baseAmount: true,
+          baseCurrency: true,
+          fxRate: true,
           billable: true,
           incurredAt: true,
           receiptFileName: true,
@@ -142,10 +145,14 @@ export class FinanceProfileService {
       };
     });
     const installmentsPaid = installmentsView.filter((i) => i.paidStatus === 'PAID').length;
-    const totalExpenses = expenses.reduce((s, e) => s + num(e.amount), 0);
+    // Expenses may be in a foreign currency — roll up the CAD equivalent
+    // (baseAmount) so the customer ledger is all in CAD.
+    const expBase = (e: { baseAmount: Prisma.Decimal | null; amount: Prisma.Decimal }) =>
+      num(e.baseAmount ?? e.amount);
+    const totalExpenses = expenses.reduce((s, e) => s + expBase(e), 0);
     // Billable disbursements are recoverable (client reimburses) → not a cost.
     // Only absorbed expenses reduce margin.
-    const billableExpenses = expenses.filter((e) => e.billable).reduce((s, e) => s + num(e.amount), 0);
+    const billableExpenses = expenses.filter((e) => e.billable).reduce((s, e) => s + expBase(e), 0);
     const absorbedExpenses = totalExpenses - billableExpenses;
 
     return {
@@ -208,6 +215,9 @@ export class FinanceProfileService {
         id: p.id,
         amount: num(p.amount),
         currency: p.currency,
+        baseAmount: p.baseAmount != null ? num(p.baseAmount) : num(p.amount),
+        baseCurrency: p.baseCurrency ?? 'CAD',
+        fxRate: p.fxRate != null ? num(p.fxRate) : 1,
         status: p.status,
         paymentMethod: p.paymentMethod,
         paidAt: p.paidAt,
@@ -245,6 +255,9 @@ export class FinanceProfileService {
         description: e.description,
         amount: num(e.amount),
         currency: e.currency,
+        baseAmount: e.baseAmount != null ? num(e.baseAmount) : num(e.amount),
+        baseCurrency: e.baseCurrency ?? 'CAD',
+        fxRate: e.fxRate != null ? num(e.fxRate) : 1,
         billable: e.billable,
         incurredAt: e.incurredAt,
         receiptFileName: e.receiptFileName,

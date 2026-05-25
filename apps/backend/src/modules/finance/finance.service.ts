@@ -20,6 +20,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
+import { FxService } from '../../common/fx/fx.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
@@ -92,6 +93,7 @@ export class FinanceService {
     private readonly storage: StorageService,
     private readonly receiptPdfService: ReceiptPdfService,
     private readonly numbering: NumberingService,
+    private readonly fx: FxService,
   ) {}
 
   async listInvoices(query: ListInvoicesQueryDto) {
@@ -195,7 +197,8 @@ export class FinanceService {
         this.getRevenueByService(),
         this.prisma.invoice.aggregate({ _sum: { paidAmount: true }, where: { deletedAt: null } }),
         // Only ABSORBED expenses are a cost; billable disbursements are recoverable.
-        this.prisma.expense.aggregate({ _sum: { amount: true }, where: { deletedAt: null, billable: false } }),
+        // baseAmount = CAD equivalent so the cost rolls up in the base currency.
+        this.prisma.expense.aggregate({ _sum: { baseAmount: true }, where: { deletedAt: null, billable: false } }),
         this.prisma.receipt.count({ where: { voidedAt: null } }),
         // A real customer = money received (lead→client conversion fires on the
         // first verified payment).
@@ -216,7 +219,7 @@ export class FinanceService {
       ]);
 
     const collected = dec(paidAgg._sum.paidAmount);
-    const expenses = dec(expenseAgg._sum.amount);
+    const expenses = dec(expenseAgg._sum.baseAmount);
     const collectedOnSigned = dec(signedPaidAgg._sum.paidAmount);
     const pipelineValue = pipelineAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
     // Accrual view: earned (delivered milestones) vs received (cash) → the gap
@@ -289,6 +292,7 @@ export class FinanceService {
       },
       select: {
         amount: true,
+        baseAmount: true,
         verifiedAt: true,
         invoice: {
           select: {
@@ -308,7 +312,7 @@ export class FinanceService {
     let totalAll = 0;
 
     for (const p of payments) {
-      const amount = Number(p.amount);
+      const amount = Number(p.baseAmount ?? p.amount); // CAD
       const service =
         p.invoice.client?.serviceType ??
         p.invoice.lead?.serviceInterest ??
@@ -664,23 +668,32 @@ export class FinanceService {
   async recordPayment(dto: CreatePaymentDto, actorUserId: string) {
     const invoice = await this.findInvoiceById(dto.invoiceId);
 
-    // A payment must be in the same currency as the invoice it settles —
-    // mixing currencies on one invoice corrupts paidAmount (we don't carry an
-    // FX rate to convert). Default to the invoice currency when unspecified.
-    if (dto.currency && dto.currency !== invoice.currency) {
-      throw new BadRequestException(
-        `Payment currency (${dto.currency}) must match the invoice currency (${invoice.currency}).`,
-      );
-    }
-
     // Period lock: can't book a payment dated into a closed accounting period.
     await this.assertPeriodOpen(dto.paidAt ? new Date(dto.paidAt) : new Date());
+
+    // Multi-currency at source: the payment may be received in a foreign
+    // currency (e.g. PKR on the bank slip). Keep the original amount/currency
+    // for reconciliation, and convert to the firm's base currency (CAD) at the
+    // live rate, stamping the rate so the record never moves later. The CAD
+    // `baseAmount` is what's applied to the (CAD) invoice on verification.
+    const origCurrency = (dto.currency ?? invoice.currency).toUpperCase();
+    let conv: { baseAmount: number; baseCurrency: string; rate: number };
+    try {
+      conv = await this.fx.convertToBase(Number(dto.amount), origCurrency);
+    } catch {
+      throw new BadRequestException(
+        `Could not get an exchange rate for ${origCurrency} → CAD. Try again, or enter the amount in CAD.`,
+      );
+    }
 
     const payment = await this.prisma.payment.create({
       data: {
         invoiceId: dto.invoiceId,
         amount: dto.amount,
-        currency: dto.currency ?? invoice.currency,
+        currency: origCurrency,
+        baseAmount: conv.baseAmount.toString(),
+        baseCurrency: conv.baseCurrency,
+        fxRate: conv.rate.toString(),
         status: PaymentStatus.PENDING,
         paymentMethod: dto.paymentMethod,
         transactionRef: dto.transactionRef,
@@ -1205,14 +1218,6 @@ export class FinanceService {
       );
     }
 
-    // Currency integrity: the payment must settle the invoice in the same
-    // currency, or adding amount→paidAmount silently mixes currencies.
-    if (payment.currency !== payment.invoice.currency) {
-      throw new BadRequestException(
-        `Payment currency (${payment.currency}) does not match the invoice currency (${payment.invoice.currency}). It cannot be verified against this invoice.`,
-      );
-    }
-
     // Period lock: don't recognize cash into a closed period (covers payments
     // created via any path, including the handover/profile flow).
     await this.assertPeriodOpen(payment.paidAt ?? new Date());
@@ -1224,7 +1229,11 @@ export class FinanceService {
       clientId = conversion.client.id;
     }
 
-    const newPaidAmount = Number(payment.invoice.paidAmount) + Number(payment.amount);
+    // Apply the CAD-equivalent (baseAmount) to the CAD invoice — the payment
+    // may have been received in a foreign currency, but the ledger is CAD.
+    // Fall back to amount for any legacy row recorded before multi-currency.
+    const newPaidAmount =
+      Number(payment.invoice.paidAmount) + Number(payment.baseAmount ?? payment.amount);
     const totalAmount = Number(payment.invoice.totalAmount);
 
     // Overpayment guard: the books must never show paidAmount > totalAmount.
@@ -1657,7 +1666,10 @@ export class FinanceService {
       },
     });
 
-    const newPaidAmount = Math.max(Number(payment.invoice.paidAmount) - Number(payment.amount), 0);
+    // Reverse the CAD-equivalent that was booked (baseAmount), not the foreign
+    // original — the invoice ledger is in CAD.
+    const reversedBase = Number(payment.baseAmount ?? payment.amount);
+    const newPaidAmount = Math.max(Number(payment.invoice.paidAmount) - reversedBase, 0);
     await this.prisma.invoice.update({
       where: { id: payment.invoiceId },
       data: {
@@ -1689,8 +1701,9 @@ export class FinanceService {
         paymentId: id,
         leadId: payment.invoice.leadId,
         clientId: payment.invoice.clientId,
-        amount: payment.amount,
-        currency: payment.currency,
+        // Credit note is booked in the ledger currency (CAD = baseAmount).
+        amount: (payment.baseAmount ?? payment.amount).toString(),
+        currency: payment.baseCurrency ?? payment.invoice.currency,
         reason: dto.notes ?? 'Payment refunded',
         issuedByUserId: actorUserId,
       },
@@ -2398,36 +2411,33 @@ export class FinanceService {
           status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.CANCELLED] },
           ...(range ? { createdAt: range } : {}),
         },
-        select: { currency: true, taxAmount: true },
+        select: { taxAmount: true },
       }),
       this.prisma.expense.findMany({
         where: { deletedAt: null, ...(range ? { incurredAt: range } : {}) },
-        select: { currency: true, taxAmount: true },
+        select: { taxAmount: true, fxRate: true },
       }),
     ]);
 
-    const map = new Map<
-      string,
-      { currency: string; outputTax: number; inputTax: number; netPayable: number }
-    >();
-    const get = (ccy: string) =>
-      map.get(ccy) ?? { currency: ccy, outputTax: 0, inputTax: 0, netPayable: 0 };
-    for (const inv of invoices) {
-      const m = get(inv.currency);
-      m.outputTax += dec(inv.taxAmount);
-      map.set(inv.currency, m);
-    }
+    // Everything rolls up in CAD. Invoices are CAD, so their tax is CAD as-is.
+    // Expense input tax is in the expense's currency, so convert via the rate
+    // stamped on the row (1 CAD = fxRate <currency>).
+    let outputTax = 0;
+    for (const inv of invoices) outputTax += dec(inv.taxAmount);
+    let inputTax = 0;
     for (const e of expenses) {
-      const m = get(e.currency);
-      m.inputTax += dec(e.taxAmount);
-      map.set(e.currency, m);
+      const rate = Number(e.fxRate ?? 1) || 1;
+      inputTax += dec(e.taxAmount) / rate;
     }
-    for (const m of map.values()) m.netPayable = m.outputTax - m.inputTax;
+    outputTax = Math.round(outputTax * 100) / 100;
+    inputTax = Math.round(inputTax * 100) / 100;
 
     return {
       from: fromDate ?? null,
       to: toDate ?? null,
-      byCurrency: Array.from(map.values()).sort((a, b) => b.outputTax - a.outputTax),
+      byCurrency: [
+        { currency: 'CAD', outputTax, inputTax, netPayable: Math.round((outputTax - inputTax) * 100) / 100 },
+      ],
     };
   }
 
@@ -2520,6 +2530,13 @@ export class FinanceService {
         `The accounting period is closed — entries dated before ${lock.toISOString().slice(0, 10)} are locked. Use a current date, or ask an admin to move the book-close date.`,
       );
     }
+  }
+
+  /** Live FX rates to the base currency (CAD) — powers the currency picker
+   *  and the CAD conversion preview on the payment/expense forms. */
+  async getFxRates() {
+    const r = await this.fx.getRates();
+    return { base: r.base, rates: r.rates, source: r.source, asOf: r.asOf };
   }
 
   private generateInvoiceNumber() {

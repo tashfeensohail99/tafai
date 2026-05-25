@@ -1481,6 +1481,13 @@ model Payment {
   invoiceId        String
   amount           Decimal       @db.Decimal(12, 2)
   currency         String        @default("CAD")
+  /// FX: `amount`/`currency` are what was actually received (e.g. PKR on the
+  /// bank slip). `baseAmount` is the CAD equivalent booked to the ledger and
+  /// `fxRate` is the rate used (1 CAD = fxRate <currency>), stamped at record
+  /// time so historical records never move when the live rate changes.
+  baseAmount       Decimal?      @db.Decimal(12, 2)
+  baseCurrency     String        @default("CAD")
+  fxRate           Decimal?      @db.Decimal(18, 8)
   status           PaymentStatus @default(PENDING)
   paymentMethod    String?
   transactionRef   String?
@@ -1639,6 +1646,11 @@ model Expense {
   description      String
   amount           Decimal         @db.Decimal(12, 2)
   currency         String          @default("CAD")
+  /// FX: CAD equivalent of `amount` + the rate used (1 CAD = fxRate <currency>),
+  /// stamped at entry. Reports/margin use baseAmount so everything rolls up in CAD.
+  baseAmount       Decimal?        @db.Decimal(12, 2)
+  baseCurrency     String          @default("CAD")
+  fxRate           Decimal?        @db.Decimal(18, 8)
   /// Recoverable input tax (GST/HST/VAT) paid on this expense — claimable as
   /// an input tax credit (ITC) and netted against output tax in the tax
   /// report. 0 when no tax applies or it isn't recoverable.

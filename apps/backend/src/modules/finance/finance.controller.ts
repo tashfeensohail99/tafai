@@ -146,6 +146,13 @@ export class FinanceController {
     return this.financeService.setBooksLockedBefore(dto.date ?? null, user.id);
   }
 
+  /** Live FX rates to CAD (for the currency picker + CAD preview). */
+  @Get('fx/rates')
+  @RequireAnyPermissions('finance.view_all', 'finance.record_payment', 'finance_handover.create', 'settings.manage')
+  getFxRates() {
+    return this.financeService.getFxRates();
+  }
+
   /** Issued credit-notes ledger. */
   @Get('credit-notes')
   @RequireAnyPermissions('finance.view_all', 'settings.manage')

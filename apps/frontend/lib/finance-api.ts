@@ -400,6 +400,26 @@ export async function getReceiptDownloadUrl(
   );
 }
 
+/** One row in the issued-receipts ledger. */
+export interface ApiIssuedReceipt {
+  id: string;
+  receiptNumber: string;
+  amount: number;
+  currency: string;
+  paymentMethod: string | null;
+  issuedAt: string;
+  customerName: string;
+  referenceCode: string | null;
+  leadId: string | null;
+  hasPdf: boolean;
+}
+
+/** All issued receipts (newest first), with optional search. */
+export async function fetchReceipts(search?: string): Promise<ApiIssuedReceipt[]> {
+  const qs = search && search.trim() ? `?search=${encodeURIComponent(search.trim())}` : '';
+  return apiFetch<ApiIssuedReceipt[]>(`/finance/receipts${qs}`);
+}
+
 /** Result of an admin-authorised handover deletion. */
 export interface AdminDeleteHandoverResult {
   handoverId: string;

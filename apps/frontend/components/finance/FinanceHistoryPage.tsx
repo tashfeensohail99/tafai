@@ -1,10 +1,9 @@
 'use client';
-// Finance Payment History — Screen 6 of 7.
-// Searchable, filterable, read-only record of every payment record.
+// Finance Payment History.
+// Searchable, filterable, read-only record of every payment.
 // Scope: all statuses (including SENT_TO_PROCESSING, VERIFIED, REJECTED).
-//
-// Phase 1: mock data, client-side filter/sort, stub row actions.
-// Phase 2: real pagination, CSV/XLSX/PDF export, refund initiation.
+// Reads real payment data with client-side filter/sort. Future: server-side
+// pagination + CSV/PDF export.
 
 import { useMemo, useState, useEffect } from 'react';
 import {

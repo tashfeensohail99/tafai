@@ -254,6 +254,13 @@ export class FinanceController {
     return this.financeService.findReceiptByHandoverId(id);
   }
 
+  /** Issued-receipts ledger (the Finance "Receipts" screen). */
+  @Get('receipts')
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
+  listReceipts(@Query('search') search?: string) {
+    return this.financeService.listReceipts(search);
+  }
+
   /**
    * Get a signed download URL for a Receipt PDF. If the stored key is
    * missing (earlier failed render), the service regenerates on the fly

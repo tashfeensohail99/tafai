@@ -1,12 +1,12 @@
 'use client';
 
 /**
- * Screen 3 — Payment Verification Detail
+ * Payment Verification Detail
  * Route: /finance/intake/[id]
  *
- * Layout: sticky receipt preview panel (left) + scrollable verification form (right).
- * All styling via --sos-* tokens.  Phase 1 scope: no real OCR, no real
- * file viewer, no maker-checker enforcement, no fraud-rule engine.
+ * Layout: sticky receipt viewer (left) + scrollable verification form (right).
+ * The receipt renders inline (image/PDF). Not yet: OCR auto-read,
+ * maker-checker enforcement, fraud-rule engine.
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -73,7 +73,7 @@ const DEFAULT_CHECKLIST: ChecklistState = {
 
 const METHOD_OPTIONS = Object.entries(METHOD_LABEL).map(([value, label]) => ({ value, label }));
 
-// ---------- Receipt preview (Phase 1 placeholder) -----------------------
+// ---------- Receipt viewer (inline image/PDF) ---------------------------
 
 function ReceiptPreviewPanel({ payment }: { payment: ApiHandover }) {
   const [activeTab, setActiveTab] = useState(0);
@@ -92,30 +92,51 @@ function ReceiptPreviewPanel({ payment }: { payment: ApiHandover }) {
           </p>
         </div>
 
-        {/* placeholder viewer */}
-        <div
-          style={{
-            margin: '16px',
-            borderRadius: '10px',
-            background: 'var(--sos-bg-glass-subtle)',
-            border: '2px dashed var(--sos-border-subtle)',
-            minHeight: '260px',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px',
-          }}
-        >
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--sos-text-muted)" strokeWidth="1.5">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-            <polyline points="10 9 9 9 8 9" />
-          </svg>
-          <p style={{ fontSize: '13px', color: 'var(--sos-text-muted)', textAlign: 'center' }}>
-            {payment.receiptFileName}
-            <br />
-            <span style={{ fontSize: '11px' }}>Submitted by sales</span>
-          </p>
-        </div>
+        {/* Inline viewer — the officer must be able to SEE the proof, not
+            just download it. Images render directly; PDFs embed; anything
+            else (or a missing URL) falls back to the file placeholder. */}
+        {payment.receiptDownloadUrl && (payment.receiptMimeType ?? '').startsWith('image/') ? (
+          <div style={{ margin: '16px' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={payment.receiptDownloadUrl}
+              alt={`Receipt — ${payment.receiptFileName}`}
+              style={{ width: '100%', maxHeight: '480px', objectFit: 'contain', borderRadius: '10px', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-bg-glass-subtle)' }}
+            />
+          </div>
+        ) : payment.receiptDownloadUrl && payment.receiptMimeType === 'application/pdf' ? (
+          <div style={{ margin: '16px' }}>
+            <iframe
+              src={payment.receiptDownloadUrl}
+              title={`Receipt — ${payment.receiptFileName}`}
+              style={{ width: '100%', height: '480px', border: '1px solid var(--sos-border-subtle)', borderRadius: '10px', background: '#fff' }}
+            />
+          </div>
+        ) : (
+          <div
+            style={{
+              margin: '16px',
+              borderRadius: '10px',
+              background: 'var(--sos-bg-glass-subtle)',
+              border: '2px dashed var(--sos-border-subtle)',
+              minHeight: '260px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px',
+            }}
+          >
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--sos-text-muted)" strokeWidth="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <p style={{ fontSize: '13px', color: 'var(--sos-text-muted)', textAlign: 'center' }}>
+              {payment.receiptFileName}
+              <br />
+              <span style={{ fontSize: '11px' }}>Preview unavailable — use Download to open the file</span>
+            </p>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: '8px', padding: '0 16px 16px', flexWrap: 'wrap' }}>
           {payment.receiptDownloadUrl ? (

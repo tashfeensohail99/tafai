@@ -1,6 +1,6 @@
 'use client';
-// Finance Intake Queue — Phase 1 / Screen 2 of 7.
-// Lists every handover currently in an active finance state.
+// Verify Payments — client payment receipts awaiting confirmation.
+// Lists every payment submission currently in an active finance state.
 // Officer claims an unclaimed case OR resumes one already in their queue.
 
 import { useMemo, useState, useEffect } from 'react';
@@ -251,7 +251,7 @@ export function FinanceIntakePage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
-        eyebrow="Finance intake"
+        eyebrow="Verify Payments"
         title={<>Verify the receipt, confirm the money is ours.</>}
         description={
           <>
@@ -523,12 +523,14 @@ function LeadGroup({
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <StatusBadge tone="info" size="sm">
-            {items.length} {items.length === 1 ? 'handover' : 'handovers'}
+            {items.length} {items.length === 1 ? 'payment' : 'payments'}
           </StatusBadge>
           {currencyTotals.length > 0 ? (
-            <StatusBadge tone="neutral" size="sm" title="Sum of handovers still awaiting finance action — rejected attempts are excluded.">
-              {currencyTotals.join(' · ')} pending
-            </StatusBadge>
+            <span title="Sum of payments still awaiting finance action — rejected attempts are excluded.">
+              <StatusBadge tone="neutral" size="sm">
+                {currencyTotals.join(' · ')} pending
+              </StatusBadge>
+            </span>
           ) : null}
           {unclaimedCount > 0 ? (
             <StatusBadge tone="warning" size="sm" dot>

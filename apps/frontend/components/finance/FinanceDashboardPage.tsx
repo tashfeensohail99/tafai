@@ -1,7 +1,7 @@
 'use client';
-// Finance Dashboard – Phase 1 / Screen 1 of 7.
-// What finance officer sees when they sign in: today's verification queue,
-// problem pile, collection summary, and one-click jump to active queues.
+// Finance Dashboard.
+// What a finance officer sees on sign-in: today's verification queue,
+// problem pile, collection summary, and one-click jumps to active queues.
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';

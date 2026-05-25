@@ -1270,6 +1270,71 @@ export class FinanceService {
     });
   }
 
+  /**
+   * All issued (non-voided) receipts, newest first — powers the Finance
+   * "Receipts" ledger. Customer names are resolved in two batched queries
+   * (lead first, client fallback). Optional case-insensitive search across
+   * receipt number / customer name / reference code.
+   */
+  async listReceipts(search?: string) {
+    const receipts = await this.prisma.receipt.findMany({
+      where: { voidedAt: null },
+      orderBy: { issuedAt: 'desc' },
+      take: 500,
+      select: {
+        id: true,
+        receiptNumber: true,
+        amount: true,
+        currency: true,
+        paymentMethod: true,
+        issuedAt: true,
+        pdfStorageKey: true,
+        leadId: true,
+        clientId: true,
+      },
+    });
+    if (receipts.length === 0) return [];
+
+    const leadIds = [...new Set(receipts.map((r) => r.leadId).filter((x): x is string => !!x))];
+    const clientIds = [...new Set(receipts.map((r) => r.clientId).filter((x): x is string => !!x))];
+    const [leads, clients] = await Promise.all([
+      leadIds.length
+        ? this.prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, firstName: true, lastName: true, referenceCode: true } })
+        : Promise.resolve([] as Array<{ id: string; firstName: string | null; lastName: string | null; referenceCode: string }>),
+      clientIds.length
+        ? this.prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, firstName: true, lastName: true, referenceCode: true } })
+        : Promise.resolve([] as Array<{ id: string; firstName: string; lastName: string; referenceCode: string }>),
+    ]);
+    const leadMap = new Map(leads.map((l) => [l.id, l]));
+    const clientMap = new Map(clients.map((c) => [c.id, c]));
+
+    const rows = receipts.map((r) => {
+      const owner = (r.leadId && leadMap.get(r.leadId)) || (r.clientId && clientMap.get(r.clientId)) || null;
+      const customerName = owner ? `${owner.firstName ?? ''} ${owner.lastName ?? ''}`.trim() : '';
+      return {
+        id: r.id,
+        receiptNumber: r.receiptNumber,
+        amount: Number(r.amount.toString()),
+        currency: r.currency,
+        paymentMethod: r.paymentMethod,
+        issuedAt: r.issuedAt,
+        customerName: customerName || '—',
+        referenceCode: owner?.referenceCode ?? null,
+        leadId: r.leadId,
+        hasPdf: !!r.pdfStorageKey,
+      };
+    });
+
+    const s = search?.trim().toLowerCase();
+    if (!s) return rows;
+    return rows.filter(
+      (r) =>
+        r.receiptNumber.toLowerCase().includes(s) ||
+        r.customerName.toLowerCase().includes(s) ||
+        (r.referenceCode ?? '').toLowerCase().includes(s),
+    );
+  }
+
   async refundPayment(id: string, dto: RefundPaymentDto, actorUserId: string) {
     const payment = await this.prisma.payment.findUnique({
       where: { id },

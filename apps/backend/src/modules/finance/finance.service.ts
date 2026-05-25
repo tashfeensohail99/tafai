@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import {
+  AgreementStatus,
   AuditAction,
   FinanceHandoverStatus,
   InvoiceStatus,
@@ -158,69 +159,74 @@ export class FinanceService {
    * all-time so the admin Finance page can show a quick rollup card.
    */
   /**
-   * Firm-wide finance report — the Insight layer. Pairs the revenue side
-   * (collected, by service) with the cost side (expenses) to surface margin,
-   * plus the AR position (fees vs collected = outstanding). All figures are
-   * computed from the same rows the rest of the app uses, so they reconcile.
+   * Firm-wide finance report — the Insight layer. The finance picture is three
+   * tiers, and an agreement existing is NOT money:
+   *   • Pipeline    — agreements not yet SIGNED (draft/review/approved/sent).
+   *                   Potential only; the client hasn't committed or paid.
+   *   • Receivables — SIGNED agreements (client committed) → what we're owed.
+   *   • Cash        — money actually received (verified payments) − expenses.
+   * NOTE: a contract's signedDate/ACTIVE status is set at APPROVAL, so it is
+   * NOT a reliable "signed" signal — Agreement.status === SIGNED is, and a
+   * lead becomes a paying client (convertedClientId) on the first verified
+   * payment.
    */
   async getReportsSummary() {
     const dec = (d: Prisma.Decimal | number | null | undefined): number =>
       d == null ? 0 : Number(d.toString());
 
-    const [revenue, paidAgg, feesAgg, expenseAgg, contractsCount, receiptsCount, agrLeads, scLeads, hoLeads] =
+    // SIGNED agreements = the real receivable; resolve their owners so we can
+    // measure what's been collected against them.
+    const signedAgreements = await this.prisma.agreement.findMany({
+      where: { deletedAt: null, status: AgreementStatus.SIGNED },
+      select: { leadId: true, totalAmount: true },
+    });
+    const signedFees = signedAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
+    const signedLeadIds = [...new Set(signedAgreements.map((a) => a.leadId).filter((x): x is string => !!x))];
+    const signedLeads = signedLeadIds.length
+      ? await this.prisma.lead.findMany({ where: { id: { in: signedLeadIds } }, select: { convertedClientId: true } })
+      : [];
+    const signedClientIds = [...new Set(signedLeads.map((l) => l.convertedClientId).filter((x): x is string => !!x))];
+
+    const [revenue, paidAgg, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPaidAgg] =
       await Promise.all([
         this.getRevenueByService(),
         this.prisma.invoice.aggregate({ _sum: { paidAmount: true } }),
-        this.prisma.serviceContract.aggregate({ _sum: { totalAmount: true }, where: { deletedAt: null } }),
         this.prisma.expense.aggregate({ _sum: { amount: true }, where: { deletedAt: null } }),
-        this.prisma.serviceContract.count({ where: { deletedAt: null } }),
         this.prisma.receipt.count({ where: { voidedAt: null } }),
-        this.prisma.agreement.findMany({ where: { deletedAt: null }, select: { leadId: true }, distinct: ['leadId'] }),
-        this.prisma.serviceContract.findMany({ where: { deletedAt: null, leadId: { not: null } }, select: { leadId: true }, distinct: ['leadId'] }),
-        this.prisma.financeHandover.findMany({ select: { leadId: true }, distinct: ['leadId'] }),
+        // A real customer = money received (lead→client conversion fires on the
+        // first verified payment).
+        this.prisma.lead.count({ where: { deletedAt: null, convertedClientId: { not: null } } }),
+        this.prisma.agreement.findMany({
+          where: { deletedAt: null, status: { notIn: [AgreementStatus.SIGNED, AgreementStatus.CANCELLED] } },
+          select: { totalAmount: true },
+        }),
+        signedLeadIds.length || signedClientIds.length
+          ? this.prisma.invoice.aggregate({
+              _sum: { paidAmount: true },
+              where: { OR: [{ leadId: { in: signedLeadIds } }, { clientId: { in: signedClientIds } }] },
+            })
+          : Promise.resolve({ _sum: { paidAmount: null } }),
       ]);
 
     const collected = dec(paidAgg._sum.paidAmount);
-    const fees = dec(feesAgg._sum.totalAmount);
     const expenses = dec(expenseAgg._sum.amount);
-    const customers = new Set(
-      [...agrLeads, ...scLeads, ...hoLeads].map((r) => r.leadId).filter((x): x is string => !!x),
-    ).size;
-
-    // AR (receivables) is scoped to active service contracts only — historical
-    // payments without a contract must NOT distort "outstanding". So we sum
-    // only what's been collected from contract owners and compare to fees.
-    const contractOwners = await this.prisma.serviceContract.findMany({
-      where: { deletedAt: null },
-      select: { leadId: true, clientId: true },
-    });
-    const cLeadIds = [...new Set(contractOwners.map((c) => c.leadId).filter((x): x is string => !!x))];
-    const cClientIds = [...new Set(contractOwners.map((c) => c.clientId).filter((x): x is string => !!x))];
-    const contractPaidAgg =
-      cLeadIds.length || cClientIds.length
-        ? await this.prisma.invoice.aggregate({
-            _sum: { paidAmount: true },
-            where: { OR: [{ leadId: { in: cLeadIds } }, { clientId: { in: cClientIds } }] },
-          })
-        : { _sum: { paidAmount: null } };
-    const collectedAgainstContracts = dec(contractPaidAgg._sum.paidAmount);
+    const collectedOnSigned = dec(signedPaidAgg._sum.paidAmount);
+    const pipelineValue = pipelineAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
 
     return {
       currency: 'CAD',
-      // Cash actuals — real money in/out, the whole book.
-      cash: {
-        collected,
-        expenses,
-        margin: collected - expenses, // what the firm has actually kept
-      },
-      // Receivables — scoped to active service contracts (the agreement flow).
+      // Cash — money actually received vs spent.
+      cash: { collected, expenses, margin: collected - expenses },
+      // Receivables — SIGNED agreements only (client committed).
       receivables: {
-        fees,
-        collected: collectedAgainstContracts,
-        outstanding: Math.max(0, fees - collectedAgainstContracts),
+        fees: signedFees,
+        collected: collectedOnSigned,
+        outstanding: Math.max(0, signedFees - collectedOnSigned),
       },
+      // Pipeline — agreements in progress, NOT yet money.
+      pipeline: { agreements: pipelineAgreements.length, value: pipelineValue },
       revenue: revenue.totals, // { month, ytd, allTime } — verified payments
-      counts: { customers, contracts: contractsCount, receipts: receiptsCount },
+      counts: { payingCustomers, signed: signedAgreements.length, receipts: receiptsCount },
       byService: revenue.byService,
     };
   }

@@ -423,12 +423,14 @@ export async function fetchReceipts(search?: string): Promise<ApiIssuedReceipt[]
 /** Firm-wide finance report (Insight layer). */
 export interface FinanceReportsSummary {
   currency: string;
-  // Cash actuals — the whole book.
+  // Cash — money actually received vs spent.
   cash: { collected: number; expenses: number; margin: number };
-  // Receivables — scoped to active service contracts (the agreement flow).
+  // Receivables — SIGNED agreements only (client committed).
   receivables: { fees: number; collected: number; outstanding: number };
+  // Pipeline — agreements in progress, NOT yet money.
+  pipeline: { agreements: number; value: number };
   revenue: { month: number; ytd: number; allTime: number };
-  counts: { customers: number; contracts: number; receipts: number };
+  counts: { payingCustomers: number; signed: number; receipts: number };
   byService: Array<{ service: string; month: number; ytd: number; allTime: number }>;
 }
 

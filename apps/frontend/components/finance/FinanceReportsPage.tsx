@@ -6,7 +6,7 @@
 // numbers because they read the same rows.
 
 import { useEffect, useState, type CSSProperties } from 'react';
-import { AlertTriangle, Coins, FileSignature, Receipt as ReceiptIcon, TrendingUp, Users, Wallet } from 'lucide-react';
+import { AlertTriangle, Coins, FileSignature, FileText, Receipt as ReceiptIcon, TrendingUp, Users, Wallet } from 'lucide-react';
 import { GlassCard, MetricCard, PageHeader } from '@/components/sales-v2/ui';
 import { fetchFinanceReports, type FinanceReportsSummary } from '@/lib/finance-api';
 
@@ -32,7 +32,7 @@ export function FinanceReportsPage() {
   if (loading) return <div className="sos-text-muted" style={{ padding: 40, textAlign: 'center' }}>Loading report…</div>;
   if (!data) return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
 
-  const { cash, receivables, revenue, counts, byService, currency: ccy } = data;
+  const { cash, receivables, pipeline, revenue, counts, byService, currency: ccy } = data;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -54,13 +54,24 @@ export function FinanceReportsPage() {
         </div>
       </div>
 
-      {/* Receivables — active contracts only */}
+      {/* Receivables — SIGNED agreements only */}
       <div>
-        <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Receivables — active contracts</div>
+        <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Receivables — signed agreements</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-          <MetricCard label="Fees contracted" value={money(receivables.fees, ccy)} tone="accent" Icon={Wallet} />
-          <MetricCard label="Collected on contracts" value={money(receivables.collected, ccy)} tone="success" Icon={ReceiptIcon} />
+          <MetricCard label="Fees (signed)" value={money(receivables.fees, ccy)} tone="accent" Icon={Wallet} />
+          <MetricCard label="Collected on signed" value={money(receivables.collected, ccy)} tone="success" Icon={ReceiptIcon} />
           <MetricCard label="Outstanding" value={money(receivables.outstanding, ccy)} tone={receivables.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
+        </div>
+      </div>
+
+      {/* Pipeline — agreements in progress, NOT money yet */}
+      <div>
+        <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+          Pipeline — not signed yet <span style={{ textTransform: 'none', fontWeight: 400 }}>(potential, not counted as revenue)</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
+          <MetricCard label="Agreements in progress" value={String(pipeline.agreements)} tone="info" Icon={FileText} />
+          <MetricCard label="Potential value" value={money(pipeline.value, ccy)} tone="neutral" Icon={Wallet} hint="if all get signed & paid" />
         </div>
       </div>
 
@@ -78,8 +89,8 @@ export function FinanceReportsPage() {
       <div>
         <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Portfolio</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-          <MetricCard label="Customers" value={String(counts.customers)} tone="neutral" Icon={Users} />
-          <MetricCard label="Active contracts" value={String(counts.contracts)} tone="neutral" Icon={FileSignature} />
+          <MetricCard label="Paying customers" value={String(counts.payingCustomers)} tone="neutral" Icon={Users} hint="made a verified payment" />
+          <MetricCard label="Signed agreements" value={String(counts.signed)} tone="neutral" Icon={FileSignature} />
           <MetricCard label="Receipts issued" value={String(counts.receipts)} tone="neutral" Icon={ReceiptIcon} />
         </div>
       </div>

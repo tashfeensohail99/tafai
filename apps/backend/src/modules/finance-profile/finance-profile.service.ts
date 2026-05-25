@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AgreementStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 /** Coerce a Prisma Decimal (or number/null) to a plain number for the UI. */
@@ -262,9 +262,10 @@ export class FinanceProfileService {
   async listCustomers(search?: string) {
     const s = search?.trim();
 
-    // 1) Candidate leadIds: anyone with an agreement / contract / handover.
+    // 1) Candidate leadIds: anyone finance is actually handling — a submitted+
+    // agreement (DRAFTs are still in Sales' hands), a contract, or a handover.
     const [agrLeads, scLeads, hoLeads] = await Promise.all([
-      this.prisma.agreement.findMany({ where: { deletedAt: null }, select: { leadId: true }, distinct: ['leadId'] }),
+      this.prisma.agreement.findMany({ where: { deletedAt: null, status: { not: AgreementStatus.DRAFT } }, select: { leadId: true }, distinct: ['leadId'] }),
       this.prisma.serviceContract.findMany({ where: { deletedAt: null, leadId: { not: null } }, select: { leadId: true }, distinct: ['leadId'] }),
       this.prisma.financeHandover.findMany({ select: { leadId: true }, distinct: ['leadId'] }),
     ]);

@@ -440,6 +440,8 @@ export interface FinanceReportsSummary {
   revenue: { month: number; ytd: number; allTime: number };
   counts: { payingCustomers: number; signed: number; receipts: number };
   byService: Array<{ service: string; month: number; ytd: number; allTime: number }>;
+  /** Accounting period-lock (book-close) date — entries before this are rejected. */
+  booksLockedBefore?: string | null;
 }
 
 export async function fetchFinanceReports(): Promise<FinanceReportsSummary> {

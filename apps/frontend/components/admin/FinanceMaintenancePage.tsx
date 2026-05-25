@@ -26,26 +26,32 @@
  * slot in as additional cards on this page.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  CalendarClock,
   CheckCircle2,
   Loader2,
+  Lock,
   ShieldAlert,
   Wrench,
 } from 'lucide-react';
 import {
   Field,
+  FormInput,
   FormTextarea,
   GhostButton,
   GlassCard,
   PageHeader,
   PrimaryButton,
+  SecondaryButton,
   StatusBadge,
 } from '@/components/sales-v2/ui';
 import { Modal } from '@/components/whatsapp/Modal';
 import {
   cleanupOrphanHandovers,
+  fetchFinanceReports,
+  lockPeriod,
   type OrphanCleanupResult,
 } from '@/lib/finance-api';
 import { ApiClientError } from '@/lib/api-client';
@@ -56,6 +62,39 @@ export function FinanceMaintenancePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OrphanCleanupResult | null>(null);
+
+  // Period lock (book close)
+  const [lockDate, setLockDate] = useState('');
+  const [currentLock, setCurrentLock] = useState<string | null>(null);
+  const [lockBusy, setLockBusy] = useState(false);
+  const [lockMsg, setLockMsg] = useState<string | null>(null);
+  const [lockErr, setLockErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchFinanceReports()
+      .then((r) => setCurrentLock(r.booksLockedBefore ?? null))
+      .catch(() => {});
+  }, []);
+
+  async function handleLock(date: string | null) {
+    setLockBusy(true);
+    setLockErr(null);
+    setLockMsg(null);
+    try {
+      await lockPeriod(date);
+      setCurrentLock(date);
+      if (!date) setLockDate('');
+      setLockMsg(
+        date
+          ? `Books closed through ${new Date(date).toLocaleDateString()}. Entries dated before this are now rejected.`
+          : 'Period lock cleared — entries of any date are accepted again.',
+      );
+    } catch (err) {
+      setLockErr(err instanceof Error ? err.message : 'Could not update the period lock.');
+    } finally {
+      setLockBusy(false);
+    }
+  }
 
   function openModal() {
     setReason('');
@@ -188,6 +227,87 @@ export function FinanceMaintenancePage() {
               {result ? 'Run cleanup again' : 'Run cleanup…'}
             </PrimaryButton>
           </div>
+        </div>
+      </GlassCard>
+
+      {/* Period lock (book close) card */}
+      <GlassCard variant="default" padded="lg">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                display: 'grid',
+                placeItems: 'center',
+                background: 'var(--sos-status-info-soft)',
+                color: 'var(--sos-status-info)',
+              }}
+            >
+              <Lock size={16} />
+            </div>
+            <div>
+              <div className="sos-title" style={{ fontSize: 'var(--sos-text-base)' }}>
+                Accounting period lock (book close)
+              </div>
+              <div className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)' }}>
+                Freeze a closed period — payments and invoices dated before this date are rejected.
+              </div>
+            </div>
+          </div>
+
+          <div
+            className="sos-banner sos-banner--info"
+            style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12.5, lineHeight: 1.55 }}
+          >
+            <CalendarClock size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div>
+              {currentLock ? (
+                <>
+                  Books are currently <strong>closed through {new Date(currentLock).toLocaleDateString()}</strong>.
+                  Any payment or invoice effective-dated before then is blocked.
+                </>
+              ) : (
+                <>No period is locked — entries of any date are accepted.</>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 210 }}>
+              <FormInput
+                label="Close books before"
+                type="date"
+                value={lockDate}
+                onChange={(e) => setLockDate(e.target.value)}
+                hint="entries before this date are locked"
+              />
+            </div>
+            <PrimaryButton
+              onClick={() => void handleLock(lockDate || null)}
+              disabled={lockBusy || !lockDate}
+              iconLeft={lockBusy ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Lock size={14} />}
+            >
+              {lockBusy ? 'Saving…' : 'Lock period'}
+            </PrimaryButton>
+            {currentLock ? (
+              <SecondaryButton onClick={() => void handleLock(null)} disabled={lockBusy}>
+                Clear lock
+              </SecondaryButton>
+            ) : null}
+          </div>
+
+          {lockMsg ? (
+            <div className="sos-banner sos-banner--success" style={{ fontSize: 13, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <CheckCircle2 size={14} /> {lockMsg}
+            </div>
+          ) : null}
+          {lockErr ? (
+            <div className="sos-banner sos-banner--danger" style={{ fontSize: 13, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <AlertTriangle size={14} /> {lockErr}
+            </div>
+          ) : null}
         </div>
       </GlassCard>
 

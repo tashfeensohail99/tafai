@@ -223,6 +223,12 @@ export class FinanceService {
     // is either deferred revenue (cash ahead of delivery, a liability) or
     // accrued/unbilled (delivery ahead of cash, an asset).
     const earned = dec(earnedAgg._sum.amount);
+    // Period-lock (book-close) date — surfaced so the UI can show "books
+    // closed through X" and the admin control can render the current state.
+    const orgLock = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { booksLockedBefore: true },
+    });
 
     // Currency integrity: a single rolled-up total must not silently span
     // currencies. Derive the real currency from the data; flag if >1 is in
@@ -258,6 +264,7 @@ export class FinanceService {
       revenue: revenue.totals, // { month, ytd, allTime } — cash collected (verified payments)
       counts: { payingCustomers, signed: signedAgreements.length, receipts: receiptsCount },
       byService: revenue.byService,
+      booksLockedBefore: orgLock?.booksLockedBefore ?? null,
     };
   }
 

@@ -236,6 +236,10 @@ const SYSTEM_ROLES: {
       'finance.verify_payment', 'finance.refund',
       'reports.view', 'reports.export',
       'employees.view_all',
+      // Closed-loop client comms — Finance can see the WhatsApp conversation
+      // alongside the customer profile, share PDFs (agreement / receipt) and
+      // pick up replies in the same place they verify payments.
+      'whatsapp.view_inbox', 'whatsapp.view_all_inboxes', 'whatsapp.send_message',
     ],
   },
   {
@@ -247,6 +251,8 @@ const SYSTEM_ROLES: {
       'finance_handover.view_all', 'finance_handover.review',
       'finance.view_all', 'finance.create_invoice', 'finance.record_payment',
       'finance.verify_payment', 'finance.refund',
+      // Closed-loop comms on the customer profile (see finance_manager).
+      'whatsapp.view_inbox', 'whatsapp.view_all_inboxes', 'whatsapp.send_message',
     ],
   },
   {

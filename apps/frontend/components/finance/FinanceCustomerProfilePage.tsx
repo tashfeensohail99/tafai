@@ -10,6 +10,7 @@ import {
   FileSignature,
   FileText,
   Loader2,
+  MessageSquare,
   Receipt as ReceiptIcon,
   Send,
   Trash2,
@@ -44,6 +45,7 @@ import {
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
 import { fetchHandoverById, fetchFxRates, fetchReceiptPdfBlob, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
+import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
 
 const CURRENCY_OPTIONS = FINANCE_CURRENCIES.map((c) => ({ value: c, label: c }));
 
@@ -80,7 +82,7 @@ function fileToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-type TabKey = 'overview' | 'agreement' | 'ledger' | 'invoices' | 'payments' | 'expenses' | 'receipts';
+type TabKey = 'overview' | 'agreement' | 'ledger' | 'invoices' | 'payments' | 'expenses' | 'receipts' | 'whatsapp';
 const TABS: Array<[TabKey, string]> = [
   ['overview', 'Overview'],
   ['agreement', 'Agreement'],
@@ -89,6 +91,7 @@ const TABS: Array<[TabKey, string]> = [
   ['payments', 'Payments'],
   ['expenses', 'Expenses'],
   ['receipts', 'Receipts'],
+  ['whatsapp', 'WhatsApp'],
 ];
 
 const money = (n: number, ccy: string) =>
@@ -1044,6 +1047,24 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             ])}
           />
         </GlassCard>
+      ) : null}
+
+      {/* WHATSAPP — closed-loop client comms right next to the ledger so
+          finance can verify a payment, share the receipt PDF and pick up
+          the client's "got it, thanks" reply without leaving the page. */}
+      {tab === 'whatsapp' ? (
+        <div style={{ minHeight: 520 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <MessageSquare size={16} className="sos-text-faint" />
+            <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>
+              WhatsApp conversation
+            </h3>
+            <span className="sos-text-faint" style={{ fontSize: 12 }}>
+              · share the agreement / receipt, pick up replies
+            </span>
+          </div>
+          <WhatsAppLeadTab leadId={lead.id} leadPhone={lead.phone ?? null} />
+        </div>
       ) : null}
     </div>
   );

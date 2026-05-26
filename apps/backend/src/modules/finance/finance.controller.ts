@@ -322,7 +322,7 @@ export class FinanceController {
    * before returning the URL.
    */
   @Get('receipts/:id/download')
-  @RequirePermissions('finance_handover.view_own')
+  @RequireAnyPermissions('finance.view_all', 'finance.record_payment', 'finance_handover.view_own')
   async getReceiptDownloadUrl(@Param('id', ParseUUIDPipe) id: string) {
     return this.financeService.getReceiptDownloadUrl(id);
   }
@@ -331,9 +331,14 @@ export class FinanceController {
    * Stream the receipt PDF bytes directly (same-origin). Used by the
    * frontend to bypass Supabase Storage's `sandbox` CSP that prevents
    * Chrome's PDF viewer from rendering signed URLs inline.
+   *
+   * Anyone with finance.view_all / finance.record_payment can view receipts —
+   * the old finance_handover.view_own gate is a relic from the retired
+   * handover flow and locked super-admin/finance roles out of their own
+   * receipts.
    */
   @Get('receipts/:id/pdf')
-  @RequirePermissions('finance_handover.view_own')
+  @RequireAnyPermissions('finance.view_all', 'finance.record_payment', 'finance_handover.view_own')
   async streamReceiptPdf(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,

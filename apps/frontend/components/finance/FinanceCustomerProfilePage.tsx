@@ -362,8 +362,10 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const handleReceiptDownload = async (id: string) => {
     // Open the tab SYNCHRONOUSLY in the click handler so we don't lose the
     // user-gesture window — calling window.open after an `await` is silently
-    // blocked by Chrome/Edge/Safari as if it were a pop-up.
-    const tab = window.open('about:blank', '_blank', 'noopener,noreferrer');
+    // blocked by browsers as if it were a pop-up. (NOTE: no `noopener` here —
+    // that would sever the opener and we wouldn't be able to navigate this
+    // tab to the signed URL once the fetch comes back.)
+    const tab = window.open('about:blank', '_blank');
     setBusy('rcpt-dl');
     setError(null);
     try {

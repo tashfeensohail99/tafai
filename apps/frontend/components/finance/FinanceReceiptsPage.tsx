@@ -69,7 +69,9 @@ export function FinanceReceiptsPage() {
     // Open the tab SYNCHRONOUSLY in the click handler so we keep the user
     // gesture — calling window.open after an `await` is silently blocked by
     // most browsers' pop-up rules. We then navigate the just-opened tab.
-    const tab = window.open('about:blank', '_blank', 'noopener,noreferrer');
+    // (NOTE: no `noopener` here — that would sever the opener and prevent
+    // us from setting tab.location.href below.)
+    const tab = window.open('about:blank', '_blank');
     setDownloading(id);
     setError(null);
     try {

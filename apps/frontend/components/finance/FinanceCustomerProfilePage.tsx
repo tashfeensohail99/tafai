@@ -46,6 +46,7 @@ import {
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
 import { fetchHandoverById, fetchFxRates, fetchReceiptPdfBlob, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
 import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
+import { sendTemplate } from '@/lib/whatsapp';
 
 const CURRENCY_OPTIONS = FINANCE_CURRENCIES.map((c) => ({ value: c, label: c }));
 
@@ -111,6 +112,59 @@ const label = (s: string) => s.replace(/_/g, ' ').toLowerCase();
 
 const th: CSSProperties = { textAlign: 'left', padding: '9px 14px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--sos-text-faint)', borderBottom: '1px solid var(--sos-border-subtle)', whiteSpace: 'nowrap' };
 const td: CSSProperties = { padding: '10px 14px', fontSize: 13, color: 'var(--sos-text-secondary)', borderBottom: '1px solid var(--sos-border-subtle)' };
+
+/**
+ * One-click "Send consultation reminder" button on the Finance WhatsApp tab.
+ *
+ * Calls the approved `finance_consultation_today` template (UTILITY, en) with
+ * the client's first name as `{{1}}`. Sending an approved template is allowed
+ * even when the 24-hour customer-service window is closed — that's the whole
+ * point: this is the "door opener" finance uses to get the client to reply, at
+ * which point the window reopens and finance can send the receipt PDF / talk
+ * freely. Template approval lives in Meta; until they flip it to APPROVED,
+ * this button returns Meta's "template not approved" error which the chat
+ * panel surfaces inline.
+ */
+function ConsultationReminderButton({
+  threadId,
+  clientFirstName,
+  onSent,
+  onError,
+}: {
+  threadId: string;
+  clientFirstName: string;
+  onSent: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const handleClick = async () => {
+    setBusy(true);
+    try {
+      await sendTemplate(threadId, {
+        templateName: 'finance_consultation_today',
+        language: 'en',
+        components: [
+          { type: 'body', parameters: [{ type: 'text', text: clientFirstName }] },
+        ],
+      });
+      onSent();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not send the consultation reminder');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '8px 12px', borderRadius: 8, border: '1px dashed var(--sos-border-subtle)', background: 'var(--sos-bg-glass-subtle)' }}>
+      <span className="sos-text-faint" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <MessageSquare size={13} /> 24-hour window closed? Re-open it with one tap:
+      </span>
+      <PrimaryButton size="sm" iconLeft={busy ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={13} />} onClick={() => void handleClick()} disabled={busy}>
+        {busy ? 'Sending…' : 'Send consultation reminder'}
+      </PrimaryButton>
+    </div>
+  );
+}
 
 function Table({ head, rows, empty }: { head: string[]; rows: ReactNode[][]; empty: string }) {
   if (rows.length === 0) return <div className="sos-text-muted" style={{ padding: 24, textAlign: 'center', fontSize: 13 }}>{empty}</div>;
@@ -1063,7 +1117,18 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
               · share the agreement / receipt, pick up replies
             </span>
           </div>
-          <WhatsAppLeadTab leadId={lead.id} leadPhone={lead.phone ?? null} />
+          <WhatsAppLeadTab
+            leadId={lead.id}
+            leadPhone={lead.phone ?? null}
+            renderHeaderActions={(threadId) => (
+              <ConsultationReminderButton
+                threadId={threadId}
+                clientFirstName={lead.firstName}
+                onSent={() => setNotice('Consultation reminder sent — waiting for the client to reply to open the 24-hour chat window.')}
+                onError={(msg) => setError(msg)}
+              />
+            )}
+          />
         </div>
       ) : null}
     </div>

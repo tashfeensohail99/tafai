@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { EmptyState, GlassCard } from '@/components/sales-v2/ui';
 import { listThreads, type ThreadListItem } from '@/lib/whatsapp';
@@ -13,8 +13,20 @@ import { WhatsAppChatPanel } from './WhatsAppChatPanel';
  * that by searching the inbox by phone, since the dedicated
  * `GET /whatsapp/threads/by-lead/:id` endpoint isn't built yet (one-line
  * follow-up).
+ *
+ * Optional `renderHeaderActions(threadId)` slot lets the host page render
+ * extra controls above the chat — used by the Finance customer profile to
+ * surface a one-click "Send consultation reminder" template button.
  */
-export function WhatsAppLeadTab({ leadId, leadPhone }: { leadId: string; leadPhone: string | null }) {
+export function WhatsAppLeadTab({
+  leadId,
+  leadPhone,
+  renderHeaderActions,
+}: {
+  leadId: string;
+  leadPhone: string | null;
+  renderHeaderActions?: (threadId: string) => ReactNode;
+}) {
   const [thread, setThread] = useState<ThreadListItem | null | undefined>(undefined);
 
   useEffect(() => {
@@ -62,5 +74,10 @@ export function WhatsAppLeadTab({ leadId, leadPhone }: { leadId: string; leadPho
     );
   }
 
-  return <WhatsAppChatPanel threadId={thread.id} />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {renderHeaderActions ? renderHeaderActions(thread.id) : null}
+      <WhatsAppChatPanel threadId={thread.id} />
+    </div>
+  );
 }

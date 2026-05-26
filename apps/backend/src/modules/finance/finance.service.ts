@@ -1236,18 +1236,28 @@ export class FinanceService {
     // Apply the CAD-equivalent (baseAmount) to the CAD invoice — the payment
     // may have been received in a foreign currency, but the ledger is CAD.
     // Fall back to amount for any legacy row recorded before multi-currency.
-    const newPaidAmount =
-      Number(payment.invoice.paidAmount) + Number(payment.baseAmount ?? payment.amount);
+    const paymentCad = Number(payment.baseAmount ?? payment.amount);
+    const newPaidAmount = Number(payment.invoice.paidAmount) + paymentCad;
     const totalAmount = Number(payment.invoice.totalAmount);
 
-    // Overpayment guard: the books must never show paidAmount > totalAmount.
-    // Compare in integer cents so float noise / a legacy ±1¢ rounding gap
-    // doesn't trip it — only a genuine overpayment (more than a cent over the
-    // remaining balance) is rejected.
-    if (Math.round(newPaidAmount * 100) > Math.round(totalAmount * 100) + 1) {
-      const balance = Math.max(0, totalAmount - Number(payment.invoice.paidAmount));
+    // Overpayment is checked at the ENGAGEMENT level, not per-invoice. A
+    // payment that exceeds THIS installment's invoice is fine — the AR
+    // waterfall (in the customer profile + on the receipt PDF) automatically
+    // applies the overflow to the next unpaid installment. We only reject
+    // when the payment would push total cash collected ABOVE the agreement's
+    // total fee, which would mean a refund is owed.
+    const overpay = await this.checkEngagementOverpay(
+      payment.invoice.leadId,
+      payment.invoice.clientId,
+      payment.invoiceId,
+      Number(payment.invoice.paidAmount),
+      Number(payment.invoice.totalAmount),
+    );
+    const newEngagementPaid = overpay.engagementPaidBefore + paymentCad;
+    if (Math.round(newEngagementPaid * 100) > Math.round(overpay.engagementFee * 100) + 1) {
+      const balance = Math.max(0, overpay.engagementFee - overpay.engagementPaidBefore);
       throw new BadRequestException(
-        `This payment (${Number(payment.amount).toLocaleString()} ${payment.currency}) exceeds the invoice balance of ${balance.toLocaleString()} ${payment.invoice.currency}. Adjust the amount or split it across invoices.`,
+        `This payment (${paymentCad.toLocaleString()} ${payment.invoice.currency}) exceeds the remaining engagement balance of ${balance.toLocaleString()} ${payment.invoice.currency}. The client owes only ${balance.toLocaleString()} on this agreement — refund the excess, split into smaller payments, or move it to a new engagement.`,
       );
     }
 
@@ -1507,6 +1517,45 @@ export class FinanceService {
       );
       return created;
     }
+  }
+
+  /**
+   * Engagement-level overpayment check (used by verifyPayment). Returns the
+   * agreed fee on the active service contract and the total cash already
+   * applied across every invoice of this lead/client. A payment that takes
+   * the engagement total above the agreed fee is rejected (a refund is owed);
+   * anything within the fee waterfalls into the next installment.
+   *
+   * Falls back to per-invoice numbers when there's no contract yet — same
+   * conservative behaviour as before.
+   */
+  private async checkEngagementOverpay(
+    leadId: string | null,
+    clientId: string | null,
+    currentInvoiceId: string,
+    currentInvoicePaid: number,
+    currentInvoiceTotal: number,
+  ): Promise<{ engagementFee: number; engagementPaidBefore: number }> {
+    const ownerOr: Array<{ leadId?: string; clientId?: string }> = [];
+    if (leadId) ownerOr.push({ leadId });
+    if (clientId) ownerOr.push({ clientId });
+    if (ownerOr.length === 0) {
+      return { engagementFee: currentInvoiceTotal, engagementPaidBefore: currentInvoicePaid };
+    }
+    const [contract, others] = await Promise.all([
+      this.prisma.serviceContract.findFirst({
+        where: { OR: ownerOr, deletedAt: null },
+        select: { totalAmount: true },
+      }),
+      this.prisma.invoice.aggregate({
+        _sum: { paidAmount: true },
+        where: { OR: ownerOr, deletedAt: null, NOT: { id: currentInvoiceId } },
+      }),
+    ]);
+    const othersPaid = Number(others._sum.paidAmount?.toString() ?? 0);
+    const engagementFee = contract ? Number(contract.totalAmount.toString()) : currentInvoiceTotal;
+    const engagementPaidBefore = currentInvoicePaid + othersPaid;
+    return { engagementFee, engagementPaidBefore };
   }
 
   /**

@@ -200,12 +200,15 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   };
 
   const handleUpload = async (file: File) => {
-    if (!data?.contract) { setError('No contract yet — approve the agreement first.'); return; }
+    // Keyed by **agreement** id, not contract id — the ServiceContract +
+    // Installments only get materialised the moment the signed copy lands
+    // (per the finance team's rule: no ledger before signing).
+    if (!data?.agreement) { setError('No agreement yet — Sales needs to draft one first.'); return; }
     setBusy('upload');
     setError(null);
     try {
-      await uploadSignedAgreement(data.contract.id, file);
-      setNotice('Signed agreement uploaded — marked as signed.');
+      await uploadSignedAgreement(data.agreement.id, file);
+      setNotice('Signed agreement uploaded — ledger materialised; agreement marked signed.');
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
@@ -624,13 +627,13 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     <SecondaryButton size="sm" iconLeft={<Download size={14} />} onClick={() => void openUrl('signed')} disabled={busy !== null}>Download signed</SecondaryButton>
                     <PrimaryButton size="sm" iconLeft={<Upload size={14} />} onClick={() => fileRef.current?.click()} disabled={busy !== null}>Replace</PrimaryButton>
                   </div>
-                ) : contract ? (
+                ) : ['APPROVED', 'SENT', 'SIGNED'].includes(agreement.status) ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <span className="sos-text-muted" style={{ fontSize: 13 }}>No signed copy yet. Upload the client&apos;s signed agreement to mark it signed.</span>
+                    <span className="sos-text-muted" style={{ fontSize: 13 }}>No signed copy yet. Uploading it creates the ledger and marks the agreement signed.</span>
                     <PrimaryButton size="sm" iconLeft={busy === 'upload' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Upload size={14} />} onClick={() => fileRef.current?.click()} disabled={busy !== null}>{busy === 'upload' ? 'Uploading…' : 'Upload signed agreement'}</PrimaryButton>
                   </div>
                 ) : (
-                  <div className="sos-text-muted" style={{ fontSize: 13 }}>Available once the agreement is approved (a contract is created).</div>
+                  <div className="sos-text-muted" style={{ fontSize: 13 }}>Available once Finance approves the agreement.</div>
                 )}
                 <input
                   ref={fileRef}
@@ -657,7 +660,13 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
           </div>
           <Table
             head={['#', 'Stage', 'Amount', 'Paid', 'Due', 'Status', 'Revenue']}
-            empty={contract ? 'No installments.' : 'No service contract yet (created on approval).'}
+            empty={
+              contract
+                ? 'No installments.'
+                : agreement
+                  ? 'Awaiting client signature — the ledger materialises once the signed agreement is uploaded.'
+                  : 'No agreement yet.'
+            }
             rows={data.installments.map((i) => [
               i.sequence,
               i.description ?? '—',

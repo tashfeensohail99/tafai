@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,8 +9,12 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import {
@@ -219,6 +224,29 @@ export class AgreementsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.agreements.sendToClient(id, user.id);
+  }
+
+  /**
+   * Finance uploads the client's signed agreement PDF/image. This is the
+   * moment the **ledger** (ServiceContract + Installments) materialises —
+   * before this the agreement is just a finance-approved proposal awaiting
+   * the client's signature.
+   */
+  @Post(':id/upload-signed')
+  @RequireAnyPermissions('finance.create_invoice', 'finance.verify_payment', 'settings.manage')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    }),
+  )
+  uploadSigned(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (!file) throw new BadRequestException('Signed agreement file is required');
+    return this.agreements.uploadSignedAgreement(id, file, user.id);
   }
 
   @Get(':id/pdf-url')

@@ -127,11 +127,17 @@ export function fetchFinanceCustomers(search?: string): Promise<FinanceCustomerR
   return apiFetch<FinanceCustomerRow[]>(`/finance/customer${qs}`, { cache: 'no-store' });
 }
 
-/** Finance uploads the signed agreement PDF onto the customer's contract. */
-export async function uploadSignedAgreement(contractId: string, file: File): Promise<void> {
+/**
+ * Finance uploads the client's signed agreement. Keyed by **agreement id**
+ * (not contract id) because the ServiceContract only materialises the moment
+ * the signed copy lands — before this the agreement is a proposal with no
+ * ledger yet. The backend handles both first upload (creates contract +
+ * installments) and re-uploads (updates an already-signed contract).
+ */
+export async function uploadSignedAgreement(agreementId: string, file: File): Promise<void> {
   const fd = new FormData();
   fd.append('file', file);
-  await apiFetch(`/finance/service-contracts/${contractId}/upload-signed`, {
+  await apiFetch(`/agreements/${agreementId}/upload-signed`, {
     method: 'POST',
     body: fd,
     cache: 'no-store',

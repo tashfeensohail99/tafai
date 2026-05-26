@@ -427,9 +427,12 @@ export class AgreementsService {
   // ─── Finance review ──────────────────────────────────────────────────────
 
   /**
-   * Finance approves: re-validate, lock the plan, materialise the ledger
-   * (ServiceContract + Installments) once, and generate + store the final
-   * PDF from the approved record.
+   * Finance approves: re-validate, lock the plan, and generate + store the
+   * final PDF from the approved record. Crucially this does NOT yet create
+   * a ServiceContract — the **ledger** (ServiceContract + Installments) is
+   * a binding billing schedule and only materialises the moment the signed
+   * agreement is uploaded (see `uploadSignedAgreement`). Per the finance
+   * team: until the client signs, there's a *proposal*, not a ledger.
    */
   async approve(id: string, userId: string) {
     const a = await this.prisma.agreement.findFirst({ where: { id, deletedAt: null } });
@@ -446,9 +449,6 @@ export class AgreementsService {
       netPayable: plan.netPayable ?? Number(a.totalAmount.toString()),
       installments: plan.installments ?? [],
     });
-
-    const serviceContractId =
-      a.serviceContractId ?? (await this.materializeServiceContract(a, plan, userId));
 
     let pdfKey = a.generatedPdfKey;
     const template = await this.prisma.agreementTemplate.findUnique({
@@ -484,7 +484,6 @@ export class AgreementsService {
         reviewedAt: now,
         paymentPlanLockedAt: now,
         paymentPlanLockedByUserId: userId,
-        serviceContractId,
         generatedPdfKey: pdfKey ?? undefined,
         generatedPdfAt: pdfKey ? now : undefined,
       },
@@ -494,14 +493,106 @@ export class AgreementsService {
       id,
       userId,
       'APPROVED',
-      'Approved by Finance; payment plan locked and ledger contract created',
+      'Approved by Finance; payment plan locked. Ledger materializes on signed-agreement upload.',
       null,
-      { serviceContractId } as unknown as Prisma.InputJsonValue,
+      null,
     );
     await this.notifyAuthor(a.createdByUserId, 'approved', {
       agreementNumber: a.agreementNumber,
       leadId: a.leadId,
     });
+    return updated;
+  }
+
+  /**
+   * Finance uploads the client's signed agreement → materialises the
+   * ServiceContract + Installments NOW (signedDate = today), stores the
+   * signed PDF on the contract, and marks the agreement SIGNED. This is the
+   * moment the **ledger** starts existing — before this, the agreement is
+   * just a finance-approved proposal awaiting the client's signature.
+   *
+   * Backward-compat: agreements approved before this fix already have a
+   * ServiceContract row; in that case we attach the signed PDF onto the
+   * existing contract instead of creating a duplicate.
+   */
+  async uploadSignedAgreement(
+    agreementId: string,
+    file: { buffer: Buffer; mimetype: string; originalname: string; size: number },
+    userId: string,
+  ) {
+    if (!file?.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Signed agreement file is required');
+    }
+    const allowedMime = new Set([
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/webp',
+    ]);
+    if (!allowedMime.has(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported file type: ${file.mimetype}. Use PDF or image (PNG/JPEG/WebP).`,
+      );
+    }
+
+    const a = await this.prisma.agreement.findFirst({ where: { id: agreementId, deletedAt: null } });
+    if (!a) throw new NotFoundException('Agreement not found');
+    const uploadable: AgreementStatus[] = [
+      AgreementStatus.APPROVED,
+      AgreementStatus.SENT,
+      AgreementStatus.SIGNED,
+    ];
+    if (!uploadable.includes(a.status)) {
+      throw new ConflictException(
+        `Cannot upload a signed copy from status ${a.status} — approve the agreement first.`,
+      );
+    }
+
+    // Materialise the ledger NOW (or reuse the legacy one if it already
+    // exists from the old approve-time flow).
+    const plan = (a.paymentPlan as AgreementPlanData) ?? {};
+    const serviceContractId =
+      a.serviceContractId ?? (await this.materializeServiceContract(a, plan, userId));
+
+    const uploaded = await this.storage.upload(
+      file.buffer,
+      file.mimetype,
+      'service-contracts',
+      file.originalname,
+    );
+
+    const now = new Date();
+    await this.prisma.serviceContract.update({
+      where: { id: serviceContractId },
+      data: {
+        agreementKey: uploaded.key,
+        agreementFileName: file.originalname,
+        agreementMimeType: file.mimetype,
+        agreementSizeBytes: file.size,
+        signedDate: now,
+        status: ServiceContractStatus.ACTIVE,
+      },
+    });
+
+    const updated = await this.prisma.agreement.update({
+      where: { id: agreementId },
+      data: {
+        status: AgreementStatus.SIGNED,
+        signedAt: now,
+        serviceContractId,
+      },
+    });
+
+    await this.recordEvent(
+      agreementId,
+      userId,
+      'SIGNED',
+      'Signed agreement uploaded by Finance; ledger materialised.',
+      null,
+      { serviceContractId } as unknown as Prisma.InputJsonValue,
+    );
+
     return updated;
   }
 
@@ -599,6 +690,15 @@ export class AgreementsService {
     return { url: await this.storage.getSignedUrl(a.generatedPdfKey) };
   }
 
+  /**
+   * Creates the ServiceContract + Installments from the agreement's locked
+   * plan. Called the moment the signed agreement lands (from
+   * `uploadSignedAgreement`) — never at approval time. Trigger-based
+   * milestones without a real due date fall back to `signedDate` as a
+   * placeholder; the receipt renderer detects same-day collisions with the
+   * contract's signedDate and prints "—" so the client never sees a
+   * fabricated date.
+   */
   private async materializeServiceContract(
     a: {
       leadId: string;
@@ -611,7 +711,7 @@ export class AgreementsService {
     userId: string,
   ): Promise<string> {
     const net = Number(a.totalAmount.toString());
-    const approvalDate = new Date();
+    const signedDate = new Date();
     let rows = plan.installments ?? [];
     if (rows.length === 0) {
       rows = [{ sequence: 1, stage: 'Full payment', amount: net, trigger: null, dueDate: null }];
@@ -624,14 +724,14 @@ export class AgreementsService {
         clientId: a.clientId ?? undefined,
         totalAmount: a.totalAmount,
         currency: a.currency,
-        signedDate: approvalDate,
+        signedDate,
         status: ServiceContractStatus.ACTIVE,
-        notes: `Auto-created from agreement ${a.agreementNumber}`,
+        notes: `Materialised on signature from agreement ${a.agreementNumber}`,
         createdByUserId: userId,
         installments: {
           create: rows.map((i, idx) => ({
             sequence: i.sequence ?? idx + 1,
-            dueDate: i.dueDate ? new Date(i.dueDate) : approvalDate,
+            dueDate: i.dueDate ? new Date(i.dueDate) : signedDate,
             amount: i.amount ?? 0,
             description:
               (i.stage ?? `Stage ${idx + 1}`) + (i.trigger ? ` — ${i.trigger}` : ''),

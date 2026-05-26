@@ -35,6 +35,28 @@ export interface ReceiptPdfInput {
     paidAmount: string;
     currency: string;
   };
+  /**
+   * Engagement-level account view (whole agreement / contract). When present
+   * the receipt shows the full client balance instead of just this invoice —
+   * so the client sees total fee, paid to date across all installments, and
+   * what's still owed. Falls back to the per-invoice figures if omitted.
+   */
+  account?: {
+    totalFee: number;
+    totalPaid: number;
+    remaining: number;
+    installmentsPaid: number;
+    installmentsTotal: number;
+    currency: string;
+  };
+  /** Unpaid / upcoming installments so the client sees what's still due and when. */
+  upcomingInstallments?: Array<{
+    sequence: number;
+    description: string | null;
+    dueDate: Date | null;
+    amount: number;
+    status: 'PENDING' | 'PARTIALLY_PAID';
+  }>;
   notes: string | null;
   issuedBy: {
     name: string;
@@ -68,10 +90,28 @@ export class ReceiptPdfService {
   }
 
   private buildHtml(input: ReceiptPdfInput): string {
-    const total = Number(input.invoice.totalAmount);
-    const paid = Number(input.invoice.paidAmount);
-    const remaining = Math.max(0, total - paid);
-    const fullyPaid = remaining < 0.005;
+    // Prefer the engagement view (total fee / total paid across all
+    // installments / remaining balance). Fall back to this invoice's
+    // figures only when we have no wider context (one-off invoice, no
+    // service contract behind it).
+    const account = input.account ?? {
+      totalFee: Number(input.invoice.totalAmount),
+      totalPaid: Number(input.invoice.paidAmount),
+      remaining: Math.max(0, Number(input.invoice.totalAmount) - Number(input.invoice.paidAmount)),
+      installmentsPaid: 0,
+      installmentsTotal: 0,
+      currency: input.invoice.currency,
+    };
+    const fullyPaid = account.remaining < 0.005;
+    const upcoming = input.upcomingInstallments ?? [];
+
+    // Strip the internal "Created from finance handover <uuid>" annotation —
+    // it's an audit breadcrumb for our team, never something a client should
+    // see on their official receipt.
+    const cleanNotes = (input.notes ?? '')
+      .replace(/Created from finance handover\s+[^\s]+\s*/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
 
     // The big headline amount is what the client actually paid, in the currency
     // they paid in. When that's not CAD, show the CAD equivalent beneath.
@@ -109,6 +149,9 @@ export class ReceiptPdfService {
   .grid{display:flex;gap:24px;margin-top:10px;}
   .grid .col{flex:1;}
   .inv{width:100%;border-collapse:collapse;margin-top:6px;}
+  .up{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;}
+  .up th{text-align:left;padding:6px 8px;background:#f1f5f9;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;}
+  .up td{padding:6px 8px;color:#0f172a;border-bottom:1px solid #f1f5f9;}
   .balance{margin-top:12px;background:${fullyPaid ? '#ecfdf5' : '#fff7ed'};border:1px solid ${fullyPaid ? '#a7f3d0' : '#fed7aa'};
            border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;}
   .balance .bl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;}
@@ -156,18 +199,45 @@ export class ReceiptPdfService {
   </div>
 
   <div class="section">
-    <div class="label">Applied against invoice (CAD)</div>
+    <div class="label">Your account (${this.esc(account.currency)})</div>
     <table class="inv">
-      ${detailRow('Invoice total', `${this.esc(input.invoice.currency)} ${this.money(input.invoice.totalAmount)}`)}
-      ${detailRow('Paid to date', `${this.esc(input.invoice.currency)} ${this.money(input.invoice.paidAmount)}`, true)}
+      ${detailRow('Total agreement fee', `${this.esc(account.currency)} ${this.money(String(account.totalFee))}`)}
+      ${detailRow('Paid to date (all payments)', `${this.esc(account.currency)} ${this.money(String(account.totalPaid))}`, true)}
+      ${account.installmentsTotal > 0 ? detailRow('Installments paid', `${account.installmentsPaid} of ${account.installmentsTotal}`) : ''}
     </table>
     <div class="balance">
       <div class="bl">Balance remaining</div>
-      <div class="bv">${fullyPaid ? 'NIL — PAID IN FULL' : `${this.esc(input.invoice.currency)} ${this.money(String(remaining))}`}</div>
+      <div class="bv">${fullyPaid ? 'NIL — PAID IN FULL' : `${this.esc(account.currency)} ${this.money(String(account.remaining))}`}</div>
     </div>
   </div>
 
-  ${input.notes ? `<div class="notes"><strong>Notes:</strong> ${this.esc(input.notes)}</div>` : ''}
+  ${upcoming.length > 0 ? `
+  <div class="section">
+    <div class="label">Upcoming payments</div>
+    <table class="up">
+      <thead>
+        <tr><th>#</th><th>Stage</th><th>Due</th><th style="text-align:right;">Amount</th></tr>
+      </thead>
+      <tbody>
+        ${upcoming
+          .map(
+            (i) => `<tr>
+            <td>${i.sequence}</td>
+            <td>${this.esc(i.description ?? '—')}</td>
+            <td>${i.dueDate ? this.esc(this.formatDateShort(i.dueDate)) : '—'}</td>
+            <td style="text-align:right;font-weight:600;">${this.esc(account.currency)} ${this.money(String(i.amount))}${
+              i.status === 'PARTIALLY_PAID'
+                ? ' <span style="color:#b45309;font-weight:500;font-size:10px;">(partial)</span>'
+                : ''
+            }</td>
+          </tr>`,
+          )
+          .join('')}
+      </tbody>
+    </table>
+  </div>` : ''}
+
+  ${cleanNotes ? `<div class="notes"><strong>Notes:</strong> ${this.esc(cleanNotes)}</div>` : ''}
 
   <div class="issued">
     Issued by ${this.esc(input.issuedBy.name)} (${this.esc(input.issuedBy.role)}).
@@ -184,6 +254,14 @@ export class ReceiptPdfService {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
+    });
+  }
+
+  private formatDateShort(date: Date): string {
+    return date.toLocaleDateString('en-GB', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
     });
   }
 

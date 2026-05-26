@@ -1443,6 +1443,19 @@ export class FinanceService {
       },
     });
 
+    // Engagement-level totals + upcoming installments for the client-facing
+    // receipt (so it shows "owes 3000 of 8000, next installment Aug 1" not
+    // just "this invoice paid in full").
+    const acctCtx = await this.computeReceiptAccountContext(
+      payment.invoice.leadId,
+      payment.invoice.clientId,
+      {
+        totalAmount: payment.invoice.totalAmount,
+        paidAmount: payment.invoice.paidAmount,
+        currency: payment.invoice.currency,
+      },
+    );
+
     // Render + upload PDF; persist the storage key. Failures are logged
     // and the Receipt row keeps pdfStorageKey=NULL so the download
     // endpoint can retry on demand.
@@ -1469,6 +1482,8 @@ export class FinanceService {
           paidAmount: payment.invoice.paidAmount.toString(),
           currency: payment.invoice.currency,
         },
+        account: acctCtx.account,
+        upcomingInstallments: acctCtx.upcomingInstallments,
         notes: payment.notes,
         issuedBy: {
           name: 'Finance Officer',
@@ -1486,6 +1501,111 @@ export class FinanceService {
       );
       return created;
     }
+  }
+
+  /**
+   * Compute the engagement-level "account" view for a receipt: total
+   * agreement fee, total paid across all this lead/client's invoices, the
+   * remaining balance, and the list of upcoming (unpaid) installments. The
+   * receipt PDF uses this so the client sees the WHOLE picture instead of
+   * just the one invoice this payment settled.
+   *
+   * Falls back to per-invoice figures when there's no service contract
+   * (e.g. a one-off direct invoice with no signed agreement behind it).
+   */
+  private async computeReceiptAccountContext(
+    leadId: string | null,
+    clientId: string | null,
+    fallback: { totalAmount: Prisma.Decimal | string; paidAmount: Prisma.Decimal | string; currency: string },
+  ): Promise<{
+    account: {
+      totalFee: number;
+      totalPaid: number;
+      remaining: number;
+      installmentsPaid: number;
+      installmentsTotal: number;
+      currency: string;
+    };
+    upcomingInstallments: Array<{
+      sequence: number;
+      description: string | null;
+      dueDate: Date | null;
+      amount: number;
+      status: 'PENDING' | 'PARTIALLY_PAID';
+    }>;
+  }> {
+    const num = (d: Prisma.Decimal | number | string | null | undefined): number =>
+      d == null ? 0 : Number(d.toString());
+
+    // Plain shape both Prisma.ServiceContractWhereInput['OR'] and
+    // Prisma.InvoiceWhereInput['OR'] accept (each has leadId/clientId fields).
+    const ownerOr: Array<{ leadId?: string; clientId?: string }> = [];
+    if (leadId) ownerOr.push({ leadId });
+    if (clientId) ownerOr.push({ clientId });
+
+    const fallbackAccount = (totalPaid: number) => ({
+      totalFee: num(fallback.totalAmount),
+      totalPaid,
+      remaining: Math.max(0, num(fallback.totalAmount) - totalPaid),
+      installmentsPaid: 0,
+      installmentsTotal: 0,
+      currency: fallback.currency,
+    });
+
+    if (ownerOr.length === 0) {
+      return { account: fallbackAccount(num(fallback.paidAmount)), upcomingInstallments: [] };
+    }
+
+    const [contract, invoices] = await Promise.all([
+      this.prisma.serviceContract.findFirst({
+        where: { OR: ownerOr, deletedAt: null },
+        include: { installments: { orderBy: { sequence: 'asc' } } },
+      }),
+      this.prisma.invoice.findMany({
+        where: { OR: ownerOr, deletedAt: null },
+        select: { paidAmount: true },
+      }),
+    ]);
+
+    const totalPaid = invoices.reduce((s, i) => s + num(i.paidAmount), 0);
+
+    if (!contract) {
+      return { account: fallbackAccount(totalPaid), upcomingInstallments: [] };
+    }
+
+    const totalFee = num(contract.totalAmount);
+    const remaining = Math.max(0, totalFee - totalPaid);
+
+    // AR waterfall: allocate total paid across installments in sequence order.
+    let pool = totalPaid;
+    const installments = contract.installments.map((i) => {
+      const amount = num(i.amount);
+      const covered = Math.max(0, Math.min(pool, amount));
+      pool -= covered;
+      const fullyPaid = amount > 0 && covered >= amount - 0.005;
+      const status: 'PAID' | 'PARTIALLY_PAID' | 'PENDING' = fullyPaid
+        ? 'PAID'
+        : covered > 0
+          ? 'PARTIALLY_PAID'
+          : 'PENDING';
+      return { sequence: i.sequence, description: i.description, dueDate: i.dueDate, amount, status };
+    });
+    const installmentsPaid = installments.filter((i) => i.status === 'PAID').length;
+    const upcoming = installments
+      .filter((i) => i.status !== 'PAID')
+      .map(({ status, ...rest }) => ({ ...rest, status: status as 'PENDING' | 'PARTIALLY_PAID' }));
+
+    return {
+      account: {
+        totalFee,
+        totalPaid,
+        remaining,
+        installmentsPaid,
+        installmentsTotal: contract.installments.length,
+        currency: contract.currency,
+      },
+      upcomingInstallments: upcoming,
+    };
   }
 
   /**
@@ -1518,6 +1638,15 @@ export class FinanceService {
         ? `${lead.firstName} ${lead.lastName}`.trim()
         : 'Unknown customer';
 
+    const acctCtx = await this.computeReceiptAccountContext(
+      receipt.payment.invoice.leadId,
+      receipt.payment.invoice.clientId,
+      {
+        totalAmount: receipt.payment.invoice.totalAmount,
+        paidAmount: receipt.payment.invoice.paidAmount,
+        currency: receipt.payment.invoice.currency,
+      },
+    );
     const upload = await this.receiptPdfService.renderAndStore({
       receiptNumber: receipt.receiptNumber,
       issuedAt: receipt.issuedAt,
@@ -1540,6 +1669,8 @@ export class FinanceService {
         paidAmount: receipt.payment.invoice.paidAmount.toString(),
         currency: receipt.payment.invoice.currency,
       },
+      account: acctCtx.account,
+      upcomingInstallments: acctCtx.upcomingInstallments,
       notes: receipt.payment.notes,
       issuedBy: { name: 'Finance Officer', role: 'Finance' },
     });

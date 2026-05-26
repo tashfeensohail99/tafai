@@ -43,7 +43,7 @@ export class FinanceProfileService {
       ? [{ leadId }, { clientId }]
       : [{ leadId }];
 
-    const [agreement, contract, invoices, payments, receipts, handovers, processingCase, expenses] = await Promise.all([
+    const [agreement, contract, invoices, payments, receipts, handovers, processingCase, expenses, realProcessingCase] = await Promise.all([
       this.prisma.agreement.findFirst({
         where: { leadId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -114,6 +114,13 @@ export class FinanceProfileService {
           createdAt: true,
         },
       }),
+      // Real ProcessingCase row (the operational entity the processing team
+      // works on) — used to decide whether finance's "Send to Processing"
+      // button should still be available or has already been pressed.
+      this.prisma.processingCase.findFirst({
+        where: { leadId },
+        select: { id: true, stage: true, status: true },
+      }),
     ]);
 
     const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
@@ -154,6 +161,24 @@ export class FinanceProfileService {
     // Only absorbed expenses reduce margin.
     const billableExpenses = expenses.filter((e) => e.billable).reduce((s, e) => s + expBase(e), 0);
     const absorbedExpenses = totalExpenses - billableExpenses;
+
+    // "Send to Processing" gate — finance manually hands the file over after
+    // they've verified payment. The button on the customer profile stays grey
+    // until a PAYMENT_VERIFIED handover exists, and disappears once a real
+    // ProcessingCase row is on file (so we can't double-send).
+    const verifiedReadyHandover = handovers.find(
+      (h) => h.status === FinanceHandoverStatus.PAYMENT_VERIFIED,
+    );
+    const sendToProcessing = {
+      ready: !!verifiedReadyHandover && !realProcessingCase,
+      handoverId: verifiedReadyHandover?.id ?? null,
+      alreadySent: !!realProcessingCase,
+      reason: realProcessingCase
+        ? 'Already in processing.'
+        : !verifiedReadyHandover
+          ? 'Verify a payment first to enable.'
+          : null,
+    };
 
     return {
       lead: {
@@ -249,6 +274,7 @@ export class FinanceProfileService {
             slaStatus: '',
           }
         : null,
+      sendToProcessing,
       expenses: expenses.map((e) => ({
         id: e.id,
         category: e.category,

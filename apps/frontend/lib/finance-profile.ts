@@ -80,6 +80,19 @@ export interface FinanceCustomerProfile {
   receipts: Array<{ id: string; receiptNumber: string; amount: number; currency: string; issuedAt: string }>;
   handovers: Array<{ id: string; status: string; amount: number; currency: string; verified: boolean; receiptFileName: string | null; submittedAt: string; reviewedAt: string | null }>;
   processingCase: { id: string; stage: string; service: string; targetCountry: string; slaStatus: string } | null;
+  /**
+   * Whether the "Send to Processing" handover button is currently actionable.
+   * `ready` flips true after a payment is verified (a PAYMENT_VERIFIED
+   * handover exists) and the file hasn't already been handed off. `alreadySent`
+   * means a ProcessingCase is already open — show a passive badge instead of
+   * the button. `reason` is the hover/tooltip when the button is disabled.
+   */
+  sendToProcessing: {
+    ready: boolean;
+    handoverId: string | null;
+    alreadySent: boolean;
+    reason: string | null;
+  };
   expenses: FinanceProfileExpense[];
   totals: { fee: number; paid: number; outstanding: number; currency: string; installmentsPaid: number; installmentsTotal: number; expenses: number; billableExpenses: number; absorbedExpenses: number; margin: number };
 }
@@ -191,6 +204,26 @@ export function deleteExpense(id: string): Promise<{ id: string; deleted: boolea
 /** Signed URL to download an expense's attached receipt. */
 export function getExpenseReceiptUrl(id: string): Promise<{ url: string; fileName: string }> {
   return apiFetch<{ url: string; fileName: string }>(`/finance/expenses/${id}/receipt-url`, {
+    cache: 'no-store',
+  });
+}
+
+// ─── Send to Processing (finance → processing handover) ───────────────────
+
+/**
+ * Finance manually hands a customer's file over to the Processing team after
+ * verifying payment. Posts to /processing/intake which opens a ProcessingCase,
+ * converts the lead → client (if not already), and marks the FinanceHandover
+ * as SENT_TO_PROCESSING so the customer profile flips into "already sent".
+ */
+export function sendCaseToProcessing(payload: {
+  financeHandoverId: string;
+  priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+  financeHandoverNote?: string;
+}): Promise<{ id: string }> {
+  return apiFetch<{ id: string }>('/processing/intake', {
+    method: 'POST',
+    body: JSON.stringify(payload),
     cache: 'no-store',
   });
 }

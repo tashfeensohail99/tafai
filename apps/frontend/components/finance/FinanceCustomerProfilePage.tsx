@@ -37,6 +37,7 @@ import {
   getContractAgreementUrl,
   getExpenseReceiptUrl,
   recordCustomerPayment,
+  sendCaseToProcessing,
   uploadSignedAgreement,
   type ExpenseCategory,
   type FinanceCustomerProfile,
@@ -400,6 +401,27 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     }
   };
 
+  // Finance manually hands the file over to Processing once payment has been
+  // verified. The button only fires when `sendToProcessing.ready` is true (a
+  // PAYMENT_VERIFIED handover exists and no ProcessingCase has been opened
+  // yet) — disabled otherwise so it visibly "turns on" the moment the payment
+  // verification step completes.
+  const handleSendToProcessing = async () => {
+    if (!data?.sendToProcessing.handoverId) return;
+    setBusy('to-processing');
+    setError(null);
+    setNotice(null);
+    try {
+      await sendCaseToProcessing({ financeHandoverId: data.sendToProcessing.handoverId });
+      setNotice('Sent to Processing — the case is now in the processing queue.');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not hand the file over to Processing');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const handleAddExpense = async () => {
     if (!data) return;
     if (!expDesc.trim()) { setError('Add a short description for the expense.'); return; }
@@ -484,11 +506,27 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
         title={name}
         description={`${lead.serviceInterest ?? 'Service —'} · ${lead.targetCountry ?? 'Country —'}`}
         actions={
-          <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <StatusBadge tone={tone(lead.status)} dot>{label(lead.status)}</StatusBadge>
             {data.processingCase ? (
               <StatusBadge tone="violet" dot>In processing · {label(data.processingCase.stage)}</StatusBadge>
             ) : null}
+            {/* "Send to Processing" — the manual handover finance triggers
+                once payment has been verified. Stays disabled (greyed)
+                until `ready` flips to true; disappears once the file is
+                already in Processing (the badge above takes over). */}
+            {data.sendToProcessing.alreadySent ? null : (
+              <span title={data.sendToProcessing.reason ?? 'Send this file to Processing'}>
+                <PrimaryButton
+                  size="sm"
+                  iconLeft={busy === 'to-processing' ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={14} />}
+                  onClick={() => void handleSendToProcessing()}
+                  disabled={!data.sendToProcessing.ready || busy !== null}
+                >
+                  {busy === 'to-processing' ? 'Sending…' : 'Send to Processing'}
+                </PrimaryButton>
+              </span>
+            )}
           </span>
         }
       />

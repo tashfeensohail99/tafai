@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { IsIn, IsOptional, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
@@ -6,6 +8,7 @@ import { RequirePermissions } from '../../common/decorators/require-permissions.
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { KnowledgeService } from './knowledge.service';
 import { OrchestratorService } from './orchestrator.service';
+import { WHATSAPP_QUEUE, type AiReplyJob } from '../whatsapp/queues/queue-contracts';
 
 class TestQueryDto {
   @IsString()
@@ -35,6 +38,8 @@ export class AiAdminController {
     private readonly prisma: PrismaService,
     private readonly knowledge: KnowledgeService,
     private readonly orchestrator: OrchestratorService,
+    @InjectQueue(WHATSAPP_QUEUE.AI_REPLY)
+    private readonly aiReplyQueue: Queue<AiReplyJob>,
   ) {}
 
   /** Status + recent activity summary. */
@@ -93,5 +98,121 @@ export class AiAdminController {
   async dryRun(@Body() dto: TestQueryDto) {
     const matches = await this.knowledge.search(dto.query, 5);
     return { topMatches: matches };
+  }
+
+  /**
+   * Backfill: enqueue an AI-reply job for every thread that has an open
+   * 24-hour window AND a pending unanswered customer message AND is not a
+   * paid client / human-active / explicitly AI-disabled. The AiReplyProcessor
+   * applies all the same per-thread guards before composing, so this is
+   * idempotent + safe to re-run — duplicates are caught by the unique
+   * `ai.runs.inboundMessageId` constraint.
+   *
+   * "Unanswered" = thread.responseDeadlineAt IS NOT NULL (the existing
+   * agent-turn clock). Cleared automatically when an agent replies, so this
+   * filter only picks up threads waiting on us.
+   *
+   * Jobs are staggered with a small per-message delay so we don't burst N
+   * OpenAI calls into the rate limiter all at once.
+   */
+  @Post('backfill-open-window')
+  async backfillOpenWindow() {
+    const now = new Date();
+
+    // 1) Threads with open window + agent-turn clock running + AI not locked
+    //    out by a recent human send. The orchestrator re-checks every guard
+    //    at fire-time, so this list can be permissive.
+    const threads = await this.prisma.whatsAppThread.findMany({
+      where: {
+        status: 'OPEN',
+        aiEnabled: true,
+        windowExpiresAt: { gt: now },
+        responseDeadlineAt: { not: null },
+        OR: [
+          { aiDisabledAt: null },
+          { aiDisabledAt: { lt: new Date(now.getTime() - 4 * 60 * 60 * 1000) } },
+        ],
+        // Skip threads already linked to a converted client — paid clients
+        // get further filtered (processing/finance) inside the orchestrator.
+        clientId: null,
+        lead: { is: { convertedClientId: null, deletedAt: null } },
+      },
+      select: { id: true, leadId: true },
+    });
+
+    let enqueued = 0;
+    const skipped: Record<string, number> = {};
+    const bump = (k: string) => (skipped[k] = (skipped[k] ?? 0) + 1);
+
+    for (const thread of threads) {
+      // 2) Latest INBOUND text message on this thread — the one we'd answer.
+      const latestInbound = await this.prisma.whatsAppMessage.findFirst({
+        where: { threadId: thread.id, direction: 'INBOUND', type: 'TEXT' },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, createdAt: true, body: true },
+      });
+      if (!latestInbound || !(latestInbound.body ?? '').trim()) {
+        bump('no-text-inbound');
+        continue;
+      }
+
+      // 3) If a human OUTBOUND landed after that latest inbound → human
+      //    already replied, skip.
+      const humanReplyAfter = await this.prisma.whatsAppMessage.findFirst({
+        where: {
+          threadId: thread.id,
+          direction: 'OUTBOUND',
+          sentByEmployeeId: { not: null },
+          createdAt: { gt: latestInbound.createdAt },
+        },
+        select: { id: true },
+      });
+      if (humanReplyAfter) {
+        bump('human-already-replied');
+        continue;
+      }
+
+      // 4) Already processed by AI (any mode)? Skip — unique constraint on
+      //    ai.runs.inboundMessageId would block the duplicate anyway.
+      const existingRun = await this.prisma.aiRun.findUnique({
+        where: { inboundMessageId: latestInbound.id },
+        select: { id: true },
+      });
+      if (existingRun) {
+        bump('already-processed');
+        continue;
+      }
+
+      // 5) Paid client gate (processing or finance) is checked inside the
+      //    orchestrator at fire-time, so we don't pre-filter here.
+
+      await this.aiReplyQueue.add(
+        'reply',
+        {
+          inboundMessageId: latestInbound.id,
+          threadId: thread.id,
+          body: latestInbound.body!,
+        },
+        {
+          jobId: `ai-${latestInbound.id}`,
+          // Small stagger so 100 backfills don't fire 100 OpenAI calls in 1s.
+          delay: 2_000 + enqueued * 1_500,
+          attempts: 2,
+          removeOnComplete: { age: 3600, count: 500 },
+          removeOnFail: { age: 24 * 3600, count: 500 },
+        },
+      );
+      enqueued++;
+    }
+
+    return {
+      scanned: threads.length,
+      enqueued,
+      skipped,
+      note:
+        'Jobs are staggered with a 1.5s gap to stay under OpenAI rate limits. ' +
+        'Each job re-checks every guard at fire-time (paid client, human-active, ' +
+        'aiDisabled, newer-inbound), so ineligible threads are dropped there.',
+    };
   }
 }

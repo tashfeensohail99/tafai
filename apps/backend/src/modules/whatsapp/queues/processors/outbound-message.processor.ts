@@ -103,6 +103,22 @@ export class OutboundMessageProcessor extends WorkerHost {
         },
       });
 
+      // 1a) Bump the thread's denormalized lastMessage* fields so the inbox
+      //     sidebar re-sorts and the chat preview updates. Without this the
+      //     left-side list keeps showing the customer's last inbound as the
+      //     thread preview even after we replied (visible bug observed both
+      //     with bot replies and human sends). Mirrors the inbound update
+      //     in webhook-ingest. We DO NOT touch unreadCount here — outbound
+      //     messages don't make the conversation "unread for the agent".
+      const preview = previewOfOutbound(message);
+      await this.prisma.whatsAppThread.update({
+        where: { id: message.threadId },
+        data: {
+          lastMessageAt: now,
+          lastMessagePreview: preview,
+        },
+      });
+
       // 1b) Rolling Response-SLA resolution. A genuine agent reply closes the
       //     current pending window: stamp Met or Breached, move the assigned
       //     agent's tally, and clear the clock so the next customer message
@@ -311,5 +327,26 @@ export class OutboundMessageProcessor extends WorkerHost {
       default:
         throw new Error(`Unsupported outbound type: ${message.type}`);
     }
+  }
+}
+
+/**
+ * Inbox-sidebar preview for an outbound message. Matches the shape used by
+ * the inbound preview in webhook-ingest.processor — body text trimmed to ~140
+ * chars, or a "[media]" placeholder when there's no body (e.g. a voice note
+ * sent without a caption). Returns null for genuinely empty messages so the
+ * sidebar keeps whatever was there before instead of going blank.
+ */
+function previewOfOutbound(message: { body: string | null; type: string }): string | null {
+  const body = (message.body ?? '').trim();
+  if (body) return body.slice(0, 140);
+  switch (message.type) {
+    case 'IMAGE': return '[image]';
+    case 'VIDEO': return '[video]';
+    case 'AUDIO': return '[voice]';
+    case 'DOCUMENT': return '[document]';
+    case 'STICKER': return '[sticker]';
+    case 'TEMPLATE': return '[template]';
+    default: return null;
   }
 }

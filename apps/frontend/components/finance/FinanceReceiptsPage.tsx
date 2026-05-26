@@ -69,18 +69,24 @@ export function FinanceReceiptsPage() {
     // Open the tab SYNCHRONOUSLY in the click handler so we keep the user
     // gesture — calling window.open after an `await` is silently blocked by
     // most browsers' pop-up rules. We then navigate the just-opened tab.
-    // (NOTE: no `noopener` here — that would sever the opener and prevent
-    // us from setting tab.location.href below.)
     const tab = window.open('about:blank', '_blank');
     setDownloading(id);
     setError(null);
     try {
       const { url } = await getReceiptDownloadUrl(id);
+      // Supabase Storage attaches `Content-Security-Policy: sandbox` to signed
+      // URLs, which makes Chrome refuse to render the PDF inline (blank tab).
+      // Fetch the bytes ourselves and open a same-origin blob: URL instead.
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Storage returned HTTP ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
       if (tab && !tab.closed) {
-        tab.location.href = url;
+        tab.location.href = blobUrl;
       } else {
-        window.location.href = url;
+        window.location.href = blobUrl;
       }
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
     } catch (e) {
       if (tab && !tab.closed) tab.close();
       setError(e instanceof Error ? e.message : 'Could not open receipt');

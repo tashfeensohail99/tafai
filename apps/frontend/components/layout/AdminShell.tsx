@@ -11,6 +11,7 @@ import {
   FileText,
   Flag,
   Handshake,
+  Key,
   LayoutDashboard,
   LogOut,
   MapPinned,
@@ -113,6 +114,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'Presence Report', href: '/admin/settings/whatsapp/presence-report', icon: ClipboardList, caption: 'Away/Offline accountability', permissionKey: 'whatsapp.view_all_inboxes' },
       { label: 'Agreement Templates', href: '/admin/settings/agreements', icon: FileText, caption: 'Service agreement drafts', permissionKey: 'settings.manage' },
       { label: 'Integrations', href: '/admin/settings/integrations', icon: Plug2, caption: 'Meta API & external keys', permissionKey: 'settings.manage' },
+      { label: 'API Keys', href: '/admin/settings/api-keys', icon: Key, caption: 'OpenAI & future providers', permissionKey: 'settings.manage' },
       { label: 'Finance maintenance', href: '/admin/settings/finance', icon: Wrench, caption: 'Orphan cleanup & finance tools', permissionKey: 'settings.manage' },
     ],
   },
@@ -145,6 +147,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/settings/whatsapp/hours')) return { title: 'WhatsApp Hours & SLA', subtitle: 'Working hours + SLA' };
   if (pathname.startsWith('/admin/settings/whatsapp/team')) return { title: 'WhatsApp Team', subtitle: 'Inbox roster' };
   if (pathname.startsWith('/admin/settings/integrations')) return { title: 'Integrations', subtitle: 'External API credentials' };
+  if (pathname.startsWith('/admin/settings/api-keys')) return { title: 'API Keys', subtitle: 'Third-party secrets (OpenAI etc.)' };
   if (pathname.startsWith('/admin/settings/finance')) return { title: 'Finance maintenance', subtitle: 'Orphan cleanup & finance tools' };
   return { title: 'Admin', subtitle: '' };
 }

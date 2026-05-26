@@ -40,6 +40,8 @@ import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { EmailModule } from './modules/email/email.module';
 import { PdfModule } from './modules/pdf/pdf.module';
 import { AgreementsModule } from './modules/agreements/agreements.module';
+import { ApiKeysModule } from './modules/api-keys/api-keys.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -90,6 +92,8 @@ import { AgreementsModule } from './modules/agreements/agreements.module';
     EmailModule,
     PdfModule,
     AgreementsModule,
+    ApiKeysModule,
+    AiModule,
   ],
   providers: [
     // Global: keep Employee.lastActivityAt fresh on every authenticated request

@@ -482,11 +482,55 @@ model Organization {
   afterHoursTemplate      String?
   afterHoursTemplateLang  String? @default("en")
 
+  // --- AI WhatsApp bot ------------------------------------------------------
+  // When set, the AI orchestrator only fires for messages received AFTER this
+  // moment. Lets ops flip the bot on for a future Monday (e.g. 2026-06-01) so
+  // we can ingest data + smoke-test the admin UI before any client sees a
+  // robotic reply. Null disables the bot entirely.
+  botEnabledAt            DateTime?
+  // Mode override. When AUTO (default): obeys the auto/shadow split based on
+  // business hours + active-agent presence. When SHADOW_ONLY: never sends
+  // automatically, only writes AI suggestions for human use. When DISABLED:
+  // bot is off regardless of botEnabledAt.
+  botMode                 String @default("AUTO")
+
   branches    Branch[]
   departments Department[]
   partners    Partner[]
+  apiKeys     ApiKey[]
 
   @@map("organizations")
+  @@schema("core")
+}
+
+/// Encrypted third-party API keys (OpenAI, future providers) managed via the
+/// admin "API Keys" tab. Single source of truth — consumers fetch the active
+/// key for their provider at call time so rotation just works. Plaintext key
+/// is **never** stored: `keyEnc` holds AES-256-GCM ciphertext using the
+/// existing WHATSAPP_ENCRYPTION_KEY env. `keyTail` keeps the last 4 chars in
+/// plain text so the admin UI can render a masked preview without having to
+/// decrypt.
+model ApiKey {
+  id              String   @id @default(uuid())
+  organizationId  String
+  provider        String   // 'openai' | (future: 'anthropic' | 'gemini' | …)
+  label           String   // human-friendly name e.g. "Production OpenAI"
+  keyEnc          String   // AES-256-GCM ciphertext of the secret
+  keyTail         String   // last 4 chars for "sk-…AbCd" UI preview
+  isActive        Boolean  @default(true)
+  lastUsedAt      DateTime?
+  lastTestedAt    DateTime?
+  lastTestOk      Boolean?
+  lastTestError   String?
+  createdAt       DateTime @default(now())
+  createdByUserId String?
+  updatedAt       DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, provider, label])
+  @@index([organizationId, provider, isActive])
+  @@map("api_keys")
   @@schema("core")
 }
 
@@ -2897,4 +2941,87 @@ model WhatsAppWebhookEvent {
   @@index([processedAt])
   @@map("webhook_events")
   @@schema("whatsapp")
+}
+
+// =============================================================================
+// AI / WhatsApp bot — pgvector knowledge base + suggestion + run log
+// =============================================================================
+
+/// One indexed unit of knowledge for the RAG bot. A row can be a Q&A pair
+/// (from the XLSX files) or a brochure chunk (~500 chars). `embedding` is a
+/// 1536-dim vector from OpenAI text-embedding-3-small — Prisma can't model
+/// vector types natively so we declare it `Unsupported` and access it via
+/// raw queries (see ai-knowledge.repository.ts).
+model AiKnowledge {
+  id          String                       @id @default(uuid())
+  type        String                       // 'qa' | 'brochure_chunk' | 'company_profile'
+  programKey  String?
+  queryEn     String?
+  queryUr     String?
+  answerEn    String
+  answerUr    String?
+  sourceFile  String
+  chunkIndex  Int?
+  embedding   Unsupported("vector(1536)")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type])
+  @@index([programKey])
+  @@map("knowledge")
+  @@schema("ai")
+}
+
+/// AI-composed reply waiting for a human to send (SHADOW mode). When sales
+/// hits "Use this", we transition to USED and dispatch via the existing send
+/// pipeline. EDITED + REJECTED are training signal.
+model AiSuggestion {
+  id                  String   @id @default(uuid())
+  threadId            String
+  inboundMessageId    String
+  suggestedReply      String
+  language            String                                // 'en' | 'ur_roman' | 'ur' | 'other'
+  topMatchType        String?
+  topMatchSourceFile  String?
+  topMatchSimilarity  Float?
+  retrievedDocIds     String[]
+  status              String   @default("PENDING")          // PENDING | USED | EDITED | REJECTED | EXPIRED
+  usedByUserId        String?
+  usedAt              DateTime?
+  model               String
+  inputTokens         Int?
+  outputTokens        Int?
+  latencyMs           Int?
+  createdAt           DateTime @default(now())
+
+  @@index([threadId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("suggestions")
+  @@schema("ai")
+}
+
+/// One row per inbound message the bot processed. Powers the cost dashboard
+/// + audit trail + "why didn't it reply?" forensics. Mode tells you whether
+/// we sent automatically, queued a suggestion, or skipped (with reason).
+model AiRun {
+  id                  String   @id @default(uuid())
+  threadId            String
+  inboundMessageId    String   @unique
+  mode                String                                // AUTO | SHADOW | SKIPPED
+  skipReason          String?
+  language            String?
+  model               String?
+  inputTokens         Int?
+  outputTokens        Int?
+  totalLatencyMs      Int?
+  topMatchSimilarity  Float?
+  outboundMessageId   String?
+  suggestionId        String?
+  error               String?
+  createdAt           DateTime @default(now())
+
+  @@index([threadId, createdAt(sort: Desc)])
+  @@index([mode, createdAt(sort: Desc)])
+  @@map("runs")
+  @@schema("ai")
 }

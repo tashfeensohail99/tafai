@@ -536,9 +536,14 @@ export class WebhookIngestProcessor extends WorkerHost {
     //   • AUDIO — voice notes. The AI processor pulls the rehosted audio
     //     bytes, runs Whisper, writes the transcript into message.body and
     //     hands the transcript to the orchestrator. Reply is text either way.
+    //   • IMAGE / DOCUMENT — bot doesn't try to read the file; it sends one
+    //     canned "got it, manager will review" acknowledgement and parks
+    //     the thread in HANDED_OFF so it doesn't keep replying.
     const isText = decoded.type === WAMessageType.TEXT && decoded.body && decoded.body.trim().length >= 2;
     const isAudio = decoded.type === WAMessageType.AUDIO;
-    if (isText || isAudio) {
+    const isMediaForAck =
+      decoded.type === WAMessageType.IMAGE || decoded.type === WAMessageType.DOCUMENT;
+    if (isText || isAudio || isMediaForAck) {
       try {
         await this.aiReplyQueue.add(
           'reply',

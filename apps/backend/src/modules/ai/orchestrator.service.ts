@@ -53,7 +53,7 @@ const BOT_REPLY_CEILING = 5;
  */
 const DUPLICATE_REPLY_JACCARD = 0.7;
 
-export type RunMode = 'AUTO' | 'SKIPPED';
+export type RunMode = 'AUTO' | 'SKIPPED' | 'OPT_OUT';
 
 export interface OrchestratorInput {
   threadId: string;
@@ -168,6 +168,19 @@ export class OrchestratorService {
     }
     if (thread.clientId || thread.lead?.convertedClientId) {
       return { mode: 'SKIPPED', skipReason: 'converted-client' };
+    }
+
+    // ── 3.5 Opt-out: customer asked us to stop. Send one final ack + disable
+    //    AI on this thread permanently. The processor flips thread.aiEnabled
+    //    based on mode='OPT_OUT'.
+    if (this.isOptOutIntent(input.inboundText)) {
+      const language = this.detectLanguage(input.inboundText);
+      return {
+        mode: 'OPT_OUT',
+        reply: this.optOutAcknowledgement(language),
+        language,
+        nextAiState: 'HANDED_OFF',
+      };
     }
 
     // ── 4. Debounce: only reply to the latest message in a burst ───────────
@@ -580,6 +593,55 @@ export class OrchestratorService {
       return 'Aapka sawal hum apke manager tak forward kar dete hain — kya hum aaj ya kal ek short call schedule kar lein?';
     }
     return "I'll loop in our manager for the exact details — can we schedule a short call today or tomorrow?";
+  }
+
+  /**
+   * Detect customer asking us to stop messaging. Conservative — only matches
+   * unambiguous opt-out phrases. False positives here are very bad ("I'm
+   * stopping by the office tomorrow" must NOT trigger it).
+   *
+   * Covers English, Roman Urdu, and Urdu script. Whole-word boundaries where
+   * possible.
+   */
+  private isOptOutIntent(text: string): boolean {
+    const lc = text.toLowerCase();
+
+    // English phrases (whole-word / phrase boundaries).
+    const enPhrases = [
+      /\bunsubscribe\b/,
+      /\bstop\s+(messag|sending|contact|texting|calling)/,
+      /\bdon'?t\s+(message|text|call|contact|disturb)\s+me\b/,
+      /\bdo\s+not\s+(message|text|call|contact)\s+me\b/,
+      /\bleave\s+me\s+alone\b/,
+      /\bno\s+more\s+messages\b/,
+      /\bblock\s+me\b/,
+      /\bremove\s+me\s+from\s+(your\s+)?list\b/,
+    ];
+    if (enPhrases.some((re) => re.test(lc))) return true;
+
+    // Roman Urdu opt-outs.
+    const rUrduPhrases = [
+      /\bband\s+kar(o|do|den|dein)\b/,
+      /\brok\s+(do|den|dein)\b/,
+      /\bmessage\s+(mat|na)\s+(karo|karen|bhejo|bhejen)\b/,
+      /\bpareshan\s+(mat|na)\s+(karo|karen)\b/,
+      /\btang\s+(mat|na)\s+karo\b/,
+      /\bblock\s+kar(o|do|den)\b/,
+      /\bcall\s+(mat|na)\s+(karo|karen)\b/,
+    ];
+    if (rUrduPhrases.some((re) => re.test(lc))) return true;
+
+    // Urdu script — narrower, just the most direct phrasings.
+    if (/(بند\s*کرو|روک\s*دو|پریشان\s*نہ|تنگ\s*نہ|بلاک\s*کرو|بلاک\s*کریں)/.test(text)) return true;
+
+    return false;
+  }
+
+  private optOutAcknowledgement(language: string): string {
+    if (language === 'ur_roman' || language === 'ur') {
+      return 'Theek hai. Aapka message receive hua — hum aap ko zaroorat hone par hi contact karenge. Khayal rakhein!';
+    }
+    return "Got it — we'll stop messaging you and only reach out if needed. Take care!";
   }
 
   /**

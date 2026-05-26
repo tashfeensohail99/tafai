@@ -74,6 +74,17 @@ export class AiReplyProcessor extends WorkerHost {
       });
       return;
     }
+
+    // IMAGE / DOCUMENT inbound — bot doesn't try to read the file. It just
+    // sends one canned acknowledgement so the customer knows we got it,
+    // parks the thread in HANDED_OFF, and gets out of the way so sales can
+    // review the actual content. Falls through the rest of the guards
+    // (window open, paid client, etc.) — same safety net as TEXT.
+    if (message.type === 'IMAGE' || message.type === 'DOCUMENT') {
+      await this.sendMediaAcknowledgement(threadId, inboundMessageId, message.type);
+      return;
+    }
+
     if (message.type === 'AUDIO' && (!inboundText || !inboundText.trim())) {
       // Existing body wins if we already transcribed in a previous attempt.
       if (message.body?.trim()) {
@@ -120,7 +131,9 @@ export class AiReplyProcessor extends WorkerHost {
       return;
     }
 
-    // AUTO — enqueue an outbound message via the existing send pipeline.
+    // AUTO or OPT_OUT — both want to send an outbound message. OPT_OUT
+    // additionally flips thread.aiEnabled to false so the bot stays out
+    // for good (it's the customer asking us to stop).
     const thread = await this.prisma.whatsAppThread.findUnique({
       where: { id: threadId },
       select: { id: true, channelId: true, leadId: true, clientId: true, windowExpiresAt: true },
@@ -177,7 +190,9 @@ export class AiReplyProcessor extends WorkerHost {
       data: {
         threadId,
         inboundMessageId,
-        mode: 'AUTO',
+        // OPT_OUT is logged distinctly from AUTO so the admin panel can show
+        // when a customer told us to stop.
+        mode: decision.mode === 'OPT_OUT' ? 'OPT_OUT' : 'AUTO',
         model: decision.model ?? null,
         inputTokens: decision.inputTokens ?? null,
         outputTokens: decision.outputTokens ?? null,
@@ -187,6 +202,20 @@ export class AiReplyProcessor extends WorkerHost {
       },
     });
 
+    // OPT_OUT: silence the bot on this thread permanently. The customer
+    // asked us to stop — honoring that is a regulatory + trust requirement.
+    // Sales can manually flip aiEnabled back on if needed.
+    if (decision.mode === 'OPT_OUT') {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: {
+          aiEnabled: false,
+          aiState: 'HANDED_OFF',
+        },
+      });
+      return;
+    }
+
     // Advance the funnel phase on the thread for next turn's prompt.
     if (decision.nextAiState) {
       await this.prisma.whatsAppThread.update({
@@ -194,6 +223,94 @@ export class AiReplyProcessor extends WorkerHost {
         data: { aiState: decision.nextAiState },
       });
     }
+  }
+
+  /**
+   * Send one canned acknowledgement when the customer drops an IMAGE or
+   * DOCUMENT on us. The bot doesn't try to read the file — that's the
+   * manager's job. We park the thread in HANDED_OFF afterwards so the bot
+   * doesn't keep replying turn after turn.
+   *
+   * Respects every per-thread guard via a focused mini-decide call: bot
+   * enabled, window open, not paid client, no recent human reply, AI not
+   * disabled on this thread. If any of those fail, we log SKIPPED with the
+   * orchestrator's reason and don't send anything.
+   */
+  private async sendMediaAcknowledgement(
+    threadId: string,
+    inboundMessageId: string,
+    messageType: 'IMAGE' | 'DOCUMENT',
+  ): Promise<void> {
+    // Run the orchestrator with a fake text payload purely to reuse its
+    // pre-flight guards. If it would skip, we skip the same way.
+    const fakeText = messageType === 'IMAGE' ? '[image]' : '[document]';
+    const decision = await this.orchestrator.decide({
+      threadId,
+      inboundMessageId,
+      inboundText: fakeText,
+    });
+    if (decision.mode === 'SKIPPED') {
+      await this.prisma.aiRun.create({
+        data: {
+          threadId,
+          inboundMessageId,
+          mode: 'SKIPPED',
+          skipReason: decision.skipReason ?? `media-ack-skipped`,
+        },
+      });
+      return;
+    }
+
+    // The orchestrator's compose may already produce a reasonable reply,
+    // but for media we override with a canned acknowledgement so the bot
+    // doesn't accidentally answer based on a hallucinated read of the
+    // (unread) media. Pick language from the orchestrator's detection.
+    const ack = mediaAckText(decision.language ?? 'en', messageType);
+
+    const thread = await this.prisma.whatsAppThread.findUnique({
+      where: { id: threadId },
+      select: { id: true, channelId: true, leadId: true, clientId: true, windowExpiresAt: true },
+    });
+    if (!thread) return;
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= Date.now()) {
+      await this.prisma.aiRun.create({
+        data: { threadId, inboundMessageId, mode: 'SKIPPED', skipReason: 'window-closed' },
+      });
+      return;
+    }
+
+    const outbound = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: 'OUTBOUND',
+        type: 'TEXT',
+        status: 'QUEUED',
+        body: ack,
+        sentByEmployeeId: null,
+        payload: { aiBot: true, mediaAck: true } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    await this.outboundQueue.add('send', { messageId: outbound.id }, { jobId: outbound.id });
+
+    await this.prisma.aiRun.create({
+      data: {
+        threadId,
+        inboundMessageId,
+        mode: 'AUTO',
+        model: 'canned-media-ack',
+        outboundMessageId: outbound.id,
+      },
+    });
+
+    // Park the thread so subsequent inbounds don't keep getting bot replies
+    // until a human takes over. Sales picks up from here.
+    await this.prisma.whatsAppThread.update({
+      where: { id: thread.id },
+      data: { aiState: 'HANDED_OFF' },
+    });
   }
 
   /**
@@ -247,4 +364,21 @@ export class AiReplyProcessor extends WorkerHost {
     const res = await this.openai.transcribe(bytes, `voice-${message.id}.${ext}`);
     return res?.text?.trim() || null;
   }
+}
+
+/**
+ * Canned acknowledgement text for an inbound IMAGE or DOCUMENT. Short and
+ * friendly — explicitly says a human will look at it so the customer
+ * doesn't think the bot has read their passport / salary slip.
+ */
+function mediaAckText(
+  language: string,
+  messageType: 'IMAGE' | 'DOCUMENT',
+): string {
+  const what = messageType === 'IMAGE' ? 'image' : 'document';
+  if (language === 'ur_roman' || language === 'ur') {
+    const noun = messageType === 'IMAGE' ? 'tasveer' : 'document';
+    return `Shukriya — aapki ${noun} mil gayi. Manager review karke jaldi reply karenge.`;
+  }
+  return `Thanks — got your ${what}. Manager will review and get back to you shortly.`;
 }

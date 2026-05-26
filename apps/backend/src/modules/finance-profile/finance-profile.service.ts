@@ -116,10 +116,12 @@ export class FinanceProfileService {
       }),
       // Real ProcessingCase row (the operational entity the processing team
       // works on) — used to decide whether finance's "Send to Processing"
-      // button should still be available or has already been pressed.
+      // button should still be available or has already been pressed. We
+      // only need its existence (button hides once a case is open), so a
+      // minimal select keeps the query cheap.
       this.prisma.processingCase.findFirst({
         where: { leadId },
-        select: { id: true, stage: true, status: true },
+        select: { id: true },
       }),
     ]);
 

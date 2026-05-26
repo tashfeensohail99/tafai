@@ -440,10 +440,26 @@ export class LeadsService {
       await this.ensureUniqueLead(dto.phone, dto.email, id);
     }
 
+    // If Sales changes the email, the old verification becomes meaningless
+    // — a new address is by definition unverified. Clear the verified flag
+    // + the in-flight token so the Verification tab forces a fresh send.
+    // (Same email re-submitted → no-op.)
+    const emailChanged =
+      dto.email !== undefined && (dto.email ?? '').trim().toLowerCase() !== (existing.email ?? '').trim().toLowerCase();
+    const emailVerificationReset = emailChanged
+      ? {
+          emailVerified: false,
+          emailVerifiedAt: null,
+          emailVerificationToken: null,
+          emailVerificationSentAt: null,
+        }
+      : {};
+
     const updated = await this.prisma.lead.update({
       where: { id },
       data: {
         ...dto,
+        ...emailVerificationReset,
         convertedAt: dto.status === LeadStatus.CONVERTED ? new Date() : undefined,
       },
       include: {

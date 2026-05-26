@@ -381,6 +381,29 @@ export class AgreementsService {
     }
     this.assertPlanBalances(existing.paymentPlan as unknown as PaymentPlanDto);
 
+    // Sales → Finance data-quality gate. Block submission until the underlying
+    // lead is complete: first + last name on file (so Finance + downstream PDFs
+    // render properly) AND a verified email address (so receipts / agreement
+    // links don't bounce or land in the wrong inbox). Without this guard the
+    // first time anyone notices the data is missing is when Finance is already
+    // trying to issue a receipt — too late.
+    const lead = await this.prisma.lead.findUnique({
+      where: { id: existing.leadId },
+      select: { firstName: true, lastName: true, email: true, emailVerified: true },
+    });
+    if (!lead) throw new BadRequestException('Lead not found for this agreement');
+    const missing: string[] = [];
+    if (!lead.firstName?.trim()) missing.push('first name');
+    if (!lead.lastName?.trim()) missing.push('last name');
+    if (!lead.email?.trim()) missing.push('email address');
+    else if (!lead.emailVerified) missing.push('email verification');
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Cannot submit to Finance — the lead profile is incomplete (${missing.join(', ')}). ` +
+        `Open the lead profile, fill in any missing fields, and use the Verification tab to confirm the email before re-submitting.`,
+      );
+    }
+
     const updated = await this.prisma.agreement.update({
       where: { id },
       data: { status: AgreementStatus.SUBMITTED, submittedAt: new Date() },

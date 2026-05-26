@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Eye, EyeOff, Key, Loader2, Plus, RefreshCw, Save, Signal, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, Eye, EyeOff, Key, Loader2, MessageSquare, Plus, Power, RefreshCw, Save, Signal, Trash2, Zap } from 'lucide-react';
 import {
   Field,
   FormInput,
@@ -13,11 +13,16 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   deleteApiKey,
+  getAiBotStatus,
   listApiKeys,
   setApiKeyActive,
+  setBotMode,
   testApiKey,
+  triggerAiBackfill,
   upsertApiKey,
   type AdminApiKey,
+  type AiBackfillResult,
+  type AiBotStatus,
 } from '@/lib/api-keys';
 
 /**
@@ -198,6 +203,11 @@ export default function ApiKeysPage() {
         );
       })}
 
+      <BotControlPanel
+        onError={(m) => setError(m)}
+        onNotice={(m) => setNotice(m)}
+      />
+
       {showAdd ? (
         <AddKeyModal
           onClose={() => setShowAdd(false)}
@@ -208,6 +218,183 @@ export default function ApiKeysPage() {
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+// ─── AI Bot control panel ──────────────────────────────────────────────────
+// Lives below the keys so ops can see "is the key set + active?" → "what is
+// the bot doing?" in one screen. The backfill button enqueues an AI reply
+// job for every open-window, unanswered, eligible thread — the same logic
+// the orchestrator runs on each new inbound, just kicked off manually.
+function BotControlPanel({
+  onError,
+  onNotice,
+}: {
+  onError: (m: string) => void;
+  onNotice: (m: string) => void;
+}) {
+  const [status, setStatus] = useState<AiBotStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [lastResult, setLastResult] = useState<AiBackfillResult | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      setStatus(await getAiBotStatus());
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not load AI bot status');
+    } finally {
+      setLoading(false);
+    }
+  }, [onError]);
+
+  useEffect(() => { void reload(); }, [reload]);
+
+  const handleBackfill = async () => {
+    if (!confirm(
+      'This will queue AI replies for every open-window, unanswered, eligible thread (paid clients + recently-human-active threads are still skipped at fire time). Continue?',
+    )) return;
+    setBackfillBusy(true);
+    try {
+      const res = await triggerAiBackfill();
+      setLastResult(res);
+      onNotice(`Backfill queued: scanned ${res.scanned}, enqueued ${res.enqueued}. Jobs fire over the next ~${Math.ceil(res.enqueued * 1.5)} seconds.`);
+      // Give the queue a moment, then refresh stats.
+      setTimeout(() => void reload(), 3000);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Backfill failed');
+    } finally {
+      setBackfillBusy(false);
+    }
+  };
+
+  const handleMode = async (mode: 'AUTO' | 'SHADOW_ONLY' | 'DISABLED') => {
+    setModeBusy(true);
+    try {
+      await setBotMode(mode);
+      onNotice(`Bot mode set to ${mode}.`);
+      await reload();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not change mode');
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  const currentMode = status?.organization?.botMode ?? 'unknown';
+  const enabledAt = status?.organization?.botEnabledAt;
+  const isLive = !!enabledAt && new Date(enabledAt).getTime() <= Date.now() && currentMode !== 'DISABLED';
+
+  return (
+    <GlassCard variant="default" padded="lg">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 10,
+              display: 'grid',
+              placeItems: 'center',
+              background: 'var(--sos-brand-primary-soft)',
+              color: 'var(--sos-brand-primary)',
+            }}
+          >
+            <Bot size={16} />
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div className="sos-title" style={{ fontSize: 'var(--sos-text-base)' }}>WhatsApp AI Bot</div>
+            <div className="sos-text-muted" style={{ fontSize: 'var(--sos-text-sm)' }}>
+              Status + manual controls. Bot replies fire 60s after each inbound; per-thread guards apply.
+            </div>
+          </div>
+          {isLive ? (
+            <StatusBadge tone="success" size="sm" dot>live · {currentMode.toLowerCase()}</StatusBadge>
+          ) : (
+            <StatusBadge tone="warning" size="sm" dot>{currentMode.toLowerCase()}</StatusBadge>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="sos-text-muted" style={{ fontSize: 13 }}>Loading status…</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', fontSize: 12.5 }}>
+            <StatTile label="Knowledge rows" value={String(status?.knowledgeCount ?? 0)} />
+            <StatTile label="Runs (7 days)" value={String(status?.last7days.total ?? 0)} />
+            {(status?.last7days.byMode ?? []).map((m) => (
+              <StatTile key={m.mode} label={m.mode} value={String(m.count)} />
+            ))}
+            <StatTile label="Mode" value={currentMode} />
+            <StatTile label="Enabled at" value={enabledAt ? new Date(enabledAt).toLocaleString() : 'not set'} />
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderTop: '1px solid var(--sos-border-subtle)', paddingTop: 14 }}>
+          <PrimaryButton
+            size="sm"
+            iconLeft={backfillBusy ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={14} />}
+            onClick={() => void handleBackfill()}
+            disabled={backfillBusy || !isLive}
+          >
+            {backfillBusy ? 'Queueing…' : 'Reply to all open chats now'}
+          </PrimaryButton>
+
+          {currentMode === 'DISABLED' ? (
+            <GhostButton
+              size="sm"
+              iconLeft={<Power size={14} />}
+              onClick={() => void handleMode('AUTO')}
+              disabled={modeBusy}
+            >
+              {modeBusy ? 'Enabling…' : 'Enable bot (AUTO)'}
+            </GhostButton>
+          ) : (
+            <GhostButton
+              size="sm"
+              iconLeft={<Power size={14} />}
+              onClick={() => void handleMode('DISABLED')}
+              disabled={modeBusy}
+            >
+              {modeBusy ? 'Disabling…' : 'Disable bot'}
+            </GhostButton>
+          )}
+
+          <GhostButton
+            size="sm"
+            iconLeft={<RefreshCw size={14} />}
+            onClick={() => void reload()}
+          >
+            Refresh
+          </GhostButton>
+        </div>
+
+        {lastResult ? (
+          <div className="sos-banner sos-banner--info" style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <MessageSquare size={13} />
+              <strong>Last backfill: scanned {lastResult.scanned} · enqueued {lastResult.enqueued}</strong>
+            </div>
+            {Object.entries(lastResult.skipped).length > 0 ? (
+              <div className="sos-text-muted" style={{ fontSize: 12 }}>
+                Skipped: {Object.entries(lastResult.skipped).map(([k, v]) => `${k}=${v}`).join(' · ')}
+              </div>
+            ) : null}
+            <div className="sos-text-muted" style={{ fontSize: 11.5 }}>{lastResult.note}</div>
+          </div>
+        ) : null}
+      </div>
+    </GlassCard>
+  );
+}
+
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ padding: '8px 12px', background: 'var(--sos-surface-1)', borderRadius: 'var(--sos-radius-sm)', border: '1px solid var(--sos-border-subtle)' }}>
+      <div className="sos-text-faint" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</div>
+      <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--sos-text-primary)' }}>{value}</div>
     </div>
   );
 }

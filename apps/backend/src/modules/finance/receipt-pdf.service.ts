@@ -62,6 +62,9 @@ export interface ReceiptPdfInput {
     name: string;
     role: string;
   };
+  /** Compact stable code shown on the footer so an auditor / CA can quote it
+   *  to look up the full audit trail (audit log, source handover, etc.). */
+  auditRef?: string;
 }
 
 @Injectable()
@@ -157,7 +160,10 @@ export class ReceiptPdfService {
   .balance .bl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;}
   .balance .bv{font-size:18px;font-weight:800;color:${fullyPaid ? '#047857' : '#b45309'};}
   .notes{margin-top:14px;font-size:11px;color:#475569;}
-  .issued{margin-top:18px;font-size:9.5px;color:#94a3b8;text-align:center;line-height:1.6;}
+  .issued{margin-top:22px;padding-top:10px;border-top:1px dashed #cbd5e1;text-align:center;line-height:1.55;}
+  .issued .verify{font-size:10px;color:#0f172a;font-weight:600;letter-spacing:.02em;}
+  .issued .verify .ref{font-family:'Courier New',Courier,monospace;color:#0b1f3a;background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:9.5px;letter-spacing:.05em;}
+  .issued .fine{color:#94a3b8;font-size:8.5px;margin-top:4px;}
   .stamp{display:inline-block;margin-top:8px;border:2px solid ${fullyPaid ? '#047857' : '#0b1f3a'};color:${fullyPaid ? '#047857' : '#0b1f3a'};
          border-radius:6px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:1px;transform:rotate(-3deg);}
 </style></head>
@@ -240,8 +246,12 @@ export class ReceiptPdfService {
   ${cleanNotes ? `<div class="notes"><strong>Notes:</strong> ${this.esc(cleanNotes)}</div>` : ''}
 
   <div class="issued">
-    Issued by ${this.esc(input.issuedBy.name)} (${this.esc(input.issuedBy.role)}).
-    This is a computer-generated receipt — quote the receipt number above to verify its authenticity.
+    <div class="verify">
+      Verified by ${this.esc(input.issuedBy.name)} on ${this.esc(this.formatDateShort(input.issuedAt))}${input.auditRef ? ` &nbsp;·&nbsp; <span class="ref">${this.esc(input.auditRef)}</span>` : ''}
+    </div>
+    <div class="fine">
+      This is a computer-generated receipt — quote the receipt number above to verify its authenticity.
+    </div>
   </div>
 </body></html>`;
   }

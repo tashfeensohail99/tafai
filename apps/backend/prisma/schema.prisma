@@ -1495,6 +1495,10 @@ model Payment {
   verifiedByUserId String?
   verifiedAt       DateTime?
   notes            String?
+  /// Internal-only annotation (NOT shown on client-facing PDFs). Used for
+  /// audit breadcrumbs like "handover:<id>" that link a payment back to the
+  /// workflow row that created it, without polluting the client's receipt.
+  internalReference String?
   receiptKey       String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt

@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { createHash } from 'node:crypto';
 import {
   AgreementStatus,
   AuditAction,
@@ -701,6 +702,7 @@ export class FinanceService {
         transactionRef: dto.transactionRef,
         paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
         notes: dto.notes,
+        internalReference: dto.internalReference,
       },
     });
 
@@ -1130,11 +1132,11 @@ export class FinanceService {
         currency: existing.currency,
         paymentMethod: dto.paymentMethod ?? existing.paymentMethod ?? undefined,
         transactionRef: dto.transactionRef ?? existing.transactionRef ?? undefined,
-        notes: this.combineNotes(
-          `Created from finance handover ${existing.id}`,
-          existing.notes,
-          dto.financeNotes,
-        ) ?? undefined,
+        // Client-facing notes — only what the client should see on the receipt.
+        notes: this.combineNotes(existing.notes, dto.financeNotes) ?? undefined,
+        // Internal audit pointer — links the payment back to its source
+        // handover row without ever appearing on the client's receipt.
+        internalReference: `handover:${existing.id}`,
       },
       actorUserId,
     );
@@ -1455,6 +1457,9 @@ export class FinanceService {
         currency: payment.invoice.currency,
       },
     );
+    // CA-friendly footer: real verifier name + a short, stable audit reference
+    // derived from the receipt id.
+    const verifierName = await this.resolveVerifierName(actorUserId);
 
     // Render + upload PDF; persist the storage key. Failures are logged
     // and the Receipt row keeps pdfStorageKey=NULL so the download
@@ -1486,9 +1491,10 @@ export class FinanceService {
         upcomingInstallments: acctCtx.upcomingInstallments,
         notes: payment.notes,
         issuedBy: {
-          name: 'Finance Officer',
+          name: verifierName,
           role: 'Finance',
         },
+        auditRef: this.auditRefFor(created.id),
       });
       const updated = await this.prisma.receipt.update({
         where: { id: created.id },
@@ -1501,6 +1507,35 @@ export class FinanceService {
       );
       return created;
     }
+  }
+
+  /**
+   * Stable short audit reference derived from the receipt id. The receipt
+   * footer shows it so a CA / auditor has a compact code they can quote
+   * (instead of a UUID) to look up the full audit trail. Deterministic, so
+   * regenerating the same receipt yields the same code.
+   */
+  private auditRefFor(receiptId: string): string {
+    return 'AUD-' + createHash('sha256').update(receiptId).digest('hex').slice(0, 6).toUpperCase();
+  }
+
+  /**
+   * Resolve a finance user's display name for the "Verified by" line on the
+   * receipt. Falls back through employee → email → generic label, so the
+   * footer is never blank even if the user account is unusual.
+   */
+  private async resolveVerifierName(userId: string | null | undefined): Promise<string> {
+    if (!userId) return 'Finance Officer';
+    const u = await this.prisma.userAccount.findUnique({
+      where: { id: userId },
+      select: { email: true, employee: { select: { firstName: true, lastName: true } } },
+    });
+    if (!u) return 'Finance Officer';
+    if (u.employee) {
+      const name = `${u.employee.firstName} ${u.employee.lastName}`.trim();
+      if (name) return name;
+    }
+    return u.email;
   }
 
   /**
@@ -1647,6 +1682,7 @@ export class FinanceService {
         currency: receipt.payment.invoice.currency,
       },
     );
+    const verifierName = await this.resolveVerifierName(receipt.issuedByUserId);
     const upload = await this.receiptPdfService.renderAndStore({
       receiptNumber: receipt.receiptNumber,
       issuedAt: receipt.issuedAt,
@@ -1672,7 +1708,8 @@ export class FinanceService {
       account: acctCtx.account,
       upcomingInstallments: acctCtx.upcomingInstallments,
       notes: receipt.payment.notes,
-      issuedBy: { name: 'Finance Officer', role: 'Finance' },
+      issuedBy: { name: verifierName, role: 'Finance' },
+      auditRef: this.auditRefFor(receipt.id),
     });
     return this.prisma.receipt.update({
       where: { id: receipt.id },

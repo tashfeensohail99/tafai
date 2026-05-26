@@ -15,6 +15,8 @@ import {
 import { FinanceHandoverStatus, InvoiceStatus, PaymentStatus } from '@prisma/client';
 
 /** Mark/unmark a contract milestone (installment) as delivered → earned revenue. */
+// (internalReference is captured below on CreatePaymentDto.)
+
 export class RecognizeInstallmentDto {
   @IsOptional()
   @IsBoolean()
@@ -197,6 +199,13 @@ export class CreatePaymentDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+
+  /** Internal-only annotation (NOT shown on client PDFs) — e.g. "handover:<id>"
+   *  to link a payment back to the workflow row that created it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  internalReference?: string;
 }
 
 export class VerifyPaymentDto {

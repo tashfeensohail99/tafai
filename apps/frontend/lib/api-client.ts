@@ -190,6 +190,47 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 }
 
 /**
+ * Same auth + refresh handling as apiFetch, but returns the response body
+ * as a Blob (for PDF / file downloads). Bypass-CSP-friendly: the bytes are
+ * delivered through our own origin so no third-party headers come along
+ * for the ride.
+ */
+export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const token = getAccessToken();
+
+  function buildHeaders(currentToken: string | null): Headers {
+    const h = new Headers(init?.headers ?? {});
+    if (currentToken) h.set('Authorization', `Bearer ${currentToken}`);
+    return h;
+  }
+  async function doFetch(currentToken: string | null): Promise<Response> {
+    return fetch(`${getApiBaseUrl()}${path}`, {
+      ...init,
+      headers: buildHeaders(currentToken),
+    });
+  }
+
+  let response = await doFetch(token);
+  if (response.status === 401 && token && !NO_REFRESH_PATHS.has(path)) {
+    const newToken = await attemptRefresh();
+    if (newToken) {
+      response = await doFetch(newToken);
+    } else {
+      clearAllTokens();
+    }
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new ApiClientError(
+      text || `Request failed with status ${response.status}`,
+      response.status,
+      text,
+    );
+  }
+  return response.blob();
+}
+
+/**
  * Wake the backend up if it's been idle. Railway free-tier services nap
  * after inactivity and cold-start the next request. Call this early in the
  * page lifecycle so user-driven requests don't pay for the wake-up.

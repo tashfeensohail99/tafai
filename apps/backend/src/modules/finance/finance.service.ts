@@ -1616,6 +1616,43 @@ export class FinanceService {
   }
 
   /**
+   * Stream the receipt PDF straight to the caller through our own backend
+   * (same-origin response). Bypasses Supabase Storage's `Content-Security-
+   * Policy: sandbox` header on signed URLs — which blocks Chrome's built-in
+   * PDF viewer from rendering inline, so the previous redirect-to-signed-URL
+   * flow opened a blank tab. Here we set clean inline headers ourselves.
+   *
+   * Regenerates the PDF on the fly if it's missing (covers receipts that
+   * predate the branded render, or where the earlier render failed).
+   */
+  async streamReceiptPdf(receiptId: string, res: import('express').Response): Promise<void> {
+    let receipt = await this.prisma.receipt.findUnique({
+      where: { id: receiptId },
+      select: { pdfStorageKey: true, receiptNumber: true },
+    });
+    if (!receipt) throw new NotFoundException('Receipt not found');
+    if (!receipt.pdfStorageKey) {
+      await this.regenerateReceiptPdf(receiptId);
+      receipt = await this.prisma.receipt.findUnique({
+        where: { id: receiptId },
+        select: { pdfStorageKey: true, receiptNumber: true },
+      });
+      if (!receipt?.pdfStorageKey) {
+        throw new BadRequestException('Could not generate the receipt PDF.');
+      }
+    }
+    const file = await this.storage.download(receipt.pdfStorageKey);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${receipt.receiptNumber}.pdf"`,
+    );
+    res.setHeader('Content-Length', String(file.bytes.length));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(file.bytes);
+  }
+
+  /**
    * Public endpoint helper: returns the signed download URL for a
    * Receipt PDF. Regenerates the PDF on the fly if the stored key is
    * missing (e.g. earlier failed render).

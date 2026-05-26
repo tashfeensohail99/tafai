@@ -5,7 +5,7 @@
  * All finance components import their data via this file instead of MOCK data.
  */
 
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, apiFetchBlob } from '@/lib/api-client';
 
 // ---------------------------------------------------------------------------
 // Types matching the backend FinanceHandover + Payment + Invoice models
@@ -429,6 +429,15 @@ export async function sendReceiptToClient(receiptId: string): Promise<{ sent: bo
     method: 'POST',
     body: JSON.stringify({}),
   });
+}
+
+/**
+ * Fetch the receipt PDF bytes directly from our backend (same-origin), so the
+ * browser doesn't pull from Supabase's signed URL — which carries a CSP
+ * `sandbox` header that prevents Chrome's PDF viewer from rendering it.
+ */
+export async function fetchReceiptPdfBlob(receiptId: string): Promise<Blob> {
+  return apiFetchBlob(`/finance/receipts/${receiptId}/pdf`);
 }
 
 /** Firm-wide finance report (Insight layer). */

@@ -327,6 +327,20 @@ export class FinanceController {
     return this.financeService.getReceiptDownloadUrl(id);
   }
 
+  /**
+   * Stream the receipt PDF bytes directly (same-origin). Used by the
+   * frontend to bypass Supabase Storage's `sandbox` CSP that prevents
+   * Chrome's PDF viewer from rendering signed URLs inline.
+   */
+  @Get('receipts/:id/pdf')
+  @RequirePermissions('finance_handover.view_own')
+  async streamReceiptPdf(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.financeService.streamReceiptPdf(id, res);
+  }
+
   /** Email the official receipt PDF to the client. */
   @Post('receipts/:id/send')
   @RequireAnyPermissions('finance.record_payment', 'finance.view_all')

@@ -42,7 +42,7 @@ import {
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
-import { fetchHandoverById, fetchFxRates, getReceiptDownloadUrl, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
+import { fetchHandoverById, fetchFxRates, fetchReceiptPdfBlob, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
 
 const CURRENCY_OPTIONS = FINANCE_CURRENCIES.map((c) => ({ value: c, label: c }));
 
@@ -360,28 +360,23 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   };
 
   const handleReceiptDownload = async (id: string) => {
-    // Open the tab SYNCHRONOUSLY in the click handler so we don't lose the
-    // user-gesture window — calling window.open after an `await` is silently
-    // blocked by browsers as if it were a pop-up.
+    // Open the tab SYNCHRONOUSLY in the click handler so we keep the user
+    // gesture (browsers block window.open if called after an await).
     const tab = window.open('about:blank', '_blank');
     setBusy('rcpt-dl');
     setError(null);
     try {
-      const { url } = await getReceiptDownloadUrl(id);
-      // Supabase Storage attaches `Content-Security-Policy: sandbox` to its
-      // signed URLs, which makes Chrome refuse to render the PDF inline (the
-      // tab opens blank). Bypass that by fetching the bytes ourselves and
-      // opening a same-origin blob: URL — no CSP sandbox attached to blobs.
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Storage returned HTTP ${res.status}`);
-      const blob = await res.blob();
+      // Stream the PDF bytes from OUR backend (same-origin) — Supabase's
+      // signed URLs carry a CSP `sandbox` header that makes Chrome's PDF
+      // viewer refuse to render them inline. Same-origin bytes wrapped in
+      // a blob URL render normally.
+      const blob = await fetchReceiptPdfBlob(id);
       const blobUrl = URL.createObjectURL(blob);
       if (tab && !tab.closed) {
         tab.location.href = blobUrl;
       } else {
         window.location.href = blobUrl;
       }
-      // Give the new tab time to load the blob before we release it.
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
     } catch (e) {
       if (tab && !tab.closed) tab.close();

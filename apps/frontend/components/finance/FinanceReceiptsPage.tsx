@@ -16,7 +16,7 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   fetchReceipts,
-  getReceiptDownloadUrl,
+  fetchReceiptPdfBlob,
   sendReceiptToClient,
   METHOD_LABEL,
   type ApiIssuedReceipt,
@@ -66,20 +66,16 @@ export function FinanceReceiptsPage() {
   }, [rows]);
 
   const download = async (id: string) => {
-    // Open the tab SYNCHRONOUSLY in the click handler so we keep the user
-    // gesture — calling window.open after an `await` is silently blocked by
-    // most browsers' pop-up rules. We then navigate the just-opened tab.
+    // Open the tab SYNCHRONOUSLY in the click handler so the browser keeps the
+    // user-gesture context (window.open after an `await` is pop-up-blocked).
     const tab = window.open('about:blank', '_blank');
     setDownloading(id);
     setError(null);
     try {
-      const { url } = await getReceiptDownloadUrl(id);
-      // Supabase Storage attaches `Content-Security-Policy: sandbox` to signed
-      // URLs, which makes Chrome refuse to render the PDF inline (blank tab).
-      // Fetch the bytes ourselves and open a same-origin blob: URL instead.
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Storage returned HTTP ${res.status}`);
-      const blob = await res.blob();
+      // Stream the PDF bytes from OUR backend (same-origin) and wrap in a
+      // blob URL — Supabase's signed URLs carry a CSP `sandbox` header that
+      // blocks Chrome's PDF viewer, so we serve same-origin bytes instead.
+      const blob = await fetchReceiptPdfBlob(id);
       const blobUrl = URL.createObjectURL(blob);
       if (tab && !tab.closed) {
         tab.location.href = blobUrl;

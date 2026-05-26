@@ -203,7 +203,13 @@ export class OrchestratorService {
     const inboundCount = history.filter((m) => m.direction === 'INBOUND').length;
     const nextAiState = this.decideNextState(thread.aiState, inboundCount, input.inboundText);
     const topSim = retrieved[0]?.similarity ?? 0;
-    const confident = topSim >= 0.62; // empirical floor — below this, pivot to booking
+    // Confidence floor: below this we tell the LLM to skip answering from
+    // its own knowledge and just push toward booking. Started at 0.62 but
+    // that was too aggressive — straightforward questions like "Pakistan
+    // mein office kahaan hai" landed at ~0.55 similarity and the bot
+    // pivoted instead of just answering with "Islamabad + Karachi" which
+    // is right there in CONTEXT. 0.50 is a calmer floor.
+    const confident = topSim >= 0.50;
 
     const systemPrompt = this.systemPrompt({
       language,
@@ -358,13 +364,26 @@ export class OrchestratorService {
    */
   private decideNextState(current: string, inboundCount: number, text: string): string {
     const lc = text.toLowerCase();
-    const yesish = /\b(yes|haan|ji|sure|ok+|okay|jee|theek|book|schedule|book it|chalein|kr lo)\b/i.test(
+    // English + Roman-Urdu affirmatives.
+    const yesishLatin = /\b(yes|haan|ji|jee|sure|ok+|okay|theek|book|schedule|chalein|kr lo|kar do|krwa do|please|plz)\b/i.test(
       lc,
     );
-    const timeish =
-      /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|am|pm|morning|evening|afternoon|kal|aaj|subha|sham|raat)\b/i.test(
+    // Urdu-script affirmatives. Important: WhatsApp users in Pakistan very
+    // often switch from Roman Urdu to script mid-conversation, and the funnel
+    // was previously getting stuck in APPOINTMENT_PROPOSED because "جی جی بک
+    // کروا دیں" matched none of the Latin patterns above.
+    const yesishUrdu = /(جی|ہاں|بالکل|ٹھیک|بک|بک کر|بکنگ|پلیز|شیڈول)/.test(text);
+    const yesish = yesishLatin || yesishUrdu;
+
+    // Time / day mentions in any of English, Roman Urdu, or Urdu script.
+    const timeishLatin =
+      /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|am|pm|morning|evening|afternoon|night|kal|aaj|subha|sham|raat|dopahar)\b/i.test(
         lc,
       ) || /\d{1,2}\s*(am|pm|:|baje)/i.test(lc);
+    const timeishUrdu =
+      /(پیر|منگل|بدھ|جمعرات|جمعہ|ہفتہ|اتوار|کل|آج|صبح|شام|رات|دوپہر|بجے)/.test(text) ||
+      /\d{1,2}\s*بجے/.test(text);
+    const timeish = timeishLatin || timeishUrdu;
 
     if (current === 'INITIAL') {
       return inboundCount >= APPOINTMENT_NUDGE_AFTER_TURNS ? 'Q_AND_A' : 'INITIAL';

@@ -122,7 +122,10 @@ export class WhatsAppMessagesController {
       where: { userId: user.id },
       select: { id: true },
     });
-    const canViewAll = (user.permissions ?? []).includes('whatsapp.view_all_inboxes');
-    return { userId: user.id, employeeId: employee?.id ?? null, canViewAll };
+    const perms = user.permissions ?? [];
+    const canViewAll = perms.includes('whatsapp.view_all_inboxes');
+    // Finance closed-loop scope (see threads.controller.ts for rationale).
+    const canViewFinanceScope = !canViewAll && perms.includes('whatsapp.view_finance_scope');
+    return { userId: user.id, employeeId: employee?.id ?? null, canViewAll, canViewFinanceScope };
   }
 }

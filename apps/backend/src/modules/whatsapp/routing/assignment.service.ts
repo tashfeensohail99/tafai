@@ -294,6 +294,11 @@ export class WhatsAppAssignmentService {
    * the next morning. Eligibility is just the inbox-member toggle + the
    * normal soft-delete + isActive flags.
    *
+   * **Finance / Finance Manager users are excluded** from the routing pool:
+   * they read WhatsApp through the customer profile as a closed-loop comms
+   * channel, not as a primary inbox. Auto-assigning a new lead to a Finance
+   * Officer would dead-end the conversation.
+   *
    * If you ever want to skip vacationing agents, add a separate
    * `Employee.outOfOffice` field rather than overloading `presenceStatus`.
    */
@@ -308,7 +313,13 @@ export class WhatsAppAssignmentService {
         deletedAt: null,
         // Deactivated/suspended users can't log in — if we route to them
         // the lead has nowhere to go. Always check user.status here too.
-        user: { status: 'ACTIVE' },
+        user: {
+          status: 'ACTIVE',
+          // Finance/finance_manager are NOT round-robin targets (see jsdoc).
+          userRoles: {
+            none: { role: { name: { in: ['finance', 'finance_manager'] } } },
+          },
+        },
       },
       orderBy: { id: 'asc' },
       // presenceStatus drives the ONLINE-only gate for NEW leads (Away/Offline

@@ -37,6 +37,11 @@ interface CallerContext {
   userId: string;
   employeeId: string | null;
   canViewAll: boolean;
+  /**
+   * Finance closed-loop scope: caller may see/send on threads only for
+   * leads where Sales has sent an agreement (status != DRAFT).
+   */
+  canViewFinanceScope?: boolean;
 }
 
 interface SendTextInput {
@@ -418,12 +423,23 @@ export class WhatsAppMessagesService {
         leadId: true,
         clientId: true,
         windowExpiresAt: true,
-        lead: { select: { assignedEmployeeId: true } },
+        lead: { select: { id: true, assignedEmployeeId: true } },
       },
     });
     if (!t) throw new NotFoundException('Thread not found');
     if (!caller.canViewAll) {
-      if (!caller.employeeId || t.lead?.assignedEmployeeId !== caller.employeeId) {
+      if (caller.canViewFinanceScope) {
+        // Finance can only operate on threads whose lead has a
+        // non-DRAFT agreement on file (closed-loop comms scope).
+        if (!t.lead?.id) throw new ForbiddenException('Thread not visible to Finance');
+        const hasAgreement = await this.prisma.agreement.findFirst({
+          where: { leadId: t.lead.id, status: { not: 'DRAFT' }, deletedAt: null },
+          select: { id: true },
+        });
+        if (!hasAgreement) {
+          throw new ForbiddenException('Thread not visible to Finance until Sales sends an agreement');
+        }
+      } else if (!caller.employeeId || t.lead?.assignedEmployeeId !== caller.employeeId) {
         throw new ForbiddenException('Thread not assigned to you');
       }
     }

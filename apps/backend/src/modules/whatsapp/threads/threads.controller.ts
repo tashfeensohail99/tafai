@@ -304,11 +304,17 @@ export class WhatsAppThreadsController {
       where: { userId: user.id },
       select: { id: true },
     });
-    const canViewAll = (user.permissions ?? []).includes('whatsapp.view_all_inboxes');
+    const perms = user.permissions ?? [];
+    const canViewAll = perms.includes('whatsapp.view_all_inboxes');
+    // Finance scope: see threads only for leads where Sales has already
+    // sent an agreement (status != DRAFT). Narrower than view_all_inboxes
+    // so finance can't peek into pre-agreement Sales negotiations.
+    const canViewFinanceScope = !canViewAll && perms.includes('whatsapp.view_finance_scope');
     return {
       userId: user.id,
       employeeId: employee?.id ?? null,
       canViewAll,
+      canViewFinanceScope,
     };
   }
 }

@@ -18,14 +18,23 @@ interface CallerContext {
   employeeId: string | null;
   /** Whether the caller is allowed to see threads not assigned to them. */
   canViewAll: boolean;
+  /**
+   * Finance closed-loop scope: caller may see threads only for leads
+   * where Sales has already sent an agreement (status != DRAFT). Narrower
+   * than `canViewAll` — pre-agreement Sales negotiations stay private.
+   * Implies the caller is NEVER part of the round-robin assignment pool.
+   */
+  canViewFinanceScope: boolean;
 }
 
 /**
  * Read-side API for WhatsApp threads — what the inbox UI calls.
  *
  * Access rules:
- *   - "agent" (has whatsapp.view_inbox but not whatsapp.view_all_inboxes):
- *     only threads whose Lead.assignedEmployeeId = caller's employee.
+ *   - "agent" (has whatsapp.view_inbox only): only threads whose
+ *     Lead.assignedEmployeeId = caller's employee.
+ *   - "finance" (has whatsapp.view_finance_scope): only threads whose
+ *     lead has a non-DRAFT agreement on file (closed-loop comms).
  *   - "manager/admin" (has whatsapp.view_all_inboxes): every thread in
  *     the org.
  *
@@ -37,6 +46,24 @@ interface CallerContext {
 @Injectable()
 export class WhatsAppThreadsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Distinct lead ids that currently have at least one non-DRAFT agreement
+   * on file — i.e. Sales has submitted the agreement to Finance. Used to
+   * scope the WhatsApp inbox for finance-role callers (see `canViewFinanceScope`).
+   *
+   * Agreement.leadId is declared without a Prisma FK relation (kept
+   * decoupled per the schema's note), so we pre-resolve the id set here
+   * rather than using a nested relation filter on `lead`.
+   */
+  private async eligibleLeadIdsForFinance(): Promise<string[]> {
+    const rows = await this.prisma.agreement.findMany({
+      where: { status: { not: 'DRAFT' }, deletedAt: null },
+      select: { leadId: true },
+      distinct: ['leadId'],
+    });
+    return rows.map((r) => r.leadId);
+  }
 
   async list(caller: CallerContext, opts: ThreadListOptions = {}) {
     const limit = Math.min(opts.limit ?? 30, 100);
@@ -60,13 +87,23 @@ export class WhatsAppThreadsService {
 
     // Scope to caller's assigned leads unless they're allowed to see all
     // AND haven't explicitly asked for "mine only".
-    if (!caller.canViewAll || opts.assignedToMe) {
+    if ((!caller.canViewAll && !caller.canViewFinanceScope) || opts.assignedToMe) {
       if (!caller.employeeId) {
         // A user with whatsapp.view_inbox but no Employee row — return nothing
         // rather than throw, so the UI doesn't break.
         return { items: [], nextCursor: null };
       }
       where.lead = { assignedEmployeeId: caller.employeeId, deletedAt: null };
+    } else if (caller.canViewFinanceScope) {
+      // Finance closed-loop scope — only threads whose lead has a
+      // non-DRAFT agreement on file (i.e., Sales has sent it to Finance).
+      // Pre-agreement Sales conversations stay private to Sales.
+      // Note: Agreement.leadId has no Prisma FK relation (decoupled by
+      // design), so we pre-resolve the eligible lead-id set instead of
+      // using a nested relation filter.
+      const eligibleLeadIds = await this.eligibleLeadIdsForFinance();
+      if (eligibleLeadIds.length === 0) return { items: [], nextCursor: null };
+      where.lead = { id: { in: eligibleLeadIds }, deletedAt: null };
     } else if (opts.unassigned) {
       // Admin-only filter — only meaningful when canViewAll is true.
       where.lead = { assignedEmployeeId: null, deletedAt: null };
@@ -190,7 +227,14 @@ export class WhatsAppThreadsService {
     const base: Prisma.WhatsAppThreadWhereInput = {
       OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }],
     };
-    if (!caller.canViewAll) {
+    if (caller.canViewFinanceScope && !caller.canViewAll) {
+      // Finance closed-loop scope — only threads whose lead has a
+      // non-DRAFT agreement (see list() for rationale).
+      const eligibleLeadIds = await this.eligibleLeadIdsForFinance();
+      if (eligibleLeadIds.length === 0) return empty;
+      base.lead = { id: { in: eligibleLeadIds }, deletedAt: null };
+      delete base.OR;
+    } else if (!caller.canViewAll) {
       if (!caller.employeeId) return empty;
       base.lead = { assignedEmployeeId: caller.employeeId, deletedAt: null };
       delete base.OR; // the lead filter already excludes deleted leads
@@ -310,7 +354,19 @@ export class WhatsAppThreadsService {
     });
     if (!t) throw new NotFoundException('Thread not found');
     if (!caller.canViewAll) {
-      if (!caller.employeeId || t.lead?.assignedEmployeeId !== caller.employeeId) {
+      if (caller.canViewFinanceScope) {
+        // Finance can only open threads whose lead has a non-DRAFT
+        // agreement on file (Sales has sent it to Finance). Pre-agreement
+        // negotiations stay private to Sales.
+        if (!t.lead?.id) throw new ForbiddenException('Thread not visible to Finance');
+        const hasAgreement = await this.prisma.agreement.findFirst({
+          where: { leadId: t.lead.id, status: { not: 'DRAFT' }, deletedAt: null },
+          select: { id: true },
+        });
+        if (!hasAgreement) {
+          throw new ForbiddenException('Thread not visible to Finance until Sales sends an agreement');
+        }
+      } else if (!caller.employeeId || t.lead?.assignedEmployeeId !== caller.employeeId) {
         throw new ForbiddenException('Thread not assigned to you');
       }
     }

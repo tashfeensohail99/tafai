@@ -100,6 +100,7 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   // WhatsApp
   { key: 'whatsapp.view_inbox', module: 'whatsapp', description: 'View the WhatsApp inbox (own assigned threads)' },
   { key: 'whatsapp.view_all_inboxes', module: 'whatsapp', description: 'View all WhatsApp threads across agents (manager / admin)' },
+  { key: 'whatsapp.view_finance_scope', module: 'whatsapp', description: 'View WhatsApp threads of leads with a non-draft agreement (Finance closed-loop comms; narrower than view_all_inboxes)' },
   { key: 'whatsapp.send_message', module: 'whatsapp', description: 'Send WhatsApp messages to assigned threads' },
   { key: 'whatsapp.reassign', module: 'whatsapp', description: 'Manually reassign WhatsApp threads to other agents' },
   { key: 'whatsapp.manage_channels', module: 'whatsapp', description: 'Connect / pause / rotate-token on WhatsApp Business numbers' },
@@ -236,10 +237,11 @@ const SYSTEM_ROLES: {
       'finance.verify_payment', 'finance.refund',
       'reports.view', 'reports.export',
       'employees.view_all',
-      // Closed-loop client comms — Finance can see the WhatsApp conversation
-      // alongside the customer profile, share PDFs (agreement / receipt) and
-      // pick up replies in the same place they verify payments.
-      'whatsapp.view_inbox', 'whatsapp.view_all_inboxes', 'whatsapp.send_message',
+      // Closed-loop client comms — Finance sees the WhatsApp conversation
+      // alongside the customer profile. Scoped to leads where Sales has
+      // already sent an agreement (status != DRAFT); pre-agreement Sales
+      // negotiations stay private. Finance is NOT a round-robin target.
+      'whatsapp.view_inbox', 'whatsapp.view_finance_scope', 'whatsapp.send_message',
     ],
   },
   {
@@ -252,7 +254,7 @@ const SYSTEM_ROLES: {
       'finance.view_all', 'finance.create_invoice', 'finance.record_payment',
       'finance.verify_payment', 'finance.refund',
       // Closed-loop comms on the customer profile (see finance_manager).
-      'whatsapp.view_inbox', 'whatsapp.view_all_inboxes', 'whatsapp.send_message',
+      'whatsapp.view_inbox', 'whatsapp.view_finance_scope', 'whatsapp.send_message',
     ],
   },
   {

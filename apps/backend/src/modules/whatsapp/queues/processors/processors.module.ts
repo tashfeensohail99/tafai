@@ -4,6 +4,7 @@ import { WebhookIngestProcessor } from './webhook-ingest.processor';
 import { OutboundMessageProcessor } from './outbound-message.processor';
 import { MediaDownloadProcessor } from './media-download.processor';
 import { TemplateSyncProcessor } from './template-sync.processor';
+import { AiReplyProcessor } from './ai-reply.processor';
 
 @Module({
   imports: [ActivityTimelineModule],
@@ -12,6 +13,7 @@ import { TemplateSyncProcessor } from './template-sync.processor';
     OutboundMessageProcessor,
     MediaDownloadProcessor,
     TemplateSyncProcessor,
+    AiReplyProcessor,
   ],
 })
 export class WhatsAppProcessorsModule {}

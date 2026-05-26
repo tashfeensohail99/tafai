@@ -153,6 +153,15 @@ export class WhatsAppMessagesService {
       { messageId: message.id },
       { jobId: message.id },
     );
+    // Stamp the thread so the AI bot stays silent for 4h after any human
+    // reply. This rolls forward on every subsequent human send. Bot-sent
+    // messages have senderEmployeeId=null and don't touch this stamp.
+    if (senderEmployeeId) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
     return message;
   }
 
@@ -181,6 +190,15 @@ export class WhatsAppMessagesService {
       { messageId: message.id },
       { jobId: message.id },
     );
+    // Stamp the thread so the AI bot stays silent for 4h after any human
+    // reply. This rolls forward on every subsequent human send. Bot-sent
+    // messages have senderEmployeeId=null and don't touch this stamp.
+    if (senderEmployeeId) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
     return message;
   }
 
@@ -341,6 +359,15 @@ export class WhatsAppMessagesService {
       { messageId: message.id },
       { jobId: message.id },
     );
+    // Stamp the thread so the AI bot stays silent for 4h after any human
+    // reply. This rolls forward on every subsequent human send. Bot-sent
+    // messages have senderEmployeeId=null and don't touch this stamp.
+    if (senderEmployeeId) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
     return message;
   }
 

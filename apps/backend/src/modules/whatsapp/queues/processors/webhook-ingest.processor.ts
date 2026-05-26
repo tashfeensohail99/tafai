@@ -22,7 +22,7 @@ import {
   type WebhookIngestJob,
 } from '../queue-contracts';
 import { META_LEADGEN_QUEUE, type MetaLeadgenJob } from '../../../meta-leads/queue-contracts';
-import { OrchestratorService } from '../../../ai/orchestrator.service';
+import type { AiReplyJob } from '../queue-contracts';
 import { WhatsAppMessageType as WAMessageType } from '@prisma/client';
 
 // ---- Meta webhook payload types (subset; full spec at developers.facebook.com)
@@ -159,9 +159,11 @@ export class WebhookIngestProcessor extends WorkerHost {
     // `page`/`leadgen` events onto this queue (handled by the meta-leads module).
     @InjectQueue(META_LEADGEN_QUEUE)
     private readonly metaLeadgenQueue: Queue<MetaLeadgenJob>,
-    // AI orchestrator — runs for every TEXT inbound after the auto-ack, in
-    // a try/catch so failures here never break the inbound pipeline.
-    private readonly aiOrchestrator: OrchestratorService,
+    // AI bot — every TEXT inbound enqueues a delayed reply job (60s) here
+    // so a human can jump in first. The processor at the other end double-
+    // checks every guard at fire-time.
+    @InjectQueue(WHATSAPP_QUEUE.AI_REPLY)
+    private readonly aiReplyQueue: Queue<AiReplyJob>,
   ) {
     super();
   }
@@ -524,137 +526,33 @@ export class WebhookIngestProcessor extends WorkerHost {
       });
     }
 
-    // AI bot hook — runs only for TEXT inbound and only when configured. Fully
-    // try/caught so an AI failure CANNOT break the rest of the inbound flow.
-    if (decoded.type === WAMessageType.TEXT && decoded.body) {
+    // AI bot — enqueue a delayed reply job (60s) so a human has a chance to
+    // jump in first. The AiReplyProcessor at the other end re-checks every
+    // guard at fire-time (newer inbound, human-active window, paid client,
+    // etc.). Fully try/caught — AI failure must never block ingest.
+    if (decoded.type === WAMessageType.TEXT && decoded.body && decoded.body.trim().length >= 2) {
       try {
-        await this.runAiBotIfEligible(thread.id, message.id, decoded.body);
+        await this.aiReplyQueue.add(
+          'reply',
+          {
+            inboundMessageId: message.id,
+            threadId: thread.id,
+            body: decoded.body,
+          },
+          {
+            jobId: `ai-${message.id}`, // idempotent on retries / dupes
+            delay: 60_000,             // 60-second debounce
+            attempts: 2,
+            removeOnComplete: { age: 3600, count: 500 },
+            removeOnFail: { age: 24 * 3600, count: 500 },
+          },
+        );
       } catch (err) {
-        this.log.error(`AI bot hook failed for message ${message.id}: ${(err as Error).message}`);
+        this.log.error(
+          `AI reply enqueue failed for message ${message.id}: ${(err as Error).message}`,
+        );
       }
     }
-  }
-
-  /**
-   * Run the AI orchestrator on a new inbound TEXT message. Persists an
-   * `ai.runs` row regardless of mode (audit trail), and either sends an
-   * outbound reply (AUTO) or writes an `ai.suggestions` row for sales to
-   * pick up in the chat panel (SHADOW).
-   */
-  private async runAiBotIfEligible(
-    threadId: string,
-    inboundMessageId: string,
-    body: string,
-  ): Promise<void> {
-    // Avoid replying to one-emoji / very short messages — they're usually
-    // reactions and the bot would just thrash.
-    const trimmed = body.trim();
-    if (trimmed.length < 2) return;
-
-    // Idempotency: if we already have an ai.runs row for this inbound, skip.
-    // (Retries / duplicate webhooks would otherwise generate two replies.)
-    const already = await this.prisma.aiRun.findUnique({
-      where: { inboundMessageId },
-      select: { id: true },
-    });
-    if (already) return;
-
-    const decision = await this.aiOrchestrator.decide({
-      threadId,
-      inboundMessageId,
-      inboundText: trimmed,
-    });
-
-    if (decision.mode === 'SKIPPED') {
-      await this.prisma.aiRun.create({
-        data: {
-          threadId,
-          inboundMessageId,
-          mode: 'SKIPPED',
-          skipReason: decision.skipReason ?? 'unknown',
-        },
-      });
-      return;
-    }
-
-    if (decision.mode === 'SHADOW') {
-      const sug = await this.prisma.aiSuggestion.create({
-        data: {
-          threadId,
-          inboundMessageId,
-          suggestedReply: decision.reply ?? '',
-          language: decision.topMatch?.queryUr ? 'ur_roman' : 'en',
-          topMatchType: decision.topMatch?.type ?? null,
-          topMatchSourceFile: decision.topMatch?.sourceFile ?? null,
-          topMatchSimilarity: decision.topMatch?.similarity ?? null,
-          retrievedDocIds: (decision.retrieved ?? []).map((m) => m.id),
-          model: decision.model ?? 'gpt-4o-mini',
-          inputTokens: decision.inputTokens ?? null,
-          outputTokens: decision.outputTokens ?? null,
-          latencyMs: decision.latencyMs ?? null,
-        },
-      });
-      await this.prisma.aiRun.create({
-        data: {
-          threadId,
-          inboundMessageId,
-          mode: 'SHADOW',
-          model: decision.model ?? null,
-          inputTokens: decision.inputTokens ?? null,
-          outputTokens: decision.outputTokens ?? null,
-          totalLatencyMs: decision.latencyMs ?? null,
-          topMatchSimilarity: decision.topMatch?.similarity ?? null,
-          suggestionId: sug.id,
-        },
-      });
-      return;
-    }
-
-    // AUTO mode: enqueue a real outbound message via the existing pipeline.
-    // We create the row with status=QUEUED and add it to the outbound queue
-    // exactly like messages.service.sendText does — the OutboundMessage
-    // processor will dispatch via Meta and we'll get status callbacks.
-    const thread = await this.prisma.whatsAppThread.findUnique({
-      where: { id: threadId },
-      select: { id: true, channelId: true, leadId: true, clientId: true },
-    });
-    if (!thread) return;
-    const outbound = await this.prisma.whatsAppMessage.create({
-      data: {
-        threadId: thread.id,
-        channelId: thread.channelId,
-        leadId: thread.leadId,
-        clientId: thread.clientId,
-        direction: 'OUTBOUND',
-        type: 'TEXT',
-        status: 'QUEUED',
-        body: decision.reply ?? '',
-        // Important: sentByEmployeeId stays NULL so this is recognised as a
-        // bot message (the "human-active" guard in the orchestrator keys
-        // off sentByEmployeeId NOT NULL).
-        sentByEmployeeId: null,
-        payload: { aiBot: true } as unknown as Prisma.InputJsonValue,
-      },
-    });
-    await this.outboundQueue.add(
-      'send',
-      { messageId: outbound.id },
-      { jobId: outbound.id },
-    );
-
-    await this.prisma.aiRun.create({
-      data: {
-        threadId,
-        inboundMessageId,
-        mode: 'AUTO',
-        model: decision.model ?? null,
-        inputTokens: decision.inputTokens ?? null,
-        outputTokens: decision.outputTokens ?? null,
-        totalLatencyMs: decision.latencyMs ?? null,
-        topMatchSimilarity: decision.topMatch?.similarity ?? null,
-        outboundMessageId: outbound.id,
-      },
-    });
   }
 
   /**

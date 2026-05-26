@@ -11,6 +11,11 @@ export const WHATSAPP_QUEUE = {
   TEMPLATE_SYNC: 'whatsapp-template-sync',
   CAMPAIGN_DISPATCH: 'whatsapp-campaign-dispatch',
   CAMPAIGN_RECIPIENT: 'whatsapp-campaign-recipient',
+  // AI bot reply — fired 60s after an inbound TEXT message so a human can
+  // jump in first. The processor double-checks at fire-time and skips if
+  // a human has since replied, a newer inbound landed, or the thread's AI
+  // got disabled.
+  AI_REPLY: 'whatsapp-ai-reply',
 } as const;
 
 export type WhatsAppQueueName = (typeof WHATSAPP_QUEUE)[keyof typeof WHATSAPP_QUEUE];
@@ -37,6 +42,12 @@ export interface TemplateSyncJob {
 
 export interface CampaignDispatchJob {
   campaignId: string;
+}
+
+export interface AiReplyJob {
+  inboundMessageId: string;
+  threadId: string;
+  body: string;
 }
 
 export interface CampaignRecipientJob {

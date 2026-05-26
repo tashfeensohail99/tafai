@@ -55,6 +55,7 @@ const DEFAULT_JOB_OPTS = {
       { name: WHATSAPP_QUEUE.TEMPLATE_SYNC },
       { name: WHATSAPP_QUEUE.CAMPAIGN_DISPATCH },
       { name: WHATSAPP_QUEUE.CAMPAIGN_RECIPIENT },
+      { name: WHATSAPP_QUEUE.AI_REPLY },
       // Meta Lead Ads (forked off the shared webhook → meta-leads module).
       { name: META_LEADGEN_QUEUE },
     ),

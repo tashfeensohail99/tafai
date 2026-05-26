@@ -2767,6 +2767,22 @@ model WhatsAppThread {
   adReferral         Json?
   adReferralAt       DateTime?
 
+  // --- AI bot per-chat state -----------------------------------------------
+  // Whether the AI assistant is allowed to compose replies on this thread.
+  // Hard off — a human can flip this from the chat panel to permanently
+  // disable AI on a chat ("I'll take this one"). Default ON.
+  aiEnabled         Boolean  @default(true)
+  // Stamped whenever ANY human agent sends an outbound message. The AI
+  // orchestrator silences itself for 4 hours from this timestamp so the bot
+  // can't talk over a live sales conversation. Auto-rolls forward on each
+  // new human send. NULL = AI is free to fire.
+  aiDisabledAt      DateTime?
+  // Conversation phase tracker so the bot's appointment funnel persists
+  // across messages. INITIAL → Q_AND_A → APPOINTMENT_PROPOSED →
+  // APPOINTMENT_AVAILABILITY → HANDED_OFF. Updated by the orchestrator on
+  // each turn so the next turn knows where we are in the funnel.
+  aiState           String   @default("INITIAL")
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

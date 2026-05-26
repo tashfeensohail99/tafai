@@ -104,6 +104,15 @@ export class CreateAppointmentDto {
   @IsOptional()
   @IsBoolean()
   sendWhatsAppConfirmation?: boolean;
+
+  /**
+   * If set, links this appointment back to a bot-captured AppointmentRequest
+   * row. The request is then auto-flipped to CONFIRMED so the chat-panel
+   * banner clears. Best-effort: an unknown id is silently ignored.
+   */
+  @IsOptional()
+  @IsUUID()
+  appointmentRequestId?: string;
 }
 
 export class UpdateAppointmentDto {

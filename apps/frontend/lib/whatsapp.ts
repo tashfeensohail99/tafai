@@ -433,6 +433,13 @@ export interface CreateAppointmentInput {
   notes?: string;
   /** Send a free-form WhatsApp confirmation to the linked lead/client. */
   sendWhatsAppConfirmation?: boolean;
+  /**
+   * If set, the backend flips the linked AppointmentRequest row to
+   * CONFIRMED and stores this appointment id on it — so the chat-panel
+   * banner clears automatically. Passed through when booking from a
+   * bot-captured request.
+   */
+  appointmentRequestId?: string;
 }
 
 export type AppointmentConfirmationOutcome =

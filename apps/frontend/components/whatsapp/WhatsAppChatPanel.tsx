@@ -75,7 +75,7 @@ import {
 } from '@/lib/whatsapp';
 import { ConvertToClientModal } from './ConvertToClientModal';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
-import { BookAppointmentModal } from './BookAppointmentModal';
+import { BookAppointmentModal, type AppointmentPrefill } from './BookAppointmentModal';
 import { AddFollowUpModal } from './AddFollowUpModal';
 import { EditLeadModal } from './EditLeadModal';
 import { TemplatePickerModal } from './TemplatePickerModal';
@@ -100,6 +100,11 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   const [sending, setSending] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [bookOpen, setBookOpen] = useState(false);
+  // When sales clicks "Book now" on a bot-captured AppointmentRequest banner,
+  // we stash the request data here so the modal opens pre-filled (day, time,
+  // modality + the customer's raw words in notes). null = manual open, no
+  // bot context. Cleared on close.
+  const [bookPrefill, setBookPrefill] = useState<AppointmentPrefill | null>(null);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [editLeadOpen, setEditLeadOpen] = useState(false);
@@ -540,7 +545,21 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             are absent (no toggle data + no pending requests). */}
         <AiBotStrip
           threadId={thread.id}
-          onBookFromRequest={() => setBookOpen(true)}
+          onBookFromRequest={(req) => {
+            // Pass the captured intent through to the modal so it opens
+            // pre-filled (modality → type, day/time → date+time, notes →
+            // "Bot captured: …"). The requestId travels with the create
+            // call so the backend auto-marks the AppointmentRequest as
+            // CONFIRMED and links it to the new appointment.
+            setBookPrefill({
+              appointmentRequestId: req.id,
+              preferredDay: req.preferredDay,
+              preferredTime: req.preferredTime,
+              modality: req.modality,
+              rawText: req.rawText,
+            });
+            setBookOpen(true);
+          }}
         />
         {/* Quick actions strip — visible only when there's no right sidebar
             (i.e. on the inbox view). Lead-detail tab variant has its own
@@ -806,12 +825,17 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       />
       <BookAppointmentModal
         open={bookOpen}
-        onClose={() => setBookOpen(false)}
+        onClose={() => {
+          setBookOpen(false);
+          setBookPrefill(null);
+        }}
         leadId={thread.leadId ?? null}
         clientId={thread.clientId ?? null}
         defaultAssigneeId={thread.lead?.assignedEmployeeId ?? null}
+        prefill={bookPrefill}
         onBooked={() => {
           setBookOpen(false);
+          setBookPrefill(null);
           void reload();
         }}
       />

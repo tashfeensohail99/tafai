@@ -20,12 +20,30 @@ import { Modal } from './Modal';
  * Times are submitted as ISO. Date+time inputs are local PKT — converted
  * with the browser's local TZ.
  */
+/**
+ * Optional bot-captured intent that pre-fills this modal. Sent in by the
+ * Finance / Sales chat panel when sales clicks "Book now" on the AI
+ * appointment-request banner. We use it to:
+ *   - Map modality → appointmentType + a sensible default location/link
+ *   - Drop the customer's raw words into the notes so sales has context
+ *   - Carry the requestId through so the create call auto-flips the
+ *     AppointmentRequest row to CONFIRMED + links the new appointment
+ */
+export interface AppointmentPrefill {
+  appointmentRequestId: string;
+  preferredDay: string | null;
+  preferredTime: string | null;
+  modality: string | null; // CALL | VIDEO | IN_PERSON | UNKNOWN
+  rawText: string;
+}
+
 export function BookAppointmentModal(props: {
   open: boolean;
   onClose: () => void;
   leadId: string | null;
   clientId: string | null;
   defaultAssigneeId: string | null;
+  prefill?: AppointmentPrefill | null;
   onBooked: () => void;
 }) {
   const [title, setTitle] = useState('Initial consultation');
@@ -44,20 +62,25 @@ export function BookAppointmentModal(props: {
   useEffect(() => {
     if (!props.open) return;
     setTitle('Initial consultation');
-    setAppointmentType('CONSULTATION');
-    // Default date = tomorrow.
+
+    // Defaults — overridden below if a bot-captured AppointmentPrefill came in.
+    setAppointmentType(modalityToType(props.prefill?.modality));
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    setDate(tomorrow.toISOString().slice(0, 10));
-    setTime('10:00');
+    setDate(prefillDate(props.prefill?.preferredDay) ?? tomorrow.toISOString().slice(0, 10));
+    setTime(prefillTime(props.prefill?.preferredTime));
     setDuration(30);
     setLocation('');
     setMeetingLink('');
-    setNotes('');
+    setNotes(
+      props.prefill
+        ? buildPrefillNote(props.prefill)
+        : '',
+    );
     setSendWhatsApp(true);
     setSubmitting(false);
     setError(null);
     setConfirmationNote(null);
-  }, [props.open]);
+  }, [props.open, props.prefill]);
 
   const onSubmit = async () => {
     if (!date || !time) {
@@ -81,6 +104,13 @@ export function BookAppointmentModal(props: {
         ...(meetingLink ? { meetingLink } : {}),
         ...(notes ? { notes } : {}),
         sendWhatsAppConfirmation: sendWhatsApp,
+        // Pass back to the backend so the bot-captured request row is
+        // auto-flipped to CONFIRMED + linked to this appointment. Without
+        // this the chat-panel banner would keep showing the same request
+        // forever (until manually closed via the admin page).
+        ...(props.prefill?.appointmentRequestId
+          ? { appointmentRequestId: props.prefill.appointmentRequestId }
+          : {}),
       });
 
       if (sendWhatsApp && result.whatsappConfirmation && !result.whatsappConfirmation.sent) {
@@ -245,4 +275,106 @@ function describeSkipReason(reason: 'no_thread' | 'window_expired' | 'no_phone' 
     case 'no_channel':
       return 'Appointment booked, but the WhatsApp channel is unavailable. Contact admin.';
   }
+}
+
+// ─── Bot-prefill helpers ────────────────────────────────────────────────────
+// All of these are best-effort: when the bot's parser was ambiguous (e.g.
+// "soon" with no day), we fall back to the modal's normal defaults so sales
+// can pick. Worst case is sales typing what they would have typed anyway.
+
+/**
+ * Bot modality → modal's `appointmentType` enum. The modal only exposes
+ * CONSULTATION / DOCUMENT_REVIEW / FOLLOW_UP / VISA_FILING / IN_PERSON, so
+ * CALL and VIDEO both map to CONSULTATION (the location/meetingLink fields
+ * + the notes tell sales which format the customer wanted).
+ */
+function modalityToType(modality: string | null | undefined): string {
+  switch (modality) {
+    case 'IN_PERSON': return 'IN_PERSON';
+    case 'CALL':
+    case 'VIDEO':
+    default:          return 'CONSULTATION';
+  }
+}
+
+/**
+ * "Monday" / "tomorrow" / "kal" → YYYY-MM-DD (next occurrence). Returns
+ * null for vague/unparseable strings — modal then falls back to "tomorrow".
+ */
+function prefillDate(preferredDay: string | null | undefined): string | null {
+  if (!preferredDay) return null;
+  const p = preferredDay.trim().toLowerCase();
+  const now = new Date();
+
+  if (p === 'today' || p === 'aaj' || p === 'آج') {
+    return now.toISOString().slice(0, 10);
+  }
+  if (p === 'tomorrow' || p === 'kal' || p === 'کل') {
+    return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
+  // Already YYYY-MM-DD?
+  if (/^\d{4}-\d{2}-\d{2}$/.test(p)) return p;
+
+  const weekdayMap: Record<string, number> = {
+    sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+    اتوار: 0, پیر: 1, منگل: 2, بدھ: 3, جمعرات: 4, جمعہ: 5, ہفتہ: 6,
+  };
+  const targetDow = weekdayMap[p];
+  if (targetDow === undefined) return null;
+  const currentDow = now.getDay();
+  // Days until next occurrence (1..7, never today).
+  const delta = ((targetDow - currentDow + 7) % 7) || 7;
+  const target = new Date(now.getTime() + delta * 24 * 60 * 60 * 1000);
+  return target.toISOString().slice(0, 10);
+}
+
+/**
+ * "morning" / "afternoon" / "evening" / "3pm" / "15:00" → HH:MM. Returns a
+ * sensible default per slot when the bot only gave us a vague time.
+ */
+function prefillTime(preferredTime: string | null | undefined): string {
+  if (!preferredTime) return '10:00';
+  const p = preferredTime.trim().toLowerCase();
+
+  // Roman + Urdu vague slots
+  if (/morning|subha|صبح/.test(p))         return '10:00';
+  if (/afternoon|dopahar|دوپہر/.test(p))   return '14:00';
+  if (/evening|sham|شام/.test(p))           return '17:00';
+  if (/night|raat|رات/.test(p))             return '19:00';
+
+  // Already HH:MM?
+  const hhmm = p.match(/^(\d{1,2}):(\d{2})$/);
+  if (hhmm) {
+    const hh = String(Math.min(23, parseInt(hhmm[1], 10))).padStart(2, '0');
+    return `${hh}:${hhmm[2]}`;
+  }
+
+  // "3pm" / "11 am" / "5 PM" — strip space, parse.
+  const ampm = p.replace(/\s+/g, '').match(/^(\d{1,2})(am|pm)$/);
+  if (ampm) {
+    let hh = parseInt(ampm[1], 10);
+    if (ampm[2] === 'pm' && hh < 12) hh += 12;
+    if (ampm[2] === 'am' && hh === 12) hh = 0;
+    return `${String(hh).padStart(2, '0')}:00`;
+  }
+
+  // "3 baje" — bare number, assume PM if 1-7, AM if 8-12.
+  const baje = p.match(/^(\d{1,2})\s*(baje|بجے)?$/);
+  if (baje) {
+    let hh = parseInt(baje[1], 10);
+    if (hh >= 1 && hh <= 7) hh += 12; // 1-7 → afternoon/evening in PKT business context
+    return `${String(hh).padStart(2, '0')}:00`;
+  }
+
+  return '10:00';
+}
+
+function buildPrefillNote(p: AppointmentPrefill): string {
+  const tags: string[] = [];
+  if (p.preferredDay)  tags.push(p.preferredDay);
+  if (p.preferredTime) tags.push(p.preferredTime);
+  if (p.modality && p.modality !== 'UNKNOWN') tags.push(p.modality);
+  const head = tags.length ? `Bot captured: ${tags.join(' · ')}` : 'Bot captured an appointment intent';
+  return `${head}\nClient said: "${p.rawText.slice(0, 200)}"`;
 }

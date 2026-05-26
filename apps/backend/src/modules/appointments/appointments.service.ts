@@ -260,6 +260,23 @@ export class AppointmentsService {
       }
     }
 
+    // If this appointment was created from a bot-captured AppointmentRequest,
+    // flip the request to CONFIRMED + link the appointment so the chat-panel
+    // banner clears and we don't keep nagging sales about an already-actioned
+    // request. Best-effort: a stale appointmentRequestId shouldn't break the
+    // create, so we updateMany (silently no-ops if the id doesn't exist).
+    if (dto.appointmentRequestId) {
+      await this.prisma.appointmentRequest.updateMany({
+        where: { id: dto.appointmentRequestId, status: 'PENDING' },
+        data: {
+          status: 'CONFIRMED',
+          linkedAppointmentId: created.id,
+          closedAt: new Date(),
+          closedByUserId: actorUserId,
+        },
+      });
+    }
+
     return { ...created, whatsappConfirmation };
   }
 

@@ -44,6 +44,15 @@ const APPOINTMENT_NUDGE_AFTER_TURNS = 2;
  */
 const BOT_REPLY_CEILING = 5;
 
+/**
+ * Jaccard similarity threshold above which a freshly-composed reply is
+ * treated as a duplicate of the last bot outbound on the thread. Token
+ * overlap above this means "we're about to say the same thing again" — we
+ * skip rather than spam. 0.7 is strict (most words shared); occasional
+ * legit repeats (e.g. the canned HANDED_OFF confirmation) won't trip it.
+ */
+const DUPLICATE_REPLY_JACCARD = 0.7;
+
 export type RunMode = 'AUTO' | 'SKIPPED';
 
 export interface OrchestratorInput {
@@ -216,7 +225,10 @@ export class OrchestratorService {
       currentState: thread.aiState,
       nextState: nextAiState,
       confident,
-      leadFirstName: thread.lead?.firstName ?? null,
+      // Sanitize: empty / placeholder / digit-only first names get dropped so
+      // the bot doesn't greet "Hi Customer 1234" or "Hi +92345…". Imports
+      // sometimes leave junk in firstName until sales cleans it up.
+      leadFirstName: this.sanitizedFirstName(thread.lead?.firstName),
     });
     const contextBlock = this.formatContext(retrieved);
     const historyBlock = this.formatHistory(history, input.inboundText);
@@ -237,6 +249,25 @@ export class OrchestratorService {
     if (this.looksLikeGuarantee(reply)) {
       this.log.warn(`Guarantee phrase detected, escalating instead: "${reply.slice(0, 80)}…"`);
       reply = this.escalationFallback(language);
+    }
+
+    // Dedup guard: don't repeat ourselves verbatim if the bot just sent a
+    // near-identical message on this thread. Catches the loop failure mode
+    // where retrieval returns the same top-1 + the LLM riffs almost the
+    // same response. Jaccard token overlap > 0.7 → SKIP.
+    const lastBotOutbound = await this.prisma.whatsAppMessage.findFirst({
+      where: {
+        threadId: thread.id,
+        direction: 'OUTBOUND',
+        sentByEmployeeId: null, // bot-sent messages only
+        body: { not: null },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { body: true },
+    });
+    if (lastBotOutbound?.body && this.tooSimilar(lastBotOutbound.body, reply)) {
+      this.log.warn(`Duplicate-reply skip: "${reply.slice(0, 60)}…" vs last "${lastBotOutbound.body.slice(0, 60)}…"`);
+      return { mode: 'SKIPPED', skipReason: 'duplicate-reply' };
     }
 
     // If the funnel just landed on HANDED_OFF this turn, extract structured
@@ -546,8 +577,46 @@ export class OrchestratorService {
 
   private escalationFallback(language: string): string {
     if (language === 'ur_roman') {
-      return 'Aapka sawal hum apke consultant tak forward kar dete hain — kya hum aaj ya kal ek short call schedule kar lein?';
+      return 'Aapka sawal hum apke manager tak forward kar dete hain — kya hum aaj ya kal ek short call schedule kar lein?';
     }
-    return "I'll loop in our consultant for the exact details — can we schedule a short call today or tomorrow?";
+    return "I'll loop in our manager for the exact details — can we schedule a short call today or tomorrow?";
+  }
+
+  /**
+   * Drop firstName values that would make the bot look broken when used in a
+   * greeting:
+   *   - empty / whitespace-only
+   *   - single character
+   *   - common placeholders (Unknown, Customer, Guest, Test, NA, …)
+   *   - digit-only or phone-shaped strings (CSV imports sometimes put the
+   *     phone in firstName until sales cleans it up)
+   * Returns the cleaned name or null — the system prompt then renders no
+   * name suffix at all instead of "Hi ,".
+   */
+  private sanitizedFirstName(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    const t = raw.trim();
+    if (!t || t.length < 2) return null;
+    if (/^(unknown|customer|guest|client|lead|test|na|n\/a|new lead|whatsapp)$/i.test(t)) return null;
+    if (/^[\d\s+\-()]+$/.test(t)) return null; // pure digits / phone
+    if (/^\+?\d/.test(t)) return null;          // starts with digit / +
+    return t;
+  }
+
+  /**
+   * Jaccard token-set similarity. Cheap, language-agnostic check used by the
+   * duplicate-reply guard. Tokens are lowercase, length > 2 (drops Urdu/En
+   * stop-words like "hai", "ji", "is", "to").
+   */
+  private tooSimilar(a: string, b: string): boolean {
+    const tokens = (s: string) =>
+      new Set(s.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
+    const ta = tokens(a);
+    const tb = tokens(b);
+    if (ta.size === 0 || tb.size === 0) return false;
+    let intersect = 0;
+    for (const t of ta) if (tb.has(t)) intersect++;
+    const union = ta.size + tb.size - intersect;
+    return intersect / union >= DUPLICATE_REPLY_JACCARD;
   }
 }

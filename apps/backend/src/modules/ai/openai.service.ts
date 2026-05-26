@@ -4,6 +4,7 @@ import { ApiKeysService } from '../api-keys/api-keys.service';
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const CHAT_MODEL = 'gpt-4o-mini';
+const TRANSCRIPTION_MODEL = 'whisper-1';
 
 /**
  * Thin wrapper around the OpenAI SDK that:
@@ -79,6 +80,34 @@ export class OpenAiService {
     };
   }
 
+  /**
+   * Transcribe a voice / audio clip via Whisper. Used by the AI reply
+   * processor to turn inbound WhatsApp voice notes into text the
+   * orchestrator can reason about. Whisper costs $0.006/min — a typical
+   * 30-second voice note is ~$0.003, negligible at our volume.
+   *
+   * `filename` is mostly for Meta + Whisper to sniff the codec; we pass the
+   * recorded extension (e.g. "voice.ogg") so the API picks the right
+   * decoder. Returns null on failure rather than throwing — a missed
+   * transcription should just skip the AI reply, not break the pipeline.
+   */
+  async transcribe(audio: Buffer, filename: string): Promise<{ text: string; latencyMs: number } | null> {
+    try {
+      const c = await this.getClient();
+      const t0 = Date.now();
+      const file = await OpenAI.toFile(audio, filename);
+      const res = await c.audio.transcriptions.create({
+        file,
+        model: TRANSCRIPTION_MODEL,
+      });
+      return { text: res.text.trim(), latencyMs: Date.now() - t0 };
+    } catch (e) {
+      this.log.error(`whisper transcribe failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
   static readonly EMBEDDING_MODEL = EMBEDDING_MODEL;
   static readonly CHAT_MODEL = CHAT_MODEL;
+  static readonly TRANSCRIPTION_MODEL = TRANSCRIPTION_MODEL;
 }

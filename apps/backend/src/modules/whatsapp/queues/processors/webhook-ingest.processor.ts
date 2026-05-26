@@ -530,14 +530,25 @@ export class WebhookIngestProcessor extends WorkerHost {
     // jump in first. The AiReplyProcessor at the other end re-checks every
     // guard at fire-time (newer inbound, human-active window, paid client,
     // etc.). Fully try/caught — AI failure must never block ingest.
-    if (decoded.type === WAMessageType.TEXT && decoded.body && decoded.body.trim().length >= 2) {
+    //
+    // Eligible message types:
+    //   • TEXT with a body — straightforward.
+    //   • AUDIO — voice notes. The AI processor pulls the rehosted audio
+    //     bytes, runs Whisper, writes the transcript into message.body and
+    //     hands the transcript to the orchestrator. Reply is text either way.
+    const isText = decoded.type === WAMessageType.TEXT && decoded.body && decoded.body.trim().length >= 2;
+    const isAudio = decoded.type === WAMessageType.AUDIO;
+    if (isText || isAudio) {
       try {
         await this.aiReplyQueue.add(
           'reply',
           {
             inboundMessageId: message.id,
             threadId: thread.id,
-            body: decoded.body,
+            // For AUDIO, body is empty here — the AI processor transcribes
+            // first and uses that. Keep the field non-nullable so the queue
+            // contract stays clean.
+            body: decoded.body ?? '',
           },
           {
             jobId: `ai-${message.id}`, // idempotent on retries / dupes

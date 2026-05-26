@@ -4,6 +4,8 @@ import type { Job, Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { OrchestratorService } from '../../../ai/orchestrator.service';
+import { OpenAiService } from '../../../ai/openai.service';
+import { StorageService } from '../../../storage/storage.service';
 import {
   WHATSAPP_QUEUE,
   type AiReplyJob,
@@ -34,6 +36,8 @@ export class AiReplyProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly orchestrator: OrchestratorService,
+    private readonly openai: OpenAiService,
+    private readonly storage: StorageService,
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundQueue: Queue<OutboundMessageJob>,
   ) {
@@ -53,10 +57,55 @@ export class AiReplyProcessor extends WorkerHost {
       return;
     }
 
+    // Resolve the text to feed the orchestrator. For TEXT messages this is
+    // just the body. For AUDIO voice notes we transcribe via Whisper here,
+    // persist the transcript into message.body (so sales can read it later
+    // on the chat panel), then pass the transcript downstream. Whisper
+    // failure / no-rehost-yet → skip with a clear reason; BullMQ retries
+    // pick it up automatically.
+    let inboundText = body;
+    const message = await this.prisma.whatsAppMessage.findUnique({
+      where: { id: inboundMessageId },
+      select: { id: true, type: true, body: true, mediaUrl: true, mediaMimeType: true },
+    });
+    if (!message) {
+      await this.prisma.aiRun.create({
+        data: { threadId, inboundMessageId, mode: 'SKIPPED', skipReason: 'message-not-found' },
+      });
+      return;
+    }
+    if (message.type === 'AUDIO' && (!inboundText || !inboundText.trim())) {
+      // Existing body wins if we already transcribed in a previous attempt.
+      if (message.body?.trim()) {
+        inboundText = message.body;
+      } else {
+        const transcript = await this.transcribeVoiceMessage(message);
+        if (!transcript) {
+          await this.prisma.aiRun.create({
+            data: { threadId, inboundMessageId, mode: 'SKIPPED', skipReason: 'voice-transcription-failed' },
+          });
+          return;
+        }
+        inboundText = transcript;
+        // Persist so sales sees the transcript on the chat panel + so a
+        // retry doesn't pay for another Whisper call.
+        await this.prisma.whatsAppMessage.update({
+          where: { id: inboundMessageId },
+          data: { body: transcript },
+        });
+      }
+    }
+    if (!inboundText || inboundText.trim().length < 2) {
+      await this.prisma.aiRun.create({
+        data: { threadId, inboundMessageId, mode: 'SKIPPED', skipReason: 'empty-after-transcription' },
+      });
+      return;
+    }
+
     const decision = await this.orchestrator.decide({
       threadId,
       inboundMessageId,
-      inboundText: body,
+      inboundText,
     });
 
     if (decision.mode === 'SKIPPED') {
@@ -145,5 +194,57 @@ export class AiReplyProcessor extends WorkerHost {
         data: { aiState: decision.nextAiState },
       });
     }
+  }
+
+  /**
+   * Pull the audio bytes for an inbound voice note + transcribe via Whisper.
+   *
+   * mediaUrl resolution (mirrors threads.controller.streamMedia):
+   *   • starts with "meta:" → media-download hasn't run yet. Return null;
+   *     the SKIP reason will be "voice-transcription-failed". BullMQ retries
+   *     the job will pick up after rehost completes.
+   *   • starts with "http"  → public CDN URL form, fetch with HTTP.
+   *   • else                → raw S3/Supabase storage key, use StorageService.
+   *
+   * Returns null on any failure — the caller logs SKIPPED and we move on.
+   */
+  private async transcribeVoiceMessage(message: {
+    id: string;
+    mediaUrl: string | null;
+    mediaMimeType: string | null;
+  }): Promise<string | null> {
+    if (!message.mediaUrl || message.mediaUrl.startsWith('meta:')) {
+      this.log.debug(`voice ${message.id}: media not rehosted yet`);
+      return null;
+    }
+    let bytes: Buffer | null = null;
+    try {
+      if (message.mediaUrl.startsWith('http')) {
+        const r = await fetch(message.mediaUrl);
+        if (!r.ok) {
+          this.log.warn(`voice ${message.id}: http fetch returned ${r.status}`);
+          return null;
+        }
+        bytes = Buffer.from(await r.arrayBuffer());
+      } else {
+        const d = await this.storage.download(message.mediaUrl);
+        bytes = d.bytes;
+      }
+    } catch (e) {
+      this.log.warn(`voice ${message.id}: bytes fetch failed: ${(e as Error).message}`);
+      return null;
+    }
+    if (!bytes || bytes.length === 0) return null;
+
+    // Pick a filename whose extension matches the codec so Whisper picks the
+    // right decoder. WhatsApp voice notes are Ogg/Opus; other audio is
+    // commonly mp3/m4a. When uncertain default to .ogg.
+    const ext = (message.mediaMimeType ?? '').includes('mp3')
+      ? 'mp3'
+      : (message.mediaMimeType ?? '').includes('m4a')
+        ? 'm4a'
+        : 'ogg';
+    const res = await this.openai.transcribe(bytes, `voice-${message.id}.${ext}`);
+    return res?.text?.trim() || null;
   }
 }

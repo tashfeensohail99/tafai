@@ -66,12 +66,21 @@ export function FinanceReceiptsPage() {
   }, [rows]);
 
   const download = async (id: string) => {
+    // Open the tab SYNCHRONOUSLY in the click handler so we keep the user
+    // gesture — calling window.open after an `await` is silently blocked by
+    // most browsers' pop-up rules. We then navigate the just-opened tab.
+    const tab = window.open('about:blank', '_blank', 'noopener,noreferrer');
     setDownloading(id);
     setError(null);
     try {
       const { url } = await getReceiptDownloadUrl(id);
-      window.open(url, '_blank', 'noopener');
+      if (tab && !tab.closed) {
+        tab.location.href = url;
+      } else {
+        window.location.href = url;
+      }
     } catch (e) {
+      if (tab && !tab.closed) tab.close();
       setError(e instanceof Error ? e.message : 'Could not open receipt');
     } finally {
       setDownloading(null);

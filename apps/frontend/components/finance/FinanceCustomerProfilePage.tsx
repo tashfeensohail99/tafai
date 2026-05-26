@@ -360,12 +360,22 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   };
 
   const handleReceiptDownload = async (id: string) => {
+    // Open the tab SYNCHRONOUSLY in the click handler so we don't lose the
+    // user-gesture window — calling window.open after an `await` is silently
+    // blocked by Chrome/Edge/Safari as if it were a pop-up.
+    const tab = window.open('about:blank', '_blank', 'noopener,noreferrer');
     setBusy('rcpt-dl');
     setError(null);
     try {
       const { url } = await getReceiptDownloadUrl(id);
-      window.open(url, '_blank', 'noopener');
+      if (tab && !tab.closed) {
+        tab.location.href = url;
+      } else {
+        // Pop-up blocked entirely — fall back to navigating the current tab.
+        window.location.href = url;
+      }
     } catch (e) {
+      if (tab && !tab.closed) tab.close();
       setError(e instanceof Error ? e.message : 'Could not open the receipt');
     } finally {
       setBusy(null);

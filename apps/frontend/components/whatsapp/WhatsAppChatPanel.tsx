@@ -79,6 +79,7 @@ import { BookAppointmentModal } from './BookAppointmentModal';
 import { AddFollowUpModal } from './AddFollowUpModal';
 import { EditLeadModal } from './EditLeadModal';
 import { TemplatePickerModal } from './TemplatePickerModal';
+import { AiBotStrip } from './AiBotStrip';
 
 interface Props {
   threadId: string;
@@ -532,6 +533,14 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           assignedTo={thread.lead?.assignedEmployee ?? null}
           csvBatchName={thread.lead?.importRows?.[0]?.batch.name ?? null}
           onBack={onBack}
+        />
+        {/* AI bot strip — per-thread on/off toggle + any bot-captured
+            appointment-request banners. Self-contained: fetches its own
+            state from the API and silently renders nothing when both
+            are absent (no toggle data + no pending requests). */}
+        <AiBotStrip
+          threadId={thread.id}
+          onBookFromRequest={() => setBookOpen(true)}
         />
         {/* Quick actions strip — visible only when there's no right sidebar
             (i.e. on the inbox view). Lead-detail tab variant has its own

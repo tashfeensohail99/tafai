@@ -266,6 +266,47 @@ export function sendTemplate(threadId: string, input: {
   });
 }
 
+// ─── AI bot per-thread controls ─────────────────────────────────────────
+
+export interface ThreadAiState {
+  id: string;
+  aiEnabled: boolean;
+  aiDisabledAt: string | null;
+  aiState: string;
+}
+
+/**
+ * Flip the WhatsApp AI bot ON / OFF for a single thread. Off = the bot
+ * stays silent on this thread regardless of the global bot mode. Useful
+ * for sensitive conversations where the agent wants full control.
+ */
+export function toggleThreadAi(threadId: string, aiEnabled: boolean): Promise<ThreadAiState> {
+  return apiFetch<ThreadAiState>(`/whatsapp/threads/${threadId}/ai-toggle`, {
+    method: 'POST',
+    body: JSON.stringify({ aiEnabled }),
+  });
+}
+
+export interface PendingAppointmentRequest {
+  id: string;
+  leadId: string;
+  threadId: string | null;
+  rawText: string;
+  preferredDay: string | null;
+  preferredTime: string | null;
+  modality: string | null;
+  status: string;
+  createdAt: string;
+}
+
+/** Bot-captured appointment intent waiting for sales to confirm on this thread. */
+export function getThreadAppointmentRequests(threadId: string): Promise<PendingAppointmentRequest[]> {
+  return apiFetch<PendingAppointmentRequest[]>(
+    `/whatsapp/threads/${threadId}/appointment-requests`,
+    { cache: 'no-store' },
+  );
+}
+
 /**
  * Upload and send a media message (voice note, image, video, document).
  * Uses multipart/form-data; `apiFetch` is bypassed because we need raw FormData.

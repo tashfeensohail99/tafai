@@ -36,6 +36,13 @@ import { KnowledgeService, type KnowledgeMatch } from './knowledge.service';
 const HUMAN_LOCKOUT_MS = 4 * 60 * 60 * 1000;
 const HISTORY_TURNS = 10;
 const APPOINTMENT_NUDGE_AFTER_TURNS = 2;
+/**
+ * Hard ceiling on bot replies per thread. Once we've sent this many OUTBOUND
+ * messages with sentByEmployeeId=null on the thread, the orchestrator
+ * silences itself regardless of funnel state — prevents runaway loops if a
+ * customer keeps asking questions and no human ever steps in.
+ */
+const BOT_REPLY_CEILING = 5;
 
 export type RunMode = 'AUTO' | 'SKIPPED';
 
@@ -108,6 +115,28 @@ export class OrchestratorService {
 
     if (thread.aiDisabledAt && Date.now() - thread.aiDisabledAt.getTime() < HUMAN_LOCKOUT_MS) {
       return { mode: 'SKIPPED', skipReason: 'within-human-lockout' };
+    }
+
+    // Funnel-state stop: once we've handed off to a real consultant, the bot
+    // stays out of the way. Any further reply would be either "consultant
+    // will reach out" (already said) or noise.
+    if (thread.aiState === 'HANDED_OFF') {
+      return { mode: 'SKIPPED', skipReason: 'handed-off' };
+    }
+
+    // Hard ceiling: never send more than N bot replies on a single thread.
+    // Defense against runaway loops if a customer keeps probing without
+    // anyone stepping in. Counts OUTBOUND messages with NULL sentByEmployeeId
+    // (bot messages — humans always have a non-null sender).
+    const botRepliesSoFar = await this.prisma.whatsAppMessage.count({
+      where: {
+        threadId: thread.id,
+        direction: 'OUTBOUND',
+        sentByEmployeeId: null,
+      },
+    });
+    if (botRepliesSoFar >= BOT_REPLY_CEILING) {
+      return { mode: 'SKIPPED', skipReason: 'reply-ceiling-reached' };
     }
 
     // ── 3. Paid client = has a ProcessingCase OR any FinanceHandover ───────
@@ -204,6 +233,22 @@ export class OrchestratorService {
       reply = this.escalationFallback(language);
     }
 
+    // If the funnel just landed on HANDED_OFF this turn, extract structured
+    // appointment intent from the customer's message and write a row to
+    // crm.appointment_requests. Sales picks it up from the chat panel banner
+    // and uses it to pre-fill the existing "Book Appointment" modal.
+    if (nextAiState === 'HANDED_OFF' && thread.aiState !== 'HANDED_OFF' && thread.lead?.id) {
+      // Fire-and-forget: a failure to extract should NOT block the reply.
+      void this.extractAndSaveAppointmentRequest({
+        leadId: thread.lead.id,
+        threadId: thread.id,
+        inboundMessageId: input.inboundMessageId,
+        rawText: input.inboundText,
+      }).catch((e) =>
+        this.log.warn(`appointment-request extract failed: ${(e as Error).message}`),
+      );
+    }
+
     return {
       mode: 'AUTO',
       reply,
@@ -216,6 +261,66 @@ export class OrchestratorService {
       model: res.model,
       nextAiState,
     };
+  }
+
+  /**
+   * Second OpenAI call (small, ~150 tokens) that parses the customer's
+   * scheduling message into structured fields. We don't try to be clever in
+   * regex — natural-language schedule parsing across English + Roman Urdu
+   * is a job for the LLM, and gpt-4o-mini is cheap enough that one extra
+   * call per HANDED_OFF transition is a non-issue.
+   *
+   * Returns nothing — writes the AppointmentRequest row as a side effect.
+   * Safe to fail silently: the customer still gets the reply, sales still
+   * gets the conversation, the "pending request" badge just won't appear.
+   */
+  private async extractAndSaveAppointmentRequest(opts: {
+    leadId: string;
+    threadId: string;
+    inboundMessageId: string;
+    rawText: string;
+  }): Promise<void> {
+    const prompt = [
+      `Extract appointment-booking intent from the customer's message.`,
+      `Return STRICT JSON with exactly these keys:`,
+      `  preferredDay: string | null  // "Monday", "Tuesday", … or "today", "tomorrow", or a date "2026-06-03", or null`,
+      `  preferredTime: string | null // "morning", "afternoon", "evening", or "15:00" / "3pm", or null`,
+      `  modality: "CALL" | "VIDEO" | "IN_PERSON" | "UNKNOWN"`,
+      `Rules:`,
+      `- "call" / "phone" → CALL; "meet" / "google meet" / "video" / "zoom" → VIDEO; "office" / "visit" / "visit office" → IN_PERSON; otherwise UNKNOWN.`,
+      `- Roman Urdu: "subha"=morning, "sham"=evening, "kal"=tomorrow, "aaj"=today, "Monday"="Monday" etc.`,
+      `- Output ONLY the JSON. No code fences, no commentary.`,
+      ``,
+      `Customer message: """${opts.rawText.slice(0, 500)}"""`,
+    ].join('\n');
+
+    const res = await this.openai.chat([
+      { role: 'system', content: 'You extract structured fields from chat messages. Always output strict JSON.' },
+      { role: 'user', content: prompt },
+    ]);
+    let parsed: { preferredDay?: string | null; preferredTime?: string | null; modality?: string } | null = null;
+    try {
+      const cleaned = (res.reply ?? '').replace(/^```(json)?|```$/g, '').trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      parsed = null;
+    }
+    const modality = ['CALL', 'VIDEO', 'IN_PERSON'].includes(parsed?.modality ?? '')
+      ? (parsed!.modality as string)
+      : 'UNKNOWN';
+
+    await this.prisma.appointmentRequest.create({
+      data: {
+        leadId: opts.leadId,
+        threadId: opts.threadId,
+        extractedFromMessageId: opts.inboundMessageId,
+        rawText: opts.rawText.slice(0, 1000),
+        preferredDay: parsed?.preferredDay ?? null,
+        preferredTime: parsed?.preferredTime ?? null,
+        modality,
+        status: 'PENDING',
+      },
+    });
   }
 
   // ─── helpers ─────────────────────────────────────────────────────────────

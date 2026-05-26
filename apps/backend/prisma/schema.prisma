@@ -3041,3 +3041,47 @@ model AiRun {
   @@map("runs")
   @@schema("ai")
 }
+
+/// Bot-captured appointment intent. When the AI funnel reaches HANDED_OFF
+/// state (customer said "Monday morning works"), the orchestrator extracts
+/// structured intent and writes a row here. Sales picks up the row from the
+/// chat panel banner, clicks Book Appointment, the modal pre-fills with the
+/// captured preference, and on save we link `linkedAppointmentId` back to the
+/// confirmed Appointment row.
+///
+/// Stays as a separate model (not an enum on Appointment) because:
+///  - It represents PROVISIONAL intent — not a slot, not assigned, not
+///    confirmed. Mixing it into Appointment would pollute the calendar/ICS
+///    feed with proposals that may never happen.
+///  - The bot can rewrite its own intent row across turns (the customer
+///    sometimes negotiates the time), without churning real Appointment rows.
+model AppointmentRequest {
+  id                String   @id @default(uuid())
+  leadId            String
+  threadId          String?
+  /// The WhatsApp message we extracted the intent from — for forensics +
+  /// "scroll to this message" UX on the chat panel.
+  extractedFromMessageId String?
+  /// Free-text customer wording — kept verbatim so sales sees exactly what
+  /// they said even if our parser missed nuance.
+  rawText           String
+  /// Parsed day-of-week (Monday / Tuesday / …) OR a date string (2026-06-03)
+  /// OR null when unspecified.
+  preferredDay      String?
+  /// Parsed time slot (morning / afternoon / evening) OR a specific time
+  /// (15:00) OR null when unspecified.
+  preferredTime     String?
+  /// Bot-detected modality.
+  modality          String?  // CALL | VIDEO | IN_PERSON | UNKNOWN
+  status            String   @default("PENDING") // PENDING | CONFIRMED | REJECTED | EXPIRED
+  linkedAppointmentId String?  // set when sales books a real Appointment from this
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  closedAt          DateTime?
+  closedByUserId    String?
+
+  @@index([leadId, status, createdAt(sort: Desc)])
+  @@index([threadId, status])
+  @@map("appointment_requests")
+  @@schema("crm")
+}

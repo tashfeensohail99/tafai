@@ -135,6 +135,47 @@ export class WhatsAppThreadsController {
   }
 
   /**
+   * Per-thread AI on/off toggle. Flips WhatsAppThread.aiEnabled. When set
+   * false, the AI orchestrator skips this thread regardless of the global
+   * bot mode. Useful for sensitive conversations where the agent wants to
+   * own every reply.
+   */
+  @Post(':id/ai-toggle')
+  @RequirePermissions('whatsapp.send_message')
+  async toggleAi(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: { aiEnabled: boolean },
+  ) {
+    const caller = await this.buildCallerContext(user);
+    // Use getOrFail so we apply the same role-scope checks as a read.
+    await this.threads.getOrFail(caller, id);
+    return this.prisma.whatsAppThread.update({
+      where: { id },
+      data: { aiEnabled: !!dto.aiEnabled },
+      select: { id: true, aiEnabled: true, aiDisabledAt: true, aiState: true },
+    });
+  }
+
+  /**
+   * Pending AI-extracted appointment requests on this thread. Powers the
+   * "Client wants Monday morning, video call" banner on the chat panel.
+   */
+  @Get(':id/appointment-requests')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async appointmentRequests(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    await this.threads.getOrFail(caller, id);
+    return this.prisma.appointmentRequest.findMany({
+      where: { threadId: id, status: 'PENDING' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
    * Admin override: reassign the thread's Lead to a specific employee. The
    * round-robin engine still applies on the next unassigned inbound, but
    * sticky routing (Lead.preferredEmployeeId) is updated so this becomes the

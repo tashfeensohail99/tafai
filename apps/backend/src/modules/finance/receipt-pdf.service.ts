@@ -155,21 +155,22 @@ export class ReceiptPdfService {
   .up{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;}
   .up th{text-align:left;padding:6px 8px;background:#f1f5f9;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;}
   .up td{padding:6px 8px;color:#0f172a;border-bottom:1px solid #f1f5f9;}
-  .balance{margin-top:12px;background:${fullyPaid ? '#ecfdf5' : '#fff7ed'};border:1px solid ${fullyPaid ? '#a7f3d0' : '#fed7aa'};
-           border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;}
+  .balance{margin-top:12px;background:${fullyPaid ? '#f8fafc' : '#fafaf9'};border:1px solid ${fullyPaid ? '#cbd5e1' : '#e7e5e4'};
+           border-radius:6px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;}
   .balance .bl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;}
-  .balance .bv{font-size:18px;font-weight:800;color:${fullyPaid ? '#047857' : '#b45309'};}
+  .balance .bv{font-size:18px;font-weight:800;color:${fullyPaid ? '#0b1f3a' : '#0b1f3a'};}
   .notes{margin-top:14px;font-size:11px;color:#475569;}
-  .issued{margin-top:22px;padding-top:10px;border-top:1px dashed #cbd5e1;text-align:center;line-height:1.55;}
-  .issued .verify{font-size:10px;color:#0f172a;font-weight:600;letter-spacing:.02em;}
-  .issued .verify .ref{font-family:'Courier New',Courier,monospace;color:#0b1f3a;background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:9.5px;letter-spacing:.05em;}
-  .issued .fine{color:#94a3b8;font-size:8.5px;margin-top:4px;}
-  .stamp{display:inline-block;margin-top:8px;border:2px solid ${fullyPaid ? '#047857' : '#0b1f3a'};color:${fullyPaid ? '#047857' : '#0b1f3a'};
-         border-radius:6px;padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:1px;transform:rotate(-3deg);}
+  .signoff{margin-top:34px;padding-top:14px;border-top:1px solid #cbd5e1;text-align:right;}
+  .signoff .auth{font-size:9.5px;color:#64748b;letter-spacing:.05em;margin-bottom:3px;text-transform:uppercase;}
+  .signoff .role{font-size:12px;color:#0b1f3a;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
+  .signoff .meta{font-size:9.5px;color:#94a3b8;margin-top:8px;}
+  .signoff .meta .ref{font-family:'Courier New',Courier,monospace;color:#0b1f3a;background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:9px;letter-spacing:.05em;}
+  .fine-print{margin-top:18px;text-align:center;font-size:8.5px;color:#94a3b8;line-height:1.5;}
+  .stamp{display:inline-block;margin-top:8px;border:1.5px solid ${fullyPaid ? '#0b1f3a' : '#475569'};color:${fullyPaid ? '#0b1f3a' : '#475569'};
+         border-radius:3px;padding:3px 10px;font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;}
 </style></head>
 <body>
   <div class="title">PAYMENT RECEIPT</div>
-  <div class="sub">Official acknowledgement of payment received — Tashfeen Immigration Solutions</div>
 
   <table class="meta">
     <tr><td class="k">Receipt no.</td><td class="v">${this.esc(input.receiptNumber)}</td>
@@ -193,7 +194,7 @@ export class ReceiptPdfService {
       <div class="label">Payment received</div>
       <div class="amount">${paidLine}</div>
       ${baseLine ? `<div class="amount-base">${baseLine}</div>` : ''}
-      <span class="stamp">${fullyPaid ? 'PAID IN FULL' : 'RECEIVED WITH THANKS'}</span>
+      <span class="stamp">${fullyPaid ? 'Payment in Full' : 'On Account'}</span>
     </div>
     <div class="col section">
       <div class="label">Payment details</div>
@@ -245,13 +246,13 @@ export class ReceiptPdfService {
 
   ${cleanNotes ? `<div class="notes"><strong>Notes:</strong> ${this.esc(cleanNotes)}</div>` : ''}
 
-  <div class="issued">
-    <div class="verify">
-      Verified by ${this.esc(input.issuedBy.name)} on ${this.esc(this.formatDateShort(input.issuedAt))}${input.auditRef ? ` &nbsp;·&nbsp; <span class="ref">${this.esc(input.auditRef)}</span>` : ''}
-    </div>
-    <div class="fine">
-      This is a computer-generated receipt — quote the receipt number above to verify its authenticity.
-    </div>
+  <div class="signoff">
+    <div class="auth">For Tashfeen Immigration Solutions</div>
+    <div class="role">Authorised Signatory · Finance Department</div>
+    <div class="meta">Verified ${this.esc(this.formatDateShort(input.issuedAt))}${input.auditRef ? ` &nbsp;·&nbsp; Audit Ref <span class="ref">${this.esc(input.auditRef)}</span>` : ''}</div>
+  </div>
+  <div class="fine-print">
+    This is a computer-generated receipt and does not require a physical signature. Quote the receipt number to verify its authenticity through Tashfeen Immigration Solutions.
   </div>
 </body></html>`;
   }

@@ -1611,6 +1611,16 @@ export class FinanceService {
     const totalFee = num(contract.totalAmount);
     const remaining = Math.max(0, totalFee - totalPaid);
 
+    // Detect "placeholder" due dates — when an installment is purely
+    // trigger-based (e.g. "On approval"), materializeServiceContract falls
+    // back to the agreement signing date as a dummy due date. Showing that
+    // date on the client's receipt looks like the installment is due TODAY,
+    // which is wrong. Null it out so the renderer prints "—" and the trigger
+    // text in the Stage column carries the meaning.
+    const sameDay = (a: Date | null, b: Date | null) =>
+      !!(a && b && a.toDateString() === b.toDateString());
+    const signed = contract.signedDate ?? null;
+
     // AR waterfall: allocate total paid across installments in sequence order.
     let pool = totalPaid;
     const installments = contract.installments.map((i) => {
@@ -1623,7 +1633,8 @@ export class FinanceService {
         : covered > 0
           ? 'PARTIALLY_PAID'
           : 'PENDING';
-      return { sequence: i.sequence, description: i.description, dueDate: i.dueDate, amount, status };
+      const dueDate = sameDay(i.dueDate, signed) ? null : i.dueDate;
+      return { sequence: i.sequence, description: i.description, dueDate, amount, status };
     });
     const installmentsPaid = installments.filter((i) => i.status === 'PAID').length;
     const upcoming = installments

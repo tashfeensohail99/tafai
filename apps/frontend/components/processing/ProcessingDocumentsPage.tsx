@@ -1,9 +1,9 @@
 'use client';
-// Aggregated Document Review Queue — Phase 1F-1.
+// Aggregated Document Review Queue — wired to GET /processing/documents.
 // Cross-case view of all documents needing officer attention:
-// SUBMITTED (awaiting review), UNDER_REVIEW, REJECTED (awaiting client), EXPIRING_SOON.
+// SUBMITTED, UNDER_REVIEW, REJECTED, EXPIRING_SOON, EXPIRED.
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -13,7 +13,7 @@ import {
   ExternalLink,
   FileSearch,
   Filter,
-  ShieldAlert,
+  Loader2,
   XCircle,
 } from 'lucide-react';
 import {
@@ -25,23 +25,18 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_PROCESSING_OFFICER,
-  getAggregatedDocQueue,
   DOC_STATUS_LABEL,
   PRIORITY_LABEL,
-  REJECTION_REASON_LABEL,
-  fmtRelative,
   fmtDate,
   type DocumentItemStatus,
   type DocumentCriticality,
-  type ProcessingPriority,
-  type AggregatedDocRow,
 } from '@/components/processing/mockData';
 import { priorityTone } from './ProcessingDashboardPage';
-
-// ---------------------------------------------------------------------------
-// Tone helpers
-// ---------------------------------------------------------------------------
+import {
+  fetchAggregatedDocuments,
+  type ApiAggregatedDocument,
+} from '@/lib/processing';
+import { labelForServiceCode } from '@/lib/service-types';
 
 function docStatusTone(status: DocumentItemStatus): BadgeTone {
   switch (status) {
@@ -65,10 +60,6 @@ function criticalityTone(c: DocumentCriticality): BadgeTone {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Filter config
-// ---------------------------------------------------------------------------
-
 type StatusFilter = 'ALL' | DocumentItemStatus;
 type CriticalityFilter = 'ALL' | DocumentCriticality;
 
@@ -78,6 +69,7 @@ const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: 'UNDER_REVIEW', label: 'Under review' },
   { value: 'REJECTED',     label: 'Rejected' },
   { value: 'EXPIRING_SOON',label: 'Expiring soon' },
+  { value: 'EXPIRED',      label: 'Expired' },
 ];
 
 const CRITICALITY_OPTIONS: { value: CriticalityFilter; label: string }[] = [
@@ -88,17 +80,18 @@ const CRITICALITY_OPTIONS: { value: CriticalityFilter; label: string }[] = [
   { value: 'SUPPORTING',  label: 'Supporting' },
 ];
 
-// ---------------------------------------------------------------------------
-// Document row card
-// ---------------------------------------------------------------------------
+function personName(c: ApiAggregatedDocument['case']): string {
+  const src = c.client ?? c.lead;
+  const first = src?.firstName?.trim() ?? '';
+  const last = src?.lastName?.trim() ?? '';
+  const full = `${first} ${last}`.trim();
+  return full || 'Unnamed';
+}
 
-function DocQueueRow({ row }: { row: AggregatedDocRow }) {
-  const { docItem: doc, caseId, clientName, service, targetCountry, casePriority } = row;
-
+function DocQueueRow({ doc }: { doc: ApiAggregatedDocument }) {
   return (
     <GlassCard variant="default" padded="md">
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
-        {/* Left: doc info */}
         <div style={{ flex: 1, minWidth: '220px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '5px' }}>
             <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>
@@ -118,57 +111,33 @@ function DocQueueRow({ row }: { row: AggregatedDocRow }) {
             </div>
           ) : null}
 
-          {/* Rejection reason codes */}
-          {doc.status === 'REJECTED' && doc.rejectionReasonCodes?.length ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '6px' }}>
-              {doc.rejectionReasonCodes.map((code) => (
-                <span
-                  key={code}
-                  style={{ padding: '2px 8px', borderRadius: 'var(--sos-radius-full)', background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', fontSize: '11.5px', color: 'var(--sos-status-danger)' }}
-                >
-                  {REJECTION_REASON_LABEL[code] ?? code}
-                </span>
-              ))}
-            </div>
-          ) : null}
-
-          {/* Validity / expiry */}
           {doc.validityExpiryDate ? (
-            <div style={{ fontSize: '11.5px', color: doc.status === 'EXPIRING_SOON' ? 'var(--sos-status-warning)' : 'var(--sos-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              {doc.status === 'EXPIRING_SOON' ? <AlertTriangle size={12} /> : <Clock size={12} />}
+            <div style={{ fontSize: '11.5px', color: doc.status === 'EXPIRING_SOON' || doc.status === 'EXPIRED' ? 'var(--sos-status-warning)' : 'var(--sos-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {doc.status === 'EXPIRING_SOON' || doc.status === 'EXPIRED' ? <AlertTriangle size={12} /> : <Clock size={12} />}
               Expires {fmtDate(doc.validityExpiryDate)}
             </div>
           ) : null}
         </div>
 
-        {/* Centre: case context */}
         <div style={{ minWidth: '160px', flexShrink: 0 }}>
           <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginBottom: '4px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             Case
           </div>
           <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '2px' }}>
-            {clientName}
+            {personName(doc.case)}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginBottom: '6px' }}>
-            {service} · {targetCountry}
+            {labelForServiceCode(doc.case.service)} · {doc.case.targetCountry}
           </div>
-          <StatusBadge tone={priorityTone(casePriority)} size="sm">
-            {PRIORITY_LABEL[casePriority]}
+          <StatusBadge tone={priorityTone(doc.case.priority)} size="sm">
+            {PRIORITY_LABEL[doc.case.priority]}
           </StatusBadge>
         </div>
 
-        {/* Right: meta + action */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
-          <div style={{ fontSize: '11.5px', color: 'var(--sos-text-muted)', textAlign: 'right' }}>
-            {doc.uploadedAt ? (
-              <>Uploaded {fmtRelative(doc.uploadedAt)}<br />v{doc.versionNumber ?? 1}</>
-            ) : (
-              <span>Not uploaded</span>
-            )}
-          </div>
+        <div style={{ flexShrink: 0, alignSelf: 'center' }}>
           <Link
-            href={`/processing/cases/${caseId}` as Route}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-brand-primary-soft)', border: '1px solid var(--sos-brand-primary-border)', color: 'var(--sos-brand-primary-strong)', fontSize: '12.5px', fontWeight: 600, textDecoration: 'none', transition: 'opacity 150ms' }}
+            href={`/processing/cases/${doc.case.id}` as Route}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-brand-primary-soft)', border: '1px solid var(--sos-brand-primary-border)', color: 'var(--sos-brand-primary-strong)', fontSize: '12.5px', fontWeight: 600, textDecoration: 'none' }}
           >
             <ExternalLink size={12} /> Open case
           </Link>
@@ -178,31 +147,35 @@ function DocQueueRow({ row }: { row: AggregatedDocRow }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main page component
-// ---------------------------------------------------------------------------
-
 export function ProcessingDocumentsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [critFilter, setCritFilter]     = useState<CriticalityFilter>('ALL');
+  const [docs, setDocs] = useState<ApiAggregatedDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Fetch queue — my cases only for officer view
-  const allRows = useMemo(() => getAggregatedDocQueue(MOCK_PROCESSING_OFFICER.id), []);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchAggregatedDocuments()
+      .then((res) => { if (!cancelled) setDocs(res.items); })
+      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load documents'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
-  // Metrics (always over full queue regardless of filter)
-  const submitted    = allRows.filter((r) => r.docItem.status === 'SUBMITTED').length;
-  const underReview  = allRows.filter((r) => r.docItem.status === 'UNDER_REVIEW').length;
-  const rejected     = allRows.filter((r) => r.docItem.status === 'REJECTED').length;
-  const expiringSoon = allRows.filter((r) => r.docItem.status === 'EXPIRING_SOON').length;
+  const submitted    = docs.filter((d) => d.status === 'SUBMITTED').length;
+  const underReview  = docs.filter((d) => d.status === 'UNDER_REVIEW').length;
+  const rejected     = docs.filter((d) => d.status === 'REJECTED').length;
+  const expiringSoon = docs.filter((d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED').length;
 
-  // Filtered rows
   const filtered = useMemo(() => {
-    return allRows.filter((r) => {
-      const statusOk = statusFilter === 'ALL' || r.docItem.status === statusFilter;
-      const critOk   = critFilter === 'ALL'   || r.docItem.criticality === critFilter;
+    return docs.filter((d) => {
+      const statusOk = statusFilter === 'ALL' || d.status === statusFilter;
+      const critOk   = critFilter === 'ALL'   || d.criticality === critFilter;
       return statusOk && critOk;
     });
-  }, [allRows, statusFilter, critFilter]);
+  }, [docs, statusFilter, critFilter]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -211,7 +184,6 @@ export function ProcessingDocumentsPage() {
         description="Documents across your cases that need attention — review, re-submission, or follow-up."
       />
 
-      {/* ── KPI strip ──────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
         <MetricCard
           label="Awaiting review"
@@ -235,7 +207,7 @@ export function ProcessingDocumentsPage() {
           tone={rejected > 0 ? 'danger' : 'success'}
         />
         <MetricCard
-          label="Expiring soon"
+          label="Expiring / expired"
           value={String(expiringSoon)}
           hint={expiringSoon > 0 ? 'Needs follow-up' : 'None'}
           Icon={AlertTriangle}
@@ -243,10 +215,8 @@ export function ProcessingDocumentsPage() {
         />
       </div>
 
-      {/* ── Filter bar ─────────────────────────────────────────────────── */}
       <GlassCard variant="panel" padded="md">
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-          {/* Status tabs */}
           <div style={{ display: 'flex', gap: '4px', background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-md)', padding: '3px' }}>
             {STATUS_FILTER_OPTIONS.map(({ value, label }) => (
               <button
@@ -262,7 +232,6 @@ export function ProcessingDocumentsPage() {
                   fontSize: '12.5px',
                   fontWeight: statusFilter === value ? 600 : 400,
                   cursor: 'pointer',
-                  transition: 'all 150ms',
                   whiteSpace: 'nowrap',
                 }}
               >
@@ -271,7 +240,6 @@ export function ProcessingDocumentsPage() {
             ))}
           </div>
 
-          {/* Criticality select */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Filter size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
             <select
@@ -291,20 +259,31 @@ export function ProcessingDocumentsPage() {
         </div>
       </GlassCard>
 
-      {/* ── Document rows ──────────────────────────────────────────────── */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <GlassCard variant="panel" padded="lg">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+            <Loader2 size={16} className="sos-spin" /> Loading queue…
+          </div>
+        </GlassCard>
+      ) : error ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>Failed to load queue: {error}</div>
+        </GlassCard>
+      ) : filtered.length === 0 ? (
         <GlassCard variant="panel" padded="lg">
           <EmptyState
             Icon={CheckCircle2}
-            title="No documents match this filter"
-            description="Try changing the status or criticality filter, or check back after new documents are uploaded."
+            title={docs.length === 0 ? 'No documents need attention right now' : 'No documents match this filter'}
+            description={
+              docs.length === 0
+                ? 'Documents will appear here as clients upload them and as validity dates approach.'
+                : 'Try changing the status or criticality filter.'
+            }
           />
         </GlassCard>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {filtered.map((row) => (
-            <DocQueueRow key={`${row.caseId}-${row.docItem.id}`} row={row} />
-          ))}
+          {filtered.map((doc) => <DocQueueRow key={doc.id} doc={doc} />)}
         </div>
       )}
     </div>

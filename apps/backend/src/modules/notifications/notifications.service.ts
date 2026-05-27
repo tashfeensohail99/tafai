@@ -1,0 +1,72 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../../common/prisma/prisma.service';
+
+/**
+ * In-app notifications shown in the bell badge on the employee shell.
+ * Producers (right now just the AI orchestrator's auto-book path) call
+ * `create()` directly — there's no fanout, no realtime push yet. The
+ * frontend polls every 30 seconds; that's enough at the bot's volume.
+ *
+ * All reads are scoped to the calling user. `markAllRead` and the
+ * unread counter help the bell render quickly.
+ */
+@Injectable()
+export class NotificationsService {
+  private readonly log = new Logger(NotificationsService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** Create a notification. Caller already knows the recipient userId. */
+  async create(input: {
+    userId: string;
+    type: string;
+    title: string;
+    body?: string | null;
+    link?: string | null;
+  }): Promise<void> {
+    try {
+      await this.prisma.notification.create({
+        data: {
+          userId: input.userId,
+          type: input.type,
+          title: input.title,
+          body: input.body ?? null,
+          link: input.link ?? null,
+        },
+      });
+    } catch (e) {
+      // Notifications are best-effort — never let a write failure here
+      // break the business flow that produced the event.
+      this.log.warn(`notification write failed (${input.type}): ${(e as Error).message}`);
+    }
+  }
+
+  /** Latest N notifications for the caller. Default 20. */
+  list(userId: string, limit = 20) {
+    return this.prisma.notification.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(limit, 100),
+    });
+  }
+
+  /** Unread count — drives the bell badge. */
+  async unreadCount(userId: string): Promise<number> {
+    return this.prisma.notification.count({ where: { userId, read: false } });
+  }
+
+  async markRead(userId: string, id: string): Promise<void> {
+    await this.prisma.notification.updateMany({
+      where: { id, userId },
+      data: { read: true, readAt: new Date() },
+    });
+  }
+
+  async markAllRead(userId: string): Promise<{ updated: number }> {
+    const res = await this.prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true, readAt: new Date() },
+    });
+    return { updated: res.count };
+  }
+}

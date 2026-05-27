@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { OpenAiService } from './openai.service';
 import { KnowledgeService, type KnowledgeMatch } from './knowledge.service';
+import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /**
  * The bot's brain. One call per inbound TEXT message after a 60-second
@@ -97,6 +99,8 @@ export class OrchestratorService {
     private readonly prisma: PrismaService,
     private readonly openai: OpenAiService,
     private readonly knowledge: KnowledgeService,
+    private readonly email: EmailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async decide(input: OrchestratorInput): Promise<OrchestratorDecision> {
@@ -389,7 +393,7 @@ export class OrchestratorService {
       ? (parsed!.modality as string)
       : 'UNKNOWN';
 
-    await this.prisma.appointmentRequest.create({
+    const requestRow = await this.prisma.appointmentRequest.create({
       data: {
         leadId: opts.leadId,
         threadId: opts.threadId,
@@ -401,6 +405,238 @@ export class OrchestratorService {
         status: 'PENDING',
       },
     });
+
+    // Auto-book attempt: if we can parse the day + time AND the lead has an
+    // assigned agent AND the parsed date is in the future, create the
+    // Appointment directly and notify the agent by email + bell. Any failure
+    // (no agent / unparseable / past date / DB) falls back to the existing
+    // PENDING flow so sales can book manually from the chat-panel banner.
+    await this.tryAutoBookFromRequest({
+      requestId: requestRow.id,
+      leadId: opts.leadId,
+      preferredDay: parsed?.preferredDay ?? null,
+      preferredTime: parsed?.preferredTime ?? null,
+      modality,
+      rawText: opts.rawText.slice(0, 200),
+    });
+  }
+
+  /**
+   * Materialise an AppointmentRequest into a real Appointment + notify the
+   * assigned agent. Side effects, in order:
+   *   1. Parse preferredDay + preferredTime → concrete Date
+   *   2. Create the Appointment (status SCHEDULED, assigned to lead's agent)
+   *   3. Flip the request to CONFIRMED + link the appointment id
+   *   4. Email the agent
+   *   5. Create an in-app Notification (bell badge)
+   *
+   * Every step is best-effort: failure anywhere is logged and we exit
+   * silently. The PENDING request still exists on the chat-panel banner so
+   * sales can book manually if anything went wrong.
+   */
+  private async tryAutoBookFromRequest(opts: {
+    requestId: string;
+    leadId: string;
+    preferredDay: string | null;
+    preferredTime: string | null;
+    modality: string;
+    rawText: string;
+  }): Promise<void> {
+    try {
+      const scheduledAt = this.parsePreferredDateTime(opts.preferredDay, opts.preferredTime);
+      if (!scheduledAt) {
+        this.log.debug(`auto-book: can't parse "${opts.preferredDay}" + "${opts.preferredTime}", staying PENDING`);
+        return;
+      }
+      if (scheduledAt.getTime() < Date.now() - 60_000) {
+        this.log.debug(`auto-book: parsed date ${scheduledAt.toISOString()} is in the past, staying PENDING`);
+        return;
+      }
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: opts.leadId },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          assignedEmployeeId: true,
+          convertedClientId: true,
+          assignedEmployee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              user: { select: { id: true, email: true } },
+            },
+          },
+        },
+      });
+      if (!lead) return;
+      if (!lead.assignedEmployee) {
+        this.log.debug(`auto-book: lead ${opts.leadId} has no assigned employee, staying PENDING`);
+        return;
+      }
+
+      const appointmentType = this.modalityToAppointmentType(opts.modality);
+      const leadFullName = `${lead.firstName ?? ''} ${lead.lastName ?? ''}`.trim() || 'WhatsApp lead';
+      const modalityLabel = this.modalityLabel(opts.modality);
+
+      const created = await this.prisma.appointment.create({
+        data: {
+          leadId: lead.id,
+          clientId: lead.convertedClientId ?? null,
+          assignedEmployeeId: lead.assignedEmployee.id,
+          title: `Consultation with ${leadFullName}`,
+          appointmentType,
+          scheduledAt,
+          durationMinutes: 30,
+          notes: `Auto-booked by AI assistant. Client said: "${opts.rawText}"`,
+        },
+        select: { id: true, scheduledAt: true, durationMinutes: true, appointmentType: true },
+      });
+
+      await this.prisma.appointmentRequest.updateMany({
+        where: { id: opts.requestId, status: 'PENDING' },
+        data: {
+          status: 'CONFIRMED',
+          linkedAppointmentId: created.id,
+          closedAt: new Date(),
+        },
+      });
+
+      // Email the agent — fire-and-forget.
+      const agentEmail = lead.assignedEmployee.user?.email;
+      const agentName = `${lead.assignedEmployee.firstName ?? ''} ${lead.assignedEmployee.lastName ?? ''}`.trim() || 'there';
+      if (agentEmail) {
+        void this.email
+          .sendNewAppointmentToAgent({
+            to: agentEmail,
+            consultantName: agentName,
+            leadName: leadFullName,
+            leadPhone: lead.phone,
+            scheduledAt: created.scheduledAt,
+            durationMinutes: created.durationMinutes,
+            appointmentType: created.appointmentType,
+            modalityLabel,
+            notes: opts.rawText,
+          })
+          .catch((e) => this.log.warn(`auto-book email failed: ${(e as Error).message}`));
+      }
+
+      // In-app bell notification.
+      if (lead.assignedEmployee.user?.id) {
+        await this.notifications.create({
+          userId: lead.assignedEmployee.user.id,
+          type: 'APPOINTMENT_BOOKED',
+          title: `New appointment with ${leadFullName}`,
+          body: `${modalityLabel} · ${this.formatWhen(created.scheduledAt)}`,
+          link: '/sales/appointments',
+        });
+      }
+
+      this.log.log(
+        `auto-booked appointment ${created.id} for lead ${lead.id} with agent ${lead.assignedEmployee.id} at ${created.scheduledAt.toISOString()}`,
+      );
+    } catch (e) {
+      this.log.warn(`auto-book failed: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Mirror of the BookAppointmentModal frontend helpers — resolves
+   * "Monday morning" / "kal subha" / "tomorrow 3pm" / "15:00" into a real
+   * Date. Returns null when the bot's parser was too vague.
+   */
+  private parsePreferredDateTime(day: string | null, time: string | null): Date | null {
+    const date = this.resolveDay(day);
+    if (!date) return null;
+    const { hh, mm } = this.resolveTime(time);
+    date.setHours(hh, mm, 0, 0);
+    return date;
+  }
+
+  private resolveDay(preferred: string | null): Date | null {
+    if (!preferred) return null;
+    const p = preferred.trim().toLowerCase();
+    const now = new Date();
+    if (p === 'today' || p === 'aaj' || p === 'آج') {
+      return new Date(now);
+    }
+    if (p === 'tomorrow' || p === 'kal' || p === 'کل') {
+      const t = new Date(now);
+      t.setDate(t.getDate() + 1);
+      return t;
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(p)) {
+      const d = new Date(`${p}T00:00:00`);
+      return Number.isFinite(d.getTime()) ? d : null;
+    }
+    const weekdayMap: Record<string, number> = {
+      sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+      اتوار: 0, پیر: 1, منگل: 2, بدھ: 3, جمعرات: 4, جمعہ: 5, ہفتہ: 6,
+    };
+    const targetDow = weekdayMap[p];
+    if (targetDow === undefined) return null;
+    const currentDow = now.getDay();
+    const delta = ((targetDow - currentDow + 7) % 7) || 7; // next occurrence; never today
+    const target = new Date(now);
+    target.setDate(target.getDate() + delta);
+    return target;
+  }
+
+  private resolveTime(preferred: string | null): { hh: number; mm: number } {
+    if (!preferred) return { hh: 10, mm: 0 };
+    const p = preferred.trim().toLowerCase();
+    if (/morning|subha|صبح/.test(p))         return { hh: 10, mm: 0 };
+    if (/afternoon|dopahar|دوپہر/.test(p))   return { hh: 14, mm: 0 };
+    if (/evening|sham|شام/.test(p))           return { hh: 17, mm: 0 };
+    if (/night|raat|رات/.test(p))             return { hh: 19, mm: 0 };
+    const hhmm = p.match(/^(\d{1,2}):(\d{2})$/);
+    if (hhmm) return { hh: Math.min(23, parseInt(hhmm[1], 10)), mm: parseInt(hhmm[2], 10) };
+    const ampm = p.replace(/\s+/g, '').match(/^(\d{1,2})(am|pm)$/);
+    if (ampm) {
+      let hh = parseInt(ampm[1], 10);
+      if (ampm[2] === 'pm' && hh < 12) hh += 12;
+      if (ampm[2] === 'am' && hh === 12) hh = 0;
+      return { hh, mm: 0 };
+    }
+    const baje = p.match(/^(\d{1,2})\s*(baje|بجے)?$/);
+    if (baje) {
+      let hh = parseInt(baje[1], 10);
+      if (hh >= 1 && hh <= 7) hh += 12;
+      return { hh, mm: 0 };
+    }
+    return { hh: 10, mm: 0 };
+  }
+
+  private modalityToAppointmentType(modality: string): string {
+    switch (modality) {
+      case 'IN_PERSON': return 'IN_PERSON';
+      case 'CALL':
+      case 'VIDEO':
+      default:          return 'CONSULTATION';
+    }
+  }
+
+  private modalityLabel(modality: string): string {
+    switch (modality) {
+      case 'CALL':      return 'Phone call';
+      case 'VIDEO':     return 'Google Meet';
+      case 'IN_PERSON': return 'Office visit';
+      default:          return 'Consultation';
+    }
+  }
+
+  private formatWhen(d: Date): string {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Karachi',
+      weekday: 'long',
+      day: '2-digit',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(d) + ' PKT';
   }
 
   // ─── helpers ─────────────────────────────────────────────────────────────

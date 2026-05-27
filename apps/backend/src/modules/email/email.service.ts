@@ -91,6 +91,30 @@ export class EmailService {
     });
   }
 
+  /**
+   * AI bot booked an appointment for the assigned sales agent on the lead's
+   * behalf — fired right after the Appointment row is created so the agent
+   * knows to expect it in their /sales/appointments view.
+   */
+  async sendNewAppointmentToAgent(opts: {
+    to: string;
+    consultantName: string;
+    leadName: string;
+    leadPhone: string;
+    scheduledAt: Date;
+    durationMinutes: number;
+    appointmentType: string;
+    modalityLabel: string; // e.g. "Phone call" / "Google Meet" / "Office visit"
+    notes?: string | null;
+    appointmentsUrl?: string;
+  }): Promise<boolean> {
+    return this.sendMail({
+      to: opts.to,
+      subject: `New appointment booked — ${opts.leadName} · ${formatWhen(opts.scheduledAt)}`,
+      html: buildNewAppointmentToAgentEmail(opts),
+    });
+  }
+
   async sendLeadCreatedNotification(opts: {
     to: string | string[];
     leadName: string;
@@ -436,6 +460,64 @@ function buildLeadAssignedEmail(opts: {
     </a>
   `;
   return baseTemplate(`Lead assigned: ${opts.leadName}`, content);
+}
+
+/**
+ * AI booked an appointment on the agent's behalf. Lives in /sales/appointments
+ * already; this just nudges the agent so they don't miss it.
+ */
+function buildNewAppointmentToAgentEmail(opts: {
+  consultantName: string;
+  leadName: string;
+  leadPhone: string;
+  scheduledAt: Date;
+  durationMinutes: number;
+  appointmentType: string;
+  modalityLabel: string;
+  notes?: string | null;
+  appointmentsUrl?: string;
+}): string {
+  const url = opts.appointmentsUrl ?? 'https://tashfeengroup.com/sales/appointments';
+  const content = `
+    <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">📅 New appointment auto-booked for you</h2>
+    <p style="margin:0 0 24px;font-size:14px;color:#64748b;">
+      Hi ${escHtml(opts.consultantName)}, our WhatsApp AI assistant just confirmed a consultation booking with one of your leads. It's already on your calendar.
+    </p>
+
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${infoRow('Client', opts.leadName)}
+        ${infoRow('Phone', opts.leadPhone)}
+        ${infoRow('When', formatWhen(opts.scheduledAt))}
+        ${infoRow('Duration', `${opts.durationMinutes} minutes`)}
+        ${infoRow('Format', opts.modalityLabel)}
+        ${opts.notes ? infoRow('AI captured', opts.notes) : ''}
+      </table>
+    </div>
+
+    <p style="margin:0 0 24px;font-size:13.5px;color:#64748b;">
+      The time was inferred from what the client said on WhatsApp ("Monday morning" / "tomorrow 3pm" / etc.). Please confirm with the client and adjust if needed.
+    </p>
+
+    <a href="${url}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">
+      Open my appointments →
+    </a>
+  `;
+  return baseTemplate(`New appointment: ${opts.leadName}`, content);
+}
+
+/** Friendly date+time string: "Monday, 02 Jun 2026 · 10:00 AM PKT". */
+function formatWhen(d: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Karachi',
+    weekday: 'long',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d) + ' PKT';
 }
 
 function buildLeadCreatedEmail(opts: {

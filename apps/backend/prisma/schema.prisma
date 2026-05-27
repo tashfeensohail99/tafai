@@ -693,6 +693,7 @@ model UserAccount {
   passwordResets    PasswordResetToken[]
   employee          Employee?
   partnerProfile    Partner?
+  notifications     Notification[]       @relation("UserNotifications")
   auditActorLogs    AuditLog[]           @relation("AuditActor")
   createdLeads      Lead[]               @relation("LeadCreatedBy")
   uploadedLeadImportBatches LeadImportBatch[] @relation("LeadImportBatchUploadedBy")
@@ -3109,4 +3110,36 @@ model BotBrochure {
   @@index([programKey])
   @@map("brochures")
   @@schema("ai")
+}
+
+/// In-app notifications shown in the bell badge on the employee shell.
+/// One row per (user, event) — e.g. "AI booked an appointment with John
+/// Doe for Monday 10am". Marked read on click; bulk-marked on "Mark all
+/// read". Kept in core schema because notifications are user-scoped, not
+/// lead/customer-scoped.
+///
+/// Designed for low write volume (1-3 per agent per day at the bot's
+/// scale) so we don't bother with an SQS-style fan-out; just direct
+/// Prisma inserts from the producing service.
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String   // recipient
+  /// Stable category for filtering / icon selection on the frontend.
+  /// Today: APPOINTMENT_BOOKED. Add more as more producers come online.
+  type        String
+  title       String   // shown in the dropdown as the headline
+  body        String?  // optional second line
+  /// Path to navigate to when the notification is clicked (e.g.
+  /// "/sales/appointments?focusId=…"). Relative to the app root.
+  link        String?
+  read        Boolean  @default(false)
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  user UserAccount @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("notifications")
+  @@schema("core")
 }

@@ -196,7 +196,11 @@ export class AiAdminController {
         responseDeadlineAt: { not: null },
         OR: [
           { aiDisabledAt: null },
-          { aiDisabledAt: { lt: new Date(now.getTime() - 4 * 60 * 60 * 1000) } },
+          // Keep this aligned with orchestrator.HUMAN_LOCKOUT_MS (20h).
+          // Threads where a human replied within the last 20h stay off the
+          // backfill list; once 20h elapses without a follow-up the bot
+          // resumes.
+          { aiDisabledAt: { lt: new Date(now.getTime() - 20 * 60 * 60 * 1000) } },
         ],
         // Skip threads already linked to a converted client — paid clients
         // get further filtered (processing/finance) inside the orchestrator.

@@ -35,7 +35,14 @@ import { NotificationsService } from '../notifications/notifications.service';
  *       3. Funnel-aware — earlier turns answer questions, later turns
  *          (3+ inbound messages on the thread) move toward booking.
  */
-const HUMAN_LOCKOUT_MS = 4 * 60 * 60 * 1000;
+/**
+ * How long the bot stays silent after a human agent sends an outbound
+ * message on a thread. Set to 20 hours: if sales hasn't followed up by
+ * the next business day, the bot picks up the conversation again so the
+ * lead doesn't go cold. Was 4h originally — bumped after the team asked
+ * for an overnight grace window.
+ */
+const HUMAN_LOCKOUT_MS = 20 * 60 * 60 * 1000;
 const HISTORY_TURNS = 10;
 const APPOINTMENT_NUDGE_AFTER_TURNS = 2;
 /**

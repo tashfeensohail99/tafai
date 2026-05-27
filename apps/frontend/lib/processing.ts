@@ -123,6 +123,13 @@ export interface ProcessingDashboardMetrics {
   awaitingReview: number;
   readyToSubmit: number;
   newIntake: number;
+  // Per-associate (or manager-aggregate when canViewAll) breakdowns. Names
+  // start "my" because the backend filters by assignedOfficerId for non-
+  // managers; for managers these are global counts.
+  myPendingDocs: number;
+  myClientFollowUp: number;
+  myApproved: number;
+  myRefused: number;
 }
 
 export interface ListCasesQuery {

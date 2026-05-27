@@ -2951,12 +2951,25 @@ export class ProcessingService {
       ProcessingCaseStage.ADDITIONAL_INFO_REQUESTED,
       ProcessingCaseStage.DECISION_RECEIVED,
     ];
+    // Per the workflow spec, the associate dashboard surfaces:
+    //   - my assigned cases (= activeCases)
+    //   - my pending document cases (cases in DOC_COLLECTION /
+    //     DOC_UNDER_REVIEW)
+    //   - my cases needing client follow-up (DOCS_INCOMPLETE /
+    //     ADDITIONAL_INFO_REQUESTED — client owes us something)
+    //   - my final submission pending (READY_FOR_SUBMISSION)
+    //   - my approved / refused
+    // Manager view keeps the same payload but unfiltered by officer.
 
     const [
       activeCases,
       awaitingReview,
       readyToSubmit,
       newIntake,
+      myPendingDocs,
+      myClientFollowUp,
+      myApproved,
+      myRefused,
     ] = await this.prisma.$transaction([
       this.prisma.processingCase.count({
         where: { ...officerFilter, stage: { in: activeStages } },
@@ -2970,9 +2983,36 @@ export class ProcessingService {
       this.prisma.processingCase.count({
         where: { stage: ProcessingCaseStage.INTAKE_PENDING },
       }),
+      this.prisma.processingCase.count({
+        where: {
+          ...officerFilter,
+          stage: { in: [ProcessingCaseStage.DOCUMENTS_COLLECTION, ProcessingCaseStage.DOCUMENTS_UNDER_REVIEW] },
+        },
+      }),
+      this.prisma.processingCase.count({
+        where: {
+          ...officerFilter,
+          stage: { in: [ProcessingCaseStage.DOCUMENTS_INCOMPLETE, ProcessingCaseStage.ADDITIONAL_INFO_REQUESTED] },
+        },
+      }),
+      this.prisma.processingCase.count({
+        where: { ...officerFilter, stage: ProcessingCaseStage.APPROVED },
+      }),
+      this.prisma.processingCase.count({
+        where: { ...officerFilter, stage: ProcessingCaseStage.REJECTED },
+      }),
     ]);
 
-    return { activeCases, awaitingReview, readyToSubmit, newIntake };
+    return {
+      activeCases,
+      awaitingReview,
+      readyToSubmit,
+      newIntake,
+      myPendingDocs,
+      myClientFollowUp,
+      myApproved,
+      myRefused,
+    };
   }
 
   // -------------------------------------------------------------------------

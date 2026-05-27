@@ -808,8 +808,16 @@ export class OrchestratorService {
     const welcomeLead = agent
       ? `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}! I'm ${agent}, Immigration Solutions Associate."`
       : `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}!"`;
+    // Bare-greeting follow-up. The English phrasing was a literal "How can we
+    // assist you today?" but in Roman Urdu we got a stilted machine-translated
+    // "Aap kaisay help le sakte hain hum se?" — fixing it by giving the model
+    // an actual Pakistani sales-rep line to copy instead of asking it to
+    // translate. Picks naturally based on the customer's language.
+    const bareGreetingFollow = isUrdu
+      ? `Since the customer just said hi/salam (no real question), follow the welcome line with a friendly opener like "Bataiye, kis cheez me help chahiye?" or "Bolen kaisay assist kar saktay hain?" — pick whichever flows. Do NOT pitch anything yet.`
+      : `Since the customer just said hi/hello (no real question), follow the welcome line with "How can I help you today?" — and stop there. Do NOT pitch anything yet.`;
     const followUp = isBareGreeting
-      ? `Since the customer just said hi/hello (no real question), after the welcome line ask: "How can we assist you today?" — and stop there. Do NOT pitch anything yet.`
+      ? bareGreetingFollow
       : `Then answer their question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;
 
     const initialGoal = `Greet warmly${name}. Answer the question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;

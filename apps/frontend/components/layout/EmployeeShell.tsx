@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  Bell,
   CalendarDays,
   ChevronRight,
   CirclePlus,
@@ -29,6 +28,7 @@ import {
 import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/DrawerMenu';
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
+import { NotificationsBell } from './NotificationsBell';
 import { PresencePill } from '@/components/whatsapp/PresencePill';
 import { PresenceWarnings } from '@/components/whatsapp/PresenceWarnings';
 import { logout as sessionLogout, useSession } from '@/lib/session';
@@ -378,9 +378,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
                 <PresencePill />
               </span>
 
-              <button type="button" className="sos-topbar__icon-btn" aria-label="Notifications">
-                <Bell size={15} />
-              </button>
+              <NotificationsBell iconSize={15} />
 
               <span className="sos-topbar__optional">
                 <RoleBadge role={user.roles[0] ?? 'SALES'} />

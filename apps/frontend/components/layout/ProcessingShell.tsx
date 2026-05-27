@@ -4,7 +4,6 @@
 
 import {
   BarChart2,
-  Bell,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
@@ -34,6 +33,7 @@ import {
 import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/DrawerMenu';
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
+import { NotificationsBell } from './NotificationsBell';
 import {
   MOCK_PROCESSING_CASES,
   getIntakePending,
@@ -274,9 +274,7 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <ThemeToggle />
-              <button type="button" aria-label="Notifications" className="sos-topbar__icon-btn">
-                <Bell size={16} />
-              </button>
+              <NotificationsBell iconSize={16} />
               <span className="sos-topbar__optional">
                 <RoleBadge role="Processing" />
               </span>

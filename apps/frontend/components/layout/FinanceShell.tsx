@@ -5,7 +5,6 @@
 
 import {
   BarChart3,
-  Bell,
   ChevronRight,
   FileSignature,
   FileText,
@@ -31,6 +30,7 @@ import {
 import { DrawerMenu, type DrawerMenuItem } from '@/components/sales-v2/ui/DrawerMenu';
 import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
+import { NotificationsBell } from './NotificationsBell';
 import { logout as sessionLogout, useSession } from '@/lib/session';
 import { fetchAgreementReviewCounts } from '@/lib/agreements';
 
@@ -284,9 +284,7 @@ export function FinanceShell({ children }: { children: ReactNode }) {
 
               <ThemeToggle />
 
-              <button type="button" className="sos-topbar__icon-btn" aria-label="Notifications">
-                <Bell size={15} />
-              </button>
+              <NotificationsBell iconSize={15} />
 
               <span className="sos-topbar__optional">
                 <RoleBadge role={user.roles[0] ?? 'FINANCE'} />

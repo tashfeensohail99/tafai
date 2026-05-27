@@ -162,6 +162,20 @@ export class AssignCaseDto {
   officerId!: string;
 }
 
+/**
+ * Mark a REJECTED case as having refund initiated. Workflow doc: when the
+ * authority rejects, the case either gets refunded (back to Finance) or
+ * escalated to APPEAL_IN_PROGRESS. Escalation reuses ChangeCaseStageDto;
+ * refund needs its own marker because no stage transition fits — the case
+ * stays REJECTED while Finance processes the refund out-of-band.
+ */
+export class MarkCaseForRefundDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  reason!: string;
+}
+
 export class ChangeCaseStageDto {
   @IsEnum(ProcessingCaseStage)
   toStage!: ProcessingCaseStage;

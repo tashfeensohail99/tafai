@@ -19,6 +19,7 @@ import {
   Send,
   Settings2,
   Sparkles,
+  Wallet,
   X,
 } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
@@ -81,6 +82,7 @@ const PROCESSING_NAV: DrawerMenuItem[] = [
   { label: 'My Cases', href: '/processing/cases', icon: FolderKanban, caption: 'Your active caseload' },
   { label: 'Documents', href: '/processing/documents', icon: FileSearch, caption: 'Pending reviews' },
   { label: 'Tasks', href: '/processing/tasks', icon: ClipboardList, caption: 'Open task list' },
+  { label: 'Refunds & Appeals', href: '/processing/refunds', icon: Wallet, caption: 'Rejected — refund or escalate' },
   { label: 'History', href: '/processing/history', icon: History, caption: 'Completed cases' },
   { label: 'Reports', href: '/processing/reports', icon: BarChart2, caption: 'Metrics & analytics' },
 ];
@@ -97,6 +99,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/processing/cases') return { title: 'My Cases', subtitle: 'Your active cases' };
   if (pathname === '/processing/documents') return { title: 'Document Reviews', subtitle: 'Documents awaiting your review' };
   if (pathname === '/processing/tasks') return { title: 'My Tasks', subtitle: 'Open tasks across all cases' };
+  if (pathname === '/processing/refunds') return { title: 'Refunds & Appeals', subtitle: 'Rejected cases — initiate refund or escalate to appeal' };
   if (pathname === '/processing/history') return { title: 'Case History', subtitle: 'Completed and cancelled cases' };
   if (pathname === '/processing/reports') return { title: 'Processing Reports', subtitle: 'Metrics & analytics' };
   if (pathname === '/processing/manager') return { title: 'Manager Dashboard', subtitle: 'Team workload & SLA overview' };

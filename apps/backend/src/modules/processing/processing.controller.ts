@@ -43,6 +43,7 @@ import {
   ListCorrectionRequestsQueryDto,
   ListIntakeQueueQueryDto,
   ListProcessingCasesQueryDto,
+  MarkCaseForRefundDto,
   ReportDateRangeQueryDto,
   ReportExportQueryDto,
   RequestDocumentDto,
@@ -158,6 +159,31 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.updateCasePriority(caseId, dto, user);
+  }
+
+  // -------------------------------------------------------------------------
+  // REFUND / ESCALATION LANE
+  // -------------------------------------------------------------------------
+
+  /**
+   * Dedicated queue of REJECTED cases needing refund or escalation handling.
+   * Per-row `refundInitiatedAt` lets the UI badge cases that already had a
+   * refund recorded so officers don't double-action them.
+   */
+  @Get('refunds')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  listRefundLane(@CurrentUser() user: RequestUser) {
+    return this.processingService.listRefundLane(user);
+  }
+
+  @Post('cases/:caseId/refund')
+  @RequirePermissions('processing.case.update_stage')
+  markCaseForRefund(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: MarkCaseForRefundDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.markCaseForRefund(caseId, dto, user);
   }
 
   // -------------------------------------------------------------------------

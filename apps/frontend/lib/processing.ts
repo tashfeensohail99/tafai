@@ -204,6 +204,43 @@ export function fetchProcessingCase(caseId: string): Promise<ApiProcessingCaseDe
   return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}`, { cache: 'no-store' });
 }
 
+// ---------------------------------------------------------------------------
+// Refund / Escalation lane (workflow doc: when authority REJECTS, processing
+// either refunds the client or escalates to APPEAL_IN_PROGRESS — both flows
+// surface here).
+// ---------------------------------------------------------------------------
+
+export interface ApiRefundLaneCase extends ApiProcessingCaseListItem {
+  authorityDecisionDate: string | null;
+  refundInitiatedAt: string | null;
+  refundInitiatedByUserId: string | null;
+}
+
+export interface RefundLaneResponse {
+  cases: ApiRefundLaneCase[];
+}
+
+export function fetchRefundLane(): Promise<RefundLaneResponse> {
+  return apiFetch<RefundLaneResponse>('/processing/refunds', { cache: 'no-store' });
+}
+
+/**
+ * Records a refund as initiated for a REJECTED case. Creates a pinned note +
+ * audit log entry on the case — Finance handles the actual money side
+ * out-of-band; this just makes processing's intent observable.
+ */
+export function markCaseForRefund(
+  caseId: string,
+  body: { reason: string },
+): Promise<unknown> {
+  return apiFetch<unknown>(`/processing/cases/${caseId}/refund`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
 export function acknowledgeIntake(
   caseId: string,
   body: { assignOfficerId?: string } = {},
@@ -218,7 +255,15 @@ export function acknowledgeIntake(
 
 export function changeCaseStage(
   caseId: string,
-  body: { toStage: ProcessingStage; reason?: string },
+  body: {
+    toStage: ProcessingStage;
+    reason?: string;
+    notes?: string;
+    submissionReference?: string;
+    authorityTrackingRef?: string;
+    cancellationReason?: string;
+    completionNotes?: string;
+  },
 ): Promise<ApiProcessingCaseDetail> {
   return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}/stage`, {
     method: 'PATCH',

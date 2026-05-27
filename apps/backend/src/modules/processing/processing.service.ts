@@ -587,6 +587,121 @@ export class ProcessingService {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // REFUND / ESCALATION LANE
+  //
+  // Workflow doc: when the authority rejects a case, the team picks one of two
+  // paths — refund the client (Finance handles the money side) or escalate to
+  // APPEAL_IN_PROGRESS. We surface both REJECTED-state actions in a dedicated
+  // lane so processing officers don't have to scroll through the main caseload
+  // to find the rejections that need handling.
+  //
+  // Escalation reuses changeCaseStage (REJECTED → APPEAL_IN_PROGRESS is in
+  // ALLOWED_TRANSITIONS and the gate already requires processing.case.view_all).
+  // Refund needs its own marker: no stage transition fits the "we're refunding
+  // out-of-band but the case stays REJECTED" semantics, so we record it as a
+  // pinned ProcessingNote + an audit-log entry, and surface the most recent
+  // refund-initiated timestamp on the lane list so officers can see at a
+  // glance which rejections still need action.
+  // -------------------------------------------------------------------------
+
+  async listRefundLane(user: RequestUser) {
+    const canViewAll = user.permissions.includes('processing.case.view_all');
+    const where: Prisma.ProcessingCaseWhereInput = {
+      ...(canViewAll ? {} : { assignedOfficerId: user.id }),
+      OR: [
+        { authorityDecision: AuthorityDecision.REJECTED },
+        { stage: ProcessingCaseStage.REJECTED },
+      ],
+    };
+
+    const cases = await this.prisma.processingCase.findMany({
+      where,
+      include: {
+        lead: { select: { id: true, firstName: true, lastName: true, phone: true } },
+        client: { select: { id: true, firstName: true, lastName: true, phone: true } },
+        assignedOfficer: { select: { id: true, email: true } },
+      },
+      orderBy: [{ authorityDecisionDate: 'desc' }, { updatedAt: 'desc' }],
+    });
+
+    if (cases.length === 0) return { cases: [] };
+
+    // Pull the latest refund-initiated audit-log entry per case in one shot.
+    // findMany + groupBy isn't worth it for what's normally a handful of rows,
+    // and Prisma's distinct lets us collapse to "most recent per case" cleanly.
+    const caseIds = cases.map((c) => c.id);
+    const refundLogs = await this.prisma.processingAuditLog.findMany({
+      where: { caseId: { in: caseIds }, action: 'case_refund_initiated' },
+      orderBy: { createdAt: 'desc' },
+      distinct: ['caseId'],
+      select: { caseId: true, createdAt: true, actorUserId: true },
+    });
+    const refundByCaseId = new Map(refundLogs.map((r) => [r.caseId, r]));
+
+    return {
+      cases: cases.map((c) => {
+        const refund = refundByCaseId.get(c.id);
+        return {
+          ...c,
+          refundInitiatedAt: refund?.createdAt ?? null,
+          refundInitiatedByUserId: refund?.actorUserId ?? null,
+        };
+      }),
+    };
+  }
+
+  async markCaseForRefund(
+    caseId: string,
+    dto: { reason: string },
+    user: RequestUser,
+  ) {
+    const processingCase = await this.findCaseOrThrow(caseId);
+    this.assertCaseAccess(processingCase, user);
+
+    // Only flag refunds on cases the authority actually rejected. Without
+    // this guard a refund could be marked on an active case and confuse the
+    // lane / finance hand-off later.
+    if (
+      processingCase.authorityDecision !== AuthorityDecision.REJECTED &&
+      processingCase.stage !== ProcessingCaseStage.REJECTED
+    ) {
+      throw new BadRequestException(
+        'Refund can only be initiated on a REJECTED case',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const note = await tx.processingNote.create({
+        data: {
+          caseId,
+          content: `Refund initiated. Reason: ${dto.reason}`,
+          noteType: ProcessingNoteType.GENERAL,
+          isPinned: true,
+          createdByUserId: user.id,
+        },
+      });
+
+      await tx.processingAuditLog.create({
+        data: {
+          caseId,
+          actorUserId: user.id,
+          action: 'case_refund_initiated',
+          entityType: 'processing_case',
+          entityId: caseId,
+          newValues: { reason: dto.reason, noteId: note.id },
+        },
+      });
+
+      const c = await tx.processingCase.update({
+        where: { id: caseId },
+        data: { updatedByUserId: user.id },
+      });
+
+      return { ...c, refundNoteId: note.id };
+    });
+  }
+
   /**
    * Stage transition with full gate checks (Rule 2).
    * READY_FOR_SUBMISSION gate is the hardest check — enforced server-side.

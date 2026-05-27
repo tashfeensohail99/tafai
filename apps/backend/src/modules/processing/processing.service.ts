@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -22,6 +23,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
+import { isCanonicalServiceCode } from '../../common/service-types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
@@ -127,6 +129,8 @@ const STAGE_TO_CLIENT_STATUS: Partial<Record<ProcessingCaseStage, string>> = {
 
 @Injectable()
 export class ProcessingService {
+  private readonly logger = new Logger(ProcessingService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
@@ -171,8 +175,19 @@ export class ProcessingService {
       throw new ConflictException('A processing case has already been created for this handover');
     }
 
-    // Resolve service and country from lead if not on handover
-    const service = handover.lead.serviceInterest ?? 'Unknown';
+    // Resolve service and country from lead. The Sales→Finance gate
+    // (agreements.service.ts) already requires a canonical service code
+    // before the agreement can be submitted, so by the time a finance
+    // handover exists the lead.serviceInterest should be one of the codes
+    // in SERVICE_TYPE_CODES. Defensive check here too — surfaces a clear
+    // error if a legacy free-text or null value somehow reaches here.
+    const service = handover.lead.serviceInterest;
+    if (!service || !isCanonicalServiceCode(service)) {
+      throw new BadRequestException(
+        `Lead ${handover.leadId} has no canonical service code on file (got: "${service ?? 'null'}"). ` +
+          'Sales must reclassify the lead to one of the coded service types before this case can move to Processing.',
+      );
+    }
     const targetCountry = handover.lead.targetCountry ?? 'Unknown';
 
     const processingCase = await this.prisma.$transaction(async (tx) => {
@@ -330,8 +345,10 @@ export class ProcessingService {
         },
       });
 
-      // Auto-build checklist from templates
-      const templates = await tx.documentRequirementTemplate.findMany({
+      // Auto-build checklist from templates. We try TWO lookups (service +
+      // country, then service-only as fallback) so a generic "STUDY_VISA"
+      // template still applies when no country-specific one exists yet.
+      let templates = await tx.documentRequirementTemplate.findMany({
         where: {
           service: processingCase.service,
           targetCountry: processingCase.targetCountry,
@@ -339,30 +356,42 @@ export class ProcessingService {
         },
         orderBy: { sortOrder: 'asc' },
       });
-
-      // Block acknowledge if no template configured — admin must create one first
       if (templates.length === 0) {
-        throw new BadRequestException(
-          `No active document requirement template found for "${processingCase.service}" → "${processingCase.targetCountry}". ` +
-            'A Processing Admin must create the checklist template before this case can be acknowledged.',
-        );
+        templates = await tx.documentRequirementTemplate.findMany({
+          where: {
+            service: processingCase.service,
+            isActive: true,
+          },
+          orderBy: { sortOrder: 'asc' },
+        });
       }
 
-      await tx.caseDocumentItem.createMany({
-        data: templates.map((t) => ({
-          caseId,
-          templateId: t.id,
-          documentName: t.documentName,
-          description: t.description ?? undefined,
-          criticality: t.criticality,
-          expectedFormats: t.expectedFormats,
-          maxFileSizeMb: t.maxFileSizeMb,
-          validityRule: t.validityRule,
-          validityMonths: t.validityMonths ?? undefined,
-          validityBufferDays: t.validityBufferDays,
-          sortOrder: t.sortOrder,
-        })),
-      });
+      // Soft fallback: if NO template exists for this service yet, don't
+      // block the officer — they can still acknowledge + add doc items
+      // manually via POST /cases/:id/documents. We just log a warning so
+      // the admin team knows a template is missing. (Was: hard 400 error
+      // that blocked the entire intake flow until admin created a template.)
+      if (templates.length === 0) {
+        this.logger.warn(
+          `acknowledgeIntake: no DocumentRequirementTemplate for service="${processingCase.service}" / country="${processingCase.targetCountry}". Case acknowledged with an empty checklist — officer can add doc items manually.`,
+        );
+      } else {
+        await tx.caseDocumentItem.createMany({
+          data: templates.map((t) => ({
+            caseId,
+            templateId: t.id,
+            documentName: t.documentName,
+            description: t.description ?? undefined,
+            criticality: t.criticality,
+            expectedFormats: t.expectedFormats,
+            maxFileSizeMb: t.maxFileSizeMb,
+            validityRule: t.validityRule,
+            validityMonths: t.validityMonths ?? undefined,
+            validityBufferDays: t.validityBufferDays,
+            sortOrder: t.sortOrder,
+          })),
+        });
+      }
 
       // Audit
       await tx.processingAuditLog.create({

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -10,6 +11,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { SERVICE_TYPE_CODES } from '../../common/service-types';
 import { Transform, Type } from 'class-transformer';
 import {
   AuthorityResponseType,
@@ -170,9 +172,13 @@ export class ChangeCaseStageDto {
 // ---------------------------------------------------------------------------
 
 export class CreateDocumentTemplateDto {
+  // Must be one of the 9 canonical service codes — matches Lead.serviceInterest
+  // so the per-case checklist can be looked up by code at acknowledge-intake
+  // time without any fuzzy matching. (See SERVICE_TYPE_CODES.)
   @IsString()
   @IsNotEmpty()
-  @MaxLength(200)
+  @MaxLength(64)
+  @IsIn(SERVICE_TYPE_CODES, { message: 'service must be one of the canonical service codes' })
   service!: string;
 
   @IsString()

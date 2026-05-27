@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { CheckCircle2, FileText, X } from 'lucide-react';
+import { SERVICE_TYPES } from '@/lib/service-types';
 import {
   GlassCard,
   PrimaryButton,
@@ -227,16 +228,34 @@ export function TemplateFormModal({ template, onClose, onSaved }: TemplateFormMo
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {/* Service + Country row */}
+          {/* Service + Country row.
+              Service is locked to the 9 canonical codes (matches Lead.serviceInterest)
+              so a checklist template can be looked up at acknowledge-intake time
+              with no fuzzy matching. Target country stays free-text — admins
+              may target a region label like "Schengen" that isn't a single
+              ISO country. */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <div>
               <FieldLabel required>Service</FieldLabel>
-              <input
+              <select
                 style={inputStyle}
-                placeholder="e.g. PR Application"
-                value={form.service}
+                value={
+                  form.service && SERVICE_TYPES.some((s) => s.code === form.service)
+                    ? form.service
+                    : ''
+                }
                 onChange={(e) => set('service', e.target.value)}
-              />
+              >
+                <option value="" disabled>Select a service…</option>
+                {SERVICE_TYPES.map((s) => (
+                  <option key={s.code} value={s.code}>{s.label}</option>
+                ))}
+              </select>
+              {form.service && !SERVICE_TYPES.some((s) => s.code === form.service) ? (
+                <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sos-text-muted)' }}>
+                  Legacy value: <strong>{form.service}</strong> — pick a coded type above.
+                </div>
+              ) : null}
             </div>
             <div>
               <FieldLabel required>Target country</FieldLabel>

@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { Edit2, FileText, Globe, ToggleLeft, ToggleRight, Plus } from 'lucide-react';
+import { labelForServiceCode } from '@/lib/service-types';
 import {
   GlassCard,
   PageHeader,
@@ -167,7 +168,7 @@ function TemplateRow({ template: t, onEdit, onToggle }: TemplateRowProps) {
       <td style={{ padding: '12px 14px', verticalAlign: 'middle', fontSize: '13px', color: 'var(--sos-text-muted)', whiteSpace: 'nowrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
           <Globe size={12} />
-          {t.service}
+          {labelForServiceCode(t.service)}
         </div>
         <div style={{ fontSize: '12px', marginTop: '1px' }}>{t.targetCountry}</div>
       </td>

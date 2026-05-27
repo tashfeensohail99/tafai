@@ -162,6 +162,38 @@ export function fetchProcessingDashboard(): Promise<ProcessingDashboardMetrics> 
 }
 
 /**
+ * Manager dashboard payload — totals + per-stage + per-officer + recent
+ * intake + currently SLA-breached cases. Requires processing.case.view_all.
+ */
+export interface ApiProcessingAdminOverview {
+  totals: { active: number; newIntake: number; slaBreached: number };
+  stageBreakdown: Array<{ stage: ProcessingStage; count: number }>;
+  officerWorkload: Array<{ officerId: string | null; name: string; activeCases: number }>;
+  recentIntake: Array<{
+    id: string;
+    service: string;
+    targetCountry: string;
+    priority: ProcessingPriority;
+    createdAt: string;
+    clientName: string | null;
+    clientPhone: string | null;
+  }>;
+  breachedCases: Array<{
+    id: string;
+    stage: ProcessingStage;
+    service: string;
+    targetCountry: string;
+    slaDueAt: string | null;
+    officerName: string | null;
+    clientName: string | null;
+  }>;
+}
+
+export function fetchProcessingAdminOverview(): Promise<ApiProcessingAdminOverview> {
+  return apiFetch<ApiProcessingAdminOverview>('/processing/admin-overview', { cache: 'no-store' });
+}
+
+/**
  * Intake queue row — same as a list item but also includes the finance
  * handover snapshot the officer needs to acknowledge intelligently (the
  * paid amount, who handed off, the file name of the receipt).

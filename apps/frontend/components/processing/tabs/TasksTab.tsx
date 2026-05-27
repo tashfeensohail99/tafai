@@ -47,14 +47,14 @@ function taskStatusLabel(s: ProcessingTaskStatus): string {
   switch (s) {
     case 'OPEN': return 'Open';
     case 'IN_PROGRESS': return 'In progress';
-    case 'COMPLETED': return 'Done';
+    case 'DONE': return 'Done';
     case 'CANCELLED': return 'Cancelled';
     default: return s;
   }
 }
 
 function StatusIcon({ status }: { status: ProcessingTaskStatus }) {
-  if (status === 'COMPLETED') return <CheckCircle2 size={16} style={{ color: 'var(--sos-status-success)' }} />;
+  if (status === 'DONE') return <CheckCircle2 size={16} style={{ color: 'var(--sos-status-success)' }} />;
   if (status === 'CANCELLED') return <XCircle size={16} style={{ color: 'var(--sos-text-muted)' }} />;
   if (status === 'IN_PROGRESS') return <Clock size={16} style={{ color: 'var(--sos-brand-primary-strong)' }} />;
   return <Circle size={16} style={{ color: 'var(--sos-text-muted)' }} />;
@@ -67,15 +67,15 @@ function TaskCard({
   task: ApiProcessingTask;
   onAdvance: (id: string, next: ProcessingTaskStatus) => void;
 }) {
-  const isDone = task.status === 'COMPLETED' || task.status === 'CANCELLED';
+  const isDone = task.status === 'DONE' || task.status === 'CANCELLED';
   const isOverdue =
     task.dueDate && !isDone ? new Date(task.dueDate).getTime() < Date.now() : false;
 
   // Click rotates through OPEN → IN_PROGRESS → COMPLETED → OPEN
   const next: ProcessingTaskStatus =
     task.status === 'OPEN' ? 'IN_PROGRESS' :
-    task.status === 'IN_PROGRESS' ? 'COMPLETED' :
-    task.status === 'COMPLETED' ? 'OPEN' :
+    task.status === 'IN_PROGRESS' ? 'DONE' :
+    task.status === 'DONE' ? 'OPEN' :
     task.status;
 
   return (
@@ -253,7 +253,7 @@ export function TasksTab({ c }: { c: MockProcessingCase }) {
   }
 
   const open = tasks.filter((t) => t.status === 'OPEN' || t.status === 'IN_PROGRESS');
-  const done = tasks.filter((t) => t.status === 'COMPLETED' || t.status === 'CANCELLED');
+  const done = tasks.filter((t) => t.status === 'DONE' || t.status === 'CANCELLED');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

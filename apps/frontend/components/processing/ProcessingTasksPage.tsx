@@ -1,9 +1,9 @@
 'use client';
-// Cross-Case Task List — Phase 1F-2.
-// Aggregated view of all open/in-progress/blocked tasks across the officer's cases.
-// Supports quick-complete inline, priority/status filtering, and overdue section.
+// Cross-Case Task List — wired to GET /processing/tasks.
+// Aggregated view of all OPEN / IN_PROGRESS / BLOCKED tasks across the
+// officer's cases (or all cases for managers). Quick-complete inline.
 
-import { useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -15,6 +15,7 @@ import {
   Clock,
   ExternalLink,
   Filter,
+  Loader2,
   ShieldAlert,
   User,
   XCircle,
@@ -27,22 +28,18 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
-import {
-  MOCK_PROCESSING_OFFICER,
-  getAggregatedTaskQueue,
-  PRIORITY_LABEL,
-  fmtDate,
-  type MockTask,
-  type ProcessingPriority,
-  type AggregatedTaskRow,
-} from '@/components/processing/mockData';
+import { PRIORITY_LABEL, fmtDate } from '@/components/processing/mockData';
 import { priorityTone } from './ProcessingDashboardPage';
+import {
+  fetchAggregatedTasks,
+  updateCaseTask,
+  type ApiAggregatedTask,
+  type ProcessingTaskPriority,
+  type ProcessingTaskStatus,
+} from '@/lib/processing';
+import { labelForServiceCode } from '@/lib/service-types';
 
-// ---------------------------------------------------------------------------
-// Tone helpers (mirrors TasksTab)
-// ---------------------------------------------------------------------------
-
-function taskPriorityTone(p: MockTask['priority']): BadgeTone {
+function taskPriorityTone(p: ProcessingTaskPriority): BadgeTone {
   switch (p) {
     case 'URGENT': return 'danger';
     case 'HIGH':   return 'warning';
@@ -51,7 +48,7 @@ function taskPriorityTone(p: MockTask['priority']): BadgeTone {
   }
 }
 
-function taskStatusTone(s: MockTask['status']): BadgeTone {
+function taskStatusTone(s: ProcessingTaskStatus): BadgeTone {
   switch (s) {
     case 'OPEN':        return 'info';
     case 'IN_PROGRESS': return 'accent';
@@ -61,19 +58,15 @@ function taskStatusTone(s: MockTask['status']): BadgeTone {
   }
 }
 
-function taskStatusLabel(s: MockTask['status']): string {
-  const map: Record<MockTask['status'], string> = {
+function taskStatusLabel(s: ProcessingTaskStatus): string {
+  const map: Record<ProcessingTaskStatus, string> = {
     OPEN: 'Open', IN_PROGRESS: 'In progress', BLOCKED: 'Blocked', DONE: 'Done', CANCELLED: 'Cancelled',
   };
   return map[s];
 }
 
-// ---------------------------------------------------------------------------
-// Filter config
-// ---------------------------------------------------------------------------
-
-type StatusFilter = 'ALL' | MockTask['status'];
-type PriorityFilter = 'ALL' | MockTask['priority'];
+type StatusFilter = 'ALL' | ProcessingTaskStatus;
+type PriorityFilter = 'ALL' | ProcessingTaskPriority;
 
 const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: 'ALL',        label: 'All' },
@@ -90,31 +83,31 @@ const PRIORITY_OPTIONS: { value: PriorityFilter; label: string }[] = [
   { value: 'LOW',    label: 'Low' },
 ];
 
-const TODAY = '2026-05-12';
-
-// ---------------------------------------------------------------------------
-// Task row
-// ---------------------------------------------------------------------------
+function personName(c: ApiAggregatedTask['case']): string {
+  const src = c.client ?? c.lead;
+  const first = src?.firstName?.trim() ?? '';
+  const last = src?.lastName?.trim() ?? '';
+  const full = `${first} ${last}`.trim();
+  return full || 'Unnamed';
+}
 
 function TaskRow({
-  row,
+  task,
   onDone,
+  busy,
+  todayIso,
 }: {
-  row: AggregatedTaskRow;
+  task: ApiAggregatedTask;
   onDone: (id: string) => void;
+  busy: boolean;
+  todayIso: string;
 }) {
-  const { task, caseId, clientName, service, targetCountry, casePriority } = row;
-  const isOverdue = !!task.dueDate && task.dueDate < TODAY;
-  const [hover, setHover] = useState(false);
+  const isOverdue = !!task.dueDate && task.dueDate < todayIso;
+  const clientName = personName(task.case);
 
   return (
     <GlassCard variant="default" padded="md">
-      <div
-        style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap', background: hover ? 'var(--sos-surface-hover)' : 'transparent', transition: 'background 150ms', borderRadius: 'var(--sos-radius-sm)', margin: '-4px', padding: '4px' }}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-      >
-        {/* Status icon */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
         <div style={{ paddingTop: '2px', flexShrink: 0 }}>
           {task.status === 'IN_PROGRESS' ? (
             <Clock size={16} style={{ color: 'var(--sos-brand-primary-strong)' }} />
@@ -125,7 +118,6 @@ function TaskRow({
           )}
         </div>
 
-        {/* Task body */}
         <div style={{ flex: 1, minWidth: '200px' }}>
           <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '5px' }}>
             {task.title}
@@ -142,9 +134,9 @@ function TaskRow({
             <StatusBadge tone={taskStatusTone(task.status)} size="sm">
               {taskStatusLabel(task.status)}
             </StatusBadge>
-            {task.assignedToName ? (
+            {task.assignedTo ? (
               <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--sos-text-muted)' }}>
-                <User size={11} /> {task.assignedToName}
+                <User size={11} /> {task.assignedTo.email.split('@')[0]}
               </span>
             ) : (
               <span style={{ fontSize: '12px', color: 'var(--sos-status-warning)' }}>Unassigned</span>
@@ -159,20 +151,19 @@ function TaskRow({
           </div>
         </div>
 
-        {/* Case context */}
         <div style={{ minWidth: '150px', flexShrink: 0 }}>
           <div style={{ fontSize: '11.5px', color: 'var(--sos-text-muted)', marginBottom: '3px', fontWeight: 500 }}>
             {clientName}
           </div>
           <div style={{ fontSize: '11.5px', color: 'var(--sos-text-muted)', marginBottom: '5px' }}>
-            {service} · {targetCountry}
+            {labelForServiceCode(task.case.service)} · {task.case.targetCountry}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <StatusBadge tone={priorityTone(casePriority)} size="sm">
-              {PRIORITY_LABEL[casePriority]}
+            <StatusBadge tone={priorityTone(task.case.priority)} size="sm">
+              {PRIORITY_LABEL[task.case.priority]}
             </StatusBadge>
             <Link
-              href={`/processing/cases/${caseId}` as Route}
+              href={`/processing/cases/${task.case.id}` as Route}
               title="Open case"
               style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11.5px', color: 'var(--sos-brand-primary-strong)', textDecoration: 'none' }}
             >
@@ -181,61 +172,75 @@ function TaskRow({
           </div>
         </div>
 
-        {/* Quick-done button */}
         <button
           type="button"
           onClick={() => onDone(task.id)}
+          disabled={busy}
           title="Mark as done"
-          style={{ flexShrink: 0, alignSelf: 'center', background: 'transparent', border: '1px solid var(--sos-border-subtle)', borderRadius: 'var(--sos-radius-sm)', padding: '5px 12px', fontSize: '12.5px', color: 'var(--sos-text-muted)', cursor: 'pointer', transition: 'all 150ms', display: 'flex', alignItems: 'center', gap: '5px' }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--sos-status-success-soft)'; e.currentTarget.style.color = 'var(--sos-status-success)'; e.currentTarget.style.borderColor = 'var(--sos-status-success-border)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--sos-text-muted)'; e.currentTarget.style.borderColor = 'var(--sos-border-subtle)'; }}
+          style={{ flexShrink: 0, alignSelf: 'center', background: 'transparent', border: '1px solid var(--sos-border-subtle)', borderRadius: 'var(--sos-radius-sm)', padding: '5px 12px', fontSize: '12.5px', color: 'var(--sos-text-muted)', cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '5px', opacity: busy ? 0.5 : 1 }}
         >
-          <CheckCircle2 size={13} /> Done
+          <CheckCircle2 size={13} /> {busy ? 'Saving…' : 'Done'}
         </button>
       </div>
     </GlassCard>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main page component
-// ---------------------------------------------------------------------------
-
 export function ProcessingTasksPage() {
-  const [statusFilter,   setStatusFilter]   = useState<StatusFilter>('ALL');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('ALL');
-  const [doneIds,        setDoneIds]        = useState<Set<string>>(new Set());
+  const [tasks, setTasks] = useState<ApiAggregatedTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
-  // All open tasks for my cases
-  const allRows = useMemo(() => getAggregatedTaskQueue(MOCK_PROCESSING_OFFICER.id), []);
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetchAggregatedTasks();
+      setTasks(res.tasks);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load tasks');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Live rows: exclude locally-done
-  const liveRows = useMemo(
-    () => allRows.filter((r) => !doneIds.has(r.task.id)),
-    [allRows, doneIds],
-  );
+  useEffect(() => { void reload(); }, [reload]);
 
-  function handleDone(id: string) {
-    setDoneIds((prev) => new Set([...prev, id]));
+  async function handleDone(taskId: string) {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    setBusyId(taskId);
+    try {
+      await updateCaseTask(task.caseId, taskId, { status: 'DONE' });
+      // Optimistic: drop from list. Server is the source of truth on reload.
+      setTasks((curr) => curr.filter((t) => t.id !== taskId));
+    } catch (err) {
+      // Surface error in the alert area then reload to resync.
+      setError(err instanceof Error ? err.message : 'Failed to mark task done');
+      void reload();
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  // Metrics over live rows
-  const overdueCount  = liveRows.filter((r) => !!r.task.dueDate && r.task.dueDate < TODAY).length;
-  const blockedCount  = liveRows.filter((r) => r.task.status === 'BLOCKED').length;
-  const urgentCount   = liveRows.filter((r) => r.task.priority === 'URGENT').length;
+  const overdueCount = tasks.filter((t) => !!t.dueDate && t.dueDate < todayIso).length;
+  const blockedCount = tasks.filter((t) => t.status === 'BLOCKED').length;
+  const urgentCount  = tasks.filter((t) => t.priority === 'URGENT').length;
 
-  // Filtered
   const filtered = useMemo(() => {
-    return liveRows.filter((r) => {
-      const sOk = statusFilter   === 'ALL' || r.task.status   === statusFilter;
-      const pOk = priorityFilter === 'ALL' || r.task.priority === priorityFilter;
+    return tasks.filter((t) => {
+      const sOk = statusFilter === 'ALL' || t.status === statusFilter;
+      const pOk = priorityFilter === 'ALL' || t.priority === priorityFilter;
       return sOk && pOk;
     });
-  }, [liveRows, statusFilter, priorityFilter]);
+  }, [tasks, statusFilter, priorityFilter]);
 
-  // Split into overdue + normal for visual grouping
-  const overdue = filtered.filter((r) => !!r.task.dueDate && r.task.dueDate < TODAY);
-  const onTime  = filtered.filter((r) => !r.task.dueDate || r.task.dueDate >= TODAY);
+  const overdue = filtered.filter((t) => !!t.dueDate && t.dueDate < todayIso);
+  const onTime  = filtered.filter((t) => !t.dueDate || t.dueDate >= todayIso);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -244,12 +249,11 @@ export function ProcessingTasksPage() {
         description="All open tasks across your active cases — sorted by priority and due date."
       />
 
-      {/* ── KPI strip ──────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
         <MetricCard
           label="Open tasks"
-          value={String(liveRows.length)}
-          hint={liveRows.length === 0 ? 'All clear' : `${liveRows.length} remaining`}
+          value={String(tasks.length)}
+          hint={tasks.length === 0 ? 'All clear' : `${tasks.length} remaining`}
           Icon={ClipboardList}
           tone="accent"
         />
@@ -276,10 +280,8 @@ export function ProcessingTasksPage() {
         />
       </div>
 
-      {/* ── Filter bar ─────────────────────────────────────────────────── */}
       <GlassCard variant="panel" padded="md">
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-          {/* Status tabs */}
           <div style={{ display: 'flex', gap: '4px', background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-md)', padding: '3px' }}>
             {STATUS_OPTIONS.map(({ value, label }) => (
               <button
@@ -295,7 +297,6 @@ export function ProcessingTasksPage() {
                   fontSize: '12.5px',
                   fontWeight: statusFilter === value ? 600 : 400,
                   cursor: 'pointer',
-                  transition: 'all 150ms',
                   whiteSpace: 'nowrap',
                 }}
               >
@@ -304,7 +305,6 @@ export function ProcessingTasksPage() {
             ))}
           </div>
 
-          {/* Priority select */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Filter size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
             <select
@@ -324,23 +324,35 @@ export function ProcessingTasksPage() {
         </div>
       </GlassCard>
 
-      {/* ── Overdue section ────────────────────────────────────────────── */}
-      {overdue.length > 0 && (
+      {error ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>Failed to load tasks: {error}</div>
+        </GlassCard>
+      ) : null}
+
+      {loading ? (
+        <GlassCard variant="panel" padded="lg">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+            <Loader2 size={16} className="sos-spin" /> Loading tasks…
+          </div>
+        </GlassCard>
+      ) : null}
+
+      {!loading && overdue.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '11px', fontWeight: 700, color: 'var(--sos-status-danger)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
             <AlertTriangle size={13} />
             Overdue ({overdue.length})
           </div>
           <div style={{ borderLeft: '3px solid var(--sos-status-danger-border)', paddingLeft: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {overdue.map((row) => (
-              <TaskRow key={`${row.caseId}-${row.task.id}`} row={row} onDone={handleDone} />
+            {overdue.map((t) => (
+              <TaskRow key={t.id} task={t} onDone={handleDone} busy={busyId === t.id} todayIso={todayIso} />
             ))}
           </div>
         </div>
       )}
 
-      {/* ── On-time tasks ──────────────────────────────────────────────── */}
-      {onTime.length > 0 && (
+      {!loading && onTime.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {overdue.length > 0 && (
             <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
@@ -348,21 +360,20 @@ export function ProcessingTasksPage() {
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {onTime.map((row) => (
-              <TaskRow key={`${row.caseId}-${row.task.id}`} row={row} onDone={handleDone} />
+            {onTime.map((t) => (
+              <TaskRow key={t.id} task={t} onDone={handleDone} busy={busyId === t.id} todayIso={todayIso} />
             ))}
           </div>
         </div>
       )}
 
-      {/* ── Empty ─────────────────────────────────────────────────────── */}
-      {filtered.length === 0 && (
+      {!loading && filtered.length === 0 && !error && (
         <GlassCard variant="panel" padded="lg">
           <EmptyState
             Icon={CheckCircle2}
-            title={liveRows.length === 0 ? 'All tasks complete' : 'No tasks match this filter'}
+            title={tasks.length === 0 ? 'All tasks complete' : 'No tasks match this filter'}
             description={
-              liveRows.length === 0
+              tasks.length === 0
                 ? 'Great work — no open tasks across your cases right now.'
                 : 'Try a different status or priority filter.'
             }

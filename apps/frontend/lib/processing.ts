@@ -358,7 +358,9 @@ export function pinCaseNote(
 // Tasks
 // ---------------------------------------------------------------------------
 
-export type ProcessingTaskStatus = 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+// Mirrors the Prisma enum exactly. Note: server uses DONE (not COMPLETED) as
+// the terminal-positive state; BLOCKED is a real status used by the lane UI.
+export type ProcessingTaskStatus = 'OPEN' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE' | 'CANCELLED';
 export type ProcessingTaskPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
 
 export interface ApiProcessingTask {
@@ -382,6 +384,53 @@ export interface ApiProcessingTask {
 
 export function fetchCaseTasks(caseId: string): Promise<ApiProcessingTask[]> {
   return apiFetch<ApiProcessingTask[]>(`/processing/cases/${caseId}/tasks`, { cache: 'no-store' });
+}
+
+// Cross-case task / document feeds — used by /processing/tasks and
+// /processing/documents side pages. Each row carries enough case context
+// that the queue can render without a second roundtrip per row.
+
+export interface ApiAggregatedTask extends ApiProcessingTask {
+  case: {
+    id: string;
+    service: string;
+    targetCountry: string;
+    priority: ProcessingPriority;
+    stage: ProcessingStage;
+    lead: { firstName: string; lastName: string } | null;
+    client: { firstName: string; lastName: string } | null;
+  };
+}
+
+export function fetchAggregatedTasks(): Promise<{ tasks: ApiAggregatedTask[] }> {
+  return apiFetch<{ tasks: ApiAggregatedTask[] }>('/processing/tasks', { cache: 'no-store' });
+}
+
+export interface ApiAggregatedDocument {
+  id: string;
+  caseId: string;
+  documentName: string;
+  description: string | null;
+  criticality: 'CRITICAL' | 'REQUIRED' | 'CONDITIONAL' | 'SUPPORTING' | 'OPTIONAL';
+  status: 'NOT_SUBMITTED' | 'SUBMITTED' | 'UNDER_REVIEW' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'EXPIRING_SOON' | 'WAIVED' | 'NOT_APPLICABLE';
+  validityExpiryDate: string | null;
+  lastRequestedAt: string | null;
+  requestDeadline: string | null;
+  sortOrder: number;
+  updatedAt: string;
+  case: {
+    id: string;
+    service: string;
+    targetCountry: string;
+    priority: ProcessingPriority;
+    stage: ProcessingStage;
+    lead: { firstName: string; lastName: string } | null;
+    client: { firstName: string; lastName: string } | null;
+  };
+}
+
+export function fetchAggregatedDocuments(): Promise<{ items: ApiAggregatedDocument[] }> {
+  return apiFetch<{ items: ApiAggregatedDocument[] }>('/processing/documents', { cache: 'no-store' });
 }
 
 export function createCaseTask(

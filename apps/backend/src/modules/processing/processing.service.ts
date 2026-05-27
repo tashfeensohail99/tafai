@@ -621,6 +621,102 @@ export class ProcessingService {
   }
 
   // -------------------------------------------------------------------------
+  // CROSS-CASE TASKS / DOCUMENTS
+  //
+  // Side-page queries used by /processing/tasks (cross-case task list) and
+  // /processing/documents (cross-case docs needing officer attention). Both
+  // are scoped by user permission — view_assigned users only see their own
+  // cases, view_all (managers) see everything. Each row carries enough case
+  // context that the UI doesn't need a second roundtrip per row.
+  // -------------------------------------------------------------------------
+
+  async listAggregatedTasks(user: RequestUser) {
+    const canViewAll = user.permissions.includes('processing.case.view_all');
+
+    const tasks = await this.prisma.processingTask.findMany({
+      where: {
+        status: { in: [
+          ProcessingTaskStatus.OPEN,
+          ProcessingTaskStatus.IN_PROGRESS,
+          ProcessingTaskStatus.BLOCKED,
+        ]},
+        case: {
+          // Non-terminal cases only — once a case is COMPLETED/CANCELLED its
+          // tasks shouldn't clutter the queue.
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          ...(canViewAll ? {} : { assignedOfficerId: user.id }),
+        },
+      },
+      include: {
+        case: {
+          select: {
+            id: true,
+            service: true,
+            targetCountry: true,
+            priority: true,
+            stage: true,
+            lead: { select: { firstName: true, lastName: true } },
+            client: { select: { firstName: true, lastName: true } },
+          },
+        },
+        assignedTo: { select: { id: true, email: true } },
+      },
+      // Server-side sort: URGENT first, then due date asc (nulls last), then
+      // created. Frontend can re-sort on filter changes.
+      orderBy: [{ priority: 'desc' }, { dueDate: 'asc' }, { createdAt: 'desc' }],
+      take: 500,
+    });
+
+    return { tasks };
+  }
+
+  async listAggregatedDocuments(user: RequestUser) {
+    const canViewAll = user.permissions.includes('processing.case.view_all');
+
+    // Status mix the officer cares about cross-case: actively pending review
+    // (SUBMITTED, UNDER_REVIEW), client-side blockers (REJECTED — client
+    // needs to re-upload), and validity risks (EXPIRING_SOON, EXPIRED).
+    const items = await this.prisma.caseDocumentItem.findMany({
+      where: {
+        status: { in: [
+          DocumentItemStatus.SUBMITTED,
+          DocumentItemStatus.UNDER_REVIEW,
+          DocumentItemStatus.REJECTED,
+          DocumentItemStatus.EXPIRING_SOON,
+          DocumentItemStatus.EXPIRED,
+        ]},
+        case: {
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          ...(canViewAll ? {} : { assignedOfficerId: user.id }),
+        },
+      },
+      include: {
+        case: {
+          select: {
+            id: true,
+            service: true,
+            targetCountry: true,
+            priority: true,
+            stage: true,
+            lead: { select: { firstName: true, lastName: true } },
+            client: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+      orderBy: [
+        // SUBMITTED first (officer's main inbox), then UNDER_REVIEW, then the
+        // rest. Within each, ascending sortOrder so checklist position is
+        // preserved.
+        { status: 'asc' },
+        { sortOrder: 'asc' },
+      ],
+      take: 500,
+    });
+
+    return { items };
+  }
+
+  // -------------------------------------------------------------------------
   // REFUND / ESCALATION LANE
   //
   // Workflow doc: when the authority rejects a case, the team picks one of two

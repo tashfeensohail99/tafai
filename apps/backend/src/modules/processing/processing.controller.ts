@@ -162,6 +162,30 @@ export class ProcessingController {
   }
 
   // -------------------------------------------------------------------------
+  // CROSS-CASE TASKS / DOCUMENTS  — side-page queries
+  // -------------------------------------------------------------------------
+
+  /**
+   * Aggregated open-task queue across the user's cases. Non-terminal tasks
+   * (OPEN / IN_PROGRESS / BLOCKED) on non-terminal cases only.
+   */
+  @Get('tasks')
+  @RequireAnyPermissions('processing.task.create', 'processing.case.view_all')
+  listAggregatedTasks(@CurrentUser() user: RequestUser) {
+    return this.processingService.listAggregatedTasks(user);
+  }
+
+  /**
+   * Aggregated documents needing officer action across cases: SUBMITTED /
+   * UNDER_REVIEW / REJECTED / EXPIRING_SOON / EXPIRED.
+   */
+  @Get('documents')
+  @RequireAnyPermissions('processing.document.review', 'processing.case.view_all')
+  listAggregatedDocuments(@CurrentUser() user: RequestUser) {
+    return this.processingService.listAggregatedDocuments(user);
+  }
+
+  // -------------------------------------------------------------------------
   // REFUND / ESCALATION LANE
   // -------------------------------------------------------------------------
 

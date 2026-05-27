@@ -99,17 +99,25 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
   // Poll unread count every 15s. Play a ding when the count *increases*
   // (so a freshly-arrived notification triggers the alert, but mark-read
   // dropping the count back to zero doesn't).
+  //
+  // First-load suppression: lastUnreadRef starts at 0, but a freshly mounted
+  // shell with N existing unread items would trip "0 → N" on the very first
+  // poll and ding on every page navigation. We seed the ref from the first
+  // response without playing, so the ding fires only when something genuinely
+  // new arrives during this session.
   useEffect(() => {
     let cancelled = false;
+    let seeded = false;
     const fetchCount = () => {
       getUnreadNotificationCount()
         .then((r) => {
           if (cancelled) return;
-          if (r.count > lastUnreadRef.current) {
+          if (seeded && r.count > lastUnreadRef.current) {
             playDing();
           }
           lastUnreadRef.current = r.count;
           setUnread(r.count);
+          seeded = true;
         })
         .catch(() => {
           /* best-effort */

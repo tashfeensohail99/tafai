@@ -546,12 +546,26 @@ export class OrchestratorService {
    * Mirror of the BookAppointmentModal frontend helpers — resolves
    * "Monday morning" / "kal subha" / "tomorrow 3pm" / "15:00" into a real
    * Date. Returns null when the bot's parser was too vague.
+   *
+   * Day-default behaviour: customers often say only a time ("3pm") without
+   * specifying a day. In that case we assume "today" if the resulting slot
+   * is still in the future, else "tomorrow" — that matches what a human
+   * receptionist would do. Returns null only if BOTH day and time are
+   * unparseable.
    */
   private parsePreferredDateTime(day: string | null, time: string | null): Date | null {
-    const date = this.resolveDay(day);
-    if (!date) return null;
+    let date = this.resolveDay(day);
+    const hasTime = !!(time && time.trim());
+    if (!date) {
+      if (!hasTime) return null; // nothing usable at all
+      date = new Date(); // default to today
+    }
     const { hh, mm } = this.resolveTime(time);
     date.setHours(hh, mm, 0, 0);
+    // If we defaulted day to today but the slot already passed, bump to tomorrow.
+    if (!this.resolveDay(day) && date.getTime() <= Date.now()) {
+      date.setDate(date.getDate() + 1);
+    }
     return date;
   }
 

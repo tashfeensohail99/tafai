@@ -695,6 +695,16 @@ export class OrchestratorService {
     const yesishUrdu = /(جی|ہاں|بالکل|ٹھیک|بک|بک کر|بکنگ|پلیز|شیڈول)/.test(text);
     const yesish = yesishLatin || yesishUrdu;
 
+    // Modality picks count as forward progress out of PROPOSED — when the bot
+    // asked "phone call, Google Meet, or office visit?" and the customer
+    // replied just "phone call would be nice", there's no "yes" in there, but
+    // it's clearly a yes. Without this we used to ping-pong PROPOSED ↔ Q_AND_A
+    // and never reach HANDED_OFF.
+    const modalityish =
+      /\b(phone\s*call|call|video|google\s*meet|gmeet|meet|zoom|office|in[\s-]?person|visit)\b/i.test(
+        lc,
+      ) || /(کال|ویڈیو|گوگل|آفس|ملاقات)/.test(text);
+
     // Time / day mentions in any of English, Roman Urdu, or Urdu script.
     const timeishLatin =
       /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|am|pm|morning|evening|afternoon|night|kal|aaj|subha|sham|raat|dopahar)\b/i.test(
@@ -709,10 +719,21 @@ export class OrchestratorService {
       return inboundCount >= APPOINTMENT_NUDGE_AFTER_TURNS ? 'Q_AND_A' : 'INITIAL';
     }
     if (current === 'Q_AND_A') {
+      // From Q_AND_A: if customer is already volunteering modality+time
+      // ("phone call at 3pm"), skip straight to HANDED_OFF. If they're just
+      // selecting modality, jump to AVAILABILITY. Otherwise nudge toward
+      // PROPOSED.
+      if (timeish && modalityish) return 'HANDED_OFF';
+      if (modalityish || yesish) return 'APPOINTMENT_AVAILABILITY';
       return 'APPOINTMENT_PROPOSED';
     }
     if (current === 'APPOINTMENT_PROPOSED') {
-      if (yesish) return 'APPOINTMENT_AVAILABILITY';
+      // Modality selection OR a time hint OR a plain yes all push forward.
+      // We treat any of those as the customer engaging with the booking
+      // flow — pushing them back to Q_AND_A on "phone call would be nice"
+      // was a real bug we hit in prod.
+      if (timeish && modalityish) return 'HANDED_OFF';
+      if (yesish || modalityish || timeish) return 'APPOINTMENT_AVAILABILITY';
       return 'Q_AND_A'; // they kept asking; loop back
     }
     if (current === 'APPOINTMENT_AVAILABILITY') {

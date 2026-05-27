@@ -1090,3 +1090,81 @@ export function caseAgeDays(c: { createdAt: string }): number {
   const ms = Date.now() - new Date(c.createdAt).getTime();
   return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
 }
+
+// ---------------------------------------------------------------------------
+// Checklist templates — admin-side CRUD for document requirements per
+// (service, targetCountry). Powers /processing/admin/templates.
+// ---------------------------------------------------------------------------
+
+export interface ApiDocumentTemplate {
+  id: string;
+  service: string;
+  targetCountry: string;
+  documentName: string;
+  description: string | null;
+  instructions: string | null;
+  criticality: 'CRITICAL' | 'REQUIRED' | 'CONDITIONAL' | 'SUPPORTING' | 'OPTIONAL';
+  conditionRule: Record<string, unknown> | null;
+  expectedFormats: string[];
+  maxFileSizeMb: number;
+  validityRule: 'NONE' | 'MUST_NOT_EXPIRE' | 'MUST_BE_VALID_FOR_N_MONTHS';
+  validityMonths: number | null;
+  validityBufferDays: number;
+  guidanceUrl: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateDocumentTemplateBody {
+  service: string;
+  targetCountry: string;
+  documentName: string;
+  description?: string;
+  instructions?: string;
+  criticality: 'CRITICAL' | 'REQUIRED' | 'CONDITIONAL' | 'SUPPORTING' | 'OPTIONAL';
+  expectedFormats?: string[];
+  maxFileSizeMb?: number;
+  validityRule: 'NONE' | 'MUST_NOT_EXPIRE' | 'MUST_BE_VALID_FOR_N_MONTHS';
+  validityMonths?: number;
+  validityBufferDays?: number;
+  guidanceUrl?: string;
+  sortOrder?: number;
+}
+
+export type UpdateDocumentTemplateBody = Partial<Omit<CreateDocumentTemplateBody, 'service' | 'targetCountry'>>;
+
+export function fetchChecklistTemplates(query: { service?: string; targetCountry?: string } = {}): Promise<ApiDocumentTemplate[]> {
+  const qs = new URLSearchParams();
+  if (query.service) qs.set('service', query.service);
+  if (query.targetCountry) qs.set('targetCountry', query.targetCountry);
+  const tail = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<ApiDocumentTemplate[]>(`/processing/checklist-templates${tail}`, { cache: 'no-store' });
+}
+
+export function createDocumentTemplate(body: CreateDocumentTemplateBody): Promise<ApiDocumentTemplate> {
+  return apiFetch<ApiDocumentTemplate>('/processing/checklist-templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+export function updateDocumentTemplate(id: string, body: UpdateDocumentTemplateBody): Promise<ApiDocumentTemplate> {
+  return apiFetch<ApiDocumentTemplate>(`/processing/checklist-templates/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/** Soft delete — backend sets isActive=false; row stays for audit. */
+export function deactivateDocumentTemplate(id: string): Promise<ApiDocumentTemplate> {
+  return apiFetch<ApiDocumentTemplate>(`/processing/checklist-templates/${id}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}

@@ -1,5 +1,5 @@
 'use client';
-// Template Form Modal — Phase 2C-3.
+// Template Form Modal — wired to real backend in P6.3.
 // Create or edit a checklist template.
 // Calls POST /processing/checklist-templates (create) or
 //        PATCH /processing/checklist-templates/:id (edit).
@@ -14,6 +14,11 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
+import {
+  createDocumentTemplate,
+  updateDocumentTemplate,
+  type ApiDocumentTemplate,
+} from '@/lib/processing';
 
 // ---------- Types -----------------------------------------------------------
 
@@ -26,6 +31,7 @@ export interface TemplateRecord {
   targetCountry: string;
   documentName: string;
   description: string;
+  instructions: string;
   criticality: Criticality;
   validityRule: ValidityRule;
   validityMonths: number | null;
@@ -35,6 +41,30 @@ export interface TemplateRecord {
   sortOrder: number;
   isActive: boolean;
   guidanceUrl: string;
+}
+
+/**
+ * Convert the API row (which uses nulls + non-null defaults) into the
+ * TemplateRecord shape the page + form expect.
+ */
+export function templateFromApi(t: ApiDocumentTemplate): TemplateRecord {
+  return {
+    id: t.id,
+    service: t.service,
+    targetCountry: t.targetCountry,
+    documentName: t.documentName,
+    description: t.description ?? '',
+    instructions: t.instructions ?? '',
+    criticality: t.criticality,
+    validityRule: t.validityRule,
+    validityMonths: t.validityMonths,
+    validityBufferDays: t.validityBufferDays ?? null,
+    expectedFormats: t.expectedFormats ?? [],
+    maxFileSizeMb: t.maxFileSizeMb ?? null,
+    sortOrder: t.sortOrder,
+    isActive: t.isActive,
+    guidanceUrl: t.guidanceUrl ?? '',
+  };
 }
 
 // ---------- Config ----------------------------------------------------------
@@ -107,6 +137,7 @@ function blank(): Omit<TemplateRecord, 'id' | 'isActive'> {
     targetCountry: '',
     documentName: '',
     description: '',
+    instructions: '',
     criticality: 'REQUIRED',
     validityRule: 'NONE',
     validityMonths: null,
@@ -128,6 +159,7 @@ export function TemplateFormModal({ template, onClose, onSaved }: TemplateFormMo
           targetCountry: template.targetCountry,
           documentName: template.documentName,
           description: template.description,
+          instructions: template.instructions,
           criticality: template.criticality,
           validityRule: template.validityRule,
           validityMonths: template.validityMonths,
@@ -142,6 +174,7 @@ export function TemplateFormModal({ template, onClose, onSaved }: TemplateFormMo
 
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function set<K extends keyof typeof form>(key: K, val: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: val }));
@@ -162,22 +195,54 @@ export function TemplateFormModal({ template, onClose, onSaved }: TemplateFormMo
     form.documentName.trim().length > 0 &&
     !loading;
 
-  function handleSave() {
+  async function handleSave() {
     if (!canSave) return;
     setLoading(true);
-    // Replace with real API:
-    //   POST  /processing/checklist-templates           (create)
-    //   PATCH /processing/checklist-templates/:id       (edit)
-    setTimeout(() => {
-      const saved: TemplateRecord = {
-        id: isEdit ? template!.id : `tpl-${Date.now()}`,
-        isActive: isEdit ? template!.isActive : true,
-        ...form,
+    setError(null);
+    try {
+      // The form drives the body. We send only fields with meaningful
+      // content — empty strings get dropped so the backend (which uses
+      // ?? undefined to honour Prisma's null vs undefined distinction)
+      // doesn't accidentally null out an existing description on edit.
+      const body = {
+        service: form.service,
+        targetCountry: form.targetCountry,
+        documentName: form.documentName,
+        criticality: form.criticality,
+        validityRule: form.validityRule,
+        ...(form.description.trim() ? { description: form.description.trim() } : {}),
+        ...(form.instructions.trim() ? { instructions: form.instructions.trim() } : {}),
+        ...(form.expectedFormats.length > 0 ? { expectedFormats: form.expectedFormats } : {}),
+        ...(form.maxFileSizeMb != null ? { maxFileSizeMb: form.maxFileSizeMb } : {}),
+        ...(form.validityMonths != null ? { validityMonths: form.validityMonths } : {}),
+        ...(form.validityBufferDays != null ? { validityBufferDays: form.validityBufferDays } : {}),
+        ...(form.guidanceUrl.trim() ? { guidanceUrl: form.guidanceUrl.trim() } : {}),
+        sortOrder: form.sortOrder,
       };
-      onSaved(saved);
+      // Service + country are immutable on edit — backend's
+      // UpdateDocumentTemplateDto doesn't accept them. Strip on edit.
+      const apiResult = isEdit
+        ? await updateDocumentTemplate(template!.id, {
+            documentName: body.documentName,
+            criticality: body.criticality,
+            validityRule: body.validityRule,
+            description: body.description,
+            instructions: body.instructions,
+            expectedFormats: body.expectedFormats,
+            maxFileSizeMb: body.maxFileSizeMb,
+            validityMonths: body.validityMonths,
+            validityBufferDays: body.validityBufferDays,
+            guidanceUrl: body.guidanceUrl,
+            sortOrder: body.sortOrder,
+          })
+        : await createDocumentTemplate(body);
+      onSaved(templateFromApi(apiResult));
       setDone(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to save template');
+    } finally {
       setLoading(false);
-    }, 700);
+    }
   }
 
   /* ---- Done state ---- */
@@ -415,6 +480,12 @@ export function TemplateFormModal({ template, onClose, onSaved }: TemplateFormMo
             </div>
           </div>
         </div>
+
+        {error ? (
+          <div style={{ marginTop: '16px', padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: '12.5px' }}>
+            {error}
+          </div>
+        ) : null}
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '22px', borderTop: '1px solid var(--sos-border-subtle)', paddingTop: '16px' }}>

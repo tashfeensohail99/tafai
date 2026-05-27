@@ -1,11 +1,11 @@
 'use client';
-// Checklist Templates Admin Page — Phase 2C-3.
+// Checklist Templates Admin Page — wired to real backend in P6.3.
 // Manage document requirement templates per service/country.
 // Backed by GET/POST/PATCH/DELETE /processing/checklist-templates.
 
-import { useState } from 'react';
-import { Edit2, FileText, Globe, ToggleLeft, ToggleRight, Plus } from 'lucide-react';
-import { labelForServiceCode } from '@/lib/service-types';
+import { useCallback, useEffect, useState } from 'react';
+import { Edit2, FileText, Globe, Loader2, ToggleLeft, Plus } from 'lucide-react';
+import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
 import {
   GlassCard,
   PageHeader,
@@ -16,12 +16,15 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   TemplateFormModal,
+  templateFromApi,
   type TemplateRecord,
   type Criticality,
   type ValidityRule,
 } from './TemplateFormModal';
-
-// ---------- Criticality config ----------------------------------------------
+import {
+  fetchChecklistTemplates,
+  deactivateDocumentTemplate,
+} from '@/lib/processing';
 
 const CRITICALITY_TONE: Record<Criticality, BadgeTone> = {
   CRITICAL: 'danger',
@@ -37,119 +40,16 @@ const VALIDITY_SHORT: Record<ValidityRule, string> = {
   MUST_BE_VALID_FOR_N_MONTHS: 'Valid N months',
 };
 
-// ---------- Mock data -------------------------------------------------------
-
-const INITIAL_TEMPLATES: TemplateRecord[] = [
-  {
-    id: 'tpl-001',
-    service: 'PR Application',
-    targetCountry: 'Canada',
-    documentName: 'Police Clearance Certificate',
-    description: 'National police clearance from country of residence for past 5 years.',
-    criticality: 'CRITICAL',
-    validityRule: 'MUST_BE_VALID_FOR_N_MONTHS',
-    validityMonths: 6,
-    validityBufferDays: 30,
-    expectedFormats: ['PDF'],
-    maxFileSizeMb: 10,
-    sortOrder: 1,
-    isActive: true,
-    guidanceUrl: 'https://www.rcmp-grc.gc.ca/en/criminal-record-checks',
-  },
-  {
-    id: 'tpl-002',
-    service: 'PR Application',
-    targetCountry: 'Canada',
-    documentName: 'Medical Examination Report',
-    description: 'IRCC-approved panel physician report (IMM 1017E).',
-    criticality: 'CRITICAL',
-    validityRule: 'MUST_BE_VALID_FOR_N_MONTHS',
-    validityMonths: 12,
-    validityBufferDays: 60,
-    expectedFormats: ['PDF'],
-    maxFileSizeMb: 10,
-    sortOrder: 2,
-    isActive: true,
-    guidanceUrl: '',
-  },
-  {
-    id: 'tpl-003',
-    service: 'PR Application',
-    targetCountry: 'Canada',
-    documentName: 'IELTS Test Result',
-    description: 'Academic or General IELTS. Must be within 2 years.',
-    criticality: 'REQUIRED',
-    validityRule: 'MUST_BE_VALID_FOR_N_MONTHS',
-    validityMonths: 24,
-    validityBufferDays: 0,
-    expectedFormats: ['PDF'],
-    maxFileSizeMb: 5,
-    sortOrder: 3,
-    isActive: true,
-    guidanceUrl: '',
-  },
-  {
-    id: 'tpl-004',
-    service: 'Student Visa',
-    targetCountry: 'UK',
-    documentName: 'CAS Letter',
-    description: 'Confirmation of Acceptance for Studies from the sponsoring university.',
-    criticality: 'CRITICAL',
-    validityRule: 'MUST_NOT_EXPIRE',
-    validityMonths: null,
-    validityBufferDays: null,
-    expectedFormats: ['PDF'],
-    maxFileSizeMb: 5,
-    sortOrder: 1,
-    isActive: true,
-    guidanceUrl: '',
-  },
-  {
-    id: 'tpl-005',
-    service: 'Student Visa',
-    targetCountry: 'UK',
-    documentName: 'Financial Evidence',
-    description: 'Bank statements showing sufficient maintenance funds for the course duration.',
-    criticality: 'REQUIRED',
-    validityRule: 'MUST_BE_VALID_FOR_N_MONTHS',
-    validityMonths: 1,
-    validityBufferDays: 0,
-    expectedFormats: ['PDF', 'JPG', 'PNG'],
-    maxFileSizeMb: 10,
-    sortOrder: 2,
-    isActive: true,
-    guidanceUrl: '',
-  },
-  {
-    id: 'tpl-006',
-    service: 'Work Permit',
-    targetCountry: 'Australia',
-    documentName: 'Skills Assessment',
-    description: 'Formal skills assessment from the relevant Australian assessing authority.',
-    criticality: 'CRITICAL',
-    validityRule: 'MUST_NOT_EXPIRE',
-    validityMonths: null,
-    validityBufferDays: null,
-    expectedFormats: ['PDF'],
-    maxFileSizeMb: 10,
-    sortOrder: 1,
-    isActive: false,
-    guidanceUrl: '',
-  },
-];
-
-const ALL_SERVICES = [...new Set(INITIAL_TEMPLATES.map((t) => t.service))].sort();
-const ALL_COUNTRIES = [...new Set(INITIAL_TEMPLATES.map((t) => t.targetCountry))].sort();
-
 // ---------- Template row ----------------------------------------------------
 
 interface TemplateRowProps {
   template: TemplateRecord;
   onEdit: () => void;
-  onToggle: () => void;
+  onDeactivate: () => void;
+  busy: boolean;
 }
 
-function TemplateRow({ template: t, onEdit, onToggle }: TemplateRowProps) {
+function TemplateRow({ template: t, onEdit, onDeactivate, busy }: TemplateRowProps) {
   return (
     <tr style={{ borderBottom: '1px solid var(--sos-border-subtle)' }}>
       <td style={{ padding: '12px 14px', verticalAlign: 'middle' }}>
@@ -180,28 +80,25 @@ function TemplateRow({ template: t, onEdit, onToggle }: TemplateRowProps) {
         {t.sortOrder}
       </td>
       <td style={{ padding: '12px 14px', verticalAlign: 'middle' }}>
-        <StatusBadge tone={t.isActive ? 'success' : 'neutral'} size="sm">
-          {t.isActive ? 'Active' : 'Inactive'}
-        </StatusBadge>
-      </td>
-      <td style={{ padding: '12px 14px', verticalAlign: 'middle' }}>
         <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
           <button
             type="button"
             onClick={onEdit}
+            disabled={busy}
             title="Edit template"
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--sos-radius-sm)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 100ms' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--sos-radius-sm)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: '12px', fontWeight: 500, cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.5 : 1 }}
           >
             <Edit2 size={12} /> Edit
           </button>
           <button
             type="button"
-            onClick={onToggle}
-            title={t.isActive ? 'Deactivate' : 'Activate'}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--sos-radius-sm)', border: `1px solid ${t.isActive ? 'var(--sos-status-danger-border)' : 'var(--sos-status-success-border)'}`, background: t.isActive ? 'var(--sos-status-danger-soft)' : 'var(--sos-status-success-soft)', color: t.isActive ? 'var(--sos-status-danger)' : 'var(--sos-status-success)', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'all 100ms' }}
+            onClick={onDeactivate}
+            disabled={busy}
+            title="Deactivate template — hides it from new acknowledgments"
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: 'var(--sos-radius-sm)', border: '1px solid var(--sos-status-danger-border)', background: 'var(--sos-status-danger-soft)', color: 'var(--sos-status-danger)', fontSize: '12px', fontWeight: 500, cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.5 : 1 }}
           >
-            {t.isActive ? <ToggleLeft size={12} /> : <ToggleRight size={12} />}
-            {t.isActive ? 'Deactivate' : 'Activate'}
+            <ToggleLeft size={12} />
+            {busy ? 'Saving…' : 'Deactivate'}
           </button>
         </div>
       </td>
@@ -212,18 +109,40 @@ function TemplateRow({ template: t, onEdit, onToggle }: TemplateRowProps) {
 // ---------- Main page -------------------------------------------------------
 
 export function ChecklistTemplatesPage() {
-  const [templates, setTemplates] = useState<TemplateRecord[]>(INITIAL_TEMPLATES);
+  const [templates, setTemplates] = useState<TemplateRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [filterService, setFilterService] = useState('');
   const [filterCountry, setFilterCountry] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('active');
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState<TemplateRecord | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // The backend only ever returns isActive=true rows, so the page shows
+      // a clean working set. Deactivated templates stay in the DB for audit
+      // but disappear from the admin view; admin can recreate if needed.
+      const rows = await fetchChecklistTemplates();
+      setTemplates(rows.map(templateFromApi));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load templates');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void reload(); }, [reload]);
+
+  // Derived dropdown options — pulled from what actually exists. As admins
+  // create templates for new services/countries the filters expand.
+  const allCountries = [...new Set(templates.map((t) => t.targetCountry))].sort();
 
   const filtered = templates.filter((t) => {
     if (filterService && t.service !== filterService) return false;
     if (filterCountry && t.targetCountry !== filterCountry) return false;
-    if (filterStatus === 'active' && !t.isActive) return false;
-    if (filterStatus === 'inactive' && t.isActive) return false;
     return true;
   });
 
@@ -237,10 +156,24 @@ export function ChecklistTemplatesPage() {
     setShowModal(true);
   }
 
-  function toggleActive(id: string) {
-    setTemplates((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, isActive: !t.isActive } : t)),
-    );
+  async function handleDeactivate(id: string) {
+    const target = templates.find((t) => t.id === id);
+    if (!target) return;
+    const ok = window.confirm(`Deactivate "${target.documentName}" for ${labelForServiceCode(target.service)} → ${target.targetCountry}? It will no longer be added to new cases. Existing cases keep their copy.`);
+    if (!ok) return;
+    setBusyId(id);
+    // Optimistic: drop from the visible list. Server is source of truth on reload.
+    const prev = templates;
+    setTemplates((curr) => curr.filter((t) => t.id !== id));
+    try {
+      await deactivateDocumentTemplate(id);
+    } catch (e: unknown) {
+      // Restore and surface the error.
+      setTemplates(prev);
+      setError(e instanceof Error ? e.message : 'Failed to deactivate');
+    } finally {
+      setBusyId(null);
+    }
   }
 
   function handleSaved(saved: TemplateRecord) {
@@ -276,12 +209,12 @@ export function ChecklistTemplatesPage() {
         <PageHeader
           eyebrow="Admin"
           title="Checklist Templates"
-          description="Define document requirements for each service and target country."
+          description="Define document requirements per service + target country. Templates marked GLOBAL apply when there's no country-specific override."
           actions={
             <button
               type="button"
               onClick={openCreate}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '9px 18px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-brand-primary-strong)', color: '#fff', border: 'none', fontSize: '13.5px', fontWeight: 600, cursor: 'pointer', transition: 'opacity 150ms' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '9px 18px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-brand-primary-strong)', color: '#fff', border: 'none', fontSize: '13.5px', fontWeight: 600, cursor: 'pointer' }}
             >
               <Plus size={14} /> New template
             </button>
@@ -296,16 +229,11 @@ export function ChecklistTemplatesPage() {
             </div>
             <select style={selectStyle} value={filterService} onChange={(e) => setFilterService(e.target.value)}>
               <option value="">All services</option>
-              {ALL_SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
+              {SERVICE_TYPES.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>
             <select style={selectStyle} value={filterCountry} onChange={(e) => setFilterCountry(e.target.value)}>
               <option value="">All countries</option>
-              {ALL_COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <select style={selectStyle} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}>
-              <option value="all">All</option>
-              <option value="active">Active only</option>
-              <option value="inactive">Inactive only</option>
+              {allCountries.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <div style={{ marginLeft: 'auto', fontSize: '12.5px', color: 'var(--sos-text-muted)' }}>
               {filtered.length} template{filtered.length !== 1 ? 's' : ''}
@@ -315,10 +243,22 @@ export function ChecklistTemplatesPage() {
 
         {/* Table */}
         <GlassCard variant="panel" padded={false}>
-          {filtered.length === 0 ? (
+          {loading ? (
+            <div style={{ padding: 32, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Loader2 size={14} className="sos-spin" /> Loading templates…
+            </div>
+          ) : error ? (
+            <div style={{ padding: 24, color: 'var(--sos-status-danger)', fontSize: 13 }}>
+              Failed to load templates: {error}
+            </div>
+          ) : filtered.length === 0 ? (
             <EmptyState
-              title="No templates found"
-              description="Adjust your filters or create a new template."
+              title={templates.length === 0 ? 'No templates yet' : 'No templates match this filter'}
+              description={
+                templates.length === 0
+                  ? 'Create your first template — or rely on the seeded GLOBAL templates per service.'
+                  : 'Adjust your filters or create a new template.'
+              }
               action={<SecondaryButton onClick={openCreate}>New template</SecondaryButton>}
             />
           ) : (
@@ -326,7 +266,7 @@ export function ChecklistTemplatesPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
                   <tr style={{ borderBottom: '2px solid var(--sos-border-subtle)' }}>
-                    {['Document', 'Criticality', 'Service / Country', 'Validity', 'Order', 'Status', ''].map((h) => (
+                    {['Document', 'Criticality', 'Service / Country', 'Validity', 'Order', ''].map((h) => (
                       <th
                         key={h}
                         style={{ padding: '10px 14px', textAlign: h === '' ? 'right' : 'left', fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}
@@ -342,7 +282,8 @@ export function ChecklistTemplatesPage() {
                       key={t.id}
                       template={t}
                       onEdit={() => openEdit(t)}
-                      onToggle={() => toggleActive(t.id)}
+                      onDeactivate={() => handleDeactivate(t.id)}
+                      busy={busyId === t.id}
                     />
                   ))}
                 </tbody>

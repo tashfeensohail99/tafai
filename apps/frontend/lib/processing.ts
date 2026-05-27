@@ -193,6 +193,114 @@ export function fetchProcessingAdminOverview(): Promise<ApiProcessingAdminOvervi
   return apiFetch<ApiProcessingAdminOverview>('/processing/admin-overview', { cache: 'no-store' });
 }
 
+// ---------------------------------------------------------------------------
+// Reports — 5 endpoints under /processing/reports/*. Each accepts optional
+// dateFrom / dateTo (ISO date) + officerId filters. Frontend renders raw
+// payloads as tabs — no transformation, server is source of truth.
+// ---------------------------------------------------------------------------
+
+export interface ReportDateRangeQuery {
+  dateFrom?: string;
+  dateTo?: string;
+  officerId?: string;
+}
+
+function reportQs(q: ReportDateRangeQuery = {}): string {
+  const qs = new URLSearchParams();
+  if (q.dateFrom) qs.set('dateFrom', q.dateFrom);
+  if (q.dateTo) qs.set('dateTo', q.dateTo);
+  if (q.officerId) qs.set('officerId', q.officerId);
+  return qs.toString() ? `?${qs.toString()}` : '';
+}
+
+export interface ApiWorkloadReport {
+  from: string;
+  to: string;
+  rows: Array<{
+    officerId: string | null;
+    officerName: string;
+    caseCount: number;
+    avgDaysOpen: number;
+    stageCounts: Record<string, number>;
+  }>;
+}
+export function fetchWorkloadReport(q?: ReportDateRangeQuery): Promise<ApiWorkloadReport> {
+  return apiFetch<ApiWorkloadReport>(`/processing/reports/workload${reportQs(q)}`, { cache: 'no-store' });
+}
+
+export interface ApiThroughputReport {
+  from: string;
+  to: string;
+  totalClosed: number;
+  weeks: Array<{ week: string; completed: number; cancelled: number; rejected: number; total: number }>;
+}
+export function fetchThroughputReport(q?: ReportDateRangeQuery): Promise<ApiThroughputReport> {
+  return apiFetch<ApiThroughputReport>(`/processing/reports/throughput${reportQs(q)}`, { cache: 'no-store' });
+}
+
+export interface ApiDocQualityReport {
+  from: string;
+  to: string;
+  documents: Array<{
+    documentName: string;
+    accepted: number;
+    rejected: number;
+    total: number;
+    rejectionRate: number;
+    topReasonCodes: Array<{ code: string; count: number }>;
+  }>;
+  topReasonCodes: Array<{ code: string; count: number }>;
+}
+export function fetchDocQualityReport(q?: ReportDateRangeQuery): Promise<ApiDocQualityReport> {
+  return apiFetch<ApiDocQualityReport>(`/processing/reports/doc-quality${reportQs(q)}`, { cache: 'no-store' });
+}
+
+export interface ApiSlaReport {
+  overdueCorrections: Array<{
+    correctionId: string;
+    caseId: string;
+    subject: string;
+    status: string;
+    slaDueAt: string | null;
+    hoursOverdue: number | null;
+    raisedByName: string;
+  }>;
+  agingCases: Array<{
+    caseId: string;
+    service: string;
+    targetCountry: string;
+    stage: ProcessingStage;
+    priority: ProcessingPriority;
+    daysOpen: number;
+    bucket: '30-60' | '60-90' | '90+';
+    officerName: string;
+  }>;
+  summary: { overdueCount: number; aging30to60: number; aging60to90: number; aging90plus: number };
+}
+export function fetchSlaReport(q?: ReportDateRangeQuery): Promise<ApiSlaReport> {
+  return apiFetch<ApiSlaReport>(`/processing/reports/sla${reportQs(q)}`, { cache: 'no-store' });
+}
+
+export interface ApiExpiryRiskReport {
+  rows: Array<{
+    documentItemId: string;
+    documentName: string;
+    criticality: string;
+    status: string;
+    validityExpiryDate: string | null;
+    daysUntilExpiry: number | null;
+    bucket: 'expired' | '0-30' | '31-60' | '61-90' | 'unknown';
+    caseId: string;
+    service: string;
+    targetCountry: string;
+    casePriority: ProcessingPriority;
+    officerName: string;
+  }>;
+}
+export function fetchExpiryRiskReport(q?: ReportDateRangeQuery): Promise<ApiExpiryRiskReport> {
+  return apiFetch<ApiExpiryRiskReport>(`/processing/reports/expiry-risk${reportQs(q)}`, { cache: 'no-store' });
+}
+
 /**
  * Intake queue row — same as a list item but also includes the finance
  * handover snapshot the officer needs to acknowledge intelligently (the

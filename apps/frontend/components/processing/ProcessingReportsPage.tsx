@@ -1,56 +1,46 @@
 'use client';
-// Processing Reports — Phase 1G-F1.
+// Processing Reports — wired to /processing/reports/*.
 // Tabbed report viewer: Workload / Throughput / Doc Quality / SLA / Expiry Risk.
-// All data is mock; wires to GET /processing/reports/* once backend is live.
+// Each tab fetches its own data on demand. Date-range filter applies across tabs.
 
-import { useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
-  AlertTriangle,
   BarChart2,
-  CalendarRange,
-  CheckCircle2,
-  Clock,
   Download,
   FileWarning,
+  Loader2,
   ShieldAlert,
   TrendingUp,
   Users,
-  XCircle,
 } from 'lucide-react';
 import {
-  EmptyState,
   GlassCard,
-  MetricCard,
   PageHeader,
   SecondaryButton,
   StatusBadge,
-  type BadgeTone,
 } from '@/components/sales-v2/ui';
-import {
-  MOCK_WORKLOAD_REPORT,
-  MOCK_THROUGHPUT_REPORT,
-  MOCK_DOC_QUALITY_REPORT,
-  MOCK_SLA_REPORT,
-  MOCK_EXPIRY_RISK_REPORT,
-  STAGE_LABEL,
-  PRIORITY_LABEL,
-  fmtDate,
-  type ProcessingStage,
-  type ProcessingPriority,
-  type WorkloadOfficerRow,
-  type ThroughputWeekRow,
-  type DocQualityDocRow,
-  type OverdueCorrectionRow,
-  type AgingCaseRow,
-  type ExpiryRiskRow,
-} from '@/components/processing/mockData';
+import { STAGE_LABEL, PRIORITY_LABEL, fmtDate } from '@/components/processing/mockData';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
+import {
+  fetchWorkloadReport,
+  fetchThroughputReport,
+  fetchDocQualityReport,
+  fetchSlaReport,
+  fetchExpiryRiskReport,
+  type ApiWorkloadReport,
+  type ApiThroughputReport,
+  type ApiDocQualityReport,
+  type ApiSlaReport,
+  type ApiExpiryRiskReport,
+  type ReportDateRangeQuery,
+} from '@/lib/processing';
+import { labelForServiceCode } from '@/lib/service-types';
 
-// ---------------------------------------------------------------------------
-// Tab config
-// ---------------------------------------------------------------------------
+function apiBaseUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+}
 
 type ReportTab = 'workload' | 'throughput' | 'doc-quality' | 'sla' | 'expiry-risk';
 
@@ -62,11 +52,7 @@ const REPORT_TABS: { key: ReportTab; label: string; Icon: React.ElementType }[] 
   { key: 'expiry-risk',  label: 'Expiry Risk',  Icon: FileWarning  },
 ];
 
-// ---------------------------------------------------------------------------
-// Shared mini-bar for visual proportion
-// ---------------------------------------------------------------------------
-
-function MiniBar({ value, max, tone }: { value: number; max: number; tone: string }) {
+function MiniBar({ value, max, tone = 'neutral' }: { value: number; max: number; tone?: string }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   const colors: Record<string, string> = {
     success: 'var(--sos-status-success)',
@@ -75,431 +61,422 @@ function MiniBar({ value, max, tone }: { value: number; max: number; tone: strin
     neutral: 'var(--sos-brand-primary)',
   };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      <div style={{ flex: 1, height: '6px', background: 'var(--sos-surface-2)', borderRadius: '9999px', overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: colors[tone] ?? colors.neutral, borderRadius: '9999px', transition: 'width 300ms' }} />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1, height: 6, background: 'var(--sos-surface-2)', borderRadius: 9999, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: colors[tone] ?? colors.neutral, borderRadius: 9999, transition: 'width 300ms' }} />
       </div>
-      <span style={{ fontSize: '11px', color: 'var(--sos-text-muted)', minWidth: '28px', textAlign: 'right' }}>{value}</span>
+      <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', minWidth: 28, textAlign: 'right' }}>{value}</span>
     </div>
   );
 }
 
+function LoadingShell({ label }: { label: string }) {
+  return (
+    <GlassCard variant="panel" padded="lg">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24, fontSize: 13 }}>
+        <Loader2 size={16} className="sos-spin" /> {label}
+      </div>
+    </GlassCard>
+  );
+}
+
+function ErrorShell({ err }: { err: string }) {
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>Failed to load report: {err}</div>
+    </GlassCard>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// WORKLOAD TAB
+// Tabs
 // ---------------------------------------------------------------------------
 
-function WorkloadTab() {
-  const { rows, from, to } = MOCK_WORKLOAD_REPORT;
-  const maxCases = Math.max(...rows.map((r) => r.caseCount), 1);
+function WorkloadTab({ q }: { q: ReportDateRangeQuery }) {
+  const [data, setData] = useState<ApiWorkloadReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    setData(null);
+    fetchWorkloadReport(q)
+      .then((res) => { if (!cancelled) setData(res); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed'); });
+    return () => { cancelled = true; };
+  }, [q]);
+
+  if (err) return <ErrorShell err={err} />;
+  if (!data) return <LoadingShell label="Loading workload…" />;
+  const maxCases = Math.max(...data.rows.map((r) => r.caseCount), 1);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>
-        Period: {fmtDate(from)} – {fmtDate(to)}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+        Period: {fmtDate(data.from)} – {fmtDate(data.to)} · {data.rows.length} officer{data.rows.length !== 1 ? 's' : ''}
       </div>
-
-      {rows.map((row) => (
-        <GlassCard key={row.officerId ?? 'unassigned'} variant="default" padded="md">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            {/* Officer name */}
-            <div style={{ minWidth: '160px', flex: '1' }}>
-              <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '2px' }}>
-                {row.officerName}
+      {data.rows.length === 0 ? (
+        <GlassCard variant="panel" padded="md"><div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>No activity in this range.</div></GlassCard>
+      ) : (
+        data.rows.map((r) => (
+          <GlassCard key={r.officerId ?? 'unassigned'} variant="default" padded="md">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 160, flex: 1 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{r.officerName}</div>
+                <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>Avg {r.avgDaysOpen} days open per case</div>
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>
-                Avg {row.avgDaysOpen} days open per case
+              <div style={{ minWidth: 200, flex: 1 }}>
+                <MiniBar value={r.caseCount} max={maxCases} />
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                {Object.entries(r.stageCounts).slice(0, 3).map(([s, n]) => `${STAGE_LABEL[s as keyof typeof STAGE_LABEL] ?? s}: ${n}`).join(' · ')}
               </div>
             </div>
-
-            {/* Case count bar */}
-            <div style={{ flex: 2, minWidth: '160px' }}>
-              <div style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginBottom: '4px' }}>
-                {row.caseCount} case{row.caseCount !== 1 ? 's' : ''}
-              </div>
-              <MiniBar value={row.caseCount} max={maxCases} tone="neutral" />
-            </div>
-
-            {/* Stage breakdown */}
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {Object.entries(row.stageCounts).map(([stage, count]) => (
-                <StatusBadge key={stage} tone={stageTone(stage as ProcessingStage)} size="sm">
-                  {STAGE_LABEL[stage as ProcessingStage]}: {count}
-                </StatusBadge>
-              ))}
-            </div>
-          </div>
-        </GlassCard>
-      ))}
-
-      {rows.length === 0 && (
-        <EmptyState Icon={Users} title="No workload data" description="No cases in this date range." />
+          </GlassCard>
+        ))
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// THROUGHPUT TAB
-// ---------------------------------------------------------------------------
+function ThroughputTab({ q }: { q: ReportDateRangeQuery }) {
+  const [data, setData] = useState<ApiThroughputReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    setData(null);
+    fetchThroughputReport(q)
+      .then((res) => { if (!cancelled) setData(res); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed'); });
+    return () => { cancelled = true; };
+  }, [q]);
 
-function ThroughputTab() {
-  const { weeks, from, to, totalClosed } = MOCK_THROUGHPUT_REPORT;
-  const maxTotal = Math.max(...weeks.map((w) => w.total), 1);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      {/* Summary strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '4px' }}>
-        <MetricCard label="Total closed" value={String(totalClosed)} hint="In date range" Icon={CheckCircle2} tone="neutral" />
-        <MetricCard label="Completed"    value={String(weeks.reduce((s, w) => s + w.completed, 0))} hint="" Icon={CheckCircle2} tone="success" />
-        <MetricCard label="Cancelled"    value={String(weeks.reduce((s, w) => s + w.cancelled, 0))} hint="" Icon={XCircle} tone="neutral" />
-        <MetricCard label="Rejected"     value={String(weeks.reduce((s, w) => s + w.rejected, 0))}  hint="" Icon={XCircle} tone="danger" />
-      </div>
-
-      <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>
-        Period: {fmtDate(from)} – {fmtDate(to)} · Weekly breakdown
-      </div>
-
-      {weeks.map((w) => (
-        <GlassCard key={w.week} variant="default" padded="md">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <div style={{ minWidth: '90px', fontSize: '13px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{w.week}</div>
-            <div style={{ flex: 1, minWidth: '160px' }}>
-              <MiniBar value={w.total} max={maxTotal} tone="neutral" />
-            </div>
-            <div style={{ display: 'flex', gap: '10px', fontSize: '12.5px' }}>
-              <span style={{ color: 'var(--sos-status-success)' }}>✓ {w.completed}</span>
-              <span style={{ color: 'var(--sos-text-muted)'    }}>✕ {w.cancelled}</span>
-              <span style={{ color: 'var(--sos-status-danger)' }}>✗ {w.rejected}</span>
-            </div>
-          </div>
-        </GlassCard>
-      ))}
-
-      {weeks.length === 0 && (
-        <EmptyState Icon={TrendingUp} title="No throughput data" description="No closed cases in this date range." />
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// DOC QUALITY TAB
-// ---------------------------------------------------------------------------
-
-function DocQualityTab() {
-  const { documents, topReasonCodes, from, to } = MOCK_DOC_QUALITY_REPORT;
-  const maxRejections = Math.max(...documents.map((d) => d.rejected), 1);
-  const maxReasonCount = topReasonCodes[0]?.count ?? 1;
+  if (err) return <ErrorShell err={err} />;
+  if (!data) return <LoadingShell label="Loading throughput…" />;
+  const max = Math.max(...data.weeks.map((w) => w.total), 1);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>Period: {fmtDate(from)} – {fmtDate(to)}</div>
-
-      {/* Per-document rejection rates */}
-      <div>
-        <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Rejection rate by document
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {documents.map((doc) => (
-            <GlassCard key={doc.documentName} variant="default" padded="md">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                <div style={{ minWidth: '160px', flex: 1 }}>
-                  <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '3px' }}>{doc.documentName}</div>
-                  <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>{doc.total} reviewed · {doc.accepted} accepted · {doc.rejected} rejected</div>
-                </div>
-                <div style={{ flex: 1, minWidth: '120px' }}>
-                  <MiniBar value={doc.rejected} max={maxRejections} tone={doc.rejectionRate >= 30 ? 'danger' : doc.rejectionRate >= 15 ? 'warning' : 'success'} />
-                </div>
-                <StatusBadge
-                  tone={doc.rejectionRate >= 30 ? 'danger' : doc.rejectionRate >= 15 ? 'warning' : 'success'}
-                  size="sm"
-                >
-                  {doc.rejectionRate}% rejected
-                </StatusBadge>
-              </div>
-              {doc.topReasonCodes.length > 0 && (
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--sos-border-subtle)' }}>
-                  {doc.topReasonCodes.map(({ code, count }) => (
-                    <span key={code} style={{ padding: '2px 8px', borderRadius: '9999px', background: 'var(--sos-surface-2)', fontSize: '11.5px', color: 'var(--sos-text-muted)' }}>
-                      {code.replace(/_/g, ' ')} × {count}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </GlassCard>
-          ))}
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+        Period: {fmtDate(data.from)} – {fmtDate(data.to)} · {data.totalClosed} cases closed
       </div>
-
-      {/* Top reason codes globally */}
-      <div>
-        <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Top rejection reason codes (all documents)
-        </div>
+      {data.weeks.length === 0 ? (
+        <GlassCard variant="panel" padded="md"><div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>No closures in this range.</div></GlassCard>
+      ) : (
         <GlassCard variant="panel" padded="md">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {topReasonCodes.map(({ code, count }) => (
-              <div key={code} style={{ display: 'grid', gridTemplateColumns: '200px 1fr 32px', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '12.5px', color: 'var(--sos-text-primary)', fontFamily: 'var(--font-mono, monospace)' }}>{code}</span>
-                <MiniBar value={count} max={maxReasonCount} tone="danger" />
-                <span style={{ fontSize: '12px', color: 'var(--sos-text-muted)', textAlign: 'right' }}>{count}</span>
-              </div>
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 60px 60px 60px 60px', gap: 8, padding: '6px 0 8px 0', fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+            <span>Week</span>
+            <span></span>
+            <span style={{ textAlign: 'right' }}>Comp</span>
+            <span style={{ textAlign: 'right' }}>Canc</span>
+            <span style={{ textAlign: 'right' }}>Rej</span>
+            <span style={{ textAlign: 'right' }}>Total</span>
           </div>
-        </GlassCard>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SLA TAB
-// ---------------------------------------------------------------------------
-
-function SlaTab() {
-  const { overdueCorrections, agingCases, summary } = MOCK_SLA_REPORT;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Summary strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
-        <MetricCard label="Overdue corrections" value={String(summary.overdueCount)} hint="Past SLA due date" Icon={Clock}          tone={summary.overdueCount > 0 ? 'danger' : 'success'} />
-        <MetricCard label="Aging 30–60 days"    value={String(summary.aging30to60)}  hint="Open cases"       Icon={AlertTriangle}  tone={summary.aging30to60 > 0 ? 'warning' : 'neutral'} />
-        <MetricCard label="Aging 60–90 days"    value={String(summary.aging60to90)}  hint="Open cases"       Icon={AlertTriangle}  tone={summary.aging60to90 > 0 ? 'danger'  : 'neutral'} />
-        <MetricCard label="Aging 90+ days"      value={String(summary.aging90plus)}  hint="Open cases"       Icon={ShieldAlert}    tone={summary.aging90plus > 0 ? 'danger'  : 'neutral'} />
-      </div>
-
-      {/* Overdue corrections */}
-      <div>
-        <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Overdue correction requests
-        </div>
-        {overdueCorrections.length === 0 ? (
-          <GlassCard variant="panel" padded="md">
-            <EmptyState Icon={CheckCircle2} title="No overdue corrections" description="All open correction requests are within SLA." />
-          </GlassCard>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {overdueCorrections.map((cr) => (
-              <GlassCard key={cr.correctionId} variant="default" padded="md" style={{ borderLeft: '3px solid var(--sos-status-danger)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                  <div style={{ flex: 1, minWidth: '160px' }}>
-                    <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '3px' }}>{cr.subject}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>Raised by {cr.raisedByName} · Due {fmtDate(cr.slaDueAt)}</div>
-                  </div>
-                  <StatusBadge tone="danger" size="sm">{cr.hoursOverdue}h overdue</StatusBadge>
-                  <Link
-                    href={`/processing/cases/${cr.caseId}` as Route}
-                    style={{ fontSize: '12px', color: 'var(--sos-brand-primary)', textDecoration: 'none', fontWeight: 600 }}
-                  >
-                    Open case →
-                  </Link>
-                </div>
-              </GlassCard>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Aging cases */}
-      <div>
-        <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Long-running open cases
-        </div>
-        {agingCases.length === 0 ? (
-          <GlassCard variant="panel" padded="md">
-            <EmptyState Icon={CheckCircle2} title="No aging cases" description="All active cases are under 30 days old." />
-          </GlassCard>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {agingCases.map((c) => {
-              const bucketTone: BadgeTone = c.bucket === '90+' ? 'danger' : c.bucket === '60-90' ? 'warning' : 'neutral';
-              return (
-                <GlassCard key={c.caseId} variant="default" padded="md">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: '160px' }}>
-                      <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '3px' }}>
-                        {c.service} · {c.targetCountry}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>{c.officerName} · {c.daysOpen} days open</div>
-                    </div>
-                    <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
-                    <StatusBadge tone={priorityTone(c.priority)} size="sm">{PRIORITY_LABEL[c.priority]}</StatusBadge>
-                    <StatusBadge tone={bucketTone} size="sm">{c.bucket} days</StatusBadge>
-                    <Link
-                      href={`/processing/cases/${c.caseId}` as Route}
-                      style={{ fontSize: '12px', color: 'var(--sos-brand-primary)', textDecoration: 'none', fontWeight: 600 }}
-                    >
-                      Open →
-                    </Link>
-                  </div>
-                </GlassCard>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// EXPIRY RISK TAB
-// ---------------------------------------------------------------------------
-
-function ExpiryRiskTab() {
-  const { rows, summary, generatedAt } = MOCK_EXPIRY_RISK_REPORT;
-
-  const bucketOrder = ['expired', '0-30', '31-60', '61-90'] as const;
-  const bucketLabel: Record<string, string> = {
-    expired: 'Already expired',
-    '0-30':  'Expires in 0–30 days',
-    '31-60': 'Expires in 31–60 days',
-    '61-90': 'Expires in 61–90 days',
-  };
-  const bucketTone: Record<string, BadgeTone> = {
-    expired: 'danger',
-    '0-30':  'warning',
-    '31-60': 'warm',
-    '61-90': 'neutral',
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Summary strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
-        <MetricCard label="Expired"           value={String(summary.expired)}  hint="Already past expiry" Icon={XCircle}      tone={summary.expired  > 0 ? 'danger'  : 'neutral'} />
-        <MetricCard label="Expiring ≤ 30 days" value={String(summary.within30)} hint="Urgent action needed" Icon={FileWarning} tone={summary.within30 > 0 ? 'warning' : 'neutral'} />
-        <MetricCard label="Expiring ≤ 60 days" value={String(summary.within60)} hint="Monitor closely"       Icon={Clock}       tone={summary.within60 > 0 ? 'warm'    : 'neutral'} />
-        <MetricCard label="Expiring ≤ 90 days" value={String(summary.within90)} hint="Heads up"              Icon={CalendarRange} tone="neutral" />
-      </div>
-
-      <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>Generated at {fmtDate(generatedAt)}</div>
-
-      {/* Grouped by bucket */}
-      {bucketOrder.map((bucket) => {
-        const bucketRows = rows.filter((r) => r.bucket === bucket);
-        if (bucketRows.length === 0) return null;
-        return (
-          <div key={bucket}>
-            <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              {bucketLabel[bucket]} ({bucketRows.length})
+          {data.weeks.map((w) => (
+            <div key={w.week} style={{ display: 'grid', gridTemplateColumns: '100px 1fr 60px 60px 60px 60px', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--sos-border-subtle)', alignItems: 'center' }}>
+              <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--sos-text-primary)' }}>{w.week}</span>
+              <MiniBar value={w.total} max={max} />
+              <span style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--sos-status-success)' }}>{w.completed}</span>
+              <span style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--sos-text-muted)' }}>{w.cancelled}</span>
+              <span style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--sos-status-danger)' }}>{w.rejected}</span>
+              <span style={{ fontSize: 12.5, textAlign: 'right', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{w.total}</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {bucketRows.map((row) => (
-                <GlassCard
-                  key={row.documentItemId}
-                  variant="default"
-                  padded="md"
-                  style={{ borderLeft: `3px solid var(--sos-status-${bucket === 'expired' ? 'danger' : bucket === '0-30' ? 'warning' : 'info'})` }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: '160px' }}>
-                      <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '3px' }}>{row.documentName}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>
-                        {row.service} · {row.targetCountry} · {row.officerName}
-                      </div>
-                    </div>
-                    <StatusBadge tone={bucketTone[bucket]} size="sm">
-                      {row.daysUntilExpiry < 0
-                        ? `${Math.abs(row.daysUntilExpiry)}d expired`
-                        : `${row.daysUntilExpiry}d left`}
-                    </StatusBadge>
-                    <StatusBadge tone={row.criticality === 'CRITICAL' ? 'danger' : row.criticality === 'REQUIRED' ? 'warning' : 'neutral'} size="sm">
-                      {row.criticality}
-                    </StatusBadge>
-                    <Link
-                      href={`/processing/cases/${row.caseId}` as Route}
-                      style={{ fontSize: '12px', color: 'var(--sos-brand-primary)', textDecoration: 'none', fontWeight: 600 }}
-                    >
-                      Open →
-                    </Link>
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          </div>
-        );
-      })}
-
-      {rows.length === 0 && (
-        <GlassCard variant="panel" padded="lg">
-          <EmptyState Icon={CheckCircle2} title="No expiring documents" description="No document items expiring within the next 90 days." />
+          ))}
         </GlassCard>
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
+function DocQualityTab({ q }: { q: ReportDateRangeQuery }) {
+  const [data, setData] = useState<ApiDocQualityReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    setData(null);
+    fetchDocQualityReport(q)
+      .then((res) => { if (!cancelled) setData(res); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed'); });
+    return () => { cancelled = true; };
+  }, [q]);
 
-export function ProcessingReportsPage() {
-  const [activeTab, setActiveTab] = useState<ReportTab>('workload');
+  if (err) return <ErrorShell err={err} />;
+  if (!data) return <LoadingShell label="Loading doc quality…" />;
 
-  function handleExport() {
-    // Build query params matching the active tab and navigate to the export URL.
-    // The endpoint streams a CSV with Content-Disposition: attachment so the browser
-    // downloads it directly.  Authentication token must be attached for production;
-    // here we construct the URL and open it in the same tab.
-    const params = new URLSearchParams({ reportType: activeTab });
-    const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/processing/reports/export?${params.toString()}`;
-    window.open(url, '_self');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>Period: {fmtDate(data.from)} – {fmtDate(data.to)}</div>
+
+      {data.topReasonCodes.length > 0 ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--sos-text-primary)' }}>Top rejection reason codes</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {data.topReasonCodes.map((c) => (
+              <StatusBadge key={c.code} tone="danger" size="sm" dot={false}>{c.code} · {c.count}</StatusBadge>
+            ))}
+          </div>
+        </GlassCard>
+      ) : null}
+
+      {data.documents.length === 0 ? (
+        <GlassCard variant="panel" padded="md"><div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>No document reviews in this range.</div></GlassCard>
+      ) : (
+        <GlassCard variant="panel" padded={false}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 60px 60px 100px 80px', gap: 8, padding: '9px 14px', fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+            <span>Document</span>
+            <span style={{ textAlign: 'right' }}>Acc</span>
+            <span style={{ textAlign: 'right' }}>Rej</span>
+            <span>Rejection rate</span>
+            <span style={{ textAlign: 'right' }}>Total</span>
+          </div>
+          {data.documents.map((d) => (
+            <div key={d.documentName} style={{ display: 'grid', gridTemplateColumns: '2fr 60px 60px 100px 80px', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--sos-border-subtle)', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{d.documentName}</div>
+                {d.topReasonCodes.length > 0 ? (
+                  <div style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginTop: 2 }}>
+                    Top: {d.topReasonCodes.slice(0, 3).map((r) => `${r.code} (${r.count})`).join(' · ')}
+                  </div>
+                ) : null}
+              </div>
+              <span style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--sos-status-success)' }}>{d.accepted}</span>
+              <span style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--sos-status-danger)' }}>{d.rejected}</span>
+              <MiniBar value={d.rejectionRate} max={100} tone={d.rejectionRate >= 50 ? 'danger' : d.rejectionRate >= 25 ? 'warning' : 'success'} />
+              <span style={{ fontSize: 12.5, textAlign: 'right', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{d.total}</span>
+            </div>
+          ))}
+        </GlassCard>
+      )}
+    </div>
+  );
+}
+
+function SlaTab({ q }: { q: ReportDateRangeQuery }) {
+  const [data, setData] = useState<ApiSlaReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    setData(null);
+    fetchSlaReport(q)
+      .then((res) => { if (!cancelled) setData(res); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed'); });
+    return () => { cancelled = true; };
+  }, [q]);
+
+  if (err) return <ErrorShell err={err} />;
+  if (!data) return <LoadingShell label="Loading SLA…" />;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+        <SlaKpi label="Overdue corrections" value={data.summary.overdueCount} tone="danger" />
+        <SlaKpi label="Aging 30-60 days" value={data.summary.aging30to60} tone="warning" />
+        <SlaKpi label="Aging 60-90 days" value={data.summary.aging60to90} tone="warning" />
+        <SlaKpi label="Aging 90+ days" value={data.summary.aging90plus} tone="danger" />
+      </div>
+
+      {data.overdueCorrections.length > 0 ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--sos-text-primary)' }}>Overdue correction requests</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {data.overdueCorrections.map((c) => (
+              <Link key={c.correctionId} href={`/processing/cases/${c.caseId}` as Route} style={{ display: 'flex', gap: 12, padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', textDecoration: 'none', alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{c.subject}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>{c.status} · raised by {c.raisedByName}</div>
+                </div>
+                {c.hoursOverdue != null ? (
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--sos-status-danger)' }}>{c.hoursOverdue}h overdue</span>
+                ) : null}
+              </Link>
+            ))}
+          </div>
+        </GlassCard>
+      ) : null}
+
+      {data.agingCases.length > 0 ? (
+        <GlassCard variant="panel" padded={false}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px 80px', gap: 8, padding: '9px 14px', fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+            <span>Service / country</span>
+            <span>Stage</span>
+            <span>Priority</span>
+            <span>Officer</span>
+            <span style={{ textAlign: 'right' }}>Days</span>
+            <span></span>
+          </div>
+          {data.agingCases.map((c) => (
+            <div key={c.caseId} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 80px 80px', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--sos-border-subtle)', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: 'var(--sos-text-primary)' }}>{labelForServiceCode(c.service)} · {c.targetCountry}</span>
+              <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
+              <StatusBadge tone={priorityTone(c.priority)} size="sm" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>
+              <span style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>{c.officerName}</span>
+              <span style={{ fontSize: 12.5, textAlign: 'right', fontWeight: 600, color: c.bucket === '90+' ? 'var(--sos-status-danger)' : 'var(--sos-status-warning)' }}>{c.daysOpen}d</span>
+              <Link href={`/processing/cases/${c.caseId}` as Route} style={{ fontSize: 12.5, color: 'var(--sos-brand-primary-strong)', textDecoration: 'none' }}>Open →</Link>
+            </div>
+          ))}
+        </GlassCard>
+      ) : null}
+
+      {data.agingCases.length === 0 && data.overdueCorrections.length === 0 ? (
+        <GlassCard variant="panel" padded="md"><div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>No SLA issues right now.</div></GlassCard>
+      ) : null}
+    </div>
+  );
+}
+
+function SlaKpi({ label, value, tone }: { label: string; value: number; tone: 'danger' | 'warning' }) {
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: value > 0 ? `var(--sos-status-${tone})` : 'var(--sos-text-primary)' }}>{value}</div>
+    </GlassCard>
+  );
+}
+
+function ExpiryRiskTab({ q }: { q: ReportDateRangeQuery }) {
+  const [data, setData] = useState<ApiExpiryRiskReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    setData(null);
+    fetchExpiryRiskReport(q)
+      .then((res) => { if (!cancelled) setData(res); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed'); });
+    return () => { cancelled = true; };
+  }, [q]);
+
+  if (err) return <ErrorShell err={err} />;
+  if (!data) return <LoadingShell label="Loading expiry risk…" />;
+
+  if (data.rows.length === 0) {
+    return <GlassCard variant="panel" padded="md"><div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>No documents expiring in the next 90 days.</div></GlassCard>;
   }
 
+  const buckets: Array<'expired' | '0-30' | '31-60' | '61-90'> = ['expired', '0-30', '31-60', '61-90'];
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+        {buckets.map((b) => {
+          const count = data.rows.filter((r) => r.bucket === b).length;
+          const tone = b === 'expired' || b === '0-30' ? 'danger' : 'warning';
+          return (
+            <GlassCard key={b} variant="panel" padded="md">
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{b === 'expired' ? 'Expired' : `${b} days`}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: count > 0 ? `var(--sos-status-${tone})` : 'var(--sos-text-primary)' }}>{count}</div>
+            </GlassCard>
+          );
+        })}
+      </div>
+
+      <GlassCard variant="panel" padded={false}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr 80px 80px', gap: 8, padding: '9px 14px', fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+          <span>Document</span>
+          <span>Case</span>
+          <span>Officer</span>
+          <span style={{ textAlign: 'right' }}>Days</span>
+          <span></span>
+        </div>
+        {data.rows.map((r) => (
+          <div key={r.documentItemId} style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr 80px 80px', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--sos-border-subtle)', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 13, color: 'var(--sos-text-primary)', fontWeight: 600 }}>{r.documentName}</div>
+              <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{r.criticality} · {r.status}{r.validityExpiryDate ? ` · expires ${fmtDate(r.validityExpiryDate)}` : ''}</div>
+            </div>
+            <span style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>{labelForServiceCode(r.service)} · {r.targetCountry}</span>
+            <span style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>{r.officerName}</span>
+            <span style={{ fontSize: 12.5, textAlign: 'right', fontWeight: 600, color: r.bucket === 'expired' ? 'var(--sos-status-danger)' : r.bucket === '0-30' ? 'var(--sos-status-danger)' : 'var(--sos-status-warning)' }}>
+              {r.daysUntilExpiry == null ? '—' : r.daysUntilExpiry < 0 ? `${Math.abs(r.daysUntilExpiry)}d ago` : `${r.daysUntilExpiry}d`}
+            </span>
+            <Link href={`/processing/cases/${r.caseId}` as Route} style={{ fontSize: 12.5, color: 'var(--sos-brand-primary-strong)', textDecoration: 'none' }}>Open →</Link>
+          </div>
+        ))}
+      </GlassCard>
+    </div>
+  );
+}
+
+export function ProcessingReportsPage() {
+  const [tab, setTab] = useState<ReportTab>('workload');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // Stable query identity so child tabs only re-fetch when the filter actually
+  // changes — not on every re-render.
+  const query = useMemo<ReportDateRangeQuery>(
+    () => ({ ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) }),
+    [dateFrom, dateTo],
+  );
+
+  const exportUrl = useCallback(() => {
+    const qs = new URLSearchParams({ reportType: tab });
+    if (dateFrom) qs.set('dateFrom', dateFrom);
+    if (dateTo) qs.set('dateTo', dateTo);
+    return `${apiBaseUrl()}/processing/reports/export?${qs.toString()}`;
+  }, [tab, dateFrom, dateTo]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <PageHeader
-        title="Processing Reports"
-        description="Workload distribution, case throughput, document quality, SLA health, and document expiry risk."
-        actions={
-          <SecondaryButton
-            iconLeft={<Download size={14} />}
-            onClick={handleExport}
-          >
-            Export CSV
-          </SecondaryButton>
-        }
+        eyebrow="Processing"
+        title="Reports"
+        description="Workload, throughput, document quality, SLA, and validity-expiry across the team."
       />
 
-      {/* Tab bar */}
+      {/* Filter bar */}
       <GlassCard variant="panel" padded="md">
-        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-          {REPORT_TABS.map(({ key, label, Icon }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setActiveTab(key)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '7px 14px',
-                borderRadius: 'var(--sos-radius-md)',
-                border: 'none',
-                background: activeTab === key ? 'var(--sos-brand-primary-strong)' : 'transparent',
-                color: activeTab === key ? '#fff' : 'var(--sos-text-secondary)',
-                fontSize: '13px',
-                fontWeight: activeTab === key ? 600 : 400,
-                cursor: 'pointer',
-                transition: 'all 150ms',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <Icon size={14} />
-              {label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-md)', padding: 3 }}>
+            {REPORT_TABS.map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '5px 12px',
+                  borderRadius: 'var(--sos-radius-sm)',
+                  border: 'none',
+                  background: tab === key ? 'var(--sos-brand-primary-strong)' : 'transparent',
+                  color: tab === key ? '#fff' : 'var(--sos-text-secondary)',
+                  fontSize: 12.5,
+                  fontWeight: tab === key ? 600 : 400,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Icon size={12} /> {label}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="sos-input" style={{ fontSize: 12.5 }} />
+            <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>to</span>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="sos-input" style={{ fontSize: 12.5 }} />
+          </div>
+
+          <a
+            href={exportUrl()}
+            target="_blank"
+            rel="noreferrer"
+            style={{ marginLeft: 'auto', textDecoration: 'none' }}
+          >
+            <SecondaryButton iconLeft={<Download size={13} />}>Export CSV</SecondaryButton>
+          </a>
         </div>
       </GlassCard>
 
-      {/* Report content */}
-      {activeTab === 'workload'    && <WorkloadTab    />}
-      {activeTab === 'throughput'  && <ThroughputTab  />}
-      {activeTab === 'doc-quality' && <DocQualityTab  />}
-      {activeTab === 'sla'         && <SlaTab         />}
-      {activeTab === 'expiry-risk' && <ExpiryRiskTab  />}
+      {tab === 'workload'    ? <WorkloadTab     q={query} /> : null}
+      {tab === 'throughput'  ? <ThroughputTab   q={query} /> : null}
+      {tab === 'doc-quality' ? <DocQualityTab   q={query} /> : null}
+      {tab === 'sla'         ? <SlaTab          q={query} /> : null}
+      {tab === 'expiry-risk' ? <ExpiryRiskTab   q={query} /> : null}
     </div>
   );
 }

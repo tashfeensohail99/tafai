@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumberString,
   IsOptional,
@@ -14,6 +15,7 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { LeadStatus } from '@prisma/client';
+import { SERVICE_TYPE_CODES } from '../../common/service-types';
 
 export class ListLeadsQueryDto {
   @IsOptional()
@@ -53,9 +55,14 @@ export class ListLeadsQueryDto {
   @IsBoolean()
   fromCsv?: boolean;
 
+  // Coded service type — must match the canonical list in
+  // src/common/service-types.ts. Optional so legacy leads + WhatsApp-
+  // sourced leads (which arrive unclassified) still validate; the
+  // Sales→Finance gate enforces "must be set + canonical" at submit time.
   @IsOptional()
   @IsString()
   @MaxLength(100)
+  @IsIn(SERVICE_TYPE_CODES, { message: 'serviceInterest must be one of the canonical service codes' })
   serviceInterest?: string;
 
   @IsOptional()
@@ -134,9 +141,14 @@ export class CreateLeadDto {
   @MaxLength(100)
   targetCountry?: string;
 
+  // Coded service type — must match the canonical list in
+  // src/common/service-types.ts. Optional so legacy leads + WhatsApp-
+  // sourced leads (which arrive unclassified) still validate; the
+  // Sales→Finance gate enforces "must be set + canonical" at submit time.
   @IsOptional()
   @IsString()
   @MaxLength(100)
+  @IsIn(SERVICE_TYPE_CODES, { message: 'serviceInterest must be one of the canonical service codes' })
   serviceInterest?: string;
 
   @IsOptional()
@@ -233,9 +245,14 @@ export class UpdateLeadDto {
   @MaxLength(100)
   targetCountry?: string;
 
+  // Coded service type — must match the canonical list in
+  // src/common/service-types.ts. Optional so legacy leads + WhatsApp-
+  // sourced leads (which arrive unclassified) still validate; the
+  // Sales→Finance gate enforces "must be set + canonical" at submit time.
   @IsOptional()
   @IsString()
   @MaxLength(100)
+  @IsIn(SERVICE_TYPE_CODES, { message: 'serviceInterest must be one of the canonical service codes' })
   serviceInterest?: string;
 
   @IsOptional()

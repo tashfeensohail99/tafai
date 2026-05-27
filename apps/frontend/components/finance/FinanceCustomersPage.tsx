@@ -12,6 +12,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { fetchFinanceCustomers, type FinanceCustomerRow } from '@/lib/finance-profile';
+import { labelForServiceCode } from '@/lib/service-types';
 
 const money = (n: number, ccy: string) =>
   `${ccy} ${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -144,7 +145,7 @@ export function FinanceCustomersPage() {
                         <div style={{ fontFamily: 'monospace', fontSize: 11.5, color: 'var(--sos-text-faint)' }}>{c.referenceCode} · {c.phone}</div>
                       </td>
                       <td style={td}>
-                        <div>{c.serviceInterest ?? '—'}</div>
+                        <div>{labelForServiceCode(c.serviceInterest)}</div>
                         <div style={{ fontSize: 11.5, color: 'var(--sos-text-faint)' }}>{c.targetCountry ?? '—'}</div>
                       </td>
                       <td style={td}><StatusBadge tone={phase.badgeTone} size="sm" dot={false}>{phase.text}</StatusBadge></td>

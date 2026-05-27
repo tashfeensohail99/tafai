@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { StorageService } from '../storage/storage.service';
+import { isCanonicalServiceCode } from '../../common/service-types';
 import { EmailService } from '../email/email.service';
 import {
   AgreementRenderService,
@@ -389,7 +390,7 @@ export class AgreementsService {
     // trying to issue a receipt — too late.
     const lead = await this.prisma.lead.findUnique({
       where: { id: existing.leadId },
-      select: { firstName: true, lastName: true, email: true, emailVerified: true },
+      select: { firstName: true, lastName: true, email: true, emailVerified: true, serviceInterest: true },
     });
     if (!lead) throw new BadRequestException('Lead not found for this agreement');
     const missing: string[] = [];
@@ -397,6 +398,12 @@ export class AgreementsService {
     if (!lead.lastName?.trim()) missing.push('last name');
     if (!lead.email?.trim()) missing.push('email address');
     else if (!lead.emailVerified) missing.push('email verification');
+    // Coded service type — required for downstream processing-checklist
+    // routing. Legacy free-text values don't count: sales must reclassify
+    // to one of the canonical codes before this case can move to Finance.
+    if (!lead.serviceInterest?.trim() || !isCanonicalServiceCode(lead.serviceInterest)) {
+      missing.push('service type (pick one of the coded options)');
+    }
     if (missing.length > 0) {
       throw new BadRequestException(
         `Cannot submit to Finance — the lead profile is incomplete (${missing.join(', ')}). ` +

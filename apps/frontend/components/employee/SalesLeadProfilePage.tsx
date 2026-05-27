@@ -436,7 +436,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
         }
         description={
           <>
-            {lead.service} → {lead.targetCountry} ·{' '}
+            {labelForServiceCode(lead.service)} → {lead.targetCountry} ·{' '}
             {lead.assignmentType === 'ADMIN'
               ? `Admin · ${lead.assignedBy?.split('·')[1]?.trim() ?? 'front desk'}`
               : 'Auto CRM'}{' '}
@@ -733,7 +733,7 @@ function IdentityStrip({
               label="Target"
               value={lead.targetCountry}
             />
-            <ContactItem Icon={Wallet} label="Service" value={lead.service} />
+            <ContactItem Icon={Wallet} label="Service" value={labelForServiceCode(lead.service)} />
           </div>
         </div>
       </div>
@@ -1319,7 +1319,7 @@ function SnapshotCard({ lead }: { lead: NonNullable<ReturnType<typeof getLead>> 
           tone={slaTone}
         />
         <SnapshotRow label="Source" value={SOURCE_LABEL[lead.source]} />
-        <SnapshotRow label="Service" value={lead.service} />
+        <SnapshotRow label="Service" value={labelForServiceCode(lead.service)} />
         <SnapshotRow label="Country" value={lead.targetCountry} />
         <SnapshotRow
           label="Channel"
@@ -2869,3 +2869,4 @@ function HandoverCard({
 // Helper used below for type inference
 function getLead() { return null as unknown as ReturnType<typeof adaptLead>; }
 import { adaptLead } from '@/lib/sales-api';
+import { labelForServiceCode } from '@/lib/service-types';

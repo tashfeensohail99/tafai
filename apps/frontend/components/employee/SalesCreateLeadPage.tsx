@@ -75,14 +75,13 @@ const initial: FormState = {
   note: '',
 };
 
-const SERVICES = [
-  'Study Visa',
-  'Work Permit',
-  'Visit Visa',
-  'Tourist Visa',
-  'Permanent Residency',
-  'Spouse Visa',
-];
+// Canonical service-type chips. Codes are what we persist to
+// Lead.serviceInterest so downstream (Finance, Processing checklists) can
+// look up per-service requirements without fuzzy-matching free text.
+// Labels are what the agent sees on the chip. Empty by default — sales
+// MUST pick one before submitting.
+import { SERVICE_TYPES } from '@/lib/service-types';
+const SERVICES = SERVICE_TYPES;
 // Quick-pick chips for the destinations we see most; the searchable
 // CountrySelect below covers every other country (Schengen states, etc.).
 const COUNTRIES = POPULAR_COUNTRIES;
@@ -768,10 +767,10 @@ function StepInterest({ form, update }: { form: FormState; update: UpdateFn }) {
         >
           {SERVICES.map((s) => (
             <ChipBtn
-              key={s}
-              active={form.service === s}
-              onClick={() => update('service', s)}
-              label={s}
+              key={s.code}
+              active={form.service === s.code}
+              onClick={() => update('service', s.code)}
+              label={s.label}
             />
           ))}
         </div>
@@ -1045,7 +1044,7 @@ function StepReview({ form, jumpTo }: { form: FormState; jumpTo: (idx: number) =
       label: 'Service & country',
       idx: 2,
       rows: [
-        { k: 'Service', v: form.service || '—' },
+        { k: 'Service', v: SERVICES.find((s) => s.code === form.service)?.label ?? '—' },
         { k: 'Country', v: form.country || '—' },
       ],
     },

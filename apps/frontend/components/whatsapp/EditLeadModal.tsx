@@ -9,6 +9,7 @@ import {
   PrimaryButton,
 } from '@/components/sales-v2/ui';
 import { patchLead } from '@/lib/sales-api';
+import { SERVICE_TYPES } from '@/lib/service-types';
 import { CountrySelect } from '@/components/shared/CountrySelect';
 import { Modal } from './Modal';
 
@@ -199,12 +200,62 @@ export function EditLeadModal(props: {
             inputMode="email"
           />
         </Field>
-        <Field label="Service of interest">
-          <FormInput
-            value={service}
-            onChange={(e) => setService(e.target.value)}
-            placeholder="e.g. Study Visa"
-          />
+        <Field label="Service of interest" required>
+          {/* Coded picker. Empty by default — sales MUST select one of the
+              canonical types so Finance + Processing can route the case
+              correctly downstream. Free-text entry was removed to stop
+              typos like "Stuy Visa" / "WPpermit" reaching production. */}
+          <div
+            style={{
+              display: 'grid',
+              gap: 6,
+              gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+            }}
+          >
+            {SERVICE_TYPES.map((s) => {
+              const active = service === s.code;
+              return (
+                <button
+                  key={s.code}
+                  type="button"
+                  onClick={() => setService(s.code)}
+                  style={{
+                    padding: '8px 10px',
+                    borderRadius: 8,
+                    border: active
+                      ? '1px solid var(--sos-brand-accent, #7c3aed)'
+                      : '1px solid var(--sos-border)',
+                    background: active
+                      ? 'var(--sos-brand-soft, rgba(124,58,237,0.10))'
+                      : 'var(--sos-surface-2)',
+                    color: active
+                      ? 'var(--sos-brand-accent, #7c3aed)'
+                      : 'var(--sos-text-primary)',
+                    fontSize: 12.5,
+                    fontWeight: active ? 600 : 500,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+          {/* Show the legacy free-text value when it doesn't match any code
+              so sales knows what was there before and can reclassify. */}
+          {service && !SERVICE_TYPES.some((s) => s.code === service) ? (
+            <div
+              style={{
+                marginTop: 6,
+                fontSize: 11.5,
+                color: 'var(--sos-text-muted)',
+              }}
+            >
+              Legacy value: <strong>{service}</strong> — pick a coded type above to reclassify.
+            </div>
+          ) : null}
         </Field>
         <Field label="Target country">
           <CountrySelect

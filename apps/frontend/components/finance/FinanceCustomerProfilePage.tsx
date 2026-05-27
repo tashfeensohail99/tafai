@@ -44,6 +44,7 @@ import {
   type FinanceCustomerProfile,
 } from '@/lib/finance-profile';
 import { getAgreementPdfUrl, sendAgreementToClient } from '@/lib/agreements';
+import { labelForServiceCode } from '@/lib/service-types';
 import { fetchHandoverById, fetchFxRates, fetchReceiptPdfBlob, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
 import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
 import { sendTemplate } from '@/lib/whatsapp';
@@ -564,7 +565,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       <PageHeader
         eyebrow={`Customer · ${lead.referenceCode}`}
         title={name}
-        description={`${lead.serviceInterest ?? 'Service —'} · ${lead.targetCountry ?? 'Country —'}`}
+        description={`${labelForServiceCode(lead.serviceInterest)} · ${lead.targetCountry ?? 'Country —'}`}
         actions={
           <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <StatusBadge tone={tone(lead.status)} dot>{label(lead.status)}</StatusBadge>
@@ -632,7 +633,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             {idTile('Email', lead.email)}
             {idTile('Nationality', lead.nationality)}
             {idTile('Target country', lead.targetCountry)}
-            {idTile('Service', lead.serviceInterest)}
+            {idTile('Service', labelForServiceCode(lead.serviceInterest))}
             {idTile('Source', lead.sourceChannel)}
             {idTile('Assigned agent', agent)}
             {idTile('Lead since', fmtDate(lead.createdAt))}

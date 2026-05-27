@@ -38,6 +38,7 @@ import {
   type FinanceHandoverStatus,
 } from '@/lib/finance-api';
 import { AdminAuthDeleteModal } from './AdminAuthDeleteModal';
+import { labelForServiceCode } from '@/lib/service-types';
 
 // ---------- Config -------------------------------------------------------
 
@@ -321,7 +322,7 @@ function HistoryRow({
             marginTop: 2,
           }}
         >
-          {payment.lead.serviceInterest ?? '—'} · {payment.lead.targetCountry ?? '—'}
+          {labelForServiceCode(payment.lead.serviceInterest)} · {payment.lead.targetCountry ?? '—'}
         </div>
       </td>
 

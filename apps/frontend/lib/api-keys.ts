@@ -95,3 +95,29 @@ export function setBotMode(botMode: 'AUTO' | 'SHADOW_ONLY' | 'DISABLED'): Promis
     cache: 'no-store',
   });
 }
+
+// ─── Recent AI runs (admin observability) ────────────────────────────────
+
+export interface AiRecentRun {
+  id: string;
+  threadId: string;
+  inboundMessageId: string;
+  mode: string;             // AUTO | SHADOW | SKIPPED | OPT_OUT
+  skipReason: string | null;
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalLatencyMs: number | null;
+  topMatchSimilarity: number | null;
+  outboundMessageId: string | null;
+  createdAt: string;
+  inboundText: string | null;
+  inboundType: string | null;
+  outboundText: string | null;
+  outboundType: string | null;
+  lead: { firstName: string | null; lastName: string | null; phone: string } | null;
+}
+
+export function getRecentAiRuns(): Promise<AiRecentRun[]> {
+  return apiFetch<AiRecentRun[]>('/admin/ai/recent-runs', { cache: 'no-store' });
+}

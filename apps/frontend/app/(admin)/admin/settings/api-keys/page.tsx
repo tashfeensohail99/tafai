@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Bot, CheckCircle2, Eye, EyeOff, Key, Loader2, MessageSquare, Plus, Power, RefreshCw, Save, Signal, Trash2, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, Bot, CheckCircle2, Eye, EyeOff, Key, Loader2, MessageSquare, Plus, Power, RefreshCw, Save, Signal, Trash2, Zap } from 'lucide-react';
 import {
   Field,
   FormInput,
@@ -14,6 +14,7 @@ import {
 import {
   deleteApiKey,
   getAiBotStatus,
+  getRecentAiRuns,
   listApiKeys,
   setApiKeyActive,
   setBotMode,
@@ -23,6 +24,7 @@ import {
   type AdminApiKey,
   type AiBackfillResult,
   type AiBotStatus,
+  type AiRecentRun,
 } from '@/lib/api-keys';
 
 /**
@@ -385,8 +387,129 @@ function BotControlPanel({
             <div className="sos-text-muted" style={{ fontSize: 11.5 }}>{lastResult.note}</div>
           </div>
         ) : null}
+
+        <RecentRunsSection />
       </div>
     </GlassCard>
+  );
+}
+
+/**
+ * Expandable "what's the bot been saying" section. Fetches the last 50 ai.runs
+ * rows joined with their inbound + outbound message bodies so the admin can
+ * see "Client said X → Bot said Y" in one place. Collapsed by default so
+ * the API-keys page doesn't get crowded.
+ */
+function RecentRunsSection() {
+  const [open, setOpen] = useState(false);
+  const [runs, setRuns] = useState<AiRecentRun[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      setRuns(await getRecentAiRuns());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not load recent runs');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--sos-border-subtle)', paddingTop: 12 }}>
+      <button
+        type="button"
+        onClick={() => {
+          const nextOpen = !open;
+          setOpen(nextOpen);
+          if (nextOpen && runs === null) void load();
+        }}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'none',
+          border: 'none',
+          color: 'var(--sos-text-primary)',
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: 'pointer',
+          padding: 0,
+        }}
+      >
+        <Activity size={13} />
+        {open ? 'Hide' : 'Show'} recent activity {runs ? `(${runs.length})` : ''}
+      </button>
+
+      {open ? (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <GhostButton size="sm" iconLeft={<RefreshCw size={13} />} onClick={() => void load()} disabled={loading}>
+              {loading ? 'Loading…' : 'Refresh'}
+            </GhostButton>
+            <span className="sos-text-faint" style={{ fontSize: 11.5 }}>Last 50 decisions</span>
+          </div>
+          {err ? (
+            <div className="sos-banner sos-banner--danger" style={{ fontSize: 12.5 }}>{err}</div>
+          ) : !runs ? (
+            <div className="sos-text-muted" style={{ fontSize: 12.5 }}>Loading…</div>
+          ) : runs.length === 0 ? (
+            <div className="sos-text-muted" style={{ fontSize: 12.5 }}>No runs yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 480, overflowY: 'auto' }}>
+              {runs.map((r) => (
+                <RecentRunRow key={r.id} run={r} />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RecentRunRow({ run }: { run: AiRecentRun }) {
+  const tone: 'success' | 'warning' | 'danger' | 'neutral' =
+    run.mode === 'AUTO' ? 'success' :
+    run.mode === 'OPT_OUT' ? 'warning' :
+    run.mode === 'SHADOW' ? 'neutral' :
+    'danger';
+  const who = run.lead ? `${run.lead.firstName ?? ''} ${run.lead.lastName ?? ''}`.trim() || run.lead.phone : run.threadId.slice(0, 8);
+  const tokens = (run.inputTokens ?? 0) + (run.outputTokens ?? 0);
+  return (
+    <div style={{
+      padding: '8px 10px',
+      borderRadius: 'var(--sos-radius-sm)',
+      border: '1px solid var(--sos-border-subtle)',
+      background: 'var(--sos-surface-1)',
+      fontSize: 12,
+    }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <StatusBadge tone={tone} size="sm" dot={false}>{run.mode.toLowerCase()}</StatusBadge>
+        <strong style={{ fontSize: 12.5 }}>{who}</strong>
+        {run.skipReason ? <span className="sos-text-faint">· {run.skipReason}</span> : null}
+        <span className="sos-text-faint" style={{ marginLeft: 'auto', fontSize: 11 }}>
+          {new Date(run.createdAt).toLocaleString()}
+          {run.totalLatencyMs ? ` · ${run.totalLatencyMs}ms` : ''}
+          {tokens ? ` · ${tokens} tok` : ''}
+        </span>
+      </div>
+      {run.inboundText ? (
+        <div style={{ marginTop: 5, color: 'var(--sos-text-secondary)' }}>
+          <span className="sos-text-faint">Client:</span>{' '}
+          {run.inboundText.length > 200 ? run.inboundText.slice(0, 200) + '…' : run.inboundText}
+        </div>
+      ) : null}
+      {run.outboundText ? (
+        <div style={{ marginTop: 3, color: 'var(--sos-brand-primary)' }}>
+          <span className="sos-text-faint">Bot:</span>{' '}
+          {run.outboundText.length > 200 ? run.outboundText.slice(0, 200) + '…' : run.outboundText}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

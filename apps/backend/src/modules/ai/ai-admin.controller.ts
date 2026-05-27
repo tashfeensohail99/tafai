@@ -101,6 +101,72 @@ export class AiAdminController {
   }
 
   /**
+   * Recent AI runs for the admin "what's the bot been saying" panel. Joins
+   * each run with the original inbound message + the outbound reply (when
+   * AUTO / OPT_OUT) so the UI can show "Client said X → Bot said Y" inline.
+   * Last 50 by default.
+   */
+  @Get('recent-runs')
+  async recentRuns() {
+    const runs = await this.prisma.aiRun.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        threadId: true,
+        inboundMessageId: true,
+        mode: true,
+        skipReason: true,
+        model: true,
+        inputTokens: true,
+        outputTokens: true,
+        totalLatencyMs: true,
+        topMatchSimilarity: true,
+        outboundMessageId: true,
+        createdAt: true,
+      },
+    });
+
+    // Join inbound + outbound bodies. One findMany each to avoid N+1.
+    const messageIds = [
+      ...new Set([
+        ...runs.map((r) => r.inboundMessageId),
+        ...runs.map((r) => r.outboundMessageId).filter((id): id is string => !!id),
+      ]),
+    ];
+    const messages = await this.prisma.whatsAppMessage.findMany({
+      where: { id: { in: messageIds } },
+      select: { id: true, body: true, type: true, createdAt: true },
+    });
+    const msgMap = new Map(messages.map((m) => [m.id, m]));
+
+    // Also fetch lead names so the UI can show who the conversation is with.
+    const threadIds = [...new Set(runs.map((r) => r.threadId))];
+    const threads = await this.prisma.whatsAppThread.findMany({
+      where: { id: { in: threadIds } },
+      select: {
+        id: true,
+        lead: { select: { firstName: true, lastName: true, phone: true } },
+      },
+    });
+    const threadMap = new Map(threads.map((t) => [t.id, t]));
+
+    return runs.map((r) => {
+      const inbound = msgMap.get(r.inboundMessageId);
+      const outbound = r.outboundMessageId ? msgMap.get(r.outboundMessageId) : null;
+      const t = threadMap.get(r.threadId);
+      return {
+        ...r,
+        inboundText: inbound?.body ?? null,
+        inboundType: inbound?.type ?? null,
+        outboundText: outbound?.body ?? null,
+        outboundType: outbound?.type ?? null,
+        lead: t?.lead ?? null,
+      };
+    });
+  }
+
+  /**
    * Backfill: enqueue an AI-reply job for every thread that has an open
    * 24-hour window AND a pending unanswered customer message AND is not a
    * paid client / human-active / explicitly AI-disabled. The AiReplyProcessor

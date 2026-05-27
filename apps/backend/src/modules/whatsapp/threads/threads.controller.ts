@@ -158,6 +158,59 @@ export class WhatsAppThreadsController {
   }
 
   /**
+   * "Take over" — one-click handover from bot to the calling agent. Does
+   * everything sales typically needs to do manually after a bad bot turn:
+   *   1. Sets aiEnabled = false (bot stays out of this chat for good).
+   *   2. Stamps aiDisabledAt = now (also tracked for analytics).
+   *   3. Sets aiState = HANDED_OFF.
+   *   4. Reassigns the thread's Lead to the calling agent if not already
+   *      assigned to them. Sticky routing (preferredEmployeeId) updated so
+   *      future inbounds also stay with this agent.
+   *
+   * Requires whatsapp.send_message — anyone allowed to talk can take over.
+   */
+  @Post(':id/take-over')
+  @RequirePermissions('whatsapp.send_message')
+  async takeOver(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    const thread = await this.threads.getOrFail(caller, id);
+    const now = new Date();
+
+    // Find the calling user's Employee row — needed for reassignment.
+    const me = await this.prisma.employee.findUnique({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+
+    // Always disable AI and park the state.
+    const updated = await this.prisma.whatsAppThread.update({
+      where: { id },
+      data: {
+        aiEnabled: false,
+        aiDisabledAt: now,
+        aiState: 'HANDED_OFF',
+      },
+      select: { id: true, aiEnabled: true, aiDisabledAt: true, aiState: true, leadId: true },
+    });
+
+    // Reassign the Lead to the calling agent (if any change is needed).
+    if (me && thread.lead && thread.lead.assignedEmployeeId !== me.id) {
+      await this.prisma.lead.update({
+        where: { id: thread.lead.id },
+        data: {
+          assignedEmployeeId: me.id,
+          preferredEmployeeId: me.id, // sticky for future inbounds
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  /**
    * Pending AI-extracted appointment requests on this thread. Powers the
    * "Client wants Monday morning, video call" banner on the chat panel.
    */

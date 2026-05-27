@@ -308,6 +308,17 @@ export function getThreadAppointmentRequests(threadId: string): Promise<PendingA
 }
 
 /**
+ * One-click "Take over": disables AI on the thread, parks it in HANDED_OFF,
+ * and reassigns the underlying Lead to the calling agent. Useful when a bot
+ * conversation has gone sideways and the agent wants full ownership.
+ */
+export function takeOverThread(threadId: string): Promise<ThreadAiState> {
+  return apiFetch<ThreadAiState>(`/whatsapp/threads/${threadId}/take-over`, {
+    method: 'POST',
+  });
+}
+
+/**
  * Upload and send a media message (voice note, image, video, document).
  * Uses multipart/form-data; `apiFetch` is bypassed because we need raw FormData.
  */

@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, CalendarClock, Power, Sparkles, X } from 'lucide-react';
+import { Bot, CalendarClock, HandMetal, Power, Sparkles, X } from 'lucide-react';
 import {
   getThread,
   getThreadAppointmentRequests,
+  takeOverThread,
   toggleThreadAi,
   type PendingAppointmentRequest,
 } from '@/lib/whatsapp';
@@ -68,6 +69,19 @@ export function AiBotStrip({
     }
   };
 
+  const handleTakeOver = async () => {
+    if (!confirm('Take over this conversation? AI will be disabled here and the lead will be assigned to you.')) return;
+    setBusy(true);
+    try {
+      await takeOverThread(threadId);
+      setAiEnabled(false);
+    } catch {
+      // Swallow — UI just doesn't flip.
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Always render the AI toggle. The appointment-request row only renders
   // when there's a PENDING request. If both are absent we render nothing.
   if (aiEnabled === null && requests.length === 0) return null;
@@ -82,47 +96,75 @@ export function AiBotStrip({
         background: 'var(--wa-panel-header)',
       }}
     >
-      {/* AI on/off pill */}
+      {/* AI on/off pill + Take-over button */}
       {aiEnabled !== null ? (
-        <div
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            alignSelf: 'flex-start',
-            padding: '4px 10px',
-            borderRadius: 999,
-            fontSize: 11.5,
-            fontWeight: 600,
-            background: aiEnabled ? 'var(--sos-status-success-soft)' : 'var(--sos-surface-1)',
-            color: aiEnabled ? 'var(--sos-status-success)' : 'var(--sos-text-secondary)',
-            border: '1px solid var(--sos-border-subtle)',
-          }}
-        >
-          <Bot size={12} />
-          <span>AI assist {aiEnabled ? 'ON' : 'OFF'}</span>
-          <button
-            type="button"
-            onClick={() => void handleToggle()}
-            disabled={busy}
-            title={aiEnabled ? 'Turn off AI for this thread' : 'Turn on AI for this thread'}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, alignSelf: 'flex-start' }}>
+          <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 3,
-              padding: '2px 8px',
-              borderRadius: 8,
-              border: '1px solid var(--sos-border-strong)',
-              background: 'var(--sos-surface-0)',
-              color: 'var(--sos-text-primary)',
-              fontSize: 11,
+              gap: 8,
+              padding: '4px 10px',
+              borderRadius: 999,
+              fontSize: 11.5,
               fontWeight: 600,
-              cursor: busy ? 'wait' : 'pointer',
+              background: aiEnabled ? 'var(--sos-status-success-soft)' : 'var(--sos-surface-1)',
+              color: aiEnabled ? 'var(--sos-status-success)' : 'var(--sos-text-secondary)',
+              border: '1px solid var(--sos-border-subtle)',
             }}
           >
-            <Power size={10} />
-            {busy ? '…' : aiEnabled ? 'Turn off' : 'Turn on'}
-          </button>
+            <Bot size={12} />
+            <span>AI assist {aiEnabled ? 'ON' : 'OFF'}</span>
+            <button
+              type="button"
+              onClick={() => void handleToggle()}
+              disabled={busy}
+              title={aiEnabled ? 'Turn off AI for this thread' : 'Turn on AI for this thread'}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                padding: '2px 8px',
+                borderRadius: 8,
+                border: '1px solid var(--sos-border-strong)',
+                background: 'var(--sos-surface-0)',
+                color: 'var(--sos-text-primary)',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: busy ? 'wait' : 'pointer',
+              }}
+            >
+              <Power size={10} />
+              {busy ? '…' : aiEnabled ? 'Turn off' : 'Turn on'}
+            </button>
+          </div>
+          {/* "Take over" — one click: disables AI, parks state, reassigns
+              the lead to me. Only shows when AI is still ON; once off,
+              the take-over has effectively happened already. */}
+          {aiEnabled ? (
+            <button
+              type="button"
+              onClick={() => void handleTakeOver()}
+              disabled={busy}
+              title="Disable AI here + assign this lead to me"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '4px 10px',
+                borderRadius: 999,
+                border: '1px solid var(--sos-brand-primary-border)',
+                background: 'var(--sos-brand-primary-soft)',
+                color: 'var(--sos-brand-primary)',
+                fontSize: 11.5,
+                fontWeight: 700,
+                cursor: busy ? 'wait' : 'pointer',
+              }}
+            >
+              <HandMetal size={11} />
+              Take over
+            </button>
+          ) : null}
         </div>
       ) : null}
 

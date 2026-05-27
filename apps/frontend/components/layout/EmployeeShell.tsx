@@ -74,6 +74,7 @@ function buildSalesNav(stats: MySalesStats | null): DrawerMenuItem[] {
       ...(stats && stats.openFollowUps > 0 ? { badge: stats.openFollowUps } : {}),
     },
     { label: 'Appointments', href: '/sales/appointments', icon: CalendarDays, caption: 'Meetings & visits' },
+    { label: 'Bot Requests', href: '/sales/appointment-requests', icon: Sparkles, caption: 'AI-captured booking intents' },
     { label: 'Agreements', href: '/sales/agreements', icon: FileText, caption: 'Service agreements' },
   ];
 }
@@ -88,6 +89,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/sales/follow-ups/')) return { title: 'Follow-up Detail', subtitle: 'Update status, SLA, and outcome' };
   if (pathname === '/sales/follow-ups') return { title: 'Follow Ups', subtitle: 'Calls, WhatsApp and reminders' };
   if (pathname === '/sales/appointments') return { title: 'Appointments', subtitle: 'Bookings, consultations, and visits' };
+  if (pathname === '/sales/appointment-requests') return { title: 'Bot appointment requests', subtitle: 'AI-captured day/time/modality preferences awaiting confirmation' };
   if (pathname.startsWith('/sales/agreements/new')) return { title: 'New Agreement', subtitle: 'Pick a category to start' };
   if (pathname.startsWith('/sales/agreements/')) return { title: 'Agreement', subtitle: 'Bio, payment plan, and review' };
   if (pathname === '/sales/agreements') return { title: 'Agreements', subtitle: 'Your service agreements' };

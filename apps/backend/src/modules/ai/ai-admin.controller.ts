@@ -185,23 +185,18 @@ export class AiAdminController {
   async backfillOpenWindow() {
     const now = new Date();
 
-    // 1) Threads with open window + agent-turn clock running + AI not locked
-    //    out by a recent human send. The orchestrator re-checks every guard
-    //    at fire-time, so this list can be permissive.
+    // 1) Threads with open WhatsApp window + agent-turn clock running. We
+    //    no longer pre-filter by `aiDisabledAt`: the orchestrator's per-
+    //    inbound "human-replied-since" check (see orchestrator.decide) is
+    //    precise and supersedes the old coarse lockout window. The loop
+    //    below ALSO pre-checks `humanReplyAfter` before enqueueing, so we
+    //    don't burst OpenAI calls on threads sales is actively working.
     const threads = await this.prisma.whatsAppThread.findMany({
       where: {
         status: 'OPEN',
         aiEnabled: true,
         windowExpiresAt: { gt: now },
         responseDeadlineAt: { not: null },
-        OR: [
-          { aiDisabledAt: null },
-          // Keep this aligned with orchestrator.HUMAN_LOCKOUT_MS (20h).
-          // Threads where a human replied within the last 20h stay off the
-          // backfill list; once 20h elapses without a follow-up the bot
-          // resumes.
-          { aiDisabledAt: { lt: new Date(now.getTime() - 20 * 60 * 60 * 1000) } },
-        ],
         // Skip threads already linked to a converted client — paid clients
         // get further filtered (processing/finance) inside the orchestrator.
         clientId: null,

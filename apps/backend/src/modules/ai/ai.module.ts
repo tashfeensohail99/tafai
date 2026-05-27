@@ -3,6 +3,7 @@ import { OpenAiService } from './openai.service';
 import { KnowledgeService } from './knowledge.service';
 import { OrchestratorService } from './orchestrator.service';
 import { AiAdminController } from './ai-admin.controller';
+import { AiBacklogSweeperService } from './ai-backlog-sweeper.service';
 
 /**
  * Global so the WhatsApp inbound processor can inject {@link OrchestratorService}
@@ -11,7 +12,7 @@ import { AiAdminController } from './ai-admin.controller';
 @Global()
 @Module({
   controllers: [AiAdminController],
-  providers: [OpenAiService, KnowledgeService, OrchestratorService],
+  providers: [OpenAiService, KnowledgeService, OrchestratorService, AiBacklogSweeperService],
   exports: [OpenAiService, KnowledgeService, OrchestratorService],
 })
 export class AiModule {}

@@ -36,13 +36,24 @@ import { NotificationsService } from '../notifications/notifications.service';
  *          (3+ inbound messages on the thread) move toward booking.
  */
 /**
- * How long the bot stays silent after a human agent sends an outbound
- * message on a thread. Set to 20 hours: if sales hasn't followed up by
- * the next business day, the bot picks up the conversation again so the
- * lead doesn't go cold. Was 4h originally — bumped after the team asked
- * for an overnight grace window.
+ * Bot reply policy (per business decision):
+ *
+ *   • New inbound: webhook enqueues an AI reply with a 60-second delay.
+ *     When the job fires, we check whether a HUMAN agent has replied to
+ *     (or after) this exact inbound. If yes → skip; if no → bot replies.
+ *     This gives sales a 1-minute grace window on every customer message
+ *     without locking the bot out for hours.
+ *
+ *   • Safety net: a periodic backfill sweep picks up any inbound that's
+ *     been waiting > 20 hours with no human reply — the bot then jumps
+ *     in so we don't blow the WhatsApp 24-hour customer-service window.
+ *
+ * We deliberately do NOT keep a multi-hour "human lockout" any more: it
+ * was blocking the bot even when sales had drifted away from the
+ * conversation. The "human-replied-since-this-inbound?" check is precise
+ * and self-resetting — every new inbound gets a fresh 1-minute grace.
  */
-const HUMAN_LOCKOUT_MS = 20 * 60 * 60 * 1000;
+const STALE_INBOUND_BACKFILL_MS = 20 * 60 * 60 * 1000;
 const HISTORY_TURNS = 10;
 const APPOINTMENT_NUDGE_AFTER_TURNS = 2;
 /**
@@ -152,8 +163,27 @@ export class OrchestratorService {
     if (!thread) return { mode: 'SKIPPED', skipReason: 'thread-not-found' };
     if (!thread.aiEnabled) return { mode: 'SKIPPED', skipReason: 'ai-disabled-on-thread' };
 
-    if (thread.aiDisabledAt && Date.now() - thread.aiDisabledAt.getTime() < HUMAN_LOCKOUT_MS) {
-      return { mode: 'SKIPPED', skipReason: 'within-human-lockout' };
+    // Per-inbound human-reply check: did a real agent already respond to
+    // (or after) the message we're about to answer? If yes, sales has it
+    // covered — stay out. This replaces the old multi-hour "human lockout"
+    // window: that was too coarse, locking the bot out long after sales
+    // had drifted away. Now every new inbound earns its own 1-minute grace
+    // (via the webhook's 60s delay) and the bot fills in only when sales
+    // really didn't reply.
+    const inboundAt = await this.inboundMessageCreatedAt(input.inboundMessageId);
+    if (inboundAt) {
+      const humanReplied = await this.prisma.whatsAppMessage.findFirst({
+        where: {
+          threadId: thread.id,
+          direction: 'OUTBOUND',
+          sentByEmployeeId: { not: null },  // human send (bot is null)
+          createdAt: { gte: inboundAt },
+        },
+        select: { id: true },
+      });
+      if (humanReplied) {
+        return { mode: 'SKIPPED', skipReason: 'human-replied-after-inbound' };
+      }
     }
 
     // Funnel-state stop: once we've handed off to a real consultant, the bot

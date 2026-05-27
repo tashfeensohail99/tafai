@@ -8,6 +8,7 @@ import { AppointmentStatus, AuditAction, LeadStatus, TimelineEventType } from '@
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   WhatsAppAppointmentNotifierService,
   type AppointmentConfirmationResult,
@@ -28,6 +29,7 @@ export class AppointmentsService {
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
     private readonly activityTimeline: ActivityTimelineService,
+    private readonly notifications: NotificationsService,
     private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
   ) {}
 
@@ -241,6 +243,33 @@ export class AppointmentsService {
       `Appointment scheduled: ${created.title}`,
       actorUserId,
     );
+
+    // Bell notification to the agent the appointment is assigned to —
+    // unless they ARE the creator (no point notifying yourself). Best-
+    // effort; never blocks creation.
+    if (created.assignedEmployeeId) {
+      try {
+        const assignee = await this.prisma.employee.findUnique({
+          where: { id: created.assignedEmployeeId },
+          select: { firstName: true, user: { select: { id: true } } },
+        });
+        if (assignee?.user?.id && assignee.user.id !== actorUserId) {
+          const who =
+            created.lead?.firstName ||
+            created.client?.firstName ||
+            'a lead';
+          await this.notifications.create({
+            userId: assignee.user.id,
+            type: 'APPOINTMENT_BOOKED',
+            title: `New appointment: ${created.title}`,
+            body: `With ${who} on ${formatBellWhen(created.scheduledAt)}`,
+            link: '/sales/appointments',
+          });
+        }
+      } catch (err) {
+        this.log.warn({ err: (err as Error).message }, 'bell notification on appointment create failed');
+      }
+    }
 
     let whatsappConfirmation: AppointmentConfirmationResult | null = null;
     if (dto.sendWhatsAppConfirmation) {
@@ -585,4 +614,21 @@ export class AppointmentsService {
       });
     }
   }
+}
+
+/**
+ * Asia/Karachi-localized timestamp used in the bell notification body
+ * ("With Asad on Mon, 02 Jun · 10:00 AM PKT"). Kept simple so it reads
+ * well at one-line length.
+ */
+function formatBellWhen(d: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Karachi',
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d) + ' PKT';
 }

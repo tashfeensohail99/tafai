@@ -11,15 +11,25 @@ import {
   type NotificationRow,
 } from '@/lib/notifications';
 
-const POLL_MS = 30 * 1000;
+const POLL_MS = 15 * 1000;
 const ICON_SIZE_DEFAULT = 15;
 
 /**
- * Topbar bell with unread badge + dropdown. Polls /notifications/unread-count
- * every 30s and fetches the latest 20 only when the dropdown is opened.
+ * Topbar bell with unread badge + dropdown + audio alert.
  *
- * Fires for: AI auto-booked appointments (link → /sales/appointments). Generic
- * by design so future events plug in without touching this component.
+ * - Polls /notifications/unread-count every 15s.
+ * - When the count *increases* between polls, plays a Web Audio ding so
+ *   the agent hears new notifications even when the tab is in the
+ *   background.
+ * - Updates `document.title` to "(N) <original>" so background tabs show
+ *   the unread count.
+ * - Pulses the bell icon while there are unread items.
+ *
+ * Audio note: browsers require a user gesture before audio can play. The
+ * agent has already logged in (a click) by the time this mounts, so the
+ * first ding works in Chrome/Edge/Safari/Firefox. If the gesture is too
+ * old in some browsers, we silently swallow the rejected play() promise
+ * and the badge + tab title still convey the alert.
  */
 export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?: number }) {
   const router = useRouter();
@@ -28,15 +38,78 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastUnreadRef = useRef<number>(0);
+  const titleBaseRef = useRef<string>('');
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
-  // Poll unread count every 30s so the badge stays fresh while the agent
-  // is on any other screen.
+  // Capture the original document.title on first mount so we can restore /
+  // prefix it as the unread count changes.
+  useEffect(() => {
+    if (!titleBaseRef.current) {
+      titleBaseRef.current = document.title.replace(/^\(\d+\)\s*/, '');
+    }
+  }, []);
+
+  // Update tab title whenever the unread count changes.
+  useEffect(() => {
+    const base = titleBaseRef.current || document.title;
+    document.title = unread > 0 ? `(${unread > 99 ? '99+' : unread}) ${base}` : base;
+  }, [unread]);
+
+  // Play a short two-tone chime via Web Audio. No external asset needed.
+  // Frequencies tuned for a clean "ding" that cuts through a noisy office
+  // without being annoying. Wrapped in try/catch because audio can fail
+  // for a dozen reasons (autoplay policy, suspended context, etc.) and we
+  // never want it to break the bell.
+  const playDing = useCallback(() => {
+    try {
+      if (typeof window === 'undefined') return;
+      let ctx = audioCtxRef.current;
+      if (!ctx) {
+        const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!Ctor) return;
+        ctx = new Ctor();
+        audioCtxRef.current = ctx;
+      }
+      if (ctx.state === 'suspended') {
+        void ctx.resume().catch(() => undefined);
+      }
+      const now = ctx.currentTime;
+      // First tone: C6 (1046Hz), second tone: E6 (1318Hz). Sounds like an
+      // iOS notification. Each tone ~140ms, total under 300ms.
+      const playTone = (freq: number, start: number, dur: number, gain: number) => {
+        const osc = ctx!.createOscillator();
+        const g = ctx!.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        g.gain.setValueAtTime(0, start);
+        g.gain.linearRampToValueAtTime(gain, start + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.connect(g).connect(ctx!.destination);
+        osc.start(start);
+        osc.stop(start + dur + 0.02);
+      };
+      playTone(1046.5, now, 0.14, 0.35);
+      playTone(1318.5, now + 0.13, 0.18, 0.35);
+    } catch {
+      /* audio is best-effort */
+    }
+  }, []);
+
+  // Poll unread count every 15s. Play a ding when the count *increases*
+  // (so a freshly-arrived notification triggers the alert, but mark-read
+  // dropping the count back to zero doesn't).
   useEffect(() => {
     let cancelled = false;
     const fetchCount = () => {
       getUnreadNotificationCount()
         .then((r) => {
-          if (!cancelled) setUnread(r.count);
+          if (cancelled) return;
+          if (r.count > lastUnreadRef.current) {
+            playDing();
+          }
+          lastUnreadRef.current = r.count;
+          setUnread(r.count);
         })
         .catch(() => {
           /* best-effort */
@@ -48,7 +121,7 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [playDing]);
 
   // Close on outside click.
   useEffect(() => {
@@ -68,6 +141,7 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
       .then((list) => {
         setRows(list);
         const u = list.filter((r) => !r.read).length;
+        lastUnreadRef.current = u; // keep ref in sync — avoid false-positive ding
         setUnread(u);
       })
       .catch(() => {
@@ -89,7 +163,9 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
     if (!row.read) {
       // optimistic
       setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, read: true } : r)));
-      setUnread((u) => Math.max(0, u - 1));
+      const next = Math.max(0, unread - 1);
+      lastUnreadRef.current = next;
+      setUnread(next);
       markNotificationRead(row.id).catch(() => {
         /* keep optimistic state — next poll will reconcile */
       });
@@ -100,6 +176,7 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
 
   async function onMarkAll() {
     setRows((prev) => prev.map((r) => ({ ...r, read: true })));
+    lastUnreadRef.current = 0;
     setUnread(0);
     try {
       await markAllNotificationsRead();
@@ -112,8 +189,8 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
     <div ref={containerRef} style={{ position: 'relative' }}>
       <button
         type="button"
-        className="sos-topbar__icon-btn"
-        aria-label="Notifications"
+        className={`sos-topbar__icon-btn ${unread > 0 ? 'tash-bell-pulse' : ''}`}
+        aria-label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={toggle}
@@ -122,7 +199,7 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
         <Bell size={iconSize} />
         {unread > 0 && (
           <span
-            aria-label={`${unread} unread`}
+            aria-hidden
             style={{
               position: 'absolute',
               top: 2,
@@ -295,6 +372,17 @@ export function NotificationsBell({ iconSize = ICON_SIZE_DEFAULT }: { iconSize?:
           </div>
         </div>
       )}
+
+      {/* Pulse keyframes — kept colocated so the bell ships as one unit. */}
+      <style>{`
+        @keyframes tashBellPulse {
+          0%, 100% { transform: scale(1); }
+          50%      { transform: scale(1.12); }
+        }
+        .tash-bell-pulse {
+          animation: tashBellPulse 1.6s ease-in-out infinite;
+        }
+      `}</style>
     </div>
   );
 }

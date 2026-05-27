@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
+import { NotificationsService } from '../../../notifications/notifications.service';
 import { WhatsAppAssignmentService } from '../../routing/assignment.service';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
 import { computeSlaDeadline, type BusinessHours } from '../../routing/business-hours';
@@ -142,6 +143,7 @@ export class WebhookIngestProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly timeline: ActivityTimelineService,
+    private readonly notifications: NotificationsService,
     private readonly assignment: WhatsAppAssignmentService,
     private readonly publisher: WhatsAppRealtimePublisher,
     // Used to enqueue a re-host job for every inbound media (image / video
@@ -524,6 +526,43 @@ export class WebhookIngestProcessor extends WorkerHost {
         messageId: message.id,
         direction: 'INBOUND',
       });
+    }
+
+    // Bell notification for the assigned agent. Fired after assignment +
+    // SLA so the routing decisions are settled. Best-effort — failures here
+    // never block ingest. We re-read the thread (instead of using the
+    // closure-captured value) because ensureAssigned() may have just
+    // populated assignedEmployeeId. WhatsAppThread has no `assignedEmployee`
+    // relation defined in the schema, so we look up the Employee by id in
+    // a separate hop.
+    try {
+      const assigned = await this.prisma.whatsAppThread.findUnique({
+        where: { id: thread.id },
+        select: {
+          assignedEmployeeId: true,
+          lead: { select: { firstName: true, phone: true } },
+        },
+      });
+      if (assigned?.assignedEmployeeId) {
+        const emp = await this.prisma.employee.findUnique({
+          where: { id: assigned.assignedEmployeeId },
+          select: { user: { select: { id: true } } },
+        });
+        const userId = emp?.user?.id;
+        if (userId) {
+          const who = (assigned.lead?.firstName ?? assigned.lead?.phone ?? 'WhatsApp lead').trim();
+          const preview = (decoded.body ?? `[${decoded.type.toLowerCase()}]`).slice(0, 80);
+          await this.notifications.create({
+            userId,
+            type: 'WHATSAPP_MESSAGE',
+            title: `New WhatsApp from ${who}`,
+            body: preview,
+            link: '/sales/inbox',
+          });
+        }
+      }
+    } catch (err) {
+      this.log.warn(`bell notification failed for thread ${thread.id}: ${(err as Error).message}`);
     }
 
     // AI bot — enqueue a delayed reply job (60s) so a human has a chance to

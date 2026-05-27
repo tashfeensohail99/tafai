@@ -5,7 +5,7 @@
 // outbound WhatsApp + email transports themselves are wired separately).
 
 import { useEffect, useState } from 'react';
-import { Loader2, Mail, MessageSquare, PlusCircle, Send } from 'lucide-react';
+import { AlertTriangle, Loader2, Mail, MessageSquare, PlusCircle, Send } from 'lucide-react';
 import {
   GlassCard,
   EmptyState,
@@ -66,7 +66,15 @@ function CommunicationCard({ m }: { m: ApiCaseCommunication }) {
   );
 }
 
-function SendForm({ caseId, onSent }: { caseId: string; onSent: (m: ApiCaseCommunication) => void }) {
+function SendForm({
+  caseId,
+  onSent,
+  onWarnings,
+}: {
+  caseId: string;
+  onSent: (m: ApiCaseCommunication) => void;
+  onWarnings: (warnings: string[]) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState('');
   const [content, setContent] = useState('');
@@ -88,7 +96,13 @@ function SendForm({ caseId, onSent }: { caseId: string; onSent: (m: ApiCaseCommu
         content: content.trim(),
         channelsSent: channels,
       });
-      onSent(saved);
+      // The response carries the persisted row plus a parallel list of
+      // per-channel warnings (e.g. "WhatsApp send skipped: window expired").
+      // The row went in regardless — warnings just tell the UI which
+      // channels silently didn't actually transmit. Bubble both up.
+      const { deliveryWarnings, ...row } = saved;
+      onSent(row);
+      onWarnings(deliveryWarnings ?? []);
       setSubject('');
       setContent('');
       setChannels(['PORTAL']);
@@ -160,6 +174,9 @@ export function CommunicationsTab({ c }: { c: MockProcessingCase }) {
   const [items, setItems] = useState<ApiCaseCommunication[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Most-recent delivery warnings (e.g. "WhatsApp send skipped: window
+  // expired"). Persists until the user sends again or clicks the dismiss x.
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,8 +190,36 @@ export function CommunicationsTab({ c }: { c: MockProcessingCase }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <SendForm caseId={c.id} onSent={(m) => setItems((p) => [m, ...p])} />
+        <SendForm
+          caseId={c.id}
+          onSent={(m) => setItems((p) => [m, ...p])}
+          onWarnings={setWarnings}
+        />
       </div>
+
+      {warnings.length > 0 ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <AlertTriangle size={14} style={{ color: 'var(--sos-status-warning)', marginTop: 2, flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
+                Saved — but one channel didn&apos;t actually transmit
+              </div>
+              <ul style={{ margin: '4px 0 0 0', padding: '0 0 0 16px', fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                {warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+            <button
+              type="button"
+              onClick={() => setWarnings([])}
+              style={{ background: 'transparent', border: 'none', color: 'var(--sos-text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 2 }}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        </GlassCard>
+      ) : null}
 
       {loading ? (
         <GlassCard variant="panel" padded="lg">

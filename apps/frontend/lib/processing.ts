@@ -565,6 +565,16 @@ export interface ApiCaseCommunication {
   sentBy?: { id: string; email: string } | null;
 }
 
+/**
+ * sendCaseCommunication returns the persisted communication plus any
+ * per-channel warnings (e.g. WhatsApp window expired, no thread yet). The
+ * row was saved either way — warnings just tell the UI which channels
+ * silently didn't actually transmit.
+ */
+export interface SendCaseCommunicationResponse extends ApiCaseCommunication {
+  deliveryWarnings: string[];
+}
+
 export function fetchCaseCommunications(caseId: string): Promise<ApiCaseCommunication[]> {
   return apiFetch<ApiCaseCommunication[]>(`/processing/cases/${caseId}/communications`, { cache: 'no-store' });
 }
@@ -572,8 +582,8 @@ export function fetchCaseCommunications(caseId: string): Promise<ApiCaseCommunic
 export function sendCaseCommunication(
   caseId: string,
   body: { subject: string; content: string; channelsSent: string[] },
-): Promise<ApiCaseCommunication> {
-  return apiFetch<ApiCaseCommunication>(`/processing/cases/${caseId}/communications`, {
+): Promise<SendCaseCommunicationResponse> {
+  return apiFetch<SendCaseCommunicationResponse>(`/processing/cases/${caseId}/communications`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

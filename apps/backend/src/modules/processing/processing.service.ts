@@ -6,6 +6,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
+import { randomUUID } from 'node:crypto';
 import {
   AuthorityDecision,
   CorrectionRequiredAction,
@@ -20,6 +23,10 @@ import {
   ProcessingNoteType,
   ProcessingTaskStatus,
   TimelineEventType,
+  WhatsAppMessageDirection,
+  WhatsAppMessageStatus,
+  WhatsAppMessageType,
+  WhatsAppThreadStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
@@ -28,6 +35,10 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
 import { LeadsService } from '../leads/leads.service';
+import {
+  WHATSAPP_QUEUE,
+  type OutboundMessageJob,
+} from '../whatsapp/queues/queue-contracts';
 import {
   AcknowledgeIntakeDto,
   AddDocumentItemDto,
@@ -139,6 +150,11 @@ export class ProcessingService {
     // Used to auto-convert Lead → Client at the moment Finance sends a case
     // into processing.
     private readonly leadsService: LeadsService,
+    // Outbound WhatsApp queue — used by sendCommunication to put a real
+    // WA message on the wire when officers tick the WhatsApp channel. The
+    // queues module is @Global() so we get this without extra wiring.
+    @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
+    private readonly outboundWhatsAppQueue: Queue<OutboundMessageJob>,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -1473,7 +1489,7 @@ export class ProcessingService {
   ) {
     await this.assertCaseAccessById(caseId, user);
 
-    const comm = await this.prisma.caseCommunication.create({
+    let comm = await this.prisma.caseCommunication.create({
       data: {
         caseId,
         direction: 'OFFICER_TO_CLIENT',
@@ -1496,7 +1512,156 @@ export class ProcessingService {
       },
     });
 
-    return comm;
+    // If the officer ticked WhatsApp, actually put a message on the wire.
+    // Best-effort: never throw — if no thread exists or the 24h window has
+    // expired we record that as a delivery warning so the UI can surface
+    // "WhatsApp send skipped: …" without burying the rest of the channels.
+    const deliveryWarnings: string[] = [];
+    const channelsUpper = dto.channelsSent.map((c) => c.toUpperCase());
+    if (channelsUpper.includes('WHATSAPP')) {
+      try {
+        const result = await this.enqueueWhatsAppForCase({
+          caseId,
+          actorUserId: user.id,
+          body: this.composeWhatsAppBody(dto.subject, dto.content),
+        });
+        if (result.ok) {
+          comm = await this.prisma.caseCommunication.update({
+            where: { id: comm.id },
+            data: { whatsappMessageId: result.messageId },
+          });
+        } else {
+          deliveryWarnings.push(`WhatsApp send skipped: ${result.reason}`);
+        }
+      } catch (err) {
+        // We deliberately swallow — the CaseCommunication row already
+        // landed and the audit log captured the attempt. Logging keeps
+        // the failure visible without breaking the request.
+        this.logger.error(
+          { err, caseId, commId: comm.id },
+          'sendCommunication: WhatsApp enqueue threw',
+        );
+        deliveryWarnings.push('WhatsApp send skipped: internal error');
+      }
+    }
+
+    return { ...comm, deliveryWarnings };
+  }
+
+  /**
+   * Combine the subject + body into the WhatsApp message text. Subject lives
+   * at the top in *asterisks* (WA bold) so the client can scan it like an
+   * email subject before reading the body. Empty/whitespace subject is
+   * dropped silently.
+   */
+  private composeWhatsAppBody(subject: string, content: string): string {
+    const trimmedSubject = subject.trim();
+    const trimmedContent = content.trim();
+    if (!trimmedSubject) return trimmedContent;
+    return `*${trimmedSubject}*\n\n${trimmedContent}`;
+  }
+
+  /**
+   * Look up the case's WhatsApp thread (by lead first, then client — they're
+   * the same once Lead→Client conversion has happened) and enqueue a real
+   * outbound message. Mirrors WhatsAppAppointmentNotifierService so delivery
+   * status, retries, and realtime fanout all behave identically.
+   *
+   * Returns { ok: true, messageId } on enqueue, or { ok: false, reason } if
+   * the message can't be sent — the caller decides what to do with the
+   * skip reason (typically: record it as a deliveryWarning).
+   */
+  private async enqueueWhatsAppForCase(input: {
+    caseId: string;
+    actorUserId: string;
+    body: string;
+  }): Promise<{ ok: true; messageId: string } | { ok: false; reason: string }> {
+    const body = input.body.trim();
+    if (!body) return { ok: false, reason: 'empty message body' };
+
+    const processingCase = await this.prisma.processingCase.findUnique({
+      where: { id: input.caseId },
+      select: {
+        id: true,
+        leadId: true,
+        clientId: true,
+        lead: { select: { id: true, phone: true } },
+        client: { select: { id: true, phone: true } },
+      },
+    });
+    if (!processingCase) return { ok: false, reason: 'case not found' };
+
+    const phone = processingCase.lead?.phone ?? processingCase.client?.phone ?? null;
+    if (!phone) return { ok: false, reason: 'client has no phone on file' };
+
+    const thread = await this.prisma.whatsAppThread.findFirst({
+      where: {
+        OR: [
+          ...(processingCase.leadId ? [{ leadId: processingCase.leadId }] : []),
+          ...(processingCase.clientId ? [{ clientId: processingCase.clientId }] : []),
+        ],
+        status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      select: {
+        id: true,
+        channelId: true,
+        leadId: true,
+        clientId: true,
+        windowExpiresAt: true,
+      },
+    });
+    if (!thread) return { ok: false, reason: 'no WhatsApp conversation yet' };
+
+    const now = new Date();
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      return { ok: false, reason: '24h customer service window expired — use a template' };
+    }
+
+    // Map the processing officer (RequestUser.id is the UserAccount id) to
+    // their Employee record so the WhatsApp message is attributed correctly
+    // and the AI bot stays silent for the post-send lockout window.
+    const employee = await this.prisma.employee.findFirst({
+      where: { userId: input.actorUserId, isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.TEXT,
+        status: WhatsAppMessageStatus.QUEUED,
+        body,
+        sentByEmployeeId: employee?.id ?? null,
+        idempotencyKey: randomUUID(),
+        payload: {
+          source: 'processing_case_communication',
+          caseId: input.caseId,
+        } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+
+    await this.outboundWhatsAppQueue.add(
+      'send',
+      { messageId: message.id },
+      { jobId: message.id },
+    );
+
+    // Mark the thread human-touched so the AI bot stays out of the way.
+    // Mirrors what messages.service.ts does on manual agent sends.
+    if (employee?.id) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
+
+    return { ok: true, messageId: message.id };
   }
 
   // -------------------------------------------------------------------------

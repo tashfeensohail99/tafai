@@ -15,6 +15,7 @@ import {
   type MockProcessingCase,
   STAGE_LABEL,
 } from '@/components/processing/mockData';
+import { changeCaseStage } from '@/lib/processing';
 
 // ---------- Overlay styles (shared pattern with StageChangeModal) ----------
 
@@ -34,25 +35,38 @@ const overlayStyle: React.CSSProperties = {
 interface CancelCaseModalProps {
   caseRecord: MockProcessingCase;
   onClose: () => void;
+  /** Called after a successful cancel so the parent can refetch. */
+  onCancelled?: () => void;
 }
 
-export function CancelCaseModal({ caseRecord: c, onClose }: CancelCaseModalProps) {
+export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelCaseModalProps) {
   const [reason, setReason] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const canSubmit = reason.trim().length >= 10 && confirmed && !loading;
 
-  function handleCancel() {
+  async function handleCancel() {
     if (!canSubmit) return;
     setLoading(true);
-    // Replace with real API: PATCH /processing/cases/:id/stage
-    // Body: { toStage: 'CANCELLED', cancellationReason: reason }
-    setTimeout(() => {
+    setError(null);
+    try {
+      // Backend ChangeCaseStageDto: when toStage=CANCELLED the
+      // cancellationReason field is required (server returns 400 otherwise).
+      // The reason textarea here is the source of truth.
+      await changeCaseStage(c.id, {
+        toStage: 'CANCELLED',
+        cancellationReason: reason.trim(),
+      });
       setDone(true);
+      onCancelled?.();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to cancel case');
+    } finally {
       setLoading(false);
-    }, 800);
+    }
   }
 
   /* ---- Done state ---- */
@@ -211,6 +225,12 @@ export function CancelCaseModal({ caseRecord: c, onClose }: CancelCaseModalProps
             I confirm that this cancellation has been reviewed and cannot be undone. I take responsibility for this action.
           </span>
         </label>
+
+        {error ? (
+          <div style={{ marginBottom: '14px', padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: '12.5px' }}>
+            {error}
+          </div>
+        ) : null}
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>

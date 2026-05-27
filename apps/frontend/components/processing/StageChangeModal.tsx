@@ -26,6 +26,7 @@ import {
   getDocumentProgress,
 } from '@/components/processing/mockData';
 import { stageTone } from './ProcessingDashboardPage';
+import { changeCaseStage } from '@/lib/processing';
 
 // ---------- Allowed transitions (mirrors backend ALLOWED_TRANSITIONS) ------
 
@@ -121,16 +122,22 @@ function GateCheckResult({ c, toStage }: { c: MockProcessingCase; toStage: Proce
 interface StageChangeModalProps {
   caseRecord: MockProcessingCase;
   onClose: () => void;
+  /** Called after a successful stage change so the parent can refetch. */
+  onChanged?: () => void;
 }
 
-export function StageChangeModal({ caseRecord: c, onClose }: StageChangeModalProps) {
+export function StageChangeModal({ caseRecord: c, onClose, onChanged }: StageChangeModalProps) {
   const allowed = ALLOWED_TRANSITIONS[c.stage] ?? [];
   const [toStage, setToStage] = useState<ProcessingStage | null>(allowed[0] ?? null);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  // Front-end mirror of the backend doc gate so the manager sees blockers
+  // before they click. Backend re-checks server-side too — this is a UX
+  // shortcut, not a security boundary.
   const extraFields = toStage ? (STAGE_FIELDS[toStage] ?? []) : [];
   const needsDocGate = toStage ? DOC_GATE_STAGES.includes(toStage) : false;
   const docBlockers = needsDocGate
@@ -148,14 +155,41 @@ export function StageChangeModal({ caseRecord: c, onClose }: StageChangeModalPro
     (needsDocGate ? docBlockers.length === 0 : true) &&
     extraFields.every((f) => !f.required || !!fields[f.key]?.trim());
 
-  function handleSubmit() {
-    if (!canSubmit) return;
+  async function handleSubmit() {
+    if (!canSubmit || !toStage) return;
     setLoading(true);
-    // Replace with real API: PATCH /processing/cases/:id/stage
-    setTimeout(() => {
+    setError(null);
+    try {
+      // The backend's ChangeCaseStageDto accepts named fields per target
+      // stage — submissionReference, authorityTrackingRef, cancellationReason,
+      // completionNotes — plus the generic reason/notes pair. Pass through
+      // exactly what the manager typed so server-side gates can validate
+      // (e.g. REJECTED requires `notes`, SUBMITTED requires
+      // `submissionReference`, etc.).
+      await changeCaseStage(c.id, {
+        toStage,
+        ...(reason.trim() ? { reason: reason.trim() } : {}),
+        ...(fields.notes?.trim() ? { notes: fields.notes.trim() } : {}),
+        ...(fields.submissionReference?.trim()
+          ? { submissionReference: fields.submissionReference.trim() }
+          : {}),
+        ...(fields.authorityTrackingRef?.trim()
+          ? { authorityTrackingRef: fields.authorityTrackingRef.trim() }
+          : {}),
+        ...(fields.cancellationReason?.trim()
+          ? { cancellationReason: fields.cancellationReason.trim() }
+          : {}),
+        ...(fields.completionNotes?.trim()
+          ? { completionNotes: fields.completionNotes.trim() }
+          : {}),
+      });
       setDone(true);
+      onChanged?.();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to change stage');
+    } finally {
       setLoading(false);
-    }, 800);
+    }
   }
 
   if (allowed.length === 0) {
@@ -277,6 +311,12 @@ export function StageChangeModal({ caseRecord: c, onClose }: StageChangeModalPro
             style={{ width: '100%', resize: 'vertical', padding: '8px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: '13.5px', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
           />
         </div>
+
+        {error ? (
+          <div style={{ marginTop: '14px', padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: '12.5px' }}>
+            {error}
+          </div>
+        ) : null}
 
         {/* Actions */}
         <div style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>

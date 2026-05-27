@@ -298,7 +298,11 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   return (
     <>
       {showStageModal ? (
-        <StageChangeModal caseRecord={c} onClose={() => setShowStageModal(false)} />
+        <StageChangeModal
+          caseRecord={c}
+          onClose={() => setShowStageModal(false)}
+          onChanged={() => setRefetchTick((n) => n + 1)}
+        />
       ) : null}
       {showAssignModal ? (
         <ProcessingAssignmentModal
@@ -318,6 +322,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
         <CancelCaseModal
           caseRecord={c}
           onClose={() => setShowCancelModal(false)}
+          onCancelled={() => setRefetchTick((n) => n + 1)}
         />
       ) : null}
 

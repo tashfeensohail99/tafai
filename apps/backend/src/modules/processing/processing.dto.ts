@@ -48,10 +48,25 @@ export class CreateProcessingCaseDto {
   financeHandoverNote?: string;
 }
 
+/**
+ * Manager acknowledges a Finance handover. Per the Processing workflow
+ * (Manager → Associate hierarchy), the manager MUST nominate a processing
+ * associate at this step — the case never lands in a general queue where
+ * associates self-pick. Optionally the manager can re-confirm or override
+ * the case's service code if Sales picked the wrong category.
+ */
 export class AcknowledgeIntakeDto {
-  @IsOptional()
   @IsUUID()
-  assignOfficerId?: string; // if omitted, assigns to self
+  assignOfficerId!: string;
+
+  /** Optional override of the case's service code (one of the 9 canonical
+   *  service types). When set, the checklist is re-templated against the
+   *  new (service, targetCountry) pair. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @IsIn(SERVICE_TYPE_CODES, { message: 'service must be one of the canonical service codes' })
+  service?: string;
 }
 
 export class ListIntakeQueueQueryDto {

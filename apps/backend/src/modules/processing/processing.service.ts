@@ -337,16 +337,50 @@ export class ProcessingService {
       throw new BadRequestException('Case has already been acknowledged');
     }
 
-    const officerId = dto.assignOfficerId ?? user.id;
+    // Manager-only by route permission. Per the Processing workflow the
+    // manager MUST nominate a real associate — never self-assign — so cases
+    // are visible only to the person actually doing the work.
+    const officerId = dto.assignOfficerId;
+    const assignee = await this.prisma.userAccount.findUnique({
+      where: { id: officerId },
+      select: {
+        id: true,
+        email: true,
+        userRoles: {
+          select: { role: { select: { name: true } } },
+        },
+      },
+    });
+    if (!assignee) {
+      throw new BadRequestException('Assignee not found');
+    }
+    const assigneeRoles = assignee.userRoles.map((r) => r.role.name);
+    // Accept anyone who can work cases — associate (processing), manager
+    // (processing_manager), documentation specialist, or admin. We block
+    // assignment to non-processing roles (sales, finance, support) to keep
+    // the work boundary clean.
+    const PROCESSING_WORKERS = new Set(['processing', 'processing_manager', 'documentation', 'super_admin', 'admin']);
+    if (!assigneeRoles.some((r) => PROCESSING_WORKERS.has(r))) {
+      throw new BadRequestException(
+        'Assignee must be a Processing Associate, Manager, or Documentation specialist',
+      );
+    }
+
+    // Service-type override: manager re-confirms the case category at
+    // acknowledge time. If they pick a different code, we re-template the
+    // checklist against the new (service, targetCountry) pair.
+    const effectiveService = dto.service ?? processingCase.service;
+    const serviceChanged = dto.service && dto.service !== processingCase.service;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      // Assign and move stage
+      // Assign, move stage, optionally update service code
       const c = await tx.processingCase.update({
         where: { id: caseId },
         data: {
           stage: ProcessingCaseStage.DOCUMENTS_COLLECTION,
           assignedOfficerId: officerId,
           updatedByUserId: user.id,
+          ...(serviceChanged ? { service: dto.service } : {}),
         },
       });
 
@@ -357,13 +391,13 @@ export class ProcessingService {
           fromStage: ProcessingCaseStage.INTAKE_PENDING,
           toStage: ProcessingCaseStage.DOCUMENTS_COLLECTION,
           changedByUserId: user.id,
-          reason: 'Case acknowledged by processing officer',
+          reason: serviceChanged
+            ? `Case acknowledged by manager; service set to ${dto.service}; assigned to associate`
+            : 'Case acknowledged by manager; assigned to associate',
         },
       });
 
-      // Auto-build checklist from templates. We try TWO lookups (service +
-      // country, then service-only as fallback) so a generic "STUDY_VISA"
-      // template still applies when no country-specific one exists yet.
+      // Auto-build checklist from templates against the effective service.
       // Lookup ladder:
       //   1. (service, targetCountry) exact match — country-specific overrides
       //      win when admin has curated them.
@@ -373,7 +407,7 @@ export class ProcessingService {
       //   3. Empty checklist + warning — officer adds items by hand.
       let templates = await tx.documentRequirementTemplate.findMany({
         where: {
-          service: processingCase.service,
+          service: effectiveService,
           targetCountry: processingCase.targetCountry,
           isActive: true,
         },
@@ -382,7 +416,7 @@ export class ProcessingService {
       if (templates.length === 0) {
         templates = await tx.documentRequirementTemplate.findMany({
           where: {
-            service: processingCase.service,
+            service: effectiveService,
             targetCountry: 'GLOBAL',
             isActive: true,
           },
@@ -393,11 +427,10 @@ export class ProcessingService {
       // Soft fallback: if NO template exists for this service yet, don't
       // block the officer — they can still acknowledge + add doc items
       // manually via POST /cases/:id/documents. We just log a warning so
-      // the admin team knows a template is missing. (Was: hard 400 error
-      // that blocked the entire intake flow until admin created a template.)
+      // the admin team knows a template is missing.
       if (templates.length === 0) {
         this.logger.warn(
-          `acknowledgeIntake: no DocumentRequirementTemplate for service="${processingCase.service}" / country="${processingCase.targetCountry}" (and no GLOBAL fallback). Case acknowledged with an empty checklist — officer can add doc items manually.`,
+          `acknowledgeIntake: no DocumentRequirementTemplate for service="${effectiveService}" / country="${processingCase.targetCountry}" (and no GLOBAL fallback). Case acknowledged with an empty checklist — officer can add doc items manually.`,
         );
       } else {
         await tx.caseDocumentItem.createMany({
@@ -422,12 +455,17 @@ export class ProcessingService {
         data: {
           caseId,
           actorUserId: user.id,
-          action: 'case_acknowledged',
+          action: 'case_acknowledged_and_assigned',
           entityType: 'processing_case',
           entityId: caseId,
-          oldValues: { stage: ProcessingCaseStage.INTAKE_PENDING },
+          oldValues: {
+            stage: ProcessingCaseStage.INTAKE_PENDING,
+            service: processingCase.service,
+            assignedOfficerId: null,
+          },
           newValues: {
             stage: ProcessingCaseStage.DOCUMENTS_COLLECTION,
+            service: effectiveService,
             assignedOfficerId: officerId,
             checklistItemsCreated: templates.length,
           },
@@ -617,6 +655,58 @@ export class ProcessingService {
     return this.prisma.processingCase.update({
       where: { id: caseId },
       data: { priority: dto.priority, updatedByUserId: user.id },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // OFFICER ROSTER
+  //
+  // Picker list for the manager-acknowledge flow + reassignment UI. Returns
+  // every active user account that holds a processing-side role (associate,
+  // manager, documentation, admin) so the manager can route a case to the
+  // right hands. Sales/finance/support roles are excluded.
+  // -------------------------------------------------------------------------
+
+  async listProcessingOfficers() {
+    const officers = await this.prisma.userAccount.findMany({
+      where: {
+        isActive: true,
+        userRoles: {
+          some: {
+            role: {
+              name: { in: ['processing', 'processing_manager', 'documentation', 'super_admin', 'admin'] },
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        employee: { select: { firstName: true, lastName: true } },
+        userRoles: { select: { role: { select: { name: true } } } },
+      },
+      orderBy: { email: 'asc' },
+    });
+
+    return officers.map((u) => {
+      const displayName = u.employee
+        ? `${u.employee.firstName} ${u.employee.lastName}`.trim() || u.fullName || u.email
+        : u.fullName || u.email;
+      const roles = u.userRoles.map((r) => r.role.name);
+      // Surface the most senior role so the UI can label managers vs
+      // associates without a second lookup.
+      const primaryRole = roles.includes('processing_manager')
+        ? 'processing_manager'
+        : roles.includes('processing')
+          ? 'processing'
+          : roles[0] ?? 'processing';
+      return {
+        id: u.id,
+        email: u.email,
+        name: displayName,
+        primaryRole,
+      };
     });
   }
 

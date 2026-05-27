@@ -112,6 +112,14 @@ function buildService() {
     authoritySubmission: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
     documentRequirementTemplate: { findMany: jest.fn(), create: jest.fn(), update: jest.fn() },
     financeHandover: { findUnique: jest.fn(), update: jest.fn() },
+    userAccount: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'officer-1',
+        email: 'officer@example.com',
+        userRoles: [{ role: { name: 'processing' } }],
+      }),
+      findMany: jest.fn(),
+    },
   };
 
   const auditMock = { log: jest.fn() };
@@ -213,7 +221,7 @@ describe('ProcessingService — Rule 1: acknowledgeIntake gate checks', () => {
     prismaMock.processingCase.findUnique.mockResolvedValue(null);
 
     await expect(
-      service.acknowledgeIntake('case-missing', {}, makeUser()),
+      service.acknowledgeIntake('case-missing', { assignOfficerId: 'officer-1' }, makeUser()),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -224,7 +232,7 @@ describe('ProcessingService — Rule 1: acknowledgeIntake gate checks', () => {
     );
 
     await expect(
-      service.acknowledgeIntake('case-1', {}, makeUser()),
+      service.acknowledgeIntake('case-1', { assignOfficerId: 'officer-1' }, makeUser()),
     ).rejects.toThrow(BadRequestException);
   });
 
@@ -260,32 +268,56 @@ describe('ProcessingService — Rule 1: acknowledgeIntake gate checks', () => {
       return cb(txMock);
     });
 
-    const result = await service.acknowledgeIntake('case-1', {}, makeUser());
+    const result = await service.acknowledgeIntake('case-1', { assignOfficerId: 'officer-1' }, makeUser());
 
     expect(result.stage).toBe(ProcessingCaseStage.DOCUMENTS_COLLECTION);
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it('throws BadRequestException when no active document template exists for service/country', async () => {
+  // Soft-fallback path: when no DocumentRequirementTemplate exists for the
+  // case's (service, country) pair, the acknowledge no longer throws — it
+  // logs a warning and creates the case with an empty checklist. (Was a
+  // hard 400 in earlier waves; changed in P2 to keep intake unblocked when
+  // admin hasn't curated templates yet.)
+  it('acknowledges with empty checklist when no template exists', async () => {
     const { service, prismaMock } = buildService();
     const processingCase = makeProcessingCase({ stage: ProcessingCaseStage.INTAKE_PENDING });
     prismaMock.processingCase.findUnique.mockResolvedValue(processingCase);
 
+    const updatedCase = makeProcessingCase({ stage: ProcessingCaseStage.DOCUMENTS_COLLECTION });
     prismaMock.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
+      const createMany = jest.fn();
       const txMock = {
-        processingCase: { update: jest.fn() },
+        processingCase: { update: jest.fn().mockResolvedValue(updatedCase) },
         processingCaseStageHistory: { create: jest.fn() },
-        documentRequirementTemplate: {
-          findMany: jest.fn().mockResolvedValue([]), // no templates
-        },
-        caseDocumentItem: { createMany: jest.fn() },
+        documentRequirementTemplate: { findMany: jest.fn().mockResolvedValue([]) },
+        caseDocumentItem: { createMany },
         processingAuditLog: { create: jest.fn() },
       };
-      return cb(txMock);
+      const result = await cb(txMock);
+      // createMany must NOT be called when there are no templates.
+      expect(createMany).not.toHaveBeenCalled();
+      return result;
+    });
+
+    const result = await service.acknowledgeIntake('case-1', { assignOfficerId: 'officer-1' }, makeUser());
+    expect(result.stage).toBe(ProcessingCaseStage.DOCUMENTS_COLLECTION);
+  });
+
+  it('throws BadRequestException when the assignee is not a processing-side user', async () => {
+    const { service, prismaMock } = buildService();
+    prismaMock.processingCase.findUnique.mockResolvedValue(
+      makeProcessingCase({ stage: ProcessingCaseStage.INTAKE_PENDING }),
+    );
+    // Sales user — not allowed as case assignee.
+    prismaMock.userAccount.findUnique.mockResolvedValueOnce({
+      id: 'sales-1',
+      email: 'sales@example.com',
+      userRoles: [{ role: { name: 'sales' } }],
     });
 
     await expect(
-      service.acknowledgeIntake('case-1', {}, makeUser()),
+      service.acknowledgeIntake('case-1', { assignOfficerId: 'sales-1' }, makeUser()),
     ).rejects.toThrow(BadRequestException);
   });
 });

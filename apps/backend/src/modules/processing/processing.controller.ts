@@ -91,6 +91,17 @@ export class ProcessingController {
     return this.processingService.acknowledgeIntake(caseId, dto, user);
   }
 
+  /**
+   * Officer roster for the assign-on-acknowledge picker + reassignment UI.
+   * Returns active users in any processing-side role (associate / manager /
+   * documentation / admin). Sales / finance / support are excluded.
+   */
+  @Get('officers')
+  @RequireAnyPermissions('processing.case.assign', 'processing.case.view_all')
+  listProcessingOfficers() {
+    return this.processingService.listProcessingOfficers();
+  }
+
   // -------------------------------------------------------------------------
   // CASES
   // -------------------------------------------------------------------------

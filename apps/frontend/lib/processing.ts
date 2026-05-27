@@ -386,7 +386,7 @@ export function markCaseForRefund(
 
 export function acknowledgeIntake(
   caseId: string,
-  body: { assignOfficerId?: string } = {},
+  body: { assignOfficerId: string; service?: string },
 ): Promise<ApiProcessingCaseDetail> {
   return apiFetch<ApiProcessingCaseDetail>(`/processing/intake/${caseId}/acknowledge`, {
     method: 'POST',
@@ -394,6 +394,19 @@ export function acknowledgeIntake(
     body: JSON.stringify(body),
     cache: 'no-store',
   });
+}
+
+// Officer roster — used by manager-acknowledge + reassignment pickers.
+// Excludes sales / finance / support roles server-side.
+export interface ApiProcessingOfficer {
+  id: string;
+  email: string;
+  name: string;
+  primaryRole: 'processing' | 'processing_manager' | 'documentation' | 'super_admin' | 'admin' | string;
+}
+
+export function fetchProcessingOfficers(): Promise<ApiProcessingOfficer[]> {
+  return apiFetch<ApiProcessingOfficer[]>('/processing/officers', { cache: 'no-store' });
 }
 
 export function changeCaseStage(

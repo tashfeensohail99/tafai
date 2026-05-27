@@ -75,17 +75,26 @@ const PROCESSING_ROLES = new Set([
   'admin',
 ]);
 
-function buildProcessingNav(intakePending: number): DrawerMenuItem[] {
-  return [
-    { label: 'Dashboard', href: '/processing', icon: LayoutDashboard, caption: 'Officer overview' },
-    { label: 'Intake Queue', href: '/processing/intake', icon: Inbox, caption: 'New from Finance', badge: intakePending || undefined },
+// Per the Manager → Associate workflow, the Intake Queue (a.k.a. Manager
+// Queue) belongs to the manager — they confirm case category + pick the
+// associate. Associates never see this nav item; they pick up cases that
+// have already been assigned from "My Cases".
+function buildProcessingNav(intakePending: number, isManager: boolean): DrawerMenuItem[] {
+  const items: DrawerMenuItem[] = [
+    { label: 'Dashboard', href: '/processing', icon: LayoutDashboard, caption: 'Overview' },
+  ];
+  if (isManager) {
+    items.push({ label: 'Manager Queue', href: '/processing/intake', icon: Inbox, caption: 'New from Finance — assign', badge: intakePending || undefined });
+  }
+  items.push(
     { label: 'My Cases', href: '/processing/cases', icon: FolderKanban, caption: 'Your active caseload' },
     { label: 'Documents', href: '/processing/documents', icon: FileSearch, caption: 'Pending reviews' },
     { label: 'Tasks', href: '/processing/tasks', icon: ClipboardList, caption: 'Open task list' },
     { label: 'Refunds & Appeals', href: '/processing/refunds', icon: Wallet, caption: 'Rejected — refund or escalate' },
     { label: 'History', href: '/processing/history', icon: History, caption: 'Completed cases' },
     { label: 'Reports', href: '/processing/reports', icon: BarChart2, caption: 'Metrics & analytics' },
-  ];
+  );
+  return items;
 }
 
 const ADMIN_NAV: DrawerMenuItem[] = [
@@ -95,7 +104,7 @@ const ADMIN_NAV: DrawerMenuItem[] = [
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/processing') return { title: 'Processing Dashboard', subtitle: 'Your active caseload today' };
-  if (pathname === '/processing/intake') return { title: 'Intake Queue', subtitle: 'Cases handed over by Finance' };
+  if (pathname === '/processing/intake') return { title: 'Manager Queue', subtitle: 'Cases from Finance awaiting review and assignment' };
   if (pathname.startsWith('/processing/cases/')) return { title: 'Case Workspace', subtitle: 'Full case view' };
   if (pathname === '/processing/cases') return { title: 'My Cases', subtitle: 'Your active cases' };
   if (pathname === '/processing/documents') return { title: 'Document Reviews', subtitle: 'Documents awaiting your review' };
@@ -187,7 +196,11 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
   const logout = sessionValue.logout;
   const { title, subtitle } = getPageTitle(pathname);
   const activeCases = metrics.activeCases;
-  const navItems = buildProcessingNav(intakePending);
+  // Manager == anyone who can assign cases or view all cases. Sub-managers
+  // like admin / super_admin pick this up via processing.case.view_all too.
+  const isManager = user.permissions.includes('processing.case.assign')
+    || user.permissions.includes('processing.case.view_all');
+  const navItems = buildProcessingNav(intakePending, isManager);
 
   return (
     <ProcessingSessionContext.Provider value={sessionValue}>

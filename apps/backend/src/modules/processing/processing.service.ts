@@ -364,6 +364,13 @@ export class ProcessingService {
       // Auto-build checklist from templates. We try TWO lookups (service +
       // country, then service-only as fallback) so a generic "STUDY_VISA"
       // template still applies when no country-specific one exists yet.
+      // Lookup ladder:
+      //   1. (service, targetCountry) exact match — country-specific overrides
+      //      win when admin has curated them.
+      //   2. (service, 'GLOBAL') — seeded baseline templates that apply to
+      //      every destination by default (see migration
+      //      20260528130000_seed_document_templates).
+      //   3. Empty checklist + warning — officer adds items by hand.
       let templates = await tx.documentRequirementTemplate.findMany({
         where: {
           service: processingCase.service,
@@ -376,6 +383,7 @@ export class ProcessingService {
         templates = await tx.documentRequirementTemplate.findMany({
           where: {
             service: processingCase.service,
+            targetCountry: 'GLOBAL',
             isActive: true,
           },
           orderBy: { sortOrder: 'asc' },
@@ -389,7 +397,7 @@ export class ProcessingService {
       // that blocked the entire intake flow until admin created a template.)
       if (templates.length === 0) {
         this.logger.warn(
-          `acknowledgeIntake: no DocumentRequirementTemplate for service="${processingCase.service}" / country="${processingCase.targetCountry}". Case acknowledged with an empty checklist — officer can add doc items manually.`,
+          `acknowledgeIntake: no DocumentRequirementTemplate for service="${processingCase.service}" / country="${processingCase.targetCountry}" (and no GLOBAL fallback). Case acknowledged with an empty checklist — officer can add doc items manually.`,
         );
       } else {
         await tx.caseDocumentItem.createMany({

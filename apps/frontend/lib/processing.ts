@@ -241,6 +241,176 @@ export function updateCasePriority(
 }
 
 // ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+
+export type ProcessingNoteType =
+  | 'GENERAL'
+  | 'ESCALATION'
+  | 'STRATEGY'
+  | 'CLIENT_INSIGHT'
+  | 'AUTHORITY_NOTE'
+  | 'MANAGER_ONLY';
+
+export interface ApiProcessingNote {
+  id: string;
+  caseId: string;
+  content: string;
+  noteType: ProcessingNoteType;
+  isPinned: boolean;
+  mentions: string[];
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: { id: string; email: string } | null;
+}
+
+export function fetchCaseNotes(caseId: string): Promise<ApiProcessingNote[]> {
+  return apiFetch<ApiProcessingNote[]>(`/processing/cases/${caseId}/notes`, { cache: 'no-store' });
+}
+
+export function createCaseNote(
+  caseId: string,
+  body: { content: string; noteType?: ProcessingNoteType; mentions?: string[] },
+): Promise<ApiProcessingNote> {
+  return apiFetch<ApiProcessingNote>(`/processing/cases/${caseId}/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+export function pinCaseNote(
+  caseId: string,
+  noteId: string,
+  body: { isPinned: boolean },
+): Promise<ApiProcessingNote> {
+  return apiFetch<ApiProcessingNote>(`/processing/cases/${caseId}/notes/${noteId}/pin`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+export type ProcessingTaskStatus = 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type ProcessingTaskPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+
+export interface ApiProcessingTask {
+  id: string;
+  caseId: string;
+  title: string;
+  description: string | null;
+  assignedToUserId: string | null;
+  createdByUserId: string;
+  dueDate: string | null;
+  priority: ProcessingTaskPriority;
+  status: ProcessingTaskStatus;
+  completedAt: string | null;
+  completedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assignedTo?: { id: string; email: string } | null;
+  createdBy?: { id: string; email: string } | null;
+  completedBy?: { id: string; email: string } | null;
+}
+
+export function fetchCaseTasks(caseId: string): Promise<ApiProcessingTask[]> {
+  return apiFetch<ApiProcessingTask[]>(`/processing/cases/${caseId}/tasks`, { cache: 'no-store' });
+}
+
+export function createCaseTask(
+  caseId: string,
+  body: {
+    title: string;
+    description?: string;
+    assignedToUserId?: string;
+    dueDate?: string;
+    priority?: ProcessingTaskPriority;
+  },
+): Promise<ApiProcessingTask> {
+  return apiFetch<ApiProcessingTask>(`/processing/cases/${caseId}/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+export function updateCaseTask(
+  caseId: string,
+  taskId: string,
+  body: Partial<{
+    title: string;
+    description: string | null;
+    assignedToUserId: string | null;
+    dueDate: string | null;
+    priority: ProcessingTaskPriority;
+    status: ProcessingTaskStatus;
+  }>,
+): Promise<ApiProcessingTask> {
+  return apiFetch<ApiProcessingTask>(`/processing/cases/${caseId}/tasks/${taskId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Documents (list-only here; uploads + reviews land in a later commit)
+// ---------------------------------------------------------------------------
+
+export type DocumentCriticality = 'CRITICAL' | 'REQUIRED' | 'CONDITIONAL' | 'SUPPORTING' | 'OPTIONAL';
+export type DocumentItemStatus =
+  | 'NOT_SUBMITTED'
+  | 'REQUESTED'
+  | 'AWAITING_UPLOAD'
+  | 'UPLOADED'
+  | 'UNDER_REVIEW'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'WAIVED'
+  | 'NOT_APPLICABLE'
+  | 'EXPIRED';
+
+export interface ApiCaseDocumentItem {
+  id: string;
+  caseId: string;
+  templateId: string | null;
+  documentName: string;
+  description: string | null;
+  criticality: DocumentCriticality;
+  expectedFormats: string[];
+  maxFileSizeMb: number;
+  validityRule: string;
+  validityMonths: number | null;
+  status: DocumentItemStatus;
+  latestVersionId: string | null;
+  validityExpiryDate: string | null;
+  sortOrder: number;
+  isAddedManually: boolean;
+  createdAt: string;
+  updatedAt: string;
+  latestVersion?: {
+    id: string;
+    fileName: string;
+    fileSizeBytes: number | null;
+    versionNumber: number;
+    uploadedAt: string;
+  } | null;
+}
+
+export function fetchCaseDocuments(caseId: string): Promise<ApiCaseDocumentItem[]> {
+  return apiFetch<ApiCaseDocumentItem[]>(`/processing/cases/${caseId}/documents`, { cache: 'no-store' });
+}
+
+// ---------------------------------------------------------------------------
 // Display helpers
 // ---------------------------------------------------------------------------
 

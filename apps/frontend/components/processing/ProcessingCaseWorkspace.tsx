@@ -3,7 +3,7 @@
 // Full case view with left metadata rail and tabbed panel.
 // Tabs: Documents · Timeline · Communications · Notes · Tasks · Submissions
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -18,6 +18,7 @@ import {
   Globe,
   History,
   Layers,
+  Loader2,
   MessageSquare,
   Phone,
   Send,
@@ -44,6 +45,13 @@ import {
   PRIORITY_LABEL,
   type MockProcessingCase,
 } from '@/components/processing/mockData';
+import {
+  fetchProcessingCase,
+  casePersonName,
+  casePersonPhone,
+  type ApiProcessingCaseDetail,
+} from '@/lib/processing';
+import { labelForServiceCode } from '@/lib/service-types';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
 import { DocumentChecklistTab } from './tabs/DocumentChecklistTab';
 import { CaseTimelineTab } from './tabs/CaseTimelineTab';
@@ -194,8 +202,9 @@ interface ProcessingCaseWorkspaceProps {
 }
 
 export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps) {
-  const c = getCaseById(caseId);
   const { user } = useProcessingSession();
+  const [api, setApi] = useState<ApiProcessingCaseDetail | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('documents');
   const [showStageModal, setShowStageModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -204,11 +213,19 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const isManager = user.permissions.includes('processing.case.view_all');
   const canAssign = user.permissions.includes('processing.case.assign');
 
-  if (!c) {
+  useEffect(() => {
+    let cancelled = false;
+    fetchProcessingCase(caseId)
+      .then((r) => { if (!cancelled) setApi(r); })
+      .catch((e: unknown) => { if (!cancelled) setLoadErr(e instanceof Error ? e.message : 'Failed to load case'); });
+    return () => { cancelled = true; };
+  }, [caseId]);
+
+  if (loadErr) {
     return (
       <GlassCard variant="panel" padded="lg">
         <div style={{ textAlign: 'center', padding: '40px', color: 'var(--sos-text-muted)' }}>
-          Case not found.{' '}
+          {loadErr}.{' '}
           <Link href={'/processing/cases' as Route} style={{ color: 'var(--sos-brand-primary-strong)' }}>
             Back to cases
           </Link>
@@ -216,6 +233,57 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
       </GlassCard>
     );
   }
+  if (!api) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: 10, color: 'var(--sos-text-muted)' }}>
+        <Loader2 size={18} className="sos-spin" />
+        <span>Loading case…</span>
+      </div>
+    );
+  }
+
+  // Adapter: convert API case to the MockProcessingCase shape the existing
+  // tab components (DocumentChecklistTab, CommunicationsTab, etc.) still
+  // depend on. Header / sidebar fields are real; tab-specific arrays start
+  // empty until each tab is wired to its own backend endpoint in the next
+  // pass. InternalNotesTab + TasksTab read directly from the API client and
+  // ignore these empty arrays.
+  const c: MockProcessingCase = {
+    id: api.id,
+    service: api.service,
+    targetCountry: api.targetCountry,
+    stage: api.stage as MockProcessingCase['stage'],
+    priority: api.priority as MockProcessingCase['priority'],
+    clientName: casePersonName(api),
+    clientPhone: casePersonPhone(api),
+    assignedOfficer: api.assignedOfficer
+      ? {
+          id: api.assignedOfficer.id,
+          name: api.assignedOfficer.email.split('@')[0] ?? api.assignedOfficer.email,
+          email: api.assignedOfficer.email,
+          initials: (api.assignedOfficer.email.slice(0, 2) ?? 'U').toUpperCase(),
+          role: 'Processing Officer',
+        }
+      : null,
+    financeAmount: api.financeHandover ? Number(api.financeHandover.submittedAmount) : 0,
+    financeCurrency: api.financeHandover?.currency ?? 'CAD',
+    financeHandoverNote: api.financeHandoverNote,
+    handoverOfficerName: 'Finance team',
+    createdAt: api.createdAt,
+    documentItems: [],   // wired separately per-tab in the next pass
+    communications: [],
+    notes: [],
+    tasks: [],
+    timeline: api.stageHistory.map((h) => ({
+      id: h.id,
+      createdAt: h.createdAt,
+      eventType: 'STAGE_CHANGED',
+      actorName: 'System',
+      description: `Stage moved to ${h.toStage}${h.reason ? ` — ${h.reason}` : ''}`,
+    })),
+    submissions: [],
+    daysInCurrentStage: Math.max(0, Math.floor((Date.now() - new Date(api.updatedAt).getTime()) / 86400000)),
+  };
 
   return (
     <>

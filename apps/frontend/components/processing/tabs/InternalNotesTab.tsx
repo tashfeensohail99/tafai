@@ -1,10 +1,11 @@
 'use client';
-// Internal Notes Tab — Phase 1B.
+// Internal Notes Tab — real backend wiring.
 // Pinned notes at top. Type pills (GENERAL / ESCALATION / STRATEGY / etc.)
-// Add note form below the list.
+// Add note form below the list. POSTs to /processing/cases/:id/notes.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  Loader2,
   Pin,
   PlusCircle,
   StickyNote,
@@ -18,11 +19,16 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   type MockProcessingCase,
-  type MockNote,
   fmtRelative,
 } from '@/components/processing/mockData';
+import {
+  fetchCaseNotes,
+  createCaseNote,
+  type ApiProcessingNote,
+  type ProcessingNoteType,
+} from '@/lib/processing';
 
-function noteTypeTone(type: MockNote['noteType']): BadgeTone {
+function noteTypeTone(type: ProcessingNoteType): BadgeTone {
   switch (type) {
     case 'ESCALATION': return 'danger';
     case 'STRATEGY': return 'violet';
@@ -33,7 +39,7 @@ function noteTypeTone(type: MockNote['noteType']): BadgeTone {
   }
 }
 
-function noteTypeLabel(type: MockNote['noteType']): string {
+function noteTypeLabel(type: ProcessingNoteType): string {
   switch (type) {
     case 'GENERAL': return 'General';
     case 'ESCALATION': return 'Escalation';
@@ -45,7 +51,8 @@ function noteTypeLabel(type: MockNote['noteType']): string {
   }
 }
 
-function NoteCard({ note }: { note: MockNote }) {
+function NoteCard({ note }: { note: ApiProcessingNote }) {
+  const author = note.createdBy?.email.split('@')[0] ?? 'Officer';
   return (
     <GlassCard variant="default" padded="md">
       <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
@@ -63,10 +70,10 @@ function NoteCard({ note }: { note: MockNote }) {
               <StatusBadge tone="warm" size="sm" dot={false}>Pinned</StatusBadge>
             ) : null}
             <span style={{ fontSize: '11px', color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>
-              {note.createdByName} · {fmtRelative(note.createdAt)}
+              {author} · {fmtRelative(note.createdAt)}
             </span>
           </div>
-          <div style={{ fontSize: '13.5px', color: 'var(--sos-text-primary)', lineHeight: 1.65 }}>
+          <div style={{ fontSize: '13.5px', color: 'var(--sos-text-primary)', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
             {note.content}
           </div>
         </div>
@@ -75,44 +82,37 @@ function NoteCard({ note }: { note: MockNote }) {
   );
 }
 
-// ---------- Add note form -------------------------------------------------
-
-type NoteType = MockNote['noteType'];
-
-const NOTE_TYPES: Array<{ value: NoteType; label: string }> = [
+const NOTE_TYPES: Array<{ value: ProcessingNoteType; label: string }> = [
   { value: 'GENERAL', label: 'General' },
   { value: 'STRATEGY', label: 'Strategy' },
   { value: 'CLIENT_INSIGHT', label: 'Client insight' },
   { value: 'AUTHORITY_NOTE', label: 'Authority note' },
   { value: 'ESCALATION', label: 'Escalation' },
+  { value: 'MANAGER_ONLY', label: 'Manager only' },
 ];
 
-function AddNoteForm({ onAdd }: { onAdd: (note: MockNote) => void }) {
+function AddNoteForm({ onSaved, caseId }: { onSaved: (n: ApiProcessingNote) => void; caseId: string }) {
   const [open, setOpen] = useState(false);
-  const [type, setType] = useState<NoteType>('GENERAL');
+  const [type, setType] = useState<ProcessingNoteType>('GENERAL');
   const [content, setContent] = useState('');
-  const [pinned, setPinned] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!content.trim()) return;
-    setLoading(true);
-    setTimeout(() => {
-      const newNote: MockNote = {
-        id: `note-new-${Date.now()}`,
-        content,
-        noteType: type,
-        isPinned: pinned,
-        createdByName: 'Sara Malik',
-        createdAt: new Date().toISOString(),
-      };
-      onAdd(newNote);
+    setSaving(true);
+    setErr(null);
+    try {
+      const saved = await createCaseNote(caseId, { content: content.trim(), noteType: type });
+      onSaved(saved);
       setContent('');
-      setPinned(false);
       setType('GENERAL');
       setOpen(false);
-      setLoading(false);
-    }, 500);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to save note');
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!open) {
@@ -126,7 +126,6 @@ function AddNoteForm({ onAdd }: { onAdd: (note: MockNote) => void }) {
   return (
     <GlassCard variant="strong" padded="md">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {/* Type selector */}
         <div>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--sos-text-muted)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Note type</div>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -142,8 +141,6 @@ function AddNoteForm({ onAdd }: { onAdd: (note: MockNote) => void }) {
             ))}
           </div>
         </div>
-
-        {/* Content textarea */}
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
@@ -151,19 +148,17 @@ function AddNoteForm({ onAdd }: { onAdd: (note: MockNote) => void }) {
           rows={4}
           style={{ width: '100%', resize: 'vertical', padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: '14px', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
         />
-
-        {/* Pin checkbox */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--sos-text-muted)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} style={{ accentColor: 'var(--sos-brand-primary-strong)' }} />
-          Pin this note to the top
-        </label>
-
+        {err ? (
+          <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12.5 }}>
+            {err}
+          </div>
+        ) : null}
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
           <button type="button" onClick={() => setOpen(false)} style={{ padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: '13px', cursor: 'pointer' }}>
             Cancel
           </button>
-          <PrimaryButton onClick={handleSubmit} disabled={loading || !content.trim()}>
-            {loading ? 'Saving…' : 'Save note'}
+          <PrimaryButton onClick={handleSubmit} disabled={saving || !content.trim()}>
+            {saving ? 'Saving…' : 'Save note'}
           </PrimaryButton>
         </div>
       </div>
@@ -171,25 +166,47 @@ function AddNoteForm({ onAdd }: { onAdd: (note: MockNote) => void }) {
   );
 }
 
-// ---------- Notes tab component -------------------------------------------
-
 export function InternalNotesTab({ c }: { c: MockProcessingCase }) {
-  const [notes, setNotes] = useState<MockNote[]>(c.notes);
+  // Real backend wire-up. Fetches /processing/cases/:id/notes on mount,
+  // appends new notes after a successful POST.
+  const [notes, setNotes] = useState<ApiProcessingNote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCaseNotes(c.id)
+      .then((rows) => { if (!cancelled) setNotes(rows); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to load notes'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [c.id]);
 
   const pinned = notes.filter((n) => n.isPinned);
   const rest = notes.filter((n) => !n.isPinned);
 
-  function handleAdd(note: MockNote) {
-    setNotes((prev) => [note, ...prev]);
+  function handleSaved(n: ApiProcessingNote) {
+    setNotes((prev) => [n, ...prev]);
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <AddNoteForm onAdd={handleAdd} />
+        <AddNoteForm caseId={c.id} onSaved={handleSaved} />
       </div>
 
-      {notes.length === 0 ? (
+      {loading ? (
+        <GlassCard variant="panel" padded="lg">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+            <Loader2 size={16} className="sos-spin" />
+            <span>Loading notes…</span>
+          </div>
+        </GlassCard>
+      ) : err ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>{err}</div>
+        </GlassCard>
+      ) : notes.length === 0 ? (
         <GlassCard variant="panel" padded="lg">
           <EmptyState
             Icon={StickyNote}

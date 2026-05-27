@@ -131,6 +131,13 @@ export class OrchestratorService {
             firstName: true,
             lastName: true,
             convertedClientId: true,
+            // Assigned agent's first name — used in the bot's welcome line
+            // so the customer sees a real human's name behind the bot:
+            // "Welcome to Tashfeen Immigration Solutions. I'm Iffat,
+            // Immigration Solutions Associate…"
+            assignedEmployee: {
+              select: { firstName: true },
+            },
           },
         },
       },
@@ -249,6 +256,19 @@ export class OrchestratorService {
     // is right there in CONTEXT. 0.50 is a calmer floor.
     const confident = topSim >= 0.50;
 
+    // First-ever bot reply on this thread? Used to drive a proper welcome
+    // template ("Welcome to Tashfeen Immigration Solutions. I'm <agent>,
+    // Immigration Solutions Associate…"). We treat "no prior OUTBOUND bot
+    // message in history" as the trigger — works for new leads AND for
+    // existing-lead threads that just got bot-enabled.
+    const isFirstBotReply = !history.some(
+      (m) => m.direction === 'OUTBOUND' && m.sentByEmployeeId === null,
+    );
+    // Bare greeting detection: customer said "hi" / "hello" / "salam" / etc.
+    // with no actual question attached. Drives the "how can we assist you
+    // today?" branch of the welcome.
+    const isBareGreeting = this.isBareGreeting(input.inboundText);
+
     const systemPrompt = this.systemPrompt({
       language,
       currentState: thread.aiState,
@@ -258,6 +278,9 @@ export class OrchestratorService {
       // the bot doesn't greet "Hi Customer 1234" or "Hi +92345…". Imports
       // sometimes leave junk in firstName until sales cleans it up.
       leadFirstName: this.sanitizedFirstName(thread.lead?.firstName),
+      agentFirstName: thread.lead?.assignedEmployee?.firstName ?? null,
+      isFirstBotReply,
+      isBareGreeting,
     });
     const contextBlock = this.formatContext(retrieved);
     const historyBlock = this.formatHistory(history, input.inboundText);
@@ -763,13 +786,36 @@ export class OrchestratorService {
     nextState: string;
     confident: boolean;
     leadFirstName: string | null;
+    agentFirstName: string | null;
+    isFirstBotReply: boolean;
+    isBareGreeting: boolean;
   }): string {
-    const { language, nextState, confident, leadFirstName } = opts;
+    const {
+      language,
+      nextState,
+      confident,
+      leadFirstName,
+      agentFirstName,
+      isFirstBotReply,
+      isBareGreeting,
+    } = opts;
     const name = leadFirstName ? `, ${leadFirstName}` : '';
     const isUrdu = language === 'ur_roman';
+    // House welcome template — used on the very first bot reply to a thread.
+    // Names the human agent so the customer feels they're talking to a real
+    // person on a real team, not a bare-bones bot.
+    const agent = (agentFirstName ?? '').trim();
+    const welcomeLead = agent
+      ? `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}! I'm ${agent}, Immigration Solutions Associate."`
+      : `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}!"`;
+    const followUp = isBareGreeting
+      ? `Since the customer just said hi/hello (no real question), after the welcome line ask: "How can we assist you today?" — and stop there. Do NOT pitch anything yet.`
+      : `Then answer their question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;
+
+    const initialGoal = `Greet warmly${name}. Answer the question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;
 
     const goalByState: Record<string, string> = {
-      INITIAL: `Greet warmly${name}. Answer the question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`,
+      INITIAL: initialGoal,
       Q_AND_A: `Answer briefly from CONTEXT, then suggest booking a quick consultation with our manager for the detail. Don't push hard — one line.`,
       APPOINTMENT_PROPOSED: `Ask them directly if they'd like to book a quick call with the manager. Offer 3 formats: phone call, Google Meet, or office visit in Islamabad. End with the question.`,
       APPOINTMENT_AVAILABILITY: `They've said yes (or close). Now ask which day + time slot works (morning/afternoon/evening). Keep it short.`,
@@ -783,7 +829,13 @@ export class OrchestratorService {
       `Your #1 goal is booking a consultation. Answer questions enough to build trust, then move toward booking. You're the first contact, NOT the consultant who closes — that's the manager's job.`,
       ``,
       `CURRENT FUNNEL STATE → ${nextState}`,
-      `Goal this turn: ${goalByState[nextState] ?? goalByState.INITIAL}`,
+      // First-ever bot reply on this thread: the welcome template takes
+      // priority over whatever the funnel state would normally say. We keep
+      // the funnel-state goal afterwards so the bot still nudges toward
+      // booking on the same turn if the customer asked a real question.
+      isFirstBotReply
+        ? `Goal this turn (FIRST REPLY — welcome overrides):\n${welcomeLead}\n${followUp}`
+        : `Goal this turn: ${goalByState[nextState] ?? goalByState.INITIAL}`,
       ``,
       `VOICE & STYLE (this is the most important part)`,
       `Detected language: "${language}".`,
@@ -1057,6 +1109,36 @@ export class OrchestratorService {
     if (/^[\d\s+\-()]+$/.test(t)) return null; // pure digits / phone
     if (/^\+?\d/.test(t)) return null;          // starts with digit / +
     return t;
+  }
+
+  /**
+   * Is the customer's first message a bare greeting (no actual question)?
+   * Drives the welcome branch: "how can we assist you today?" vs
+   * "let me answer your question, here's the answer + a soft nudge".
+   *
+   * Matches English greetings, Roman Urdu, and Urdu script — single or
+   * stacked ("salam bhai", "hi hello", "assalamualaikum") with no
+   * trailing question content.
+   */
+  private isBareGreeting(text: string): boolean {
+    const t = text.trim().toLowerCase();
+    if (!t) return false;
+    // Strip greeting tokens; if what's left has zero substantive content,
+    // it's a bare greeting.
+    const stripped = t
+      .replace(
+        /\b(hi+|hello+|hey+|heyy+|yo|salam|salaam|assalam(?:u)?(?:\s*)?(?:o|wa)?(?:\s*)?alaikum|aoa|asalamualaikum|walaikum|good\s*(morning|afternoon|evening|night)|bhai|sir|sis|madam|please|plz)\b/g,
+        '',
+      )
+      .replace(/[!?.,👋🙏]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Same for Urdu script
+    const strippedUrdu = stripped
+      .replace(/(السلام\s*علیکم|وعلیکم\s*السلام|ہیلو|السلام)/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return strippedUrdu.length === 0 || strippedUrdu.length <= 2;
   }
 
   /**

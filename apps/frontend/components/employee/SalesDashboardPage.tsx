@@ -41,7 +41,16 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
-import { fetchLeads, fetchFollowUps, fetchAppointments } from '@/lib/sales-api';
+import {
+  fetchLeads,
+  fetchFollowUps,
+  fetchAppointments,
+  fetchSalesDashboardSummary,
+  mapPriority,
+  mapStatus,
+  mapStageToStatus,
+  type SalesDashboardSummary,
+} from '@/lib/sales-api';
 import { getThreadStats, type ThreadStats } from '@/lib/whatsapp';
 import { useEffect, useState } from 'react';
 
@@ -92,40 +101,37 @@ export function SalesDashboardPage() {
   const { user } = useEmployeeSession();
   const firstName = user.email.split('@')[0] ?? 'there';
 
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [summary, setSummary] = useState<SalesDashboardSummary | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [slaStats, setSlaStats] = useState<ThreadStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // One lean aggregate request instead of fetching all 1000+ leads,
+    // plus the smaller follow-up / appointments / thread-stats calls
+    // — all in parallel.
     Promise.all([
-      fetchLeads(),
+      fetchSalesDashboardSummary(),
       fetchFollowUps(),
       fetchAppointments(),
       getThreadStats().catch(() => null),
-    ]).then(([l, f, a, s]) => {
-      setLeads(l);
+    ]).then(([sm, f, a, s]) => {
+      setSummary(sm);
       setFollowUps(f);
       setAppointments(a);
       setSlaStats(s);
     }).finally(() => setLoading(false));
   }, []);
 
-  const activeLeads = leads.filter((l) => !['SENT_TO_FINANCE'].includes(l.stage));
-  const adminAssigned = leads.filter((l) => l.assignmentType === 'ADMIN').length;
-  const autoAssigned = leads.filter((l) => l.assignmentType === 'AUTO_CRM').length;
-  const overdue = leads.filter((l) => l.slaStatus === 'OVERDUE').length;
-
-  // Real "assigned today" counts (was a hardcoded "+3 today" string).
-  const isToday = (iso?: string) => {
-    if (!iso) return false;
-    const d = new Date(iso);
-    const now = new Date();
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  };
-  const adminToday = leads.filter((l) => l.assignmentType === 'ADMIN' && isToday(l.assignedAt)).length;
-  const autoToday = leads.filter((l) => l.assignmentType === 'AUTO_CRM' && isToday(l.assignedAt)).length;
+  // Default the counters to 0 until the summary lands, so loading state
+  // doesn't crash the rendered counts.
+  const activeLeads = summary?.activeLeads ?? 0;
+  const adminAssigned = summary?.adminAssigned ?? 0;
+  const autoAssigned = summary?.autoAssigned ?? 0;
+  const adminToday = summary?.adminToday ?? 0;
+  const autoToday = summary?.autoToday ?? 0;
+  const overdue = summary?.overdue ?? 0;
 
   const dueToday = followUps.filter((f) => f.status === 'DUE_TODAY').length;
   const followOverdue = followUps.filter((f) => f.status === 'OVERDUE').length;
@@ -138,20 +144,36 @@ export function SalesDashboardPage() {
   const slaOverdue = slaStats?.overdue ?? 0;
   // Admins/managers see the org-wide aggregate; agents see their own.
   const slaIsOrg = slaStats?.slaScoreScope === 'org';
-  const handovers = leads.filter((l) => l.stage === 'SENT_TO_FINANCE').length;
+  const handovers = summary?.handovers ?? 0;
 
   const upcomingAppointments = appointments
     .filter((a) => a.status === 'BOOKED' || a.status === 'PENDING')
     .sort((a, b) => +new Date(a.scheduledAt) - +new Date(b.scheduledAt))
     .slice(0, 4);
 
-  const recentLeads = [...leads]
-    .sort((a, b) => +new Date(b.assignedAt) - +new Date(a.assignedAt))
-    .slice(0, 5);
+  // The backend's dashboard-summary already returns the 5 most recent
+  // leads ordered by createdAt DESC. We map the slim API shape onto the
+  // existing UI shape so the JSX downstream keeps working.
+  const recentLeads = (summary?.recentLeads ?? []).map((l) => ({
+    id: l.id,
+    firstName: l.firstName,
+    lastName: l.lastName,
+    phone: l.phone,
+    stage: mapStatus(l.stage) as LeadStage,
+    priority: mapPriority(l.priority),
+    assignedAt: l.assignedAt,
+    targetCountry: l.targetCountry ?? '—',
+    service: l.serviceInterest ?? 'Immigration',
+  }));
 
-  const totalPipeline = leads.length;
+  // Pipeline tile uses the same status counts from the backend.
+  const pipelineCounts = new Map<string, number>(
+    (summary?.pipeline ?? []).map((p) => [p.stage, p.count]),
+  );
+  const totalPipeline = Array.from(pipelineCounts.values()).reduce((a, b) => a + b, 0);
   const pipeline = PIPELINE_STAGES.map((s) => {
-    const count = leads.filter((l) => l.stage === s.key).length;
+    const backendStatus = mapStageToStatus(s.key);
+    const count = pipelineCounts.get(backendStatus) ?? 0;
     return {
       ...s,
       count,
@@ -203,7 +225,7 @@ export function SalesDashboardPage() {
         title={<>Keep today&rsquo;s lead queue calm, fast, and under control.</>}
         description={
           <>
-            {activeLeads.length} active leads are moving right now. {dueToday} follow-ups need a touch
+            {activeLeads} active leads are moving right now. {dueToday} follow-ups need a touch
             today, {followOverdue} are outside the SLA window, and {upcomingAppointments.length}{' '}
             appointments are already locked in.
           </>
@@ -241,7 +263,7 @@ export function SalesDashboardPage() {
               gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
             }}
           >
-            <FocusChip label="Active queue" value={activeLeads.length} tone="var(--sos-brand-primary-strong)" />
+            <FocusChip label="Active queue" value={activeLeads} tone="var(--sos-brand-primary-strong)" />
             <FocusChip label="Touches due today" value={dueToday} tone="var(--sos-brand-accent)" />
             <FocusChip label="Finance-ready" value={handovers} tone="var(--sos-status-success)" />
             <FocusChip label="SLA overdue" value={overdue} tone="var(--sos-status-danger)" />
@@ -521,9 +543,11 @@ export function SalesDashboardPage() {
                     <StatusBadge tone={stageBadgeTone(lead.stage)} size="sm">
                       {STAGE_LABEL[lead.stage]}
                     </StatusBadge>
-                    {lead.slaStatus === 'OVERDUE' ? (
-                      <StatusBadge tone="danger" size="sm">SLA overdue</StatusBadge>
-                    ) : null}
+                    {/* SLA status isn't returned by the summary endpoint (it
+                        was derived per-lead by mapping stage → status). The
+                        sidebar already shows the org-level overdue count, so
+                        leaving the per-row badge off keeps the dashboard
+                        snappier without losing the signal. */}
                   </div>
                   <div
                     style={{

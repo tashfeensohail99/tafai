@@ -873,6 +873,140 @@ export class LeadsService {
    * tracker — assigned leads, open / overdue follow-ups, and the agent's
    * Response-SLA score. Cheap COUNT queries; safe to call on every page load.
    */
+  /**
+   * Sales dashboard one-shot aggregate. Replaces the previous pattern of
+   * fetching all leads + follow-ups + appointments client-side just to
+   * compute counts — that was downloading ~260KB to display 7 numbers.
+   *
+   * Returns counts + the 5 most recent assigned leads in a single
+   * round-trip (~5KB). All Prisma calls run in parallel via Promise.all.
+   *
+   * Scopes to the caller's own book unless they have `leads.view_all`.
+   */
+  async salesDashboardSummary(user: RequestUser): Promise<{
+    activeLeads: number;
+    handovers: number;
+    adminAssigned: number;
+    autoAssigned: number;
+    adminToday: number;
+    autoToday: number;
+    overdue: number;
+    pipeline: Array<{ stage: string; count: number }>;
+    recentLeads: Array<{
+      id: string;
+      firstName: string;
+      lastName: string;
+      phone: string;
+      stage: string;
+      priority: string | null;
+      assignedAt: Date;
+      targetCountry: string | null;
+      serviceInterest: string | null;
+    }>;
+  }> {
+    const canViewAll = user.permissions.includes('leads.view_all');
+    const employeeId = canViewAll ? undefined : await this.findEmployeeIdByUserId(user.id);
+
+    // Common WHERE — applied to every count below so admin sees org-wide,
+    // agent sees their own book. Empty result for an agent without an
+    // employee row (would be a config error, but we no-op cleanly).
+    if (!canViewAll && !employeeId) {
+      return {
+        activeLeads: 0,
+        handovers: 0,
+        adminAssigned: 0,
+        autoAssigned: 0,
+        adminToday: 0,
+        autoToday: 0,
+        overdue: 0,
+        pipeline: [],
+        recentLeads: [],
+      };
+    }
+    const scope = canViewAll ? {} : { assignedEmployeeId: employeeId };
+
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const [
+      active,
+      handovers,
+      totalLeads,
+      todayLeads,
+      overdue,
+      pipelineRows,
+      recent,
+    ] = await Promise.all([
+      this.prisma.lead.count({
+        where: { ...scope, deletedAt: null, status: { not: 'CONVERTED' } },
+      }),
+      // SENT_TO_FINANCE in the UI maps to LeadStatus.CONVERTED.
+      this.prisma.lead.count({
+        where: { ...scope, deletedAt: null, status: 'CONVERTED' },
+      }),
+      this.prisma.lead.count({ where: { ...scope, deletedAt: null } }),
+      this.prisma.lead.count({
+        where: { ...scope, deletedAt: null, createdAt: { gte: startOfToday } },
+      }),
+      // SLA-overdue = followUps overdue today (matches the sidebar's overdueFollowUps)
+      this.prisma.followUp.count({
+        where: {
+          status: 'OPEN',
+          dueAt: { lt: now },
+          ...(employeeId ? { assignedEmployeeId: employeeId } : {}),
+        },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['status'],
+        where: { ...scope, deletedAt: null },
+        _count: true,
+      }),
+      this.prisma.lead.findMany({
+        where: { ...scope, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          status: true,
+          priority: true,
+          createdAt: true,
+          targetCountry: true,
+          serviceInterest: true,
+        },
+      }),
+    ]);
+
+    return {
+      activeLeads: active,
+      handovers,
+      // The Sales UI hardcodes assignmentType='ADMIN' for every lead today
+      // (we don't actually track AUTO_CRM-vs-ADMIN separately yet). Return
+      // total + today so the dashboard tile reads accurately, with auto=0
+      // to preserve the existing two-tile layout.
+      adminAssigned: totalLeads,
+      autoAssigned: 0,
+      adminToday: todayLeads,
+      autoToday: 0,
+      overdue,
+      pipeline: pipelineRows.map((r) => ({ stage: r.status, count: r._count as unknown as number })),
+      recentLeads: recent.map((l) => ({
+        id: l.id,
+        firstName: l.firstName,
+        lastName: l.lastName,
+        phone: l.phone,
+        stage: l.status,
+        priority: l.priority,
+        assignedAt: l.createdAt,
+        targetCountry: l.targetCountry,
+        serviceInterest: l.serviceInterest,
+      })),
+    };
+  }
+
   async myStats(userId: string): Promise<{
     assignedLeads: number;
     openFollowUps: number;

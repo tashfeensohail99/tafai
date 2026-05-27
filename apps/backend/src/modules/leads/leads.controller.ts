@@ -59,6 +59,19 @@ export class LeadsController {
     return this.leadsService.myStats(user.id);
   }
 
+  /**
+   * One-shot aggregate for the sales dashboard. Returns counts + the 5
+   * most recent leads in a single ~5KB payload — replaces the old pattern
+   * of fetching all 1000+ leads client-side just to compute counts.
+   *
+   * Mounted before @Get(':id') so the path isn't parsed as a UUID.
+   */
+  @Get('dashboard-summary')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  dashboardSummary(@CurrentUser() user: RequestUser) {
+    return this.leadsService.salesDashboardSummary(user);
+  }
+
   /** KPI summary for the admin leads dashboard (total, by status, from ads). */
   @Get('stats')
   @RequirePermissions('leads.view_all')

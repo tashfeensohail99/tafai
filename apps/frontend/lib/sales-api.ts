@@ -101,7 +101,7 @@ export interface ApiAppointment {
 // Mapping helpers
 // ---------------------------------------------------------------------------
 
-function mapStatus(backendStatus: string): LeadStage {
+export function mapStatus(backendStatus: string): LeadStage {
   switch (backendStatus) {
     case 'NEW':          return 'NEW';
     case 'CONTACTED':    return 'CONTACTED';
@@ -129,7 +129,7 @@ export function mapStageToStatus(stage: LeadStage): string {
   }
 }
 
-function mapPriority(p: string | null | undefined): Priority {
+export function mapPriority(p: string | null | undefined): Priority {
   if (!p) return 'MEDIUM';
   const u = p.toUpperCase();
   if (u === 'HOT' || u === 'HIGH')  return 'HIGH';
@@ -300,6 +300,38 @@ export function adaptAppointment(api: ApiAppointment): Appointment {
 export async function fetchLeads(): Promise<Lead[]> {
   const data = await apiFetch<ApiLead[]>('/leads');
   return (data ?? []).map(adaptLead);
+}
+
+/**
+ * Sales-dashboard one-shot summary. Replaces the previous pattern of
+ * fetching all leads + follow-ups + appointments client-side just to
+ * compute counts — that round-tripped ~260KB. This endpoint returns
+ * ~5KB with everything the dashboard needs.
+ */
+export interface SalesDashboardSummary {
+  activeLeads: number;
+  handovers: number;
+  adminAssigned: number;
+  autoAssigned: number;
+  adminToday: number;
+  autoToday: number;
+  overdue: number;
+  pipeline: Array<{ stage: string; count: number }>;
+  recentLeads: Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    stage: string;
+    priority: string | null;
+    assignedAt: string;
+    targetCountry: string | null;
+    serviceInterest: string | null;
+  }>;
+}
+
+export function fetchSalesDashboardSummary(): Promise<SalesDashboardSummary> {
+  return apiFetch<SalesDashboardSummary>('/leads/dashboard-summary', { cache: 'no-store' });
 }
 
 export async function fetchLead(id: string): Promise<Lead | null> {

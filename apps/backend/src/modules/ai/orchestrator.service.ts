@@ -808,14 +808,12 @@ export class OrchestratorService {
     const welcomeLead = agent
       ? `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}! I'm ${agent}, Immigration Solutions Associate."`
       : `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}!"`;
-    // Bare-greeting follow-up. The English phrasing was a literal "How can we
-    // assist you today?" but in Roman Urdu we got a stilted machine-translated
-    // "Aap kaisay help le sakte hain hum se?" — fixing it by giving the model
-    // an actual Pakistani sales-rep line to copy instead of asking it to
-    // translate. Picks naturally based on the customer's language.
+    // Bare-greeting follow-up. Locked to house-approved phrasing so the bot
+    // doesn't free-style something stilted. Pakistani business chat: an open
+    // invitation reads warmer than a transactional "how can I help?".
     const bareGreetingFollow = isUrdu
-      ? `Since the customer just said hi/salam (no real question), follow the welcome line with a friendly opener like "Bataiye, kis cheez me help chahiye?" or "Bolen kaisay assist kar saktay hain?" — pick whichever flows. Do NOT pitch anything yet.`
-      : `Since the customer just said hi/hello (no real question), follow the welcome line with "How can I help you today?" — and stop there. Do NOT pitch anything yet.`;
+      ? `Since the customer just said hi/salam (no real question), append this LINE VERBATIM after the welcome:\n  "Immigration sa related koi b question ha to ap discuss ker saktay hain."\nDo NOT pitch anything yet. Do NOT rephrase.`
+      : `Since the customer just said hi/hello (no real question), append this LINE VERBATIM after the welcome:\n  "If you have any immigration-related questions, feel free to discuss."\nDo NOT pitch anything yet. Do NOT rephrase.`;
     const followUp = isBareGreeting
       ? bareGreetingFollow
       : `Then answer their question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;

@@ -132,6 +132,13 @@ export interface ListCasesQuery {
   clientId?: string;
   service?: string;
   targetCountry?: string;
+  authorityDecision?: AuthorityDecision;
+  /** ISO date (yyyy-mm-dd or ISO datetime) — case intake range. */
+  createdFrom?: string;
+  createdTo?: string;
+  /** ISO date — last activity (any field-write bumps updatedAt). */
+  updatedFrom?: string;
+  updatedTo?: string;
   search?: string;
   page?: number;
   limit?: number;
@@ -181,6 +188,11 @@ export function fetchProcessingCases(query: ListCasesQuery = {}): Promise<ListCa
   if (query.clientId) qs.set('clientId', query.clientId);
   if (query.service) qs.set('service', query.service);
   if (query.targetCountry) qs.set('targetCountry', query.targetCountry);
+  if (query.authorityDecision) qs.set('authorityDecision', query.authorityDecision);
+  if (query.createdFrom) qs.set('createdFrom', query.createdFrom);
+  if (query.createdTo) qs.set('createdTo', query.createdTo);
+  if (query.updatedFrom) qs.set('updatedFrom', query.updatedFrom);
+  if (query.updatedTo) qs.set('updatedTo', query.updatedTo);
   if (query.search) qs.set('search', query.search);
   if (query.page) qs.set('page', String(query.page));
   if (query.limit) qs.set('limit', String(query.limit));

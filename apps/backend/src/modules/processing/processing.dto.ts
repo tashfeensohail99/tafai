@@ -14,6 +14,7 @@ import {
 import { SERVICE_TYPE_CODES } from '../../common/service-types';
 import { Transform, Type } from 'class-transformer';
 import {
+  AuthorityDecision,
   AuthorityResponseType,
   AuthoritySubmissionStatus,
   CorrectionRequiredAction,
@@ -104,6 +105,39 @@ export class ListProcessingCasesQueryDto {
   @IsOptional()
   @IsString()
   targetCountry?: string;
+
+  // Workflow doc's "filters: duration, last activity". ISO date-time strings
+  // (yyyy-mm-dd is fine — Prisma coerces). `createdFrom/To` filter by intake
+  // date; `updatedFrom/To` filter by last activity (any field write bumps
+  // updatedAt, so this captures the "no movement in N days" case).
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  createdFrom?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  createdTo?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  updatedFrom?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  updatedTo?: string;
+
+  /**
+   * Filter by authority decision (PENDING / APPROVED / REJECTED). Used by the
+   * Refund / Escalation view to surface cases that came back REJECTED from
+   * the authority and need refund/escalation handling per the workflow doc.
+   */
+  @IsOptional()
+  @IsEnum(AuthorityDecision)
+  authorityDecision?: AuthorityDecision;
 
   @IsOptional()
   @Transform(({ value }) => parseInt(value, 10))

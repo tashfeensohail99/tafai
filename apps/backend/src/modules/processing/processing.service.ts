@@ -438,6 +438,23 @@ export class ProcessingService {
 
   async listCases(query: ListProcessingCasesQueryDto, user: RequestUser) {
     const canViewAll = user.permissions.includes('processing.case.view_all');
+    // Date-range filters. Workflow doc asks for "filters: duration, last
+    // activity" — `createdAt` covers intake-date / duration since intake,
+    // `updatedAt` covers last-activity (any field change bumps it).
+    const createdAtFilter: Prisma.DateTimeFilter | undefined =
+      query.createdFrom || query.createdTo
+        ? {
+            ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+            ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+          }
+        : undefined;
+    const updatedAtFilter: Prisma.DateTimeFilter | undefined =
+      query.updatedFrom || query.updatedTo
+        ? {
+            ...(query.updatedFrom ? { gte: new Date(query.updatedFrom) } : {}),
+            ...(query.updatedTo ? { lte: new Date(query.updatedTo) } : {}),
+          }
+        : undefined;
     const whereClause: Prisma.ProcessingCaseWhereInput = {
       ...(canViewAll ? {} : { assignedOfficerId: user.id }),
       ...(query.stage ? { stage: query.stage } : {}),
@@ -446,6 +463,9 @@ export class ProcessingService {
       ...(query.clientId ? { clientId: query.clientId } : {}),
       ...(query.service ? { service: query.service } : {}),
       ...(query.targetCountry ? { targetCountry: query.targetCountry } : {}),
+      ...(query.authorityDecision ? { authorityDecision: query.authorityDecision } : {}),
+      ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
+      ...(updatedAtFilter ? { updatedAt: updatedAtFilter } : {}),
       ...(query.search
         ? {
             OR: [

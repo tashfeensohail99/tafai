@@ -274,9 +274,10 @@ export class LeadsService {
             invoiceNumber: true,
             status: true,
             totalAmount: true,
+            paidAmount: true,
             currency: true,
-            issuedAt: true,
-            dueAt: true,
+            createdAt: true,
+            dueDate: true,
           },
         },
         // timelineEvents removed: the Activity tab does its own

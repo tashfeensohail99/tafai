@@ -410,6 +410,309 @@ export function fetchCaseDocuments(caseId: string): Promise<ApiCaseDocumentItem[
   return apiFetch<ApiCaseDocumentItem[]>(`/processing/cases/${caseId}/documents`, { cache: 'no-store' });
 }
 
+export interface ApiDocumentVersion {
+  id: string;
+  documentItemId: string;
+  storageKey: string;
+  fileName: string;
+  fileSizeBytes: number | null;
+  mimeType: string | null;
+  versionNumber: number;
+  uploadedAt: string;
+  uploadedByUserId: string;
+}
+
+export function fetchDocumentVersions(caseId: string, itemId: string): Promise<ApiDocumentVersion[]> {
+  return apiFetch<ApiDocumentVersion[]>(
+    `/processing/cases/${caseId}/documents/${itemId}/versions`,
+    { cache: 'no-store' },
+  );
+}
+
+export function getDocumentSignedUrl(caseId: string, itemId: string): Promise<{ url: string; fileName: string }> {
+  return apiFetch<{ url: string; fileName: string }>(
+    `/processing/cases/${caseId}/documents/${itemId}/signed-url`,
+    { cache: 'no-store' },
+  );
+}
+
+export function waiveDocumentItem(
+  caseId: string,
+  itemId: string,
+  body: { waiveReason: string },
+): Promise<ApiCaseDocumentItem> {
+  return apiFetch<ApiCaseDocumentItem>(
+    `/processing/cases/${caseId}/documents/${itemId}/waive`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    },
+  );
+}
+
+export function requestDocumentFromClient(
+  caseId: string,
+  itemId: string,
+  body: { message?: string } = {},
+): Promise<ApiCaseDocumentItem> {
+  return apiFetch<ApiCaseDocumentItem>(
+    `/processing/cases/${caseId}/documents/${itemId}/request`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    },
+  );
+}
+
+export function reviewDocumentItem(
+  caseId: string,
+  itemId: string,
+  body: {
+    decision: 'ACCEPT' | 'REJECT';
+    rejectionReasonCodes?: string[];
+    rejectionNote?: string;
+  },
+): Promise<ApiCaseDocumentItem> {
+  return apiFetch<ApiCaseDocumentItem>(
+    `/processing/cases/${caseId}/documents/${itemId}/review`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Communications
+// ---------------------------------------------------------------------------
+
+export interface ApiCaseCommunication {
+  id: string;
+  caseId: string;
+  direction: 'OUTBOUND' | 'INBOUND';
+  messageType: string;
+  subject: string | null;
+  content: string;
+  channelsSent: string[];
+  sentByUserId: string | null;
+  readByClientAt: string | null;
+  whatsappMessageId: string | null;
+  emailMessageId: string | null;
+  createdAt: string;
+  sentBy?: { id: string; email: string } | null;
+}
+
+export function fetchCaseCommunications(caseId: string): Promise<ApiCaseCommunication[]> {
+  return apiFetch<ApiCaseCommunication[]>(`/processing/cases/${caseId}/communications`, { cache: 'no-store' });
+}
+
+export function sendCaseCommunication(
+  caseId: string,
+  body: { subject: string; content: string; channelsSent: string[] },
+): Promise<ApiCaseCommunication> {
+  return apiFetch<ApiCaseCommunication>(`/processing/cases/${caseId}/communications`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Authority submissions
+// ---------------------------------------------------------------------------
+
+export type AuthoritySubmissionStatus =
+  | 'SUBMITTED'
+  | 'ACKNOWLEDGED_BY_AUTHORITY'
+  | 'UNDER_REVIEW'
+  | 'INFO_REQUESTED'
+  | 'DECISION_PENDING'
+  | 'APPROVED'
+  | 'REJECTED';
+
+export interface ApiAuthoritySubmission {
+  id: string;
+  caseId: string;
+  submissionNumber: number;
+  submittedByUserId: string;
+  authority: string;
+  submissionDate: string;
+  submissionReference: string | null;
+  documentsIncluded: string[];
+  trackingNumber: string | null;
+  status: AuthoritySubmissionStatus;
+  responseType: string | null;
+  responseNotes: string | null;
+  responseReceivedAt: string | null;
+  nextAction: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function fetchCaseSubmissions(caseId: string): Promise<ApiAuthoritySubmission[]> {
+  return apiFetch<ApiAuthoritySubmission[]>(`/processing/cases/${caseId}/submissions`, { cache: 'no-store' });
+}
+
+export function createCaseSubmission(
+  caseId: string,
+  body: {
+    authority: string;
+    submissionDate: string;
+    submissionReference?: string;
+    documentsIncluded?: string[];
+    trackingNumber?: string;
+  },
+): Promise<ApiAuthoritySubmission> {
+  return apiFetch<ApiAuthoritySubmission>(`/processing/cases/${caseId}/submissions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+export function updateCaseSubmission(
+  caseId: string,
+  submissionId: string,
+  body: Partial<{
+    trackingNumber: string;
+    status: AuthoritySubmissionStatus;
+    responseType: string;
+    responseNotes: string;
+    nextAction: string;
+    responseReceivedAt: string;
+  }>,
+): Promise<ApiAuthoritySubmission> {
+  return apiFetch<ApiAuthoritySubmission>(`/processing/cases/${caseId}/submissions/${submissionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Corrections
+// ---------------------------------------------------------------------------
+
+export type CorrectionStatus = 'SENT' | 'IN_PROGRESS' | 'RESOLVED' | 'ESCALATED';
+export type CorrectionType = 'DOCUMENT' | 'INFORMATION';
+export type CorrectionRequiredAction = 'REUPLOAD' | 'CONFIRM' | 'CORRECT' | 'CALL_BACK';
+
+export interface ApiCorrectionRequest {
+  id: string;
+  caseId: string;
+  documentItemId: string | null;
+  correctionType: CorrectionType;
+  status: CorrectionStatus;
+  subject: string;
+  reasonCodes: string[];
+  officerNote: string | null;
+  clientMessage: string;
+  requiredAction: CorrectionRequiredAction;
+  slaHours: number | null;
+  resolvedAt: string | null;
+  resolutionNote: string | null;
+  escalatedAt: string | null;
+  escalationReason: string | null;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function fetchCaseCorrections(
+  caseId: string,
+  query: { status?: CorrectionStatus; correctionType?: CorrectionType } = {},
+): Promise<ApiCorrectionRequest[]> {
+  const qs = new URLSearchParams();
+  if (query.status) qs.set('status', query.status);
+  if (query.correctionType) qs.set('correctionType', query.correctionType);
+  const tail = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<ApiCorrectionRequest[]>(`/processing/cases/${caseId}/corrections${tail}`, { cache: 'no-store' });
+}
+
+export function createCaseCorrection(
+  caseId: string,
+  body: {
+    correctionType: CorrectionType;
+    documentItemId?: string;
+    subject: string;
+    reasonCodes: string[];
+    officerNote?: string;
+    clientMessage: string;
+    requiredAction: CorrectionRequiredAction;
+    slaHours?: number;
+  },
+): Promise<ApiCorrectionRequest> {
+  return apiFetch<ApiCorrectionRequest>(`/processing/cases/${caseId}/corrections`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+export function resolveCaseCorrection(
+  caseId: string,
+  correctionId: string,
+  body: { resolutionNote?: string } = {},
+): Promise<ApiCorrectionRequest> {
+  return apiFetch<ApiCorrectionRequest>(
+    `/processing/cases/${caseId}/corrections/${correctionId}/resolve`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    },
+  );
+}
+
+export function escalateCaseCorrection(
+  caseId: string,
+  correctionId: string,
+  body: { escalationReason: string },
+): Promise<ApiCorrectionRequest> {
+  return apiFetch<ApiCorrectionRequest>(
+    `/processing/cases/${caseId}/corrections/${correctionId}/escalate`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Audit / Timeline
+// ---------------------------------------------------------------------------
+
+export interface ApiProcessingAuditLog {
+  id: string;
+  caseId: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  fromValue: string | null;
+  toValue: string | null;
+  context: Record<string, unknown> | null;
+  performedByUserId: string;
+  createdAt: string;
+  performedBy?: { id: string; email: string } | null;
+}
+
+export function fetchCaseAudit(caseId: string): Promise<ApiProcessingAuditLog[]> {
+  return apiFetch<ApiProcessingAuditLog[]>(`/processing/cases/${caseId}/audit`, { cache: 'no-store' });
+}
+
 // ---------------------------------------------------------------------------
 // Display helpers
 // ---------------------------------------------------------------------------

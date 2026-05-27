@@ -1,300 +1,323 @@
 'use client';
-// Document Checklist Tab — Phase 1B.
-// Shows all document items with criticality chips, status badges, actions.
-// Officers can click "Review" to open the review panel inline.
+// Document Checklist Tab — wired to /processing/cases/:id/documents.
+// Shows all document items with criticality + status. Officers can:
+//   - View the uploaded file (signed URL → opens in new tab)
+//   - Request the doc from the client
+//   - Waive a doc with a reason
+//   - Accept / Reject the latest upload
+//
+// File upload itself is initiated by the client via the portal; the
+// upload endpoint on the backend exists and can be wired into an admin
+// upload modal in a follow-up commit.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
-  Calendar,
   CheckCircle2,
-  Clock,
-  Eye,
-  FileText,
-  RotateCcw,
-  Shield,
+  ExternalLink,
+  FileCheck2,
+  FileX2,
+  Loader2,
+  MailQuestion,
   ShieldAlert,
-  ShieldCheck,
   XCircle,
 } from 'lucide-react';
 import {
   GlassCard,
+  EmptyState,
   PrimaryButton,
   SecondaryButton,
   StatusBadge,
-  EmptyState,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import {
   type MockProcessingCase,
-  type MockDocumentItem,
-  type DocumentCriticality,
-  type DocumentItemStatus,
-  DOC_STATUS_LABEL,
-  getDocumentProgress,
-  fmtDate,
+  fmtRelative,
 } from '@/components/processing/mockData';
-import { DocumentReviewPanel } from '../DocumentReviewPanel';
+import {
+  fetchCaseDocuments,
+  getDocumentSignedUrl,
+  waiveDocumentItem,
+  requestDocumentFromClient,
+  reviewDocumentItem,
+  type ApiCaseDocumentItem,
+  type DocumentItemStatus,
+  type DocumentCriticality,
+} from '@/lib/processing';
 
-// ---------- Tone helpers --------------------------------------------------
+const STATUS_TONE: Record<DocumentItemStatus, BadgeTone> = {
+  NOT_SUBMITTED: 'neutral',
+  REQUESTED: 'info',
+  AWAITING_UPLOAD: 'info',
+  UPLOADED: 'cyan',
+  UNDER_REVIEW: 'accent',
+  ACCEPTED: 'success',
+  REJECTED: 'danger',
+  WAIVED: 'neutral',
+  NOT_APPLICABLE: 'neutral',
+  EXPIRED: 'danger',
+};
 
-function docStatusTone(status: DocumentItemStatus): BadgeTone {
-  switch (status) {
-    case 'NOT_SUBMITTED': return 'neutral';
-    case 'SUBMITTED': return 'info';
-    case 'UNDER_REVIEW': return 'accent';
-    case 'ACCEPTED': return 'success';
-    case 'REJECTED': return 'danger';
-    case 'EXPIRED': return 'danger';
-    case 'EXPIRING_SOON': return 'warning';
-    case 'WAIVED': return 'neutral';
-    case 'NOT_APPLICABLE': return 'neutral';
-    default: return 'neutral';
+const STATUS_LABEL: Record<DocumentItemStatus, string> = {
+  NOT_SUBMITTED: 'Not submitted',
+  REQUESTED: 'Requested',
+  AWAITING_UPLOAD: 'Awaiting upload',
+  UPLOADED: 'Uploaded',
+  UNDER_REVIEW: 'Under review',
+  ACCEPTED: 'Accepted',
+  REJECTED: 'Rejected',
+  WAIVED: 'Waived',
+  NOT_APPLICABLE: 'N/A',
+  EXPIRED: 'Expired',
+};
+
+const CRIT_TONE: Record<DocumentCriticality, BadgeTone> = {
+  CRITICAL: 'danger',
+  REQUIRED: 'warning',
+  CONDITIONAL: 'info',
+  SUPPORTING: 'neutral',
+  OPTIONAL: 'neutral',
+};
+
+function DocumentRow({
+  d,
+  caseId,
+  onChange,
+}: {
+  d: ApiCaseDocumentItem;
+  caseId: string;
+  onChange: (updated: ApiCaseDocumentItem) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [reviewNote, setReviewNote] = useState('');
+  const [showWaive, setShowWaive] = useState(false);
+  const [waiveReason, setWaiveReason] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleViewFile() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const { url } = await getDocumentSignedUrl(caseId, d.id);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to get file URL');
+    } finally {
+      setBusy(false);
+    }
   }
-}
 
-function criticalityIcon(criticality: DocumentCriticality) {
-  switch (criticality) {
-    case 'CRITICAL': return <ShieldAlert size={13} style={{ color: 'var(--sos-status-danger)' }} />;
-    case 'REQUIRED': return <ShieldCheck size={13} style={{ color: 'var(--sos-status-warning)' }} />;
-    case 'CONDITIONAL': return <Shield size={13} style={{ color: 'var(--sos-status-info)' }} />;
-    default: return <Shield size={13} style={{ color: 'var(--sos-text-muted)' }} />;
+  async function handleRequest() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const updated = await requestDocumentFromClient(caseId, d.id);
+      onChange(updated);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to request');
+    } finally {
+      setBusy(false);
+    }
   }
-}
 
-function criticalityLabel(criticality: DocumentCriticality): string {
-  switch (criticality) {
-    case 'CRITICAL': return 'Critical';
-    case 'REQUIRED': return 'Required';
-    case 'CONDITIONAL': return 'Conditional';
-    case 'SUPPORTING': return 'Supporting';
-    case 'OPTIONAL': return 'Optional';
-    default: return criticality;
+  async function handleWaive() {
+    if (waiveReason.trim().length < 5) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const updated = await waiveDocumentItem(caseId, d.id, { waiveReason: waiveReason.trim() });
+      onChange(updated);
+      setShowWaive(false);
+      setWaiveReason('');
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to waive');
+    } finally {
+      setBusy(false);
+    }
   }
-}
 
-function criticalityTone(criticality: DocumentCriticality): BadgeTone {
-  switch (criticality) {
-    case 'CRITICAL': return 'danger';
-    case 'REQUIRED': return 'warning';
-    case 'CONDITIONAL': return 'info';
-    case 'SUPPORTING': return 'neutral';
-    case 'OPTIONAL': return 'neutral';
-    default: return 'neutral';
+  async function handleReview(decision: 'ACCEPT' | 'REJECT') {
+    setBusy(true);
+    setErr(null);
+    try {
+      const updated = await reviewDocumentItem(caseId, d.id, {
+        decision,
+        rejectionNote: decision === 'REJECT' ? (reviewNote.trim() || undefined) : undefined,
+      });
+      onChange(updated);
+      setShowReview(false);
+      setReviewNote('');
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to save review');
+    } finally {
+      setBusy(false);
+    }
   }
-}
 
-// ---------- Single checklist row -----------------------------------------
-
-interface ChecklistRowProps {
-  item: MockDocumentItem;
-  onReview: (item: MockDocumentItem) => void;
-  onReopen: (item: MockDocumentItem) => void;
-}
-
-function ChecklistRow({ item, onReview, onReopen }: ChecklistRowProps) {
-  const hasFile = item.status !== 'NOT_SUBMITTED';
-  const isExpiringSoon = item.validityExpiryDate
-    ? new Date(item.validityExpiryDate) < new Date('2026-08-01')
-    : false;
+  const hasFile = !!d.latestVersion;
+  const canReview = hasFile && (d.status === 'UPLOADED' || d.status === 'UNDER_REVIEW');
+  const canRequest = !hasFile && (d.status === 'NOT_SUBMITTED' || d.status === 'AWAITING_UPLOAD');
+  const canWaive = d.status !== 'ACCEPTED' && d.status !== 'WAIVED' && d.status !== 'NOT_APPLICABLE';
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '24px 1fr auto',
-        gap: '10px',
-        padding: '12px 14px',
-        borderRadius: 'var(--sos-radius-md)',
-        alignItems: 'flex-start',
-        transition: 'background 150ms',
-        borderBottom: '1px solid var(--sos-border-subtle)',
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--sos-surface-hover)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-    >
-      {/* Status icon */}
-      <div style={{ paddingTop: '2px' }}>
-        {item.status === 'ACCEPTED' ? (
-          <CheckCircle2 size={16} style={{ color: 'var(--sos-status-success)' }} />
-        ) : item.status === 'REJECTED' ? (
-          <XCircle size={16} style={{ color: 'var(--sos-status-danger)' }} />
-        ) : item.status === 'UNDER_REVIEW' || item.status === 'SUBMITTED' ? (
-          <Clock size={16} style={{ color: 'var(--sos-status-info)' }} />
-        ) : item.status === 'WAIVED' ? (
-          <CheckCircle2 size={16} style={{ color: 'var(--sos-text-muted)' }} />
-        ) : (
-          <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid var(--sos-border-subtle)' }} />
-        )}
-      </div>
-
-      {/* Main content */}
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '3px' }}>
-          <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>
-            {item.documentName}
-          </span>
-          <StatusBadge tone={criticalityTone(item.criticality)} size="sm" dot={false} icon={criticalityIcon(item.criticality)}>
-            {criticalityLabel(item.criticality)}
-          </StatusBadge>
+    <GlassCard variant="default" padded="md">
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <div style={{ marginTop: 2, color: d.status === 'ACCEPTED' ? 'var(--sos-status-success)' : d.status === 'REJECTED' ? 'var(--sos-status-danger)' : 'var(--sos-text-muted)' }}>
+          {d.status === 'ACCEPTED' ? <CheckCircle2 size={14} /> :
+            d.status === 'REJECTED' ? <XCircle size={14} /> :
+              d.status === 'WAIVED' ? <ShieldAlert size={14} /> :
+                <FileCheck2 size={14} />}
         </div>
-
-        <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginBottom: '5px' }}>
-          {item.description}
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <StatusBadge tone={docStatusTone(item.status)} size="sm">{DOC_STATUS_LABEL[item.status]}</StatusBadge>
-
-          {item.expectedFormats.length > 0 ? (
-            <span style={{ fontSize: '11px', color: 'var(--sos-text-muted)' }}>
-              {item.expectedFormats.join(' / ')}
-            </span>
-          ) : null}
-
-          {item.validityExpiryDate ? (
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: isExpiringSoon ? 'var(--sos-status-warning)' : 'var(--sos-text-muted)' }}>
-              <Calendar size={11} /> Expires {fmtDate(item.validityExpiryDate)}
-            </span>
-          ) : null}
-
-          {item.versionNumber && item.versionNumber > 1 ? (
-            <span style={{ fontSize: '11px', color: 'var(--sos-text-muted)' }}>v{item.versionNumber}</span>
-          ) : null}
-        </div>
-
-        {item.status === 'REJECTED' && item.rejectionNote ? (
-          <div style={{ marginTop: '6px', padding: '6px 10px', borderRadius: 'var(--sos-radius-sm)', background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', fontSize: '12px', color: 'var(--sos-status-danger)' }}>
-            Rejection: {item.rejectionNote}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{d.documentName}</span>
+            <StatusBadge tone={CRIT_TONE[d.criticality]} size="sm">{d.criticality}</StatusBadge>
+            <StatusBadge tone={STATUS_TONE[d.status]} size="sm">{STATUS_LABEL[d.status]}</StatusBadge>
+            {d.latestVersion ? (
+              <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>
+                v{d.latestVersion.versionNumber} · {d.latestVersion.fileName}
+              </span>
+            ) : null}
           </div>
-        ) : null}
-      </div>
+          {d.description ? (
+            <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginBottom: 6, lineHeight: 1.5 }}>{d.description}</div>
+          ) : null}
+          <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+            {d.expectedFormats.length > 0 ? `Accepted: ${d.expectedFormats.join(', ')} · ` : ''}
+            {d.validityExpiryDate ? `Expires ${fmtRelative(d.validityExpiryDate)} · ` : ''}
+            Updated {fmtRelative(d.updatedAt)}
+          </div>
 
-      {/* Actions */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end', paddingTop: '2px' }}>
-        {(item.status === 'SUBMITTED' || item.status === 'UNDER_REVIEW') ? (
-          <PrimaryButton size="sm" onClick={() => onReview(item)} iconLeft={<Eye size={13} />}>
-            Review
-          </PrimaryButton>
-        ) : item.status === 'ACCEPTED' ? (
-          <SecondaryButton size="sm" onClick={() => onReview(item)} iconLeft={<Eye size={13} />}>
-            View
-          </SecondaryButton>
-        ) : (item.status === 'REJECTED' || item.status === 'EXPIRED') ? (
-          <>
-            <SecondaryButton size="sm" onClick={() => onReview(item)} iconLeft={<Eye size={13} />}>
-              View
-            </SecondaryButton>
-            <SecondaryButton size="sm" onClick={() => onReopen(item)} iconLeft={<RotateCcw size={13} />}>
-              Re-open
-            </SecondaryButton>
-          </>
-        ) : null}
+          {err ? (
+            <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12 }}>{err}</div>
+          ) : null}
+
+          {showReview ? (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <textarea
+                rows={2}
+                value={reviewNote}
+                onChange={(e) => setReviewNote(e.target.value)}
+                placeholder="Rejection note (required for REJECT)…"
+                style={{ width: '100%', resize: 'vertical', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: 13, fontFamily: 'inherit' }}
+              />
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => { setShowReview(false); setReviewNote(''); }} style={{ padding: '6px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 12.5, cursor: 'pointer' }}>Cancel</button>
+                <SecondaryButton iconLeft={<XCircle size={13} />} onClick={() => handleReview('REJECT')} disabled={busy || !reviewNote.trim()}>Reject</SecondaryButton>
+                <PrimaryButton onClick={() => handleReview('ACCEPT')} disabled={busy}>{busy ? 'Saving…' : 'Accept'}</PrimaryButton>
+              </div>
+            </div>
+          ) : showWaive ? (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <textarea
+                rows={2}
+                value={waiveReason}
+                onChange={(e) => setWaiveReason(e.target.value)}
+                placeholder="Why is this doc waived? (min 5 chars)"
+                style={{ width: '100%', resize: 'vertical', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: 13, fontFamily: 'inherit' }}
+              />
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => { setShowWaive(false); setWaiveReason(''); }} style={{ padding: '6px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 12.5, cursor: 'pointer' }}>Cancel</button>
+                <PrimaryButton onClick={handleWaive} disabled={busy || waiveReason.trim().length < 5}>{busy ? 'Saving…' : 'Waive'}</PrimaryButton>
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {hasFile ? (
+                <SecondaryButton iconLeft={<ExternalLink size={13} />} onClick={handleViewFile} disabled={busy}>View file</SecondaryButton>
+              ) : null}
+              {canReview ? (
+                <PrimaryButton onClick={() => { setShowReview(true); setReviewNote(''); }} disabled={busy}>Review</PrimaryButton>
+              ) : null}
+              {canRequest ? (
+                <SecondaryButton iconLeft={<MailQuestion size={13} />} onClick={handleRequest} disabled={busy}>Request</SecondaryButton>
+              ) : null}
+              {canWaive ? (
+                <SecondaryButton iconLeft={<ShieldAlert size={13} />} onClick={() => { setShowWaive(true); setWaiveReason(''); }} disabled={busy}>Waive</SecondaryButton>
+              ) : null}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </GlassCard>
   );
 }
-
-// ---------- Document checklist tab ----------------------------------------
 
 export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
-  const [reviewItem, setReviewItem] = useState<MockDocumentItem | null>(null);
-  // Tracks items that have been optimistically re-opened (status reset to NOT_SUBMITTED in UI).
-  const [reopenedIds, setReopenedIds] = useState<Set<string>>(new Set());
+  const [items, setItems] = useState<ApiCaseDocumentItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
-  function handleReopen(item: MockDocumentItem) {
-    // Mock: PATCH /processing/cases/:caseId/documents/:itemId/reopen
-    setReopenedIds((prev) => new Set([...prev, item.id]));
+  useEffect(() => {
+    let cancelled = false;
+    fetchCaseDocuments(c.id)
+      .then((rows) => { if (!cancelled) setItems(rows); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to load documents'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [c.id]);
+
+  function handleChange(updated: ApiCaseDocumentItem) {
+    setItems((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
   }
 
-  // Apply optimistic re-open override
-  const displayItems = c.documentItems.map((item) =>
-    reopenedIds.has(item.id) ? { ...item, status: 'NOT_SUBMITTED' as const } : item,
-  );
-
-  if (reviewItem) {
-    return <DocumentReviewPanel item={reviewItem} caseId={c.id} onBack={() => setReviewItem(null)} />;
-  }
-
-  const progress = getDocumentProgress(displayItems);
-  const docPct = progress.total > 0 ? Math.round((progress.accepted / progress.total) * 100) : 0;
-
-  const critical  = displayItems.filter((i) => i.criticality === 'CRITICAL');
-  const required  = displayItems.filter((i) => i.criticality === 'REQUIRED');
-  const supporting = displayItems.filter((i) => i.criticality === 'CONDITIONAL' || i.criticality === 'SUPPORTING' || i.criticality === 'OPTIONAL');
-
-  if (displayItems.length === 0) {
-    return (
-      <GlassCard variant="panel" padded="lg">
-        <EmptyState
-          Icon={FileText}
-          title="No documents yet"
-          description="Document checklist will be created when this case is acknowledged."
-        />
-      </GlassCard>
-    );
-  }
+  // Progress: count CRITICAL + REQUIRED items that are settled
+  // (ACCEPTED / WAIVED / NOT_APPLICABLE).
+  const core = items.filter((i) => i.criticality === 'CRITICAL' || i.criticality === 'REQUIRED');
+  const settled = core.filter((i) => i.status === 'ACCEPTED' || i.status === 'WAIVED' || i.status === 'NOT_APPLICABLE');
+  const pct = core.length > 0 ? Math.round((settled.length / core.length) * 100) : 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      {/* Progress bar */}
-      <GlassCard variant="soft" padded="md">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px' }}>
-              <span style={{ fontWeight: 600, color: 'var(--sos-text-primary)' }}>Critical + required documents</span>
-              <span style={{ color: 'var(--sos-text-muted)' }}>{progress.accepted}/{progress.total}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {loading ? (
+        <GlassCard variant="panel" padded="lg">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+            <Loader2 size={16} className="sos-spin" />
+            <span>Loading documents…</span>
+          </div>
+        </GlassCard>
+      ) : err ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>{err}</div>
+        </GlassCard>
+      ) : items.length === 0 ? (
+        <GlassCard variant="panel" padded="lg">
+          <EmptyState
+            Icon={FileX2}
+            title="No documents on the checklist yet"
+            description="Documents auto-populate from the service-type template when the case is acknowledged. If you're seeing this, the acknowledge step may not have completed."
+          />
+        </GlassCard>
+      ) : (
+        <>
+          {/* Progress strip */}
+          <GlassCard variant="panel" padded="md">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
+                  <span style={{ color: 'var(--sos-text-secondary)', fontWeight: 600 }}>
+                    Core documents progress
+                  </span>
+                  <span style={{ color: 'var(--sos-text-muted)' }}>
+                    {settled.length}/{core.length} ({pct}%)
+                  </span>
+                </div>
+                <div style={{ height: 7, background: 'var(--sos-surface-hover)', borderRadius: 999, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: pct === 100 ? 'var(--sos-status-success)' : 'var(--sos-brand-gradient)', borderRadius: 999, transition: 'width 400ms' }} />
+                </div>
+              </div>
             </div>
-            <div style={{ height: '8px', background: 'var(--sos-surface-hover)', borderRadius: '999px', overflow: 'hidden' }}>
-              <div style={{ width: `${docPct}%`, height: '100%', background: docPct === 100 ? 'var(--sos-status-success)' : 'var(--sos-brand-gradient)', borderRadius: '999px', transition: 'width 400ms ease' }} />
-            </div>
-          </div>
-          <div style={{ fontSize: '22px', fontWeight: 800, color: docPct === 100 ? 'var(--sos-status-success)' : 'var(--sos-text-primary)', letterSpacing: '-0.02em' }}>
-            {docPct}%
-          </div>
-        </div>
-        {progress.rejected > 0 ? (
-          <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', color: 'var(--sos-status-danger)' }}>
-            <AlertTriangle size={13} /> {progress.rejected} document{progress.rejected !== 1 ? 's' : ''} rejected — client must reupload
-          </div>
-        ) : null}
-      </GlassCard>
+          </GlassCard>
 
-      {/* Critical section */}
-      {critical.length > 0 ? (
-        <GlassCard variant="panel" padded={false}>
-          <div style={{ padding: '12px 14px', fontSize: '12px', fontWeight: 600, color: 'var(--sos-status-danger)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-            <ShieldAlert size={13} /> Critical documents ({critical.length})
+          {/* Items */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {items.map((d) => (
+              <DocumentRow key={d.id} d={d} caseId={c.id} onChange={handleChange} />
+            ))}
           </div>
-          {critical.map((item) => (
-            <ChecklistRow key={item.id} item={item} onReview={setReviewItem} onReopen={handleReopen} />
-          ))}
-        </GlassCard>
-      ) : null}
-
-      {/* Required section */}
-      {required.length > 0 ? (
-        <GlassCard variant="panel" padded={false}>
-          <div style={{ padding: '12px 14px', fontSize: '12px', fontWeight: 600, color: 'var(--sos-status-warning)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-            <ShieldCheck size={13} /> Required documents ({required.length})
-          </div>
-          {required.map((item) => (
-            <ChecklistRow key={item.id} item={item} onReview={setReviewItem} onReopen={handleReopen} />
-          ))}
-        </GlassCard>
-      ) : null}
-
-      {/* Supporting section */}
-      {supporting.length > 0 ? (
-        <GlassCard variant="panel" padded={false}>
-          <div style={{ padding: '12px 14px', fontSize: '12px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-            Supporting / optional ({supporting.length})
-          </div>
-          {supporting.map((item) => (
-            <ChecklistRow key={item.id} item={item} onReview={setReviewItem} onReopen={handleReopen} />
-          ))}
-        </GlassCard>
-      ) : null}
+        </>
+      )}
     </div>
   );
 }

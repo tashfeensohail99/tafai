@@ -1,16 +1,16 @@
 'use client';
-// Corrections Tab — Phase 1E.
-// Lists all correction requests for a case.
-// Provides inline Resolve and Escalate actions (mock).
+// Corrections Tab — wired to /processing/cases/:id/corrections.
+// Lists open + resolved correction requests. Officers can create new ones,
+// resolve them once the client responds, or escalate to a manager.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  AlertTriangle,
+  AlertCircle,
+  ArrowUpCircle,
   CheckCircle2,
   ClipboardEdit,
-  Clock,
-  TrendingUp,
-  X,
+  Loader2,
+  PlusCircle,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -22,315 +22,306 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   type MockProcessingCase,
-  type MockCorrectionRequest,
-  type CorrectionRequestStatus,
-  CORRECTION_STATUS_LABEL,
-  REQUIRED_ACTION_LABEL,
-  REJECTION_REASON_LABEL,
-  MOCK_CORRECTIONS,
   fmtRelative,
-  fmtDate,
 } from '@/components/processing/mockData';
-import { CorrectionRequestModal } from '../CorrectionRequestModal';
+import {
+  fetchCaseCorrections,
+  createCaseCorrection,
+  resolveCaseCorrection,
+  escalateCaseCorrection,
+  type ApiCorrectionRequest,
+  type CorrectionStatus,
+  type CorrectionRequiredAction,
+} from '@/lib/processing';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const STATUS_TONE: Record<CorrectionStatus, BadgeTone> = {
+  SENT: 'info',
+  IN_PROGRESS: 'accent',
+  RESOLVED: 'success',
+  ESCALATED: 'danger',
+};
 
-function correctionStatusTone(status: CorrectionRequestStatus): BadgeTone {
-  switch (status) {
-    case 'SENT':        return 'info';
-    case 'IN_PROGRESS': return 'warm';
-    case 'RESOLVED':    return 'success';
-    case 'ESCALATED':   return 'danger';
+const STATUS_LABEL: Record<CorrectionStatus, string> = {
+  SENT: 'Sent',
+  IN_PROGRESS: 'In progress',
+  RESOLVED: 'Resolved',
+  ESCALATED: 'Escalated',
+};
+
+const ACTION_LABEL: Record<CorrectionRequiredAction, string> = {
+  REUPLOAD: 'Re-upload',
+  CONFIRM: 'Confirm',
+  CORRECT: 'Correct',
+  CALL_BACK: 'Call back',
+};
+
+function CorrectionCard({
+  cr,
+  onResolve,
+  onEscalate,
+}: {
+  cr: ApiCorrectionRequest;
+  onResolve: (id: string, note?: string) => Promise<void>;
+  onEscalate: (id: string, reason: string) => Promise<void>;
+}) {
+  const [showResolve, setShowResolve] = useState(false);
+  const [showEscalate, setShowEscalate] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const isOpen = cr.status === 'SENT' || cr.status === 'IN_PROGRESS';
+
+  async function handleResolve() {
+    setBusy(true);
+    try { await onResolve(cr.id, text.trim() || undefined); setShowResolve(false); setText(''); }
+    finally { setBusy(false); }
   }
-}
-
-function slaLabel(slaDueAt: string): { label: string; overdue: boolean } {
-  const base = new Date('2026-05-11T12:00:00.000Z');
-  const due = new Date(slaDueAt);
-  const diff = due.getTime() - base.getTime();
-  if (diff <= 0) return { label: 'Overdue', overdue: true };
-  const hours = Math.floor(diff / 3600000);
-  if (hours < 24) return { label: `${hours}h remaining`, overdue: false };
-  const days = Math.floor(hours / 24);
-  return { label: `${days}d remaining`, overdue: false };
-}
-
-// ---------------------------------------------------------------------------
-// Resolve inline mini-form
-// ---------------------------------------------------------------------------
-
-interface ResolvePanelProps {
-  onResolve: (note: string) => void;
-  onCancel: () => void;
-}
-
-function ResolvePanel({ onResolve, onCancel }: ResolvePanelProps) {
-  const [note, setNote] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  function handleSubmit() {
-    setLoading(true);
-    // Replace with real API: PATCH /processing/cases/:caseId/corrections/:id/resolve
-    setTimeout(() => { onResolve(note); }, 700);
+  async function handleEscalate() {
+    if (!text.trim()) return;
+    setBusy(true);
+    try { await onEscalate(cr.id, text.trim()); setShowEscalate(false); setText(''); }
+    finally { setBusy(false); }
   }
-
-  return (
-    <div style={{ marginTop: '12px', padding: '14px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-status-success-soft)', border: '1px solid var(--sos-status-success-border)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-status-success)' }}>Mark as resolved</div>
-      <textarea
-        placeholder="Optional resolution note (internal only)…"
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        maxLength={2000}
-        rows={2}
-        style={{ width: '100%', padding: '7px 10px', borderRadius: 'var(--sos-radius-sm)', border: '1px solid var(--sos-status-success-border)', background: 'var(--sos-bg-surface)', color: 'var(--sos-text-primary)', fontSize: '13px', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' }}
-      />
-      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-        <SecondaryButton onClick={onCancel} disabled={loading}>Cancel</SecondaryButton>
-        <PrimaryButton onClick={handleSubmit} disabled={loading}>
-          {loading ? 'Saving…' : 'Confirm resolve'}
-        </PrimaryButton>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Escalate inline mini-form
-// ---------------------------------------------------------------------------
-
-interface EscalatePanelProps {
-  onEscalate: (reason: string) => void;
-  onCancel: () => void;
-}
-
-function EscalatePanel({ onEscalate, onCancel }: EscalatePanelProps) {
-  const [reason, setReason] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  function handleSubmit() {
-    if (!reason.trim()) return;
-    setLoading(true);
-    // Replace with real API: PATCH /processing/cases/:caseId/corrections/:id/escalate
-    setTimeout(() => { onEscalate(reason); }, 700);
-  }
-
-  return (
-    <div style={{ marginTop: '12px', padding: '14px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-status-danger)' }}>Escalate to manager</div>
-      <textarea
-        placeholder="Escalation reason — required…"
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        maxLength={2000}
-        rows={2}
-        style={{ width: '100%', padding: '7px 10px', borderRadius: 'var(--sos-radius-sm)', border: '1px solid var(--sos-status-danger-border)', background: 'var(--sos-bg-surface)', color: 'var(--sos-text-primary)', fontSize: '13px', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' }}
-      />
-      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-        <SecondaryButton onClick={onCancel} disabled={loading}>Cancel</SecondaryButton>
-        <PrimaryButton onClick={handleSubmit} disabled={!reason.trim() || loading}>
-          {loading ? 'Escalating…' : 'Confirm escalate'}
-        </PrimaryButton>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Single correction card
-// ---------------------------------------------------------------------------
-
-interface CorrectionCardProps {
-  cr: MockCorrectionRequest;
-  onResolved: (id: string) => void;
-  onEscalated: (id: string) => void;
-}
-
-function CorrectionCard({ cr, onResolved, onEscalated }: CorrectionCardProps) {
-  const [action, setAction] = useState<'resolve' | 'escalate' | null>(null);
-  const sla = slaLabel(cr.slaDueAt);
-  const isTerminal = cr.status === 'RESOLVED' || cr.status === 'ESCALATED';
 
   return (
     <GlassCard variant="default" padded="md">
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <div style={{ marginTop: 2, color: cr.status === 'ESCALATED' ? 'var(--sos-status-danger)' : 'var(--sos-status-warning)' }}>
+          <AlertCircle size={14} />
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
-            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{cr.subject}</span>
-            <StatusBadge tone={correctionStatusTone(cr.status)} size="sm">
-              {CORRECTION_STATUS_LABEL[cr.status]}
-            </StatusBadge>
-            <StatusBadge tone="neutral" size="sm" dot={false}>
-              {cr.correctionType === 'DOCUMENT' ? 'Document' : 'Information'}
-            </StatusBadge>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{cr.subject}</span>
+            <StatusBadge tone={STATUS_TONE[cr.status]} size="sm">{STATUS_LABEL[cr.status]}</StatusBadge>
+            <StatusBadge tone="neutral" size="sm">{cr.correctionType}</StatusBadge>
+            <StatusBadge tone="warm" size="sm">{ACTION_LABEL[cr.requiredAction]}</StatusBadge>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--sos-text-muted)' }}>{fmtRelative(cr.createdAt)}</span>
           </div>
 
-          {cr.documentName ? (
-            <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginBottom: '4px' }}>
-              Document: <strong style={{ color: 'var(--sos-text-primary)' }}>{cr.documentName}</strong>
+          <div style={{ fontSize: 13, color: 'var(--sos-text-primary)', whiteSpace: 'pre-wrap', lineHeight: 1.55, marginBottom: 6 }}>
+            {cr.clientMessage}
+          </div>
+
+          {cr.reasonCodes.length > 0 ? (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+              {cr.reasonCodes.map((r) => (
+                <span key={r} style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 4, background: 'var(--sos-surface-hover)', color: 'var(--sos-text-muted)' }}>{r}</span>
+              ))}
             </div>
           ) : null}
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-            {cr.reasonCodes.map((code) => (
-              <span
-                key={code}
-                style={{ padding: '2px 8px', borderRadius: 'var(--sos-radius-full)', background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)', fontSize: '11.5px', color: 'var(--sos-text-secondary)' }}
-              >
-                {REJECTION_REASON_LABEL[code] ?? code}
-              </span>
-            ))}
-          </div>
-        </div>
+          {cr.officerNote ? (
+            <div style={{ marginTop: 4, padding: '8px 12px', borderRadius: 8, background: 'var(--sos-surface-hover)', fontSize: 12, color: 'var(--sos-text-muted)' }}>
+              <strong>Officer note:</strong> {cr.officerNote}
+            </div>
+          ) : null}
+          {cr.resolutionNote ? (
+            <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-success-soft)', border: '1px solid var(--sos-status-success-border)', fontSize: 12.5, color: 'var(--sos-text-primary)' }}>
+              <strong>Resolved:</strong> {cr.resolutionNote}
+            </div>
+          ) : null}
+          {cr.escalationReason ? (
+            <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', fontSize: 12.5, color: 'var(--sos-text-primary)' }}>
+              <strong>Escalated:</strong> {cr.escalationReason}
+            </div>
+          ) : null}
 
-        <div style={{ flexShrink: 0, textAlign: 'right', fontSize: '11.5px', color: 'var(--sos-text-muted)' }}>
-          <div>{fmtRelative(cr.createdAt)}</div>
-          <div style={{ marginTop: '2px' }}>by {cr.raisedByName}</div>
+          {isOpen ? (
+            <div style={{ marginTop: 10 }}>
+              {showResolve ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <textarea
+                    rows={2}
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    placeholder="Resolution note (optional)"
+                    style={{ width: '100%', resize: 'vertical', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: 13, fontFamily: 'inherit' }}
+                  />
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button type="button" onClick={() => { setShowResolve(false); setText(''); }} style={{ padding: '6px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 12.5, cursor: 'pointer' }}>Cancel</button>
+                    <PrimaryButton onClick={handleResolve} disabled={busy}>{busy ? 'Saving…' : 'Mark resolved'}</PrimaryButton>
+                  </div>
+                </div>
+              ) : showEscalate ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <textarea
+                    rows={2}
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    placeholder="Why does this need to escalate to a manager? (required)"
+                    style={{ width: '100%', resize: 'vertical', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: 13, fontFamily: 'inherit' }}
+                  />
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button type="button" onClick={() => { setShowEscalate(false); setText(''); }} style={{ padding: '6px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 12.5, cursor: 'pointer' }}>Cancel</button>
+                    <PrimaryButton onClick={handleEscalate} disabled={busy || !text.trim()}>{busy ? 'Saving…' : 'Escalate'}</PrimaryButton>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <SecondaryButton iconLeft={<CheckCircle2 size={13} />} onClick={() => { setShowResolve(true); setText(''); }}>Resolve</SecondaryButton>
+                  <SecondaryButton iconLeft={<ArrowUpCircle size={13} />} onClick={() => { setShowEscalate(true); setText(''); }}>Escalate</SecondaryButton>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
-
-      {/* Client message preview */}
-      <div style={{ padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: 1.5, marginBottom: '10px' }}>
-        {cr.clientMessage.length > 200 ? cr.clientMessage.slice(0, 200) + '…' : cr.clientMessage}
-      </div>
-
-      {/* Footer row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'var(--sos-text-muted)' }}>
-          <Clock size={12} />
-          <span>Action: <strong style={{ color: 'var(--sos-text-primary)' }}>{REQUIRED_ACTION_LABEL[cr.requiredAction]}</strong></span>
-        </div>
-
-        {!isTerminal && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: sla.overdue ? 'var(--sos-status-danger)' : 'var(--sos-text-muted)' }}>
-            {sla.overdue ? <AlertTriangle size={12} /> : <Clock size={12} />}
-            SLA: {sla.label}
-          </div>
-        )}
-
-        {cr.resolvedAt ? (
-          <div style={{ fontSize: '12px', color: 'var(--sos-status-success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <CheckCircle2 size={12} />
-            Resolved {fmtDate(cr.resolvedAt)} by {cr.resolvedByName}
-          </div>
-        ) : null}
-
-        {/* Actions */}
-        {!isTerminal && action === null && (
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-            <SecondaryButton onClick={() => setAction('escalate')}>
-              <TrendingUp size={13} style={{ marginRight: '5px' }} /> Escalate
-            </SecondaryButton>
-            <PrimaryButton onClick={() => setAction('resolve')}>
-              <CheckCircle2 size={13} style={{ marginRight: '5px' }} /> Resolve
-            </PrimaryButton>
-          </div>
-        )}
-      </div>
-
-      {/* Inline action panels */}
-      {action === 'resolve' && (
-        <ResolvePanel
-          onResolve={() => { onResolved(cr.id); setAction(null); }}
-          onCancel={() => setAction(null)}
-        />
-      )}
-      {action === 'escalate' && (
-        <EscalatePanel
-          onEscalate={() => { onEscalated(cr.id); setAction(null); }}
-          onCancel={() => setAction(null)}
-        />
-      )}
     </GlassCard>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Tab
-// ---------------------------------------------------------------------------
+function NewCorrectionForm({ caseId, onCreated }: { caseId: string; onCreated: (cr: ApiCorrectionRequest) => void }) {
+  const [open, setOpen] = useState(false);
+  const [subject, setSubject] = useState('');
+  const [reasonCode, setReasonCode] = useState('');
+  const [clientMessage, setClientMessage] = useState('');
+  const [requiredAction, setRequiredAction] = useState<CorrectionRequiredAction>('REUPLOAD');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-export function CorrectionsTab({ c }: { c: MockProcessingCase }) {
-  const [showModal, setShowModal] = useState(false);
-  const [corrections, setCorrections] = useState<MockCorrectionRequest[]>(
-    MOCK_CORRECTIONS.filter((cr) => cr.caseId === c.id),
-  );
-
-  function handleResolved(id: string) {
-    setCorrections((prev) =>
-      prev.map((cr) =>
-        cr.id === id
-          ? { ...cr, status: 'RESOLVED' as const, resolvedAt: '2026-05-11T12:05:00.000Z', resolvedByName: 'Sara Malik' }
-          : cr,
-      ),
-    );
+  async function handleSubmit() {
+    if (!subject.trim() || !clientMessage.trim() || !reasonCode.trim()) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const saved = await createCaseCorrection(caseId, {
+        correctionType: 'INFORMATION',
+        subject: subject.trim(),
+        reasonCodes: reasonCode.split(',').map((s) => s.trim()).filter(Boolean),
+        clientMessage: clientMessage.trim(),
+        requiredAction,
+      });
+      onCreated(saved);
+      setSubject('');
+      setReasonCode('');
+      setClientMessage('');
+      setRequiredAction('REUPLOAD');
+      setOpen(false);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to create');
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function handleEscalated(id: string) {
-    setCorrections((prev) =>
-      prev.map((cr) =>
-        cr.id === id ? { ...cr, status: 'ESCALATED' as const } : cr,
-      ),
+  if (!open) {
+    return (
+      <PrimaryButton iconLeft={<PlusCircle size={14} />} onClick={() => setOpen(true)}>
+        Request correction
+      </PrimaryButton>
     );
   }
-
-  const open = corrections.filter((cr) => cr.status === 'SENT' || cr.status === 'IN_PROGRESS');
-  const closed = corrections.filter((cr) => cr.status === 'RESOLVED' || cr.status === 'ESCALATED');
 
   return (
-    <>
-      {showModal ? (
-        <CorrectionRequestModal caseRecord={c} onClose={() => setShowModal(false)} />
-      ) : null}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {/* Toolbar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)' }}>
-            {open.length} open · {closed.length} closed
-          </div>
-          <PrimaryButton iconLeft={<ClipboardEdit size={14} />} onClick={() => setShowModal(true)}>
-            New correction request
+    <GlassCard variant="strong" padded="md">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <input className="sos-input" placeholder="Subject (e.g. Passport scan unreadable)" value={subject} onChange={(e) => setSubject(e.target.value)} />
+        <input className="sos-input" placeholder="Reason codes (comma-separated, e.g. BLURRY, EXPIRED)" value={reasonCode} onChange={(e) => setReasonCode(e.target.value)} />
+        <textarea
+          rows={4}
+          value={clientMessage}
+          onChange={(e) => setClientMessage(e.target.value)}
+          placeholder="Message to client explaining what to do…"
+          style={{ width: '100%', resize: 'vertical', padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
+        />
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>Required action</div>
+          <select
+            className="sos-input"
+            value={requiredAction}
+            onChange={(e) => setRequiredAction(e.target.value as CorrectionRequiredAction)}
+          >
+            <option value="REUPLOAD">Re-upload document</option>
+            <option value="CONFIRM">Confirm information</option>
+            <option value="CORRECT">Correct information</option>
+            <option value="CALL_BACK">Call back</option>
+          </select>
+        </div>
+        {err ? (
+          <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12.5 }}>{err}</div>
+        ) : null}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" onClick={() => setOpen(false)} style={{ padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+          <PrimaryButton onClick={handleSubmit} disabled={saving || !subject.trim() || !clientMessage.trim() || !reasonCode.trim()}>
+            {saving ? 'Saving…' : 'Send correction'}
           </PrimaryButton>
         </div>
-
-        {/* Open requests */}
-        {open.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--sos-status-warning)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-              Open ({open.length})
-            </div>
-            {open.map((cr) => (
-              <CorrectionCard key={cr.id} cr={cr} onResolved={handleResolved} onEscalated={handleEscalated} />
-            ))}
-          </div>
-        )}
-
-        {/* Closed requests */}
-        {closed.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-              Closed ({closed.length})
-            </div>
-            {closed.map((cr) => (
-              <CorrectionCard key={cr.id} cr={cr} onResolved={handleResolved} onEscalated={handleEscalated} />
-            ))}
-          </div>
-        )}
-
-        {/* Empty */}
-        {corrections.length === 0 && (
-          <GlassCard variant="panel" padded="lg">
-            <EmptyState
-              Icon={ClipboardEdit}
-              title="No correction requests"
-              description="Raise a correction request when the client needs to re-upload a document or update information."
-            />
-          </GlassCard>
-        )}
       </div>
-    </>
+    </GlassCard>
+  );
+}
+
+export function CorrectionsTab({ c }: { c: MockProcessingCase }) {
+  const [items, setItems] = useState<ApiCorrectionRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCaseCorrections(c.id)
+      .then((rows) => { if (!cancelled) setItems(rows); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to load corrections'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [c.id]);
+
+  async function handleResolve(id: string, note?: string) {
+    const updated = await resolveCaseCorrection(c.id, id, { resolutionNote: note });
+    setItems((prev) => prev.map((cr) => (cr.id === id ? updated : cr)));
+  }
+  async function handleEscalate(id: string, reason: string) {
+    const updated = await escalateCaseCorrection(c.id, id, { escalationReason: reason });
+    setItems((prev) => prev.map((cr) => (cr.id === id ? updated : cr)));
+  }
+
+  const open = items.filter((cr) => cr.status === 'SENT' || cr.status === 'IN_PROGRESS' || cr.status === 'ESCALATED');
+  const done = items.filter((cr) => cr.status === 'RESOLVED');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <NewCorrectionForm caseId={c.id} onCreated={(cr) => setItems((p) => [cr, ...p])} />
+      </div>
+
+      {loading ? (
+        <GlassCard variant="panel" padded="lg">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+            <Loader2 size={16} className="sos-spin" />
+            <span>Loading corrections…</span>
+          </div>
+        </GlassCard>
+      ) : err ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>{err}</div>
+        </GlassCard>
+      ) : items.length === 0 ? (
+        <GlassCard variant="panel" padded="lg">
+          <EmptyState
+            Icon={ClipboardEdit}
+            title="No correction requests"
+            description="When a document or piece of information needs fixing, raise a correction here. The client sees the message + required action in their portal."
+          />
+        </GlassCard>
+      ) : (
+        <>
+          {open.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Open ({open.length})
+              </div>
+              {open.map((cr) => <CorrectionCard key={cr.id} cr={cr} onResolve={handleResolve} onEscalate={handleEscalate} />)}
+            </div>
+          ) : null}
+          {done.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Resolved ({done.length})
+              </div>
+              {done.map((cr) => <CorrectionCard key={cr.id} cr={cr} onResolve={handleResolve} onEscalate={handleEscalate} />)}
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }

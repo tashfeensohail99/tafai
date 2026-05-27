@@ -1,18 +1,16 @@
 'use client';
-// Tasks Tab — Phase 1B.
-// Shows task cards with priority/status/assignee/due date.
-// Basic add-task form.
+// Tasks Tab — wired to /processing/cases/:id/tasks.
+// List + add + mark in-progress / done.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  AlertTriangle,
   CalendarClock,
   CheckCircle2,
   Circle,
   ClipboardList,
   Clock,
+  Loader2,
   PlusCircle,
-  User,
   XCircle,
 } from 'lucide-react';
 import {
@@ -24,13 +22,18 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   type MockProcessingCase,
-  type MockTask,
   fmtDate,
 } from '@/components/processing/mockData';
+import {
+  fetchCaseTasks,
+  createCaseTask,
+  updateCaseTask,
+  type ApiProcessingTask,
+  type ProcessingTaskPriority,
+  type ProcessingTaskStatus,
+} from '@/lib/processing';
 
-// ---------- Tone helpers --------------------------------------------------
-
-function taskPriorityTone(p: MockTask['priority']): BadgeTone {
+function taskPriorityTone(p: ProcessingTaskPriority): BadgeTone {
   switch (p) {
     case 'URGENT': return 'danger';
     case 'HIGH': return 'warning';
@@ -40,50 +43,54 @@ function taskPriorityTone(p: MockTask['priority']): BadgeTone {
   }
 }
 
-function taskStatusTone(s: MockTask['status']): BadgeTone {
-  switch (s) {
-    case 'OPEN': return 'info';
-    case 'IN_PROGRESS': return 'accent';
-    case 'BLOCKED': return 'danger';
-    case 'DONE': return 'success';
-    case 'CANCELLED': return 'neutral';
-    default: return 'neutral';
-  }
-}
-
-function taskStatusLabel(s: MockTask['status']): string {
+function taskStatusLabel(s: ProcessingTaskStatus): string {
   switch (s) {
     case 'OPEN': return 'Open';
     case 'IN_PROGRESS': return 'In progress';
-    case 'BLOCKED': return 'Blocked';
-    case 'DONE': return 'Done';
+    case 'COMPLETED': return 'Done';
     case 'CANCELLED': return 'Cancelled';
     default: return s;
   }
 }
 
-function StatusIcon({ status }: { status: MockTask['status'] }) {
-  if (status === 'DONE') return <CheckCircle2 size={16} style={{ color: 'var(--sos-status-success)' }} />;
-  if (status === 'BLOCKED') return <XCircle size={16} style={{ color: 'var(--sos-status-danger)' }} />;
-  if (status === 'IN_PROGRESS') return <Clock size={16} style={{ color: 'var(--sos-brand-primary-strong)' }} />;
+function StatusIcon({ status }: { status: ProcessingTaskStatus }) {
+  if (status === 'COMPLETED') return <CheckCircle2 size={16} style={{ color: 'var(--sos-status-success)' }} />;
   if (status === 'CANCELLED') return <XCircle size={16} style={{ color: 'var(--sos-text-muted)' }} />;
+  if (status === 'IN_PROGRESS') return <Clock size={16} style={{ color: 'var(--sos-brand-primary-strong)' }} />;
   return <Circle size={16} style={{ color: 'var(--sos-text-muted)' }} />;
 }
 
-// ---------- Task card -----------------------------------------------------
+function TaskCard({
+  task,
+  onAdvance,
+}: {
+  task: ApiProcessingTask;
+  onAdvance: (id: string, next: ProcessingTaskStatus) => void;
+}) {
+  const isDone = task.status === 'COMPLETED' || task.status === 'CANCELLED';
+  const isOverdue =
+    task.dueDate && !isDone ? new Date(task.dueDate).getTime() < Date.now() : false;
 
-function TaskCard({ task, onDone }: { task: MockTask; onDone: (id: string) => void }) {
-  const isDone = task.status === 'DONE' || task.status === 'CANCELLED';
-  const isOverdue = task.dueDate ? new Date(task.dueDate) < new Date('2026-05-11') && !isDone : false;
+  // Click rotates through OPEN → IN_PROGRESS → COMPLETED → OPEN
+  const next: ProcessingTaskStatus =
+    task.status === 'OPEN' ? 'IN_PROGRESS' :
+    task.status === 'IN_PROGRESS' ? 'COMPLETED' :
+    task.status === 'COMPLETED' ? 'OPEN' :
+    task.status;
 
   return (
     <div style={{ display: 'flex', gap: '12px', padding: '12px 14px', borderBottom: '1px solid var(--sos-border-subtle)', alignItems: 'flex-start', opacity: isDone ? 0.55 : 1, transition: 'background 150ms' }}
       onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--sos-surface-hover)')}
       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
     >
-      <div style={{ paddingTop: '1px' }}>
+      <button
+        type="button"
+        onClick={() => onAdvance(task.id, next)}
+        aria-label={`Advance to ${next}`}
+        style={{ paddingTop: '1px', background: 'transparent', border: 'none', cursor: 'pointer' }}
+      >
         <StatusIcon status={task.status} />
-      </div>
+      </button>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: '14px', fontWeight: 600, color: isDone ? 'var(--sos-text-muted)' : 'var(--sos-text-primary)', textDecoration: isDone ? 'line-through' : 'none', marginBottom: '4px' }}>
           {task.title}
@@ -93,66 +100,63 @@ function TaskCard({ task, onDone }: { task: MockTask; onDone: (id: string) => vo
         ) : null}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
           <StatusBadge tone={taskPriorityTone(task.priority)} size="sm" dot={false}>{task.priority}</StatusBadge>
-          <StatusBadge tone={taskStatusTone(task.status)} size="sm">{taskStatusLabel(task.status)}</StatusBadge>
-          {task.assignedToName ? (
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--sos-text-muted)' }}>
-              <User size={11} /> {task.assignedToName}
-            </span>
-          ) : (
-            <span style={{ fontSize: '12px', color: 'var(--sos-status-warning)' }}>Unassigned</span>
-          )}
+          <StatusBadge tone={isDone ? 'neutral' : 'info'} size="sm" dot={false}>
+            {taskStatusLabel(task.status)}
+          </StatusBadge>
           {task.dueDate ? (
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: isOverdue ? 'var(--sos-status-danger)' : 'var(--sos-text-muted)' }}>
-              {isOverdue ? <AlertTriangle size={11} /> : <CalendarClock size={11} />}
-              Due {fmtDate(task.dueDate)}
-              {isOverdue ? ' (overdue)' : ''}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: isOverdue ? 'var(--sos-status-danger)' : 'var(--sos-text-muted)' }}>
+              <CalendarClock size={11} /> Due {fmtDate(task.dueDate)}
+            </span>
+          ) : null}
+          {task.assignedTo ? (
+            <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+              · {task.assignedTo.email.split('@')[0]}
             </span>
           ) : null}
         </div>
       </div>
-      {!isDone ? (
-        <button
-          type="button"
-          onClick={() => onDone(task.id)}
-          title="Mark as done"
-          style={{ flexShrink: 0, background: 'transparent', border: '1px solid var(--sos-border-subtle)', borderRadius: 'var(--sos-radius-sm)', padding: '4px 10px', fontSize: '12px', color: 'var(--sos-text-muted)', cursor: 'pointer', transition: 'all 150ms' }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--sos-status-success-soft)'; e.currentTarget.style.color = 'var(--sos-status-success)'; e.currentTarget.style.borderColor = 'var(--sos-status-success-border)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--sos-text-muted)'; e.currentTarget.style.borderColor = 'var(--sos-border-subtle)'; }}
-        >
-          Done
-        </button>
-      ) : null}
     </div>
   );
 }
 
-// ---------- Add task form --------------------------------------------------
+const PRIORITIES: Array<{ value: ProcessingTaskPriority; label: string }> = [
+  { value: 'LOW', label: 'Low' },
+  { value: 'NORMAL', label: 'Normal' },
+  { value: 'HIGH', label: 'High' },
+  { value: 'URGENT', label: 'Urgent' },
+];
 
-function AddTaskForm({ onAdd }: { onAdd: (task: MockTask) => void }) {
+function AddTaskForm({ caseId, onSaved }: { caseId: string; onSaved: (t: ApiProcessingTask) => void }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
-  const [priority, setPriority] = useState<MockTask['priority']>('NORMAL');
+  const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [priority, setPriority] = useState<ProcessingTaskPriority>('NORMAL');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!title.trim()) return;
-    setLoading(true);
-    setTimeout(() => {
-      onAdd({
-        id: `task-new-${Date.now()}`,
-        title,
+    setSaving(true);
+    setErr(null);
+    try {
+      const saved = await createCaseTask(caseId, {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        dueDate: dueDate || undefined,
         priority,
-        status: 'OPEN',
-        assignedToName: 'Sara Malik',
-        dueDate: dueDate || null,
       });
+      onSaved(saved);
       setTitle('');
-      setPriority('NORMAL');
+      setDescription('');
       setDueDate('');
+      setPriority('NORMAL');
       setOpen(false);
-      setLoading(false);
-    }, 500);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to create task');
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!open) {
@@ -165,45 +169,52 @@ function AddTaskForm({ onAdd }: { onAdd: (task: MockTask) => void }) {
 
   return (
     <GlassCard variant="strong" padded="md">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <input
+          className="sos-input"
+          placeholder="Task title…"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Task title…"
-          style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: '14px', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
         />
-
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: '120px' }}>
-            <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--sos-text-muted)', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Priority</div>
-            <select
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as MockTask['priority'])}
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: '13px', fontFamily: 'inherit', outline: 'none' }}
-            >
-              <option value="LOW">Low</option>
-              <option value="NORMAL">Normal</option>
-              <option value="HIGH">High</option>
-              <option value="URGENT">Urgent</option>
-            </select>
-          </div>
-          <div style={{ flex: 1, minWidth: '120px' }}>
-            <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--sos-text-muted)', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Due date</div>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Description (optional)…"
+          rows={3}
+          style={{ width: '100%', resize: 'vertical', padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
+        />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--sos-text-muted)', marginBottom: 4, textTransform: 'uppercase' }}>Due</div>
             <input
+              className="sos-input"
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: '13px', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
             />
           </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--sos-text-muted)', marginBottom: 4, textTransform: 'uppercase' }}>Priority</div>
+            <select
+              className="sos-input"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as ProcessingTaskPriority)}
+            >
+              {PRIORITIES.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
-
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-          <button type="button" onClick={() => setOpen(false)} style={{ padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: '13px', cursor: 'pointer' }}>
-            Cancel
-          </button>
-          <PrimaryButton onClick={handleSubmit} disabled={loading || !title.trim()}>
-            {loading ? 'Creating…' : 'Create task'}
+        {err ? (
+          <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12.5 }}>
+            {err}
+          </div>
+        ) : null}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" onClick={() => setOpen(false)} style={{ padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+          <PrimaryButton onClick={handleSubmit} disabled={saving || !title.trim()}>
+            {saving ? 'Saving…' : 'Add task'}
           </PrimaryButton>
         </div>
       </div>
@@ -211,53 +222,80 @@ function AddTaskForm({ onAdd }: { onAdd: (task: MockTask) => void }) {
   );
 }
 
-// ---------- Tasks tab component -------------------------------------------
-
 export function TasksTab({ c }: { c: MockProcessingCase }) {
-  const [tasks, setTasks] = useState<MockTask[]>(c.tasks);
+  const [tasks, setTasks] = useState<ApiProcessingTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
-  function handleAdd(task: MockTask) {
-    setTasks((prev) => [task, ...prev]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchCaseTasks(c.id)
+      .then((rows) => { if (!cancelled) setTasks(rows); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to load tasks'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [c.id]);
+
+  function handleSaved(t: ApiProcessingTask) {
+    setTasks((prev) => [t, ...prev]);
   }
 
-  function handleDone(id: string) {
-    setTasks((prev) => prev.map((t) => t.id === id ? { ...t, status: 'DONE' as const } : t));
+  async function handleAdvance(id: string, next: ProcessingTaskStatus) {
+    // Optimistic — flip in place, revert on error.
+    const prev = tasks;
+    setTasks((curr) => curr.map((t) => (t.id === id ? { ...t, status: next } : t)));
+    try {
+      const updated = await updateCaseTask(c.id, id, { status: next });
+      setTasks((curr) => curr.map((t) => (t.id === id ? updated : t)));
+    } catch {
+      setTasks(prev);
+    }
   }
 
-  const open = tasks.filter((t) => t.status !== 'DONE' && t.status !== 'CANCELLED');
-  const done = tasks.filter((t) => t.status === 'DONE' || t.status === 'CANCELLED');
+  const open = tasks.filter((t) => t.status === 'OPEN' || t.status === 'IN_PROGRESS');
+  const done = tasks.filter((t) => t.status === 'COMPLETED' || t.status === 'CANCELLED');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <AddTaskForm onAdd={handleAdd} />
+        <AddTaskForm caseId={c.id} onSaved={handleSaved} />
       </div>
 
-      {tasks.length === 0 ? (
+      {loading ? (
+        <GlassCard variant="panel" padded="lg">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+            <Loader2 size={16} className="sos-spin" />
+            <span>Loading tasks…</span>
+          </div>
+        </GlassCard>
+      ) : err ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>{err}</div>
+        </GlassCard>
+      ) : tasks.length === 0 ? (
         <GlassCard variant="panel" padded="lg">
           <EmptyState
             Icon={ClipboardList}
             title="No tasks yet"
-            description="Create tasks to track follow-ups and reminders for this case."
+            description="Track per-case actions like 'Call client about passport', 'Draft cover letter', or 'Schedule biometrics'."
           />
         </GlassCard>
       ) : (
         <>
           {open.length > 0 ? (
             <GlassCard variant="panel" padded={false}>
-              <div style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-                Open tasks ({open.length})
+              <div style={{ padding: '10px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+                Open ({open.length})
               </div>
-              {open.map((t) => <TaskCard key={t.id} task={t} onDone={handleDone} />)}
+              {open.map((t) => <TaskCard key={t.id} task={t} onAdvance={handleAdvance} />)}
             </GlassCard>
           ) : null}
-
           {done.length > 0 ? (
             <GlassCard variant="panel" padded={false}>
-              <div style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-                Completed / cancelled ({done.length})
+              <div style={{ padding: '10px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+                Done ({done.length})
               </div>
-              {done.map((t) => <TaskCard key={t.id} task={t} onDone={handleDone} />)}
+              {done.map((t) => <TaskCard key={t.id} task={t} onAdvance={handleAdvance} />)}
             </GlassCard>
           ) : null}
         </>

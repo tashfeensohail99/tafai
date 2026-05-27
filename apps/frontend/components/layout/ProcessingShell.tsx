@@ -36,10 +36,9 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import {
-  MOCK_PROCESSING_CASES,
-  getIntakePending,
-  countByStage,
-} from '@/components/processing/mockData';
+  fetchProcessingDashboard,
+  type ProcessingDashboardMetrics,
+} from '@/lib/processing';
 import { logout as sessionLogout, useSession } from '@/lib/session';
 
 export interface ProcessingUser {
@@ -76,16 +75,18 @@ const PROCESSING_ROLES = new Set([
   'admin',
 ]);
 
-const PROCESSING_NAV: DrawerMenuItem[] = [
-  { label: 'Dashboard', href: '/processing', icon: LayoutDashboard, caption: 'Officer overview' },
-  { label: 'Intake Queue', href: '/processing/intake', icon: Inbox, caption: 'New from Finance', badge: getIntakePending().length || undefined },
-  { label: 'My Cases', href: '/processing/cases', icon: FolderKanban, caption: 'Your active caseload' },
-  { label: 'Documents', href: '/processing/documents', icon: FileSearch, caption: 'Pending reviews' },
-  { label: 'Tasks', href: '/processing/tasks', icon: ClipboardList, caption: 'Open task list' },
-  { label: 'Refunds & Appeals', href: '/processing/refunds', icon: Wallet, caption: 'Rejected — refund or escalate' },
-  { label: 'History', href: '/processing/history', icon: History, caption: 'Completed cases' },
-  { label: 'Reports', href: '/processing/reports', icon: BarChart2, caption: 'Metrics & analytics' },
-];
+function buildProcessingNav(intakePending: number): DrawerMenuItem[] {
+  return [
+    { label: 'Dashboard', href: '/processing', icon: LayoutDashboard, caption: 'Officer overview' },
+    { label: 'Intake Queue', href: '/processing/intake', icon: Inbox, caption: 'New from Finance', badge: intakePending || undefined },
+    { label: 'My Cases', href: '/processing/cases', icon: FolderKanban, caption: 'Your active caseload' },
+    { label: 'Documents', href: '/processing/documents', icon: FileSearch, caption: 'Pending reviews' },
+    { label: 'Tasks', href: '/processing/tasks', icon: ClipboardList, caption: 'Open task list' },
+    { label: 'Refunds & Appeals', href: '/processing/refunds', icon: Wallet, caption: 'Rejected — refund or escalate' },
+    { label: 'History', href: '/processing/history', icon: History, caption: 'Completed cases' },
+    { label: 'Reports', href: '/processing/reports', icon: BarChart2, caption: 'Metrics & analytics' },
+  ];
+}
 
 const ADMIN_NAV: DrawerMenuItem[] = [
   { label: 'Manager Dashboard', href: '/processing/manager', icon: LayoutGrid, caption: 'Team & SLA overview' },
@@ -112,6 +113,15 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Sidebar KPIs come from /processing/dashboard. Refreshed every 30s so the
+  // intake badge + "ready to file" counter track reality without the user
+  // hitting refresh. Survives a single failure (keeps the last good values).
+  const [metrics, setMetrics] = useState<ProcessingDashboardMetrics>({
+    activeCases: 0,
+    awaitingReview: 0,
+    readyToSubmit: 0,
+    newIntake: 0,
+  });
 
   useEffect(() => {
     if (session.status === 'unauthed') {
@@ -124,11 +134,24 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
     }
   }, [session, router]);
 
-  // KPI bits (still backed by mock for now — the real numbers come from
-  // /processing/dashboard, wired separately at page level).
-  const intakePending = getIntakePending().length;
-  const underReview = countByStage('DOCUMENTS_UNDER_REVIEW');
-  const readyToSubmit = countByStage('READY_FOR_SUBMISSION');
+  // Poll dashboard while authed. Skipped entirely when not authed so we don't
+  // fire requests pre-login or after logout.
+  useEffect(() => {
+    if (session.status !== 'authed') return;
+    let cancelled = false;
+    const load = () => {
+      fetchProcessingDashboard()
+        .then((res) => { if (!cancelled) setMetrics(res); })
+        .catch(() => { /* keep last good values */ });
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [session.status]);
+
+  const intakePending = metrics.newIntake;
+  const underReview = metrics.awaitingReview;
+  const readyToSubmit = metrics.readyToSubmit;
 
   const sessionValue = useMemo<ProcessingSessionContextValue | null>(() => {
     if (session.status !== 'authed') return null;
@@ -163,9 +186,8 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
   const user = sessionValue.user;
   const logout = sessionValue.logout;
   const { title, subtitle } = getPageTitle(pathname);
-  const activeCases = MOCK_PROCESSING_CASES.filter(
-    (c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED',
-  ).length;
+  const activeCases = metrics.activeCases;
+  const navItems = buildProcessingNav(intakePending);
 
   return (
     <ProcessingSessionContext.Provider value={sessionValue}>
@@ -193,7 +215,7 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
 
           <div className="sos-sidebar__nav sos-scroll">
             <div className="sos-nav-section">Workspace</div>
-            <DrawerMenu items={PROCESSING_NAV} onNavigate={() => setMobileOpen(false)} />
+            <DrawerMenu items={navItems} onNavigate={() => setMobileOpen(false)} />
 
             {user.permissions.includes('processing.case.view_all') ? (
               <>

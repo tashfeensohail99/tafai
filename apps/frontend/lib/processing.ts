@@ -127,6 +127,8 @@ export interface ProcessingDashboardMetrics {
 
 export interface ListCasesQuery {
   stage?: ProcessingStage;
+  /** Multi-stage filter — wins over `stage` when both passed. */
+  stages?: ProcessingStage[];
   priority?: ProcessingPriority;
   assignedOfficerId?: string;
   clientId?: string;
@@ -183,6 +185,7 @@ export function fetchIntakeQueue(): Promise<ApiIntakeCaseItem[]> {
 export function fetchProcessingCases(query: ListCasesQuery = {}): Promise<ListCasesResponse> {
   const qs = new URLSearchParams();
   if (query.stage) qs.set('stage', query.stage);
+  if (query.stages && query.stages.length > 0) qs.set('stages', query.stages.join(','));
   if (query.priority) qs.set('priority', query.priority);
   if (query.assignedOfficerId) qs.set('assignedOfficerId', query.assignedOfficerId);
   if (query.clientId) qs.set('clientId', query.clientId);

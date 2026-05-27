@@ -479,9 +479,18 @@ export class ProcessingService {
             ...(query.updatedTo ? { lte: new Date(query.updatedTo) } : {}),
           }
         : undefined;
+    // Multi-stage wins over single stage when both are passed — keeps the
+    // History page's "all terminal stages" query in a single round trip.
+    const stageFilter: Prisma.ProcessingCaseWhereInput | undefined =
+      query.stages && query.stages.length > 0
+        ? { stage: { in: query.stages } }
+        : query.stage
+          ? { stage: query.stage }
+          : undefined;
+
     const whereClause: Prisma.ProcessingCaseWhereInput = {
       ...(canViewAll ? {} : { assignedOfficerId: user.id }),
-      ...(query.stage ? { stage: query.stage } : {}),
+      ...(stageFilter ?? {}),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.assignedOfficerId ? { assignedOfficerId: query.assignedOfficerId } : {}),
       ...(query.clientId ? { clientId: query.clientId } : {}),

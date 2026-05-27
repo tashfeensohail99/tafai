@@ -81,6 +81,23 @@ export class ListProcessingCasesQueryDto {
   @IsEnum(ProcessingCaseStage)
   stage?: ProcessingCaseStage;
 
+  /**
+   * Multi-stage filter — accepts a comma-separated list of stages or a
+   * repeated query param (`?stages=COMPLETED&stages=CANCELLED`). Used by the
+   * History page to surface all terminal cases in a single fetch instead of
+   * three parallel calls. Takes precedence over the single `stage` field
+   * when both are present.
+   */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') return value.split(',').map((s) => s.trim()).filter(Boolean);
+    return value;
+  })
+  @IsArray()
+  @IsEnum(ProcessingCaseStage, { each: true })
+  stages?: ProcessingCaseStage[];
+
   @IsOptional()
   @IsEnum(ProcessingCasePriority)
   priority?: ProcessingCasePriority;

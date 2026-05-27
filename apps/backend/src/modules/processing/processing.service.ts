@@ -651,6 +651,39 @@ export class ProcessingService {
     const processingCase = await this.findCaseOrThrow(caseId);
     this.assertCaseAccess(processingCase, user);
 
+    // No-op short-circuit — clicking Reassign and picking the same officer
+    // shouldn't write an audit row or bump updatedByUserId.
+    if (processingCase.assignedOfficerId === dto.officerId) {
+      return processingCase;
+    }
+
+    // Same role guard as acknowledgeIntake (P5.1): reassignment can only
+    // target a processing-side user. Blocks accidentally re-routing to
+    // sales/finance/support.
+    const assignee = await this.prisma.userAccount.findUnique({
+      where: { id: dto.officerId },
+      select: {
+        id: true,
+        userRoles: { select: { role: { select: { name: true } } } },
+      },
+    });
+    if (!assignee) {
+      throw new BadRequestException('Assignee not found');
+    }
+    const PROCESSING_WORKERS = new Set(['processing', 'processing_manager', 'documentation', 'super_admin', 'admin']);
+    const assigneeRoles = assignee.userRoles.map((r) => r.role.name);
+    if (!assigneeRoles.some((r) => PROCESSING_WORKERS.has(r))) {
+      throw new BadRequestException(
+        'Assignee must be a Processing Associate, Manager, or Documentation specialist',
+      );
+    }
+
+    // Differentiate initial assignment vs reassignment in the audit log so
+    // the manager-dashboard / compliance review can tell them apart.
+    const action = processingCase.assignedOfficerId
+      ? 'case_reassigned'
+      : 'case_assigned';
+
     const updated = await this.prisma.$transaction(async (tx) => {
       const c = await tx.processingCase.update({
         where: { id: caseId },
@@ -660,7 +693,7 @@ export class ProcessingService {
         data: {
           caseId,
           actorUserId: user.id,
-          action: 'case_assigned',
+          action,
           entityType: 'processing_case',
           entityId: caseId,
           oldValues: { assignedOfficerId: processingCase.assignedOfficerId },

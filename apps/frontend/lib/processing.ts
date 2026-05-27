@@ -446,9 +446,18 @@ export function changeCaseStage(
   });
 }
 
+/**
+ * Reassign a processing case to a different officer. Manager-only
+ * (server-side permission `processing.case.assign`). Server validates the
+ * assignee holds a processing-side role; rejects sales/finance/support.
+ *
+ * Body field name `officerId` matches the backend AssignCaseDto. (Earlier
+ * versions of this helper sent `assignedOfficerId` which never matched —
+ * fixed in P5.5.)
+ */
 export function assignProcessingCase(
   caseId: string,
-  body: { assignedOfficerId: string },
+  body: { officerId: string },
 ): Promise<ApiProcessingCaseDetail> {
   return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}/assign`, {
     method: 'PATCH',

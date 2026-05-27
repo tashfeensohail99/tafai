@@ -218,13 +218,18 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const isManager = user.permissions.includes('processing.case.view_all');
   const canAssign = user.permissions.includes('processing.case.assign');
 
+  // Refetch trigger — bumped by child modals (reassignment, stage change)
+  // after a successful mutation so the workspace shows the new state
+  // without a hard reload.
+  const [refetchTick, setRefetchTick] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
     fetchProcessingCase(caseId)
       .then((r) => { if (!cancelled) setApi(r); })
       .catch((e: unknown) => { if (!cancelled) setLoadErr(e instanceof Error ? e.message : 'Failed to load case'); });
     return () => { cancelled = true; };
-  }, [caseId]);
+  }, [caseId, refetchTick]);
 
   if (loadErr) {
     return (
@@ -300,6 +305,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           caseRecord={c}
           currentUserPermissions={user.permissions}
           onClose={() => setShowAssignModal(false)}
+          onAssigned={() => setRefetchTick((n) => n + 1)}
         />
       ) : null}
       {showCorrectionModal ? (

@@ -75,6 +75,18 @@ export interface OrchestratorDecision {
   model?: string;
   /** Next-turn state for the thread's `aiState` column. */
   nextAiState?: string;
+  /**
+   * When set, the AI reply processor sends this brochure as a follow-up
+   * DOCUMENT message after the text reply. Programs are matched from the
+   * customer's inbound via regex + a one-shot extraction call. Already-sent
+   * brochures (recorded in past message payloads) won't repeat.
+   */
+  attachBrochure?: {
+    programKey: string;
+    s3Key: string;
+    displayTitle: string;
+    mimeType: string;
+  };
 }
 
 @Injectable()
@@ -283,6 +295,23 @@ export class OrchestratorService {
       return { mode: 'SKIPPED', skipReason: 'duplicate-reply' };
     }
 
+    // Brochure intent: if the customer asked for a brochure / PDF / details,
+    // figure out which program they meant + look up the file. The AI reply
+    // processor sends the brochure as a follow-up DOCUMENT message after the
+    // text reply lands. Dedup: same brochure already on this thread → skip.
+    let attachBrochure: OrchestratorDecision['attachBrochure'] | undefined;
+    if (this.mentionsBrochure(input.inboundText)) {
+      try {
+        attachBrochure = await this.resolveBrochureToAttach(
+          input.inboundText,
+          history.map((m) => ({ direction: m.direction, body: m.body })),
+          thread.id,
+        );
+      } catch (e) {
+        this.log.warn(`brochure resolve failed: ${(e as Error).message}`);
+      }
+    }
+
     // If the funnel just landed on HANDED_OFF this turn, extract structured
     // appointment intent from the customer's message and write a row to
     // crm.appointment_requests. Sales picks it up from the chat panel banner
@@ -310,6 +339,7 @@ export class OrchestratorService {
       latencyMs: res.latencyMs,
       model: res.model,
       nextAiState,
+      attachBrochure,
     };
   }
 
@@ -593,6 +623,99 @@ export class OrchestratorService {
       return 'Aapka sawal hum apke manager tak forward kar dete hain — kya hum aaj ya kal ek short call schedule kar lein?';
     }
     return "I'll loop in our manager for the exact details — can we schedule a short call today or tomorrow?";
+  }
+
+  /**
+   * Cheap pre-filter: did the customer mention wanting a brochure / PDF /
+   * details? Catches English, Roman Urdu and Urdu script equivalents.
+   * Only triggers the (more expensive) program-extraction call when this
+   * returns true — most messages won't.
+   */
+  private mentionsBrochure(text: string): boolean {
+    const lc = text.toLowerCase();
+    if (/\b(brochure|pdf|leaflet|details|info\s*pack|booklet|company\s*profile)\b/.test(lc)) return true;
+    if (/\b(tafseel|maloomat|pamphlet)\b/.test(lc)) return true;
+    if (/(بروشر|پی\s*ڈی\s*ایف|تفصیل|معلومات|پروفائل)/.test(text)) return true;
+    return false;
+  }
+
+  /**
+   * The customer asked for a brochure. Figure out WHICH program (from the
+   * current inbound + recent conversation context), look it up in
+   * ai.brochures, and confirm we haven't already sent it on this thread.
+   *
+   * Approach: a tiny gpt-4o-mini extraction call that returns just a
+   * `programKey` string. The model has the full context so it can resolve
+   * "the work permit one" from earlier turns. Cheap (~$0.0002) and reliable.
+   */
+  private async resolveBrochureToAttach(
+    inboundText: string,
+    history: Array<{ direction: string; body: string | null }>,
+    threadId: string,
+  ): Promise<OrchestratorDecision['attachBrochure'] | undefined> {
+    const programKeys = [
+      'C11', 'ICT', 'SUV', 'EB2_NIW', 'RCIP', 'LMIA', 'JR', 'E2', 'VISIT', 'COMPANY_PROFILE',
+    ] as const;
+    const histText = history
+      .map((m) => `${m.direction === 'INBOUND' ? 'Client' : 'TIS'}: ${(m.body ?? '').trim()}`)
+      .filter((line) => line.length > 10)
+      .slice(-8)
+      .join('\n');
+
+    const prompt = [
+      `Pick the SINGLE most relevant brochure for the customer's latest message, using the conversation for context.`,
+      `Return ONLY the JSON: { "programKey": "<one of: ${programKeys.join(' | ')}>" }`,
+      `If the customer is asking generically (just "send brochure" with no specific program mentioned) → COMPANY_PROFILE.`,
+      `Use C11 for "work permit / business setup in Canada", SUV for "startup", ICT for "company transfer", LMIA for "skilled worker job offer", RCIP for "rural Canada", EB2_NIW for "USA / Green Card", E2 for "USA investor visa", JR for "appeal / refusal challenge / judicial review", VISIT for "visit / tourist / family visit visa".`,
+      ``,
+      `Conversation:`,
+      histText,
+      ``,
+      `Latest client message: """${inboundText.slice(0, 400)}"""`,
+    ].join('\n');
+
+    const res = await this.openai.chat([
+      { role: 'system', content: 'You output strict JSON only. No prose, no code fences.' },
+      { role: 'user', content: prompt },
+    ]);
+    let parsed: { programKey?: string } | null = null;
+    try {
+      parsed = JSON.parse((res.reply ?? '').replace(/^```(json)?|```$/g, '').trim());
+    } catch {
+      return undefined;
+    }
+    if (!parsed?.programKey || !(programKeys as readonly string[]).includes(parsed.programKey)) {
+      return undefined;
+    }
+
+    // Don't repeat ourselves: check the thread for a previous OUTBOUND
+    // DOCUMENT carrying the same programKey in its payload.
+    const alreadySent = await this.prisma.whatsAppMessage.findFirst({
+      where: {
+        threadId,
+        direction: 'OUTBOUND',
+        type: 'DOCUMENT',
+        payload: { path: ['brochureProgramKey'], equals: parsed.programKey },
+      },
+      select: { id: true },
+    });
+    if (alreadySent) {
+      this.log.debug(`brochure ${parsed.programKey} already sent on thread ${threadId}, skip`);
+      return undefined;
+    }
+
+    const brochure = await this.prisma.botBrochure.findUnique({
+      where: { programKey: parsed.programKey },
+      select: { programKey: true, s3Key: true, displayTitle: true, mimeType: true },
+    });
+    if (!brochure) return undefined;
+
+    return {
+      programKey: brochure.programKey,
+      s3Key: brochure.s3Key,
+      displayTitle: brochure.displayTitle,
+      mimeType: brochure.mimeType,
+    };
   }
 
   /**

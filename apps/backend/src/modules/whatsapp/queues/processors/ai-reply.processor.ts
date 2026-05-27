@@ -164,6 +164,14 @@ export class AiReplyProcessor extends WorkerHost {
       return;
     }
 
+    // If a brochure is going out, override the LLM's text with a clean,
+    // concise "here it is" instead of whatever the model improvised — this
+    // way the text + the document tell a consistent story regardless of
+    // what the model originally wrote.
+    const textBody = decision.attachBrochure
+      ? brochureHandoffText(decision.language ?? 'en')
+      : (decision.reply ?? '');
+
     const outbound = await this.prisma.whatsAppMessage.create({
       data: {
         threadId: thread.id,
@@ -173,7 +181,7 @@ export class AiReplyProcessor extends WorkerHost {
         direction: 'OUTBOUND',
         type: 'TEXT',
         status: 'QUEUED',
-        body: decision.reply ?? '',
+        body: textBody,
         // Bot messages: NULL sentByEmployeeId. The "human-active" guard
         // keys off sentByEmployeeId NOT NULL so this never self-locks.
         sentByEmployeeId: null,
@@ -185,6 +193,47 @@ export class AiReplyProcessor extends WorkerHost {
       { messageId: outbound.id },
       { jobId: outbound.id },
     );
+
+    // Follow-up brochure send: signed URL from storage → outbound DOCUMENT
+    // message. The existing outbound processor will dispatch this via the
+    // Meta Cloud API using the `link` form (no need to upload to Meta).
+    // Marker in payload (`brochureProgramKey`) lets the orchestrator's
+    // dedup query skip re-sending the same brochure on this thread.
+    if (decision.attachBrochure) {
+      try {
+        const signedUrl = await this.storage.getSignedUrl(decision.attachBrochure.s3Key);
+        const brochureMsg = await this.prisma.whatsAppMessage.create({
+          data: {
+            threadId: thread.id,
+            channelId: thread.channelId,
+            leadId: thread.leadId,
+            clientId: thread.clientId,
+            direction: 'OUTBOUND',
+            type: 'DOCUMENT',
+            status: 'QUEUED',
+            mediaUrl: signedUrl,
+            mediaMimeType: decision.attachBrochure.mimeType,
+            sentByEmployeeId: null,
+            payload: {
+              aiBot: true,
+              brochureProgramKey: decision.attachBrochure.programKey,
+              filename: decision.attachBrochure.displayTitle,
+            } as unknown as Prisma.InputJsonValue,
+          },
+        });
+        await this.outboundQueue.add(
+          'send',
+          { messageId: brochureMsg.id },
+          { jobId: brochureMsg.id },
+        );
+      } catch (err) {
+        // Brochure attach is best-effort. The text reply already went out —
+        // if the document fails the customer still gets the prose, which
+        // says we're sending it. The dedup query won't skip next time so a
+        // retry on the next message could succeed.
+        this.log.warn(`brochure attach failed: ${(err as Error).message}`);
+      }
+    }
 
     await this.prisma.aiRun.create({
       data: {
@@ -381,4 +430,17 @@ function mediaAckText(
     return `Shukriya — aapki ${noun} mil gayi. Manager review karke jaldi reply karenge.`;
   }
   return `Thanks — got your ${what}. Manager will review and get back to you shortly.`;
+}
+
+/**
+ * Override text we send right BEFORE the brochure attachment, so the message
+ * + document tell a coherent story. The LLM's original reply may have said
+ * "the manager will share it" — that conflicts with us attaching the file
+ * ourselves, so we replace.
+ */
+function brochureHandoffText(language: string): string {
+  if (language === 'ur_roman' || language === 'ur') {
+    return 'Yeh raha brochure. Detail mein parh lijiyega, koi bhi sawal ho to btaiye!';
+  }
+  return "Here you go — the brochure is attached. Have a read and let me know if you have any questions!";
 }

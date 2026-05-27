@@ -3085,3 +3085,28 @@ model AppointmentRequest {
   @@map("appointment_requests")
   @@schema("crm")
 }
+
+/// PDF brochures the WhatsApp AI bot can attach to a reply. One row per
+/// program (C11, ICT, SUV, EB2-NIW, RCIP, LMIA, JR, E2, VISIT) plus the
+/// company profile. The file itself lives in S3 / Supabase storage; this
+/// row carries the storage key, the customer-facing filename, and the
+/// program identifier the bot pattern-matches on when a customer asks
+/// "send me the brochure".
+model BotBrochure {
+  id            String   @id @default(uuid())
+  /// Stable key matching the AiKnowledge.programKey values + the special
+  /// 'COMPANY_PROFILE' for the about-us doc.
+  programKey    String   @unique
+  /// Human-readable title used as the WhatsApp filename when sending,
+  /// e.g. "Canada C11 Work Permit — Tashfeen Immigration Solutions.pdf".
+  displayTitle  String
+  s3Key         String   /// storage key inside our bucket
+  mimeType      String   @default("application/pdf")
+  sizeBytes     Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([programKey])
+  @@map("brochures")
+  @@schema("ai")
+}

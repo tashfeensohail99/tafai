@@ -155,11 +155,20 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     void reload();
   }, [reload]);
 
-  // Realtime: refresh on inbound, patch status in place.
+  // Realtime: throttle full reloads so a burst of incoming messages on a
+  // hot thread doesn't fire one full /messages roundtrip per WhatsApp event.
+  // At most one reload per 1.5s; status updates are still patched in place
+  // (cheap, no DB hit).
   useEffect(() => {
     if (!socket) return;
+    let pending: ReturnType<typeof setTimeout> | null = null;
     const onMessageNew = (evt: { threadId: string }) => {
-      if (evt.threadId === threadId) void reload();
+      if (evt.threadId !== threadId) return;
+      if (pending) return;
+      pending = setTimeout(() => {
+        pending = null;
+        void reload();
+      }, 1500);
     };
     const onStatus = (evt: { threadId: string; messageId: string; status: WhatsAppMessageStatus }) => {
       if (evt.threadId !== threadId) return;
@@ -170,6 +179,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     socket.on('whatsapp.message.new', onMessageNew);
     socket.on('whatsapp.message.status', onStatus);
     return () => {
+      if (pending) clearTimeout(pending);
       socket.off('whatsapp.message.new', onMessageNew);
       socket.off('whatsapp.message.status', onStatus);
     };

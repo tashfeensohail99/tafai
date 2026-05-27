@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Inbox as InboxIcon, MessageSquare, Search } from 'lucide-react';
 import { listThreads, type ThreadListItem, type WhatsAppThreadStatus } from '@/lib/whatsapp';
 import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
@@ -36,43 +36,65 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 export default function SalesInboxPage() {
   const [filter, setFilter] = useState<Filter>('ALL');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const { socket } = useWhatsAppSocket();
   const isMobile = useIsMobile();
+  // Debounce: only fetch after typing pauses for 300ms. Without this, every
+  // keystroke fires a backend round-trip — typing "Awais" used to send 5
+  // requests, each ~600-900ms.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(id);
+  }, [search]);
 
-  const reload = useMemo(
-    () => async () => {
-      setLoading(true);
-      try {
-        const res = await listThreads({
-          ...(filter !== 'ALL' ? { status: filter } : {}),
-          ...(search ? { search } : {}),
-        });
-        setItems(res.items);
-        // Auto-select first thread on desktop only — on mobile we want the
-        // user to land on the list and tap-into a chat.
-        if (!activeId && res.items.length > 0 && !isMobile) {
-          setActiveId(res.items[0]!.id);
-        }
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filter, search, activeId, isMobile],
-  );
+  // useCallback (not useMemo) and deps WITHOUT activeId / isMobile so clicking
+  // a chat doesn't recreate the function and refire the useEffect below —
+  // that was burning a full thread-list refetch on every selection click.
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await listThreads({
+        ...(filter !== 'ALL' ? { status: filter } : {}),
+        ...(debouncedSearch ? { search: debouncedSearch } : {}),
+      });
+      setItems(res.items);
+    } finally {
+      setLoading(false);
+    }
+  }, [filter, debouncedSearch]);
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // Auto-select first thread on desktop only — moved out of `reload` so it
+  // only happens once on initial mount, not after every reload.
+  useEffect(() => {
+    if (!activeId && !isMobile && items.length > 0) {
+      setActiveId(items[0]!.id);
+    }
+  }, [items, activeId, isMobile]);
+
+  // Realtime: throttle reloads so a burst of WhatsApp events (typing,
+  // delivery, read, new) doesn't hammer the backend. At most one refetch
+  // per 1.5 seconds. The in-flight reload already shows fresh data.
   useEffect(() => {
     if (!socket) return;
-    const onAny = () => { void reload(); };
-    socket.on('whatsapp.message.new', onAny);
-    socket.on('whatsapp.message.status', onAny);
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const trigger = () => {
+      if (pending) return;
+      pending = setTimeout(() => {
+        pending = null;
+        void reload();
+      }, 1500);
+    };
+    socket.on('whatsapp.message.new', trigger);
+    socket.on('whatsapp.message.status', trigger);
     return () => {
-      socket.off('whatsapp.message.new', onAny);
-      socket.off('whatsapp.message.status', onAny);
+      if (pending) clearTimeout(pending);
+      socket.off('whatsapp.message.new', trigger);
+      socket.off('whatsapp.message.status', trigger);
     };
   }, [socket, reload]);
 

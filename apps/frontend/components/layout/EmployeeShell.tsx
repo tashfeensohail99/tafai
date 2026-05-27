@@ -120,28 +120,35 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
   const [stats, setStats] = useState<MySalesStats | null>(null);
   const [changesCount, setChangesCount] = useState(0);
 
-  // Live sidebar counters. Refetch on navigation so badges/SLA stay current
-  // as the agent works through their queue.
+  // Live sidebar counters. Fetched once on auth and then refreshed in the
+  // background every 60s — NOT on every navigation. Refetching on `pathname`
+  // change was firing two backend round-trips (~1s combined) on top of every
+  // page's own data fetch, making navigation feel sluggish.
   useEffect(() => {
     if (session.status !== 'authed') return;
     let cancelled = false;
-    fetchMySalesStats()
-      .then((s) => {
-        if (!cancelled) setStats(s);
-      })
-      .catch(() => {
-        /* sidebar badges are best-effort — never block the shell */
-      });
-    // "Agreements needing changes" badge — Finance bounced them back to me.
-    fetchAgreementReviewCounts()
-      .then((c) => {
-        if (!cancelled) setChangesCount(c.salesChangesRequested);
-      })
-      .catch(() => {});
+    const load = () => {
+      fetchMySalesStats()
+        .then((s) => {
+          if (!cancelled) setStats(s);
+        })
+        .catch(() => {
+          /* sidebar badges are best-effort — never block the shell */
+        });
+      // "Agreements needing changes" badge — Finance bounced them back to me.
+      fetchAgreementReviewCounts()
+        .then((c) => {
+          if (!cancelled) setChangesCount(c.salesChangesRequested);
+        })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 60_000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
-  }, [session.status, pathname]);
+  }, [session.status]);
 
   useEffect(() => {
     if (session.status === 'unauthed') {

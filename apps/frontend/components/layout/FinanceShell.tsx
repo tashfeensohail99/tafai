@@ -105,15 +105,22 @@ export function FinanceShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [reviewCount, setReviewCount] = useState<number | null>(null);
 
-  // Live "Agreements to review" badge — refetch on navigation.
+  // Live "Agreements to review" badge — fetched once + refreshed every 60s.
+  // Used to refetch on every navigation (`pathname` in deps) which added a
+  // ~600ms round-trip on top of each page's own fetch. Now driven by an
+  // interval so navigation feels instant.
   useEffect(() => {
     if (session.status !== 'authed') return;
     let cancelled = false;
-    fetchAgreementReviewCounts()
-      .then((c) => { if (!cancelled) setReviewCount(c.financeToReview); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [session.status, pathname]);
+    const load = () => {
+      fetchAgreementReviewCounts()
+        .then((c) => { if (!cancelled) setReviewCount(c.financeToReview); })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [session.status]);
 
   useEffect(() => {
     if (session.status === 'unauthed') {

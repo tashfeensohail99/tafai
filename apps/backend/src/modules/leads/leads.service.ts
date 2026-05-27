@@ -69,6 +69,14 @@ export class LeadsService {
       where.id = { in: await this.adLeadIds(query.adSourceId) };
     }
 
+    // Default 250 rows, capped at 1000. Returning all 1000+ leads in one
+    // shot was a real prod perf issue: 1MB payload + 3s DB query made
+    // /sales/leads sluggish. The UI filters/searches client-side so 250
+    // covers the typical agent's working set; admins can paginate via
+    // `?limit=1000` if they really need everything.
+    const rawLimit = query.limit ? parseInt(query.limit, 10) : 250;
+    const take = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 250, 1), 1000);
+
     return this.prisma.lead.findMany({
       where,
       include: {
@@ -98,6 +106,7 @@ export class LeadsService {
         },
       },
       orderBy: { createdAt: 'desc' },
+      take,
     });
   }
 

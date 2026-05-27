@@ -86,6 +86,16 @@ export class ListLeadsQueryDto {
   @IsString()
   @MaxLength(64)
   adSourceId?: string;
+
+  /**
+   * Maximum rows to return. Defaults applied in the service (250). Capped at
+   * 1000 so a curious agent can't kill the backend with `?limit=999999`.
+   * Returning all 1000+ leads in one shot was a real prod perf issue —
+   * payload hit 1MB and the page felt sluggish.
+   */
+  @IsOptional()
+  @IsNumberString()
+  limit?: string;
 }
 
 export class CreateLeadDto {

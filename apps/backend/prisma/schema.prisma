@@ -986,6 +986,9 @@ model Lead {
   @@index([branchId])
   @@index([referralPartnerId])
   @@index([preferredEmployeeId])
+  /// Matches `WHERE deletedAt IS NULL ORDER BY createdAt DESC` — the
+  /// dominant list query. Cuts the 3s full-scan-and-sort down to ~50ms.
+  @@index([deletedAt, createdAt(sort: Desc)])
   @@map("leads")
   @@schema("crm")
   files               LeadFile[]

@@ -758,21 +758,51 @@ function StepInterest({ form, update }: { form: FormState; update: UpdateFn }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <Field label="Interested service" required hint="What are they looking to do?">
+        {/* Pill row — flex-wraps cleanly on every viewport so the 9 service
+            options stay in one compact band on desktop and stack nicely on
+            mobile. Replaces the older "big tile per chip" grid which gave
+            uneven 2-3 column layouts. */}
         <div
           style={{
-            display: 'grid',
-            gap: '10px',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
           }}
         >
-          {SERVICES.map((s) => (
-            <ChipBtn
-              key={s.code}
-              active={form.service === s.code}
-              onClick={() => update('service', s.code)}
-              label={s.label}
-            />
-          ))}
+          {SERVICES.map((s) => {
+            const active = form.service === s.code;
+            return (
+              <button
+                key={s.code}
+                type="button"
+                onClick={() => update('service', s.code)}
+                aria-pressed={active}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 999,
+                  border: active
+                    ? '1.5px solid var(--sos-border-accent)'
+                    : '1px solid var(--sos-border)',
+                  background: active
+                    ? 'var(--sos-brand-primary-soft)'
+                    : 'var(--sos-surface-1)',
+                  color: active
+                    ? 'var(--sos-brand-primary-strong)'
+                    : 'var(--sos-text-secondary)',
+                  fontSize: 13,
+                  fontWeight: active ? 600 : 500,
+                  cursor: 'pointer',
+                  lineHeight: 1.3,
+                  whiteSpace: 'nowrap',
+                  transition: 'all 140ms ease',
+                  fontFamily: 'inherit',
+                  minHeight: 36,
+                }}
+              >
+                {s.label}
+              </button>
+            );
+          })}
         </div>
       </Field>
       <Field label="Target country" required hint="Where do they want to go?">

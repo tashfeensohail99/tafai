@@ -201,15 +201,16 @@ export function EditLeadModal(props: {
           />
         </Field>
         <Field label="Service of interest" required>
-          {/* Coded picker. Empty by default — sales MUST select one of the
-              canonical types so Finance + Processing can route the case
-              correctly downstream. Free-text entry was removed to stop
-              typos like "Stuy Visa" / "WPpermit" reaching production. */}
+          {/* Pill row, flex-wraps cleanly on every viewport. Sales picks one
+              of the 9 canonical types — free-text was removed to stop typos
+              ("Stuy Visa") reaching Finance / Processing. Matches the rest
+              of the premium UI's chip vocabulary (rounded, soft brand fill
+              when active, neutral surface otherwise). */}
           <div
             style={{
-              display: 'grid',
-              gap: 6,
-              gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
             }}
           >
             {SERVICE_TYPES.map((s) => {
@@ -219,23 +220,43 @@ export function EditLeadModal(props: {
                   key={s.code}
                   type="button"
                   onClick={() => setService(s.code)}
+                  aria-pressed={active}
                   style={{
-                    padding: '8px 10px',
-                    borderRadius: 8,
+                    padding: '7px 14px',
+                    borderRadius: 999,
                     border: active
-                      ? '1px solid var(--sos-brand-accent, #7c3aed)'
+                      ? '1.5px solid var(--sos-border-accent)'
                       : '1px solid var(--sos-border)',
                     background: active
-                      ? 'var(--sos-brand-soft, rgba(124,58,237,0.10))'
-                      : 'var(--sos-surface-2)',
+                      ? 'var(--sos-brand-primary-soft)'
+                      : 'var(--sos-surface-1)',
                     color: active
-                      ? 'var(--sos-brand-accent, #7c3aed)'
-                      : 'var(--sos-text-primary)',
+                      ? 'var(--sos-brand-primary-strong)'
+                      : 'var(--sos-text-secondary)',
                     fontSize: 12.5,
                     fontWeight: active ? 600 : 500,
                     cursor: 'pointer',
-                    textAlign: 'left',
-                    lineHeight: 1.35,
+                    lineHeight: 1.3,
+                    whiteSpace: 'nowrap',
+                    transition: 'all 140ms ease',
+                    fontFamily: 'inherit',
+                    minHeight: 32,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active) {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        'var(--sos-surface-2)';
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        'var(--sos-text-primary)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active) {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        'var(--sos-surface-1)';
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        'var(--sos-text-secondary)';
+                    }
                   }}
                 >
                   {s.label}
@@ -248,12 +269,12 @@ export function EditLeadModal(props: {
           {service && !SERVICE_TYPES.some((s) => s.code === service) ? (
             <div
               style={{
-                marginTop: 6,
+                marginTop: 8,
                 fontSize: 11.5,
                 color: 'var(--sos-text-muted)',
               }}
             >
-              Legacy value: <strong>{service}</strong> — pick a coded type above to reclassify.
+              Legacy value: <strong style={{ color: 'var(--sos-text-secondary)' }}>{service}</strong> — pick a coded type above to reclassify.
             </div>
           ) : null}
         </Field>

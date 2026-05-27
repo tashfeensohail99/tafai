@@ -2765,6 +2765,12 @@ export class ProcessingService {
       activeCount,
       newIntakeCount,
       slaBreachedCount,
+      unassignedCount,
+      pendingDocumentsCount,
+      finalSubmissionPendingCount,
+      approvedCount,
+      refusedCount,
+      casesByTypeRaw,
       stageBreakdownRaw,
       officerWorkloadRaw,
       recentIntake,
@@ -2778,6 +2784,43 @@ export class ProcessingService {
       }),
       this.prisma.processingCase.count({
         where: { slaStatus: 'BREACHED', cancelledAt: null },
+      }),
+      // Per the spec: "Unassigned cases" KPI. Cases that have moved past
+      // INTAKE_PENDING but somehow lost their officer (e.g. officer left
+      // and re-assignment is pending). Should normally be 0; non-zero
+      // means a manager action is needed.
+      this.prisma.processingCase.count({
+        where: {
+          stage: { in: activeStages },
+          assignedOfficerId: null,
+          cancelledAt: null,
+        },
+      }),
+      // "Pending documents" — across active cases, how many doc items are
+      // sitting at SUBMITTED or UNDER_REVIEW awaiting officer action.
+      this.prisma.caseDocumentItem.count({
+        where: {
+          status: { in: [DocumentItemStatus.SUBMITTED, DocumentItemStatus.UNDER_REVIEW] },
+          case: { stage: { in: activeStages }, cancelledAt: null },
+        },
+      }),
+      // "Final submission pending" — cases at READY_FOR_SUBMISSION but not
+      // yet SUBMITTED. These are the manager's "ship today" pile.
+      this.prisma.processingCase.count({
+        where: { stage: ProcessingCaseStage.READY_FOR_SUBMISSION },
+      }),
+      this.prisma.processingCase.count({
+        where: { stage: ProcessingCaseStage.APPROVED },
+      }),
+      this.prisma.processingCase.count({
+        where: { stage: ProcessingCaseStage.REJECTED },
+      }),
+      // Cases by case type (active only) — spec calls for this on the
+      // manager dashboard.
+      this.prisma.processingCase.groupBy({
+        by: ['service'],
+        where: { stage: { in: activeStages }, cancelledAt: null },
+        _count: { _all: true },
       }),
       this.prisma.processingCase.groupBy({
         by: ['stage'],
@@ -2853,12 +2896,22 @@ export class ProcessingService {
       .map((r) => ({ stage: r.stage, count: r._count._all }))
       .sort((a, b) => b.count - a.count);
 
+    const casesByType = casesByTypeRaw
+      .map((r) => ({ service: r.service, count: r._count._all }))
+      .sort((a, b) => b.count - a.count);
+
     return {
       totals: {
         active: activeCount,
         newIntake: newIntakeCount,
         slaBreached: slaBreachedCount,
+        unassigned: unassignedCount,
+        pendingDocuments: pendingDocumentsCount,
+        finalSubmissionPending: finalSubmissionPendingCount,
+        approved: approvedCount,
+        refused: refusedCount,
       },
+      casesByType,
       stageBreakdown,
       officerWorkload,
       recentIntake: recentIntake.map((c) => ({

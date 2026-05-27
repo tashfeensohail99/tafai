@@ -166,7 +166,17 @@ export function fetchProcessingDashboard(): Promise<ProcessingDashboardMetrics> 
  * intake + currently SLA-breached cases. Requires processing.case.view_all.
  */
 export interface ApiProcessingAdminOverview {
-  totals: { active: number; newIntake: number; slaBreached: number };
+  totals: {
+    active: number;
+    newIntake: number;
+    slaBreached: number;
+    unassigned: number;
+    pendingDocuments: number;
+    finalSubmissionPending: number;
+    approved: number;
+    refused: number;
+  };
+  casesByType: Array<{ service: string; count: number }>;
   stageBreakdown: Array<{ stage: ProcessingStage; count: number }>;
   officerWorkload: Array<{ officerId: string | null; name: string; activeCases: number }>;
   recentIntake: Array<{

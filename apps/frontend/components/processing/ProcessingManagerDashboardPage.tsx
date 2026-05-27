@@ -11,12 +11,17 @@ import {
   ArrowRight,
   BarChart3,
   CheckCircle2,
+  FileSearch,
   FolderKanban,
   Inbox,
+  Layers,
   Loader2,
+  Send,
   ShieldAlert,
   User,
+  UserX,
   Users,
+  XCircle,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -145,40 +150,99 @@ export function ProcessingManagerDashboardPage() {
         description="Team workload, SLA health, and stage bottlenecks at a glance."
       />
 
-      <section style={{ display: 'grid', gap: '16px', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+      {/* Primary KPI strip — the spec'd top-line numbers */}
+      <section style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
         <MetricCard
           label="Active cases"
           value={data.totals.active}
           hint="Across all officers"
           tone="accent"
           Icon={FolderKanban}
-          footer="Live caseload"
+        />
+        <MetricCard
+          label="Awaiting your review"
+          value={data.totals.newIntake}
+          hint="From Finance — assign"
+          tone={data.totals.newIntake > 0 ? 'warning' : 'neutral'}
+          Icon={Inbox}
+        />
+        <MetricCard
+          label="Unassigned"
+          value={data.totals.unassigned}
+          hint={data.totals.unassigned > 0 ? 'Reassign needed' : 'All routed'}
+          tone={data.totals.unassigned > 0 ? 'danger' : 'success'}
+          Icon={UserX}
         />
         <MetricCard
           label="Officers working"
           value={workingOfficers}
-          hint="With active caseloads"
+          hint="Carrying caseload"
           tone="info"
           Icon={Users}
-          footer="Active team members"
+        />
+        <MetricCard
+          label="Pending documents"
+          value={data.totals.pendingDocuments}
+          hint="Submitted / under review"
+          tone={data.totals.pendingDocuments > 0 ? 'warning' : 'success'}
+          Icon={FileSearch}
+        />
+        <MetricCard
+          label="Final submission pending"
+          value={data.totals.finalSubmissionPending}
+          hint="Ready to file"
+          tone={data.totals.finalSubmissionPending > 0 ? 'info' : 'neutral'}
+          Icon={Send}
         />
         <MetricCard
           label="SLA breached"
           value={data.totals.slaBreached}
           hint="Past deadline"
-          tone={data.totals.slaBreached > 0 ? 'danger' : 'neutral'}
+          tone={data.totals.slaBreached > 0 ? 'danger' : 'success'}
           Icon={AlertTriangle}
-          footer={data.totals.slaBreached > 0 ? 'Escalate' : 'All on track'}
         />
         <MetricCard
-          label="Awaiting intake"
-          value={data.totals.newIntake}
-          hint="Unacknowledged from Finance"
-          tone={data.totals.newIntake > 0 ? 'warning' : 'neutral'}
-          Icon={Inbox}
-          footer={data.totals.newIntake > 0 ? 'Assign to officer' : 'None pending'}
+          label="Approved / refused"
+          value={`${data.totals.approved} / ${data.totals.refused}`}
+          hint="Lifetime outcomes"
+          tone={data.totals.refused > 0 ? 'neutral' : 'success'}
+          Icon={CheckCircle2}
         />
       </section>
+
+      {/* Cases by case type — spec'd as a primary breakdown for the manager */}
+      {data.casesByType.length > 0 ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <Layers size={16} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--sos-text-primary)' }}>Cases by case type</div>
+            <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--sos-text-muted)' }}>{data.casesByType.length} categor{data.casesByType.length !== 1 ? 'ies' : 'y'}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {(() => {
+              const maxByType = Math.max(...data.casesByType.map((c) => c.count), 1);
+              return data.casesByType.map(({ service, count }) => {
+                const pct = Math.round((count / maxByType) * 100);
+                return (
+                  <Link
+                    key={service}
+                    href={`/processing/cases?service=${service}` as Route}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', textDecoration: 'none' }}
+                  >
+                    <div style={{ width: 180, flexShrink: 0, fontSize: 12.5, color: 'var(--sos-text-primary)', fontWeight: 500 }}>
+                      {labelForServiceCode(service)}
+                    </div>
+                    <div style={{ flex: 1, height: 8, background: 'var(--sos-border-subtle)', borderRadius: 4, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: 'var(--sos-brand-primary-strong)', borderRadius: 4, transition: 'width 400ms ease' }} />
+                    </div>
+                    <div style={{ minWidth: 28, textAlign: 'right', fontSize: 13, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{count}</div>
+                  </Link>
+                );
+              });
+            })()}
+          </div>
+        </GlassCard>
+      ) : null}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '16px', alignItems: 'start' }}>
         <GlassCard variant="panel" padded="md">

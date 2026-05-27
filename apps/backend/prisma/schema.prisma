@@ -717,6 +717,7 @@ model UserAccount {
   completedProcessingTasks     ProcessingTask[]             @relation("TaskCompletedBy")
   authoritySubmissions         AuthoritySubmission[]        @relation("AuthoritySubmittedBy")
   processingAuditLogs          ProcessingAuditLog[]         @relation("ProcessingAuditActor")
+  completedCaseMilestones      CaseMilestone[]              @relation("CaseMilestoneCompletedBy")
 
   @@index([email])
   @@index([phone])
@@ -2286,6 +2287,7 @@ model ProcessingCase {
   tasks               ProcessingTask[]
   submissions         AuthoritySubmission[]
   auditLogs           ProcessingAuditLog[]
+  milestones          CaseMilestone[]
 
   @@index([assignedOfficerId])
   @@index([stage])
@@ -2513,6 +2515,31 @@ model ProcessingNote {
 
   @@index([caseId])
   @@map("processing_notes")
+  @@schema("processing")
+}
+
+// Per-case checkable milestones — auto-populated from a per-service-type
+// template at acknowledge time. Captures the granular workflow inside a
+// stage (e.g. WORK_PERMIT cases see "LMIA Submission" / "Offer Letter";
+// E2_VISA sees "Business Meeting" / "Incorporation"). Independent from the
+// gated stage machine — managers control stage transitions; associates tick
+// milestones as they complete the work.
+model CaseMilestone {
+  id                  String    @id @default(uuid())
+  caseId              String
+  title               String    @db.VarChar(200)
+  description         String?
+  sortOrder           Int       @default(0)
+  completedAt         DateTime?
+  completedByUserId   String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  case        ProcessingCase @relation(fields: [caseId], references: [id])
+  completedBy UserAccount?   @relation("CaseMilestoneCompletedBy", fields: [completedByUserId], references: [id])
+
+  @@index([caseId, sortOrder])
+  @@map("case_milestones")
   @@schema("processing")
 }
 

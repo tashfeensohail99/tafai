@@ -556,6 +556,56 @@ export function fetchCaseTasks(caseId: string): Promise<ApiProcessingTask[]> {
   return apiFetch<ApiProcessingTask[]>(`/processing/cases/${caseId}/tasks`, { cache: 'no-store' });
 }
 
+// ---------------------------------------------------------------------------
+// Case milestones — per-case-type checkable progress (LMIA Submission for
+// WORK_PERMIT, Incorporation for E2_VISA, etc.). Auto-seeded at acknowledge.
+// ---------------------------------------------------------------------------
+
+export interface ApiCaseMilestone {
+  id: string;
+  caseId: string;
+  title: string;
+  description: string | null;
+  sortOrder: number;
+  completedAt: string | null;
+  completedByUserId: string | null;
+  completedBy?: { id: string; email: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function fetchCaseMilestones(caseId: string): Promise<ApiCaseMilestone[]> {
+  return apiFetch<ApiCaseMilestone[]>(`/processing/cases/${caseId}/milestones`, { cache: 'no-store' });
+}
+
+export function completeMilestone(caseId: string, milestoneId: string): Promise<ApiCaseMilestone> {
+  return apiFetch<ApiCaseMilestone>(`/processing/cases/${caseId}/milestones/${milestoneId}/complete`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+  });
+}
+
+export function uncompleteMilestone(caseId: string, milestoneId: string): Promise<ApiCaseMilestone> {
+  return apiFetch<ApiCaseMilestone>(`/processing/cases/${caseId}/milestones/${milestoneId}/uncomplete`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+  });
+}
+
+export function createCaseMilestone(
+  caseId: string,
+  body: { title: string; description?: string; sortOrder?: number },
+): Promise<ApiCaseMilestone> {
+  return apiFetch<ApiCaseMilestone>(`/processing/cases/${caseId}/milestones`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
 // Cross-case task / document feeds — used by /processing/tasks and
 // /processing/documents side pages. Each row carries enough case context
 // that the queue can render without a second roundtrip per row.

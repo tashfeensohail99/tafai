@@ -34,6 +34,7 @@ import {
   AssignCaseDto,
   ChangeCaseStageDto,
   CreateAuthoritySubmissionDto,
+  CreateCaseMilestoneDto,
   CreateCorrectionRequestDto,
   CreateDocumentTemplateDto,
   CreateProcessingCaseDto,
@@ -360,6 +361,53 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.toggleNotePin(caseId, noteId, user);
+  }
+
+  // -------------------------------------------------------------------------
+  // CASE MILESTONES
+  // -------------------------------------------------------------------------
+
+  @Get('cases/:caseId/milestones')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getCaseMilestones(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.listCaseMilestones(caseId, user);
+  }
+
+  /**
+   * Add an ad-hoc milestone to a case. Manager-gated — associates work
+   * the seeded list; only managers extend it.
+   */
+  @Post('cases/:caseId/milestones')
+  @RequirePermissions('processing.case.assign')
+  createCaseMilestone(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: CreateCaseMilestoneDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.createCaseMilestone(caseId, dto, user);
+  }
+
+  @Patch('cases/:caseId/milestones/:milestoneId/complete')
+  @RequirePermissions('processing.case.update_stage')
+  completeMilestone(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('milestoneId', ParseUUIDPipe) milestoneId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.completeMilestone(caseId, milestoneId, user);
+  }
+
+  @Patch('cases/:caseId/milestones/:milestoneId/uncomplete')
+  @RequirePermissions('processing.case.update_stage')
+  uncompleteMilestone(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('milestoneId', ParseUUIDPipe) milestoneId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.uncompleteMilestone(caseId, milestoneId, user);
   }
 
   // -------------------------------------------------------------------------

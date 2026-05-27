@@ -718,3 +718,30 @@ export class ReportExportQueryDto {
   @IsUUID()
   officerId?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Case milestones
+// ---------------------------------------------------------------------------
+
+/**
+ * Manager-only — add an ad-hoc milestone to a case beyond the per-service
+ * template (e.g. one-off step a specific case needs). Associates can only
+ * tick / un-tick existing milestones, not add new ones.
+ */
+export class CreateCaseMilestoneDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  description?: string;
+
+  /** Optional position in the list — defaults to end-of-list. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sortOrder?: number;
+}

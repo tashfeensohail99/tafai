@@ -22,6 +22,7 @@ import {
   MessageSquare,
   Phone,
   Send,
+  Sparkles,
   StickyNote,
   User,
   Wallet,
@@ -64,13 +65,17 @@ import { ProcessingAssignmentModal } from './ProcessingAssignmentModal';
 import { CorrectionRequestModal } from './CorrectionRequestModal';
 import { CancelCaseModal } from './CancelCaseModal';
 import { CorrectionsTab } from './tabs/CorrectionsTab';
+import { MilestonesTab } from './tabs/MilestonesTab';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Tabs -----------------------------------------------------------
 
-type TabKey = 'documents' | 'timeline' | 'communications' | 'notes' | 'tasks' | 'submissions' | 'corrections';
+type TabKey = 'milestones' | 'documents' | 'timeline' | 'communications' | 'notes' | 'tasks' | 'submissions' | 'corrections';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
+  // Milestones first — the case-progress narrative the associate works
+  // through. Seeded per case-type at acknowledge time.
+  { key: 'milestones', label: 'Milestones', Icon: Sparkles },
   { key: 'documents', label: 'Documents', Icon: FileSearch },
   { key: 'timeline', label: 'Timeline', Icon: History },
   { key: 'communications', label: 'Comms', Icon: MessageSquare },
@@ -205,7 +210,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const { user } = useProcessingSession();
   const [api, setApi] = useState<ApiProcessingCaseDetail | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('documents');
+  const [activeTab, setActiveTab] = useState<TabKey>('milestones');
   const [showStageModal, setShowStageModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
@@ -390,6 +395,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
             </div>
 
             {/* Tab content */}
+            {activeTab === 'milestones' && <MilestonesTab c={c} />}
             {activeTab === 'documents' && <DocumentChecklistTab c={c} />}
             {activeTab === 'timeline' && <CaseTimelineTab c={c} />}
             {activeTab === 'communications' && <CommunicationsTab c={c} />}

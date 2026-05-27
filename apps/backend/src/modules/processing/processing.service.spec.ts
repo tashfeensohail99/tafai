@@ -111,6 +111,7 @@ function buildService() {
     processingTask: { findMany: jest.fn(), create: jest.fn(), update: jest.fn(), findFirst: jest.fn() },
     authoritySubmission: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
     documentRequirementTemplate: { findMany: jest.fn(), create: jest.fn(), update: jest.fn() },
+    caseMilestone: { createMany: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() },
     financeHandover: { findUnique: jest.fn(), update: jest.fn() },
     userAccount: {
       findUnique: jest.fn().mockResolvedValue({
@@ -263,6 +264,7 @@ describe('ProcessingService — Rule 1: acknowledgeIntake gate checks', () => {
           ]),
         },
         caseDocumentItem: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        caseMilestone: { createMany: jest.fn().mockResolvedValue({ count: 5 }) },
         processingAuditLog: { create: jest.fn().mockResolvedValue({}) },
       };
       return cb(txMock);
@@ -292,6 +294,7 @@ describe('ProcessingService — Rule 1: acknowledgeIntake gate checks', () => {
         processingCaseStageHistory: { create: jest.fn() },
         documentRequirementTemplate: { findMany: jest.fn().mockResolvedValue([]) },
         caseDocumentItem: { createMany },
+        caseMilestone: { createMany: jest.fn() },
         processingAuditLog: { create: jest.fn() },
       };
       const result = await cb(txMock);

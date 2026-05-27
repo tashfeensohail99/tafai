@@ -31,6 +31,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
+import { getMilestonesForService } from './milestone-templates';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
@@ -446,6 +447,30 @@ export class ProcessingService {
             validityMonths: t.validityMonths ?? undefined,
             validityBufferDays: t.validityBufferDays,
             sortOrder: t.sortOrder,
+          })),
+        });
+      }
+
+      // Per-case-type milestone checklist — the granular progress narrative
+      // the associate ticks off (e.g. WORK_PERMIT cases get LMIA + Offer
+      // Letter; E2_VISA gets Business Meeting + Incorporation). Independent
+      // of the gated stage machine. See milestone-templates.ts.
+      // "Case Initiated" is the first milestone in every template — we mark
+      // it complete immediately so the timeline reflects what just happened.
+      const milestoneTemplates = getMilestonesForService(effectiveService);
+      if (milestoneTemplates.length > 0) {
+        await tx.caseMilestone.createMany({
+          data: milestoneTemplates.map((m, idx) => ({
+            caseId,
+            title: m.title,
+            description: m.description ?? null,
+            sortOrder: idx,
+            // First milestone is "Case Initiated" by convention — auto-tick
+            // it here so the associate doesn't have to. If a template ever
+            // omits it from position 0 the only consequence is no auto-tick.
+            ...(idx === 0
+              ? { completedAt: new Date(), completedByUserId: user.id }
+              : {}),
           })),
         });
       }
@@ -1607,6 +1632,121 @@ export class ProcessingService {
       where: { id: noteId },
       data: { isPinned: !note.isPinned },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // CASE MILESTONES
+  //
+  // Per-case-type progress checklist seeded at acknowledge time. Associate
+  // ticks/un-ticks; manager can add ad-hoc milestones. Independent from the
+  // gated stage machine.
+  // -------------------------------------------------------------------------
+
+  async listCaseMilestones(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    return this.prisma.caseMilestone.findMany({
+      where: { caseId },
+      include: { completedBy: { select: { id: true, email: true } } },
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  async createCaseMilestone(
+    caseId: string,
+    dto: { title: string; description?: string; sortOrder?: number },
+    user: RequestUser,
+  ) {
+    await this.assertCaseAccessById(caseId, user);
+    // Default sortOrder = end of list
+    const sortOrder = dto.sortOrder
+      ?? ((await this.prisma.caseMilestone.count({ where: { caseId } })) + 1);
+    const milestone = await this.prisma.caseMilestone.create({
+      data: {
+        caseId,
+        title: dto.title,
+        description: dto.description ?? null,
+        sortOrder,
+      },
+    });
+    await this.prisma.processingAuditLog.create({
+      data: {
+        caseId,
+        actorUserId: user.id,
+        action: 'milestone_added',
+        entityType: 'case_milestone',
+        entityId: milestone.id,
+        newValues: { title: milestone.title },
+      },
+    });
+    return milestone;
+  }
+
+  async completeMilestone(caseId: string, milestoneId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const milestone = await this.prisma.caseMilestone.findFirst({
+      where: { id: milestoneId, caseId },
+    });
+    if (!milestone) throw new NotFoundException('Milestone not found');
+    if (milestone.completedAt) {
+      // Already complete — return as-is. Idempotent.
+      return milestone;
+    }
+    const updated = await this.prisma.caseMilestone.update({
+      where: { id: milestoneId },
+      data: { completedAt: new Date(), completedByUserId: user.id },
+      include: { completedBy: { select: { id: true, email: true } } },
+    });
+    await this.prisma.processingAuditLog.create({
+      data: {
+        caseId,
+        actorUserId: user.id,
+        action: 'milestone_completed',
+        entityType: 'case_milestone',
+        entityId: milestoneId,
+        newValues: { title: milestone.title },
+      },
+    });
+    // Non-fatal timeline record — surface milestone completion alongside
+    // stage changes and other case events.
+    this.timeline.record({
+      entityType: 'processing_case',
+      entityId: caseId,
+      eventType: TimelineEventType.PROCESSING_STAGE_CHANGED,
+      description: `Milestone completed: ${milestone.title}`,
+      actorUserId: user.id,
+      metadata: { milestoneId, milestoneTitle: milestone.title },
+    }).catch(() => { /* non-fatal */ });
+    return updated;
+  }
+
+  async uncompleteMilestone(caseId: string, milestoneId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const milestone = await this.prisma.caseMilestone.findFirst({
+      where: { id: milestoneId, caseId },
+    });
+    if (!milestone) throw new NotFoundException('Milestone not found');
+    if (!milestone.completedAt) {
+      return milestone;
+    }
+    const updated = await this.prisma.caseMilestone.update({
+      where: { id: milestoneId },
+      data: { completedAt: null, completedByUserId: null },
+      include: { completedBy: { select: { id: true, email: true } } },
+    });
+    await this.prisma.processingAuditLog.create({
+      data: {
+        caseId,
+        actorUserId: user.id,
+        action: 'milestone_uncompleted',
+        entityType: 'case_milestone',
+        entityId: milestoneId,
+        oldValues: {
+          completedAt: milestone.completedAt,
+          completedByUserId: milestone.completedByUserId,
+        },
+      },
+    });
+    return updated;
   }
 
   // -------------------------------------------------------------------------

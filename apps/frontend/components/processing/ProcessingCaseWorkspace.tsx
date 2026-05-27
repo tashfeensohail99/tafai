@@ -316,6 +316,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
         <CorrectionRequestModal
           caseRecord={c}
           onClose={() => setShowCorrectionModal(false)}
+          onCreated={() => setRefetchTick((n) => n + 1)}
         />
       ) : null}
       {showCancelModal ? (

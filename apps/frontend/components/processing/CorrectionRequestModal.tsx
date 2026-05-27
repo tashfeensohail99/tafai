@@ -21,6 +21,7 @@ import {
   StatusBadge,
 } from '@/components/sales-v2/ui';
 import type { MockDocumentItem, MockProcessingCase } from '@/components/processing/mockData';
+import { createCaseCorrection } from '@/lib/processing';
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend enums)
@@ -119,6 +120,8 @@ export interface CorrectionRequestModalProps {
   /** Pre-selected document item (e.g. when triggered from the doc checklist row). */
   preselectedDocItemId?: string;
   onClose: () => void;
+  /** Called after a successful create so the parent can refetch. */
+  onCreated?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +132,7 @@ export function CorrectionRequestModal({
   caseRecord: c,
   preselectedDocItemId,
   onClose,
+  onCreated,
 }: CorrectionRequestModalProps) {
   // ---- form state ----
   const [correctionType, setCorrectionType] = useState<CorrectionType>(
@@ -168,15 +172,32 @@ export function CorrectionRequestModal({
   }
 
   // ---- submit ----
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!canSubmit) return;
     setError('');
     setLoading(true);
-    // Replace with real API: POST /processing/cases/:caseId/corrections
-    setTimeout(() => {
+    try {
+      // Modal body mirrors CreateCorrectionRequestDto exactly. Only the
+      // fields with non-empty content go on the wire — keeps server-side
+      // trimming clean and avoids sending an empty officerNote for the
+      // common case where the officer doesn't bother with one.
+      await createCaseCorrection(c.id, {
+        correctionType,
+        ...(needsDocItem ? { documentItemId } : {}),
+        subject: subject.trim(),
+        reasonCodes,
+        ...(officerNote.trim() ? { officerNote: officerNote.trim() } : {}),
+        clientMessage: clientMessage.trim(),
+        requiredAction,
+        slaHours,
+      });
       setDone(true);
+      onCreated?.();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to send correction request');
+    } finally {
       setLoading(false);
-    }, 900);
+    }
   }
 
   // ---- backdrop click ----

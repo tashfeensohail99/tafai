@@ -56,6 +56,49 @@ import { NotificationsService } from '../notifications/notifications.service';
 const STALE_INBOUND_BACKFILL_MS = 20 * 60 * 60 * 1000;
 const HISTORY_TURNS = 10;
 const APPOINTMENT_NUDGE_AFTER_TURNS = 2;
+
+/**
+ * Eid holiday window. While we're inside this window the bot still books
+ * appointments end-to-end — but it floors every slot to this cutoff (so
+ * the earliest possible booking is Monday 09:00 PKT) and the LLM is
+ * instructed to tell the customer slots resume on Monday onwards.
+ *
+ * Set to a fixed UTC instant rather than "Asia/Karachi local Monday" so
+ * the comparison is unambiguous across server / DB timezones. 2026-06-01
+ * 00:00 PKT === 2026-05-31 19:00 UTC.
+ *
+ * To extend or remove the holiday: push this Date out / set it to a
+ * past instant. No deploy gymnastics needed beyond the date change.
+ */
+const APPOINTMENT_BOOKING_FLOOR = new Date('2026-05-31T19:00:00.000Z');
+const APPOINTMENT_BOOKING_FLOOR_DEFAULT_HOUR_PKT = 10; // 10:00 AM Mon
+
+/** True while we're still before the booking floor (Eid window active). */
+function inEidBookingWindow(now: Date = new Date()): boolean {
+  return now.getTime() < APPOINTMENT_BOOKING_FLOOR.getTime();
+}
+
+/**
+ * If the proposed slot is before the Eid floor, bump it forward to the
+ * floor — preserving the customer's preferred HOUR when possible (so
+ * "Tuesday 3pm" before the floor lands on the floor-day at 3pm, not the
+ * default morning). When no time component is set on the original (e.g.
+ * we floored a midnight-only date), use the default morning hour.
+ */
+function applyEidFloor(proposed: Date): Date {
+  if (proposed.getTime() >= APPOINTMENT_BOOKING_FLOOR.getTime()) return proposed;
+  const floor = new Date(APPOINTMENT_BOOKING_FLOOR);
+  const hours = proposed.getHours();
+  const minutes = proposed.getMinutes();
+  // If the proposed slot has a meaningful hour (not 00:00), keep it on the
+  // floor day. Otherwise default to 10:00 AM PKT.
+  if (hours === 0 && minutes === 0) {
+    floor.setHours(APPOINTMENT_BOOKING_FLOOR_DEFAULT_HOUR_PKT, 0, 0, 0);
+  } else {
+    floor.setHours(hours, minutes, 0, 0);
+  }
+  return floor;
+}
 /**
  * Hard ceiling on bot replies per thread. Once we've sent this many OUTBOUND
  * messages with sentByEmployeeId=null on the thread, the orchestrator
@@ -503,13 +546,24 @@ export class OrchestratorService {
     rawText: string;
   }): Promise<void> {
     try {
-      const scheduledAt = this.parsePreferredDateTime(opts.preferredDay, opts.preferredTime);
-      if (!scheduledAt) {
+      const rawScheduledAt = this.parsePreferredDateTime(opts.preferredDay, opts.preferredTime);
+      if (!rawScheduledAt) {
         this.log.debug(`auto-book: can't parse "${opts.preferredDay}" + "${opts.preferredTime}", staying PENDING`);
         return;
       }
+      // Eid holiday floor: if the customer asked for a slot before the
+      // floor (i.e. before Monday 09:00 PKT during the holiday window),
+      // bump it forward to the floor. The bot's HANDED_OFF reply prompt
+      // tells the customer slots resume Monday-onwards, so this stays
+      // honest end-to-end.
+      const scheduledAt = applyEidFloor(rawScheduledAt);
+      if (rawScheduledAt.getTime() !== scheduledAt.getTime()) {
+        this.log.log(
+          `auto-book: Eid floor applied — moved ${rawScheduledAt.toISOString()} → ${scheduledAt.toISOString()}`,
+        );
+      }
       if (scheduledAt.getTime() < Date.now() - 60_000) {
-        this.log.debug(`auto-book: parsed date ${scheduledAt.toISOString()} is in the past, staying PENDING`);
+        this.log.debug(`auto-book: floored date ${scheduledAt.toISOString()} is still in the past, staying PENDING`);
         return;
       }
       const lead = await this.prisma.lead.findUnique({
@@ -857,12 +911,21 @@ export class OrchestratorService {
 
     const initialGoal = `Greet warmly${name}. Answer the question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;
 
+    // Eid holiday window — applies until APPOINTMENT_BOOKING_FLOOR.
+    // We're still open for *booking*, but every slot lands on Monday or
+    // later. The bot must tell the customer this in the same breath as
+    // confirming, so we slot in a one-liner on every appointment-flow
+    // state.
+    const eidNotice = inEidBookingWindow()
+      ? ` IMPORTANT: We're closed for Eid holidays until next Monday — confirm any time the customer suggests, but say clearly that the actual consultation will be from Monday onwards (e.g. "perfect, Monday 3pm works — Eid mubarak, our manager will call you then").`
+      : '';
+
     const goalByState: Record<string, string> = {
       INITIAL: initialGoal,
-      Q_AND_A: `Answer briefly from CONTEXT, then suggest booking a quick consultation with our manager for the detail. Don't push hard — one line.`,
-      APPOINTMENT_PROPOSED: `Ask them directly if they'd like to book a quick call with the manager. Offer 3 formats: phone call, Google Meet, or office visit in Islamabad. End with the question.`,
-      APPOINTMENT_AVAILABILITY: `They've said yes (or close). Now ask which day + time slot works (morning/afternoon/evening). Keep it short.`,
-      HANDED_OFF: `Confirm you've noted their preference and the manager will reach out within 24 hours to confirm the exact slot. Don't ask anything else.`,
+      Q_AND_A: `Answer briefly from CONTEXT, then suggest booking a quick consultation with our manager for the detail. Don't push hard — one line.${eidNotice}`,
+      APPOINTMENT_PROPOSED: `Ask them directly if they'd like to book a quick call with the manager. Offer 3 formats: phone call, Google Meet, or office visit in Islamabad. End with the question.${eidNotice}`,
+      APPOINTMENT_AVAILABILITY: `They've said yes (or close). Now ask which day + time slot works (morning/afternoon/evening). Keep it short.${eidNotice}`,
+      HANDED_OFF: `Confirm you've noted their preference and the manager will reach out within 24 hours to confirm the exact slot. Don't ask anything else.${eidNotice}`,
     };
 
     return [

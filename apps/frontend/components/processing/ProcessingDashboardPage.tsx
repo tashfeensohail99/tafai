@@ -5,6 +5,7 @@
 
 import Link from 'next/link';
 import type { Route } from 'next';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -16,6 +17,14 @@ import {
   Send,
   User,
 } from 'lucide-react';
+import {
+  fetchProcessingDashboard,
+  fetchIntakeQueue,
+  casePersonName,
+  type ProcessingDashboardMetrics,
+  type ApiProcessingCaseListItem,
+} from '@/lib/processing';
+import { labelForServiceCode } from '@/lib/service-types';
 import {
   ButtonLink,
   GlassCard,
@@ -74,17 +83,40 @@ export function priorityTone(priority: ProcessingPriority): BadgeTone {
 // ---------- Dashboard component -------------------------------------------
 
 export function ProcessingDashboardPage() {
-  const intakePending = getIntakePending();
-  const myCases = getMyCases(MOCK_PROCESSING_OFFICER.id);
+  // Real backend wiring. KPI counts come from /processing/dashboard;
+  // the urgent-intake panel pulls from /processing/intake. Was previously
+  // 100% mock data.
+  const [metrics, setMetrics] = useState<ProcessingDashboardMetrics | null>(null);
+  const [intakePending, setIntakePending] = useState<ApiProcessingCaseListItem[]>([]);
+  const [loadingErr, setLoadingErr] = useState<string | null>(null);
 
-  const activeCasesTotal = MOCK_PROCESSING_CASES.filter(
-    (c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED',
-  ).length;
-  const underReview = countByStage('DOCUMENTS_UNDER_REVIEW');
-  const readyToSubmit = countByStage('READY_FOR_SUBMISSION') + countByStage('DOCUMENTS_COMPLETE');
-  const withAuthority = countByStage('SUBMITTED') + countByStage('UNDER_AUTHORITY_REVIEW');
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchProcessingDashboard(), fetchIntakeQueue()])
+      .then(([m, q]) => {
+        if (cancelled) return;
+        setMetrics(m);
+        setIntakePending(q);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadingErr(err instanceof Error ? err.message : 'Failed to load dashboard');
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const activeCasesTotal = metrics?.activeCases ?? 0;
+  const underReview = metrics?.awaitingReview ?? 0;
+  const readyToSubmit = metrics?.readyToSubmit ?? 0;
+  // "With authority" isn't its own backend tile yet — derive from list when
+  // we wire a richer dashboard. For now: total - under-review - ready ≈
+  // submitted/awaiting buckets, but we keep it neutral until backend tile
+  // ships.
+  const withAuthority = 0;
 
   const urgentIntake = intakePending.filter((c) => c.priority === 'CRITICAL' || c.priority === 'URGENT');
+  // Was wired to a hardcoded mock officer; until per-officer "my cases"
+  // ships in the API, fall back to total active count for the header line.
+  const myCases: ApiProcessingCaseListItem[] = [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -164,7 +196,7 @@ export function ProcessingDashboardPage() {
                     style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', border: '1px solid var(--sos-border-subtle)', fontSize: '13px', color: 'var(--sos-text-primary)', textDecoration: 'none', fontWeight: 500 }}
                   >
                     <StatusBadge tone={priorityTone(c.priority)} size="sm">{c.priority}</StatusBadge>
-                    {c.clientName} — {c.service} / {c.targetCountry}
+                    {casePersonName(c)} — {labelForServiceCode(c.service)} / {c.targetCountry}
                     <ArrowRight size={13} style={{ color: 'var(--sos-text-muted)' }} />
                   </Link>
                 ))}
@@ -210,16 +242,16 @@ export function ProcessingDashboardPage() {
                 <div>
                   <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--sos-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <User size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
-                    {c.clientName}
+                    {casePersonName(c)}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginTop: '2px' }}>
-                    {c.service} · {c.targetCountry}
+                    {labelForServiceCode(c.service)} · {c.targetCountry}
                   </div>
                 </div>
                 <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
                 <StatusBadge tone={priorityTone(c.priority)} size="sm" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>
-                <div style={{ fontSize: '13px', color: c.daysInCurrentStage >= 5 ? 'var(--sos-status-warning)' : 'var(--sos-text-muted)' }}>
-                  {c.daysInCurrentStage}d
+                <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)' }}>
+                  {Math.floor((Date.now() - new Date(c.updatedAt).getTime()) / 86400000)}d
                 </div>
                 <Link
                   href={`/processing/cases/${c.id}` as Route}
@@ -233,43 +265,29 @@ export function ProcessingDashboardPage() {
         )}
       </GlassCard>
 
-      {/* All-cases snapshot — show other officers too */}
+      {/* All-cases snapshot — link out to the full list. The previous inline
+          table rendered mock data; the real list lives at /processing/cases
+          with proper pagination + filters. */}
       <GlassCard variant="panel" padded="md">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>All active cases</div>
-            <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginTop: '2px' }}>Team-wide caseload snapshot</div>
+            <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginTop: '2px' }}>
+              Team-wide caseload — currently {activeCasesTotal} live across all officers.
+            </div>
           </div>
+          <Link
+            href={'/processing/cases' as Route}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, color: 'var(--sos-brand-primary-strong)', fontWeight: 500, textDecoration: 'none' }}
+          >
+            Open case list <ArrowRight size={13} />
+          </Link>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '12px', padding: '8px 12px', fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-            <span>Client / Service</span>
-            <span>Stage</span>
-            <span>Priority</span>
-            <span>Officer</span>
-            <span>Created</span>
+        {loadingErr ? (
+          <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--sos-status-danger)' }}>
+            Couldn&apos;t load metrics: {loadingErr}
           </div>
-          {MOCK_PROCESSING_CASES.filter((c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED').map((c) => (
-            <Link
-              key={c.id}
-              href={`/processing/cases/${c.id}` as Route}
-              style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '12px', padding: '12px', borderRadius: 'var(--sos-radius-md)', alignItems: 'center', textDecoration: 'none', color: 'inherit', transition: 'background 150ms' }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--sos-surface-hover)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <div>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{c.clientName}</div>
-                <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>{c.service} · {c.targetCountry}</div>
-              </div>
-              <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
-              <StatusBadge tone={priorityTone(c.priority)} size="sm" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>
-              <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)' }}>
-                {c.assignedOfficer ? c.assignedOfficer.name.split(' ')[0] : <span style={{ color: 'var(--sos-status-warning)', fontWeight: 600 }}>Unassigned</span>}
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>{fmtRelative(c.createdAt)}</div>
-            </Link>
-          ))}
-        </div>
+        ) : null}
       </GlassCard>
     </div>
   );

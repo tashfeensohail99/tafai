@@ -3,7 +3,7 @@
 // Shows all INTAKE_PENDING cases sorted by priority.
 // Officer can acknowledge & assign a case directly from this screen.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Globe,
   Inbox,
+  Loader2,
   Phone,
   User,
   Wallet,
@@ -28,40 +29,46 @@ import {
   StatusBadge,
 } from '@/components/sales-v2/ui';
 import {
-  MOCK_PROCESSING_CASES,
-  MOCK_PROCESSING_OFFICER,
-  MOCK_SENIOR_OFFICER,
-  getIntakePending,
   fmtAmount,
   fmtRelative,
   PRIORITY_LABEL,
-  type MockProcessingCase,
-  type ProcessingPriority,
 } from '@/components/processing/mockData';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
-
-// ---------- Available officers to assign to --------------------------------
-const AVAILABLE_OFFICERS = [MOCK_PROCESSING_OFFICER, MOCK_SENIOR_OFFICER];
+import {
+  fetchIntakeQueue,
+  acknowledgeIntake,
+  casePersonName,
+  casePersonPhone,
+  type ApiIntakeCaseItem,
+} from '@/lib/processing';
+import { labelForServiceCode } from '@/lib/service-types';
 
 // ---------- Acknowledge modal ----------------------------------------------
 
 interface AcknowledgeModalProps {
-  caseRecord: MockProcessingCase;
+  caseRecord: ApiIntakeCaseItem;
   onClose: () => void;
-  onConfirm: (officerId: string) => void;
+  onConfirm: () => void;
 }
 
 function AcknowledgeModal({ caseRecord: c, onClose, onConfirm }: AcknowledgeModalProps) {
-  const [selectedOfficer, setSelectedOfficer] = useState(MOCK_PROCESSING_OFFICER.id);
+  // Acknowledge claims the case for the current user (the API defaults to
+  // user.id when no `assignOfficerId` is passed). A future enhancement
+  // could let manager-permission users re-assign to another officer at
+  // this step; for now the simplest flow is "I'll take it".
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleConfirm() {
+  async function handleConfirm() {
     setLoading(true);
-    // Simulate async — replace with real API call
-    setTimeout(() => {
-      onConfirm(selectedOfficer);
+    setError(null);
+    try {
+      await acknowledgeIntake(c.id);
+      onConfirm();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to acknowledge');
       setLoading(false);
-    }, 800);
+    }
   }
 
   return (
@@ -84,8 +91,8 @@ function AcknowledgeModal({ caseRecord: c, onClose, onConfirm }: AcknowledgeModa
 
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--sos-brand-primary-strong)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>Acknowledge Intake</div>
-          <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>{c.clientName}</div>
-          <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', marginTop: '4px' }}>{c.service} · {c.targetCountry}</div>
+          <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>{casePersonName(c)}</div>
+          <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', marginTop: '4px' }}>{labelForServiceCode(c.service)} · {c.targetCountry}</div>
         </div>
 
         {/* Case summary */}
@@ -96,11 +103,17 @@ function AcknowledgeModal({ caseRecord: c, onClose, onConfirm }: AcknowledgeModa
           </div>
           <div>
             <div style={{ color: 'var(--sos-text-muted)', fontSize: '11px', marginBottom: '2px' }}>Amount paid</div>
-            <div style={{ fontWeight: 600, color: 'var(--sos-text-primary)' }}>{fmtAmount(c.financeAmount, c.financeCurrency)}</div>
+            <div style={{ fontWeight: 600, color: 'var(--sos-text-primary)' }}>
+              {c.financeHandover
+                ? fmtAmount(Number(c.financeHandover.submittedAmount), c.financeHandover.currency)
+                : '—'}
+            </div>
           </div>
           <div>
-            <div style={{ color: 'var(--sos-text-muted)', fontSize: '11px', marginBottom: '2px' }}>Handed over by</div>
-            <div style={{ fontWeight: 500, color: 'var(--sos-text-primary)' }}>{c.handoverOfficerName}</div>
+            <div style={{ color: 'var(--sos-text-muted)', fontSize: '11px', marginBottom: '2px' }}>Receipt file</div>
+            <div style={{ fontWeight: 500, color: 'var(--sos-text-primary)', fontSize: 12 }}>
+              {c.financeHandover?.receiptFileName ?? '—'}
+            </div>
           </div>
           <div>
             <div style={{ color: 'var(--sos-text-muted)', fontSize: '11px', marginBottom: '2px' }}>Received</div>
@@ -115,34 +128,17 @@ function AcknowledgeModal({ caseRecord: c, onClose, onConfirm }: AcknowledgeModa
           </div>
         ) : null}
 
-        {/* Officer assignment */}
-        <div style={{ marginBottom: '24px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '8px' }}>Assign to officer</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {AVAILABLE_OFFICERS.map((o) => (
-              <label
-                key={o.id}
-                style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: 'var(--sos-radius-md)', border: `1px solid ${selectedOfficer === o.id ? 'var(--sos-brand-primary-border)' : 'var(--sos-border-subtle)'}`, background: selectedOfficer === o.id ? 'var(--sos-brand-primary-soft)' : 'transparent', cursor: 'pointer', transition: 'all 150ms' }}
-              >
-                <input
-                  type="radio"
-                  name="officer"
-                  value={o.id}
-                  checked={selectedOfficer === o.id}
-                  onChange={() => setSelectedOfficer(o.id)}
-                  style={{ accentColor: 'var(--sos-brand-primary-strong)' }}
-                />
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--sos-brand-primary-soft)', border: '1px solid var(--sos-brand-primary-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: 'var(--sos-brand-primary-strong)', flexShrink: 0 }}>
-                  {o.initials}
-                </div>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{o.name}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--sos-text-muted)' }}>{o.role}</div>
-                </div>
-              </label>
-            ))}
-          </div>
+        {/* Claim notice — the API auto-assigns to the current user when no
+            officerId is passed. Manager-level re-assignment can happen
+            later from the case workspace. */}
+        <div style={{ marginBottom: 20, fontSize: 12.5, color: 'var(--sos-text-muted)' }}>
+          Acknowledging will assign this case to you and move it to <strong>Documents Collection</strong>. The doc checklist for <strong>{labelForServiceCode(c.service)} → {c.targetCountry}</strong> will be auto-attached from the matching template.
         </div>
+        {error ? (
+          <div style={{ marginBottom: 14, padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12.5 }}>
+            {error}
+          </div>
+        ) : null}
 
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
           <SecondaryButton onClick={onClose} disabled={loading}>Cancel</SecondaryButton>
@@ -162,20 +158,29 @@ function AcknowledgeModal({ caseRecord: c, onClose, onConfirm }: AcknowledgeModa
 // ---------- Intake queue page ----------------------------------------------
 
 export function ProcessingIntakePage() {
-  const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
-  const [activeModal, setActiveModal] = useState<MockProcessingCase | null>(null);
+  const [queue, setQueue] = useState<ApiIntakeCaseItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeModal, setActiveModal] = useState<ApiIntakeCaseItem | null>(null);
+  const [acknowledgedCount, setAcknowledgedCount] = useState(0);
 
-  const queue = getIntakePending().filter((c) => !acknowledged.has(c.id));
+  function load() {
+    setLoading(true);
+    fetchIntakeQueue()
+      .then(setQueue)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load queue'))
+      .finally(() => setLoading(false));
+  }
+  useEffect(() => { load(); }, []);
 
-  function handleAcknowledge(caseRecord: MockProcessingCase) {
+  function handleAcknowledge(caseRecord: ApiIntakeCaseItem) {
     setActiveModal(caseRecord);
   }
 
-  function handleConfirm(_officerId: string) {
-    if (activeModal) {
-      setAcknowledged((prev) => new Set([...prev, activeModal.id]));
-      setActiveModal(null);
-    }
+  function handleConfirm() {
+    setActiveModal(null);
+    setAcknowledgedCount((n) => n + 1);
+    load(); // re-fetch so the acknowledged case drops off the list
   }
 
   return (
@@ -205,8 +210,19 @@ export function ProcessingIntakePage() {
           }
         />
 
-        {/* Empty state */}
-        {queue.length === 0 ? (
+        {/* Empty / loading / error states */}
+        {loading ? (
+          <GlassCard variant="panel" padded="lg">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+              <Loader2 size={16} className="sos-spin" />
+              <span>Loading intake queue…</span>
+            </div>
+          </GlassCard>
+        ) : error ? (
+          <GlassCard variant="panel" padded="lg">
+            <div style={{ padding: 16, color: 'var(--sos-status-danger)' }}>Failed to load: {error}</div>
+          </GlassCard>
+        ) : queue.length === 0 ? (
           <GlassCard variant="panel" padded="lg">
             <EmptyState
               Icon={CheckCircle2}
@@ -238,28 +254,27 @@ export function ProcessingIntakePage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '6px' }}>
                       <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--sos-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <User size={14} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
-                        {c.clientName}
+                        {casePersonName(c)}
                       </div>
                       <div style={{ height: '16px', width: '1px', background: 'var(--sos-border-subtle)' }} />
                       <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <Globe size={13} />
-                        {c.service} · {c.targetCountry}
+                        {labelForServiceCode(c.service)} · {c.targetCountry}
                       </div>
                     </div>
 
                     {/* Row 2: meta chips */}
                     <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12.5px', color: 'var(--sos-text-muted)' }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <Phone size={12} /> {c.clientPhone}
+                        <Phone size={12} /> {casePersonPhone(c)}
                       </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <Wallet size={12} /> {fmtAmount(c.financeAmount, c.financeCurrency)}
-                      </span>
+                      {c.financeHandover ? (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <Wallet size={12} /> {fmtAmount(Number(c.financeHandover.submittedAmount), c.financeHandover.currency)}
+                        </span>
+                      ) : null}
                       <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <CalendarClock size={12} /> Received {fmtRelative(c.createdAt)}
-                      </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <User size={12} /> From: {c.handoverOfficerName} (Finance)
                       </span>
                     </div>
 
@@ -294,11 +309,11 @@ export function ProcessingIntakePage() {
         )}
 
         {/* Already acknowledged this session */}
-        {acknowledged.size > 0 ? (
+        {acknowledgedCount > 0 ? (
           <GlassCard variant="soft" padded="md">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--sos-status-success)' }}>
               <CheckCircle2 size={16} />
-              <span style={{ fontWeight: 600 }}>{acknowledged.size}</span> case{acknowledged.size !== 1 ? 's' : ''} acknowledged this session. Find them in{' '}
+              <span style={{ fontWeight: 600 }}>{acknowledgedCount}</span> case{acknowledgedCount !== 1 ? 's' : ''} acknowledged this session. Find them in{' '}
               <Link href={'/processing/cases' as Route} style={{ color: 'var(--sos-brand-primary-strong)', fontWeight: 600, textDecoration: 'none' }}>
                 My Cases <ArrowRight size={13} style={{ display: 'inline', verticalAlign: 'middle' }} />
               </Link>

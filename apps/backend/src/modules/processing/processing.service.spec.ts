@@ -134,6 +134,7 @@ function buildService() {
     timelineMock as any,
     {} as any, // leadsService mock
     { add: jest.fn() } as any, // outbound WhatsApp queue mock
+    { enqueue: jest.fn() } as any, // DocumentAiService mock (D2)
   );
 
   return { service, prismaMock, auditMock, storageMock, timelineMock };

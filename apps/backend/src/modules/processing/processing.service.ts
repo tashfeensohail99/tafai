@@ -32,6 +32,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import { getMilestonesForService } from './milestone-templates';
+import { DocumentAiService } from './document-ai/document-ai.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
@@ -175,6 +176,8 @@ export class ProcessingService {
     // queues module is @Global() so we get this without extra wiring.
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundWhatsAppQueue: Queue<OutboundMessageJob>,
+    // Phase D2 — enqueue document-AI assessment on upload.
+    private readonly documentAi: DocumentAiService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -1254,7 +1257,7 @@ export class ProcessingService {
       file.originalname,
     );
 
-    await this.prisma.$transaction(async (tx) => {
+    const newVersionId = await this.prisma.$transaction(async (tx) => {
       const version = await tx.clientDocumentVersion.create({
         data: {
           documentItemId: itemId,
@@ -1302,6 +1305,8 @@ export class ProcessingService {
           userAgent: userAgent ?? null,
         },
       });
+
+      return version.id;
     });
 
     this.timeline.record({
@@ -1313,6 +1318,11 @@ export class ProcessingService {
       actorUserId: user.id,
       metadata: { caseId, itemId, versionNumber: newVersionNumber },
     }).catch(() => { /* non-fatal */ });
+
+    // Phase D2 — kick off AI assessment (OCR + validation, possible guarded
+    // auto-approve). Fire-and-forget; enqueue swallows its own errors so a
+    // queue hiccup never fails the upload.
+    void this.documentAi.enqueue(newVersionId);
 
     return {
       success: true,

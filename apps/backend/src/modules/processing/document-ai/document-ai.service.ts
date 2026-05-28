@@ -1,0 +1,294 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
+import {
+  AiSuggestedDecision,
+  DocReviewDecisionType,
+  DocumentCriticality,
+  DocumentItemStatus,
+  Prisma,
+  TimelineEventType,
+  VirusScanStatus,
+} from '@prisma/client';
+import { PrismaService } from '../../../common/prisma/prisma.service';
+import { StorageService } from '../../storage/storage.service';
+import { ActivityTimelineService } from '../../activity-timeline/activity-timeline.service';
+import { DocumentParserClient } from './document-parser.client';
+import {
+  DOC_AI_QUEUE,
+  type DocAiJob,
+  type ParserRequest,
+  type ParserResponse,
+} from './document-ai.contracts';
+
+/**
+ * Orchestrates the document-AI pipeline (Phase D2).
+ *
+ *   upload -> enqueue(versionId) -> [queue] -> assess(versionId)
+ *
+ * assess() builds the parser contract from the CaseDocumentItem + case, calls
+ * the parser, and ALWAYS stores a DocumentAiAssessment (shadow record). It then
+ * applies AUTO-APPROVE only behind hard guardrails (see shouldAutoApprove):
+ * very high confidence, every check passed, doc NOT critical, no vision-LLM
+ * fallback, not infected, still the current version + still awaiting review.
+ * Everything else is left for a human — false-approves are the dangerous
+ * failure mode in immigration, so the bias is heavily toward NEEDS_REVIEW.
+ */
+@Injectable()
+export class DocumentAiService {
+  private readonly log = new Logger(DocumentAiService.name);
+
+  private readonly pipelineEnabled: boolean;
+  private readonly autoApproveEnabled: boolean;
+  private readonly minConfidence: number;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+    private readonly timeline: ActivityTimelineService,
+    private readonly parser: DocumentParserClient,
+    @InjectQueue(DOC_AI_QUEUE) private readonly queue: Queue<DocAiJob>,
+  ) {
+    this.pipelineEnabled =
+      this.parser.configured && process.env.DOC_AI_ENABLED !== 'false';
+    // Master kill switch — flip DOC_AUTO_APPROVE_ENABLED=false to drop the
+    // whole thing to shadow mode (AI suggests, humans always decide).
+    this.autoApproveEnabled =
+      this.pipelineEnabled && process.env.DOC_AUTO_APPROVE_ENABLED !== 'false';
+    this.minConfidence = Number(process.env.DOC_AUTO_APPROVE_MIN_CONFIDENCE ?? '0.97');
+  }
+
+  /** Producer — fire-and-forget from the upload path. Never throws. */
+  async enqueue(versionId: string): Promise<void> {
+    if (!this.pipelineEnabled) return;
+    try {
+      await this.queue.add(
+        'assess',
+        { versionId },
+        { jobId: versionId, attempts: 3, backoff: { type: 'exponential', delay: 2_000 } },
+      );
+    } catch (e) {
+      this.log.warn(`Failed to enqueue AI assessment for version ${versionId}: ${String(e)}`);
+    }
+  }
+
+  /** Consumer — invoked by DocAiProcessor for one document version. */
+  async assess(versionId: string): Promise<void> {
+    if (!this.parser.configured) return;
+
+    const version = await this.prisma.clientDocumentVersion.findUnique({
+      where: { id: versionId },
+      select: {
+        id: true,
+        storageKey: true,
+        fileName: true,
+        mimeType: true,
+        isCurrent: true,
+        virusScanStatus: true,
+        documentItemId: true,
+        caseId: true,
+        documentItem: {
+          select: {
+            id: true,
+            documentName: true,
+            criticality: true,
+            docType: true,
+            documentKind: true,
+            photoSpec: true,
+            validityRule: true,
+            validityMonths: true,
+            validityBufferDays: true,
+            status: true,
+          },
+        },
+      },
+    });
+    if (!version || !version.documentItem) {
+      this.log.warn(`assess: version ${versionId} or its item not found — skipping`);
+      return;
+    }
+    const item = version.documentItem;
+
+    const processingCase = await this.prisma.processingCase.findUnique({
+      where: { id: version.caseId },
+      select: {
+        service: true,
+        targetCountry: true,
+        clientId: true,
+        lead: { select: { firstName: true, lastName: true } },
+      },
+    });
+
+    const clientName = processingCase?.lead
+      ? `${processingCase.lead.firstName} ${processingCase.lead.lastName}`.trim()
+      : null;
+
+    let signedUrl: string;
+    try {
+      signedUrl = await this.storage.getSignedUrl(version.storageKey);
+    } catch (e) {
+      this.log.warn(`assess: could not sign URL for version ${versionId}: ${String(e)}`);
+      await this.storeAssessment(version, item, null, `Could not access stored file: ${String(e)}`);
+      return;
+    }
+
+    const req: ParserRequest = {
+      caseId: version.caseId,
+      documentItemId: version.documentItemId,
+      versionId: version.id,
+      expected: {
+        docType: item.docType ?? null,
+        documentKind: item.documentKind,
+        documentName: item.documentName,
+        validityRule: item.validityRule,
+        validityMonths: item.validityMonths ?? null,
+        validityBufferDays: item.validityBufferDays,
+        photoSpec: (item.photoSpec ?? null) as unknown as Record<string, unknown> | null,
+        clientName,
+        service: processingCase?.service ?? null,
+        targetCountry: processingCase?.targetCountry ?? null,
+      },
+      file: {
+        url: signedUrl,
+        mimeType: version.mimeType ?? 'application/octet-stream',
+        fileName: version.fileName,
+      },
+    };
+
+    let resp: ParserResponse | null = null;
+    let errorMessage: string | null = null;
+    try {
+      resp = await this.parser.validate(req);
+    } catch (e) {
+      errorMessage = e instanceof Error ? e.message : String(e);
+      this.log.warn(`assess: parser failed for version ${versionId}: ${errorMessage}`);
+    }
+
+    const assessment = await this.storeAssessment(version, item, resp, errorMessage);
+
+    if (resp && this.shouldAutoApprove(resp, item, version)) {
+      await this.autoApprove(version, item, resp, assessment.id, processingCase?.clientId ?? null);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+
+  private async storeAssessment(
+    version: { id: string; documentItemId: string; caseId: string },
+    item: { docType: string | null },
+    resp: ParserResponse | null,
+    errorMessage: string | null,
+  ) {
+    return this.prisma.documentAiAssessment.create({
+      data: {
+        documentItemId: version.documentItemId,
+        versionId: version.id,
+        caseId: version.caseId,
+        detectedDocType: resp?.detectedDocType ?? null,
+        expectedDocType: item.docType ?? null,
+        confidence: resp?.confidence ?? null,
+        extracted: (resp?.extracted ?? {}) as unknown as Prisma.InputJsonValue,
+        checks: (resp?.checks ?? []) as unknown as Prisma.InputJsonValue,
+        suggestedDecision: (resp?.suggestedDecision ?? 'NEEDS_REVIEW') as AiSuggestedDecision,
+        reasonCodes: resp?.reasonCodes ?? [],
+        ocrTier: resp?.ocrTier ?? null,
+        costCents: resp?.costCents ?? 0,
+        cacheHit: resp?.cacheHit ?? false,
+        autoApproved: false,
+        modelVersion: resp?.modelVersion ?? null,
+        errorMessage,
+      },
+    });
+  }
+
+  /** All guardrails for an automated ACCEPT. Conservative by design. */
+  private shouldAutoApprove(
+    resp: ParserResponse,
+    item: { criticality: DocumentCriticality; status: DocumentItemStatus },
+    version: { isCurrent: boolean; virusScanStatus: VirusScanStatus },
+  ): boolean {
+    return (
+      this.autoApproveEnabled &&
+      resp.suggestedDecision === 'APPROVE' &&
+      resp.confidence >= this.minConfidence &&
+      resp.checks.length > 0 &&
+      resp.checks.every((c) => c.pass) &&
+      // Hard exclusions:
+      item.criticality !== DocumentCriticality.CRITICAL && // passports etc. always human
+      item.status === DocumentItemStatus.SUBMITTED && // don't override a human/earlier decision
+      version.isCurrent && // a newer version may have superseded this one
+      version.virusScanStatus !== VirusScanStatus.INFECTED &&
+      resp.ocrTier !== 'gpt4o_mini_vision' // never trust the desperate vision fallback
+    );
+  }
+
+  private async autoApprove(
+    version: { id: string; documentItemId: string; caseId: string },
+    item: { documentName: string },
+    resp: ParserResponse,
+    aiAssessmentId: string,
+    clientId: string | null,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // Guard inside the tx against a race with a human review.
+      const fresh = await tx.caseDocumentItem.findUnique({
+        where: { id: version.documentItemId },
+        select: { status: true },
+      });
+      if (fresh?.status !== DocumentItemStatus.SUBMITTED) return;
+
+      await tx.documentReviewDecision.create({
+        data: {
+          documentItemId: version.documentItemId,
+          versionId: version.id,
+          decision: DocReviewDecisionType.ACCEPTED,
+          rejectionReasonCodes: [],
+          reviewedByUserId: null, // automated — no human reviewer
+          isAutomated: true,
+          aiAssessmentId,
+        },
+      });
+      await tx.caseDocumentItem.update({
+        where: { id: version.documentItemId },
+        data: { status: DocumentItemStatus.ACCEPTED },
+      });
+      await tx.documentAiAssessment.update({
+        where: { id: aiAssessmentId },
+        data: { autoApproved: true },
+      });
+      await tx.processingAuditLog.create({
+        data: {
+          caseId: version.caseId,
+          actorUserId: null, // system action
+          action: 'document_auto_approved',
+          entityType: 'case_document_item',
+          entityId: version.documentItemId,
+          newValues: {
+            decision: 'ACCEPTED',
+            automated: true,
+            detectedDocType: resp.detectedDocType,
+            confidence: resp.confidence,
+            reasonCodes: resp.reasonCodes,
+            aiAssessmentId,
+          },
+        },
+      });
+    });
+
+    this.timeline
+      .record({
+        entityType: 'case_document_item',
+        entityId: version.documentItemId,
+        clientId: clientId ?? undefined,
+        eventType: TimelineEventType.PROCESSING_DOCUMENT_ACCEPTED,
+        description: `Document auto-approved by AI: ${item.documentName} (confidence ${(resp.confidence * 100).toFixed(0)}%)`,
+        actorUserId: undefined,
+        metadata: { caseId: version.caseId, itemId: version.documentItemId, automated: true },
+      })
+      .catch(() => {
+        /* non-fatal */
+      });
+
+    this.log.log(`Auto-approved document item ${version.documentItemId} (case ${version.caseId})`);
+  }
+}

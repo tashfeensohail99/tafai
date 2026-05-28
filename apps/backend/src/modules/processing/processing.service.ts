@@ -747,7 +747,11 @@ export class ProcessingService {
   async listProcessingOfficers() {
     const officers = await this.prisma.userAccount.findMany({
       where: {
-        isActive: true,
+        // UserAccount has no `isActive` — active state is `status` +
+        // soft-delete via `deletedAt`. (Employee has isActive; UserAccount
+        // doesn't.)
+        status: 'ACTIVE',
+        deletedAt: null,
         userRoles: {
           some: {
             role: {

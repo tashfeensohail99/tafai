@@ -201,6 +201,6 @@ export function destinationForUser(user: SessionUser): string {
   if (roles.has('client')) return '/portal/case';
   if (roles.has('sales')) return '/sales';
   if (roles.has('finance')) return '/finance';
-  if (roles.has('processing') || roles.has('documentation')) return '/processing';
+  if (roles.has('processing') || roles.has('processing_manager') || roles.has('documentation')) return '/processing';
   return '/sales';
 }

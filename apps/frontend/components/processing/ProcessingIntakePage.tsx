@@ -49,7 +49,7 @@ import {
   type ApiIntakeCaseItem,
   type ApiProcessingOfficer,
 } from '@/lib/processing';
-import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
+import { SERVICE_TYPES, labelForServiceCode, isCanonicalServiceCode } from '@/lib/service-types';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Acknowledge modal ----------------------------------------------
@@ -71,11 +71,23 @@ function AcknowledgeModal({
   const [officerId, setOfficerId] = useState<string>(
     onlyAssociate.length === 1 ? onlyAssociate[0]!.id : '',
   );
-  const [serviceCode, setServiceCode] = useState<string>(c.service);
+  // If the lead's service is a legacy free-text value (e.g. "study") it
+  // isn't one of the 9 canonical codes, so the <select> can't show it as a
+  // real selection. Start blank in that case and FORCE the manager to pick
+  // a canonical category — otherwise the case acknowledges with a service
+  // no template matches and gets an empty document checklist.
+  const incomingIsCanonical = isCanonicalServiceCode(c.service);
+  const [serviceCode, setServiceCode] = useState<string>(
+    incomingIsCanonical ? c.service : '',
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleConfirm() {
+    if (!serviceCode) {
+      setError('Confirm the case category — it drives the document checklist.');
+      return;
+    }
     if (!officerId) {
       setError('Pick a Processing Associate to assign this case to.');
       return;
@@ -83,11 +95,11 @@ function AcknowledgeModal({
     setLoading(true);
     setError(null);
     try {
+      // Always send the (now-guaranteed-canonical) service so the checklist
+      // builds correctly, even when the lead arrived with a legacy value.
       await acknowledgeIntake(c.id, {
         assignOfficerId: officerId,
-        // Only send `service` when manager actually changed it — otherwise
-        // we save an unnecessary write and audit-log entry.
-        ...(serviceCode !== c.service ? { service: serviceCode } : {}),
+        service: serviceCode,
       });
       onConfirm();
     } catch (e: unknown) {
@@ -96,7 +108,10 @@ function AcknowledgeModal({
     }
   }
 
-  const serviceChanged = serviceCode !== c.service;
+  // Warn when the manager's pick differs from the lead's original (canonical)
+  // value, or whenever the lead arrived non-canonical (so they know a
+  // checklist is about to be attached).
+  const serviceChanged = !!serviceCode && serviceCode !== c.service;
 
   return (
     <div
@@ -166,13 +181,18 @@ function AcknowledgeModal({
             onChange={(e) => setServiceCode(e.target.value)}
             style={{ width: '100%' }}
           >
+            <option value="" disabled>Choose a case category…</option>
             {SERVICE_TYPES.map((s) => (
               <option key={s.code} value={s.code}>{s.label}</option>
             ))}
           </select>
-          {serviceChanged ? (
+          {!incomingIsCanonical ? (
             <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sos-status-warning)' }}>
-              Changing the category will rebuild the document checklist from the {labelForServiceCode(serviceCode)} template.
+              This lead arrived with a free-text service (&quot;{c.service}&quot;). Pick the matching category so the right document checklist attaches.
+            </div>
+          ) : serviceChanged ? (
+            <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sos-status-warning)' }}>
+              Changing the category will build the document checklist from the {labelForServiceCode(serviceCode)} template.
             </div>
           ) : null}
         </div>
@@ -212,7 +232,7 @@ function AcknowledgeModal({
           <SecondaryButton onClick={onClose} disabled={loading}>Cancel</SecondaryButton>
           <PrimaryButton
             onClick={handleConfirm}
-            disabled={loading || !officerId}
+            disabled={loading || !officerId || !serviceCode}
             iconLeft={<CheckCircle2 size={15} />}
           >
             {loading ? 'Assigning…' : 'Acknowledge & assign'}

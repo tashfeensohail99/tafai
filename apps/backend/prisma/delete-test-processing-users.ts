@@ -37,17 +37,19 @@ async function main() {
   const userIds = users.map((u) => u.id);
 
   await prisma.$transaction(async (tx) => {
-    // Drop role assignments first (FK constraint).
-    const roles = await tx.userRole.deleteMany({
+    // Employee.user has no onDelete cascade (defaults to Restrict), so the
+    // employee row must go before the userAccount or the delete is blocked.
+    // userRoles / loginSessions / notifications all cascade on userAccount
+    // delete, so we don't need to touch those explicitly.
+    const emps = await tx.employee.deleteMany({
       where: { userId: { in: userIds } },
     });
-    console.log(`  Removed ${roles.count} role assignment(s)`);
+    console.log(`  Removed ${emps.count} employee record(s)`);
 
-    // Then delete the user accounts.
     const accounts = await tx.userAccount.deleteMany({
       where: { id: { in: userIds } },
     });
-    console.log(`  Removed ${accounts.count} user account(s)`);
+    console.log(`  Removed ${accounts.count} user account(s) (roles/sessions cascaded)`);
   });
 
   console.log('Done.');

@@ -68,6 +68,25 @@ import {
   WaiveDocumentItemDto,
 } from './processing.dto';
 
+/**
+ * Resolve a human display name for a UserAccount. UserAccount has NO name
+ * column — the name lives on the Employee relation. Callers must include
+ * `{ email, employee: { select: { firstName, lastName } } }`. Returns null
+ * when the officer arg itself is null (e.g. unassigned case).
+ */
+function officerDisplayName(
+  officer:
+    | { email: string; employee: { firstName: string; lastName: string } | null }
+    | null
+    | undefined,
+): string | null {
+  if (!officer) return null;
+  const name = officer.employee
+    ? `${officer.employee.firstName} ${officer.employee.lastName}`.trim()
+    : '';
+  return name || officer.email;
+}
+
 // Stage gate: which transitions are allowed from each stage
 const ALLOWED_TRANSITIONS: Partial<Record<ProcessingCaseStage, ProcessingCaseStage[]>> = {
   INTAKE_PENDING: [ProcessingCaseStage.DOCUMENTS_COLLECTION],
@@ -740,7 +759,6 @@ export class ProcessingService {
       select: {
         id: true,
         email: true,
-        fullName: true,
         employee: { select: { firstName: true, lastName: true } },
         userRoles: { select: { role: { select: { name: true } } } },
       },
@@ -748,9 +766,13 @@ export class ProcessingService {
     });
 
     return officers.map((u) => {
-      const displayName = u.employee
-        ? `${u.employee.firstName} ${u.employee.lastName}`.trim() || u.fullName || u.email
-        : u.fullName || u.email;
+      // UserAccount has no name column — the human name lives on the
+      // Employee relation. Fall back to the email handle when there's no
+      // employee record (e.g. seeded/test accounts).
+      const employeeName = u.employee
+        ? `${u.employee.firstName} ${u.employee.lastName}`.trim()
+        : '';
+      const displayName = employeeName || u.email;
       const roles = u.userRoles.map((r) => r.role.name);
       // Surface the most senior role so the UI can label managers vs
       // associates without a second lookup.
@@ -2446,7 +2468,11 @@ export class ProcessingService {
         ...(query.officerId ? { assignedOfficerId: query.officerId } : {}),
         createdAt: { gte: from, lte: to },
       },
-      include: { assignedOfficer: { select: { id: true, fullName: true } } },
+      include: {
+        assignedOfficer: {
+          select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } },
+        },
+      },
     });
 
     const UNASSIGNED_KEY = 'unassigned';
@@ -2457,7 +2483,7 @@ export class ProcessingService {
 
     for (const c of cases) {
       const key  = c.assignedOfficerId ?? UNASSIGNED_KEY;
-      const name = c.assignedOfficer?.fullName ?? 'Unassigned';
+      const name = officerDisplayName(c.assignedOfficer) ?? 'Unassigned';
       if (!officerMap.has(key)) {
         officerMap.set(key, { officerName: name, stageCounts: {}, totalDaysOpen: 0, caseCount: 0 });
       }
@@ -2598,7 +2624,7 @@ export class ProcessingService {
         },
         include: {
           case: { select: { id: true, service: true, targetCountry: true } },
-          raisedBy: { select: { id: true, fullName: true } },
+          raisedBy: { select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } } },
         },
         orderBy: { slaDueAt: 'asc' },
       }),
@@ -2617,7 +2643,7 @@ export class ProcessingService {
           stage: true,
           priority: true,
           createdAt: true,
-          assignedOfficer: { select: { id: true, fullName: true } },
+          assignedOfficer: { select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } } },
         },
       }),
     ]);
@@ -2632,7 +2658,7 @@ export class ProcessingService {
         priority: c.priority,
         daysOpen,
         bucket: daysOpen >= 90 ? '90+' : daysOpen >= 60 ? '60-90' : '30-60',
-        officerName: c.assignedOfficer?.fullName ?? 'Unassigned',
+        officerName: officerDisplayName(c.assignedOfficer) ?? 'Unassigned',
       };
     }).sort((a, b) => b.daysOpen - a.daysOpen);
 
@@ -2646,7 +2672,7 @@ export class ProcessingService {
         hoursOverdue: cr.slaDueAt
           ? Math.floor((now.getTime() - cr.slaDueAt.getTime()) / 3_600_000)
           : null,
-        raisedByName: cr.raisedBy.fullName,
+        raisedByName: officerDisplayName(cr.raisedBy) ?? cr.raisedBy.email,
       })),
       agingCases: agingRows,
       summary: {
@@ -2679,7 +2705,7 @@ export class ProcessingService {
             service: true,
             targetCountry: true,
             priority: true,
-            assignedOfficer: { select: { id: true, fullName: true } },
+            assignedOfficer: { select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } } },
           },
         },
       },
@@ -2706,7 +2732,7 @@ export class ProcessingService {
         service:      item.case.service,
         targetCountry: item.case.targetCountry,
         casePriority: item.case.priority,
-        officerName:  item.case.assignedOfficer?.fullName ?? 'Unassigned',
+        officerName:  officerDisplayName(item.case.assignedOfficer) ?? 'Unassigned',
       };
     });
 

@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { DocumentParserClient } from './document-parser.client';
+import { ApiKeysService } from '../../api-keys/api-keys.service';
 import type { ParserRequest } from './document-ai.contracts';
 
 /**
@@ -34,7 +35,17 @@ export class DocumentIntakeService {
     private readonly storage: StorageService,
     private readonly parser: DocumentParserClient,
     private readonly config: ConfigService,
+    private readonly apiKeys: ApiKeysService,
   ) {}
+
+  /** The admin-managed OpenAI key (single source of truth). Null if none set. */
+  private async resolveOpenAiKey(): Promise<string | null> {
+    try {
+      return await this.apiKeys.getActiveKey('openai');
+    } catch {
+      return null;
+    }
+  }
 
   async ingestWhatsAppMessage(messageId: string): Promise<void> {
     const msg = await this.prisma.whatsAppMessage.findUnique({
@@ -142,6 +153,7 @@ export class DocumentIntakeService {
             targetCountry: activeCase.targetCountry,
           },
           file: { url: signedUrl, mimeType: mime, fileName },
+          openaiApiKey: await this.resolveOpenAiKey(),
         };
         const resp = await this.parser.validate(req);
         detectedDocType = resp.detectedDocType;

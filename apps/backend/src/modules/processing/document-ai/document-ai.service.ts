@@ -14,6 +14,7 @@ import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { ActivityTimelineService } from '../../activity-timeline/activity-timeline.service';
 import { DocumentParserClient } from './document-parser.client';
+import { ApiKeysService } from '../../api-keys/api-keys.service';
 import {
   DOC_AI_QUEUE,
   type DocAiJob,
@@ -47,6 +48,7 @@ export class DocumentAiService {
     private readonly storage: StorageService,
     private readonly timeline: ActivityTimelineService,
     private readonly parser: DocumentParserClient,
+    private readonly apiKeys: ApiKeysService,
     @InjectQueue(DOC_AI_QUEUE) private readonly queue: Queue<DocAiJob>,
   ) {
     this.pipelineEnabled =
@@ -56,6 +58,15 @@ export class DocumentAiService {
     this.autoApproveEnabled =
       this.pipelineEnabled && process.env.DOC_AUTO_APPROVE_ENABLED !== 'false';
     this.minConfidence = Number(process.env.DOC_AUTO_APPROVE_MIN_CONFIDENCE ?? '0.97');
+  }
+
+  /** The admin-managed OpenAI key (single source of truth). Null if none set. */
+  private async resolveOpenAiKey(): Promise<string | null> {
+    try {
+      return await this.apiKeys.getActiveKey('openai');
+    } catch {
+      return null;
+    }
   }
 
   /** Producer — fire-and-forget from the upload path. Never throws. */
@@ -166,6 +177,7 @@ export class DocumentAiService {
         mimeType: version.mimeType ?? 'application/octet-stream',
         fileName: version.fileName,
       },
+      openaiApiKey: await this.resolveOpenAiKey(),
     };
 
     let resp: ParserResponse | null = null;

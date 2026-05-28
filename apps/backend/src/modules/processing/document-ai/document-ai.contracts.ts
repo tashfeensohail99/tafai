@@ -54,6 +54,9 @@ export interface ParserRequest {
   versionId: string;
   expected: ParserExpected;
   file: ParserFile;
+  // Admin-managed OpenAI key (single source of truth, Admin → API Keys).
+  // The parser uses it over its own env fallback.
+  openaiApiKey?: string | null;
 }
 
 export interface ParserCheck {

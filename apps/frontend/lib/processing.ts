@@ -717,6 +717,28 @@ export type DocumentItemStatus =
   | 'NOT_APPLICABLE'
   | 'EXPIRED';
 
+export type AiSuggestedDecision = 'APPROVE' | 'REJECT' | 'NEEDS_REVIEW';
+
+export interface AiCheck {
+  code: string;
+  pass: boolean;
+  detail: string;
+}
+
+export interface ApiDocumentAiAssessment {
+  id: string;
+  detectedDocType: string | null;
+  expectedDocType: string | null;
+  confidence: number | null;
+  checks: AiCheck[] | null;
+  suggestedDecision: AiSuggestedDecision;
+  reasonCodes: string[];
+  autoApproved: boolean;
+  ocrTier: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
 export interface ApiCaseDocumentItem {
   id: string;
   caseId: string;
@@ -742,6 +764,8 @@ export interface ApiCaseDocumentItem {
     versionNumber: number;
     uploadedAt: string;
   } | null;
+  // Phase D3 — latest AI assessment (backend sends at most one).
+  aiAssessments?: ApiDocumentAiAssessment[];
 }
 
 export function fetchCaseDocuments(caseId: string): Promise<ApiCaseDocumentItem[]> {
@@ -823,6 +847,72 @@ export function reviewDocumentItem(
       body: JSON.stringify(body),
       cache: 'no-store',
     },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inbound document intake (Phase E) — WhatsApp/email/portal docs awaiting triage
+// ---------------------------------------------------------------------------
+
+export type InboundDocumentStatus = 'PENDING' | 'FILED' | 'DISCARDED';
+export type InboundDocumentSource = 'WHATSAPP' | 'EMAIL' | 'PORTAL';
+
+export interface ApiInboundDocument {
+  id: string;
+  caseId: string;
+  source: InboundDocumentSource;
+  fileName: string;
+  mimeType: string | null;
+  fileSizeBytes: number | null;
+  detectedDocType: string | null;
+  classifyConfidence: number | null;
+  suggestedItemId: string | null;
+  suggestedItemName: string | null;
+  status: InboundDocumentStatus;
+  createdAt: string;
+}
+
+export function fetchInboundDocuments(caseId: string): Promise<ApiInboundDocument[]> {
+  return apiFetch<ApiInboundDocument[]>(
+    `/processing/cases/${caseId}/inbound-documents`,
+    { cache: 'no-store' },
+  );
+}
+
+export function fileInboundDocument(
+  caseId: string,
+  inboundId: string,
+  itemId: string,
+): Promise<{ success: boolean; versionNumber: number; itemId: string }> {
+  return apiFetch(`/processing/cases/${caseId}/inbound-documents/${inboundId}/file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemId }),
+    cache: 'no-store',
+  });
+}
+
+export function discardInboundDocument(
+  caseId: string,
+  inboundId: string,
+): Promise<{ success: boolean }> {
+  return apiFetch(`/processing/cases/${caseId}/inbound-documents/${inboundId}/discard`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+}
+
+export interface RequestMissingResult {
+  success: boolean;
+  missingCount: number;
+  requested: string[];
+  warning: string | null;
+}
+
+export function requestMissingDocuments(caseId: string): Promise<RequestMissingResult> {
+  return apiFetch<RequestMissingResult>(
+    `/processing/cases/${caseId}/request-missing-documents`,
+    { method: 'POST', cache: 'no-store' },
   );
 }
 

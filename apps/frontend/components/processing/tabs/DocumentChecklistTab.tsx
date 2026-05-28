@@ -17,9 +17,13 @@ import {
   ExternalLink,
   FileCheck2,
   FileX2,
+  Inbox,
   Loader2,
   MailQuestion,
+  Send,
   ShieldAlert,
+  Sparkles,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import {
@@ -40,7 +44,13 @@ import {
   waiveDocumentItem,
   requestDocumentFromClient,
   reviewDocumentItem,
+  fetchInboundDocuments,
+  fileInboundDocument,
+  discardInboundDocument,
+  requestMissingDocuments,
   type ApiCaseDocumentItem,
+  type ApiDocumentAiAssessment,
+  type ApiInboundDocument,
   type DocumentItemStatus,
   type DocumentCriticality,
 } from '@/lib/processing';
@@ -78,6 +88,185 @@ const CRIT_TONE: Record<DocumentCriticality, BadgeTone> = {
   SUPPORTING: 'neutral',
   OPTIONAL: 'neutral',
 };
+
+// Short human labels for the parser's check codes (falls back to the raw code).
+const CHECK_LABEL: Record<string, string> = {
+  DOC_TYPE_MATCH: 'Type',
+  NAME_MATCH: 'Name',
+  DOB_MATCH: 'DOB',
+  PASSPORT_NO_MATCH: 'Passport #',
+  ID_NO_MATCH: 'ID #',
+  NOT_EXPIRED: 'Validity',
+  VALID_FOR_PERIOD: 'Validity',
+  EXPIRY_FOUND: 'Expiry',
+  RECENT_STATEMENT: 'Recency',
+  FRONT_AND_BACK: 'Front + back',
+  PASSPORT_COMPLETE: 'Complete',
+  STATEMENT_COMPLETE: 'Complete',
+  DOCUMENT_COMPLETE: 'Complete',
+  NOT_BLURRY: 'Sharp',
+  ASPECT_RATIO: 'Size',
+  BACKGROUND: 'Background',
+  SINGLE_FACE: 'Face',
+  PHOTO_UNREADABLE: 'Readable',
+};
+
+const DECISION_TONE: Record<string, BadgeTone> = {
+  APPROVE: 'success',
+  REJECT: 'danger',
+  NEEDS_REVIEW: 'warning',
+};
+const DECISION_LABEL: Record<string, string> = {
+  APPROVE: 'AI suggests approve',
+  REJECT: 'AI suggests reject',
+  NEEDS_REVIEW: 'AI: needs review',
+};
+
+function AiAssessmentBlock({ a }: { a: ApiDocumentAiAssessment }) {
+  const conf = a.confidence != null ? `${Math.round(a.confidence * 100)}%` : null;
+  return (
+    <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: 'var(--sos-text-secondary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          <Sparkles size={12} /> AI check
+        </span>
+        <StatusBadge tone={DECISION_TONE[a.suggestedDecision] ?? 'neutral'} size="sm">
+          {DECISION_LABEL[a.suggestedDecision] ?? a.suggestedDecision}
+        </StatusBadge>
+        {conf ? <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{conf} confidence</span> : null}
+        {a.autoApproved ? <StatusBadge tone="success" size="sm">Auto-approved</StatusBadge> : null}
+        {a.detectedDocType ? (
+          <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>detected: {a.detectedDocType}</span>
+        ) : null}
+      </div>
+      {a.errorMessage ? (
+        <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sos-text-muted)' }}>AI couldn’t assess: {a.errorMessage}</div>
+      ) : null}
+      {a.checks && a.checks.length > 0 ? (
+        <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {a.checks.map((ck) => (
+            <span
+              key={ck.code}
+              title={ck.detail}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999,
+                fontSize: 11, fontWeight: 600,
+                background: ck.pass ? 'var(--sos-status-success-soft)' : 'var(--sos-status-danger-soft)',
+                color: ck.pass ? 'var(--sos-status-success)' : 'var(--sos-status-danger)',
+                border: `1px solid ${ck.pass ? 'var(--sos-status-success-border)' : 'var(--sos-status-danger-border)'}`,
+              }}
+            >
+              {ck.pass ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
+              {CHECK_LABEL[ck.code] ?? ck.code}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// WhatsApp/email/portal documents that arrived without a slot, awaiting triage.
+function InboundTray({
+  caseId,
+  items,
+  onFiled,
+}: {
+  caseId: string;
+  items: ApiCaseDocumentItem[];
+  onFiled: () => void;
+}) {
+  const [inbound, setInbound] = useState<ApiInboundDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchInboundDocuments(caseId)
+      .then((rows) => { if (!cancelled) setInbound(rows); })
+      .catch(() => { /* tray is best-effort */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [caseId]);
+
+  async function handleFile(d: ApiInboundDocument) {
+    const itemId = picks[d.id] ?? d.suggestedItemId ?? '';
+    if (!itemId) { setErr('Pick a document slot first'); return; }
+    setBusyId(d.id); setErr(null);
+    try {
+      await fileInboundDocument(caseId, d.id, itemId);
+      setInbound((prev) => prev.filter((x) => x.id !== d.id));
+      onFiled();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to file document');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleDiscard(d: ApiInboundDocument) {
+    setBusyId(d.id); setErr(null);
+    try {
+      await discardInboundDocument(caseId, d.id);
+      setInbound((prev) => prev.filter((x) => x.id !== d.id));
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to discard');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (loading || inbound.length === 0) return null;
+
+  const fileable = items.filter(
+    (i) => i.status !== 'WAIVED' && i.status !== 'ACCEPTED' && i.status !== 'NOT_APPLICABLE',
+  );
+
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <Inbox size={15} style={{ color: 'var(--sos-text-secondary)' }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Inbound documents</span>
+        <StatusBadge tone="cyan" size="sm">{inbound.length}</StatusBadge>
+        <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>
+          Sent by the client — file into a slot or discard
+        </span>
+      </div>
+      {err ? <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--sos-status-danger)' }}>{err}</div> : null}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {inbound.map((d) => (
+          <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)' }}>
+            <StatusBadge tone="success" size="sm">{d.source}</StatusBadge>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--sos-text-primary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.fileName}</span>
+            {d.detectedDocType ? (
+              <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+                AI: {d.detectedDocType}{d.classifyConfidence != null ? ` (${Math.round(d.classifyConfidence * 100)}%)` : ''}
+              </span>
+            ) : null}
+            <select
+              value={picks[d.id] ?? d.suggestedItemId ?? ''}
+              onChange={(e) => setPicks((p) => ({ ...p, [d.id]: e.target.value }))}
+              style={{ marginLeft: 'auto', maxWidth: 200, padding: '5px 8px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface)', color: 'var(--sos-text-primary)', fontSize: 12 }}
+            >
+              <option value="">Choose slot…</option>
+              {fileable.map((it) => (
+                <option key={it.id} value={it.id}>
+                  {it.documentName}{d.suggestedItemId === it.id ? ' (suggested)' : ''}
+                </option>
+              ))}
+            </select>
+            <SecondaryButton iconLeft={<FileCheck2 size={13} />} onClick={() => handleFile(d)} disabled={busyId === d.id}>File</SecondaryButton>
+            <button type="button" onClick={() => handleDiscard(d)} disabled={busyId === d.id} title="Discard" style={{ padding: '6px 8px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', cursor: 'pointer' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  );
+}
 
 function DocumentRow({
   d,
@@ -189,6 +378,10 @@ function DocumentRow({
             Updated {fmtRelative(d.updatedAt)}
           </div>
 
+          {d.aiAssessments && d.aiAssessments.length > 0 ? (
+            <AiAssessmentBlock a={d.aiAssessments[0]} />
+          ) : null}
+
           {err ? (
             <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12 }}>{err}</div>
           ) : null}
@@ -248,6 +441,8 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
   const [items, setItems] = useState<ApiCaseDocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [reqMsg, setReqMsg] = useState<string | null>(null);
+  const [reqBusy, setReqBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -260,6 +455,28 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
 
   function handleChange(updated: ApiCaseDocumentItem) {
     setItems((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+  }
+
+  // Re-pull the checklist (e.g. after filing an inbound doc into a slot).
+  function reload() {
+    fetchCaseDocuments(c.id).then(setItems).catch(() => { /* keep prior state */ });
+  }
+
+  async function handleRequestMissing() {
+    setReqBusy(true);
+    setReqMsg(null);
+    try {
+      const r = await requestMissingDocuments(c.id);
+      setReqMsg(
+        r.missingCount === 0
+          ? 'All documents submitted — nothing to request.'
+          : `Requested ${r.missingCount} document(s) via WhatsApp${r.warning ? ` — ${r.warning}` : ''}.`,
+      );
+    } catch (e: unknown) {
+      setReqMsg(e instanceof Error ? e.message : 'Failed to send request');
+    } finally {
+      setReqBusy(false);
+    }
   }
 
   // Progress: count CRITICAL + REQUIRED items that are settled
@@ -307,8 +524,17 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
                   <div style={{ width: `${pct}%`, height: '100%', background: pct === 100 ? 'var(--sos-status-success)' : 'var(--sos-brand-gradient)', borderRadius: 999, transition: 'width 400ms' }} />
                 </div>
               </div>
+              <SecondaryButton iconLeft={<Send size={13} />} onClick={handleRequestMissing} disabled={reqBusy}>
+                {reqBusy ? 'Sending…' : 'Request missing'}
+              </SecondaryButton>
             </div>
+            {reqMsg ? (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--sos-text-secondary)' }}>{reqMsg}</div>
+            ) : null}
           </GlassCard>
+
+          {/* Inbound triage tray (WhatsApp/email/portal) */}
+          <InboundTray caseId={c.id} items={items} onFiled={reload} />
 
           {/* Items */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

@@ -1354,6 +1354,25 @@ export class ProcessingService {
           take: 5,
           include: { reviewedBy: { select: { id: true, email: true } } },
         },
+        // Phase D3 — the latest AI assessment (≈ the current version's, since
+        // each upload triggers a fresh one) so the UI can show verdict chips.
+        aiAssessments: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            detectedDocType: true,
+            expectedDocType: true,
+            confidence: true,
+            checks: true,
+            suggestedDecision: true,
+            reasonCodes: true,
+            autoApproved: true,
+            ocrTier: true,
+            errorMessage: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: [{ criticality: 'asc' }, { sortOrder: 'asc' }],
     });

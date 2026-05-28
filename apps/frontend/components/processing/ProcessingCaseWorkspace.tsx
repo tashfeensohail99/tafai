@@ -19,6 +19,7 @@ import {
   History,
   Layers,
   Loader2,
+  MessageCircle,
   MessageSquare,
   Phone,
   Send,
@@ -57,6 +58,7 @@ import { stageTone, priorityTone } from './ProcessingDashboardPage';
 import { DocumentChecklistTab } from './tabs/DocumentChecklistTab';
 import { CaseTimelineTab } from './tabs/CaseTimelineTab';
 import { CommunicationsTab } from './tabs/CommunicationsTab';
+import { WhatsAppTab } from './tabs/WhatsAppTab';
 import { InternalNotesTab } from './tabs/InternalNotesTab';
 import { TasksTab } from './tabs/TasksTab';
 import { SubmissionsTab } from './tabs/SubmissionsTab';
@@ -70,7 +72,7 @@ import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Tabs -----------------------------------------------------------
 
-type TabKey = 'milestones' | 'documents' | 'timeline' | 'communications' | 'notes' | 'tasks' | 'submissions' | 'corrections';
+type TabKey = 'milestones' | 'documents' | 'timeline' | 'communications' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
   // Milestones first — the case-progress narrative the associate works
@@ -79,6 +81,7 @@ const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
   { key: 'documents', label: 'Documents', Icon: FileSearch },
   { key: 'timeline', label: 'Timeline', Icon: History },
   { key: 'communications', label: 'Comms', Icon: MessageSquare },
+  { key: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle },
   { key: 'notes', label: 'Notes', Icon: StickyNote },
   { key: 'tasks', label: 'Tasks', Icon: ClipboardList },
   { key: 'corrections', label: 'Corrections', Icon: AlertCircle },
@@ -411,6 +414,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
             {activeTab === 'documents' && <DocumentChecklistTab c={c} />}
             {activeTab === 'timeline' && <CaseTimelineTab c={c} />}
             {activeTab === 'communications' && <CommunicationsTab c={c} />}
+            {activeTab === 'whatsapp' && <WhatsAppTab c={c} />}
             {activeTab === 'notes' && <InternalNotesTab c={c} />}
             {activeTab === 'tasks' && <TasksTab c={c} />}
             {activeTab === 'corrections' && <CorrectionsTab c={c} />}

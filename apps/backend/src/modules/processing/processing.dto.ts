@@ -433,6 +433,14 @@ export class FileInboundDocumentDto {
   itemId!: string;
 }
 
+// Phase E — send a WhatsApp chat message to the case's client.
+export class SendCaseWhatsAppDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
+  body!: string;
+}
+
 export class ReviewDocumentDto {
   @IsEnum(DocReviewDecisionType)
   decision!: DocReviewDecisionType;

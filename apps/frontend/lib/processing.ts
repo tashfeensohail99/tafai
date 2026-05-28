@@ -922,6 +922,44 @@ export function requestMissingDocuments(caseId: string): Promise<RequestMissingR
 }
 
 // ---------------------------------------------------------------------------
+// Case WhatsApp chat (Phase E) — live two-way thread, scoped by case access
+// ---------------------------------------------------------------------------
+
+export interface ApiCaseWhatsAppMessage {
+  id: string;
+  direction: 'INBOUND' | 'OUTBOUND';
+  type: string;
+  body: string | null;
+  mediaUrl: string | null;
+  mediaMimeType: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export interface ApiCaseWhatsApp {
+  threadId: string | null;
+  windowExpiresAt: string | null;
+  windowOpen: boolean;
+  messages: ApiCaseWhatsAppMessage[];
+}
+
+export function fetchCaseWhatsApp(caseId: string): Promise<ApiCaseWhatsApp> {
+  return apiFetch<ApiCaseWhatsApp>(`/processing/cases/${caseId}/whatsapp`, { cache: 'no-store' });
+}
+
+export function sendCaseWhatsApp(
+  caseId: string,
+  body: string,
+): Promise<{ success: boolean; messageId?: string; reason?: string }> {
+  return apiFetch(`/processing/cases/${caseId}/whatsapp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+    cache: 'no-store',
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Communications
 // ---------------------------------------------------------------------------
 

@@ -51,6 +51,7 @@ import {
   ResolveCorrectionRequestDto,
   ReviewDocumentDto,
   FileInboundDocumentDto,
+  SendCaseWhatsAppDto,
   SendCommunicationDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
@@ -372,6 +373,29 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.requestMissingDocuments(caseId, user);
+  }
+
+  // -------------------------------------------------------------------------
+  // CASE WHATSAPP CHAT (Phase E) — live two-way thread, scoped by case access
+  // -------------------------------------------------------------------------
+
+  @Get('cases/:caseId/whatsapp')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getCaseWhatsApp(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getCaseWhatsApp(caseId, user);
+  }
+
+  @Post('cases/:caseId/whatsapp')
+  @RequirePermissions('processing.communication.send')
+  sendCaseWhatsApp(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: SendCaseWhatsAppDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.sendCaseWhatsApp(caseId, dto.body, user);
   }
 
   // -------------------------------------------------------------------------

@@ -2251,6 +2251,72 @@ export class ProcessingService {
     return { ...comm, deliveryWarnings };
   }
 
+  // -------------------------------------------------------------------------
+  // CASE WHATSAPP CHAT (Phase E) — the live two-way thread for the case's
+  // client, scoped by case access (no WhatsApp-inbox permission needed; the
+  // thread lookup is keyed off this case's lead/client).
+  // -------------------------------------------------------------------------
+
+  async getCaseWhatsApp(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const processingCase = await this.prisma.processingCase.findUnique({
+      where: { id: caseId },
+      select: { leadId: true, clientId: true },
+    });
+    if (!processingCase) throw new NotFoundException('Case not found');
+
+    const thread = await this.prisma.whatsAppThread.findFirst({
+      where: {
+        OR: [
+          ...(processingCase.leadId ? [{ leadId: processingCase.leadId }] : []),
+          ...(processingCase.clientId ? [{ clientId: processingCase.clientId }] : []),
+        ],
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      select: { id: true, windowExpiresAt: true },
+    });
+    if (!thread) {
+      return { threadId: null, windowExpiresAt: null, windowOpen: false, messages: [] };
+    }
+
+    const messages = await this.prisma.whatsAppMessage.findMany({
+      where: { threadId: thread.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        direction: true,
+        type: true,
+        body: true,
+        mediaUrl: true,
+        mediaMimeType: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    return {
+      threadId: thread.id,
+      windowExpiresAt: thread.windowExpiresAt,
+      windowOpen: !!thread.windowExpiresAt && thread.windowExpiresAt.getTime() > Date.now(),
+      messages: messages.reverse(), // oldest-first for chat display
+    };
+  }
+
+  async sendCaseWhatsApp(caseId: string, body: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const text = (body ?? '').trim();
+    if (!text) throw new BadRequestException('Message body is required');
+    const result = await this.enqueueWhatsAppForCase({
+      caseId,
+      actorUserId: user.id,
+      body: text,
+    });
+    return result.ok
+      ? { success: true, messageId: result.messageId }
+      : { success: false, reason: result.reason };
+  }
+
   /**
    * Combine the subject + body into the WhatsApp message text. Subject lives
    * at the top in *asterisks* (WA bold) so the client can scan it like an

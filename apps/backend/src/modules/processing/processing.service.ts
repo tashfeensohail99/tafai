@@ -1598,7 +1598,46 @@ export class ProcessingService {
       metadata: { caseId, itemId, decision: dto.decision },
     }).catch(() => { /* non-fatal */ });
 
-    return { success: true, newStatus };
+    // Return the full updated item (same shape as the checklist) so the UI
+    // refreshes the row — status, latest version, and AI assessment chips.
+    return this.prisma.caseDocumentItem.findUnique({
+      where: { id: itemId },
+      include: {
+        latestVersion: {
+          select: {
+            id: true,
+            fileName: true,
+            fileSizeBytes: true,
+            mimeType: true,
+            versionNumber: true,
+            virusScanStatus: true,
+            uploadedAt: true,
+          },
+        },
+        reviewDecisions: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          include: { reviewedBy: { select: { id: true, email: true } } },
+        },
+        aiAssessments: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            detectedDocType: true,
+            expectedDocType: true,
+            confidence: true,
+            checks: true,
+            suggestedDecision: true,
+            reasonCodes: true,
+            autoApproved: true,
+            ocrTier: true,
+            errorMessage: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
   }
 
   // -------------------------------------------------------------------------

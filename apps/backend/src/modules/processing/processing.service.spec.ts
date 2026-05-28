@@ -97,6 +97,7 @@ function buildService() {
     caseDocumentItem: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       create: jest.fn(),
       createMany: jest.fn(),
       update: jest.fn(),
@@ -782,6 +783,11 @@ describe('ProcessingService — Rule 4: Document review append-only', () => {
       },
     });
 
+    // reviewDocument refetches + returns the full item at the end.
+    prismaMock.caseDocumentItem.findUnique.mockResolvedValue(
+      makeDocumentItem({ status: DocumentItemStatus.ACCEPTED }) as never,
+    );
+
     const decisionCreate = jest.fn().mockResolvedValue({});
     const itemUpdate = jest.fn().mockResolvedValue({});
     const auditCreate = jest.fn().mockResolvedValue({});
@@ -807,7 +813,7 @@ describe('ProcessingService — Rule 4: Document review append-only', () => {
     expect(decisionCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ decision: 'ACCEPTED' }) }),
     );
-    expect(result.newStatus).toBe(DocumentItemStatus.ACCEPTED);
+    expect(result?.status).toBe(DocumentItemStatus.ACCEPTED);
   });
 });
 

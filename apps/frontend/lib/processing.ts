@@ -844,7 +844,12 @@ export function reviewDocumentItem(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      // Backend enum is ACCEPTED/REJECTED; the UI works in ACCEPT/REJECT.
+      body: JSON.stringify({
+        decision: body.decision === 'ACCEPT' ? 'ACCEPTED' : 'REJECTED',
+        rejectionReasonCodes: body.rejectionReasonCodes,
+        rejectionNote: body.rejectionNote,
+      }),
       cache: 'no-store',
     },
   );

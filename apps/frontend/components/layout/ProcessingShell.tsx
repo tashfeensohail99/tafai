@@ -130,6 +130,10 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
     awaitingReview: 0,
     readyToSubmit: 0,
     newIntake: 0,
+    myPendingDocs: 0,
+    myClientFollowUp: 0,
+    myApproved: 0,
+    myRefused: 0,
   });
 
   useEffect(() => {

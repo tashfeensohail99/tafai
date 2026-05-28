@@ -50,6 +50,7 @@ import {
   RequestDocumentDto,
   ResolveCorrectionRequestDto,
   ReviewDocumentDto,
+  FileInboundDocumentDto,
   SendCommunicationDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
@@ -328,6 +329,49 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.reviewDocument(caseId, itemId, dto, user);
+  }
+
+  // -------------------------------------------------------------------------
+  // INBOUND DOCUMENT INTAKE (Phase E) — WhatsApp/email/portal docs awaiting triage
+  // -------------------------------------------------------------------------
+
+  @Get('cases/:caseId/inbound-documents')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  listInboundDocuments(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.listInboundDocuments(caseId, user);
+  }
+
+  @Post('cases/:caseId/inbound-documents/:inboundId/file')
+  @RequirePermissions('processing.document.upload')
+  fileInboundDocument(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('inboundId', ParseUUIDPipe) inboundId: string,
+    @Body() dto: FileInboundDocumentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.fileInboundDocument(caseId, inboundId, dto.itemId, user);
+  }
+
+  @Post('cases/:caseId/inbound-documents/:inboundId/discard')
+  @RequirePermissions('processing.document.review')
+  discardInboundDocument(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('inboundId', ParseUUIDPipe) inboundId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.discardInboundDocument(caseId, inboundId, user);
+  }
+
+  @Post('cases/:caseId/request-missing-documents')
+  @RequirePermissions('processing.document.request')
+  requestMissingDocuments(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.requestMissingDocuments(caseId, user);
   }
 
   // -------------------------------------------------------------------------

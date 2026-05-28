@@ -427,6 +427,12 @@ export class RequestDocumentDto {
   message?: string; // custom message to client
 }
 
+// Phase E — file a triaged inbound document into a checklist slot.
+export class FileInboundDocumentDto {
+  @IsUUID()
+  itemId!: string;
+}
+
 export class ReviewDocumentDto {
   @IsEnum(DocReviewDecisionType)
   decision!: DocReviewDecisionType;

@@ -16,6 +16,7 @@ import {
   CorrectionType,
   DocumentCriticality,
   DocumentItemStatus,
+  InboundDocumentStatus,
   FinanceHandoverStatus,
   Prisma,
   ProcessingCasePriority,
@@ -1579,6 +1580,233 @@ export class ProcessingService {
     }).catch(() => { /* non-fatal */ });
 
     return { success: true, newStatus };
+  }
+
+  // -------------------------------------------------------------------------
+  // INBOUND DOCUMENT INTAKE (Phase E)
+  // Documents that arrive via WhatsApp/email/portal land as PENDING
+  // InboundDocuments for triage. An associate files one into a checklist slot
+  // (creating a ClientDocumentVersion → full AI assessment) or discards it.
+  // -------------------------------------------------------------------------
+
+  async listInboundDocuments(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const docs = await this.prisma.inboundDocument.findMany({
+      where: { caseId, status: InboundDocumentStatus.PENDING },
+      orderBy: { createdAt: 'desc' },
+    });
+    const itemIds = [
+      ...new Set(docs.map((d) => d.suggestedItemId).filter((x): x is string => !!x)),
+    ];
+    const items = itemIds.length
+      ? await this.prisma.caseDocumentItem.findMany({
+          where: { id: { in: itemIds } },
+          select: { id: true, documentName: true },
+        })
+      : [];
+    const nameById = new Map(items.map((i) => [i.id, i.documentName]));
+    return docs.map((d) => ({
+      ...d,
+      suggestedItemName: d.suggestedItemId ? nameById.get(d.suggestedItemId) ?? null : null,
+    }));
+  }
+
+  async fileInboundDocument(
+    caseId: string,
+    inboundId: string,
+    itemId: string,
+    user: RequestUser,
+  ) {
+    const processingCase = await this.findCaseOrThrow(caseId);
+    this.assertCaseAccess(processingCase, user);
+
+    const inbound = await this.prisma.inboundDocument.findFirst({
+      where: { id: inboundId, caseId },
+    });
+    if (!inbound) throw new NotFoundException('Inbound document not found');
+    if (inbound.status !== InboundDocumentStatus.PENDING) {
+      throw new BadRequestException('Inbound document has already been triaged');
+    }
+
+    const item = await this.prisma.caseDocumentItem.findFirst({
+      where: { id: itemId, caseId },
+      select: {
+        id: true,
+        status: true,
+        versions: { select: { id: true }, orderBy: { versionNumber: 'desc' }, take: 1 },
+      },
+    });
+    if (!item) throw new NotFoundException('Target document item not found');
+    if (item.status === DocumentItemStatus.WAIVED) {
+      throw new BadRequestException('Cannot file into a waived document item');
+    }
+
+    const newVersionNumber = item.versions.length + 1;
+
+    // The inbound file already lives in processing storage (intake stored it),
+    // so the new version reuses the same storageKey — no re-upload.
+    const newVersionId = await this.prisma.$transaction(async (tx) => {
+      const version = await tx.clientDocumentVersion.create({
+        data: {
+          documentItemId: itemId,
+          caseId,
+          clientId: processingCase.clientId ?? undefined,
+          storageKey: inbound.storageKey,
+          fileName: inbound.fileName,
+          fileSizeBytes: inbound.fileSizeBytes ?? 0,
+          mimeType: inbound.mimeType ?? 'application/octet-stream',
+          versionNumber: newVersionNumber,
+          uploadedByUserId: user.id,
+          isCurrent: true,
+        },
+      });
+      await tx.clientDocumentVersion.updateMany({
+        where: { documentItemId: itemId, id: { not: version.id } },
+        data: { isCurrent: false },
+      });
+      await tx.caseDocumentItem.update({
+        where: { id: itemId },
+        data: {
+          latestVersionId: version.id,
+          status: DocumentItemStatus.SUBMITTED,
+          updatedAt: new Date(),
+        },
+      });
+      await tx.inboundDocument.update({
+        where: { id: inboundId },
+        data: {
+          status: InboundDocumentStatus.FILED,
+          filedItemId: itemId,
+          filedVersionId: version.id,
+          filedByUserId: user.id,
+          triagedAt: new Date(),
+        },
+      });
+      await tx.processingAuditLog.create({
+        data: {
+          caseId,
+          actorUserId: user.id,
+          action: 'inbound_document_filed',
+          entityType: 'case_document_item',
+          entityId: itemId,
+          newValues: {
+            inboundDocumentId: inboundId,
+            source: inbound.source,
+            versionNumber: newVersionNumber,
+          },
+        },
+      });
+      return version.id;
+    });
+
+    // Run the full assessment against the chosen item's requirements.
+    void this.documentAi.enqueue(newVersionId);
+
+    return { success: true, versionNumber: newVersionNumber, itemId };
+  }
+
+  async discardInboundDocument(caseId: string, inboundId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const inbound = await this.prisma.inboundDocument.findFirst({
+      where: { id: inboundId, caseId },
+    });
+    if (!inbound) throw new NotFoundException('Inbound document not found');
+    if (inbound.status !== InboundDocumentStatus.PENDING) {
+      throw new BadRequestException('Inbound document has already been triaged');
+    }
+    await this.prisma.inboundDocument.update({
+      where: { id: inboundId },
+      data: {
+        status: InboundDocumentStatus.DISCARDED,
+        filedByUserId: user.id,
+        triagedAt: new Date(),
+      },
+    });
+    await this.prisma.processingAuditLog.create({
+      data: {
+        caseId,
+        actorUserId: user.id,
+        action: 'inbound_document_discarded',
+        entityType: 'inbound_document',
+        entityId: inboundId,
+        newValues: { source: inbound.source },
+      },
+    });
+    return { success: true };
+  }
+
+  /**
+   * Compose a "documents needed" message from the still-open checklist items
+   * and send it to the client over WhatsApp (reusing the same outbound path
+   * as sendCommunication). Returns the list + any delivery warning.
+   */
+  async requestMissingDocuments(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const pendingStatuses: DocumentItemStatus[] = [
+      DocumentItemStatus.NOT_SUBMITTED,
+      DocumentItemStatus.REJECTED,
+      DocumentItemStatus.EXPIRED,
+      DocumentItemStatus.EXPIRING_SOON,
+    ];
+    const missing = await this.prisma.caseDocumentItem.findMany({
+      where: { caseId, status: { in: pendingStatuses } },
+      orderBy: { sortOrder: 'asc' },
+      select: { documentName: true },
+    });
+    if (missing.length === 0) {
+      return { success: true, missingCount: 0, requested: [], warning: null };
+    }
+
+    const lines = missing.map((m, i) => `${i + 1}. ${m.documentName}`).join('\n');
+    const body = this.composeWhatsAppBody(
+      'Documents needed',
+      `To proceed with your application we still need the following document(s):\n\n${lines}\n\nPlease reply here on WhatsApp with a clear photo or PDF of each. Thank you.`,
+    );
+
+    const comm = await this.prisma.caseCommunication.create({
+      data: {
+        caseId,
+        direction: 'OFFICER_TO_CLIENT',
+        messageType: 'GENERAL_UPDATE',
+        subject: 'Documents needed',
+        content: body,
+        channelsSent: ['WHATSAPP'],
+        sentByUserId: user.id,
+      },
+    });
+
+    let warning: string | null = null;
+    const result = await this.enqueueWhatsAppForCase({
+      caseId,
+      actorUserId: user.id,
+      body,
+    });
+    if (result.ok) {
+      await this.prisma.caseCommunication.update({
+        where: { id: comm.id },
+        data: { whatsappMessageId: result.messageId },
+      });
+    } else {
+      warning = `WhatsApp send skipped: ${result.reason}`;
+    }
+
+    await this.prisma.processingAuditLog.create({
+      data: {
+        caseId,
+        actorUserId: user.id,
+        action: 'request_missing_documents',
+        entityType: 'processing_case',
+        entityId: caseId,
+        newValues: { missingCount: missing.length },
+      },
+    });
+
+    return {
+      success: true,
+      missingCount: missing.length,
+      requested: missing.map((m) => m.documentName),
+      warning,
+    };
   }
 
   // -------------------------------------------------------------------------

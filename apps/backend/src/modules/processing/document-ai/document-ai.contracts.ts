@@ -12,6 +12,18 @@ export interface DocAiJob {
   versionId: string;
 }
 
+/**
+ * Inbound document intake (Phase E). Registered in the @Global
+ * WhatsAppQueuesModule so the producer (MediaDownloadProcessor) and the
+ * consumer (DocIntakeProcessor in the processing module) share it. One job =
+ * one inbound WhatsApp media message to triage onto an active case.
+ */
+export const DOC_INTAKE_QUEUE = 'doc-intake';
+
+export interface DocIntakeJob {
+  whatsappMessageId: string;
+}
+
 export interface ParserExpected {
   docType: string | null;
   documentKind: 'TEXT_DOCUMENT' | 'PHOTO';

@@ -2100,6 +2100,21 @@ enum AiSuggestedDecision {
   @@schema("processing")
 }
 
+// Phase E — where an untriaged inbound document came from.
+enum InboundDocumentSource {
+  WHATSAPP
+  EMAIL
+  PORTAL
+  @@schema("processing")
+}
+
+enum InboundDocumentStatus {
+  PENDING
+  FILED
+  DISCARDED
+  @@schema("processing")
+}
+
 enum DocAccessType {
   VIEW
   DOWNLOAD
@@ -2313,6 +2328,7 @@ model ProcessingCase {
   submissions         AuthoritySubmission[]
   auditLogs           ProcessingAuditLog[]
   milestones          CaseMilestone[]
+  inboundDocuments    InboundDocument[]
 
   @@index([assignedOfficerId])
   @@index([stage])
@@ -2475,6 +2491,39 @@ model DocumentAiAssessment {
   @@index([versionId])
   @@index([caseId])
   @@map("document_ai_assessments")
+  @@schema("processing")
+}
+
+// Phase E — multi-channel document intake. A document that arrived OUTSIDE a
+// specific checklist slot (client sent it on WhatsApp / email / portal) and is
+// awaiting triage: the AI classifies it and suggests which CaseDocumentItem it
+// satisfies; an associate files it into a slot (creating a ClientDocumentVersion)
+// or discards it. suggestedItemId / filedItemId / filedByUserId are plain
+// references (no FK) to keep this decoupled.
+model InboundDocument {
+  id                 String                @id @default(uuid())
+  caseId             String
+  source             InboundDocumentSource
+  storageKey         String
+  fileName           String
+  mimeType           String?
+  fileSizeBytes      Int?
+  whatsappMessageId  String?
+  detectedDocType    String?
+  classifyConfidence Float?
+  suggestedItemId    String?
+  status             InboundDocumentStatus @default(PENDING)
+  filedItemId        String?
+  filedVersionId     String?
+  filedByUserId      String?
+  triagedAt          DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  case ProcessingCase @relation(fields: [caseId], references: [id])
+
+  @@index([caseId, status])
+  @@map("inbound_documents")
   @@schema("processing")
 }
 

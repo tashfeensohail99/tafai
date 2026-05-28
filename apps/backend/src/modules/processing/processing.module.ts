@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { ConfigModule } from '@nestjs/config';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { StorageModule } from '../storage/storage.module';
 import { ActivityTimelineModule } from '../activity-timeline/activity-timeline.module';
@@ -10,6 +11,8 @@ import { DOC_AI_QUEUE } from './document-ai/document-ai.contracts';
 import { DocumentParserClient } from './document-ai/document-parser.client';
 import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocAiProcessor } from './document-ai/document-ai.processor';
+import { DocumentIntakeService } from './document-ai/document-intake.service';
+import { DocIntakeProcessor } from './document-ai/doc-intake.processor';
 
 @Module({
   imports: [
@@ -17,12 +20,22 @@ import { DocAiProcessor } from './document-ai/document-ai.processor';
     StorageModule,
     ActivityTimelineModule,
     LeadsModule,
+    ConfigModule,
     // Phase D2 — document-AI assessment queue (Redis root is the @Global
-    // WhatsAppQueuesModule; we just register our own queue name here).
+    // WhatsAppQueuesModule; we just register our own queue name here). The
+    // DOC_INTAKE_QUEUE (Phase E) is registered globally in WhatsAppQueuesModule;
+    // DocIntakeProcessor below consumes it.
     BullModule.registerQueue({ name: DOC_AI_QUEUE }),
   ],
   controllers: [ProcessingController],
-  providers: [ProcessingService, DocumentParserClient, DocumentAiService, DocAiProcessor],
+  providers: [
+    ProcessingService,
+    DocumentParserClient,
+    DocumentAiService,
+    DocAiProcessor,
+    DocumentIntakeService,
+    DocIntakeProcessor,
+  ],
   exports: [ProcessingService],
 })
 export class ProcessingModule {}

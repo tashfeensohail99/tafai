@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WHATSAPP_QUEUE } from './queue-contracts';
 import { META_LEADGEN_QUEUE } from '../../meta-leads/queue-contracts';
+import { DOC_INTAKE_QUEUE } from '../../processing/document-ai/document-ai.contracts';
 
 /**
  * BullMQ wiring for the WhatsApp module.
@@ -58,6 +59,9 @@ const DEFAULT_JOB_OPTS = {
       { name: WHATSAPP_QUEUE.AI_REPLY },
       // Meta Lead Ads (forked off the shared webhook → meta-leads module).
       { name: META_LEADGEN_QUEUE },
+      // Phase E — inbound document intake (producer: media-download worker;
+      // consumer: DocIntakeProcessor in the processing module).
+      { name: DOC_INTAKE_QUEUE },
     ),
   ],
   exports: [BullModule],

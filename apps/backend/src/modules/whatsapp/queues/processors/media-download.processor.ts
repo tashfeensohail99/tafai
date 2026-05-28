@@ -2,10 +2,17 @@ import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { WhatsAppMessageDirection, WhatsAppMessageType } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { WhatsAppMetaClientFactory } from '../../meta/client.factory';
 import { WHATSAPP_QUEUE, type MediaDownloadJob } from '../queue-contracts';
+import {
+  DOC_INTAKE_QUEUE,
+  type DocIntakeJob,
+} from '../../../processing/document-ai/document-ai.contracts';
 
 /**
  * Meta media URLs expire (~5 min). We re-host every inbound media asset on
@@ -24,6 +31,7 @@ export class MediaDownloadProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly metaFactory: WhatsAppMetaClientFactory,
     private readonly config: ConfigService,
+    @InjectQueue(DOC_INTAKE_QUEUE) private readonly intakeQueue: Queue<DocIntakeJob>,
   ) {
     super();
   }
@@ -83,6 +91,30 @@ export class MediaDownloadProcessor extends WorkerHost {
         },
       });
       this.log.log(`media-download ok: message=${messageId} key=${key} bytes=${bytes.length}`);
+
+      // Phase E — hand inbound images/PDFs to the document-intake pipeline so
+      // they get triaged onto the sender's active processing case. The consumer
+      // no-ops when the sender has no case, so it's safe to enqueue for every
+      // inbound media message.
+      if (
+        message.direction === WhatsAppMessageDirection.INBOUND &&
+        (message.type === WhatsAppMessageType.IMAGE ||
+          message.type === WhatsAppMessageType.DOCUMENT)
+      ) {
+        try {
+          await this.intakeQueue.add(
+            'intake',
+            { whatsappMessageId: message.id },
+            {
+              jobId: `intake:${message.id}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 3_000 },
+            },
+          );
+        } catch (e) {
+          this.log.warn(`doc-intake enqueue failed for ${message.id}: ${String(e)}`);
+        }
+      }
     } catch (err) {
       // Log the actual error so it shows up in Railway logs. Re-throw so
       // BullMQ records the job as failed (retries per the job's attempts

@@ -465,6 +465,11 @@ export class ProcessingService {
             validityRule: t.validityRule,
             validityMonths: t.validityMonths ?? undefined,
             validityBufferDays: t.validityBufferDays,
+            // Phase D — carry the doc-type + photo requirement onto the
+            // per-case item so the parser knows what to validate against.
+            docType: t.docType ?? undefined,
+            documentKind: t.documentKind,
+            photoSpec: t.photoSpec ?? undefined,
             sortOrder: t.sortOrder,
           })),
         });

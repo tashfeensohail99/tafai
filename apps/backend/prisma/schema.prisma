@@ -2081,6 +2081,25 @@ enum DocReviewDecisionType {
   @@schema("processing")
 }
 
+// Phase D — document-processing pipeline. Distinguishes a normal text/PDF
+// document (OCR + field extraction) from a PHOTO requirement (passport-size
+// portrait validated for background colour / face / blur — not extracted).
+enum DocumentKind {
+  TEXT_DOCUMENT
+  PHOTO
+  @@schema("processing")
+}
+
+// What the parser recommends after OCR + validation. The human associate
+// still owns the decision unless auto-approve fires (high confidence + all
+// checks pass), in which case the system records an automated ACCEPTED.
+enum AiSuggestedDecision {
+  APPROVE
+  REJECT
+  NEEDS_REVIEW
+  @@schema("processing")
+}
+
 enum DocAccessType {
   VIEW
   DOWNLOAD
@@ -2224,6 +2243,12 @@ model DocumentRequirementTemplate {
   validityRule       DocumentValidityRule @default(NONE)
   validityMonths     Int?
   validityBufferDays Int                  @default(30)
+  // Phase D: canonical doc-type tag (PASSPORT, BANK_STATEMENT, PHOTOGRAPH…)
+  // the parser validates against. NULL => parser auto-detects.
+  docType            String?
+  documentKind       DocumentKind         @default(TEXT_DOCUMENT)
+  // For documentKind=PHOTO: { background, sizeMm, faceRequired, maxBlur }.
+  photoSpec          Json?
   guidanceUrl        String?
   sortOrder          Int                  @default(0)
   isActive           Boolean              @default(true)
@@ -2329,6 +2354,11 @@ model CaseDocumentItem {
   validityRule       DocumentValidityRule @default(NONE)
   validityMonths     Int?
   validityBufferDays Int                  @default(30)
+  // Phase D — copied from the template at acknowledge time so each case
+  // carries its own (possibly customised) doc-type + photo requirement.
+  docType            String?
+  documentKind       DocumentKind         @default(TEXT_DOCUMENT)
+  photoSpec          Json?
   status             DocumentItemStatus   @default(NOT_SUBMITTED)
   latestVersionId    String?              @unique
   validityExpiryDate DateTime?            @db.Date
@@ -2348,6 +2378,7 @@ model CaseDocumentItem {
   latestVersion      ClientDocumentVersion?          @relation("LatestDocVersion", fields: [latestVersionId], references: [id])
   versions           ClientDocumentVersion[]         @relation("DocItemVersions")
   reviewDecisions    DocumentReviewDecision[]
+  aiAssessments      DocumentAiAssessment[]
   correctionRequests CorrectionRequest[]
 
   @@index([caseId])
@@ -2377,6 +2408,7 @@ model ClientDocumentVersion {
   isLatestFor     CaseDocumentItem?             @relation("LatestDocVersion")
   uploadedBy      UserAccount?                  @relation("DocVersionUploadedBy", fields: [uploadedByUserId], references: [id])
   reviewDecisions DocumentReviewDecision[]
+  aiAssessments   DocumentAiAssessment[]
   accessLogs      DocumentAccessLog[]
 
   @@index([documentItemId])
@@ -2392,15 +2424,57 @@ model DocumentReviewDecision {
   decision             DocReviewDecisionType
   rejectionReasonCodes String[]
   rejectionNote        String?
-  reviewedByUserId     String
+  // Nullable: an automated (auto-approve) decision has no human reviewer.
+  reviewedByUserId     String?
+  isAutomated          Boolean               @default(false)
+  // One-to-one link back to the AI assessment that produced an automated
+  // decision (NULL for purely human decisions).
+  aiAssessmentId       String?               @unique
   createdAt            DateTime              @default(now())
 
-  documentItem CaseDocumentItem      @relation(fields: [documentItemId], references: [id])
-  version      ClientDocumentVersion @relation(fields: [versionId], references: [id])
-  reviewedBy   UserAccount           @relation("DocReviewedBy", fields: [reviewedByUserId], references: [id])
+  documentItem CaseDocumentItem       @relation(fields: [documentItemId], references: [id])
+  version      ClientDocumentVersion  @relation(fields: [versionId], references: [id])
+  reviewedBy   UserAccount?           @relation("DocReviewedBy", fields: [reviewedByUserId], references: [id])
+  aiAssessment DocumentAiAssessment?  @relation(fields: [aiAssessmentId], references: [id])
 
   @@index([documentItemId])
   @@map("document_review_decisions")
+  @@schema("processing")
+}
+
+// Phase D — shadow + auto-approve store. The parser writes one row per
+// document version it assesses; the backend reads suggestedDecision +
+// checks to either surface a suggestion to the associate (shadow) or fire
+// an automated ACCEPTED (auto-approve) when confidence is high and every
+// check passes. Never overwrites the human DocumentReviewDecision record.
+model DocumentAiAssessment {
+  id                String              @id @default(uuid())
+  documentItemId    String
+  versionId         String
+  caseId            String
+  detectedDocType   String?
+  expectedDocType   String?
+  confidence        Float?
+  extracted         Json?
+  checks            Json?
+  suggestedDecision AiSuggestedDecision @default(NEEDS_REVIEW)
+  reasonCodes       String[]            @default([])
+  ocrTier           String?
+  costCents         Float               @default(0)
+  cacheHit          Boolean             @default(false)
+  autoApproved      Boolean             @default(false)
+  modelVersion      String?
+  errorMessage      String?
+  createdAt         DateTime            @default(now())
+
+  documentItem   CaseDocumentItem        @relation(fields: [documentItemId], references: [id])
+  version        ClientDocumentVersion   @relation(fields: [versionId], references: [id])
+  reviewDecision DocumentReviewDecision?
+
+  @@index([documentItemId])
+  @@index([versionId])
+  @@index([caseId])
+  @@map("document_ai_assessments")
   @@schema("processing")
 }
 

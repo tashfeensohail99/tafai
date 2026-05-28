@@ -65,6 +65,9 @@ async function main() {
         validityRule: t.validityRule,
         validityMonths: t.validityMonths ?? undefined,
         validityBufferDays: t.validityBufferDays,
+        docType: t.docType ?? undefined,
+        documentKind: t.documentKind,
+        photoSpec: t.photoSpec ?? undefined,
         sortOrder: t.sortOrder,
       })),
     });

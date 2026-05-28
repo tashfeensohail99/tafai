@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { DocumentAiService } from '../processing/document-ai/document-ai.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { PortalSendMessageDto } from './portal.dto';
 import { describeRejections } from './rejection-messages';
@@ -58,6 +59,9 @@ export class PortalService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    // Phase D3 — client portal uploads get the same AI assessment + guarded
+    // auto-approve as officer/WhatsApp uploads.
+    private readonly documentAi: DocumentAiService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -370,7 +374,7 @@ export class PortalService {
       file.originalname,
     );
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Create version record
       const version = await tx.clientDocumentVersion.create({
         data: {
@@ -432,6 +436,12 @@ export class PortalService {
         status: DocumentItemStatus.SUBMITTED,
       };
     });
+
+    // Run the AI assessment (OCR + ownership/type/completeness, possible
+    // guarded auto-approve) — same pipeline as officer + WhatsApp uploads.
+    void this.documentAi.enqueue(result.id);
+
+    return result;
   }
 
   /**

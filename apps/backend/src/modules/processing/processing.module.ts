@@ -36,6 +36,8 @@ import { DocIntakeProcessor } from './document-ai/doc-intake.processor';
     DocumentIntakeService,
     DocIntakeProcessor,
   ],
-  exports: [ProcessingService],
+  // DocumentAiService is exported so the client portal (PortalModule) can run
+  // the same AI assessment on client-uploaded documents.
+  exports: [ProcessingService, DocumentAiService],
 })
 export class ProcessingModule {}

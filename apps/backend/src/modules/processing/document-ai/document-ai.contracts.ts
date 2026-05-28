@@ -21,6 +21,10 @@ export interface ParserExpected {
   validityBufferDays: number;
   photoSpec: Record<string, unknown> | null;
   clientName: string | null;
+  // Ownership reference values from the CRM Client record (any may be null).
+  clientDob: string | null;
+  clientPassportNumber: string | null;
+  clientNationalId: string | null;
   service: string | null;
   targetCountry: string | null;
 }

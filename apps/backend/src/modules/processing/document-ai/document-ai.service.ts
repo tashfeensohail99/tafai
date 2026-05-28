@@ -115,13 +115,23 @@ export class DocumentAiService {
         service: true,
         targetCountry: true,
         clientId: true,
-        lead: { select: { firstName: true, lastName: true } },
+        // The Client record is the identity source of truth (richer than the
+        // Lead) — name, DOB, passport / national-ID for ownership matching.
+        client: {
+          select: {
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            passportNumber: true,
+            nationalId: true,
+            cnic: true,
+          },
+        },
       },
     });
 
-    const clientName = processingCase?.lead
-      ? `${processingCase.lead.firstName} ${processingCase.lead.lastName}`.trim()
-      : null;
+    const client = processingCase?.client ?? null;
+    const clientName = client ? `${client.firstName} ${client.lastName}`.trim() : null;
 
     let signedUrl: string;
     try {
@@ -145,6 +155,9 @@ export class DocumentAiService {
         validityBufferDays: item.validityBufferDays,
         photoSpec: (item.photoSpec ?? null) as unknown as Record<string, unknown> | null,
         clientName,
+        clientDob: client?.dateOfBirth ? client.dateOfBirth.toISOString().slice(0, 10) : null,
+        clientPassportNumber: client?.passportNumber ?? null,
+        clientNationalId: client?.nationalId ?? client?.cnic ?? null,
         service: processingCase?.service ?? null,
         targetCountry: processingCase?.targetCountry ?? null,
       },

@@ -67,6 +67,15 @@ export class AcknowledgeIntakeDto {
   @MaxLength(64)
   @IsIn(SERVICE_TYPE_CODES, { message: 'service must be one of the canonical service codes' })
   service?: string;
+
+  /** Optional specific program (e.g. C11, ICT, LMIA, VISIT). When set, the
+   *  checklist is built from the program-specific requirement set
+   *  (programCode, targetCountry) instead of the generic (service, *) list —
+   *  so a C11 case gets the C11 documents, not the generic WORK_PERMIT list. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  programCode?: string;
 }
 
 export class ListIntakeQueueQueryDto {

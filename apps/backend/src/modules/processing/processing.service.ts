@@ -395,6 +395,9 @@ export class ProcessingService {
     // checklist against the new (service, targetCountry) pair.
     const effectiveService = dto.service ?? processingCase.service;
     const serviceChanged = dto.service && dto.service !== processingCase.service;
+    // Phase F — optional specific program (C11/ICT/LMIA/VISIT…). When set, the
+    // checklist is built from the program-specific requirement set first.
+    const effectiveProgramCode = dto.programCode?.trim() || null;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       // Assign, move stage, optionally update service code
@@ -421,31 +424,41 @@ export class ProcessingService {
         },
       });
 
-      // Auto-build checklist from templates against the effective service.
-      // Lookup ladder:
-      //   1. (service, targetCountry) exact match — country-specific overrides
-      //      win when admin has curated them.
-      //   2. (service, 'GLOBAL') — seeded baseline templates that apply to
-      //      every destination by default (see migration
-      //      20260528130000_seed_document_templates).
-      //   3. Empty checklist + warning — officer adds items by hand.
-      let templates = await tx.documentRequirementTemplate.findMany({
-        where: {
-          service: effectiveService,
-          targetCountry: processingCase.targetCountry,
-          isActive: true,
-        },
-        orderBy: { sortOrder: 'asc' },
-      });
-      if (templates.length === 0) {
-        templates = await tx.documentRequirementTemplate.findMany({
-          where: {
-            service: effectiveService,
-            targetCountry: 'GLOBAL',
-            isActive: true,
-          },
+      // Auto-build checklist from templates. Lookup ladder (program-specific
+      // first, then the generic service baseline):
+      //   1. (programCode, targetCountry)  — e.g. C11·Canada
+      //   2. (programCode, 'GLOBAL')        — program, any country
+      //   3. (service, targetCountry)       — generic, country-specific
+      //   4. (service, 'GLOBAL')            — generic baseline
+      //      (see migrations 20260528130000 + 20260531150000)
+      //   5. Empty checklist + warning — officer adds items by hand.
+      const findTemplates = (where: Prisma.DocumentRequirementTemplateWhereInput) =>
+        tx.documentRequirementTemplate.findMany({
+          where: { ...where, isActive: true },
           orderBy: { sortOrder: 'asc' },
         });
+
+      let templates: Awaited<ReturnType<typeof findTemplates>> = [];
+      if (effectiveProgramCode) {
+        templates = await findTemplates({
+          programCode: effectiveProgramCode,
+          targetCountry: processingCase.targetCountry,
+        });
+        if (templates.length === 0) {
+          templates = await findTemplates({
+            programCode: effectiveProgramCode,
+            targetCountry: 'GLOBAL',
+          });
+        }
+      }
+      if (templates.length === 0) {
+        templates = await findTemplates({
+          service: effectiveService,
+          targetCountry: processingCase.targetCountry,
+        });
+      }
+      if (templates.length === 0) {
+        templates = await findTemplates({ service: effectiveService, targetCountry: 'GLOBAL' });
       }
 
       // Soft fallback: if NO template exists for this service yet, don't
@@ -474,6 +487,15 @@ export class ProcessingService {
             docType: t.docType ?? undefined,
             documentKind: t.documentKind,
             photoSpec: t.photoSpec ?? undefined,
+            // Phase F — carry program/attestation/staging + client guidance.
+            applicantRole: t.applicantRole,
+            stageGroup: t.stageGroup,
+            attestationChain: t.attestationChain ?? undefined,
+            attestationStatus: t.attestationRequired ? 'REQUIRED_PENDING' : 'NOT_REQUIRED',
+            translationStatus: t.translationRequired ? 'REQUIRED_PENDING' : 'NOT_REQUIRED',
+            whyText: t.whyText ?? undefined,
+            exampleGoodUrl: t.exampleGoodUrl ?? undefined,
+            exampleBadUrl: t.exampleBadUrl ?? undefined,
             sortOrder: t.sortOrder,
           })),
         });

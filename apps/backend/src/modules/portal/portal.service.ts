@@ -266,6 +266,14 @@ export class PortalService {
         maxFileSizeMb: true,
         validityExpiryDate: true,
         requestDeadline: true,
+        // Phase F — program-aware staging + attestation + client guidance.
+        stageGroup: true,
+        attestationStatus: true,
+        attestationChain: true,
+        translationStatus: true,
+        whyText: true,
+        exampleGoodUrl: true,
+        exampleBadUrl: true,
         latestVersion: {
           select: {
             id: true,
@@ -302,6 +310,21 @@ export class PortalService {
         // Backend-translated friendly messages — frontend renders these only
         // so internal codes never leak into client-facing UI.
         latestRejectionMessages: describeRejections(rawCodes),
+        // Phase F — client-facing shaped views of the staging/attestation fields.
+        attestation: {
+          required: item.attestationStatus !== 'NOT_REQUIRED',
+          status: item.attestationStatus,
+          chain: item.attestationChain,
+        },
+        translation: {
+          required: item.translationStatus !== 'NOT_REQUIRED',
+          status: item.translationStatus,
+        },
+        guidance: {
+          whyText: item.whyText,
+          exampleGoodUrl: item.exampleGoodUrl,
+          exampleBadUrl: item.exampleBadUrl,
+        },
         reviewDecisions: undefined, // strip the raw relation
       };
     });

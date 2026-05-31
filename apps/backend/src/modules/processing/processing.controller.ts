@@ -345,6 +345,16 @@ export class ProcessingController {
     return this.processingService.listInboundDocuments(caseId, user);
   }
 
+  @Get('cases/:caseId/inbound-documents/:inboundId/signed-url')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getInboundDocumentSignedUrl(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('inboundId', ParseUUIDPipe) inboundId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getInboundDocumentSignedUrl(caseId, inboundId, user);
+  }
+
   @Post('cases/:caseId/inbound-documents/:inboundId/file')
   @RequirePermissions('processing.document.upload')
   fileInboundDocument(

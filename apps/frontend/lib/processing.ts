@@ -860,7 +860,7 @@ export function reviewDocumentItem(
 // ---------------------------------------------------------------------------
 
 export type InboundDocumentStatus = 'PENDING' | 'FILED' | 'DISCARDED';
-export type InboundDocumentSource = 'WHATSAPP' | 'EMAIL' | 'PORTAL';
+export type InboundDocumentSource = 'WHATSAPP' | 'EMAIL' | 'PORTAL' | 'MANUAL';
 
 export interface ApiInboundDocument {
   id: string;
@@ -880,6 +880,16 @@ export interface ApiInboundDocument {
 export function fetchInboundDocuments(caseId: string): Promise<ApiInboundDocument[]> {
   return apiFetch<ApiInboundDocument[]>(
     `/processing/cases/${caseId}/inbound-documents`,
+    { cache: 'no-store' },
+  );
+}
+
+export function getInboundDocumentSignedUrl(
+  caseId: string,
+  inboundId: string,
+): Promise<{ url: string; fileName: string; mimeType: string | null; expiresIn: string }> {
+  return apiFetch(
+    `/processing/cases/${caseId}/inbound-documents/${inboundId}/signed-url`,
     { cache: 'no-store' },
   );
 }

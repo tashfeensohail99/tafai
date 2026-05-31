@@ -1711,6 +1711,27 @@ export class ProcessingService {
     }));
   }
 
+  /**
+   * Short-lived signed URL to PREVIEW an inbound (un-triaged) document in the
+   * Split Reviewer. Inbound docs aren't ClientDocumentVersions yet, so there's
+   * no virus-scan gate / access-log row — just the signed URL for its key.
+   */
+  async getInboundDocumentSignedUrl(caseId: string, inboundId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const inbound = await this.prisma.inboundDocument.findFirst({
+      where: { id: inboundId, caseId },
+      select: { id: true, storageKey: true, fileName: true, mimeType: true },
+    });
+    if (!inbound) throw new NotFoundException('Inbound document not found');
+    const url = await this.storage.getSignedUrl(inbound.storageKey);
+    return {
+      url,
+      fileName: inbound.fileName,
+      mimeType: inbound.mimeType,
+      expiresIn: '15 minutes',
+    };
+  }
+
   async fileInboundDocument(
     caseId: string,
     inboundId: string,

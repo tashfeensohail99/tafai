@@ -10,7 +10,7 @@
 // upload endpoint on the backend exists and can be wired into an admin
 // upload modal in a follow-up commit.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -54,6 +54,7 @@ import {
   type DocumentItemStatus,
   type DocumentCriticality,
 } from '@/lib/processing';
+import { SplitReviewerModal } from '@/components/processing/SplitReviewerModal';
 
 const STATUS_TONE: Record<DocumentItemStatus, BadgeTone> = {
   NOT_SUBMITTED: 'neutral',
@@ -181,15 +182,16 @@ function InboundTray({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
+  const [showReviewer, setShowReviewer] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
     fetchInboundDocuments(caseId)
-      .then((rows) => { if (!cancelled) setInbound(rows); })
+      .then((rows) => setInbound(rows))
       .catch(() => { /* tray is best-effort */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => setLoading(false));
   }, [caseId]);
+
+  useEffect(() => { load(); }, [load]);
 
   async function handleFile(d: ApiInboundDocument) {
     const itemId = picks[d.id] ?? d.suggestedItemId ?? '';
@@ -225,14 +227,20 @@ function InboundTray({
   );
 
   return (
+    <>
     <GlassCard variant="panel" padded="md">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <Inbox size={15} style={{ color: 'var(--sos-text-secondary)' }} />
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Inbound documents</span>
         <StatusBadge tone="cyan" size="sm">{inbound.length}</StatusBadge>
-        <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>
-          Sent by the client — file into a slot or discard
+        <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 12 }}>
+          Sent by the client — review with previews, or file inline
         </span>
+        <div style={{ marginLeft: 'auto' }}>
+          <PrimaryButton iconLeft={<Sparkles size={13} />} onClick={() => setShowReviewer(true)}>
+            Review with previews
+          </PrimaryButton>
+        </div>
       </div>
       {err ? <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--sos-status-danger)' }}>{err}</div> : null}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -265,6 +273,15 @@ function InboundTray({
         ))}
       </div>
     </GlassCard>
+    {showReviewer ? (
+      <SplitReviewerModal
+        caseId={caseId}
+        items={items}
+        onClose={() => { setShowReviewer(false); load(); }}
+        onChanged={onFiled}
+      />
+    ) : null}
+    </>
   );
 }
 

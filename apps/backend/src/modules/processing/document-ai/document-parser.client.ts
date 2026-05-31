@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import { ParserRequest, ParserResponse } from './document-ai.contracts';
+import {
+  ParserRequest,
+  ParserResponse,
+  SplitParserRequest,
+  SplitParserResponse,
+} from './document-ai.contracts';
 
 /**
  * Thin HMAC-authenticated HTTP client for the Python document parser.
@@ -22,16 +27,34 @@ export class DocumentParserClient {
   }
 
   async validate(req: ParserRequest): Promise<ParserResponse> {
+    return this.post<ParserResponse>('/validate-document', req, this.timeoutMs);
+  }
+
+  /**
+   * Split a combined upload into its constituent documents — each returned with
+   * its own extracted file (fileBase64). Used by intake to explode an
+   * "everything in one PDF" dump into per-document triage rows. It may OCR many
+   * pages, so it gets a longer timeout than a single-doc validate.
+   */
+  async splitAndCategorize(req: SplitParserRequest): Promise<SplitParserResponse> {
+    return this.post<SplitParserResponse>(
+      '/split-and-categorize',
+      req,
+      Math.max(this.timeoutMs, 180_000),
+    );
+  }
+
+  private async post<T>(path: string, payload: unknown, timeoutMs: number): Promise<T> {
     if (!this.configured) {
       throw new Error('Document parser not configured (DOC_PARSER_URL / DOC_PARSER_HMAC_SECRET)');
     }
-    const body = JSON.stringify(req);
+    const body = JSON.stringify(payload);
     const signature = createHmac('sha256', this.secret).update(body, 'utf8').digest('hex');
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${this.baseUrl}/validate-document`, {
+      const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Signature': signature },
         body,
@@ -39,9 +62,9 @@ export class DocumentParserClient {
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
-        throw new Error(`parser responded ${res.status}: ${text.slice(0, 300)}`);
+        throw new Error(`parser responded ${res.status} for ${path}: ${text.slice(0, 300)}`);
       }
-      return (await res.json()) as ParserResponse;
+      return (await res.json()) as T;
     } finally {
       clearTimeout(timer);
     }

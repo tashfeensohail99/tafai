@@ -78,3 +78,38 @@ export interface ParserResponse {
   modelVersion: string;
   errorMessage: string | null;
 }
+
+// ── Split & categorize (multi-document upload) ──────────────────────────────
+// One combined upload (a client dumps passport + bank statement + photo as a
+// single PDF) -> N constituent documents, each extracted into its own file so
+// the backend can file it. Mirrors the parser's /split-and-categorize.
+
+export interface SplitParserRequest {
+  file: ParserFile;
+  caseId?: string;
+  expectedProgram?: string | null;
+  expectedDocTypes?: string[] | null;
+}
+
+export interface SplitParserDocument {
+  /** Parser vocab tag, e.g. PASSPORT / BANK_STATEMENT. Map to a slot docType. */
+  doc_type: string;
+  /** 0-based source page indices this segment spans. */
+  pages: number[];
+  confidence: number;
+  needs_review: boolean;
+  ocrTier: string;
+  /** This segment extracted as its own standalone file (base64). "" on failure. */
+  fileBase64: string;
+  mimeType: string;
+}
+
+export interface SplitParserResponse {
+  documents: SplitParserDocument[];
+  pageCount: number;
+  truncated: boolean;
+  costCents: number;
+  engineUsed: string;
+  modelVersion: string;
+  errorMessage: string | null;
+}

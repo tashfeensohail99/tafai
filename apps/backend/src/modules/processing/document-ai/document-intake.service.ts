@@ -12,7 +12,8 @@ import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { DocumentParserClient } from './document-parser.client';
 import { ApiKeysService } from '../../api-keys/api-keys.service';
-import type { ParserRequest } from './document-ai.contracts';
+import type { ParserRequest, SplitParserDocument } from './document-ai.contracts';
+import { parserDocTypeCandidates } from './document-doctype-map';
 
 /**
  * Phase E — turns an inbound WhatsApp media message into a triage-ready
@@ -111,6 +112,18 @@ export class DocumentIntakeService {
     const ext = (mime.split('/')[1] ?? 'bin').split(';')[0];
     const fileName = this.payloadFileName(msg.payload) ?? `whatsapp-${messageId}.${ext}`;
 
+    // Multi-document bundle? A client often dumps passport + bank statement +
+    // photo as one combined PDF. Explode it into per-document triage rows.
+    // Images are already single documents, so this only fires for PDFs and
+    // falls through to the single-doc path on a single segment / any failure.
+    const exploded = await this.tryExplodeBundle(activeCase.id, activeCase.service, bytes, mime, fileName, messageId);
+    if (exploded > 0) {
+      this.log.log(
+        `intake: message ${messageId} split into ${exploded} document(s) for case ${activeCase.id}`,
+      );
+      return;
+    }
+
     let storageKey: string;
     try {
       const up = await this.storage.upload(
@@ -184,15 +197,124 @@ export class DocumentIntakeService {
     );
   }
 
-  /** Best matching still-open checklist item for a detected doc-type. */
+  /**
+   * Best matching checklist item for a parser-detected doc-type. Tries the raw
+   * detected value first, then the mapped slot-vocab candidates in priority
+   * order (parser vocab != checklist vocab — see document-doctype-map). Returns
+   * the first slot the case actually has; null if none -> human picks.
+   */
   private async matchItem(caseId: string, detected: string | null): Promise<string | null> {
-    if (!detected) return null;
-    const item = await this.prisma.caseDocumentItem.findFirst({
-      where: { caseId, docType: detected },
-      orderBy: { sortOrder: 'asc' },
-      select: { id: true },
-    });
-    return item?.id ?? null;
+    const candidates = parserDocTypeCandidates(detected);
+    if (candidates.length === 0) return null;
+    for (const docType of candidates) {
+      const item = await this.prisma.caseDocumentItem.findFirst({
+        where: { caseId, docType },
+        orderBy: { sortOrder: 'asc' },
+        select: { id: true },
+      });
+      if (item) return item.id;
+    }
+    return null;
+  }
+
+  /**
+   * Try to split a combined upload into per-document triage rows.
+   *
+   * Returns the number of InboundDocuments created. Returns 0 (caller falls
+   * back to the single-doc path) when: the file isn't a PDF, the parser isn't
+   * configured, the split fails, or it resolves to a single document. We only
+   * "explode" when there are >= 2 segments WITH their own extracted bytes, so a
+   * normal single-document PDF is never needlessly chopped.
+   *
+   * Per the locked rule "never auto-act on splitting", each segment is created
+   * PENDING with a suggested slot — the associate confirms each one (the
+   * existing triage tray + fileInboundDocument flow, unchanged).
+   */
+  private async tryExplodeBundle(
+    caseId: string,
+    service: string | null,
+    bytes: Buffer,
+    mime: string,
+    baseName: string,
+    messageId: string,
+  ): Promise<number> {
+    const isPdf = /pdf/i.test(mime) || bytes.subarray(0, 5).toString('latin1') === '%PDF-';
+    if (!isPdf || !this.parser.configured) return 0;
+
+    let usable: SplitParserDocument[];
+    try {
+      const resp = await this.parser.splitAndCategorize({
+        file: { contentBase64: bytes.toString('base64'), mimeType: mime, fileName: baseName },
+        caseId,
+        expectedProgram: service,
+      });
+      usable = (resp.documents ?? []).filter((d) => d.fileBase64 && d.fileBase64.length > 0);
+    } catch (e) {
+      this.log.warn(`intake: split failed for ${messageId}: ${String(e)} — single-doc fallback`);
+      return 0;
+    }
+    if (usable.length < 2) return 0; // single document (or no extractable segment)
+
+    let created = 0;
+    for (const seg of usable) {
+      let segBytes: Buffer;
+      try {
+        segBytes = Buffer.from(seg.fileBase64, 'base64');
+      } catch {
+        continue;
+      }
+      if (segBytes.length === 0) continue;
+      const segExt = /pdf/i.test(seg.mimeType)
+        ? 'pdf'
+        : (seg.mimeType.split('/')[1] ?? 'bin').split(';')[0];
+      const segName = `${this.stripExt(baseName)} — ${seg.doc_type}${this.pageRangeLabel(seg.pages)}.${segExt}`;
+
+      let storageKey: string;
+      try {
+        const up = await this.storage.upload(
+          segBytes,
+          seg.mimeType,
+          `processing/cases/${caseId}/inbound`,
+          segName,
+        );
+        storageKey = up.key;
+      } catch (e) {
+        this.log.warn(`intake: segment upload failed (${seg.doc_type}) for ${messageId}: ${String(e)}`);
+        continue;
+      }
+
+      const suggestedItemId = await this.matchItem(caseId, seg.doc_type);
+      await this.prisma.inboundDocument.create({
+        data: {
+          caseId,
+          source: InboundDocumentSource.WHATSAPP,
+          storageKey,
+          fileName: segName,
+          mimeType: seg.mimeType,
+          fileSizeBytes: segBytes.length,
+          whatsappMessageId: messageId,
+          detectedDocType: seg.doc_type,
+          classifyConfidence: seg.confidence,
+          suggestedItemId,
+          status: InboundDocumentStatus.PENDING,
+        },
+      });
+      created++;
+    }
+    return created;
+  }
+
+  private stripExt(name: string): string {
+    const i = name.lastIndexOf('.');
+    return i > 0 ? name.slice(0, i) : name;
+  }
+
+  /** Human-friendly 1-based page range, e.g. " (pp 2-7)" or " (p3)" or "". */
+  private pageRangeLabel(pages: number[]): string {
+    if (!pages || pages.length === 0) return '';
+    const first = pages[0] + 1;
+    const last = pages[pages.length - 1] + 1;
+    return first === last ? ` (p${first})` : ` (pp ${first}-${last})`;
   }
 
   private payloadFileName(payload: Prisma.JsonValue | null): string | null {

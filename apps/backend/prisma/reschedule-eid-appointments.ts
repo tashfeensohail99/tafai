@@ -36,10 +36,15 @@ import {
   WhatsAppMessageType,
   Prisma,
 } from '@prisma/client';
-import { Queue } from 'bullmq';
 
 const APPLY = process.argv.includes('--apply');
 const SKIP_NOTIFY = process.argv.includes('--no-notify');
+
+// We intentionally DO NOT enqueue to Redis from this script — Railway's Redis
+// is only reachable from inside the VPC, and BullMQ's reconnect loop would
+// hang the script for ~10s per row when run from a developer machine. Instead
+// we write the WhatsAppMessage rows in QUEUED state and the deployed backend
+// drains them via POST /whatsapp/threads/requeue-orphans (in-VPC, fast).
 
 // 2026-06-01 00:00 Asia/Karachi (PKT = UTC+5). Anything scheduled BEFORE this
 // instant gets shifted; the new date is forced to be on or after this instant.
@@ -47,7 +52,6 @@ const PKT_OFFSET_MS = 5 * 60 * 60 * 1000;
 const FLOOR = new Date(Date.UTC(2026, 5, 1, 0, 0, 0) - PKT_OFFSET_MS); // 2026-05-31T19:00Z
 
 const DAY = 24 * 60 * 60 * 1000;
-const QUEUE_NAME = 'whatsapp-outbound-message';
 
 function computeNewDate(scheduledAt: Date): Date {
   let next = new Date(scheduledAt.getTime() + 7 * DAY);
@@ -86,25 +90,8 @@ function composeRescheduleMessage(
   ].join('\n');
 }
 
-function makeOutboundQueue(): Queue | null {
-  const url = process.env.REDIS_URL;
-  if (!url) return null;
-  const u = new URL(url);
-  return new Queue(QUEUE_NAME, {
-    connection: {
-      host: u.hostname,
-      port: parseInt(u.port || '6379', 10),
-      ...(u.password ? { password: u.password } : {}),
-      ...(u.username && u.username !== 'default' ? { username: u.username } : {}),
-      // BullMQ requires this for blocking commands.
-      maxRetriesPerRequest: null,
-    },
-  });
-}
-
 async function main() {
   const prisma = new PrismaClient();
-  const outboundQueue = APPLY && !SKIP_NOTIFY ? makeOutboundQueue() : null;
 
   const affected = await prisma.appointment.findMany({
     where: {
@@ -154,8 +141,9 @@ async function main() {
     if (!APPLY) continue;
 
     // Live: update + (best-effort) notify in a single transaction per row.
-    // The WhatsApp queue.add is outside the tx because BullMQ doesn't enrol
-    // in Prisma transactions — the row update is the source of truth.
+    // We create the WhatsAppMessage row in QUEUED state — the deployed
+    // backend's drain endpoint (POST /whatsapp/threads/requeue-orphans)
+    // handles the actual Redis enqueue, in-VPC where Redis is reachable.
     let waMessageId: string | null = null;
     await prisma.$transaction(async (tx) => {
       await tx.appointment.update({
@@ -233,38 +221,30 @@ async function main() {
     });
     shifted++;
 
-    // Enqueue the WhatsApp send AFTER the transaction commits (the worker
-    // expects the message row to exist when it picks the job up).
-    if (waMessageId && outboundQueue) {
-      try {
-        await outboundQueue.add(
-          'send',
-          { messageId: waMessageId },
-          { jobId: waMessageId },
-        );
-        waSent++;
-      } catch (e) {
-        console.log(`     [enqueue failed for ${waMessageId}: ${String(e)}]`);
-        waSkipped++;
-      }
-    } else if (!SKIP_NOTIFY) {
-      waSkipped++;
-    }
+    // No queue.add() here — we deliberately defer Redis enqueue to the
+    // backend's drain endpoint so this script stays usable from outside the
+    // Railway VPC. waSent / waSkipped now mean "rows written" vs "no
+    // thread / window closed / no phone".
+    if (waMessageId) waSent++;
+    else if (!SKIP_NOTIFY) waSkipped++;
   }
 
   console.log();
   console.log(`  Summary:`);
-  console.log(`    Found:             ${affected.length}`);
-  console.log(`    Shifted in DB:     ${APPLY ? shifted : 0}`);
-  console.log(`    WhatsApp enqueued: ${APPLY && !SKIP_NOTIFY ? waSent : 0}`);
-  console.log(`    WhatsApp skipped:  ${APPLY && !SKIP_NOTIFY ? waSkipped : 0}  (no thread / window closed / no phone)`);
-  console.log(`    In-app notifs:     ${APPLY && !SKIP_NOTIFY ? notif : 0}`);
+  console.log(`    Found:                ${affected.length}`);
+  console.log(`    Shifted in DB:        ${APPLY ? shifted : 0}`);
+  console.log(`    WhatsApp rows written:${APPLY && !SKIP_NOTIFY ? waSent : 0}`);
+  console.log(`    WhatsApp skipped:     ${APPLY && !SKIP_NOTIFY ? waSkipped : 0}  (no thread / window closed / no phone)`);
+  console.log(`    In-app notifs:        ${APPLY && !SKIP_NOTIFY ? notif : 0}`);
   console.log();
   if (!APPLY) {
     console.log(`  This was a DRY RUN. Re-run with --apply to execute.`);
+  } else if (waSent > 0) {
+    console.log(`  Next: drain ${waSent} pending WhatsApp messages by calling the`);
+    console.log(`        backend's POST /whatsapp/threads/requeue-orphans endpoint`);
+    console.log(`        (runs in-VPC so the Redis enqueue actually works).`);
   }
 
-  if (outboundQueue) await outboundQueue.close();
   await prisma.$disconnect();
 }
 

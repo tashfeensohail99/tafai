@@ -28,7 +28,7 @@ import type { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
-import { WHATSAPP_QUEUE, type MediaDownloadJob } from '../queues/queue-contracts';
+import { WHATSAPP_QUEUE, type MediaDownloadJob, type OutboundMessageJob } from '../queues/queue-contracts';
 import { WhatsAppThreadsService } from './threads.service';
 
 class ListThreadsDto {
@@ -102,6 +102,8 @@ export class WhatsAppThreadsController {
     private readonly storage: StorageService,
     @InjectQueue(WHATSAPP_QUEUE.MEDIA_DOWNLOAD)
     private readonly mediaQueue: Queue<MediaDownloadJob>,
+    @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
+    private readonly outboundQueue: Queue<OutboundMessageJob>,
   ) {}
 
   @Get()
@@ -122,6 +124,54 @@ export class WhatsAppThreadsController {
   async stats(@CurrentUser() user: RequestUser) {
     const caller = await this.buildCallerContext(user);
     return this.threads.stats(caller);
+  }
+
+  /**
+   * Drain orphaned OUTBOUND messages — rows that were written to the DB with
+   * status=QUEUED but never enqueued in Redis (typically because a maintenance
+   * script ran from outside the Railway VPC and couldn't reach the internal
+   * Redis hostname). Adds each one to the outbound queue with the message id
+   * as the jobId so the worker picks them up on its normal cadence.
+   *
+   * Mounted BEFORE the @Get(':id') route so 'requeue-orphans' isn't parsed
+   * as a thread UUID.
+   *
+   * Bounded by:
+   *   - status = QUEUED (un-sent) AND direction = OUTBOUND
+   *   - sentByEmployeeId IS NULL  → system-originated only (manual agent
+   *     sends already enqueue inline, so they should never be orphans worth
+   *     re-driving here)
+   *   - createdAt within the last 7 days  → safety: don't try to deliver a
+   *     month-old message after a long outage
+   *   - hard cap of 500 per call so a runaway batch can't choke the queue
+   */
+  @HttpCode(200)
+  @Post('requeue-orphans')
+  @RequirePermissions('whatsapp.view_all_inboxes')
+  async requeueOrphans(): Promise<{ requeued: number; messageIds: string[] }> {
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const orphans = await this.prisma.whatsAppMessage.findMany({
+      where: {
+        direction: 'OUTBOUND',
+        status: 'QUEUED',
+        sentByEmployeeId: null,
+        createdAt: { gte: cutoff },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+      select: { id: true },
+    });
+    let added = 0;
+    for (const m of orphans) {
+      try {
+        await this.outboundQueue.add('send', { messageId: m.id }, { jobId: m.id });
+        added++;
+      } catch {
+        // Job already present in the queue (duplicate jobId). Safe to ignore
+        // — that's exactly the deduplication we want.
+      }
+    }
+    return { requeued: added, messageIds: orphans.map((m) => m.id) };
   }
 
   @Get(':id')

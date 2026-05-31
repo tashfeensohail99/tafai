@@ -13,6 +13,7 @@ import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocAiProcessor } from './document-ai/document-ai.processor';
 import { DocumentIntakeService } from './document-ai/document-intake.service';
 import { DocIntakeProcessor } from './document-ai/doc-intake.processor';
+import { DocumentExpirySweeperService } from './document-expiry-sweeper.service';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { DocIntakeProcessor } from './document-ai/doc-intake.processor';
     DocAiProcessor,
     DocumentIntakeService,
     DocIntakeProcessor,
+    DocumentExpirySweeperService,
   ],
   // DocumentAiService is exported so the client portal (PortalModule) can run
   // the same AI assessment on client-uploaded documents. DocumentIntakeService

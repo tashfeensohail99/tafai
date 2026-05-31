@@ -37,6 +37,7 @@ import { getMilestonesForService } from './milestone-templates';
 import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocumentIntakeService } from './document-ai/document-intake.service';
 import { reconcileIdentity } from './identity-reconciliation';
+import { computeValidityExpiry } from './expiry';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
@@ -1587,6 +1588,26 @@ export class ProcessingService {
         ? DocumentItemStatus.ACCEPTED
         : DocumentItemStatus.REJECTED;
 
+    // Phase 4b — on accept, derive the document's expiry from the latest AI
+    // assessment's extracted fields + the slot's validity rule, so the
+    // submission gate (which blocks on validityExpiryDate < now) actually bites.
+    let acceptedExpiry: Date | null = null;
+    if (dto.decision === 'ACCEPTED') {
+      const assess = await this.prisma.documentAiAssessment.findFirst({
+        where: { caseId, versionId: item.latestVersionId! },
+        orderBy: { createdAt: 'desc' },
+        select: { extracted: true },
+      });
+      const extracted =
+        assess?.extracted && typeof assess.extracted === 'object' && !Array.isArray(assess.extracted)
+          ? (assess.extracted as Record<string, unknown>)
+          : null;
+      acceptedExpiry = computeValidityExpiry(
+        { validityRule: item.validityRule, validityMonths: item.validityMonths },
+        extracted,
+      );
+    }
+
     await this.prisma.$transaction(async (tx) => {
       // Append-only decision record
       await tx.documentReviewDecision.create({
@@ -1600,10 +1621,13 @@ export class ProcessingService {
         },
       });
 
-      // Update document item status
+      // Update document item status (+ derived expiry on accept)
       await tx.caseDocumentItem.update({
         where: { id: itemId },
-        data: { status: newStatus },
+        data: {
+          status: newStatus,
+          ...(dto.decision === 'ACCEPTED' ? { validityExpiryDate: acceptedExpiry } : {}),
+        },
       });
 
       // Audit

@@ -381,6 +381,21 @@ function DocumentRow({
             <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{d.documentName}</span>
             <StatusBadge tone={CRIT_TONE[d.criticality]} size="sm">{d.criticality}</StatusBadge>
             <StatusBadge tone={STATUS_TONE[d.status]} size="sm">{STATUS_LABEL[d.status]}</StatusBadge>
+            {(() => {
+              // Phase 4b — live expiry emphasis from validityExpiryDate (warns
+              // even before the 6-hourly sweep flips an accepted doc to EXPIRED).
+              if (!d.validityExpiryDate) return null;
+              const days = Math.floor(
+                (new Date(d.validityExpiryDate).getTime() - Date.now()) / 86_400_000,
+              );
+              if (days < 0 && d.status !== 'EXPIRED') {
+                return <StatusBadge tone="danger" size="sm">Expired</StatusBadge>;
+              }
+              if (days >= 0 && days <= 30) {
+                return <StatusBadge tone="warning" size="sm">Expires in {days}d</StatusBadge>;
+              }
+              return null;
+            })()}
             {d.latestVersion ? (
               <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>
                 v{d.latestVersion.versionNumber} · {d.latestVersion.fileName}

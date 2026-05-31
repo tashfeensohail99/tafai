@@ -15,6 +15,7 @@ import { StorageService } from '../../storage/storage.service';
 import { ActivityTimelineService } from '../../activity-timeline/activity-timeline.service';
 import { DocumentParserClient } from './document-parser.client';
 import { ApiKeysService } from '../../api-keys/api-keys.service';
+import { computeValidityExpiry } from '../expiry';
 import {
   DOC_AI_QUEUE,
   type DocAiJob,
@@ -249,11 +250,17 @@ export class DocumentAiService {
 
   private async autoApprove(
     version: { id: string; documentItemId: string; caseId: string },
-    item: { documentName: string },
+    item: { documentName: string; validityRule: string | null; validityMonths: number | null },
     resp: ParserResponse,
     aiAssessmentId: string,
     clientId: string | null,
   ): Promise<void> {
+    // Phase 4b — derive when this (now-accepted) document lapses so the
+    // submission gate can block on it later.
+    const validityExpiryDate = computeValidityExpiry(
+      { validityRule: item.validityRule, validityMonths: item.validityMonths },
+      resp.extracted,
+    );
     await this.prisma.$transaction(async (tx) => {
       // Guard inside the tx against a race with a human review.
       const fresh = await tx.caseDocumentItem.findUnique({
@@ -275,7 +282,7 @@ export class DocumentAiService {
       });
       await tx.caseDocumentItem.update({
         where: { id: version.documentItemId },
-        data: { status: DocumentItemStatus.ACCEPTED },
+        data: { status: DocumentItemStatus.ACCEPTED, validityExpiryDate },
       });
       await tx.documentAiAssessment.update({
         where: { id: aiAssessmentId },

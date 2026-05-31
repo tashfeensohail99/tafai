@@ -35,6 +35,48 @@ interface CallerContext {
 }
 
 /**
+ * Relations selected for a thread-list row. Hoisted to a shared constant so
+ * the single-row endpoint (getListItem) returns a row IDENTICAL in shape to
+ * the rows list() returns — the realtime "patch one row" path splices these
+ * straight into the same array, so any shape drift would corrupt the list.
+ * Change the list shape by changing only this.
+ */
+const THREAD_LIST_INCLUDE = {
+  channel: { select: { id: true, label: true, displayNumber: true } },
+  lead: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      status: true,
+      assignedEmployeeId: true,
+      assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+      // Most-recent CSV import touch — drives the CSV LEAD badge on the
+      // thread row in the WhatsApp inbox. Tooltip uses batch.name.
+      importRows: {
+        where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: {
+          id: true,
+          batch: { select: { id: true, batchNumber: true, name: true } },
+        },
+      },
+    },
+  },
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      status: true,
+    },
+  },
+} satisfies Prisma.WhatsAppThreadInclude;
+
+/**
  * Read-side API for WhatsApp threads — what the inbox UI calls.
  *
  * Access rules:
@@ -158,40 +200,7 @@ export class WhatsAppThreadsService {
       orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
       take: limit + 1,
       ...(opts.cursor ? { skip: 1, cursor: { id: opts.cursor } } : {}),
-      include: {
-        channel: { select: { id: true, label: true, displayNumber: true } },
-        lead: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            status: true,
-            assignedEmployeeId: true,
-            assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
-            // Most-recent CSV import touch — drives the CSV LEAD badge on
-            // the thread row in the WhatsApp inbox. Tooltip uses batch.name.
-            importRows: {
-              where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-              select: {
-                id: true,
-                batch: { select: { id: true, batchNumber: true, name: true } },
-              },
-            },
-          },
-        },
-        client: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            status: true,
-          },
-        },
-      },
+      include: THREAD_LIST_INCLUDE,
     });
 
     const hasMore = rows.length > limit;
@@ -199,6 +208,54 @@ export class WhatsAppThreadsService {
       items: rows.slice(0, limit),
       nextCursor: hasMore ? rows[limit - 1]!.id : null,
     };
+  }
+
+  /**
+   * Base authorization scope for a caller — which threads they may see AT
+   * ALL, independent of any UI filter. Mirrors the scope branches in list():
+   *   agent   → only their own assigned leads
+   *   finance → only leads with a non-DRAFT agreement on file
+   *   admin   → everything
+   * Returns 'all' (no lead constraint), 'none' (caller sees nothing), or a
+   * Lead where-filter to constrain by.
+   */
+  private async resolveCallerLeadScope(
+    caller: CallerContext,
+  ): Promise<'all' | 'none' | Prisma.LeadWhereInput> {
+    if (!caller.canViewAll && !caller.canViewFinanceScope) {
+      if (!caller.employeeId) return 'none';
+      return { assignedEmployeeId: caller.employeeId, deletedAt: null };
+    }
+    if (caller.canViewFinanceScope) {
+      const ids = await this.eligibleLeadIdsForFinance();
+      if (ids.length === 0) return 'none';
+      return { id: { in: ids }, deletedAt: null };
+    }
+    return 'all';
+  }
+
+  /**
+   * Fetch a SINGLE thread in the exact list-row shape, applying the caller's
+   * authorization scope. Returns null when the thread doesn't exist or the
+   * caller isn't allowed to see it.
+   *
+   * Backs the realtime "patch one row" path: on a socket event the client
+   * refetches just this row (one indexed lookup) instead of the whole list,
+   * and a null result tells it to drop the row. Authorization is re-applied
+   * here per caller, so this stays safe even though the socket event that
+   * triggered it was an org-wide broadcast.
+   */
+  async getListItem(caller: CallerContext, threadId: string) {
+    const scope = await this.resolveCallerLeadScope(caller);
+    if (scope === 'none') return null;
+    const where: Prisma.WhatsAppThreadWhereInput = {
+      id: threadId,
+      // Same soft-delete guard the list uses (hide threads of soft-deleted
+      // leads; still allow client-only threads with no lead).
+      AND: [{ OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] }],
+    };
+    if (scope !== 'all') where.lead = scope;
+    return this.prisma.whatsAppThread.findFirst({ where, include: THREAD_LIST_INCLUDE });
   }
 
   /**

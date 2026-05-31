@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { getAccessToken } from './auth-client';
+import { getThreadListItem, type ThreadListItem } from './whatsapp';
 
 /**
  * Realtime hook for the WhatsApp inbox. Connects once per browser tab, holds
@@ -88,6 +89,125 @@ export function useWhatsAppSocket(): { socket: Socket | null; connected: boolean
   }, []);
 
   return { socket, connected };
+}
+
+// Sort threads the same way the backend list does: lastMessageAt DESC, nulls
+// last (treated as epoch 0 so they sink to the bottom).
+function byLastMessageDesc(a: ThreadListItem, b: ThreadListItem): number {
+  const at = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
+  const bt = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
+  return bt - at;
+}
+
+const LIVE_PATCH_BURST_MS = 500;
+const LIVE_PATCH_MAX = 8;
+const LIVE_RECONCILE_MS = 30_000;
+
+/**
+ * WhatsApp-grade realtime for a thread LIST. Instead of refetching the whole
+ * list on every socket event, this refreshes only the affected thread(s):
+ *
+ *   - Socket events (message.new / message.status / thread.assigned) carry
+ *     only a threadId. We coalesce a short burst, then fetch JUST those rows
+ *     (one cheap indexed lookup each) and splice them in, re-sorted by
+ *     lastMessageAt — so the touched chat jumps to the top like WhatsApp.
+ *   - `matches(row)` decides whether the freshly-fetched row still belongs in
+ *     the CURRENT view (active tab / search / assignment filter). If it no
+ *     longer matches — or the fetch reports the row gone / not visible — we
+ *     drop it. This is what keeps filter transitions correct (e.g. a thread
+ *     that just got assigned leaves the "Unassigned" tab; a resolved thread
+ *     leaves "Open").
+ *   - A slow full `reconcile()` (every 30s) + a `reconcileOnFocus()` when the
+ *     tab regains focus are the safety net: even if a patch is ever wrong the
+ *     list self-heals, and it can never end up worse than a plain refetch.
+ *
+ * If one burst touches more than LIVE_PATCH_MAX distinct threads, we skip the
+ * per-row fetches and just reconcile — a single full refetch is cheaper than
+ * many singles. Transient fetch errors leave the existing row untouched.
+ *
+ * matches/reconcile are read through refs so a filter/search change doesn't
+ * tear down and re-create the socket subscription — only a socket swap does.
+ */
+export function useThreadListLivePatch(params: {
+  socket: Socket | null;
+  setItems: Dispatch<SetStateAction<ThreadListItem[]>>;
+  matches: (row: ThreadListItem) => boolean;
+  reconcile: () => void;
+  reconcileOnFocus?: () => void;
+}): void {
+  const { socket, setItems } = params;
+  const matchesRef = useRef(params.matches);
+  const reconcileRef = useRef(params.reconcile);
+  const reconcileFocusRef = useRef(params.reconcileOnFocus ?? params.reconcile);
+  matchesRef.current = params.matches;
+  reconcileRef.current = params.reconcile;
+  reconcileFocusRef.current = params.reconcileOnFocus ?? params.reconcile;
+
+  useEffect(() => {
+    if (!socket) return;
+    const dirty = new Set<string>();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const flush = async () => {
+      timer = null;
+      const ids = [...dirty];
+      dirty.clear();
+      if (ids.length === 0) return;
+      if (ids.length > LIVE_PATCH_MAX) {
+        reconcileRef.current();
+        return;
+      }
+      const results = await Promise.all(
+        ids.map((id) =>
+          getThreadListItem(id)
+            .then((row) => ({ id, row, ok: true }))
+            .catch(() => ({ id, row: null as ThreadListItem | null, ok: false })),
+        ),
+      );
+      if (cancelled) return; // unmounted / socket swapped mid-fetch
+      setItems((curr) => {
+        const next = curr.slice();
+        for (const { id, row, ok } of results) {
+          if (!ok) continue; // transient error — leave the row as-is
+          const idx = next.findIndex((t) => t.id === id);
+          if (!row || !matchesRef.current(row)) {
+            if (idx >= 0) next.splice(idx, 1); // gone / no longer in this view
+            continue;
+          }
+          if (idx >= 0) next[idx] = row;
+          else next.push(row);
+        }
+        next.sort(byLastMessageDesc);
+        return next;
+      });
+    };
+
+    const onEvent = (payload: { threadId?: string } | undefined) => {
+      const id = payload?.threadId;
+      if (!id) return;
+      dirty.add(id);
+      if (!timer) timer = setTimeout(() => void flush(), LIVE_PATCH_BURST_MS);
+    };
+
+    socket.on('whatsapp.message.new', onEvent);
+    socket.on('whatsapp.message.status', onEvent);
+    socket.on('whatsapp.thread.assigned', onEvent);
+
+    const interval = setInterval(() => reconcileRef.current(), LIVE_RECONCILE_MS);
+    const onFocus = () => reconcileFocusRef.current();
+    if (typeof window !== 'undefined') window.addEventListener('focus', onFocus);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      clearInterval(interval);
+      if (typeof window !== 'undefined') window.removeEventListener('focus', onFocus);
+      socket.off('whatsapp.message.new', onEvent);
+      socket.off('whatsapp.message.status', onEvent);
+      socket.off('whatsapp.thread.assigned', onEvent);
+    };
+  }, [socket, setItems]);
 }
 
 /**

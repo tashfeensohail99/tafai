@@ -174,6 +174,25 @@ export class WhatsAppThreadsController {
     return { requeued: added, messageIds: orphans.map((m) => m.id) };
   }
 
+  /**
+   * Single thread in list-row shape — backs the realtime "patch one row"
+   * path. On a socket event the client refetches just this row instead of
+   * the whole list. Returns { item: null } when the thread is gone or not
+   * visible to the caller (the client then drops it). Mounted before
+   * @Get(':id') for clarity (the extra path segment means it wouldn't
+   * collide anyway).
+   */
+  @Get(':id/list-item')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async listItem(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    const item = await this.threads.getListItem(caller, id);
+    return { item };
+  }
+
   @Get(':id')
   @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
   async get(

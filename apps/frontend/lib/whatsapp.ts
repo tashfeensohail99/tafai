@@ -49,6 +49,11 @@ export interface ThreadListItem {
   firstAgentReplyAt: string | null;
   slaDeadlineAt: string | null;
   slaBreached: boolean;
+  /** SLA clock on the agent — set while a customer message awaits a reply,
+   *  cleared once the agent replies. Drives the inbox "Pending" tab. The
+   *  backend already returns this scalar; declared here so the realtime
+   *  patch path can evaluate Pending-tab membership client-side. */
+  responseDeadlineAt: string | null;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
@@ -187,6 +192,49 @@ export function listThreads(opts: {
   limit?: number;
 } = {}): Promise<ThreadListResponse> {
   return apiFetch<ThreadListResponse>(`/whatsapp/threads${buildQuery(opts)}`);
+}
+
+/**
+ * Fetch a single thread in the exact list-row shape — used by the realtime
+ * patch path to refresh just one row on a socket event instead of refetching
+ * the whole list. Resolves to null when the thread no longer exists or is no
+ * longer visible to the caller (the caller should then drop it from the list).
+ */
+export function getThreadListItem(threadId: string): Promise<ThreadListItem | null> {
+  return apiFetch<{ item: ThreadListItem | null }>(
+    `/whatsapp/threads/${threadId}/list-item`,
+  ).then((r) => r.item);
+}
+
+/**
+ * Client-side mirror of the backend thread search (name / phone / waContactId,
+ * case-insensitive; digit search needs ≥3 digits). Used by the realtime patch
+ * path to decide whether a freshly-fetched row still belongs in the current
+ * search results. Not authoritative — the periodic reconcile corrects any
+ * edge case — but close enough to avoid a flash of an off-search row.
+ */
+export function threadMatchesSearch(item: ThreadListItem, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const text = [
+    item.lead?.firstName,
+    item.lead?.lastName,
+    item.client?.firstName,
+    item.client?.lastName,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (text.includes(q)) return true;
+  const digits = q.replace(/\D/g, '');
+  if (digits.length >= 3) {
+    const phones = [item.lead?.phone, item.client?.phone, item.waContactId]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\D/g, '');
+    if (phones.includes(digits)) return true;
+  }
+  return false;
 }
 
 export interface ThreadStats {

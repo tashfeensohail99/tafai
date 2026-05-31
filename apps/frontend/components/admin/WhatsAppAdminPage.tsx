@@ -41,12 +41,13 @@ import {
   getThreadStats,
   listThreads,
   reassignThread,
+  threadMatchesSearch,
   type ThreadListItem,
   type ThreadStats,
   type WhatsAppThreadStatus,
 } from '@/lib/whatsapp';
 import { listTeamPresence, type TeamPresenceRow } from '@/lib/whatsapp-admin';
-import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
+import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
@@ -165,6 +166,14 @@ export function WhatsAppAdminPage() {
     setTeam(p);
   }, [canViewAll]);
 
+  // Stats only (the KPI chips) — no list fetch, so the periodic reconcile can
+  // refresh the chip counts without resetting a scrolled-down list.
+  const refreshStats = useCallback(async () => {
+    if (!canViewAll) return;
+    const st = await getThreadStats().catch(() => null);
+    if (st) setStats(st);
+  }, [canViewAll]);
+
   // Full reload WITH the loading spinner — initial mount, filter/search
   // change, manual Refresh, post-reassign. Deps deliberately exclude activeId
   // / isMobile so clicking a thread doesn't recreate this and refire the
@@ -218,35 +227,37 @@ export function WhatsAppAdminPage() {
     }
   }, [items, activeId, isMobile]);
 
-  // Realtime. Message events only touch the thread list + stats and are
-  // throttled to one refresh per 1.5s so a burst (typing, delivery, read,
-  // new) can't hammer the backend. Assignment events additionally refresh
-  // presence (open-lead counts shift) and are rare + user-initiated, so they
-  // run immediately for snappy feedback.
-  useEffect(() => {
-    if (!socket) return;
-    let pending: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefresh = () => {
-      if (pending) return;
-      pending = setTimeout(() => {
-        pending = null;
-        void refreshThreads();
-      }, 1500);
-    };
-    const onAssigned = () => {
+  // Realtime: patch only the thread(s) a socket event touches instead of
+  // refetching all 50 + stats + presence on every message. The single-row
+  // fetch re-applies the admin's view-all scope, and membership against the
+  // active filter (status / Pending / unassigned / agent / search) is checked
+  // here so a thread that leaves the filter (e.g. just got assigned while on
+  // the Unassigned tab) is dropped.
+  //   - interval reconcile → chips + presence only (no list fetch, so a
+  //     scrolled list isn't reset every 30s)
+  //   - focus reconcile → full list + chips + presence for total correctness
+  useThreadListLivePatch({
+    socket,
+    setItems,
+    matches: (row) => {
+      if (unassignedOnly && row.lead?.assignedEmployeeId) return false;
+      if (agentFilter && row.lead?.assignedEmployeeId !== agentFilter) return false;
+      if (filter === 'PENDING') {
+        if (row.responseDeadlineAt == null) return false;
+      } else if (filter !== 'ALL') {
+        if (row.status !== filter) return false;
+      }
+      return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
+    },
+    reconcile: () => {
+      void refreshStats();
+      void refreshPresence();
+    },
+    reconcileOnFocus: () => {
       void refreshThreads();
       void refreshPresence();
-    };
-    socket.on('whatsapp.message.new', scheduleRefresh);
-    socket.on('whatsapp.message.status', scheduleRefresh);
-    socket.on('whatsapp.thread.assigned', onAssigned);
-    return () => {
-      if (pending) clearTimeout(pending);
-      socket.off('whatsapp.message.new', scheduleRefresh);
-      socket.off('whatsapp.message.status', scheduleRefresh);
-      socket.off('whatsapp.thread.assigned', onAssigned);
-    };
-  }, [socket, refreshThreads, refreshPresence]);
+    },
+  });
 
   // Auto-clear confirmation banner after 4 seconds so it doesn't linger.
   useEffect(() => {

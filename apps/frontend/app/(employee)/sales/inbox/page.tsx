@@ -2,8 +2,13 @@
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Inbox as InboxIcon, MessageSquare, Search } from 'lucide-react';
-import { listThreads, type ThreadListItem, type WhatsAppThreadStatus } from '@/lib/whatsapp';
-import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
+import {
+  listThreads,
+  threadMatchesSearch,
+  type ThreadListItem,
+  type WhatsAppThreadStatus,
+} from '@/lib/whatsapp';
+import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
@@ -87,27 +92,24 @@ export default function SalesInboxPage() {
     }
   }, [items, activeId, isMobile]);
 
-  // Realtime: throttle reloads so a burst of WhatsApp events (typing,
-  // delivery, read, new) doesn't hammer the backend. At most one refetch
-  // per 1.5 seconds. The in-flight reload already shows fresh data.
-  useEffect(() => {
-    if (!socket) return;
-    let pending: ReturnType<typeof setTimeout> | null = null;
-    const trigger = () => {
-      if (pending) return;
-      pending = setTimeout(() => {
-        pending = null;
-        void reload({ background: true });
-      }, 1500);
-    };
-    socket.on('whatsapp.message.new', trigger);
-    socket.on('whatsapp.message.status', trigger);
-    return () => {
-      if (pending) clearTimeout(pending);
-      socket.off('whatsapp.message.new', trigger);
-      socket.off('whatsapp.message.status', trigger);
-    };
-  }, [socket, reload]);
+  // Realtime: patch only the thread(s) a socket event touches instead of
+  // refetching all 100 — the touched chat updates in place and jumps to the
+  // top, WhatsApp-style. The 30s/focus reconcile is the self-healing net.
+  // Membership is checked client-side here; the backend single-row fetch
+  // still re-applies this agent's own-leads scope, so it stays safe.
+  useThreadListLivePatch({
+    socket,
+    setItems,
+    matches: (row) => {
+      if (filter === 'PENDING') {
+        if (row.responseDeadlineAt == null) return false;
+      } else if (filter !== 'ALL') {
+        if (row.status !== filter) return false;
+      }
+      return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
+    },
+    reconcile: () => void reload({ background: true }),
+  });
 
   // Stable handler so memo(ThreadRow) skips re-rendering unaffected rows when
   // the list updates — only the rows whose `active` flag flips re-render.

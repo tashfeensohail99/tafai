@@ -56,16 +56,37 @@ const STATUS: Record<string, { tone: BadgeTone; label: string }> = {
   WAIVED: { tone: 'neutral', label: 'waived' },
 };
 
+const ACTION_LABEL: Record<string, string> = {
+  DONE: 'Mark attested',
+  WAIVED: 'Waive',
+  REQUIRED_PENDING: 'Mark pending',
+  NOT_REQUIRED: 'Not required',
+};
+
 export function AttestationPlanPanel({
   items,
   audience,
   defaultOpen = true,
+  onUpdate,
 }: {
   items: AttestationPlanItem[];
   audience: 'client' | 'associate';
   defaultOpen?: boolean;
+  /** Associate-only: set a document's attestation state for this case. */
+  onUpdate?: (itemId: string, status: string) => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function applyStatus(itemId: string, status: string) {
+    if (!onUpdate) return;
+    setBusyId(itemId);
+    try {
+      await onUpdate(itemId, status);
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   const required = items.filter(
     (i) => (i.attestationStatus ?? 'NOT_REQUIRED') !== 'NOT_REQUIRED',
@@ -161,6 +182,28 @@ export function AttestationPlanPanel({
                         </span>
                       );
                     })}
+                  </div>
+                ) : null}
+                {audience === 'associate' && onUpdate ? (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, paddingLeft: 21 }}>
+                    {(['DONE', 'WAIVED', 'REQUIRED_PENDING', 'NOT_REQUIRED'] as const)
+                      .filter((s) => s !== i.attestationStatus)
+                      .map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => applyStatus(i.id, s)}
+                          disabled={busyId === i.id}
+                          style={{
+                            padding: '3px 8px', borderRadius: 'var(--sos-radius-sm)', fontSize: 11,
+                            border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface)',
+                            color: 'var(--sos-text-secondary)', cursor: busyId === i.id ? 'default' : 'pointer',
+                            opacity: busyId === i.id ? 0.6 : 1,
+                          }}
+                        >
+                          {ACTION_LABEL[s]}
+                        </button>
+                      ))}
                   </div>
                 ) : null}
               </div>

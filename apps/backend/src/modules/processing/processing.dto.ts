@@ -21,6 +21,7 @@ import {
   CorrectionStatus,
   CorrectionType,
   DocReviewDecisionType,
+  DocumentAttestationStatus,
   DocumentCriticality,
   DocumentValidityRule,
   ProcessingCasePriority,
@@ -29,6 +30,19 @@ import {
   ProcessingTaskPriority,
   ProcessingTaskStatus,
 } from '@prisma/client';
+
+// Phase 4c — associate sets/overrides a document's attestation state per case
+// (mark attested, waive, mark not-required, or back to pending), optionally
+// adjusting the chain for this specific client.
+export class UpdateAttestationDto {
+  @IsEnum(DocumentAttestationStatus)
+  status!: DocumentAttestationStatus;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  chain?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Intake

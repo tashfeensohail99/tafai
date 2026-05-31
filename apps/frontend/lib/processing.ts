@@ -979,6 +979,20 @@ export function fetchIdentityReconciliation(
   );
 }
 
+// Phase 4c — associate sets/overrides a document's attestation state per case.
+export function updateDocumentAttestation(
+  caseId: string,
+  itemId: string,
+  body: { status: string; chain?: string },
+): Promise<{ success: boolean; attestationStatus: string }> {
+  return apiFetch(`/processing/cases/${caseId}/documents/${itemId}/attestation`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Case WhatsApp chat (Phase E) — live two-way thread, scoped by case access
 // ---------------------------------------------------------------------------

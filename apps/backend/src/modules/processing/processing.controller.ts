@@ -57,6 +57,7 @@ import {
   UpdateCasePriorityDto,
   UpdateDocumentTemplateDto,
   UpdateProcessingTaskDto,
+  UpdateAttestationDto,
   WaiveDocumentItemDto,
 } from './processing.dto';
 
@@ -256,6 +257,17 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.waiveDocumentItem(caseId, itemId, dto, user);
+  }
+
+  @Patch('cases/:caseId/documents/:itemId/attestation')
+  @RequirePermissions('processing.document.review')
+  updateDocumentAttestation(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: UpdateAttestationDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.updateDocumentAttestation(caseId, itemId, dto, user);
   }
 
   @Patch('cases/:caseId/documents/:itemId/request')

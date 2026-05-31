@@ -48,6 +48,7 @@ import {
   fileInboundDocument,
   discardInboundDocument,
   requestMissingDocuments,
+  updateDocumentAttestation,
   type ApiCaseDocumentItem,
   type ApiDocumentAiAssessment,
   type ApiInboundDocument,
@@ -576,6 +577,10 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
               attestationStatus: i.attestationStatus ?? 'NOT_REQUIRED',
               attestationChain: i.attestationChain ?? null,
             }))}
+            onUpdate={async (itemId, status) => {
+              await updateDocumentAttestation(c.id, itemId, { status });
+              reload();
+            }}
           />
 
           {/* Cross-document identity reconciliation (Phase 4) */}

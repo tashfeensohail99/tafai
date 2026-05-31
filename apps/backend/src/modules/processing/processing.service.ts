@@ -67,6 +67,7 @@ import {
   ResolveCorrectionRequestDto,
   ReviewDocumentDto,
   SendCommunicationDto,
+  UpdateAttestationDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
   UpdateDocumentTemplateDto,
@@ -1834,6 +1835,58 @@ export class ProcessingService {
       },
       docs,
     );
+  }
+
+  /**
+   * Phase 4c — set/override a document's attestation state for THIS case.
+   * Backs the associate "edit this client's attestation needs" controls
+   * (mark attested / waive / not-required / pending) and per-client chain
+   * adjustment. Per-case override of the program default; audit-logged.
+   */
+  async updateDocumentAttestation(
+    caseId: string,
+    itemId: string,
+    dto: UpdateAttestationDto,
+    user: RequestUser,
+  ) {
+    await this.assertCaseAccessById(caseId, user);
+    const item = await this.prisma.caseDocumentItem.findFirst({
+      where: { id: itemId, caseId },
+      select: { id: true, attestationStatus: true, attestationChain: true },
+    });
+    if (!item) throw new NotFoundException('Document item not found');
+
+    await this.prisma.caseDocumentItem.update({
+      where: { id: itemId },
+      data: {
+        attestationStatus: dto.status,
+        ...(dto.chain !== undefined ? { attestationChain: dto.chain.trim() || null } : {}),
+      },
+    });
+
+    await this.prisma.processingAuditLog
+      .create({
+        data: {
+          caseId,
+          actorUserId: user.id,
+          action: 'attestation_updated',
+          entityType: 'case_document_item',
+          entityId: itemId,
+          oldValues: {
+            attestationStatus: item.attestationStatus,
+            attestationChain: item.attestationChain,
+          },
+          newValues: {
+            attestationStatus: dto.status,
+            ...(dto.chain !== undefined ? { attestationChain: dto.chain } : {}),
+          },
+        },
+      })
+      .catch(() => {
+        /* audit best-effort */
+      });
+
+    return { success: true, attestationStatus: dto.status };
   }
 
   async fileInboundDocument(

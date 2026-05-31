@@ -10,6 +10,7 @@ import {
   WhatsAppThreadStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { OpenAiService } from '../../ai/openai.service';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../queues/queue-contracts';
 
 export type AppointmentConfirmationResult =
@@ -33,6 +34,7 @@ export class WhatsAppAppointmentNotifierService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly openai: OpenAiService,
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundQueue: Queue<OutboundMessageJob>,
   ) {}
@@ -90,6 +92,10 @@ export class WhatsAppAppointmentNotifierService {
 
     const sentByEmployeeId = await this.findEmployeeIdByUserId(actorUserId);
     const firstName = appt.lead?.firstName ?? appt.client?.firstName ?? null;
+    // Best-effort AI summary of the recent chat so the client sees what the
+    // consultation is about. Falls back to the manually-typed notes (or
+    // nothing) on any failure.
+    const summary = await this.generateChatSummary(thread.id);
     const body = this.composeBody({
       firstName,
       appointmentType: appt.appointmentType,
@@ -98,6 +104,7 @@ export class WhatsAppAppointmentNotifierService {
       location: appt.location,
       meetingLink: appt.meetingLink,
       notes: appt.notes,
+      summary,
     });
 
     const message = await this.prisma.whatsAppMessage.create({
@@ -133,25 +140,76 @@ export class WhatsAppAppointmentNotifierService {
     location: string | null;
     meetingLink: string | null;
     notes: string | null;
+    summary: string | null;
   }): string {
     const greeting = input.firstName ? `Hi ${input.firstName},` : 'Hi,';
     const typeLabel = formatAppointmentType(input.appointmentType);
     const { dateLine, timeLine } = formatScheduledAt(input.scheduledAt);
-    const durationLine = input.durationMinutes
-      ? `Duration: ${input.durationMinutes} min`
-      : null;
     const lines: string[] = [
       `${greeting} your ${typeLabel} is confirmed.`,
       '',
       dateLine,
       timeLine,
+      `Duration: ${input.durationMinutes ?? 30} min`,
     ];
-    if (durationLine) lines.push(durationLine);
     if (input.location) lines.push(`Location: ${input.location}`);
-    if (input.meetingLink) lines.push(`Meeting link: ${input.meetingLink}`);
-    if (input.notes) lines.push('', input.notes);
+    lines.push(`Meeting: ${formatMeetingModality(input)}`);
+    const notesLine = input.summary?.trim() || input.notes?.trim() || null;
+    if (notesLine) lines.push(`Notes: ${notesLine}`);
     lines.push('', 'Reply here if anything changes. — Tashfeen Immigration');
     return lines.join('\n');
+  }
+
+  /**
+   * Pull the last ~30 messages from this thread and ask the LLM for a 1–2
+   * sentence summary describing what the upcoming consultation is about.
+   * Best-effort: returns null on any failure (no key, network, empty thread)
+   * so the confirmation send is never blocked by it.
+   */
+  private async generateChatSummary(threadId: string): Promise<string | null> {
+    try {
+      const msgs = await this.prisma.whatsAppMessage.findMany({
+        where: { threadId, body: { not: null } },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+        select: {
+          direction: true,
+          body: true,
+          sentByEmployeeId: true,
+        },
+      });
+      if (msgs.length === 0) return null;
+      const transcript = msgs
+        .reverse()
+        .map((m) => {
+          const text = (m.body ?? '').trim();
+          if (!text) return null;
+          if (m.direction === WhatsAppMessageDirection.INBOUND) return `Client: ${text}`;
+          return `${m.sentByEmployeeId ? 'Agent' : 'Bot'}: ${text}`;
+        })
+        .filter(Boolean)
+        .join('\n');
+      if (!transcript) return null;
+      const { reply } = await this.openai.chat([
+        {
+          role: 'system',
+          content:
+            'You write a one-line summary (max 25 words) describing what the upcoming consultation is about, based on a WhatsApp chat. Plain English. Start with the topic, no greeting. Do not invent details that are not in the chat.',
+        },
+        {
+          role: 'user',
+          content: `Chat transcript:\n${transcript}\n\nWrite the summary line for the appointment confirmation.`,
+        },
+      ]);
+      const cleaned = reply.trim().replace(/^["'`]+|["'`]+$/g, '');
+      return cleaned || null;
+    } catch (e) {
+      this.log.warn(
+        { err: (e as Error).message, threadId },
+        'confirmation: chat summary failed; falling back to manual notes',
+      );
+      return null;
+    }
   }
 
   private async findEmployeeIdByUserId(userId: string): Promise<string | null> {
@@ -161,6 +219,25 @@ export class WhatsAppAppointmentNotifierService {
     });
     return emp?.id ?? null;
   }
+}
+
+/**
+ * Pick the right "how are we meeting" line for the confirmation:
+ *   - Has a meeting link → Video call (with link)
+ *   - In-person / has a physical location → Office visit
+ *   - Otherwise → Phone call (the default consultation flow)
+ */
+function formatMeetingModality(input: {
+  appointmentType: string;
+  location: string | null;
+  meetingLink: string | null;
+}): string {
+  if (input.meetingLink) return `Video call — ${input.meetingLink}`;
+  const type = input.appointmentType.toUpperCase();
+  if (type === 'IN_PERSON' || type === 'VISA_FILING' || input.location) {
+    return 'Office visit';
+  }
+  return 'Phone call';
 }
 
 function formatAppointmentType(raw: string): string {

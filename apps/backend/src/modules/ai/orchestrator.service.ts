@@ -101,14 +101,6 @@ function applyEidFloor(proposed: Date): Date {
   return floor;
 }
 /**
- * Hard ceiling on bot replies per thread. Once we've sent this many OUTBOUND
- * messages with sentByEmployeeId=null on the thread, the orchestrator
- * silences itself regardless of funnel state — prevents runaway loops if a
- * customer keeps asking questions and no human ever steps in.
- */
-const BOT_REPLY_CEILING = 5;
-
-/**
  * Jaccard similarity threshold above which a freshly-composed reply is
  * treated as a duplicate of the last bot outbound on the thread. Token
  * overlap above this means "we're about to say the same thing again" — we
@@ -238,20 +230,18 @@ export class OrchestratorService {
       return { mode: 'SKIPPED', skipReason: 'handed-off' };
     }
 
-    // Hard ceiling: never send more than N bot replies on a single thread.
-    // Defense against runaway loops if a customer keeps probing without
-    // anyone stepping in. Counts OUTBOUND messages with NULL sentByEmployeeId
-    // (bot messages — humans always have a non-null sender).
-    const botRepliesSoFar = await this.prisma.whatsAppMessage.count({
-      where: {
-        threadId: thread.id,
-        direction: 'OUTBOUND',
-        sentByEmployeeId: null,
-      },
-    });
-    if (botRepliesSoFar >= BOT_REPLY_CEILING) {
-      return { mode: 'SKIPPED', skipReason: 'reply-ceiling-reached' };
-    }
+    // No bot-reply count cap. The bot keeps engaging the lead for as long as
+    // the lead keeps replying and no human steps in — we'd rather nurture the
+    // lead than go silent at an arbitrary message count. The loop protections
+    // are instead:
+    //   • per-inbound human-reply check above — the bot yields the moment an
+    //     agent replies, and only fills back in if the lead messages again and
+    //     the agent stays silent;
+    //   • HANDED_OFF stop — once an appointment is booked / the lead opts out /
+    //     media is received, the bot goes quiet for good;
+    //   • the duplicate-reply guard below — the bot never repeats itself, so a
+    //     probing loop can't produce the same message twice;
+    //   • the 60s debounce + reply-only-to-latest-inbound — one reply per turn.
 
     // ── 3. Paid client = has a ProcessingCase OR any FinanceHandover ───────
     //    Per user's spec: "paid clients are those who are in processing or

@@ -4,6 +4,7 @@ import { OpenAiService } from './openai.service';
 import { KnowledgeService, type KnowledgeMatch } from './knowledge.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WhatsAppAppointmentNotifierService } from '../whatsapp/notifications/appointment-notifier.service';
 
 /**
  * The bot's brain. One call per inbound TEXT message after a 60-second
@@ -162,6 +163,7 @@ export class OrchestratorService {
     private readonly knowledge: KnowledgeService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
+    private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
   ) {}
 
   async decide(input: OrchestratorInput): Promise<OrchestratorDecision> {
@@ -651,6 +653,24 @@ export class OrchestratorService {
       this.log.log(
         `auto-booked appointment ${created.id} for lead ${lead.id} with agent ${lead.assignedEmployee.id} at ${created.scheduledAt.toISOString()}`,
       );
+
+      // Send the formal WhatsApp confirmation to the lead/client (Date /
+      // Time / Duration / Location / Meeting / Notes block). Fire-and-forget
+      // — the bot's inline HANDED_OFF ack already went out via the AI reply
+      // path, and this notifier is best-effort (no_thread / window_expired
+      // surface as a logged skip, never throw).
+      void this.whatsappNotifier
+        .sendConfirmationFor(created.id, '')
+        .then((res) => {
+          if (res.sent) {
+            this.log.log(`auto-book confirmation sent (message ${res.messageId})`);
+          } else {
+            this.log.debug(`auto-book confirmation skipped: ${res.reason}`);
+          }
+        })
+        .catch((e) =>
+          this.log.warn(`auto-book confirmation failed: ${(e as Error).message}`),
+        );
     } catch (e) {
       this.log.warn(`auto-book failed: ${(e as Error).message}`);
     }

@@ -539,18 +539,22 @@ export class WebhookIngestProcessor extends WorkerHost {
       const assigned = await this.prisma.whatsAppThread.findUnique({
         where: { id: thread.id },
         select: {
-          assignedEmployeeId: true,
-          lead: { select: { firstName: true, phone: true } },
+          // The assignee lives on the Lead, not the thread (WhatsAppThread has
+          // neither an assignedEmployeeId scalar nor an assignedEmployee
+          // relation). Selecting it at the thread level threw on every inbound,
+          // silently killing the bell notification.
+          lead: { select: { firstName: true, phone: true, assignedEmployeeId: true } },
         },
       });
-      if (assigned?.assignedEmployeeId) {
+      const assignedEmployeeId = assigned?.lead?.assignedEmployeeId ?? null;
+      if (assignedEmployeeId) {
         const emp = await this.prisma.employee.findUnique({
-          where: { id: assigned.assignedEmployeeId },
+          where: { id: assignedEmployeeId },
           select: { user: { select: { id: true } } },
         });
         const userId = emp?.user?.id;
         if (userId) {
-          const who = (assigned.lead?.firstName ?? assigned.lead?.phone ?? 'WhatsApp lead').trim();
+          const who = (assigned?.lead?.firstName ?? assigned?.lead?.phone ?? 'WhatsApp lead').trim();
           const preview = (decoded.body ?? `[${decoded.type.toLowerCase()}]`).slice(0, 80);
           await this.notifications.create({
             userId,

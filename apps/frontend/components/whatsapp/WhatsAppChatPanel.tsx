@@ -94,6 +94,10 @@ interface Props {
 export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack }: Props) {
   const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Live mirror of `messages` so the realtime handler can read the latest
+  // list (to compute the tail cursor) without re-subscribing on every change.
+  const messagesRef = useRef<ChatMessage[]>([]);
+  messagesRef.current = messages;
   // Pagination state for "Load older messages" — backend pages 50 at a time
   // (max 200) via the ?before=<oldest> cursor.
   const [hasMore, setHasMore] = useState(true);
@@ -207,20 +211,51 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     return () => el.removeEventListener('scroll', onScroll);
   }, [hasMore, loadingOlder, loadOlder]);
 
-  // Realtime: throttle full reloads so a burst of incoming messages on a
-  // hot thread doesn't fire one full /messages roundtrip per WhatsApp event.
-  // At most one reload per 1.5s; status updates are still patched in place
-  // (cheap, no DB hit).
+  // Realtime: APPEND just-arrived messages instead of refetching the whole
+  // window — this is what makes an incoming message pop into the open chat
+  // instantly, WhatsApp-style, rather than after a 1.5s full reload. The
+  // message.new event is id-only, so we tail-fetch everything newer than our
+  // latest REAL message (skipping optimistic temp- bubbles) and splice in
+  // what's not already shown. A 300ms coalesce batches bursts; any error
+  // falls back to a full reload. Status events still patch ticks in place.
   useEffect(() => {
     if (!socket) return;
     let pending: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
+
+    const flushNew = async () => {
+      pending = null;
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const curr = messagesRef.current;
+        let cursor: Date | undefined;
+        for (let i = curr.length - 1; i >= 0; i--) {
+          const m = curr[i]!;
+          if (!m.id.startsWith('temp-')) {
+            cursor = new Date(m.createdAt);
+            break;
+          }
+        }
+        const fresh = await listMessages(threadId, cursor ? { after: cursor } : {});
+        if (fresh.length) {
+          setMessages((prev) => {
+            const seen = new Set(prev.map((m) => m.id));
+            const add = fresh.filter((m) => !seen.has(m.id));
+            return add.length ? [...prev, ...add] : prev;
+          });
+        }
+      } catch {
+        void reload(); // fall back to a full refetch if the tail fetch fails
+      } finally {
+        inFlight = false;
+      }
+    };
+
     const onMessageNew = (evt: { threadId: string }) => {
       if (evt.threadId !== threadId) return;
       if (pending) return;
-      pending = setTimeout(() => {
-        pending = null;
-        void reload();
-      }, 1500);
+      pending = setTimeout(() => void flushNew(), 300);
     };
     const onStatus = (evt: { threadId: string; messageId: string; status: WhatsAppMessageStatus }) => {
       if (evt.threadId !== threadId) return;

@@ -291,9 +291,18 @@ export function markThreadRead(threadId: string): Promise<void> {
   return apiFetch<void>(`/whatsapp/threads/${threadId}/read`, { method: 'POST' });
 }
 
-export function listMessages(threadId: string, opts: { before?: Date } = {}): Promise<ChatMessage[]> {
-  const q = opts.before ? `?before=${opts.before.toISOString()}` : '';
-  return apiFetch<ChatMessage[]>(`/whatsapp/threads/${threadId}/messages${q}`);
+export function listMessages(
+  threadId: string,
+  opts: { before?: Date; after?: Date } = {},
+): Promise<ChatMessage[]> {
+  // `before` → older page (history scroll-up). `after` → tail fetch of just
+  // the messages newer than the cursor (used to append new arrivals to the
+  // open chat without refetching the whole window).
+  const params = new URLSearchParams();
+  if (opts.before) params.set('before', opts.before.toISOString());
+  if (opts.after) params.set('after', opts.after.toISOString());
+  const q = params.toString();
+  return apiFetch<ChatMessage[]>(`/whatsapp/threads/${threadId}/messages${q ? `?${q}` : ''}`);
 }
 
 export function sendText(threadId: string, body: string, opts?: {

@@ -51,10 +51,12 @@ export class WhatsAppMessagesController {
     @CurrentUser() user: RequestUser,
     @Param('threadId', ParseUUIDPipe) threadId: string,
     @Query('before') before: string | undefined,
+    @Query('after') after: string | undefined,
   ) {
     const caller = await this.callerContext(user);
     return this.messages.listForThread(caller, threadId, {
       ...(before ? { before: new Date(before) } : {}),
+      ...(after ? { after: new Date(after) } : {}),
     });
   }
 

@@ -100,10 +100,24 @@ export class WhatsAppMessagesService {
   async listForThread(
     caller: CallerContext,
     threadId: string,
-    opts: { limit?: number; before?: Date } = {},
+    opts: { limit?: number; before?: Date; after?: Date } = {},
   ) {
     const thread = await this.thread(caller, threadId);
     const limit = Math.min(opts.limit ?? 50, 200);
+
+    // `after` → tail fetch: ONLY messages newer than the cursor, ascending.
+    // The open chat uses this to append just-arrived messages on a realtime
+    // event instead of refetching the whole window every time. Uses the
+    // [threadId, createdAt] index just like the default load.
+    if (opts.after) {
+      return this.prisma.whatsAppMessage.findMany({
+        where: { threadId: thread.id, createdAt: { gt: opts.after } },
+        orderBy: { createdAt: 'asc' },
+        take: limit,
+        select: this.publicSelect(),
+      });
+    }
+
     const rows = await this.prisma.whatsAppMessage.findMany({
       where: {
         threadId: thread.id,

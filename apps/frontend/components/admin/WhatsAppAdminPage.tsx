@@ -119,7 +119,15 @@ export function WhatsAppAdminPage() {
     try {
       const [t, p, st] = await Promise.all([
         listThreads({
-          ...(filter !== 'ALL' ? { status: filter } : {}),
+          // PENDING in the UI maps to "SLA clock running on the agent" — no
+          // WhatsAppThread row is ever written with status=PENDING, so the
+          // tab filtered on responseDeadlineAt instead. Same convention the
+          // sales inbox uses.
+          ...(filter === 'PENDING'
+            ? { needsReply: true }
+            : filter !== 'ALL'
+              ? { status: filter }
+              : {}),
           ...(search ? { search } : {}),
           ...(unassignedOnly ? { unassigned: true } : {}),
           ...(agentFilter ? { employeeId: agentFilter } : {}),
@@ -147,7 +155,13 @@ export function WhatsAppAdminPage() {
     setLoadingMore(true);
     try {
       const t = await listThreads({
-        ...(filter !== 'ALL' ? { status: filter } : {}),
+        // Mirror reload()'s PENDING-as-needsReply mapping so paging stays
+        // consistent with the first page.
+        ...(filter === 'PENDING'
+          ? { needsReply: true }
+          : filter !== 'ALL'
+            ? { status: filter }
+            : {}),
         ...(search ? { search } : {}),
         ...(unassignedOnly ? { unassigned: true } : {}),
         ...(agentFilter ? { employeeId: agentFilter } : {}),
@@ -435,8 +449,20 @@ export function WhatsAppAdminPage() {
             >
               {FILTERS.map((f) => {
                 const active = filter === f.key;
-                const count =
-                  f.key === 'ALL'
+                // True totals from /threads/stats so the chips never cap at
+                // the page size. Fall back to the loaded page only while
+                // stats is still loading.
+                const count = stats
+                  ? f.key === 'ALL'
+                    ? stats.total
+                    : f.key === 'OPEN'
+                      ? stats.active
+                      : f.key === 'PENDING'
+                        ? stats.awaitingReply
+                        : f.key === 'RESOLVED'
+                          ? stats.resolved
+                          : 0
+                  : f.key === 'ALL'
                     ? items.length
                     : items.filter((t) => t.status === f.key).length;
                 return (

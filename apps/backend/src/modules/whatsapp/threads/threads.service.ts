@@ -224,6 +224,7 @@ export class WhatsAppThreadsService {
   async stats(caller: CallerContext): Promise<{
     total: number;
     active: number;
+    resolved: number;
     unassigned: number;
     slaBreached: number;
     unread: number;
@@ -234,7 +235,7 @@ export class WhatsAppThreadsService {
     slaScoreScope: 'self' | 'org' | null;
   }> {
     const empty = {
-      total: 0, active: 0, unassigned: 0, slaBreached: 0, unread: 0,
+      total: 0, active: 0, resolved: 0, unassigned: 0, slaBreached: 0, unread: 0,
       awaitingReply: 0, approaching: 0, overdue: 0,
       slaScore: null as number | null, slaScoreScope: null as 'self' | 'org' | null,
     };
@@ -268,7 +269,7 @@ export class WhatsAppThreadsService {
     });
     const warnCutoff = new Date(now.getTime() + (org?.slaWarnBeforeSeconds ?? 60) * 1000);
 
-    const [total, active, slaBreached, unread, unassigned, awaitingReply, overdue, approaching] =
+    const [total, active, slaBreached, unread, unassigned, awaitingReply, overdue, approaching, resolved] =
       await Promise.all([
         this.prisma.whatsAppThread.count({ where: base }),
         this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
@@ -284,6 +285,9 @@ export class WhatsAppThreadsService {
         this.prisma.whatsAppThread.count({
           where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }),
         }),
+        // Resolved tab count — keeps the inbox filter chips honest (was
+        // previously derived from the loaded page so it capped at PAGE_SIZE).
+        this.prisma.whatsAppThread.count({ where: and({ status: 'RESOLVED' }) }),
       ]);
 
     // SLA score. Admins / managers (canViewAll) get the ORG-WIDE aggregate so
@@ -319,7 +323,7 @@ export class WhatsAppThreadsService {
     }
 
     return {
-      total, active, unassigned, slaBreached, unread,
+      total, active, resolved, unassigned, slaBreached, unread,
       awaitingReply, approaching, overdue, slaScore, slaScoreScope,
     };
   }

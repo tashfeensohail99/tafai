@@ -192,6 +192,8 @@ export function listThreads(opts: {
 export interface ThreadStats {
   total: number;
   active: number;
+  /** RESOLVED status — closed conversations. */
+  resolved: number;
   unassigned: number;
   slaBreached: number;
   unread: number;

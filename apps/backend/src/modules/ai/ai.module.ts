@@ -4,6 +4,7 @@ import { KnowledgeService } from './knowledge.service';
 import { OrchestratorService } from './orchestrator.service';
 import { AiAdminController } from './ai-admin.controller';
 import { AiBacklogSweeperService } from './ai-backlog-sweeper.service';
+import { WhatsAppWindowKeeperService } from './window-keeper.service';
 import { WhatsAppNotificationsModule } from '../whatsapp/notifications/notifications.module';
 
 /**
@@ -18,7 +19,13 @@ import { WhatsAppNotificationsModule } from '../whatsapp/notifications/notificat
 @Module({
   imports: [WhatsAppNotificationsModule],
   controllers: [AiAdminController],
-  providers: [OpenAiService, KnowledgeService, OrchestratorService, AiBacklogSweeperService],
+  providers: [
+    OpenAiService,
+    KnowledgeService,
+    OrchestratorService,
+    AiBacklogSweeperService,
+    WhatsAppWindowKeeperService,
+  ],
   exports: [OpenAiService, KnowledgeService, OrchestratorService],
 })
 export class AiModule {}

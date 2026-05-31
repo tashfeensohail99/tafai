@@ -37,7 +37,8 @@ import { DocIntakeProcessor } from './document-ai/doc-intake.processor';
     DocIntakeProcessor,
   ],
   // DocumentAiService is exported so the client portal (PortalModule) can run
-  // the same AI assessment on client-uploaded documents.
-  exports: [ProcessingService, DocumentAiService],
+  // the same AI assessment on client-uploaded documents. DocumentIntakeService
+  // is exported so portal/officer uploads can run the bundle-split safety net.
+  exports: [ProcessingService, DocumentAiService, DocumentIntakeService],
 })
 export class ProcessingModule {}

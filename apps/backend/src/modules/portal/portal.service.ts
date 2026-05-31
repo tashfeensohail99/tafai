@@ -9,11 +9,13 @@ import {
   CommunicationDirection,
   CommunicationMessageType,
   DocumentItemStatus,
+  InboundDocumentSource,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { DocumentAiService } from '../processing/document-ai/document-ai.service';
+import { DocumentIntakeService } from '../processing/document-ai/document-intake.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { PortalSendMessageDto } from './portal.dto';
 import { describeRejections } from './rejection-messages';
@@ -62,6 +64,9 @@ export class PortalService {
     // Phase D3 — client portal uploads get the same AI assessment + guarded
     // auto-approve as officer/WhatsApp uploads.
     private readonly documentAi: DocumentAiService,
+    // Phase 2 — bundle-split safety net: a client who dumps several documents
+    // into one slot has the extras surfaced as triage rows.
+    private readonly documentIntake: DocumentIntakeService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -356,8 +361,10 @@ export class PortalService {
         id: true,
         status: true,
         documentName: true,
+        docType: true,
         maxFileSizeMb: true,
         expectedFormats: true,
+        case: { select: { service: true } },
         versions: { select: { id: true }, orderBy: { versionNumber: 'desc' }, take: 1 },
       },
     });
@@ -463,6 +470,20 @@ export class PortalService {
     // Run the AI assessment (OCR + ownership/type/completeness, possible
     // guarded auto-approve) — same pipeline as officer + WhatsApp uploads.
     void this.documentAi.enqueue(result.id);
+
+    // Safety net: if the client packed several documents into this one slot,
+    // surface the extras as triage rows. Best-effort + non-blocking — the
+    // upload response above is already returned. excludeSlotDocType keeps the
+    // segment they meant for this slot from being duplicated.
+    void this.documentIntake.explodeBundleToInbound({
+      caseId,
+      service: item.case?.service ?? null,
+      bytes: file.buffer,
+      mime: file.mimetype,
+      baseName: file.originalname,
+      source: InboundDocumentSource.PORTAL,
+      excludeSlotDocType: item.docType ?? null,
+    });
 
     return result;
   }

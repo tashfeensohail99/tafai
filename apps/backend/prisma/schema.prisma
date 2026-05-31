@@ -2136,6 +2136,7 @@ enum InboundDocumentSource {
   WHATSAPP
   EMAIL
   PORTAL
+  MANUAL
   @@schema("processing")
 }
 

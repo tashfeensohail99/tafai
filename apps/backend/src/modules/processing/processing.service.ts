@@ -16,6 +16,7 @@ import {
   CorrectionType,
   DocumentCriticality,
   DocumentItemStatus,
+  InboundDocumentSource,
   InboundDocumentStatus,
   FinanceHandoverStatus,
   Prisma,
@@ -34,6 +35,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import { getMilestonesForService } from './milestone-templates';
 import { DocumentAiService } from './document-ai/document-ai.service';
+import { DocumentIntakeService } from './document-ai/document-intake.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
@@ -179,6 +181,8 @@ export class ProcessingService {
     private readonly outboundWhatsAppQueue: Queue<OutboundMessageJob>,
     // Phase D2 — enqueue document-AI assessment on upload.
     private readonly documentAi: DocumentAiService,
+    // Phase 2 — bundle-split safety net for officer uploads.
+    private readonly documentIntake: DocumentIntakeService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -1245,7 +1249,9 @@ export class ProcessingService {
         id: true,
         status: true,
         documentName: true,
+        docType: true,
         maxFileSizeMb: true,
+        case: { select: { service: true } },
         versions: { select: { id: true }, orderBy: { versionNumber: 'desc' }, take: 1 },
       },
     });
@@ -1346,6 +1352,20 @@ export class ProcessingService {
     // auto-approve). Fire-and-forget; enqueue swallows its own errors so a
     // queue hiccup never fails the upload.
     void this.documentAi.enqueue(newVersionId);
+
+    // Phase 2 — bundle-split safety net: if the officer scanned several
+    // documents into one PDF and filed it under a single slot, surface the
+    // extras as triage rows. Best-effort + non-blocking; excludeSlotDocType
+    // avoids re-triaging the document they meant for this slot.
+    void this.documentIntake.explodeBundleToInbound({
+      caseId,
+      service: item.case?.service ?? null,
+      bytes: file.buffer,
+      mime: file.mimetype,
+      baseName: file.originalname,
+      source: InboundDocumentSource.MANUAL,
+      excludeSlotDocType: item.docType ?? null,
+    });
 
     return {
       success: true,

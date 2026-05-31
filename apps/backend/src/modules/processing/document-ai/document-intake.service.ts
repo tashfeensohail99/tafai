@@ -116,7 +116,15 @@ export class DocumentIntakeService {
     // photo as one combined PDF. Explode it into per-document triage rows.
     // Images are already single documents, so this only fires for PDFs and
     // falls through to the single-doc path on a single segment / any failure.
-    const exploded = await this.tryExplodeBundle(activeCase.id, activeCase.service, bytes, mime, fileName, messageId);
+    const exploded = await this.explodeBundleToInbound({
+      caseId: activeCase.id,
+      service: activeCase.service,
+      bytes,
+      mime,
+      baseName: fileName,
+      source: InboundDocumentSource.WHATSAPP,
+      whatsappMessageId: messageId,
+    });
     if (exploded > 0) {
       this.log.log(
         `intake: message ${messageId} split into ${exploded} document(s) for case ${activeCase.id}`,
@@ -218,26 +226,39 @@ export class DocumentIntakeService {
   }
 
   /**
-   * Try to split a combined upload into per-document triage rows.
+   * Split a combined upload into per-document triage rows. Shared by every
+   * intake channel: WhatsApp media (no chosen slot), and the portal/officer
+   * "safety net" (a bundle dumped into one slot — surface the extras).
    *
-   * Returns the number of InboundDocuments created. Returns 0 (caller falls
-   * back to the single-doc path) when: the file isn't a PDF, the parser isn't
-   * configured, the split fails, or it resolves to a single document. We only
-   * "explode" when there are >= 2 segments WITH their own extracted bytes, so a
+   * Returns the number of InboundDocuments created. Returns 0 when the file
+   * isn't a PDF, the parser isn't configured, the split fails, or it resolves
+   * to a single document — we only "explode" at >= 2 extractable segments, so a
    * normal single-document PDF is never needlessly chopped.
    *
+   * `excludeSlotDocType` (portal/officer): the uploader already filed one slot
+   * directly, so the matching segment is skipped — only the *extra* documents
+   * become triage rows. WhatsApp passes none (no slot was chosen).
+   *
    * Per the locked rule "never auto-act on splitting", each segment is created
-   * PENDING with a suggested slot — the associate confirms each one (the
-   * existing triage tray + fileInboundDocument flow, unchanged).
+   * PENDING with a suggested slot — the associate confirms each one via the
+   * existing triage tray + fileInboundDocument flow, unchanged. This method is
+   * self-contained (never rejects) so callers may fire it and forget.
    */
-  private async tryExplodeBundle(
-    caseId: string,
-    service: string | null,
-    bytes: Buffer,
-    mime: string,
-    baseName: string,
-    messageId: string,
-  ): Promise<number> {
+  async explodeBundleToInbound(opts: {
+    caseId: string;
+    service: string | null;
+    bytes: Buffer;
+    mime: string;
+    baseName: string;
+    source: InboundDocumentSource;
+    whatsappMessageId?: string | null;
+    excludeSlotDocType?: string | null;
+  }): Promise<number> {
+    const { caseId, service, bytes, mime, baseName, source } = opts;
+    const whatsappMessageId = opts.whatsappMessageId ?? null;
+    const excludeSlotDocType = opts.excludeSlotDocType ?? null;
+    const label = whatsappMessageId ?? `${source}:${caseId}`;
+
     const isPdf = /pdf/i.test(mime) || bytes.subarray(0, 5).toString('latin1') === '%PDF-';
     if (!isPdf || !this.parser.configured) return 0;
 
@@ -250,56 +271,51 @@ export class DocumentIntakeService {
       });
       usable = (resp.documents ?? []).filter((d) => d.fileBase64 && d.fileBase64.length > 0);
     } catch (e) {
-      this.log.warn(`intake: split failed for ${messageId}: ${String(e)} — single-doc fallback`);
+      this.log.warn(`intake: split failed for ${label}: ${String(e)} — single-doc fallback`);
       return 0;
     }
     if (usable.length < 2) return 0; // single document (or no extractable segment)
 
     let created = 0;
     for (const seg of usable) {
-      let segBytes: Buffer;
-      try {
-        segBytes = Buffer.from(seg.fileBase64, 'base64');
-      } catch {
+      // Portal/officer: don't duplicate the segment the uploader already filed
+      // into the chosen slot — only surface the extras.
+      if (excludeSlotDocType && parserDocTypeCandidates(seg.doc_type).includes(excludeSlotDocType)) {
         continue;
       }
-      if (segBytes.length === 0) continue;
-      const segExt = /pdf/i.test(seg.mimeType)
-        ? 'pdf'
-        : (seg.mimeType.split('/')[1] ?? 'bin').split(';')[0];
-      const segName = `${this.stripExt(baseName)} — ${seg.doc_type}${this.pageRangeLabel(seg.pages)}.${segExt}`;
-
-      let storageKey: string;
       try {
+        const segBytes = Buffer.from(seg.fileBase64, 'base64');
+        if (segBytes.length === 0) continue;
+        const segExt = /pdf/i.test(seg.mimeType)
+          ? 'pdf'
+          : (seg.mimeType.split('/')[1] ?? 'bin').split(';')[0];
+        const segName = `${this.stripExt(baseName)} — ${seg.doc_type}${this.pageRangeLabel(seg.pages)}.${segExt}`;
         const up = await this.storage.upload(
           segBytes,
           seg.mimeType,
           `processing/cases/${caseId}/inbound`,
           segName,
         );
-        storageKey = up.key;
+        const suggestedItemId = await this.matchItem(caseId, seg.doc_type);
+        await this.prisma.inboundDocument.create({
+          data: {
+            caseId,
+            source,
+            storageKey: up.key,
+            fileName: segName,
+            mimeType: seg.mimeType,
+            fileSizeBytes: segBytes.length,
+            whatsappMessageId,
+            detectedDocType: seg.doc_type,
+            classifyConfidence: seg.confidence,
+            suggestedItemId,
+            status: InboundDocumentStatus.PENDING,
+          },
+        });
+        created++;
       } catch (e) {
-        this.log.warn(`intake: segment upload failed (${seg.doc_type}) for ${messageId}: ${String(e)}`);
-        continue;
+        this.log.warn(`intake: segment file failed (${seg.doc_type}) for ${label}: ${String(e)}`);
       }
-
-      const suggestedItemId = await this.matchItem(caseId, seg.doc_type);
-      await this.prisma.inboundDocument.create({
-        data: {
-          caseId,
-          source: InboundDocumentSource.WHATSAPP,
-          storageKey,
-          fileName: segName,
-          mimeType: seg.mimeType,
-          fileSizeBytes: segBytes.length,
-          whatsappMessageId: messageId,
-          detectedDocType: seg.doc_type,
-          classifyConfidence: seg.confidence,
-          suggestedItemId,
-          status: InboundDocumentStatus.PENDING,
-        },
-      });
-      created++;
     }
     return created;
   }

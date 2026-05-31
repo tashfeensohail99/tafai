@@ -36,6 +36,7 @@ import { isCanonicalServiceCode } from '../../common/service-types';
 import { getMilestonesForService } from './milestone-templates';
 import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocumentIntakeService } from './document-ai/document-intake.service';
+import { reconcileIdentity } from './identity-reconciliation';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
@@ -1730,6 +1731,85 @@ export class ProcessingService {
       mimeType: inbound.mimeType,
       expiresIn: '15 minutes',
     };
+  }
+
+  /**
+   * Phase 4 — case-level identity reconciliation. Lines up the identity values
+   * the parser extracted from every current document against each other AND the
+   * CRM client record, surfacing agreement vs conflict per field. Read-only +
+   * flag-only: it never mutates a document or rejects anything (per the locked
+   * rule, transliteration variance means a human always decides on identity).
+   */
+  async getIdentityReconciliation(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+
+    const c = await this.prisma.processingCase.findUnique({
+      where: { id: caseId },
+      select: {
+        client: {
+          select: {
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            passportNumber: true,
+            nationalId: true,
+            cnic: true,
+          },
+        },
+      },
+    });
+    const client = c?.client ?? null;
+
+    const items = await this.prisma.caseDocumentItem.findMany({
+      where: { caseId, latestVersionId: { not: null } },
+      select: { id: true, documentName: true, docType: true, latestVersionId: true },
+    });
+    const versionIds = items
+      .map((i) => i.latestVersionId)
+      .filter((x): x is string => !!x);
+    const assessments = versionIds.length
+      ? await this.prisma.documentAiAssessment.findMany({
+          where: { caseId, versionId: { in: versionIds } },
+          orderBy: { createdAt: 'desc' },
+          select: { versionId: true, detectedDocType: true, extracted: true },
+        })
+      : [];
+
+    // Most-recent assessment per version (first wins — ordered desc).
+    const byVersion = new Map<string, { extracted: unknown; detectedDocType: string | null }>();
+    for (const a of assessments) {
+      if (!byVersion.has(a.versionId)) {
+        byVersion.set(a.versionId, { extracted: a.extracted, detectedDocType: a.detectedDocType });
+      }
+    }
+
+    const docs = items
+      .filter((i) => i.latestVersionId && byVersion.has(i.latestVersionId))
+      .map((i) => {
+        const a = byVersion.get(i.latestVersionId as string)!;
+        const extracted =
+          a.extracted && typeof a.extracted === 'object' && !Array.isArray(a.extracted)
+            ? (a.extracted as Record<string, unknown>)
+            : null;
+        return {
+          itemId: i.id,
+          documentName: i.documentName,
+          docType: i.docType ?? a.detectedDocType ?? null,
+          extracted,
+        };
+      });
+
+    return reconcileIdentity(
+      {
+        firstName: client?.firstName ?? null,
+        lastName: client?.lastName ?? null,
+        dateOfBirth: client?.dateOfBirth ?? null,
+        passportNumber: client?.passportNumber ?? null,
+        nationalId: client?.nationalId ?? null,
+        cnic: client?.cnic ?? null,
+      },
+      docs,
+    );
   }
 
   async fileInboundDocument(

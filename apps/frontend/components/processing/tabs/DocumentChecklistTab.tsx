@@ -55,6 +55,7 @@ import {
   type DocumentCriticality,
 } from '@/lib/processing';
 import { SplitReviewerModal } from '@/components/processing/SplitReviewerModal';
+import { IdentityReconciliationPanel } from '@/components/processing/IdentityReconciliationPanel';
 
 const STATUS_TONE: Record<DocumentItemStatus, BadgeTone> = {
   NOT_SUBMITTED: 'neutral',
@@ -549,6 +550,9 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
               <div style={{ marginTop: 8, fontSize: 12, color: 'var(--sos-text-secondary)' }}>{reqMsg}</div>
             ) : null}
           </GlassCard>
+
+          {/* Cross-document identity reconciliation (Phase 4) */}
+          <IdentityReconciliationPanel caseId={c.id} />
 
           {/* Inbound triage tray (WhatsApp/email/portal) */}
           <InboundTray caseId={c.id} items={items} onFiled={reload} />

@@ -345,6 +345,15 @@ export class ProcessingController {
     return this.processingService.listInboundDocuments(caseId, user);
   }
 
+  @Get('cases/:caseId/identity-reconciliation')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getIdentityReconciliation(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getIdentityReconciliation(caseId, user);
+  }
+
   @Get('cases/:caseId/inbound-documents/:inboundId/signed-url')
   @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
   getInboundDocumentSignedUrl(

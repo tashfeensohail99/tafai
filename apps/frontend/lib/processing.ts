@@ -932,6 +932,50 @@ export function requestMissingDocuments(caseId: string): Promise<RequestMissingR
 }
 
 // ---------------------------------------------------------------------------
+// Identity reconciliation (Phase 4) — cross-document + CRM identity agreement
+// ---------------------------------------------------------------------------
+
+export type IdentityFieldStatus = 'agree' | 'conflict' | 'insufficient';
+export type IdentityOverallStatus = 'ok' | 'review' | 'insufficient';
+
+export interface ApiIdentitySource {
+  itemId: string;
+  documentName: string;
+  docType: string | null;
+  value: string;
+  matchesReference: boolean;
+}
+
+export interface ApiIdentityFieldRow {
+  key: 'name' | 'dateOfBirth' | 'passportNumber' | 'nationalId';
+  label: string;
+  crmValue: string | null;
+  sources: ApiIdentitySource[];
+  status: IdentityFieldStatus;
+}
+
+export interface ApiIdentityReconciliation {
+  client: {
+    name: string | null;
+    dateOfBirth: string | null;
+    passportNumber: string | null;
+    nationalId: string | null;
+  };
+  fields: ApiIdentityFieldRow[];
+  overall: IdentityOverallStatus;
+  documentCount: number;
+}
+
+export function fetchIdentityReconciliation(
+  caseId: string,
+): Promise<ApiIdentityReconciliation> {
+  return apiFetch<ApiIdentityReconciliation>(
+    `/processing/cases/${caseId}/identity-reconciliation`,
+    { cache: 'no-store' },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Case WhatsApp chat (Phase E) — live two-way thread, scoped by case access
 // ---------------------------------------------------------------------------
 

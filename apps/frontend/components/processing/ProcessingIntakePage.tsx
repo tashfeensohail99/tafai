@@ -54,6 +54,19 @@ import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Acknowledge modal ----------------------------------------------
 
+// Phase F — specific programs that have their own document requirement set
+// (seeded in 20260531150000). When the manager picks one, acknowledge builds
+// the program-specific checklist; leaving it blank uses the generic service
+// list. Extend as more programs are seeded.
+const PROGRAMS_BY_SERVICE: Record<string, Array<{ code: string; label: string }>> = {
+  WORK_PERMIT: [
+    { code: 'C11', label: 'C11 — Entrepreneur / Self-employed (Canada)' },
+    { code: 'ICT', label: 'ICT — Intra-Company Transfer (Canada)' },
+    { code: 'LMIA', label: 'LMIA — Skilled Worker (Canada)' },
+  ],
+  VISIT_VISA: [{ code: 'VISIT', label: 'Visitor visa' }],
+};
+
 function AcknowledgeModal({
   caseRecord: c,
   officers,
@@ -80,6 +93,10 @@ function AcknowledgeModal({
   const [serviceCode, setServiceCode] = useState<string>(
     incomingIsCanonical ? c.service : '',
   );
+  // Phase F — optional specific program (C11/ICT/LMIA/VISIT). Drives the
+  // program-specific checklist; reset whenever the category changes.
+  const [programCode, setProgramCode] = useState<string>('');
+  const programOptions = PROGRAMS_BY_SERVICE[serviceCode] ?? [];
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,6 +117,7 @@ function AcknowledgeModal({
       await acknowledgeIntake(c.id, {
         assignOfficerId: officerId,
         service: serviceCode,
+        ...(programCode ? { programCode } : {}),
       });
       onConfirm();
     } catch (e: unknown) {
@@ -178,7 +196,7 @@ function AcknowledgeModal({
           <select
             className="sos-input"
             value={serviceCode}
-            onChange={(e) => setServiceCode(e.target.value)}
+            onChange={(e) => { setServiceCode(e.target.value); setProgramCode(''); }}
             style={{ width: '100%' }}
           >
             <option value="" disabled>Choose a case category…</option>
@@ -196,6 +214,31 @@ function AcknowledgeModal({
             </div>
           ) : null}
         </div>
+
+        {/* Phase F — specific program (drives the program-specific checklist) */}
+        {programOptions.length > 0 ? (
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+              Specific program <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional — builds the exact checklist)</span>
+            </label>
+            <select
+              className="sos-input"
+              value={programCode}
+              onChange={(e) => setProgramCode(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <option value="">Generic {labelForServiceCode(serviceCode)} checklist</option>
+              {programOptions.map((p) => (
+                <option key={p.code} value={p.code}>{p.label}</option>
+              ))}
+            </select>
+            {programCode ? (
+              <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sos-status-info)' }}>
+                Builds the {programCode} document checklist (with attestation + provide-first ordering).
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Officer picker */}
         <div style={{ marginBottom: 16 }}>

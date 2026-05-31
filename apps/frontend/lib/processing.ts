@@ -403,7 +403,7 @@ export function markCaseForRefund(
 
 export function acknowledgeIntake(
   caseId: string,
-  body: { assignOfficerId: string; service?: string },
+  body: { assignOfficerId: string; service?: string; programCode?: string },
 ): Promise<ApiProcessingCaseDetail> {
   return apiFetch<ApiProcessingCaseDetail>(`/processing/intake/${caseId}/acknowledge`, {
     method: 'POST',

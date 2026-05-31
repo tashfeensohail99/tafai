@@ -105,6 +105,11 @@ export interface PortalDocumentItem {
   latestRejectionReasonCodes: string[];
   /** Backend-translated friendly messages. Render these. */
   latestRejectionMessages: FriendlyRejection[];
+  // Phase F — program-aware staging + attestation + client guidance.
+  stageGroup?: 'PROVIDE_FIRST' | 'NEXT' | 'LATER';
+  attestation?: { required: boolean; status: string; chain: string | null };
+  translation?: { required: boolean; status: string };
+  guidance?: { whyText: string | null; exampleGoodUrl: string | null; exampleBadUrl: string | null };
 }
 
 export interface PortalMessage {

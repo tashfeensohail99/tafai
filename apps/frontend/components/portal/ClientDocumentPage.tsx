@@ -317,9 +317,22 @@ function DocumentRow({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '5px' }}>
             <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{doc.documentName}</span>
             <StatusBadge tone={critTone} size="sm">{CRITICALITY_LABEL[doc.criticality]}</StatusBadge>
+            {doc.stageGroup === 'PROVIDE_FIRST' ? (
+              <StatusBadge tone="accent" size="sm">Start here</StatusBadge>
+            ) : null}
+            {doc.attestation?.required ? (
+              <StatusBadge tone="violet" size="sm">
+                Needs {doc.attestation.chain ? doc.attestation.chain.replace(/->/g, ' → ') : 'attestation'}
+              </StatusBadge>
+            ) : null}
           </div>
           {doc.description ? (
             <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginBottom: '8px' }}>{doc.description}</div>
+          ) : null}
+          {doc.attestation?.required ? (
+            <div style={{ fontSize: '12px', color: 'var(--sos-violet-strong, var(--sos-text-muted))', marginBottom: '8px' }}>
+              Get this attested ({doc.attestation.chain ? doc.attestation.chain.replace(/->/g, ' → ') : 'official attestation'}) before uploading — it can take ~2 weeks, so start early.
+            </div>
           ) : null}
 
           {doc.latestRejectionReasonCodes.length > 0 ? (

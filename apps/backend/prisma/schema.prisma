@@ -2950,6 +2950,15 @@ model WhatsAppThread {
   @@index([clientId])
   @@index([status, lastMessageAt(sort: Desc)])
   @@index([slaDeadlineAt])
+  // Default "ALL" inbox tab orders by lastMessageAt with no status filter,
+  // so the [status, lastMessageAt] composite can't serve the sort — this
+  // standalone index does.
+  @@index([lastMessageAt(sort: Desc)])
+  // Stats endpoint counts responseDeadlineAt three ways (set / overdue /
+  // approaching) on every load, and the inbox "Pending" tab filters on it.
+  @@index([responseDeadlineAt])
+  // Unread counter feeds the stats "unread" count and the inbox badge filter.
+  @@index([unreadCount])
   @@map("threads")
   @@schema("whatsapp")
 }

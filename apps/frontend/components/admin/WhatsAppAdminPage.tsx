@@ -24,7 +24,7 @@
  * badges stay live across reassigns and incoming messages.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -90,6 +90,9 @@ export function WhatsAppAdminPage() {
   // that agent's assigned conversations (e.g. "Iffat's chats").
   const [agentFilter, setAgentFilter] = useState<string>('');
   const [search, setSearch] = useState('');
+  // Debounced copy — only triggers a fetch after typing pauses 300ms, so a
+  // 5-char query is one round-trip instead of five. Matches /sales/inbox.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [team, setTeam] = useState<TeamPresenceRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,40 +116,77 @@ export function WhatsAppAdminPage() {
   const [reassignError, setReassignError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
 
+  // Debounce the search box — see debouncedSearch above.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  // Shared list-query args built from the current filter state. Used by the
+  // full reload, the realtime soft-refresh, and infinite-scroll paging so the
+  // three never drift. PENDING maps to needsReply (responseDeadlineAt set) —
+  // no thread row is ever written with status=PENDING.
+  const buildQuery = useCallback(
+    (cursor?: string) => ({
+      ...(filter === 'PENDING'
+        ? { needsReply: true as const }
+        : filter !== 'ALL'
+          ? { status: filter }
+          : {}),
+      ...(debouncedSearch ? { search: debouncedSearch } : {}),
+      ...(unassignedOnly ? { unassigned: true } : {}),
+      ...(agentFilter ? { employeeId: agentFilter } : {}),
+      ...(cursor ? { cursor } : {}),
+      limit: PAGE_SIZE,
+    }),
+    [filter, debouncedSearch, unassignedOnly, agentFilter],
+  );
+
+  // Refetch the thread list + stats — the two things a new/updated message
+  // changes. NO loading spinner: this runs silently from realtime events so
+  // the list updates in place without a flash. Stats failure is non-fatal.
+  const refreshThreads = useCallback(async () => {
+    if (!canViewAll) return;
+    const [t, st] = await Promise.all([
+      listThreads(buildQuery()),
+      getThreadStats().catch(() => null),
+    ]);
+    setItems(t.items);
+    setNextCursor(t.nextCursor);
+    if (st) setStats(st);
+  }, [canViewAll, buildQuery]);
+
+  // Team presence changes only on (re)assignment, never on a message — so it
+  // gets its own fetcher and is deliberately left OUT of the per-message
+  // refresh path. That alone removes 2/3 of the old realtime query volume.
+  const refreshPresence = useCallback(async () => {
+    if (!canViewAll) return;
+    const p = await listTeamPresence().catch(() => [] as TeamPresenceRow[]);
+    setTeam(p);
+  }, [canViewAll]);
+
+  // Full reload WITH the loading spinner — initial mount, filter/search
+  // change, manual Refresh, post-reassign. Deps deliberately exclude activeId
+  // / isMobile so clicking a thread doesn't recreate this and refire the
+  // effect below (that was a full 3-query refetch on every chat selection).
   const reload = useCallback(async () => {
     if (!canViewAll) return;
     setLoading(true);
     try {
-      const [t, p, st] = await Promise.all([
-        listThreads({
-          // PENDING in the UI maps to "SLA clock running on the agent" — no
-          // WhatsAppThread row is ever written with status=PENDING, so the
-          // tab filtered on responseDeadlineAt instead. Same convention the
-          // sales inbox uses.
-          ...(filter === 'PENDING'
-            ? { needsReply: true }
-            : filter !== 'ALL'
-              ? { status: filter }
-              : {}),
-          ...(search ? { search } : {}),
-          ...(unassignedOnly ? { unassigned: true } : {}),
-          ...(agentFilter ? { employeeId: agentFilter } : {}),
-          limit: PAGE_SIZE,
-        }),
-        listTeamPresence().catch(() => [] as TeamPresenceRow[]),
-        getThreadStats().catch(() => null),
-      ]);
-      setItems(t.items);
-      setNextCursor(t.nextCursor);
-      setTeam(p);
-      setStats(st);
-      if (!activeId && t.items.length > 0 && !isMobile) {
-        setActiveId(t.items[0]!.id);
-      }
+      await Promise.all([refreshThreads(), refreshPresence()]);
     } finally {
       setLoading(false);
     }
-  }, [canViewAll, filter, search, unassignedOnly, agentFilter, activeId, isMobile]);
+  }, [canViewAll, refreshThreads, refreshPresence]);
+
+  // Stable row handlers so memo(ThreadRow) can skip re-rendering every row on
+  // each list update — only the rows whose `active` flag flips re-render.
+  const handleSelect = useCallback((id: string) => setActiveId(id), []);
+  const openReassign = useCallback((t: ThreadListItem) => {
+    setReassignTarget(t);
+    setReassignEmployee('');
+    setReassignError(null);
+  }, []);
 
   // Append the next page when the user scrolls near the bottom of the list.
   // Guarded so we never fire two in-flight loads or load past the end.
@@ -154,21 +194,8 @@ export function WhatsAppAdminPage() {
     if (!canViewAll || !nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const t = await listThreads({
-        // Mirror reload()'s PENDING-as-needsReply mapping so paging stays
-        // consistent with the first page.
-        ...(filter === 'PENDING'
-          ? { needsReply: true }
-          : filter !== 'ALL'
-            ? { status: filter }
-            : {}),
-        ...(search ? { search } : {}),
-        ...(unassignedOnly ? { unassigned: true } : {}),
-        ...(agentFilter ? { employeeId: agentFilter } : {}),
-        cursor: nextCursor,
-        limit: PAGE_SIZE,
-      });
-      // De-dupe by id in case a realtime reload raced with the append.
+      const t = await listThreads(buildQuery(nextCursor));
+      // De-dupe by id in case a realtime refresh raced with the append.
       setItems((curr) => {
         const seen = new Set(curr.map((i) => i.id));
         return [...curr, ...t.items.filter((i) => !seen.has(i.id))];
@@ -177,26 +204,49 @@ export function WhatsAppAdminPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [canViewAll, nextCursor, loadingMore, filter, search, unassignedOnly, agentFilter]);
+  }, [canViewAll, nextCursor, loadingMore, buildQuery]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  // Auto-select the first thread on desktop — own effect so it fires once on
+  // initial load, not on every reload.
+  useEffect(() => {
+    if (!activeId && !isMobile && items.length > 0) {
+      setActiveId(items[0]!.id);
+    }
+  }, [items, activeId, isMobile]);
+
+  // Realtime. Message events only touch the thread list + stats and are
+  // throttled to one refresh per 1.5s so a burst (typing, delivery, read,
+  // new) can't hammer the backend. Assignment events additionally refresh
+  // presence (open-lead counts shift) and are rare + user-initiated, so they
+  // run immediately for snappy feedback.
   useEffect(() => {
     if (!socket) return;
-    const onAny = () => {
-      void reload();
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (pending) return;
+      pending = setTimeout(() => {
+        pending = null;
+        void refreshThreads();
+      }, 1500);
     };
-    socket.on('whatsapp.message.new', onAny);
-    socket.on('whatsapp.message.status', onAny);
-    socket.on('whatsapp.thread.assigned', onAny);
+    const onAssigned = () => {
+      void refreshThreads();
+      void refreshPresence();
+    };
+    socket.on('whatsapp.message.new', scheduleRefresh);
+    socket.on('whatsapp.message.status', scheduleRefresh);
+    socket.on('whatsapp.thread.assigned', onAssigned);
     return () => {
-      socket.off('whatsapp.message.new', onAny);
-      socket.off('whatsapp.message.status', onAny);
-      socket.off('whatsapp.thread.assigned', onAny);
+      if (pending) clearTimeout(pending);
+      socket.off('whatsapp.message.new', scheduleRefresh);
+      socket.off('whatsapp.message.status', scheduleRefresh);
+      socket.off('whatsapp.thread.assigned', onAssigned);
     };
-  }, [socket, reload]);
+  }, [socket, refreshThreads, refreshPresence]);
 
   // Auto-clear confirmation banner after 4 seconds so it doesn't linger.
   useEffect(() => {
@@ -645,12 +695,8 @@ export function WhatsAppAdminPage() {
                     item={t}
                     active={activeId === t.id}
                     canReassign={canReassign}
-                    onClick={() => setActiveId(t.id)}
-                    onReassignClick={() => {
-                      setReassignTarget(t);
-                      setReassignEmployee('');
-                      setReassignError(null);
-                    }}
+                    onSelect={handleSelect}
+                    onReassign={openReassign}
                   />
                 ))
               )}
@@ -890,18 +936,18 @@ function AdminMetricChip({
   );
 }
 
-function ThreadRow({
+const ThreadRow = memo(function ThreadRow({
   item,
   active,
   canReassign,
-  onClick,
-  onReassignClick,
+  onSelect,
+  onReassign,
 }: {
   item: ThreadListItem;
   active: boolean;
   canReassign: boolean;
-  onClick: () => void;
-  onReassignClick: () => void;
+  onSelect: (id: string) => void;
+  onReassign: (item: ThreadListItem) => void;
 }) {
   const displayName =
     item.client?.firstName || item.client?.lastName
@@ -916,7 +962,7 @@ function ThreadRow({
 
   return (
     <div
-      onClick={onClick}
+      onClick={() => onSelect(item.id)}
       style={{
         cursor: 'pointer',
         display: 'flex',
@@ -1112,7 +1158,7 @@ function ThreadRow({
           title="Reassign thread"
           onClick={(e) => {
             e.stopPropagation();
-            onReassignClick();
+            onReassign(item);
           }}
           style={{
             background: 'transparent',
@@ -1140,7 +1186,7 @@ function ThreadRow({
       ) : null}
     </div>
   );
-}
+});
 
 // ────────────────────────────────────────────────────────────────────────────
 // Visual helpers

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Inbox as InboxIcon, MessageSquare, Search } from 'lucide-react';
 import { listThreads, type ThreadListItem, type WhatsAppThreadStatus } from '@/lib/whatsapp';
 import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
@@ -53,8 +53,11 @@ export default function SalesInboxPage() {
   // useCallback (not useMemo) and deps WITHOUT activeId / isMobile so clicking
   // a chat doesn't recreate the function and refire the useEffect below —
   // that was burning a full thread-list refetch on every selection click.
-  const reload = useCallback(async () => {
-    setLoading(true);
+  // `background: true` skips the loading spinner — used by realtime refreshes
+  // so an incoming message updates the list in place without a flash. Foreground
+  // (initial load, filter/search change) still shows the skeleton.
+  const reload = useCallback(async (opts?: { background?: boolean }) => {
+    if (!opts?.background) setLoading(true);
     try {
       // The "Pending" tab maps to needsReply (responseDeadlineAt set) — the
       // literal WhatsAppThreadStatus.PENDING value is never written by any
@@ -70,7 +73,7 @@ export default function SalesInboxPage() {
       });
       setItems(res.items);
     } finally {
-      setLoading(false);
+      if (!opts?.background) setLoading(false);
     }
   }, [filter, debouncedSearch]);
 
@@ -94,7 +97,7 @@ export default function SalesInboxPage() {
       if (pending) return;
       pending = setTimeout(() => {
         pending = null;
-        void reload();
+        void reload({ background: true });
       }, 1500);
     };
     socket.on('whatsapp.message.new', trigger);
@@ -105,6 +108,10 @@ export default function SalesInboxPage() {
       socket.off('whatsapp.message.status', trigger);
     };
   }, [socket, reload]);
+
+  // Stable handler so memo(ThreadRow) skips re-rendering unaffected rows when
+  // the list updates — only the rows whose `active` flag flips re-render.
+  const handleSelect = useCallback((id: string) => setActiveId(id), []);
 
   const totalUnread = useMemo(() => items.reduce((acc, t) => acc + t.unreadCount, 0), [items]);
 
@@ -317,7 +324,7 @@ export default function SalesInboxPage() {
                 key={t.id}
                 item={t}
                 active={activeId === t.id}
-                onClick={() => setActiveId(t.id)}
+                onSelect={handleSelect}
               />
             ))
           )}
@@ -359,14 +366,14 @@ export default function SalesInboxPage() {
   );
 }
 
-function ThreadRow({
+const ThreadRow = memo(function ThreadRow({
   item,
   active,
-  onClick,
+  onSelect,
 }: {
   item: ThreadListItem;
   active: boolean;
-  onClick: () => void;
+  onSelect: (id: string) => void;
 }) {
   const displayName =
     item.client?.firstName || item.client?.lastName
@@ -378,7 +385,7 @@ function ThreadRow({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => onSelect(item.id)}
       style={{
         all: 'unset',
         cursor: 'pointer',
@@ -531,7 +538,7 @@ function ThreadRow({
       </div>
     </button>
   );
-}
+});
 
 function tone(s: ThreadListItem['status']) {
   switch (s) {

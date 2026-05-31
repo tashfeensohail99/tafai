@@ -2090,6 +2090,37 @@ enum DocumentKind {
   @@schema("processing")
 }
 
+// Phase F (processing automation) — staged "provide-first" grouping shown to
+// the client so they don't face a 30-item wall.
+enum DocumentStageGroup {
+  PROVIDE_FIRST
+  NEXT
+  LATER
+  @@schema("processing")
+}
+
+// Phase F — which applicant a document belongs to. v1 builds PRIMARY only, but
+// every requirement/item carries the role so dependents (spouse/children) and
+// the employer side (LMIA/ICT) are config later, not a migration.
+enum ApplicantRole {
+  PRIMARY
+  SPOUSE
+  DEPENDENT
+  EMPLOYER
+  OTHER
+  @@schema("processing")
+}
+
+// Phase F — attestation / certified-translation lifecycle for a case document
+// (educate-and-nudge; a human can WAIVE per case).
+enum DocumentAttestationStatus {
+  NOT_REQUIRED
+  REQUIRED_PENDING
+  DONE
+  WAIVED
+  @@schema("processing")
+}
+
 // What the parser recommends after OCR + validation. The human associate
 // still owns the decision unless auto-approve fires (high confidence + all
 // checks pass), in which case the system records an automated ACCEPTED.
@@ -2265,6 +2296,20 @@ model DocumentRequirementTemplate {
   // For documentKind=PHOTO: { background, sizeMm, faceRequired, maxBlur }.
   photoSpec          Json?
   guidanceUrl        String?
+  // Phase F — program-aware requirement sets + attestation + staging.
+  // programCode (C11/ICT/LMIA/VISIT…) layered over the broad `service` bucket;
+  // NULL => applies to the whole service. applicantRole supports dependents.
+  // prerequisiteTemplateId is a soft reference (no FK) resolved at build time.
+  programCode            String?
+  applicantRole          ApplicantRole       @default(PRIMARY)
+  stageGroup             DocumentStageGroup  @default(NEXT)
+  attestationRequired    Boolean             @default(false)
+  attestationChain       String?
+  translationRequired    Boolean             @default(false)
+  prerequisiteTemplateId String?
+  whyText                String?
+  exampleGoodUrl         String?
+  exampleBadUrl          String?
   sortOrder          Int                  @default(0)
   isActive           Boolean              @default(true)
   createdAt          DateTime             @default(now())
@@ -2275,8 +2320,31 @@ model DocumentRequirementTemplate {
   caseDocumentItems CaseDocumentItem[]
 
   @@index([service, targetCountry])
+  @@index([programCode, targetCountry])
   @@index([isActive])
   @@map("document_requirement_templates")
+  @@schema("processing")
+}
+
+// Phase F — catalog of program-specific requirement sets so a manager can see
+// and maintain "C11 · Canada — last verified 2026-05-31" (immigration rules
+// change constantly). Templates reference a (programCode, targetCountry) pair;
+// this row holds the human-facing metadata + verification date. verifiedByUserId
+// is a soft reference (no FK) to avoid touching the central UserAccount model.
+model ProgramRequirementSet {
+  id               String    @id @default(uuid())
+  programCode      String
+  targetCountry    String
+  displayName      String
+  notes            String?
+  isActive         Boolean   @default(true)
+  lastVerifiedAt   DateTime?
+  verifiedByUserId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([programCode, targetCountry])
+  @@map("program_requirement_sets")
   @@schema("processing")
 }
 
@@ -2375,6 +2443,16 @@ model CaseDocumentItem {
   docType            String?
   documentKind       DocumentKind         @default(TEXT_DOCUMENT)
   photoSpec          Json?
+  // Phase F — copied from the template at acknowledge time (like docType/photoSpec).
+  applicantRole      ApplicantRole             @default(PRIMARY)
+  stageGroup         DocumentStageGroup        @default(NEXT)
+  attestationStatus  DocumentAttestationStatus @default(NOT_REQUIRED)
+  attestationChain   String?
+  translationStatus  DocumentAttestationStatus @default(NOT_REQUIRED)
+  prerequisiteItemId String?
+  whyText            String?
+  exampleGoodUrl     String?
+  exampleBadUrl      String?
   status             DocumentItemStatus   @default(NOT_SUBMITTED)
   latestVersionId    String?              @unique
   validityExpiryDate DateTime?            @db.Date

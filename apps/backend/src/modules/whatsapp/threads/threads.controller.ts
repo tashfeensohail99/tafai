@@ -47,6 +47,17 @@ class ListThreadsDto {
   @Transform(({ value }) => value === 'true' || value === true)
   unassigned?: boolean;
 
+  /**
+   * "Pending" tab in the inbox: threads where an agent reply is due
+   * (responseDeadlineAt is set). Backs the inbox "Pending" filter so it
+   * actually shows useful rows — the WhatsAppThreadStatus PENDING value is
+   * never written anywhere, so a literal status filter is empty.
+   */
+  @IsOptional()
+  @IsBooleanString()
+  @Transform(({ value }) => value === 'true' || value === true)
+  needsReply?: boolean;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
 

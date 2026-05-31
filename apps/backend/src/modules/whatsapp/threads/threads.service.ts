@@ -6,6 +6,13 @@ interface ThreadListOptions {
   status?: 'OPEN' | 'PENDING' | 'RESOLVED' | 'ARCHIVED';
   assignedToMe?: boolean;
   unassigned?: boolean;
+  /**
+   * "SLA clock is running on the agent" filter — `responseDeadlineAt` is set
+   * when a customer message is awaiting an agent reply. This is what the
+   * inbox "Pending" tab actually means (the WhatsAppThreadStatus PENDING
+   * value is never written anywhere, so a literal status filter is dead).
+   */
+  needsReply?: boolean;
   /** Admin filter: only threads whose lead is assigned to this employee. */
   employeeId?: string;
   search?: string;
@@ -66,7 +73,9 @@ export class WhatsAppThreadsService {
   }
 
   async list(caller: CallerContext, opts: ThreadListOptions = {}) {
-    const limit = Math.min(opts.limit ?? 30, 100);
+    // Default 100 (bumped from 30) so agents see their full inbox without
+    // having to scroll/page; the DTO caps at 100 anyway.
+    const limit = Math.min(opts.limit ?? 100, 100);
 
     const where: Prisma.WhatsAppThreadWhereInput = {};
     if (opts.status) where.status = opts.status;
@@ -110,6 +119,13 @@ export class WhatsAppThreadsService {
     } else if (opts.employeeId) {
       // Admin-only filter — show only one agent's conversations.
       where.lead = { assignedEmployeeId: opts.employeeId, deletedAt: null };
+    }
+
+    if (opts.needsReply) {
+      // "Pending" tab semantic: threads where the SLA clock is running on
+      // the agent. responseDeadlineAt is set whenever a customer message
+      // arrives with no agent reply yet, cleared when the agent replies.
+      and.push({ responseDeadlineAt: { not: null } });
     }
 
     if (opts.search) {

@@ -56,9 +56,17 @@ export default function SalesInboxPage() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
+      // The "Pending" tab maps to needsReply (responseDeadlineAt set) — the
+      // literal WhatsAppThreadStatus.PENDING value is never written by any
+      // code path, so filtering by status='PENDING' would always return zero.
       const res = await listThreads({
-        ...(filter !== 'ALL' ? { status: filter } : {}),
+        ...(filter === 'PENDING'
+          ? { needsReply: true }
+          : filter !== 'ALL'
+          ? { status: filter }
+          : {}),
         ...(debouncedSearch ? { search: debouncedSearch } : {}),
+        limit: 100,
       });
       setItems(res.items);
     } finally {

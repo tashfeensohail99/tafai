@@ -192,6 +192,21 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     void reload();
   }, [reload]);
 
+  // Infinite scroll: when the user scrolls within ~80px of the top of the
+  // message list, automatically fetch the next page of older messages.
+  // Same feel as WhatsApp Web — no button to click.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (el.scrollTop < 80 && hasMore && !loadingOlder) {
+        void loadOlder();
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [hasMore, loadingOlder, loadOlder]);
+
   // Realtime: throttle full reloads so a burst of incoming messages on a
   // hot thread doesn't fire one full /messages roundtrip per WhatsApp event.
   // At most one reload per 1.5s; status updates are still patched in place
@@ -715,26 +730,13 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             </div>
           ) : (
             <>
-              {hasMore ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
-                  <button
-                    type="button"
-                    onClick={() => void loadOlder()}
-                    disabled={loadingOlder}
-                    style={{
-                      padding: '6px 14px',
-                      fontSize: 12,
-                      fontWeight: 500,
-                      borderRadius: 999,
-                      background: 'var(--sos-surface-2)',
-                      border: '1px solid var(--sos-border-subtle)',
-                      color: 'var(--sos-text-secondary)',
-                      cursor: loadingOlder ? 'default' : 'pointer',
-                      opacity: loadingOlder ? 0.6 : 1,
-                    }}
-                  >
-                    {loadingOlder ? 'Loading older messages…' : 'Load older messages'}
-                  </button>
+              {/* Infinite scroll — older messages load automatically as the user
+                  scrolls up (see the scroll-listener effect). A thin loading
+                  indicator at the top shows during the fetch; once we've
+                  reached the start of the thread, both disappear. */}
+              {loadingOlder ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0', fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                  Loading older messages…
                 </div>
               ) : null}
               {messages.map((m) => (

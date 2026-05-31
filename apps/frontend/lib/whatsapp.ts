@@ -178,6 +178,8 @@ export function listThreads(opts: {
   status?: WhatsAppThreadStatus;
   assignedToMe?: boolean;
   unassigned?: boolean;
+  /** "Pending" tab — threads awaiting an agent reply (responseDeadlineAt set). */
+  needsReply?: boolean;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;
   search?: string;

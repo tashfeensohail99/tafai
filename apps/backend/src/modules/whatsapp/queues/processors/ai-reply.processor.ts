@@ -194,14 +194,15 @@ export class AiReplyProcessor extends WorkerHost {
       { jobId: outbound.id },
     );
 
-    // Follow-up brochure send: signed URL from storage → outbound DOCUMENT
-    // message. The existing outbound processor will dispatch this via the
-    // Meta Cloud API using the `link` form (no need to upload to Meta).
+    // Follow-up brochure send: store the DURABLE storage key in mediaUrl (not
+    // a pre-signed URL). The outbound processor signs a fresh link at send
+    // time — so Meta always gets a live URL, and the inbox can re-stream the
+    // file from the key forever (a 5-min signed URL would be long dead by the
+    // time an agent opens the thread → "Media unavailable").
     // Marker in payload (`brochureProgramKey`) lets the orchestrator's
     // dedup query skip re-sending the same brochure on this thread.
     if (decision.attachBrochure) {
       try {
-        const signedUrl = await this.storage.getSignedUrl(decision.attachBrochure.s3Key);
         const brochureMsg = await this.prisma.whatsAppMessage.create({
           data: {
             threadId: thread.id,
@@ -211,7 +212,7 @@ export class AiReplyProcessor extends WorkerHost {
             direction: 'OUTBOUND',
             type: 'DOCUMENT',
             status: 'QUEUED',
-            mediaUrl: signedUrl,
+            mediaUrl: decision.attachBrochure.s3Key,
             mediaMimeType: decision.attachBrochure.mimeType,
             sentByEmployeeId: null,
             payload: {

@@ -365,10 +365,28 @@ export class WhatsAppThreadsController {
     // to S3 when the inbound message arrived. `mediaUrl` either holds an S3
     // key (preferred — serve cached bytes) or a "meta:<id>" reference for
     // outbound voice notes we sent (need to re-fetch from Meta).
-    const cachedKey =
+    let cachedKey =
       message.mediaUrl && !message.mediaUrl.startsWith('meta:') && !message.mediaUrl.startsWith('http')
         ? message.mediaUrl
         : null;
+
+    // Brochure repair: brochure documents sent before the durable-key fix
+    // stored a 5-min signed URL in mediaUrl — long expired, so neither the
+    // cached-key path nor the Meta path can serve them ("Media unavailable").
+    // They carry payload.brochureProgramKey, so recover the permanent file
+    // from the botBrochure table. (New brochure sends store the key directly,
+    // so this only kicks in for the historical ones.)
+    if (!cachedKey) {
+      const brochureProgramKey = (message.payload as { brochureProgramKey?: string } | null)
+        ?.brochureProgramKey;
+      if (brochureProgramKey) {
+        const brochure = await this.prisma.botBrochure.findUnique({
+          where: { programKey: brochureProgramKey },
+          select: { s3Key: true },
+        });
+        if (brochure) cachedKey = brochure.s3Key;
+      }
+    }
 
     let binary: Buffer;
     let mimeType: string;
@@ -392,7 +410,9 @@ export class WhatsAppThreadsController {
       mimeType = message.mediaMimeType ?? mime_type ?? 'application/octet-stream';
     }
 
-    const filename = mediaMeta?.filename ?? `${typeKey}.${mimeType.split('/')[1] ?? 'bin'}`;
+    const payloadFilename = (message.payload as { filename?: string } | null)?.filename;
+    const filename =
+      mediaMeta?.filename ?? payloadFilename ?? `${typeKey}.${mimeType.split('/')[1] ?? 'bin'}`;
 
     res.setHeader('Content-Type', mimeType);
     res.setHeader('Content-Length', binary.length);

@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
+import { StorageService } from '../../../storage/storage.service';
 import { WhatsAppMetaClientFactory } from '../../meta/client.factory';
 import { MetaApiError, type MetaSendResponse } from '../../meta/cloud-client';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
@@ -41,6 +42,7 @@ export class OutboundMessageProcessor extends WorkerHost {
     private readonly metaFactory: WhatsAppMetaClientFactory,
     private readonly publisher: WhatsAppRealtimePublisher,
     private readonly timeline: ActivityTimelineService,
+    private readonly storage: StorageService,
   ) {
     super();
   }
@@ -302,13 +304,23 @@ export class OutboundMessageProcessor extends WorkerHost {
       case WhatsAppMessageType.AUDIO:
       case WhatsAppMessageType.DOCUMENT:
       case WhatsAppMessageType.STICKER: {
-        // mediaUrl prefixed with "meta:" means we already have a Meta media_id
-        const isMetaId = message.mediaUrl?.startsWith('meta:');
-        const mediaRef = isMetaId
-          ? { mediaId: message.mediaUrl!.slice(5) }
-          : message.mediaUrl
-            ? { link: message.mediaUrl }
-            : {};
+        // Resolve mediaUrl into a Meta media reference:
+        //   • "meta:<id>"  → we already uploaded to Meta; send by media_id.
+        //   • "http(s)://" → an externally-hosted public URL; send as-is.
+        //   • anything else → a DURABLE storage key (e.g. brochures/C11.pdf).
+        //     Sign a FRESH link right now so Meta fetches a live URL — never a
+        //     5-min-old one that expired while the job sat in the queue, and
+        //     the key stays on the row so the inbox can re-stream it forever.
+        let mediaRef: { mediaId: string } | { link: string } | Record<string, never>;
+        if (message.mediaUrl?.startsWith('meta:')) {
+          mediaRef = { mediaId: message.mediaUrl.slice(5) };
+        } else if (message.mediaUrl?.startsWith('http')) {
+          mediaRef = { link: message.mediaUrl };
+        } else if (message.mediaUrl) {
+          mediaRef = { link: await this.storage.getSignedUrl(message.mediaUrl) };
+        } else {
+          mediaRef = {};
+        }
         // For voice notes the service sets payload.isVoiceNote = true and
         // transcodes the file to OGG/OPUS before upload. We must pass
         // voice: true so Meta renders it as a voice note (waveform + auto-play)
@@ -316,11 +328,18 @@ export class OutboundMessageProcessor extends WorkerHost {
         const isVoiceNote =
           message.type === WhatsAppMessageType.AUDIO &&
           ((message.payload as { isVoiceNote?: boolean } | null)?.isVoiceNote ?? false);
+        // Documents render with a proper filename in WhatsApp when we pass one
+        // (e.g. the brochure's display title). Stored in payload.filename.
+        const filename =
+          message.type === WhatsAppMessageType.DOCUMENT
+            ? ((message.payload as { filename?: string } | null)?.filename ?? undefined)
+            : undefined;
         return client.sendMedia({
           to,
           type: message.type.toLowerCase() as 'image' | 'video' | 'audio' | 'document' | 'sticker',
           ...mediaRef,
           ...(message.body ? { caption: message.body } : {}),
+          ...(filename ? { filename } : {}),
           ...(isVoiceNote ? { voice: true } : {}),
         });
       }

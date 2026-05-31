@@ -16,6 +16,29 @@ import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppWebhookSignatureService } from '../meta/webhook-signature.service';
 import { WHATSAPP_QUEUE, type WebhookIngestJob } from '../queues/queue-contracts';
 
+// NUL (U+0000) built via fromCharCode so no literal NUL byte / escape lands in
+// source. Postgres text/jsonb cannot store NUL; a webhook payload containing
+// one makes whatsAppWebhookEvent.create() throw `22P05`, which 500s the
+// endpoint — and because the ingest job is enqueued only AFTER that create
+// succeeds, Meta retries the same payload forever and the inbound is never
+// processed (dropped). stripNullBytes recursively removes NUL from object keys
+// and string values so the forensic record persists cleanly; nothing else is
+// altered.
+const NUL_CHAR = String.fromCharCode(0);
+
+function stripNullBytes(value: unknown): unknown {
+  if (typeof value === 'string') return value.split(NUL_CHAR).join('');
+  if (Array.isArray(value)) return value.map(stripNullBytes);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k.split(NUL_CHAR).join('')] = stripNullBytes(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 /**
  * Meta webhook receiver — the only public-facing surface of the WhatsApp
  * module besides the dashboard.
@@ -75,7 +98,9 @@ export class WhatsAppWebhooksController {
     const signatureValid = this.signature.verify(rawBody, signatureHeader);
     let payload: unknown = {};
     try {
-      payload = JSON.parse(rawBody.toString('utf8'));
+      // Strip NUL bytes the moment we parse — Postgres can't persist them and
+      // the forensic create() below would otherwise 500 the entire webhook.
+      payload = stripNullBytes(JSON.parse(rawBody.toString('utf8')));
     } catch {
       this.log.warn('Webhook body was not valid JSON');
     }

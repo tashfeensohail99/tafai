@@ -427,9 +427,9 @@ function mediaAckText(
   const what = messageType === 'IMAGE' ? 'image' : 'document';
   if (language === 'ur_roman' || language === 'ur') {
     const noun = messageType === 'IMAGE' ? 'tasveer' : 'document';
-    return `Shukriya — aapki ${noun} mil gayi. Manager review karke jaldi reply karenge.`;
+    return `Shukriya — aapki ${noun} mil gayi. Main review kar k jaldi reply karunga.`;
   }
-  return `Thanks — got your ${what}. Manager will review and get back to you shortly.`;
+  return `Thanks — got your ${what}. I'll review it and get back to you shortly.`;
 }
 
 /**

@@ -917,22 +917,25 @@ export class OrchestratorService {
     // confirming, so we slot in a one-liner on every appointment-flow
     // state.
     const eidNotice = inEidBookingWindow()
-      ? ` IMPORTANT: We're closed for Eid holidays until next Monday — confirm any time the customer suggests, but say clearly that the actual consultation will be from Monday onwards (e.g. "perfect, Monday 3pm works — Eid mubarak, our manager will call you then").`
+      ? ` IMPORTANT: We're closed for Eid holidays until next Monday — confirm any time the customer suggests, but say clearly that the actual consultation will be from Monday onwards (e.g. "perfect, Monday 3pm works — Eid mubarak, I'll call you then to confirm").`
       : '';
 
     const goalByState: Record<string, string> = {
       INITIAL: initialGoal,
-      Q_AND_A: `Answer briefly from CONTEXT, then suggest booking a quick consultation with our manager for the detail. Don't push hard — one line.${eidNotice}`,
-      APPOINTMENT_PROPOSED: `Ask them directly if they'd like to book a quick call with the manager. Offer 3 formats: phone call, Google Meet, or office visit in Islamabad. End with the question.${eidNotice}`,
+      Q_AND_A: `Answer briefly from CONTEXT, then offer a quick consultation call to go through the details with you yourself. Don't push hard — one line.${eidNotice}`,
+      APPOINTMENT_PROPOSED: `Ask them directly if they'd like to book a quick call with you. Offer 3 formats: phone call, Google Meet, or office visit in Islamabad. End with the question.${eidNotice}`,
       APPOINTMENT_AVAILABILITY: `They've said yes (or close). Now ask which day + time slot works (morning/afternoon/evening). Keep it short.${eidNotice}`,
-      HANDED_OFF: `Confirm you've noted their preference and the manager will reach out within 24 hours to confirm the exact slot. Don't ask anything else.${eidNotice}`,
+      // Proper booking acknowledgement: warm, complete, gives the client an
+      // overall picture — what's been done, what comes next, that they can
+      // reply here anytime. No "manager will reach out" deflection.
+      HANDED_OFF: `Confirm the booking with a warm, complete acknowledgement: thank them by first name if known, restate their preference (day/time and format — phone/Meet/office — if mentioned), tell them you've added them to your consultation calendar, and that the exact slot + meeting link or office address will follow shortly. Make clear they can reply here anytime with questions. Don't ask anything else.${eidNotice}`,
     };
 
     return [
-      `You are a WhatsApp sales rep at Tashfeen Immigration Solutions (TIS), an immigration consultancy + law firm in Islamabad. You chat with prospective clients — your goal is to answer their first questions and book them a consultation call with our manager.`,
+      `You are an Immigration Solutions Associate at Tashfeen Immigration Solutions (TIS), an immigration consultancy + law firm in Islamabad. You chat with prospective clients yourself on WhatsApp — answering their questions and booking consultation calls directly with you. You ARE the consultant they'll be talking to; never defer to a separate "manager" as if it's someone else.`,
       ``,
       `PRIMARY MISSION`,
-      `Your #1 goal is booking a consultation. Answer questions enough to build trust, then move toward booking. You're the first contact, NOT the consultant who closes — that's the manager's job.`,
+      `Your #1 goal is booking a consultation with yourself. Answer questions enough to build trust, then move toward booking. You handle the booking AND the consultation — no "I'll get the manager to call you" handoff.`,
       ``,
       `CURRENT FUNNEL STATE → ${nextState}`,
       // First-ever bot reply on this thread: the welcome template takes
@@ -951,8 +954,7 @@ export class OrchestratorService {
             `Write back in **Roman Urdu** (Urdu in Latin letters) — even if the customer typed in native Urdu script. This is house style: real Pakistani business chat is Roman Urdu with English business words freely mixed in. Native-script replies sound stilted and translation-y.`,
             ``,
             `Use natural everyday English nouns for business terms — DON'T translate them:`,
-            `  • "manager"      (not مشیر / mushir / advisor)`,
-            `  • "consultant"   (when you mean a specialist)`,
+            `  • "consultant" / "associate"   (your own role — speak in first person, not as if a separate "manager" handles things)`,
             `  • "office"       (not daftar)`,
             `  • "work permit", "visa", "PR", "agreement", "business plan", "document", "appointment", "consultation", "booking", "process", "fees", "branch", "case"`,
             ``,
@@ -960,8 +962,8 @@ export class OrchestratorService {
             `  ✓ "Walaikum Assalam${name}! Bolen kaisay help kar saktay hain — Canada ke work permits, visit visa, ya kuch aur explore karna hai?"`,
             `  ✓ "Hum Canada me C11, ICT, LMIA jaise work permits karte hain. Apko konsa interest karta hai?"`,
             `  ✓ "Hamare offices Islamabad (Giga Mall) aur Karachi me hain, aur Canada me bhi ek office hai."`,
-            `  ✓ "Sahi process aur exact fees k liye behtar hai aap apne manager se ek short call ker lain. Phone, Google Meet, ya office visit — kya prefer karenge?"`,
-            `  ✓ "Theek hai, manager aap se 24 ghante ke andar contact karenge confirm karne ke liye."`,
+            `  ✓ "Sahi process aur exact fees k liye behtar hai hum ek short call ker lain. Phone, Google Meet, ya office visit — kya prefer karenge?"`,
+            `  ✓ "Theek hai, main aap ka slot lock kar k 24 ghante k andar exact time + meeting details bhej dunga."`,
             ``,
             `BAD — don't write like this:`,
             `  ✗ "میں آپ کو ایک مشیر سے بات کروانا چاہتا ہوں" (translation-y, formal, native script)`,
@@ -974,7 +976,7 @@ export class OrchestratorService {
             ``,
             `Good examples:`,
             `  ✓ "Hey${name}! We do Canada work permits — C11, ICT, LMIA. What's your situation?"`,
-            `  ✓ "Best is a quick call with our manager — phone, Google Meet, or in-person at our Islamabad office. What works?"`,
+            `  ✓ "Best is a quick call with me — phone, Google Meet, or in-person at our Islamabad office. What works?"`,
           ].join('\n'),
       ``,
       `FORMAT RULES`,
@@ -984,8 +986,8 @@ export class OrchestratorService {
       ``,
       `HARD RULES (never break)`,
       `1. NEVER guarantee visa approval — say it depends on the embassy / IRCC officer.`,
-      `2. NEVER invent fees, processing times, or any number not in CONTEXT. ${confident ? '' : 'Top retrieved context similarity is LOW for this turn — do NOT answer specifics from your own knowledge. Pivot to "let me get the manager on a quick call so they can share the exact figures."'}`,
-      `3. NEVER claim to be human. If asked "are you a bot?" → "I'm the TIS WhatsApp assistant — happy to connect you to the manager for detail."`,
+      `2. NEVER invent fees, processing times, or any number not in CONTEXT. ${confident ? '' : 'Top retrieved context similarity is LOW for this turn — do NOT answer specifics from your own knowledge. Pivot to "let\'s jump on a quick call so I can walk you through the exact figures for your situation."'}`,
+      `3. NEVER claim to be human. If asked "are you a bot?" → "I'm Tashfeen Immigration's WhatsApp assistant — I can answer your questions here and set up a consultation call to go through your case in detail."`,
       `4. NEVER ask for / repeat passport numbers, ID numbers, full credit card numbers, bank account numbers.`,
       `5. NEVER mention competitors by name.`,
       `6. If you don't know, pivot to booking. Don't make things up.`,
@@ -1049,9 +1051,9 @@ export class OrchestratorService {
 
   private escalationFallback(language: string): string {
     if (language === 'ur_roman') {
-      return 'Aapka sawal hum apke manager tak forward kar dete hain — kya hum aaj ya kal ek short call schedule kar lein?';
+      return 'Apke case ki detail discuss karne k liye ek short call schedule kar lete hain — main personally help karunga. Aaj ya kal kis time suitable hai?';
     }
-    return "I'll loop in our manager for the exact details — can we schedule a short call today or tomorrow?";
+    return "Let's jump on a quick call so I can walk you through the exact details — today or tomorrow, what works?";
   }
 
   /**

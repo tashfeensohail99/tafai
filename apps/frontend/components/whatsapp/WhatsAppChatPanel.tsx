@@ -94,6 +94,10 @@ interface Props {
 export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack }: Props) {
   const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Pagination state for "Load older messages" — backend pages 50 at a time
+  // (max 200) via the ?before=<oldest> cursor.
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -134,6 +138,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
 
   const { socket } = useWhatsAppSocket();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Used by loadOlder() to skip the auto-scroll-to-bottom on prepend and
+  // restore the visible scroll position after the older messages land.
+  const prependingRef = useRef(false);
+  const preservedScrollRef = useRef<{ height: number; top: number } | null>(null);
   const router = useRouter();
 
   const reload = useCallback(async () => {
@@ -143,6 +151,9 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       const [t, m] = await Promise.all([getThread(threadId), listMessages(threadId)]);
       setThread(t);
       setMessages(m);
+      // Backend page size is 50 — if we got a full page back, older ones may
+      // exist; if we got fewer, we already have the whole thread.
+      setHasMore(m.length >= 50);
       markThreadRead(threadId).catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load conversation');
@@ -150,6 +161,32 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       setLoading(false);
     }
   }, [threadId]);
+
+  // Fetch the next page of OLDER messages (uses the ?before=<oldest> cursor)
+  // and prepend them. The auto-scroll effect detects the prependingRef flag
+  // and preserves the visible position so the user stays where they were.
+  const loadOlder = useCallback(async () => {
+    if (loadingOlder || !hasMore || messages.length === 0) return;
+    setLoadingOlder(true);
+    try {
+      const oldest = messages[0];
+      const before = new Date(oldest.createdAt);
+      if (scrollRef.current) {
+        preservedScrollRef.current = {
+          height: scrollRef.current.scrollHeight,
+          top: scrollRef.current.scrollTop,
+        };
+        prependingRef.current = true;
+      }
+      const older = await listMessages(threadId, { before });
+      setMessages((curr) => [...older, ...curr]);
+      if (older.length < 50) setHasMore(false);
+    } catch {
+      // Best-effort — leave the button visible so the user can retry.
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [loadingOlder, hasMore, messages, threadId]);
 
   useEffect(() => {
     void reload();
@@ -185,9 +222,21 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     };
   }, [socket, threadId, reload]);
 
-  // Auto-scroll to latest message.
+  // Auto-scroll: jump to the latest message when new bottom-side messages
+  // arrive, but PRESERVE the visible position when older messages are
+  // prepended via loadOlder (otherwise the chat would yank to the bottom and
+  // the user would lose their reading place).
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (prependingRef.current && preservedScrollRef.current) {
+      el.scrollTop =
+        el.scrollHeight - preservedScrollRef.current.height + preservedScrollRef.current.top;
+      prependingRef.current = false;
+      preservedScrollRef.current = null;
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages.length]);
 
   const withinWindow = useMemo(() => {
@@ -665,15 +714,39 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               No messages yet
             </div>
           ) : (
-            messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                message={m}
-                onImageClick={(url) => setLightboxUrl(url)}
-                onReply={() => setReplyingTo(m)}
-                allMessages={messages}
-              />
-            ))
+            <>
+              {hasMore ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
+                  <button
+                    type="button"
+                    onClick={() => void loadOlder()}
+                    disabled={loadingOlder}
+                    style={{
+                      padding: '6px 14px',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      borderRadius: 999,
+                      background: 'var(--sos-surface-2)',
+                      border: '1px solid var(--sos-border-subtle)',
+                      color: 'var(--sos-text-secondary)',
+                      cursor: loadingOlder ? 'default' : 'pointer',
+                      opacity: loadingOlder ? 0.6 : 1,
+                    }}
+                  >
+                    {loadingOlder ? 'Loading older messages…' : 'Load older messages'}
+                  </button>
+                </div>
+              ) : null}
+              {messages.map((m) => (
+                <MessageBubble
+                  key={m.id}
+                  message={m}
+                  onImageClick={(url) => setLightboxUrl(url)}
+                  onReply={() => setReplyingTo(m)}
+                  allMessages={messages}
+                />
+              ))}
+            </>
           )}
 
           {/* Drop-zone overlay — appears while the user is dragging a file

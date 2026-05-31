@@ -21,6 +21,7 @@ import {
   type PortalDocumentItem,
 } from '@/lib/portal';
 import { useClientSession } from '@/components/layout/ClientPortalShell';
+import { AttestationPlanPanel } from '@/components/processing/AttestationPlanPanel';
 
 const DOC_STATUS_LABEL: Record<string, string> = {
   NOT_SUBMITTED: 'Not Uploaded',
@@ -331,7 +332,7 @@ function DocumentRow({
           ) : null}
           {doc.attestation?.required ? (
             <div style={{ fontSize: '12px', color: 'var(--sos-violet-strong, var(--sos-text-muted))', marginBottom: '8px' }}>
-              Get this attested ({doc.attestation.chain ? doc.attestation.chain.replace(/->/g, ' → ') : 'official attestation'}) before uploading — it can take ~2 weeks, so start early.
+              Get this attested ({doc.attestation.chain ? doc.attestation.chain.replace(/->/g, ' → ') : 'official attestation'}) before uploading — please start early, it can take time.
             </div>
           ) : null}
 
@@ -617,6 +618,16 @@ export function ClientDocumentPage() {
       </div>
 
       <DocProgressBar docs={docs} />
+
+      <AttestationPlanPanel
+        audience="client"
+        items={docs.map((d) => ({
+          id: d.id,
+          documentName: d.documentName,
+          attestationStatus: d.attestation?.status ?? 'NOT_REQUIRED',
+          attestationChain: d.attestation?.chain ?? null,
+        }))}
+      />
 
       <DocFilterTabs docs={docs} active={filter} onChange={setFilter} />
 

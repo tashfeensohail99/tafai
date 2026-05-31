@@ -56,6 +56,7 @@ import {
 } from '@/lib/processing';
 import { SplitReviewerModal } from '@/components/processing/SplitReviewerModal';
 import { IdentityReconciliationPanel } from '@/components/processing/IdentityReconciliationPanel';
+import { AttestationPlanPanel } from '@/components/processing/AttestationPlanPanel';
 
 const STATUS_TONE: Record<DocumentItemStatus, BadgeTone> = {
   NOT_SUBMITTED: 'neutral',
@@ -565,6 +566,17 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
               <div style={{ marginTop: 8, fontSize: 12, color: 'var(--sos-text-secondary)' }}>{reqMsg}</div>
             ) : null}
           </GlassCard>
+
+          {/* Attestation plan (Phase 4c) — what needs MOFA/HEC/etc., up front */}
+          <AttestationPlanPanel
+            audience="associate"
+            items={items.map((i) => ({
+              id: i.id,
+              documentName: i.documentName,
+              attestationStatus: i.attestationStatus ?? 'NOT_REQUIRED',
+              attestationChain: i.attestationChain ?? null,
+            }))}
+          />
 
           {/* Cross-document identity reconciliation (Phase 4) */}
           <IdentityReconciliationPanel caseId={c.id} />

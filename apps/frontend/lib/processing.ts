@@ -753,6 +753,10 @@ export interface ApiCaseDocumentItem {
   status: DocumentItemStatus;
   latestVersionId: string | null;
   validityExpiryDate: string | null;
+  // Phase 4c — attestation (returned by the checklist `include`; per-case copy).
+  attestationStatus?: string | null; // NOT_REQUIRED | REQUIRED_PENDING | DONE | WAIVED
+  attestationChain?: string | null; // e.g. "HEC->MOFA"
+  whyText?: string | null;
   sortOrder: number;
   isAddedManually: boolean;
   createdAt: string;

@@ -342,7 +342,17 @@ export class WebhookIngestProcessor extends WorkerHost {
     if (call.event === 'terminate') {
       const existing = await this.prisma.whatsAppCall.findUnique({
         where: { waCallId: call.id },
-        select: { id: true, status: true, startedAt: true, assignedEmployeeId: true },
+        select: {
+          id: true,
+          status: true,
+          startedAt: true,
+          assignedEmployeeId: true,
+          direction: true,
+          threadId: true,
+          channelId: true,
+          leadId: true,
+          clientId: true,
+        },
       });
       if (!existing) return;
       const answered = existing.status === 'ANSWERED';
@@ -364,6 +374,19 @@ export class WebhookIngestProcessor extends WorkerHost {
           WHATSAPP_WS_EVENTS.CALL_ENDED,
           { callId: existing.id },
         );
+      }
+      // Inbound call that was never answered → invite the caller to book a
+      // time so the AI bot can schedule a callback/appointment. Guarded by the
+      // 24h window + per-hour dedupe inside the helper. Outbound calls (a rep
+      // dialling out) never trigger a "we missed your call" message.
+      if (!answered && existing.direction === 'INBOUND' && existing.threadId) {
+        await this.maybeSendMissedCallInvite({
+          threadId: existing.threadId,
+          channelId: existing.channelId,
+          leadId: existing.leadId,
+          clientId: existing.clientId,
+          waCallId: call.id,
+        });
       }
       return;
     }
@@ -971,6 +994,83 @@ export class WebhookIngestProcessor extends WorkerHost {
         this.log.log(`auto-ack queued for thread ${thread.id} (agent ${agent.firstName})`);
       }
     }
+  }
+
+  /**
+   * Missed-call auto-reply. When an inbound WhatsApp call goes unanswered we
+   * invite the caller (in-thread) to share a preferred time; their reply flows
+   * into the normal AI bot pipeline, which books the callback/appointment.
+   * Sent as a SYSTEM message (no sentByEmployeeId) so it does NOT disable the
+   * bot — otherwise the bot couldn't pick up the caller's reply.
+   *
+   * Guard rails:
+   *  - Free-form text needs an OPEN 24h customer-service window. A call does
+   *    NOT open that window (only an inbound message does), so a contact who
+   *    only ever called is skipped here — reaching them needs an approved
+   *    template (tracked as a follow-up enhancement).
+   *  - De-duped to at most one invite per thread per hour so a burst of missed
+   *    calls doesn't spam the customer. The per-call idempotency key is a
+   *    second layer against Meta webhook retries.
+   */
+  private async maybeSendMissedCallInvite(args: {
+    threadId: string;
+    channelId: string;
+    leadId: string | null;
+    clientId: string | null;
+    waCallId: string;
+  }): Promise<void> {
+    const now = new Date();
+    const thread = await this.prisma.whatsAppThread.findUnique({
+      where: { id: args.threadId },
+      select: { id: true, windowExpiresAt: true },
+    });
+    if (!thread) return;
+
+    // No open 24h window ⇒ we can't free-form message; skip (template TODO).
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      this.log.debug(`missed-call invite skipped for thread ${args.threadId} (window closed)`);
+      return;
+    }
+
+    // At most one invite per thread per hour.
+    const recent = await this.prisma.whatsAppMessage.findFirst({
+      where: {
+        threadId: args.threadId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) },
+        payload: { path: ['missedCallInvite'], equals: true },
+      },
+      select: { id: true },
+    });
+    if (recent) {
+      this.log.debug(`missed-call invite skipped for thread ${args.threadId} (sent recently)`);
+      return;
+    }
+
+    const body =
+      'Hi 👋 Sorry we missed your call just now! If you’d like, simply reply here ' +
+      'with a day and time that suits you and we’ll arrange a callback/appointment ' +
+      'for you. We’re available Monday–Saturday, 9 AM–6 PM (Pakistan time). 🙏';
+
+    const msg = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: args.threadId,
+        channelId: args.channelId,
+        leadId: args.leadId,
+        clientId: args.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.TEXT,
+        status: WhatsAppMessageStatus.QUEUED,
+        body,
+        // System message (no sentByEmployeeId) → keeps the AI bot active so it
+        // can handle the caller's reply. The flag drives the per-hour dedupe.
+        payload: { missedCallInvite: true } as unknown as Prisma.InputJsonValue,
+        idempotencyKey: `missedcall-${args.waCallId}`,
+      },
+      select: { id: true },
+    });
+    await this.outboundQueue.add('send', { messageId: msg.id }, { jobId: msg.id });
+    this.log.log(`missed-call invite queued for thread ${args.threadId}`);
   }
 
   private async ingestStatus(st: MetaStatus): Promise<void> {

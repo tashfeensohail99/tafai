@@ -18,6 +18,7 @@ import {
   Menu,
   MessageSquare,
   NotebookTabs,
+  PhoneCall,
   Plug2,
   ShieldCheck,
   Sparkles,
@@ -96,6 +97,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageSquare, caption: 'All conversations', permissionKey: 'whatsapp.view_all_inboxes' },
       { label: 'Clients', href: '/admin/clients', icon: Users, caption: 'Converted accounts', permissionKey: 'clients.view_all' },
       { label: 'Appointments', href: '/admin/appointments', icon: CalendarDays, caption: 'Calendar', permissionKey: 'appointments.view_all' },
+      { label: 'Calls', href: '/admin/calls', icon: PhoneCall, caption: 'WhatsApp call log', permissionKey: 'whatsapp.view_all_inboxes' },
       { label: 'Finance', href: '/admin/finance', icon: BadgeDollarSign, caption: 'Invoices & payments', permissionKey: 'finance.view_all' },
       { label: 'Cases', href: '/admin/cases', icon: BriefcaseBusiness, caption: 'Legacy case ledger', permissionKey: 'cases.view_all' },
       { label: 'Processing', href: '/admin/processing', icon: ClipboardList, caption: 'Manager view', permissionKey: 'processing.case.view_all' },
@@ -136,6 +138,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/whatsapp')) return { title: 'WhatsApp conversations', subtitle: 'All threads' };
   if (pathname.startsWith('/admin/clients')) return { title: 'Clients', subtitle: 'Converted accounts' };
   if (pathname.startsWith('/admin/appointments')) return { title: 'Appointments', subtitle: 'Calendar across the business' };
+  if (pathname.startsWith('/admin/calls')) return { title: 'WhatsApp Calls', subtitle: 'Call log — answered, missed, who handled it' };
   if (pathname.startsWith('/admin/finance')) return { title: 'Finance', subtitle: 'Invoices, payments, revenue' };
   if (pathname.startsWith('/admin/cases')) return { title: 'Cases', subtitle: 'Legacy case ledger' };
   if (pathname.startsWith('/admin/processing')) return { title: 'Processing', subtitle: 'Manager view' };

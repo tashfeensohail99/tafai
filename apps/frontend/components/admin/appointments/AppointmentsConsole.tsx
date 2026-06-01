@@ -27,7 +27,7 @@ import {
 import { apiFetch, buildQuery } from '@/lib/api-client';
 import { downloadCsv } from '@/lib/csv-download';
 import { useAdminSession } from '@/components/layout/AdminShell';
-import { PageHeader, GhostButton, PrimaryButton, EmptyState } from '@/components/sales-v2/ui';
+import { PageHeader, GhostButton, PrimaryButton, EmptyState, MetricCard } from '@/components/sales-v2/ui';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { LoadingState } from '@/components/shared/LoadingState';
 import { ErrorState } from '@/components/shared/ErrorState';
@@ -295,48 +295,56 @@ export function AppointmentsConsole() {
         }
       />
 
-      {/* KPI strip — clickable scopes */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+      {/* KPI strip — design-system MetricCard tiles that double as clickable scopes */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
         <KpiTile
           label="Upcoming"
           value={kpi.total}
+          hint="All upcoming"
+          tone="info"
+          Icon={CalendarDays}
           active={scope === 'all' && !unassignedOnly && !outOfHoursOnly}
           onClick={() => {
             setScope('all');
             setUnassignedOnly(false);
             setOutOfHoursOnly(false);
           }}
-          Icon={CalendarDays}
         />
         <KpiTile
           label="Next 24 hours"
           value={kpi.next24}
+          hint="Within a day"
+          tone="accent"
+          Icon={Clock}
           active={scope === 'next24'}
           onClick={() => setScope((s) => (s === 'next24' ? 'all' : 'next24'))}
-          Icon={Clock}
         />
         <KpiTile
           label="Next 7 days"
           value={kpi.next7}
+          hint="This week"
+          tone="info"
+          Icon={CalendarDays}
           active={scope === 'next7'}
           onClick={() => setScope((s) => (s === 'next7' ? 'all' : 'next7'))}
-          Icon={CalendarDays}
         />
         <KpiTile
           label="Unassigned"
           value={kpi.unassigned}
-          warn={kpi.unassigned > 0}
+          hint="Need an owner"
+          tone={kpi.unassigned > 0 ? 'warning' : 'neutral'}
+          Icon={Users}
           active={unassignedOnly}
           onClick={() => setUnassignedOnly((v) => !v)}
-          Icon={Users}
         />
         <KpiTile
           label="Out of hours"
           value={kpi.outside}
-          warn={kpi.outside > 0}
+          hint="Outside 9–6 PKT"
+          tone={kpi.outside > 0 ? 'warning' : 'neutral'}
+          Icon={Clock}
           active={outOfHoursOnly}
           onClick={() => setOutOfHoursOnly((v) => !v)}
-          Icon={Clock}
         />
       </div>
 
@@ -427,7 +435,7 @@ export function AppointmentsConsole() {
             <div
               key={g.id ?? 'unassigned'}
               className="sos-glass sos-glass--panel"
-              style={{ padding: 14, borderRadius: 12, borderLeft: g.id === null ? '3px solid var(--sos-status-warning)' : '3px solid var(--sos-brand-primary)' }}
+              style={{ padding: 14, borderRadius: 12, ...(g.id === null ? { borderLeft: '3px solid var(--sos-status-warning)' } : {}) }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -468,46 +476,48 @@ export function AppointmentsConsole() {
 function KpiTile({
   label,
   value,
+  hint,
+  tone,
   active,
-  warn,
   onClick,
   Icon,
 }: {
   label: string;
   value: number;
+  hint?: string;
+  tone: 'accent' | 'warm' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
   active?: boolean;
-  warn?: boolean;
   onClick: () => void;
   Icon: typeof CalendarDays;
 }) {
-  const accent = warn ? 'var(--sos-status-warning)' : 'var(--sos-brand-primary)';
+  // Wrap the design-system MetricCard so the KPI strip matches the rest of the
+  // admin (employees, etc.) exactly; the active scope shows as a subtle ring.
   return (
     <button
       type="button"
       onClick={onClick}
-      className="sos-glass sos-glass--soft"
+      aria-pressed={active}
       style={{
+        display: 'block',
+        width: '100%',
         textAlign: 'left',
-        padding: '12px 14px',
-        borderRadius: 12,
+        padding: 0,
+        border: 'none',
+        background: 'none',
         cursor: 'pointer',
-        border: active ? `1.5px solid ${accent}` : '1px solid var(--sos-border-subtle)',
-        boxShadow: active ? `0 0 0 3px color-mix(in srgb, ${accent} 18%, transparent)` : undefined,
-        transition: 'border 120ms, box-shadow 120ms',
+        borderRadius: 'var(--sos-radius-panel, 16px)',
+        boxShadow: active ? '0 0 0 2px var(--sos-brand-primary)' : 'none',
+        transition: 'box-shadow 140ms ease',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 22, fontWeight: 700, color: warn && value > 0 ? 'var(--sos-status-warning)' : 'var(--sos-text-primary)' }}>{value}</span>
-        <Icon size={16} color={warn && value > 0 ? 'var(--sos-status-warning)' : 'var(--sos-text-muted)'} />
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 2 }}>{label}</div>
+      <MetricCard label={label} value={value} hint={hint} tone={tone} Icon={Icon} />
     </button>
   );
 }
 
 function Segmented({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string; Icon: typeof CalendarDays }[] }) {
   return (
-    <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 10, background: 'var(--sos-surface-1)', border: '1px solid var(--sos-border-subtle)' }}>
+    <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 12, background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)' }}>
       {options.map((o) => {
         const active = value === o.value;
         return (
@@ -521,12 +531,13 @@ function Segmented({ value, onChange, options }: { value: string; onChange: (v: 
               gap: 6,
               padding: '6px 12px',
               borderRadius: 8,
-              border: 'none',
               cursor: 'pointer',
               fontSize: 13,
               fontWeight: active ? 600 : 500,
-              background: active ? 'var(--sos-brand-primary)' : 'transparent',
-              color: active ? 'var(--sos-text-inverse, #fff)' : 'var(--sos-text-secondary)',
+              background: active ? 'var(--sos-brand-primary-soft)' : 'transparent',
+              color: active ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)',
+              border: `1px solid ${active ? 'var(--sos-brand-primary-border)' : 'transparent'}`,
+              transition: 'all 140ms ease',
             }}
           >
             <o.Icon size={14} />
@@ -611,17 +622,18 @@ function AppointmentRow({
   const c = contactOf(a);
   const outside = isOutsideOfficeHours(new Date(a.scheduledAt));
   const assignee = assigneeName(a);
-  const typeColor = TYPE_META[typeKeyOf(a.appointmentType)].color;
 
+  // Neutral card by default — color is reserved for meaning (the type icon and
+  // the amber out-of-hours flag), matching the muted admin aesthetic.
   const cell: CSSProperties = {
     display: 'flex',
     gap: 12,
     padding: dense ? '8px 10px' : '12px 14px',
     borderRadius: 10,
-    background: 'var(--sos-surface-1)',
+    background: 'var(--sos-surface-2)',
     border: '1px solid var(--sos-border-subtle)',
-    borderLeft: outside ? '3px solid var(--sos-status-warning)' : `3px solid ${typeColor}`,
     alignItems: 'flex-start',
+    ...(outside ? { borderLeft: '3px solid var(--sos-status-warning)' } : {}),
   };
 
   return (
@@ -703,11 +715,11 @@ function ListView({ rows, onEdit, onCancel }: { rows: AppointmentRecord[]; onEdi
     textAlign: 'left',
     fontSize: 11,
     fontWeight: 700,
-    letterSpacing: '0.04em',
+    letterSpacing: '0.07em',
     textTransform: 'uppercase',
     color: 'var(--sos-text-muted)',
     background: 'var(--sos-surface-1)',
-    borderBottom: '1px solid var(--sos-border-subtle)',
+    borderBottom: '1px solid var(--sos-divider)',
     whiteSpace: 'nowrap',
   };
   const td: CSSProperties = { padding: '12px 16px', fontSize: 13, color: 'var(--sos-text-secondary)', verticalAlign: 'middle' };
@@ -732,7 +744,12 @@ function ListView({ rows, onEdit, onCancel }: { rows: AppointmentRecord[]; onEdi
               const c = contactOf(a);
               const assignee = assigneeName(a);
               return (
-                <tr key={a.id} style={{ borderTop: idx === 0 ? 'none' : '1px solid var(--sos-border-subtle)' }}>
+                <tr
+                  key={a.id}
+                  style={{ borderTop: idx === 0 ? 'none' : '1px solid var(--sos-divider)', transition: 'background 140ms' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--sos-surface-hover)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{formatPktWhen(a.scheduledAt)}</td>
                   <td style={td}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

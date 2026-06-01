@@ -59,20 +59,18 @@ const HISTORY_TURNS = 10;
 const APPOINTMENT_NUDGE_AFTER_TURNS = 2;
 
 /**
- * Eid holiday window. While we're inside this window the bot still books
- * appointments end-to-end — but it floors every slot to this cutoff (so
- * the earliest possible booking is Monday 09:00 PKT) and the LLM is
- * instructed to tell the customer slots resume on Monday onwards.
+ * Holiday booking floor. When set to a FUTURE instant, the bot still books
+ * end-to-end but floors every slot to this cutoff AND the LLM is told to say
+ * consultations resume then (see `eidNotice`). When set to a PAST instant —
+ * the normal state — the window is inactive: no holiday notice, no flooring.
  *
- * Set to a fixed UTC instant rather than "Asia/Karachi local Monday" so
- * the comparison is unambiguous across server / DB timezones. 2026-06-01
- * 00:00 PKT === 2026-05-31 19:00 UTC.
- *
- * To extend or remove the holiday: push this Date out / set it to a
- * past instant. No deploy gymnastics needed beyond the date change.
+ * Eid 2026 is over and we're back to normal hours (Mon–Sat), so this is parked
+ * in the past and the holiday notice is OFF. To re-enable for a future holiday,
+ * set it to the return date as a fixed UTC instant (e.g. a Monday 00:00 PKT ===
+ * the preceding Sunday 19:00 UTC). No other change needed.
  */
-const APPOINTMENT_BOOKING_FLOOR = new Date('2026-05-31T19:00:00.000Z');
-const APPOINTMENT_BOOKING_FLOOR_DEFAULT_HOUR_PKT = 10; // 10:00 AM Mon
+const APPOINTMENT_BOOKING_FLOOR = new Date('2020-01-01T00:00:00.000Z');
+const APPOINTMENT_BOOKING_FLOOR_DEFAULT_HOUR_PKT = 10; // 10:00 AM (only used while a future floor is active)
 
 /** True while we're still before the booking floor (Eid window active). */
 function inEidBookingWindow(now: Date = new Date()): boolean {
@@ -106,13 +104,15 @@ function applyEidFloor(proposed: Date): Date {
 // timezone (Asia/Karachi / PKT) — the same convention applyEidFloor uses.
 const OFFICE_OPEN_HOUR = 9; // 09:00
 const OFFICE_CLOSE_HOUR = 18; // 18:00 (6 PM); bookable window is [09:00, 18:00)
-const OFFICE_HOURS = '9 AM–6 PM (Pakistan time)';
+const OFFICE_HOURS = 'Monday–Saturday, 9 AM–6 PM (Pakistan time)';
 const OFFICE_ADDRESS =
   'Office No. 3029B, 3rd Floor, World Trade Centre, Giga Mall, Sector F, DHA Phase 2, Islamabad';
 
 /**
- * Clamp a proposed slot into office hours. Before opening → 09:00 the same day;
- * at/after closing → 09:00 the next day. Minutes within an open hour are kept.
+ * Clamp a proposed slot into office hours AND working days. Before opening →
+ * 09:00 the same day; at/after closing → 09:00 the next day; minutes within an
+ * open hour are kept. Working days are Monday–Saturday, so a slot that lands on
+ * Sunday (getDay() === 0) is pushed to Monday, keeping the in-range hour.
  */
 function clampToOfficeHours(proposed: Date): Date {
   const d = new Date(proposed);
@@ -122,6 +122,10 @@ function clampToOfficeHours(proposed: Date): Date {
   } else if (h >= OFFICE_CLOSE_HOUR) {
     d.setDate(d.getDate() + 1);
     d.setHours(OFFICE_OPEN_HOUR, 0, 0, 0);
+  }
+  // Closed Sunday — working week is Mon–Sat. Push Sunday → Monday (same hour).
+  if (d.getDay() === 0) {
+    d.setDate(d.getDate() + 1);
   }
   return d;
 }

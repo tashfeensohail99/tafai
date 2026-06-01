@@ -3053,6 +3053,18 @@ model WhatsAppThread {
   // each turn so the next turn knows where we are in the funnel.
   aiState           String   @default("INITIAL")
 
+  // --- Outbound call permission (Meta business-initiated calls) ------------
+  // A business-initiated call requires the user to have granted call permission
+  // first — an inbound call from them does NOT count. This is a best-effort
+  // HINT mirrored from the permission-response webhook; the source of truth is
+  // Meta, which rejects an unpermitted call. NULL = never requested.
+  //   PENDING   → we sent a call_permission_request, awaiting their tap
+  //   GRANTED   → they allowed; valid until callPermissionExpiresAt (~7 days)
+  //   REJECTED  → they declined
+  callPermissionStatus     String?
+  callPermissionUpdatedAt  DateTime?
+  callPermissionExpiresAt  DateTime?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

@@ -390,8 +390,46 @@ export class WebhookIngestProcessor extends WorkerHost {
       }
       return;
     }
-    // Only act on the incoming "connect" event (carries the SDP offer in
-    // Phase 1). Intermediate "ringing" events are ignored.
+    // Look up any existing row for this call id up front — it tells us whether
+    // this is the answer to an OUTBOUND call we placed, and dedupes inbound.
+    const existingRow = await this.prisma.whatsAppCall.findUnique({
+      where: { waCallId: call.id },
+      select: { id: true, direction: true, assignedEmployeeId: true },
+    });
+
+    // Business-initiated (OUTBOUND) connect = the user ACCEPTED a call we
+    // placed; this webhook carries their SDP ANSWER. Relay it to the initiating
+    // rep's browser (which applies it as the remote description) and mark the
+    // call answered. Never create a lead/thread or ring anyone here.
+    if (
+      call.event === 'connect' &&
+      (call.direction === 'BUSINESS_INITIATED' || existingRow?.direction === 'OUTBOUND')
+    ) {
+      if (!existingRow) {
+        this.log.warn(`outbound connect for unknown call ${call.id}`);
+        return;
+      }
+      const answerSdp = call.session?.sdp ?? null;
+      await this.prisma.whatsAppCall.update({
+        where: { id: existingRow.id },
+        data: {
+          status: 'ANSWERED',
+          sdpAnswer: answerSdp ?? undefined,
+          event: 'connect',
+          startedAt: new Date(),
+        },
+      });
+      if (existingRow.assignedEmployeeId && answerSdp) {
+        await this.publisher.publishToEmployee(
+          existingRow.assignedEmployeeId,
+          WHATSAPP_WS_EVENTS.CALL_ANSWERED,
+          { callId: existingRow.id, sdpAnswer: answerSdp },
+        );
+      }
+      return;
+    }
+
+    // From here only INBOUND (user-initiated) "connect" events matter.
     if (call.event && call.event !== 'connect') return;
 
     const waContactId = call.from;
@@ -399,11 +437,7 @@ export class WebhookIngestProcessor extends WorkerHost {
     const phone = waContactId.startsWith('+') ? waContactId : `+${waContactId}`;
 
     // Dedupe — Meta retries webhooks; one Call row per waCallId.
-    const dupe = await this.prisma.whatsAppCall.findUnique({
-      where: { waCallId: call.id },
-      select: { id: true },
-    });
-    if (dupe) {
+    if (existingRow) {
       this.log.debug(`dedup call ${call.id}`);
       return;
     }

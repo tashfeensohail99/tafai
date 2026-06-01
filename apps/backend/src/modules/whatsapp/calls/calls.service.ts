@@ -1,6 +1,17 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+  BadGatewayException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import {
+  Prisma,
+  WhatsAppMessageDirection,
+  WhatsAppMessageType,
+  WhatsAppMessageStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WhatsAppRealtimePublisher } from '../realtime/publisher.service';
@@ -224,5 +235,161 @@ export class WhatsAppCallsService {
       answered,
       avgDurationSeconds: Math.round(durAgg._avg.durationSeconds ?? 0),
     };
+  }
+
+  // ── Outbound (business-initiated) calling ────────────────────────────────
+
+  /** Resolve the acting user's employee row (the calling rep). */
+  private async employeeIdForUser(userId: string): Promise<string | null> {
+    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
+    return emp?.id ?? null;
+  }
+
+  /** Load a thread + its channel (for the Meta client), or 404. */
+  private async threadWithChannel(threadId: string) {
+    if (!threadId) throw new BadRequestException('Missing threadId');
+    const thread = await this.prisma.whatsAppThread.findUnique({
+      where: { id: threadId },
+      select: {
+        id: true,
+        channelId: true,
+        waContactId: true,
+        leadId: true,
+        clientId: true,
+        windowExpiresAt: true,
+        callPermissionStatus: true,
+        callPermissionExpiresAt: true,
+      },
+    });
+    if (!thread) throw new NotFoundException('Conversation not found');
+    const channel = await this.prisma.whatsAppChannel.findUnique({ where: { id: thread.channelId } });
+    if (!channel) throw new NotFoundException('WhatsApp channel not found for conversation');
+    return { thread, channel };
+  }
+
+  /**
+   * Request permission to call this contact. Meta requires explicit opt-in
+   * before ANY business-initiated call (an inbound call from them does not
+   * count). Sends the interactive `call_permission_request` (needs an open 24h
+   * window), records a display message, and marks the thread permission PENDING.
+   */
+  async requestCallPermission(threadId: string, userId: string) {
+    const { thread, channel } = await this.threadWithChannel(threadId);
+    const now = new Date();
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestException(
+        'The 24-hour messaging window is closed — send a message first, then request call permission.',
+      );
+    }
+    const senderEmployeeId = await this.employeeIdForUser(userId);
+    const bodyText =
+      'We’d like to call you on WhatsApp to discuss your application. ' +
+      'It’s a free call over your internet connection. May we call you?';
+
+    const client = this.metaFactory.forChannel(channel);
+    let wamid: string | null = null;
+    try {
+      const res = await client.sendCallPermissionRequest({ to: thread.waContactId, bodyText });
+      wamid = res.messages?.[0]?.id ?? null;
+    } catch (err) {
+      throw new BadGatewayException(
+        err instanceof Error ? err.message : 'Could not send the call-permission request',
+      );
+    }
+
+    await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: channel.id,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.TEXT,
+        status: WhatsAppMessageStatus.SENT,
+        body: `🔔 Requested permission to call. “${bodyText}”`,
+        sentByEmployeeId: senderEmployeeId,
+        waMessageId: wamid ?? undefined,
+        payload: { callPermissionRequest: true } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    await this.prisma.whatsAppThread.update({
+      where: { id: thread.id },
+      data: {
+        callPermissionStatus: 'PENDING',
+        callPermissionUpdatedAt: now,
+        lastMessageAt: now,
+        lastMessagePreview: '🔔 Call permission requested',
+      },
+    });
+    this.log.log(`call-permission request sent for thread ${thread.id}`);
+    return { ok: true };
+  }
+
+  /**
+   * Place an OUTBOUND (business-initiated) call. The rep's browser supplies an
+   * SDP OFFER; we relay it to Meta via action=connect. Meta enforces that the
+   * user has granted call permission — a permission failure surfaces as a clear,
+   * actionable error. On success we create the call row (RINGING) and return its
+   * id; the user's SDP ANSWER arrives later on the connect webhook and is
+   * relayed to the rep's browser via the CALL_ANSWERED event.
+   */
+  async initiateOutbound(threadId: string, sdpOffer: string, userId: string) {
+    if (!sdpOffer) throw new BadRequestException('Missing SDP offer');
+    const { thread, channel } = await this.threadWithChannel(threadId);
+    const senderEmployeeId = await this.employeeIdForUser(userId);
+
+    const client = this.metaFactory.forChannel(channel);
+    let callId = '';
+    try {
+      const res = await client.initiateCall({ to: thread.waContactId, sdpOffer });
+      callId = res.callId;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not place the call';
+      // Meta rejects calls when the user hasn't granted permission — translate
+      // to a clear next step instead of a raw Meta error code.
+      if (/permission|consent|not allowed|opt[- ]?in|1014|139\d{3}/i.test(msg)) {
+        throw new BadRequestException(
+          'This customer hasn’t allowed WhatsApp calls yet. Use “Request call permission” first, then call once they tap Allow.',
+        );
+      }
+      throw new BadGatewayException(msg);
+    }
+    if (!callId) throw new BadGatewayException('Meta did not return a call id');
+
+    const now = new Date();
+    const callRow = await this.prisma.whatsAppCall.create({
+      data: {
+        threadId: thread.id,
+        channelId: channel.id,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        waCallId: callId,
+        direction: 'OUTBOUND',
+        status: 'RINGING',
+        event: 'connect',
+        sdpOffer,
+        assignedEmployeeId: senderEmployeeId,
+        answeredByEmployeeId: senderEmployeeId,
+        startedAt: now,
+      },
+      select: { id: true },
+    });
+
+    // A successful initiate means permission IS granted — reflect the hint
+    // (valid ~7 days per Meta). Best-effort; never block the call on this.
+    await this.prisma.whatsAppThread
+      .update({
+        where: { id: thread.id },
+        data: {
+          callPermissionStatus: 'GRANTED',
+          callPermissionUpdatedAt: now,
+          callPermissionExpiresAt: new Date(now.getTime() + 7 * 24 * 3600 * 1000),
+        },
+      })
+      .catch(() => undefined);
+
+    this.log.log(`outbound call ${callRow.id} (waCallId ${callId}) initiated for thread ${thread.id}`);
+    return { callId: callRow.id };
   }
 }

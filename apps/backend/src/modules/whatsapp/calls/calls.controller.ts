@@ -48,6 +48,22 @@ export class WhatsAppCallsController {
     });
   }
 
+  // ── Outbound (business-initiated) calling ────────────────────────────────
+  // Any authenticated employee may request permission / place a call for a
+  // conversation (same auth as the inbound answer/reject/hangup actions).
+  @Post('permission')
+  requestPermission(@Body() body: { threadId: string }, @CurrentUser() user: RequestUser) {
+    return this.calls.requestCallPermission(body?.threadId, user.id);
+  }
+
+  @Post('outbound')
+  outbound(
+    @Body() body: { threadId: string; sdpOffer: string },
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.calls.initiateOutbound(body?.threadId, body?.sdpOffer, user.id);
+  }
+
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.calls.getForDock(id);

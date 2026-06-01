@@ -82,6 +82,11 @@ export const WHATSAPP_WS_EVENTS = {
   // (Phase 1 softphone). CALL_ENDED fires on terminate with the final duration.
   CALL_INCOMING: 'whatsapp.call.incoming',
   CALL_ENDED: 'whatsapp.call.ended',
+  // Outbound (business-initiated): the user accepted; carries their SDP answer
+  // for the initiating rep's browser to apply as the remote description.
+  CALL_ANSWERED: 'whatsapp.call.answered',
+  // A call-permission request was answered (granted/rejected) — UI hint refresh.
+  CALL_PERMISSION: 'whatsapp.call.permission',
 } as const;
 
 export type WhatsAppWsEvent = (typeof WHATSAPP_WS_EVENTS)[keyof typeof WHATSAPP_WS_EVENTS];

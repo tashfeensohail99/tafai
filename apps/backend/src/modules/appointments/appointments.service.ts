@@ -156,7 +156,7 @@ export class AppointmentsService {
       return [];
     }
 
-    return this.prisma.appointment.findMany({
+    const rows = await this.prisma.appointment.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
         ...(query.leadId ? { leadId: query.leadId } : {}),
@@ -207,6 +207,98 @@ export class AppointmentsService {
       },
       orderBy: { scheduledAt: 'asc' },
     });
+
+    // Appointment has no `assignedEmployee` Prisma relation — resolve the
+    // assignee names in one extra query and merge them onto each row so the
+    // admin list can show "Assigned to".
+    const empIds = [
+      ...new Set(rows.map((r) => r.assignedEmployeeId).filter((x): x is string => !!x)),
+    ];
+    const emps = empIds.length
+      ? await this.prisma.employee.findMany({
+          where: { id: { in: empIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const empById = new Map(emps.map((e) => [e.id, e]));
+    return rows.map((r) => ({
+      ...r,
+      assignedEmployee: r.assignedEmployeeId ? empById.get(r.assignedEmployeeId) ?? null : null,
+    }));
+  }
+
+  /**
+   * Admin overview for the appointments dashboard — counts over upcoming
+   * (future, active) appointments: timeframe windows, by-status, per-salesperson
+   * load, unassigned, and how many fall outside office hours. Computed from one
+   * query (small working set) so there's no aggregation plumbing.
+   */
+  async getAdminOverview() {
+    const now = new Date();
+    const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const in7d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const future = await this.prisma.appointment.findMany({
+      where: {
+        status: {
+          in: [
+            AppointmentStatus.SCHEDULED,
+            AppointmentStatus.CONFIRMED,
+            AppointmentStatus.RESCHEDULED,
+          ],
+        },
+        scheduledAt: { gte: now },
+      },
+      select: {
+        scheduledAt: true,
+        status: true,
+        assignedEmployeeId: true,
+      },
+    });
+
+    const byStatus: Record<string, number> = {};
+    const countById = new Map<string, number>();
+    let unassigned = 0;
+    let next24 = 0;
+    let next7 = 0;
+    let outsideHours = 0;
+
+    for (const a of future) {
+      byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
+      if (a.scheduledAt <= in24h) next24++;
+      if (a.scheduledAt <= in7d) next7++;
+      const h = pktHour(a.scheduledAt);
+      if (h < OFFICE_OPEN_HOUR || h >= OFFICE_CLOSE_HOUR) outsideHours++;
+      if (!a.assignedEmployeeId) {
+        unassigned++;
+      } else {
+        countById.set(a.assignedEmployeeId, (countById.get(a.assignedEmployeeId) ?? 0) + 1);
+      }
+    }
+
+    // Appointment has no assignedEmployee relation — resolve names separately.
+    const emps = countById.size
+      ? await this.prisma.employee.findMany({
+          where: { id: { in: [...countById.keys()] } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const nameById = new Map(
+      emps.map((e) => [e.id, `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() || 'Unknown']),
+    );
+    const byEmployee = [...countById.entries()]
+      .map(([id, count]) => ({ name: nameById.get(id) ?? 'Unknown', count }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      total: future.length,
+      next24,
+      next7,
+      outsideHours,
+      unassigned,
+      byStatus,
+      byEmployee,
+    };
   }
 
   async findByIdAccessible(id: string, user: RequestUser) {

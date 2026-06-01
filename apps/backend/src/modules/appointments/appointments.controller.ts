@@ -55,6 +55,12 @@ export class AppointmentsController {
     return this.appointmentsService.reshiftOutOfHours(true, user);
   }
 
+  @Get('admin/overview')
+  @RequirePermissions('appointments.view_all')
+  adminOverview() {
+    return this.appointmentsService.getAdminOverview();
+  }
+
   @Get('export.csv')
   @RequirePermissions('reports.export')
   async exportCsv(

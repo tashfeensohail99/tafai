@@ -6,6 +6,7 @@ import type { DataTableColumn } from '@/components/shared/DataTable';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { apiFetch } from '@/lib/api-client';
 import { OfficeHoursCleanupCard } from '@/components/admin/OfficeHoursCleanupCard';
+import { AppointmentsDashboard } from '@/components/admin/AppointmentsDashboard';
 
 interface LeadOption {
   id: string;
@@ -48,12 +49,14 @@ interface AppointmentRecord {
   status: string;
   lead?: { firstName?: string | null; lastName?: string | null; phone?: string | null } | null;
   client?: { firstName?: string | null; lastName?: string | null; phone?: string | null } | null;
+  assignedEmployee?: { firstName?: string | null; lastName?: string | null } | null;
   case?: { caseNumber?: string | null } | null;
 }
 
 const columns: DataTableColumn<AppointmentRecord>[] = [
   { key: 'title', header: 'Title', render: (row) => row.title },
   { key: 'owner', header: 'Owner', render: (row) => row.lead ? `${row.lead.firstName ?? ''} ${row.lead.lastName ?? ''}`.trim() : row.client ? `${row.client.firstName ?? ''} ${row.client.lastName ?? ''}`.trim() : '—' },
+  { key: 'assignedTo', header: 'Assigned to', render: (row) => row.assignedEmployee ? (`${row.assignedEmployee.firstName ?? ''} ${row.assignedEmployee.lastName ?? ''}`.trim() || '—') : 'Unassigned' },
   { key: 'type', header: 'Type', render: (row) => row.appointmentType },
   { key: 'scheduledAt', header: 'Scheduled At', render: (row) => new Date(row.scheduledAt).toLocaleString() },
   { key: 'case', header: 'Case', render: (row) => row.case?.caseNumber ?? '—' },
@@ -86,6 +89,7 @@ export default function AppointmentsPage() {
 
   return (
     <>
+    <AppointmentsDashboard />
     <OfficeHoursCleanupCard />
     <ResourceManager<AppointmentRecord>
       permissionKey="appointments.view_all"
@@ -109,6 +113,7 @@ export default function AppointmentsPage() {
             { label: 'Rescheduled', value: 'RESCHEDULED' },
           ],
         },
+        { key: 'assignedEmployeeId', label: 'Assigned to', options: employeeOptions },
       ]}
       fields={[
         { name: 'leadId', label: 'Lead', type: 'select', options: leadOptions },

@@ -21,6 +21,47 @@ import {
 } from './appointments.dto';
 import { RequestUser } from '../../common/types/auth.types';
 
+// Office-hours backfill (PKT = UTC+5, no DST) — computed explicitly so it's
+// correct regardless of the process timezone. Window: [09:00, 18:00) PKT.
+const PKT_OFFSET_MS = 5 * 60 * 60 * 1000;
+const OFFICE_OPEN_HOUR = 9;
+const OFFICE_CLOSE_HOUR = 18;
+
+function pktHour(d: Date): number {
+  return new Date(d.getTime() + PKT_OFFSET_MS).getUTCHours();
+}
+
+/** Clamp into office hours: before open → 09:00 same PKT day; at/after close → 09:00 next PKT day. */
+function clampToOfficeHoursPkt(d: Date): Date {
+  const h = pktHour(d);
+  if (h >= OFFICE_OPEN_HOUR && h < OFFICE_CLOSE_HOUR) return d;
+  const pkt = new Date(d.getTime() + PKT_OFFSET_MS);
+  let y = pkt.getUTCFullYear();
+  let mo = pkt.getUTCMonth();
+  let da = pkt.getUTCDate();
+  if (h >= OFFICE_CLOSE_HOUR) {
+    const next = new Date(Date.UTC(y, mo, da) + 24 * 60 * 60 * 1000);
+    y = next.getUTCFullYear();
+    mo = next.getUTCMonth();
+    da = next.getUTCDate();
+  }
+  return new Date(Date.UTC(y, mo, da, OFFICE_OPEN_HOUR, 0, 0, 0) - PKT_OFFSET_MS);
+}
+
+function fmtPkt(d: Date): string {
+  return (
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Karachi',
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(d) + ' PKT'
+  );
+}
+
 @Injectable()
 export class AppointmentsService {
   private readonly log = new Logger(AppointmentsService.name);
@@ -32,6 +73,78 @@ export class AppointmentsService {
     private readonly notifications: NotificationsService,
     private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
   ) {}
+
+  /**
+   * One-off cleanup: find future, active appointments scheduled outside office
+   * hours (9 AM–6 PM PKT) and shift them in. apply=false previews (read-only);
+   * apply=true performs the shift. Returns the full affected list either way so
+   * the team can confirm the new times with each client (no auto-messaging).
+   */
+  async reshiftOutOfHours(apply: boolean, user: RequestUser) {
+    const now = new Date();
+    const appts = await this.prisma.appointment.findMany({
+      where: {
+        status: {
+          in: [
+            AppointmentStatus.SCHEDULED,
+            AppointmentStatus.CONFIRMED,
+            AppointmentStatus.RESCHEDULED,
+          ],
+        },
+        scheduledAt: { gte: now },
+      },
+      orderBy: { scheduledAt: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        appointmentType: true,
+        status: true,
+        scheduledAt: true,
+        lead: { select: { firstName: true, lastName: true, phone: true } },
+        client: { select: { firstName: true, lastName: true, phone: true } },
+      },
+    });
+
+    const items = appts
+      .filter((a) => {
+        const h = pktHour(a.scheduledAt);
+        return h < OFFICE_OPEN_HOUR || h >= OFFICE_CLOSE_HOUR;
+      })
+      .map((a) => {
+        const newAt = clampToOfficeHoursPkt(a.scheduledAt);
+        const who =
+          (a.lead ? `${a.lead.firstName ?? ''} ${a.lead.lastName ?? ''}`.trim() : '') ||
+          (a.client ? `${a.client.firstName ?? ''} ${a.client.lastName ?? ''}`.trim() : '') ||
+          a.title;
+        return {
+          id: a.id,
+          who,
+          phone: a.lead?.phone ?? a.client?.phone ?? null,
+          appointmentType: a.appointmentType,
+          status: a.status,
+          currentAt: a.scheduledAt.toISOString(),
+          currentPkt: fmtPkt(a.scheduledAt),
+          newAt: newAt.toISOString(),
+          newPkt: fmtPkt(newAt),
+        };
+      });
+
+    if (apply && items.length > 0) {
+      await this.prisma.$transaction(
+        items.map((x) =>
+          this.prisma.appointment.update({
+            where: { id: x.id },
+            data: { scheduledAt: new Date(x.newAt) },
+          }),
+        ),
+      );
+      this.log.log(
+        `reshiftOutOfHours: ${items.length} appointment(s) moved into office hours by user ${user.id}`,
+      );
+    }
+
+    return { applied: apply, count: items.length, items };
+  }
 
   async findAllAccessible(query: ListAppointmentsQueryDto, user: RequestUser) {
     const canViewAll = user.permissions.includes('appointments.view_all');

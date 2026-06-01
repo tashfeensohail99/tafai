@@ -42,6 +42,19 @@ export class AppointmentsController {
     return this.appointmentsService.findAllAccessible(query, user);
   }
 
+  // One-off office-hours cleanup — preview (read-only) then apply the shift.
+  @Get('admin/out-of-hours')
+  @RequirePermissions('appointments.view_all')
+  previewOutOfHours(@CurrentUser() user: RequestUser) {
+    return this.appointmentsService.reshiftOutOfHours(false, user);
+  }
+
+  @Post('admin/reshift-office-hours')
+  @RequirePermissions('appointments.update')
+  reshiftOfficeHours(@CurrentUser() user: RequestUser) {
+    return this.appointmentsService.reshiftOutOfHours(true, user);
+  }
+
   @Get('export.csv')
   @RequirePermissions('reports.export')
   async exportCsv(

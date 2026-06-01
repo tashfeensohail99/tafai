@@ -5,6 +5,7 @@ import { ResourceManager, type ResourceFieldOption } from '@/components/admin/Re
 import type { DataTableColumn } from '@/components/shared/DataTable';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { apiFetch } from '@/lib/api-client';
+import { OfficeHoursCleanupCard } from '@/components/admin/OfficeHoursCleanupCard';
 
 interface LeadOption {
   id: string;
@@ -84,6 +85,8 @@ export default function AppointmentsPage() {
   }, []);
 
   return (
+    <>
+    <OfficeHoursCleanupCard />
     <ResourceManager<AppointmentRecord>
       permissionKey="appointments.view_all"
       title="Appointments"
@@ -188,5 +191,6 @@ export default function AppointmentsPage() {
         notes: form.notes || undefined,
       })}
     />
+    </>
   );
 }

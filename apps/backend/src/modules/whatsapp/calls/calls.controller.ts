@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { PermissionGuard } from '../../../common/guards/permission.guard';
+import { RequireAnyPermissions } from '../../../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import type { RequestUser } from '../../../common/types/auth.types';
 import { WhatsAppCallsService } from './calls.service';
@@ -18,6 +20,32 @@ export class WhatsAppCallsController {
   @Get('ice')
   ice() {
     return this.calls.getIceServers();
+  }
+
+  // Admin calls history (org-wide). Declared before ':id' so these literal
+  // routes win over the dock's UUID-param route. Gated to managers/admins.
+  @Get('stats')
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermissions('whatsapp.view_all_inboxes')
+  stats() {
+    return this.calls.callStats();
+  }
+
+  @Get()
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermissions('whatsapp.view_all_inboxes')
+  history(
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
+    @Query('direction') direction?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.calls.listHistory({
+      limit: limit ? Number(limit) : undefined,
+      before: before ? new Date(before) : undefined,
+      direction: direction || undefined,
+      status: status || undefined,
+    });
   }
 
   @Get(':id')

@@ -56,6 +56,7 @@ export function CallDock() {
   const ringRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Mirror of the active call id so socket handlers read fresh state.
   const activeIdRef = useRef<string | null>(null);
 
@@ -98,6 +99,10 @@ export function CallDock() {
 
   const teardown = useCallback(() => {
     stopRing();
+    if (ringTimeoutRef.current) {
+      clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = null;
+    }
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -133,8 +138,14 @@ export function CallDock() {
         playRingTone();
         stopRing();
         ringRef.current = setInterval(playRingTone, 3000);
+        // Safety: auto-clear an unanswered ring after 45s (the bell + callback
+        // task already persist the missed call). Cleared on accept/teardown.
+        if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = setTimeout(() => {
+          if (activeIdRef.current === data.callId) teardown();
+        }, 45000);
       },
-      [playRingTone, stopRing],
+      [playRingTone, stopRing, teardown],
     ),
   );
 
@@ -154,6 +165,10 @@ export function CallDock() {
   async function accept() {
     if (!call) return;
     stopRing();
+    if (ringTimeoutRef.current) {
+      clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = null;
+    }
     setPhase('connecting');
     setError(null);
     try {

@@ -335,12 +335,36 @@ export class WebhookIngestProcessor extends WorkerHost {
   private async ingestInboundCall(channelId: string, call: MetaCall): Promise<void> {
     const now = new Date();
 
-    // Terminal event — close out the call row (best-effort) and stop.
+    // Terminal event — the caller (or Meta) ended the call. Close the row out
+    // with the right status + duration, and tell the assigned rep's CallDock to
+    // tear down (whether it was still ringing or already in-call). This is the
+    // Phase-1b fix for "the customer hangs up but the rep's dock stays open".
     if (call.event === 'terminate') {
-      await this.prisma.whatsAppCall.updateMany({
+      const existing = await this.prisma.whatsAppCall.findUnique({
         where: { waCallId: call.id },
-        data: { status: 'ENDED', event: 'terminate', endedAt: now },
+        select: { id: true, status: true, startedAt: true, assignedEmployeeId: true },
       });
+      if (!existing) return;
+      const answered = existing.status === 'ANSWERED';
+      await this.prisma.whatsAppCall.update({
+        where: { id: existing.id },
+        data: {
+          status: answered ? 'ENDED' : 'MISSED',
+          event: 'terminate',
+          endedAt: now,
+          durationSeconds:
+            answered && existing.startedAt
+              ? Math.max(0, Math.round((now.getTime() - existing.startedAt.getTime()) / 1000))
+              : undefined,
+        },
+      });
+      if (existing.assignedEmployeeId) {
+        await this.publisher.publishToEmployee(
+          existing.assignedEmployeeId,
+          WHATSAPP_WS_EVENTS.CALL_ENDED,
+          { callId: existing.id },
+        );
+      }
       return;
     }
     // Only act on the incoming "connect" event (carries the SDP offer in

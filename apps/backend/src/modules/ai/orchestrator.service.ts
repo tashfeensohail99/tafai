@@ -100,6 +100,32 @@ function applyEidFloor(proposed: Date): Date {
   }
   return floor;
 }
+
+// Office hours — every auto-booked consultation (phone / Google Meet / office
+// visit) must land inside the working day. Interpreted in the server's local
+// timezone (Asia/Karachi / PKT) — the same convention applyEidFloor uses.
+const OFFICE_OPEN_HOUR = 9; // 09:00
+const OFFICE_CLOSE_HOUR = 18; // 18:00 (6 PM); bookable window is [09:00, 18:00)
+const OFFICE_HOURS = '9 AM–6 PM (Pakistan time)';
+const OFFICE_ADDRESS =
+  'Office No. 3029B, 3rd Floor, World Trade Centre, Giga Mall, Sector F, DHA Phase 2, Islamabad';
+
+/**
+ * Clamp a proposed slot into office hours. Before opening → 09:00 the same day;
+ * at/after closing → 09:00 the next day. Minutes within an open hour are kept.
+ */
+function clampToOfficeHours(proposed: Date): Date {
+  const d = new Date(proposed);
+  const h = d.getHours();
+  if (h < OFFICE_OPEN_HOUR) {
+    d.setHours(OFFICE_OPEN_HOUR, 0, 0, 0);
+  } else if (h >= OFFICE_CLOSE_HOUR) {
+    d.setDate(d.getDate() + 1);
+    d.setHours(OFFICE_OPEN_HOUR, 0, 0, 0);
+  }
+  return d;
+}
+
 /**
  * Jaccard similarity threshold above which a freshly-composed reply is
  * treated as a duplicate of the last bot outbound on the thread. Token
@@ -548,10 +574,17 @@ export class OrchestratorService {
       // bump it forward to the floor. The bot's HANDED_OFF reply prompt
       // tells the customer slots resume Monday-onwards, so this stays
       // honest end-to-end.
-      const scheduledAt = applyEidFloor(rawScheduledAt);
-      if (rawScheduledAt.getTime() !== scheduledAt.getTime()) {
+      const flooredAt = applyEidFloor(rawScheduledAt);
+      if (rawScheduledAt.getTime() !== flooredAt.getTime()) {
         this.log.log(
-          `auto-book: Eid floor applied — moved ${rawScheduledAt.toISOString()} → ${scheduledAt.toISOString()}`,
+          `auto-book: Eid floor applied — moved ${rawScheduledAt.toISOString()} → ${flooredAt.toISOString()}`,
+        );
+      }
+      // Keep every consultation inside office hours (9 AM–6 PM PKT).
+      const scheduledAt = clampToOfficeHours(flooredAt);
+      if (flooredAt.getTime() !== scheduledAt.getTime()) {
+        this.log.log(
+          `auto-book: office-hours clamp — moved ${flooredAt.toISOString()} → ${scheduledAt.toISOString()}`,
         );
       }
       if (scheduledAt.getTime() < Date.now() - 60_000) {
@@ -596,6 +629,9 @@ export class OrchestratorService {
           appointmentType,
           scheduledAt,
           durationMinutes: 30,
+          // Office visits carry the office address so the confirmation tells
+          // the client exactly where to come; calls/Meets have no location.
+          location: opts.modality === 'IN_PERSON' ? OFFICE_ADDRESS : null,
           notes: `Auto-booked by AI assistant. Client said: "${opts.rawText}"`,
         },
         select: { id: true, scheduledAt: true, durationMinutes: true, appointmentType: true },
@@ -934,7 +970,7 @@ export class OrchestratorService {
       INITIAL: initialGoal,
       Q_AND_A: `Answer briefly from CONTEXT, then offer a quick consultation call to go through the details with you yourself. Don't push hard — one line.${eidNotice}`,
       APPOINTMENT_PROPOSED: `Ask them directly if they'd like to book a quick call with you. Offer 3 formats: phone call, Google Meet, or office visit in Islamabad. End with the question.${eidNotice}`,
-      APPOINTMENT_AVAILABILITY: `They've said yes (or close). Now ask which day + time slot works (morning/afternoon/evening). Keep it short.${eidNotice}`,
+      APPOINTMENT_AVAILABILITY: `They've said yes (or close). Now ask which day + time works for them within our office hours (${OFFICE_HOURS}). Keep it short.${eidNotice}`,
       // Proper booking acknowledgement: warm, complete, gives the client an
       // overall picture — what's been done, what comes next, that they can
       // reply here anytime. No "manager will reach out" deflection.
@@ -971,7 +1007,7 @@ export class OrchestratorService {
             `Good examples (copy this tone):`,
             `  ✓ "Walaikum Assalam${name}! Bolen kaisay help kar saktay hain — Canada ke work permits, visit visa, ya kuch aur explore karna hai?"`,
             `  ✓ "Hum Canada me C11, ICT, LMIA jaise work permits karte hain. Apko konsa interest karta hai?"`,
-            `  ✓ "Hamare offices Islamabad (Giga Mall) aur Karachi me hain, aur Canada me bhi ek office hai."`,
+            `  ✓ "Hamara office Islamabad me hai — World Trade Centre, Giga Mall (3rd Floor). Aap visit kar saktay hain, ya phone/Google Meet pe baat kar lain."`,
             `  ✓ "Sahi process aur exact fees k liye behtar hai hum ek short call ker lain. Phone, Google Meet, ya office visit — kya prefer karenge?"`,
             `  ✓ "Theek hai, main aap ka slot lock kar k 24 ghante k andar exact time + meeting details bhej dunga."`,
             ``,
@@ -1003,7 +1039,8 @@ export class OrchestratorService {
       `6. If you don't know, pivot to booking. Don't make things up.`,
       ``,
       `KNOWN FACTS YOU MAY ALWAYS USE`,
-      `- Offices: Islamabad (Giga Mall, World Trade Center), Karachi, and Canada.`,
+      `- Office: ${OFFICE_ADDRESS}. (This is our only office — do NOT invent other branches.)`,
+      `- Office hours: ${OFFICE_HOURS}. Phone, Google Meet, and office-visit consultations are all booked within these hours.`,
       `- Phone: +92 335-000-1111  ·  Email: info@tashfeenimmigrationsolutions.com`,
       `- Services: Canadian work permits & PR (C11, ICT, SUV, LMIA, RCIP), USA (E2, EB2-NIW), Judicial Review, Visit visas (Canada/UK/Schengen).`,
       `- Written agreement always signed before any payment.`,

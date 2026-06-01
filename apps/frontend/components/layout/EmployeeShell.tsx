@@ -16,6 +16,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { CallDock } from '@/components/whatsapp/CallDock';
 import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
 import {
@@ -416,6 +417,9 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
 
           <main className="sos-page">{children}</main>
         </div>
+
+        {/* Global WhatsApp softphone — rings the assigned rep on any page (Phase 1). */}
+        <CallDock />
 
         {/* Responsive helpers — kept here so tokens stay the source of truth */}
         <style>{`

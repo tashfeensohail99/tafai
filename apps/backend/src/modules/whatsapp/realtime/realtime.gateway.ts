@@ -10,7 +10,7 @@ import {
 import type { Server, Socket } from 'socket.io';
 import IORedis, { Redis } from 'ioredis';
 import { PrismaService } from '../../../common/prisma/prisma.service';
-import { redisOrgChannel } from '../queues/queue-contracts';
+import { redisOrgChannel, redisEmpChannel } from '../queues/queue-contracts';
 
 interface AgentSocketData {
   userId: string;
@@ -62,7 +62,7 @@ export class WhatsAppRealtimeGateway
     const url = this.config.get<string>('app.redis.url') ?? 'redis://localhost:6379';
     this.subscriber = new IORedis(url, { maxRetriesPerRequest: null });
     this.subscriber.on('error', (err) => this.log.error(`redis sub error: ${err.message}`));
-    await this.subscriber.psubscribe('whatsapp:org:*');
+    await this.subscriber.psubscribe('whatsapp:org:*', 'whatsapp:emp:*');
     this.subscriber.on('pmessage', (_pattern, channel, payload) => {
       try {
         const parsed = JSON.parse(payload) as { event: string; data: unknown };
@@ -123,6 +123,10 @@ export class WhatsAppRealtimeGateway
 
       const room = redisOrgChannel(org.id);
       await client.join(room);
+      // Also join a per-employee room so we can ring just this rep (calls).
+      if (user.employee?.id) {
+        await client.join(redisEmpChannel(user.employee.id));
+      }
       client.emit('connected', { ok: true, room });
       this.log.log(`agent ${user.id} connected → ${room}`);
     } catch (err) {

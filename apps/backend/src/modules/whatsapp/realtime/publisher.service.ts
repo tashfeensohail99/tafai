@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import IORedis, { Redis } from 'ioredis';
-import { WHATSAPP_WS_EVENTS, redisOrgChannel, type WhatsAppWsEvent } from '../queues/queue-contracts';
+import { WHATSAPP_WS_EVENTS, redisOrgChannel, redisEmpChannel, type WhatsAppWsEvent } from '../queues/queue-contracts';
 
 /**
  * Single Redis client for publishing WhatsApp realtime events from the
@@ -45,6 +45,23 @@ export class WhatsAppRealtimePublisher implements OnModuleInit, OnModuleDestroy 
     }
     const channel = redisOrgChannel(organizationId);
     await this.client.publish(channel, JSON.stringify({ event, data }));
+  }
+
+  /**
+   * Publish an event to a SINGLE employee (all their connected sockets), e.g.
+   * ringing the assigned rep for an inbound call. The gateway joins each socket
+   * to `whatsapp:emp:{employeeId}` on connect.
+   */
+  async publishToEmployee(
+    employeeId: string,
+    event: WhatsAppWsEvent,
+    data: unknown,
+  ): Promise<void> {
+    if (!this.client) {
+      this.log.warn('publish (emp) before init — dropping event');
+      return;
+    }
+    await this.client.publish(redisEmpChannel(employeeId), JSON.stringify({ event, data }));
   }
 }
 

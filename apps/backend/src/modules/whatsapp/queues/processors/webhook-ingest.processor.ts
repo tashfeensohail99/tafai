@@ -425,7 +425,7 @@ export class WebhookIngestProcessor extends WorkerHost {
       },
     });
 
-    await this.prisma.whatsAppCall.create({
+    const callRow = await this.prisma.whatsAppCall.create({
       data: {
         threadId: thread.id,
         channelId,
@@ -435,8 +435,11 @@ export class WebhookIngestProcessor extends WorkerHost {
         direction: 'INBOUND',
         status: 'RINGING',
         event: call.event ?? 'connect',
+        // SDP offer for the rep's browser to answer (Phase 1 live softphone).
+        sdpOffer: call.session?.sdp ?? null,
         startedAt: now,
       },
+      select: { id: true },
     });
 
     // Same routing engine as inbound messages: sticky → round-robin → online.
@@ -487,33 +490,27 @@ export class WebhookIngestProcessor extends WorkerHost {
           await this.notifications.create({
             userId,
             type: 'WHATSAPP_CALL',
-            title: `📞 Missed WhatsApp call from ${who}`,
+            title: `📞 WhatsApp call from ${who}`,
             body: phone,
             link: lead?.id ? `/sales/leads/${lead.id}` : '/sales/inbox',
           });
         }
+        // Phase 1: ring THIS rep's browser (CallDock). Per-employee channel, so
+        // only the assigned rep's open tabs ring — not every agent in the org.
+        await this.publisher.publishToEmployee(
+          assignedEmployeeId,
+          WHATSAPP_WS_EVENTS.CALL_INCOMING,
+          {
+            callId: callRow.id,
+            from: phone,
+            leadId: lead?.id ?? null,
+            leadName: who,
+            threadId: thread.id,
+          },
+        );
       }
     } catch (err) {
       this.log.warn(`call routing/notify failed for ${call.id}: ${(err as Error).message}`);
-    }
-
-    // Realtime fanout (Phase 1 CallDock will consume this to ring the browser).
-    try {
-      const org = await this.prisma.organization.findFirst({
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      });
-      if (org) {
-        await this.publisher.publishToOrg(org.id, WHATSAPP_WS_EVENTS.CALL_INCOMING, {
-          callId: call.id,
-          from: phone,
-          leadId,
-          clientId,
-          threadId: thread.id,
-        });
-      }
-    } catch (err) {
-      this.log.warn(`call realtime publish failed for ${call.id}: ${(err as Error).message}`);
     }
   }
 

@@ -13,6 +13,7 @@ import { WhatsAppMessagesModule } from './messages/messages.module';
 import { WhatsAppNotificationsModule } from './notifications/notifications.module';
 import { WhatsAppTemplatesModule } from './templates/templates.module';
 import { WhatsAppSettingsModule } from './settings/settings.module';
+import { WhatsAppCallsModule } from './calls/calls.module';
 
 /**
  * Root WhatsApp module. Composes the entire integration.
@@ -45,6 +46,7 @@ import { WhatsAppSettingsModule } from './settings/settings.module';
     WhatsAppNotificationsModule,
     WhatsAppTemplatesModule,
     WhatsAppSettingsModule,
+    WhatsAppCallsModule,
   ],
 })
 export class WhatsAppModule {}

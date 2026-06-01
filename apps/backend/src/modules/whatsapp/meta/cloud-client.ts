@@ -351,6 +351,34 @@ export class MetaCloudClient {
     }
   }
 
+  /**
+   * Read this phone number's settings, including the `calling` config
+   * (status + call_icon_visibility). Requires the number's own access token.
+   */
+  async getPhoneSettings(): Promise<Record<string, unknown>> {
+    try {
+      const res = await this.http.get<Record<string, unknown>>(`/${this.phoneNumberId}/settings`);
+      return res.data;
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
+  /**
+   * Enable user-initiated calling on this number and surface the in-chat call
+   * button (`call_icon_visibility=DEFAULT`). Idempotent on Meta's side.
+   */
+  async enableCalling(): Promise<Record<string, unknown>> {
+    try {
+      const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/settings`, {
+        calling: { status: 'ENABLED', call_icon_visibility: 'DEFAULT' },
+      });
+      return res.data;
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
   private async post(body: Record<string, unknown>): Promise<MetaSendResponse> {
     try {
       const res = await this.http.post<MetaSendResponse>(`/${this.phoneNumberId}/messages`, body);

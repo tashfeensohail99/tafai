@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job, Queue } from 'bullmq';
 import {
+  FollowUpPriority,
   LeadStatus,
   WhatsAppMessageDirection,
   WhatsAppMessageStatus,
@@ -78,12 +79,23 @@ interface MetaStatus {
   pricing?: { category?: string };
   errors?: Array<{ code: number; title?: string; message?: string; error_data?: unknown }>;
 }
+// Inbound call event (Meta Calling API, webhook field 'calls').
+interface MetaCall {
+  id: string;
+  from?: string;
+  to?: string;
+  event?: string; // 'connect' (incoming; carries the SDP offer) | 'ringing' | 'terminate'
+  timestamp?: string;
+  direction?: string; // 'USER_INITIATED' for inbound
+  session?: { sdp?: string; sdp_type?: string };
+}
 interface MetaValue {
   messaging_product: 'whatsapp';
   metadata: { display_phone_number: string; phone_number_id: string };
   contacts?: MetaContact[];
   messages?: MetaMessage[];
   statuses?: MetaStatus[];
+  calls?: MetaCall[];
 }
 interface MetaChange {
   field: string;
@@ -224,8 +236,12 @@ export class WebhookIngestProcessor extends WorkerHost {
     try {
       for (const entry of payload.entry ?? []) {
         for (const change of entry.changes ?? []) {
-          if (change.field !== 'messages') continue;
-          await this.handleValue(change.value);
+          if (change.field === 'messages') {
+            await this.handleValue(change.value);
+          } else if (change.field === 'calls') {
+            // Inbound WhatsApp voice call (Meta Calling API).
+            await this.handleCallsValue(change.value);
+          }
         }
       }
       await this.prisma.whatsAppWebhookEvent.update({
@@ -287,6 +303,217 @@ export class WebhookIngestProcessor extends WorkerHost {
       if (this.phoneLocks.get(phone) === chained) {
         this.phoneLocks.delete(phone);
       }
+    }
+  }
+
+  /**
+   * Inbound WhatsApp **calls** (Meta Calling API, `field: 'calls'`). Phase 0:
+   * we don't answer live yet — we make sure the call is never missed. On the
+   * customer-initiated `connect` event we resolve the caller (client > lead >
+   * new lead), run the SAME assignment engine as messages, log a Call row, and
+   * create a HIGH-priority callback FollowUp + a bell Notification for the
+   * assigned rep. `terminate` closes the row. (Live in-browser answering is
+   * Phase 1.)
+   */
+  private async handleCallsValue(value: MetaValue): Promise<void> {
+    const channel = await this.prisma.whatsAppChannel.findUnique({
+      where: { phoneNumberId: value.metadata.phone_number_id },
+    });
+    if (!channel) {
+      this.log.warn(`no channel for phone_number_id ${value.metadata.phone_number_id} (call)`);
+      return;
+    }
+    for (const call of value.calls ?? []) {
+      try {
+        await this.ingestInboundCall(channel.id, call);
+      } catch (err) {
+        this.log.error(`call ingest failed for ${call.id}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  private async ingestInboundCall(channelId: string, call: MetaCall): Promise<void> {
+    const now = new Date();
+
+    // Terminal event — close out the call row (best-effort) and stop.
+    if (call.event === 'terminate') {
+      await this.prisma.whatsAppCall.updateMany({
+        where: { waCallId: call.id },
+        data: { status: 'ENDED', event: 'terminate', endedAt: now },
+      });
+      return;
+    }
+    // Only act on the incoming "connect" event (carries the SDP offer in
+    // Phase 1). Intermediate "ringing" events are ignored.
+    if (call.event && call.event !== 'connect') return;
+
+    const waContactId = call.from;
+    if (!waContactId) return;
+    const phone = waContactId.startsWith('+') ? waContactId : `+${waContactId}`;
+
+    // Dedupe — Meta retries webhooks; one Call row per waCallId.
+    const dupe = await this.prisma.whatsAppCall.findUnique({
+      where: { waCallId: call.id },
+      select: { id: true },
+    });
+    if (dupe) {
+      this.log.debug(`dedup call ${call.id}`);
+      return;
+    }
+
+    // Resolve customer: client > lead > new lead (same identity rule as
+    // messages), serialized per-phone so a simultaneous first message + call
+    // can't both create a lead.
+    const { leadId, clientId } = await this.withPhoneLock(phone, async () => {
+      const existingClient = await this.prisma.client.findFirst({
+        where: { phone, deletedAt: null },
+        select: { id: true },
+      });
+      if (existingClient) {
+        return { leadId: null as string | null, clientId: existingClient.id as string | null };
+      }
+      const existingLead = await this.prisma.lead.findFirst({
+        where: { phone, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      if (existingLead) {
+        return { leadId: existingLead.id as string | null, clientId: null as string | null };
+      }
+      const branch = await this.prisma.branch.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      const { firstName, lastName } = splitProfileName(null, phone);
+      const referenceCode = await generateLeadReferenceCode(this.prisma);
+      const newLead = await this.prisma.lead.create({
+        data: {
+          referenceCode,
+          firstName,
+          lastName,
+          phone,
+          sourceChannel: 'whatsapp',
+          status: LeadStatus.NEW,
+          ...(branch ? { branchId: branch.id } : {}),
+        },
+        select: { id: true },
+      });
+      return { leadId: newLead.id as string | null, clientId: null as string | null };
+    });
+
+    // Upsert the contact's thread so the call shares the inbox conversation and
+    // we can reuse the assignment engine.
+    const thread = await this.prisma.whatsAppThread.upsert({
+      where: { channelId_waContactId: { channelId, waContactId } },
+      create: {
+        channelId,
+        leadId,
+        clientId,
+        waContactId,
+        firstInboundAt: now,
+        lastMessageAt: now,
+        lastMessagePreview: '📞 Incoming call',
+        unreadCount: 1,
+      },
+      update: {
+        ...(leadId && { leadId }),
+        ...(clientId && { clientId }),
+        lastMessageAt: now,
+        lastMessagePreview: '📞 Incoming call',
+        unreadCount: { increment: 1 },
+        status: 'OPEN',
+      },
+    });
+
+    await this.prisma.whatsAppCall.create({
+      data: {
+        threadId: thread.id,
+        channelId,
+        leadId,
+        clientId,
+        waCallId: call.id,
+        direction: 'INBOUND',
+        status: 'RINGING',
+        event: call.event ?? 'connect',
+        startedAt: now,
+      },
+    });
+
+    // Same routing engine as inbound messages: sticky → round-robin → online.
+    try {
+      await this.assignment.ensureAssigned(thread.id);
+    } catch (err) {
+      this.log.error(`call assignment failed for thread ${thread.id}: ${(err as Error).message}`);
+    }
+
+    // Route to the assigned rep: a lead-scoped callback task + a bell ping.
+    try {
+      const t = await this.prisma.whatsAppThread.findUnique({
+        where: { id: thread.id },
+        select: {
+          lead: {
+            select: { id: true, firstName: true, lastName: true, phone: true, assignedEmployeeId: true },
+          },
+        },
+      });
+      const lead = t?.lead ?? null;
+      const assignedEmployeeId = lead?.assignedEmployeeId ?? null;
+      if (assignedEmployeeId) {
+        await this.prisma.whatsAppCall.updateMany({
+          where: { waCallId: call.id },
+          data: { assignedEmployeeId },
+        });
+        const emp = await this.prisma.employee.findUnique({
+          where: { id: assignedEmployeeId },
+          select: { user: { select: { id: true } } },
+        });
+        const userId = emp?.user?.id ?? null;
+        const who = `${lead?.firstName ?? ''} ${lead?.lastName ?? ''}`.trim() || lead?.phone || phone;
+        if (lead?.id && userId) {
+          await this.prisma.followUp.create({
+            data: {
+              leadId: lead.id,
+              assignedEmployeeId,
+              createdByUserId: userId,
+              title: `Call back ${who}`,
+              description: `Missed WhatsApp call from ${phone} — call them back.`,
+              contactMethod: 'WHATSAPP',
+              dueAt: now,
+              priority: FollowUpPriority.HIGH,
+            },
+          });
+        }
+        if (userId) {
+          await this.notifications.create({
+            userId,
+            type: 'WHATSAPP_CALL',
+            title: `📞 Missed WhatsApp call from ${who}`,
+            body: phone,
+            link: lead?.id ? `/sales/leads/${lead.id}` : '/sales/inbox',
+          });
+        }
+      }
+    } catch (err) {
+      this.log.warn(`call routing/notify failed for ${call.id}: ${(err as Error).message}`);
+    }
+
+    // Realtime fanout (Phase 1 CallDock will consume this to ring the browser).
+    try {
+      const org = await this.prisma.organization.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      if (org) {
+        await this.publisher.publishToOrg(org.id, WHATSAPP_WS_EVENTS.CALL_INCOMING, {
+          callId: call.id,
+          from: phone,
+          leadId,
+          clientId,
+          threadId: thread.id,
+        });
+      }
+    } catch (err) {
+      this.log.warn(`call realtime publish failed for ${call.id}: ${(err as Error).message}`);
     }
   }
 

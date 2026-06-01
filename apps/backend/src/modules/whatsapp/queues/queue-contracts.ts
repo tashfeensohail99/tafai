@@ -77,6 +77,11 @@ export const WHATSAPP_WS_EVENTS = {
   // employeeId so the agent's own shell shows the warning popup.
   PRESENCE_AWAY_WARNING: 'whatsapp.presence.away_warning',
   PRESENCE_OFFLINE_PENALTY: 'whatsapp.presence.offline_penalty',
+  // Inbound WhatsApp voice call routed to the assigned rep. Payload carries
+  // callId, from, leadId/clientId, threadId so the agent's shell can ring/toast
+  // (Phase 1 softphone). CALL_ENDED fires on terminate with the final duration.
+  CALL_INCOMING: 'whatsapp.call.incoming',
+  CALL_ENDED: 'whatsapp.call.ended',
 } as const;
 
 export type WhatsAppWsEvent = (typeof WHATSAPP_WS_EVENTS)[keyof typeof WHATSAPP_WS_EVENTS];

@@ -106,7 +106,10 @@ export class MediaDownloadProcessor extends WorkerHost {
             'intake',
             { whatsappMessageId: message.id },
             {
-              jobId: `intake:${message.id}`,
+              // BullMQ forbids ':' in a custom jobId — a ':' here threw
+              // "Custom Id cannot contain :" on every enqueue, so inbound
+              // WhatsApp media never reached the doc-intake pipeline. Use '-'.
+              jobId: `intake-${message.id}`,
               attempts: 3,
               backoff: { type: 'exponential', delay: 3_000 },
             },

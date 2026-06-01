@@ -414,10 +414,13 @@ export function AppointmentsConsole() {
           action={canCreate ? <PrimaryButton size="sm" iconLeft={<Plus size={15} />} onClick={openCreate}>New appointment</PrimaryButton> : undefined}
         />
       ) : view === 'agenda' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {dayGroups.map((g) => (
-            <div key={g.key}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+            // Each day sits on its own navy glass panel so the rows read on a
+            // solid surface (matching the employees table) rather than letting
+            // the page's cyan backdrop glow show through translucent rows.
+            <div key={g.key} className="sos-glass sos-glass--panel" style={{ padding: 16, borderRadius: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: g.relative ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-primary)' }}>{g.heading}</h3>
                 <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>{g.items.length} appointment{g.items.length === 1 ? '' : 's'}</span>
               </div>

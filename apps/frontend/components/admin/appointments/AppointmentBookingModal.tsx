@@ -232,7 +232,7 @@ export function AppointmentBookingModal({
         position: 'fixed',
         inset: 0,
         zIndex: 1000,
-        background: 'rgba(0,0,0,0.55)',
+        background: 'var(--sos-bg-overlay)',
         backdropFilter: 'blur(2px)',
         display: 'flex',
         alignItems: 'flex-start',

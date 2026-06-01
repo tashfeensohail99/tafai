@@ -692,6 +692,17 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             onEditLead={() => setEditLeadOpen(true)}
             onBook={() => setBookOpen(true)}
             onFollowUp={() => setFollowUpOpen(true)}
+            onCall={() =>
+              window.dispatchEvent(
+                new CustomEvent('wa:outbound-call', {
+                  detail: {
+                    threadId: thread.id,
+                    name: displayName,
+                    phone: thread.lead?.phone ?? thread.client?.phone ?? thread.waContactId,
+                  },
+                }),
+              )
+            }
           />
         ) : null}
         {/* Click-to-WhatsApp ad attribution banner — shows when the thread's
@@ -1859,6 +1870,7 @@ function QuickActionsBar({
   onEditLead,
   onBook,
   onFollowUp,
+  onCall,
 }: {
   isLead: boolean;
   canConvertToLead: boolean;
@@ -1867,6 +1879,7 @@ function QuickActionsBar({
   onEditLead: () => void;
   onBook: () => void;
   onFollowUp: () => void;
+  onCall: () => void;
 }) {
   return (
     <div
@@ -1929,6 +1942,31 @@ function QuickActionsBar({
       >
         <CalendarClock size={13} />
         Book appointment
+      </button>
+      {/* Click-to-call — places a WhatsApp voice call to this contact. The
+          globally-mounted CallDock owns the WebRTC + UI (and the permission
+          opt-in fallback if Meta blocks the call). */}
+      <button
+        type="button"
+        onClick={onCall}
+        title="Call this contact on WhatsApp"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '7px 14px',
+          borderRadius: 999,
+          border: '1px solid var(--sos-border-strong)',
+          background: 'var(--sos-surface-1)',
+          color: 'var(--sos-text-primary)',
+          fontSize: 12.5,
+          fontWeight: 600,
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <Phone size={13} />
+        Call
       </button>
       {isLead ? (
         <button

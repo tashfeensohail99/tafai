@@ -407,6 +407,62 @@ export class MetaCloudClient {
     }
   }
 
+  /**
+   * Initiate a BUSINESS-initiated (outbound) call. The business is the offerer:
+   * we send an SDP OFFER; Meta rings the user; on accept, the user's SDP ANSWER
+   * arrives on the Connect webhook (calls[].session.sdp, sdp_type 'answer'),
+   * which the caller's browser applies as the remote description.
+   *   POST /{phoneNumberId}/calls
+   *   { messaging_product, to, action:'connect', session:{ sdp_type:'offer', sdp } }
+   * REQUIRES prior user call-permission — Meta rejects the call otherwise, which
+   * surfaces here as a MetaApiError the caller can act on.
+   */
+  async initiateCall(input: { to: string; sdpOffer: string }): Promise<{
+    callId: string;
+    raw: Record<string, unknown>;
+  }> {
+    try {
+      const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/calls`, {
+        messaging_product: 'whatsapp',
+        to: input.to,
+        action: 'connect',
+        session: { sdp_type: 'offer', sdp: input.sdpOffer },
+      });
+      const data = res.data as {
+        id?: string;
+        calls?: Array<{ id?: string }>;
+        messages?: Array<{ id?: string }>;
+      };
+      const callId = data.calls?.[0]?.id ?? data.id ?? data.messages?.[0]?.id ?? '';
+      return { callId, raw: res.data };
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
+  /**
+   * Request permission to call a user (required before any business-initiated
+   * call — an inbound call from them does NOT grant it). Sent as a free-form
+   * interactive message, so it needs an open 24h window. The user taps
+   * Allow/Decline in their WhatsApp client; their response arrives on the
+   * webhook.
+   *   POST /{phoneNumberId}/messages
+   *   { type:'interactive', interactive:{ type:'call_permission_request', ... } }
+   */
+  async sendCallPermissionRequest(input: { to: string; bodyText: string }): Promise<MetaSendResponse> {
+    return this.post({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: input.to,
+      type: 'interactive',
+      interactive: {
+        type: 'call_permission_request',
+        action: { name: 'call_permission_request' },
+        body: { text: input.bodyText },
+      },
+    });
+  }
+
   private async post(body: Record<string, unknown>): Promise<MetaSendResponse> {
     try {
       const res = await this.http.post<MetaSendResponse>(`/${this.phoneNumberId}/messages`, body);

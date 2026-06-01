@@ -16,7 +16,7 @@ interface IncomingCall {
   leadName?: string | null;
   leadId?: string | null;
 }
-type Phase = 'ringing' | 'connecting' | 'in-call';
+type Phase = 'ringing' | 'dialing' | 'connecting' | 'in-call' | 'error';
 
 function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -49,6 +49,9 @@ export function CallDock() {
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Outbound only: a permission-related failure shows a "Request permission"
+  // button on the error card so the rep can opt the customer in right there.
+  const [showReqPerm, setShowReqPerm] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -57,6 +60,10 @@ export function CallDock() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Outbound: give up ringing the customer after 60s with no answer.
+  const dialTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Outbound: the thread we're calling, so the error card can request permission.
+  const outboundThreadRef = useRef<string | null>(null);
   // Mirror of the active call id so socket handlers read fresh state.
   const activeIdRef = useRef<string | null>(null);
 
@@ -103,6 +110,10 @@ export function CallDock() {
       clearTimeout(ringTimeoutRef.current);
       ringTimeoutRef.current = null;
     }
+    if (dialTimeoutRef.current) {
+      clearTimeout(dialTimeoutRef.current);
+      dialTimeoutRef.current = null;
+    }
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -122,6 +133,8 @@ export function CallDock() {
     setPhase(null);
     setMuted(false);
     setSeconds(0);
+    setShowReqPerm(false);
+    outboundThreadRef.current = null;
   }, [stopRing]);
 
   // Incoming-call ring (targeted to this rep by the backend).
@@ -159,6 +172,131 @@ export function CallDock() {
       [teardown],
     ),
   );
+
+  // Outbound: the customer accepted our call — Meta relayed their SDP answer.
+  // Apply it as the remote description; connectionstatechange flips to in-call.
+  useWhatsAppEvent<{ callId: string; sdpAnswer: string }>(
+    'whatsapp.call.answered',
+    useCallback(
+      (data) => {
+        if (!data?.callId || data.callId !== activeIdRef.current) return;
+        const pc = pcRef.current;
+        if (!pc || !data.sdpAnswer) return;
+        if (dialTimeoutRef.current) {
+          clearTimeout(dialTimeoutRef.current);
+          dialTimeoutRef.current = null;
+        }
+        setPhase('connecting');
+        pc.setRemoteDescription({ type: 'answer', sdp: data.sdpAnswer }).catch(() => teardown());
+      },
+      [teardown],
+    ),
+  );
+
+  // Place an OUTBOUND call. The browser is the offerer: getUserMedia → offer →
+  // POST to /outbound (backend relays it to Meta) → wait for the customer's
+  // answer (whatsapp.call.answered) → media connects.
+  const startOutbound = useCallback(
+    async (detail: { threadId: string; name?: string | null; phone?: string | null }) => {
+      if (!detail?.threadId) return;
+      if (activeIdRef.current) return; // already on / placing a call
+      activeIdRef.current = 'pending';
+      outboundThreadRef.current = detail.threadId;
+      setError(null);
+      setShowReqPerm(false);
+      setCall({ callId: '', from: detail.phone ?? '', leadName: detail.name ?? null, leadId: null });
+      setPhase('dialing');
+      try {
+        const { iceServers } = await apiFetch<{ iceServers: RTCIceServer[] }>('/whatsapp/calls/ice');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        localStreamRef.current = stream;
+
+        const pc = new RTCPeerConnection({ iceServers: iceServers ?? [] });
+        pcRef.current = pc;
+        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+        pc.ontrack = (e) => {
+          if (remoteAudioRef.current) remoteAudioRef.current.srcObject = e.streams[0] ?? null;
+        };
+        pc.onconnectionstatechange = () => {
+          const st = pc.connectionState;
+          if (st === 'connected') {
+            setPhase('in-call');
+            if (!timerRef.current) {
+              timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+            }
+          } else if (st === 'failed' || st === 'closed' || st === 'disconnected') {
+            teardown();
+          }
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIce(pc);
+
+        const { callId } = await apiFetch<{ callId: string }>('/whatsapp/calls/outbound', {
+          method: 'POST',
+          body: JSON.stringify({ threadId: detail.threadId, sdpOffer: pc.localDescription?.sdp ?? '' }),
+        });
+        if (!callId) throw new Error('No call id returned');
+        activeIdRef.current = callId;
+        setCall((c) => (c ? { ...c, callId } : c));
+
+        // Give up if the customer doesn't pick up within 60s.
+        if (dialTimeoutRef.current) clearTimeout(dialTimeoutRef.current);
+        dialTimeoutRef.current = setTimeout(() => {
+          if (activeIdRef.current === callId && pcRef.current?.connectionState !== 'connected') {
+            void apiFetch(`/whatsapp/calls/${callId}/hangup`, { method: 'POST' }).catch(() => undefined);
+            teardown();
+          }
+        }, 60000);
+      } catch (e) {
+        if (dialTimeoutRef.current) {
+          clearTimeout(dialTimeoutRef.current);
+          dialTimeoutRef.current = null;
+        }
+        // Stop any media we opened, but KEEP the card so the (actionable) error
+        // stays visible — e.g. "request call permission first".
+        try {
+          pcRef.current?.getSenders().forEach((s) => s.track?.stop());
+          pcRef.current?.close();
+        } catch {
+          /* ignore */
+        }
+        pcRef.current = null;
+        localStreamRef.current?.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+        const id = activeIdRef.current;
+        if (id && id !== 'pending') {
+          try {
+            await apiFetch(`/whatsapp/calls/${id}/hangup`, { method: 'POST' });
+          } catch {
+            /* ignore */
+          }
+        }
+        const m = e instanceof Error ? e.message : 'Could not place the call';
+        setError(m);
+        // Permission failures get a "Request permission" button on the card.
+        setShowReqPerm(/permission|allow/i.test(m));
+        setPhase('error');
+      }
+    },
+    [teardown],
+  );
+
+  // Bridge: a "Call" button anywhere (e.g. the chat panel) dispatches this
+  // window event; the globally-mounted dock owns the WebRTC + UI.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        threadId: string;
+        name?: string | null;
+        phone?: string | null;
+      };
+      void startOutbound(detail);
+    };
+    window.addEventListener('wa:outbound-call', handler);
+    return () => window.removeEventListener('wa:outbound-call', handler);
+  }, [startOutbound]);
 
   useEffect(() => () => teardown(), [teardown]);
 
@@ -244,6 +382,24 @@ export function CallDock() {
     }
   }
 
+  // Outbound: send the customer a call-permission request (after a call was
+  // blocked for missing permission). They tap Allow in their WhatsApp client,
+  // then the rep can call again.
+  async function requestPermission() {
+    const threadId = outboundThreadRef.current;
+    if (!threadId) return;
+    try {
+      await apiFetch('/whatsapp/calls/permission', {
+        method: 'POST',
+        body: JSON.stringify({ threadId }),
+      });
+      setShowReqPerm(false);
+      setError('Permission request sent. Once the customer taps “Allow”, call again.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send the permission request');
+    }
+  }
+
   function toggleMute() {
     const track = localStreamRef.current?.getAudioTracks()[0];
     if (!track) return;
@@ -295,8 +451,10 @@ export function CallDock() {
             </div>
             <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
               {phase === 'ringing' && 'Incoming WhatsApp call…'}
+              {phase === 'dialing' && 'Calling…'}
               {phase === 'connecting' && 'Connecting…'}
               {phase === 'in-call' && `In call · ${fmt(seconds)}`}
+              {phase === 'error' && 'Call failed'}
             </div>
           </div>
         </div>
@@ -327,6 +485,27 @@ export function CallDock() {
                 style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <PhoneOff size={15} /> Decline
+              </button>
+            </>
+          ) : phase === 'error' ? (
+            <>
+              {showReqPerm ? (
+                <button
+                  type="button"
+                  onClick={() => void requestPermission()}
+                  className="sos-btn sos-btn--success"
+                  style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                >
+                  <Phone size={15} /> Request permission
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => teardown()}
+                className="sos-btn sos-btn--ghost"
+                style={{ flex: 1 }}
+              >
+                Close
               </button>
             </>
           ) : (

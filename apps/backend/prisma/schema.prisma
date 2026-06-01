@@ -2948,6 +2948,36 @@ model WhatsAppChannel {
   @@schema("whatsapp")
 }
 
+/// Inbound (and later outbound) WhatsApp voice calls. Scalar FKs only — the
+/// DB-level foreign keys are added in the migration, so no Prisma back-relations
+/// are needed on Thread/Channel/Lead/Client/Employee.
+model WhatsAppCall {
+  id                 String    @id @default(uuid())
+  threadId           String?
+  channelId          String
+  leadId             String?
+  clientId           String?
+  assignedEmployeeId String?
+  waCallId           String    @unique
+  direction          String    @default("INBOUND")
+  // RINGING | ANSWERED | ENDED | MISSED | FAILED — plain string for flexibility.
+  status             String    @default("RINGING")
+  // Last Meta call event seen: connect | ringing | terminate.
+  event              String?
+  startedAt          DateTime?
+  endedAt            DateTime?
+  durationSeconds    Int?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([assignedEmployeeId, createdAt(sort: Desc)])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([threadId])
+  @@map("calls")
+  @@schema("whatsapp")
+}
+
 // One thread per (channel, contact) tuple. Lead-rooted while in sales pipeline;
 // re-rooted onto Client after `POST /leads/:id/convert` runs.
 model WhatsAppThread {

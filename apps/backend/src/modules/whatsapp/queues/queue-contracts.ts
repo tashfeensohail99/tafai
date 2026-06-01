@@ -90,3 +90,8 @@ export type WhatsAppWsEvent = (typeof WHATSAPP_WS_EVENTS)[keyof typeof WHATSAPP_
 // every connected agent in that org.
 export const redisOrgChannel = (organizationId: string): string =>
   `whatsapp:org:${organizationId}`;
+
+// Per-employee channel — used to ring ONE rep (e.g. an inbound call routed to
+// the assigned salesperson) without broadcasting signaling to the whole org.
+export const redisEmpChannel = (employeeId: string): string =>
+  `whatsapp:emp:${employeeId}`;

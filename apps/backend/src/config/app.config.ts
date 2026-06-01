@@ -58,5 +58,26 @@ export default registerAs('app', () => ({
     // shared `storage.*` config if unset.
     mediaBucket: process.env.WHATSAPP_MEDIA_BUCKET ?? '',
     mediaPublicBaseUrl: process.env.WHATSAPP_MEDIA_PUBLIC_BASE_URL ?? '',
+    // WebRTC ICE servers for the in-CRM softphone (Phase 1). STUN is always
+    // present (free Google default); TURN is added only when TURN_URLS is set —
+    // needed for restrictive networks / CGNAT. Host TURN on Cloudflare TURN or a
+    // coturn VPS, NOT Railway (it lacks the UDP/port-range a TURN relay needs).
+    iceServers: [
+      {
+        urls: (process.env.WHATSAPP_STUN_URLS ?? 'stun:stun.l.google.com:19302')
+          .split(',')
+          .map((u) => u.trim())
+          .filter(Boolean),
+      },
+      ...(process.env.TURN_URLS
+        ? [
+            {
+              urls: process.env.TURN_URLS.split(',').map((u) => u.trim()).filter(Boolean),
+              username: process.env.TURN_USERNAME || undefined,
+              credential: process.env.TURN_CREDENTIAL || undefined,
+            },
+          ]
+        : []),
+    ] as Array<{ urls: string[]; username?: string; credential?: string }>,
   },
 }));

@@ -379,6 +379,34 @@ export class MetaCloudClient {
     }
   }
 
+  /**
+   * Control an inbound WhatsApp call (Meta Calling API). One endpoint covers
+   * every action:
+   *   POST /{phoneNumberId}/calls
+   *   { messaging_product, call_id, action, session?: { sdp_type:'answer', sdp } }
+   * `session` (the SDP answer) is sent only for `accept` / `pre_accept`.
+   */
+  async respondToCall(input: {
+    callId: string;
+    action: 'pre_accept' | 'accept' | 'reject' | 'terminate';
+    sdpAnswer?: string;
+  }): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = {
+      messaging_product: 'whatsapp',
+      call_id: input.callId,
+      action: input.action,
+    };
+    if (input.sdpAnswer && (input.action === 'accept' || input.action === 'pre_accept')) {
+      body.session = { sdp_type: 'answer', sdp: input.sdpAnswer };
+    }
+    try {
+      const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/calls`, body);
+      return res.data;
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
   private async post(body: Record<string, unknown>): Promise<MetaSendResponse> {
     try {
       const res = await this.http.post<MetaSendResponse>(`/${this.phoneNumberId}/messages`, body);

@@ -2964,6 +2964,13 @@ model WhatsAppCall {
   status             String    @default("RINGING")
   // Last Meta call event seen: connect | ringing | terminate.
   event              String?
+  // WebRTC signaling (Phase 1): SDP offer from Meta's connect webhook + the
+  // answer produced by the rep's browser, and who actually answered.
+  sdpOffer           String?
+  sdpAnswer          String?
+  answeredByEmployeeId String?
+  // When the ring times out and we cascade/terminate (Phase 1b).
+  ringExpiresAt      DateTime?
   startedAt          DateTime?
   endedAt            DateTime?
   durationSeconds    Int?

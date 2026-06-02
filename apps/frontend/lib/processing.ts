@@ -451,6 +451,28 @@ export function changeCaseStage(
 }
 
 /**
+ * Manual client creation (Processing Manager). Creates Lead → Client →
+ * INTAKE_PENDING case with no Finance handover; returns the created case.
+ */
+export function createManualClientCase(body: {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  phone?: string;
+  service: string;
+  targetCountry: string;
+  nationality?: string;
+  priority?: ProcessingPriority;
+}): Promise<ApiProcessingCaseDetail> {
+  return apiFetch<ApiProcessingCaseDetail>('/processing/clients', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/**
  * P4d — Submission-quality gate.
  * Returns whether a case is clear to move to READY_FOR_SUBMISSION / SUBMITTED,
  * plus a list of human-readable blocker messages when it is not.

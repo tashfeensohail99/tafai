@@ -63,6 +63,53 @@ export class CreateProcessingCaseDto {
 }
 
 /**
+ * Manual client creation — a Processing Manager's second on-ramp (no Finance
+ * handover). Creates Lead (sourceChannel PROCESSING_MANUAL) → Client → an
+ * INTAKE_PENDING case that lands in the intake queue like a finance case.
+ * Email + phone are optional (imported old clients / test clients may lack
+ * them); a blank phone gets a unique non-dialable placeholder server-side.
+ */
+export class CreateManualClientCaseDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  firstName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  lastName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsString()
+  @IsIn(SERVICE_TYPE_CODES)
+  service!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  targetCountry!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  nationality?: string;
+
+  @IsOptional()
+  @IsEnum(ProcessingCasePriority)
+  priority?: ProcessingCasePriority;
+}
+
+/**
  * Manager acknowledges a Finance handover. Per the Processing workflow
  * (Manager → Associate hierarchy), the manager MUST nominate a processing
  * associate at this step — the case never lands in a general queue where

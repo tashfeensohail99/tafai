@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
@@ -23,6 +23,24 @@ class SetBotConfigDto {
   @IsOptional()
   @IsIn(['AUTO', 'SHADOW_ONLY', 'DISABLED'])
   botMode?: 'AUTO' | 'SHADOW_ONLY' | 'DISABLED';
+}
+
+class KnowledgeUpsertDto {
+  @IsString()
+  @MinLength(3)
+  queryEn!: string;
+
+  @IsString()
+  @MinLength(3)
+  answerEn!: string;
+
+  @IsOptional()
+  @IsString()
+  answerUr?: string;
+
+  @IsOptional()
+  @IsString()
+  programKey?: string;
 }
 
 /**
@@ -98,6 +116,34 @@ export class AiAdminController {
   async dryRun(@Body() dto: TestQueryDto) {
     const matches = await this.knowledge.search(dto.query, 5);
     return { topMatches: matches };
+  }
+
+  // ── Knowledge editor (admin CRUD; the bot's RAG facts). Each save embeds
+  //    the question+answer so retrieval picks it up immediately. ────────────
+  @Get('knowledge')
+  async listKnowledge(@Query('search') search?: string, @Query('limit') limit?: string) {
+    return this.knowledge.listEntries({
+      search: search || undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Post('knowledge')
+  async createKnowledge(@Body() dto: KnowledgeUpsertDto) {
+    const id = await this.knowledge.saveEntry(dto);
+    return this.knowledge.getEntry(id);
+  }
+
+  @Put('knowledge/:id')
+  async updateKnowledge(@Param('id') id: string, @Body() dto: KnowledgeUpsertDto) {
+    await this.knowledge.saveEntry({ ...dto, id });
+    return this.knowledge.getEntry(id);
+  }
+
+  @Delete('knowledge/:id')
+  async removeKnowledge(@Param('id') id: string) {
+    await this.knowledge.deleteEntry(id);
+    return { id, deleted: true };
   }
 
   /**

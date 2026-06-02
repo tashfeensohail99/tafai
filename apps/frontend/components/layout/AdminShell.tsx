@@ -2,6 +2,7 @@
 
 import {
   BadgeDollarSign,
+  BookOpenText,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
@@ -117,6 +118,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'Agreement Templates', href: '/admin/settings/agreements', icon: FileText, caption: 'Service agreement drafts', permissionKey: 'settings.manage' },
       { label: 'Integrations', href: '/admin/settings/integrations', icon: Plug2, caption: 'Meta API & external keys', permissionKey: 'settings.manage' },
       { label: 'API Keys', href: '/admin/settings/api-keys', icon: Key, caption: 'OpenAI & future providers', permissionKey: 'settings.manage' },
+      { label: 'Bot Knowledge', href: '/admin/settings/ai-knowledge', icon: BookOpenText, caption: 'AI bot facts (RAG)', permissionKey: 'settings.manage' },
       { label: 'Finance maintenance', href: '/admin/settings/finance', icon: Wrench, caption: 'Orphan cleanup & finance tools', permissionKey: 'settings.manage' },
     ],
   },
@@ -151,6 +153,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/settings/whatsapp/team')) return { title: 'WhatsApp Team', subtitle: 'Inbox roster' };
   if (pathname.startsWith('/admin/settings/integrations')) return { title: 'Integrations', subtitle: 'External API credentials' };
   if (pathname.startsWith('/admin/settings/api-keys')) return { title: 'API Keys', subtitle: 'Third-party secrets (OpenAI etc.)' };
+  if (pathname.startsWith('/admin/settings/ai-knowledge')) return { title: 'Bot Knowledge', subtitle: 'What the WhatsApp AI bot answers from' };
   if (pathname.startsWith('/admin/settings/finance')) return { title: 'Finance maintenance', subtitle: 'Orphan cleanup & finance tools' };
   return { title: 'Admin', subtitle: '' };
 }

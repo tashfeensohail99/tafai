@@ -15,6 +15,21 @@ export interface KnowledgeMatch {
   similarity: number;
 }
 
+/** A knowledge row WITHOUT the embedding — for the admin editor list/detail. */
+export interface AdminKnowledgeRow {
+  id: string;
+  type: string;
+  programKey: string | null;
+  queryEn: string | null;
+  queryUr: string | null;
+  answerEn: string;
+  answerUr: string | null;
+  sourceFile: string;
+  chunkIndex: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /**
  * pgvector-backed RAG retrieval over the `ai.knowledge` table. Prisma can't
  * model `vector` columns natively so we use $queryRawUnsafe for the cosine
@@ -121,6 +136,75 @@ export class KnowledgeService {
       vec,
     );
     return id;
+  }
+
+  // ── Admin editor (manual curation of the knowledge base) ──────────────────
+
+  private readonly ADMIN_SELECT =
+    `SELECT id, type, "programKey", "queryEn", "queryUr", "answerEn", "answerUr", "sourceFile", "chunkIndex", "createdAt", "updatedAt" FROM ai.knowledge`;
+
+  /** List entries (metadata only — never the embedding). Optional text search. */
+  async listEntries(opts: { search?: string; limit?: number } = {}): Promise<AdminKnowledgeRow[]> {
+    const limit = Math.min(Math.max(opts.limit ?? 300, 1), 500);
+    const q = (opts.search ?? '').trim();
+    if (q) {
+      return this.prisma.$queryRawUnsafe<AdminKnowledgeRow[]>(
+        `${this.ADMIN_SELECT}
+          WHERE "queryEn" ILIKE $1 OR "answerEn" ILIKE $1
+             OR COALESCE("programKey",'') ILIKE $1 OR COALESCE("answerUr",'') ILIKE $1
+          ORDER BY "updatedAt" DESC LIMIT $2`,
+        `%${q}%`,
+        limit,
+      );
+    }
+    return this.prisma.$queryRawUnsafe<AdminKnowledgeRow[]>(
+      `${this.ADMIN_SELECT} ORDER BY "updatedAt" DESC LIMIT $1`,
+      limit,
+    );
+  }
+
+  /** Single entry by id (no embedding), or null. */
+  async getEntry(id: string): Promise<AdminKnowledgeRow | null> {
+    const rows = await this.prisma.$queryRawUnsafe<AdminKnowledgeRow[]>(
+      `${this.ADMIN_SELECT} WHERE id = $1 LIMIT 1`,
+      id,
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Create/update a hand-curated Q&A entry. Embeds question + answer together
+   * so an inbound message matches on either the phrasing or the answer's
+   * keywords. Stamped type='qa', sourceFile='admin' to distinguish curated
+   * rows from the bulk-ingested corpus.
+   */
+  async saveEntry(input: {
+    id?: string;
+    programKey?: string | null;
+    queryEn: string;
+    answerEn: string;
+    answerUr?: string | null;
+  }): Promise<string> {
+    const queryEn = (input.queryEn ?? '').trim();
+    const answerEn = (input.answerEn ?? '').trim();
+    const { embedding } = await this.openai.embed([queryEn, answerEn].filter(Boolean).join('\n'));
+    return this.upsert({
+      id: input.id,
+      type: 'qa',
+      programKey: input.programKey?.trim() || null,
+      queryEn,
+      queryUr: null,
+      answerEn,
+      answerUr: input.answerUr?.trim() || null,
+      sourceFile: 'admin',
+      chunkIndex: null,
+      embedding,
+    });
+  }
+
+  /** Permanently delete an entry. */
+  async deleteEntry(id: string): Promise<void> {
+    await this.prisma.$executeRawUnsafe(`DELETE FROM ai.knowledge WHERE id = $1`, id);
   }
 }
 

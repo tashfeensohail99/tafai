@@ -454,6 +454,40 @@ export function changeCaseStage(
  * Manual client creation (Processing Manager). Creates Lead → Client →
  * INTAKE_PENDING case with no Finance handover; returns the created case.
  */
+/**
+ * Officer/manager uploads a document on the client's behalf into a checklist
+ * slot (multipart). Mirrors the portal upload, on the processing side; backend
+ * gates with `processing.document.upload`. Returns the updated checklist item.
+ */
+export async function uploadOfficerDocument(
+  caseId: string,
+  itemId: string,
+  file: File,
+): Promise<ApiCaseDocumentItem> {
+  const { getAccessToken } = await import('./auth-client');
+  const token = getAccessToken();
+  const form = new FormData();
+  form.append('file', file);
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const res = await fetch(
+    `${base}/processing/cases/${caseId}/documents/${itemId}/upload`,
+    { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : undefined, body: form },
+  );
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const msg =
+      errBody && typeof errBody === 'object' && 'message' in errBody
+        ? String((errBody as { message?: unknown }).message)
+        : `Upload failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/**
+ * Manual client creation (Processing Manager). Creates Lead → Client →
+ * INTAKE_PENDING case with no Finance handover; returns the created case.
+ */
 export function createManualClientCase(body: {
   firstName: string;
   lastName: string;
@@ -781,16 +815,20 @@ export function updateCaseTask(
 
 export type DocumentCriticality = 'CRITICAL' | 'REQUIRED' | 'CONDITIONAL' | 'SUPPORTING' | 'OPTIONAL';
 export type DocumentItemStatus =
+  // Backend enum (processing.DocumentItemStatus) — the real values the API emits.
   | 'NOT_SUBMITTED'
-  | 'REQUESTED'
-  | 'AWAITING_UPLOAD'
-  | 'UPLOADED'
+  | 'SUBMITTED'        // client/officer uploaded → awaiting review
   | 'UNDER_REVIEW'
   | 'ACCEPTED'
   | 'REJECTED'
+  | 'EXPIRED'
+  | 'EXPIRING_SOON'
   | 'WAIVED'
   | 'NOT_APPLICABLE'
-  | 'EXPIRED';
+  // Legacy/portal-side aliases kept for backward compatibility.
+  | 'REQUESTED'
+  | 'AWAITING_UPLOAD'
+  | 'UPLOADED';
 
 export type AiSuggestedDecision = 'APPROVE' | 'REJECT' | 'NEEDS_REVIEW';
 

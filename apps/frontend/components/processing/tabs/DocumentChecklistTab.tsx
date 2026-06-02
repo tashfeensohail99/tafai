@@ -11,6 +11,7 @@
 // upload modal in a follow-up commit.
 
 import { useCallback, useEffect, useState } from 'react';
+import { useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -24,6 +25,7 @@ import {
   ShieldAlert,
   Sparkles,
   Trash2,
+  Upload,
   XCircle,
 } from 'lucide-react';
 import {
@@ -49,6 +51,7 @@ import {
   discardInboundDocument,
   requestMissingDocuments,
   updateDocumentAttestation,
+  uploadOfficerDocument,
   type ApiCaseDocumentItem,
   type ApiDocumentAiAssessment,
   type ApiInboundDocument,
@@ -61,6 +64,7 @@ import { AttestationPlanPanel } from '@/components/processing/AttestationPlanPan
 
 const STATUS_TONE: Record<DocumentItemStatus, BadgeTone> = {
   NOT_SUBMITTED: 'neutral',
+  SUBMITTED: 'cyan',
   REQUESTED: 'info',
   AWAITING_UPLOAD: 'info',
   UPLOADED: 'cyan',
@@ -70,10 +74,12 @@ const STATUS_TONE: Record<DocumentItemStatus, BadgeTone> = {
   WAIVED: 'neutral',
   NOT_APPLICABLE: 'neutral',
   EXPIRED: 'danger',
+  EXPIRING_SOON: 'warning',
 };
 
 const STATUS_LABEL: Record<DocumentItemStatus, string> = {
   NOT_SUBMITTED: 'Not submitted',
+  SUBMITTED: 'Uploaded — pending review',
   REQUESTED: 'Requested',
   AWAITING_UPLOAD: 'Awaiting upload',
   UPLOADED: 'Uploaded',
@@ -83,6 +89,7 @@ const STATUS_LABEL: Record<DocumentItemStatus, string> = {
   WAIVED: 'Waived',
   NOT_APPLICABLE: 'N/A',
   EXPIRED: 'Expired',
+  EXPIRING_SOON: 'Expiring soon',
 };
 
 const CRIT_TONE: Record<DocumentCriticality, BadgeTone> = {
@@ -248,10 +255,10 @@ function InboundTray({
     <GlassCard variant="panel" padded="md">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <Inbox size={15} style={{ color: 'var(--sos-text-secondary)' }} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Inbound documents</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Inbound documents — needs filing</span>
         <StatusBadge tone="cyan" size="sm">{inbound.length}</StatusBadge>
         <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 12 }}>
-          Sent by the client — review with previews, or file inline
+          Files received via WhatsApp / email / unmatched upload — pick the checklist slot each belongs to (or discard)
         </span>
         <div style={{ marginLeft: 'auto' }}>
           <PrimaryButton iconLeft={<Sparkles size={13} />} onClick={() => setShowReviewer(true)}>
@@ -306,10 +313,12 @@ function DocumentRow({
   d,
   caseId,
   onChange,
+  onReload,
 }: {
   d: ApiCaseDocumentItem;
   caseId: string;
   onChange: (updated: ApiCaseDocumentItem) => void;
+  onReload: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [showReview, setShowReview] = useState(false);
@@ -317,6 +326,22 @@ function DocumentRow({
   const [showWaive, setShowWaive] = useState(false);
   const [waiveReason, setWaiveReason] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function handleUpload(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await uploadOfficerDocument(caseId, d.id, file);
+      onReload(); // full refetch — picks up new version, SUBMITTED status, async AI assessment
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   async function handleViewFile() {
     setBusy(true);
@@ -379,9 +404,15 @@ function DocumentRow({
   }
 
   const hasFile = !!d.latestVersion;
-  const canReview = hasFile && (d.status === 'UPLOADED' || d.status === 'UNDER_REVIEW');
+  // Backend emits SUBMITTED when a doc is uploaded (client or officer); keep
+  // UPLOADED as a legacy alias. This is what gates the Accept/Reject control.
+  const canReview = hasFile && (d.status === 'SUBMITTED' || d.status === 'UPLOADED' || d.status === 'UNDER_REVIEW');
   const canRequest = !hasFile && (d.status === 'NOT_SUBMITTED' || d.status === 'AWAITING_UPLOAD');
   const canWaive = d.status !== 'ACCEPTED' && d.status !== 'WAIVED' && d.status !== 'NOT_APPLICABLE';
+  // Officer upload-on-behalf: allowed whenever the slot still needs a (better)
+  // file — i.e. not already accepted/waived/N-A. Lets the team upload for the
+  // client or replace a rejected/expired doc.
+  const canUpload = d.status !== 'ACCEPTED' && d.status !== 'WAIVED' && d.status !== 'NOT_APPLICABLE';
 
   return (
     <GlassCard variant="default" padded="md">
@@ -471,6 +502,20 @@ function DocumentRow({
               ) : null}
               {canReview ? (
                 <PrimaryButton onClick={() => { setShowReview(true); setReviewNote(''); }} disabled={busy}>Review</PrimaryButton>
+              ) : null}
+              {canUpload ? (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    style={{ display: 'none' }}
+                    onChange={(e) => handleUpload(e.target.files?.[0])}
+                  />
+                  <SecondaryButton iconLeft={busy ? <Loader2 size={13} /> : <Upload size={13} />} onClick={() => fileInputRef.current?.click()} disabled={busy}>
+                    {hasFile ? 'Replace' : 'Upload for client'}
+                  </SecondaryButton>
+                </>
               ) : null}
               {canRequest ? (
                 <SecondaryButton iconLeft={<MailQuestion size={13} />} onClick={handleRequest} disabled={busy}>Request</SecondaryButton>
@@ -607,7 +652,7 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
           {/* Items */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {items.map((d) => (
-              <DocumentRow key={d.id} d={d} caseId={c.id} onChange={handleChange} />
+              <DocumentRow key={d.id} d={d} caseId={c.id} onChange={handleChange} onReload={reload} />
             ))}
           </div>
         </>

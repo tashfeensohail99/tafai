@@ -217,6 +217,7 @@ export class DocumentAiService {
         checks: (resp?.checks ?? []) as unknown as Prisma.InputJsonValue,
         suggestedDecision: (resp?.suggestedDecision ?? 'NEEDS_REVIEW') as AiSuggestedDecision,
         reasonCodes: resp?.reasonCodes ?? [],
+        detectedAuthorities: resp?.detectedAuthorities ?? [],
         ocrTier: resp?.ocrTier ?? null,
         costCents: resp?.costCents ?? 0,
         cacheHit: resp?.cacheHit ?? false,

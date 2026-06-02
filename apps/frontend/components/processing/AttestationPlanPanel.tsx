@@ -23,6 +23,10 @@ export interface AttestationPlanItem {
   attestationStatus?: string | null;
   /** e.g. "HEC->MOFA" */
   attestationChain?: string | null;
+  /** P4c-2: authorities the parser detected in this document's OCR text
+   *  (e.g. ["MOFA","HEC"]). Suggestion only — shown to the associate as a
+   *  hint to confirm with "Mark attested"; never auto-marks. */
+  detectedAuthorities?: string[];
 }
 
 // What each authority does — surfaced as a tooltip + legend. No time estimates.
@@ -161,6 +165,23 @@ export function AttestationPlanPanel({
                   )}
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{i.documentName}</span>
                   {st ? <StatusBadge tone={st.tone} size="sm">{st.label}</StatusBadge> : null}
+                  {audience === 'associate' && (i.detectedAuthorities?.length ?? 0) > 0 ? (
+                    <span
+                      title={
+                        'Detected from this document’s text by the parser — AI suggestion only. ' +
+                        'If correct, confirm with “Mark attested”. Nothing is marked automatically.'
+                      }
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px',
+                        borderRadius: 999, fontSize: 11, fontWeight: 600,
+                        background: 'var(--sos-status-success-soft)', color: 'var(--sos-status-success)',
+                        border: '1px solid var(--sos-status-success-border)',
+                      }}
+                    >
+                      <ShieldCheck size={11} />
+                      {i.detectedAuthorities!.map((a) => authority(a).label).join(', ')} stamp detected
+                    </span>
+                  ) : null}
                 </div>
                 {steps.length ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingLeft: 21 }}>

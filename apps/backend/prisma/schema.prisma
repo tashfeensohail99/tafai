@@ -2554,6 +2554,10 @@ model DocumentAiAssessment {
   checks            Json?
   suggestedDecision AiSuggestedDecision @default(NEEDS_REVIEW)
   reasonCodes       String[]            @default([])
+  // P4c-2: attestation authorities whose stamp keywords the parser found in
+  // the OCR text (e.g. ["MOFA","HEC"]). Suggestion only — surfaced as a hint
+  // next to the manual "Mark attested" control; never auto-marks attestation.
+  detectedAuthorities String[]          @default([])
   ocrTier           String?
   costCents         Float               @default(0)
   cacheHit          Boolean             @default(false)

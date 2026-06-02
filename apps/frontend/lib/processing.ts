@@ -733,6 +733,9 @@ export interface ApiDocumentAiAssessment {
   checks: AiCheck[] | null;
   suggestedDecision: AiSuggestedDecision;
   reasonCodes: string[];
+  /** P4c-2: attestation authorities detected in the OCR text (e.g. ["MOFA","HEC"]).
+   *  Suggestion only — shown as a hint next to the manual "Mark attested" control. */
+  detectedAuthorities?: string[];
   autoApproved: boolean;
   ocrTier: string | null;
   errorMessage: string | null;

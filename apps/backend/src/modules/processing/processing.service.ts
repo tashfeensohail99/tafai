@@ -44,6 +44,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
 import { LeadsService } from '../leads/leads.service';
+import { EmailService } from '../email/email.service';
 import {
   WHATSAPP_QUEUE,
   type OutboundMessageJob,
@@ -189,6 +190,10 @@ export class ProcessingService {
     private readonly documentAi: DocumentAiService,
     // Phase 2 — bundle-split safety net for officer uploads.
     private readonly documentIntake: DocumentIntakeService,
+    // Outbound email — powers the Email channel in sendCommunication and the
+    // nudge cron's email fallback when WhatsApp can't deliver. EmailModule is
+    // @Global() so no extra module import is needed.
+    private readonly email: EmailService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -2625,6 +2630,29 @@ export class ProcessingService {
       }
     }
 
+    // If the officer ticked Email, send a branded copy by email too. Same
+    // best-effort contract as WhatsApp: never throw — a failure (no email on
+    // file / SMTP down) is surfaced as a delivery warning so the rest of the
+    // request still succeeds and the CaseCommunication row is preserved.
+    if (channelsUpper.includes('EMAIL')) {
+      try {
+        const result = await this.sendCaseEmailToClient(
+          caseId,
+          dto.subject,
+          dto.content,
+        );
+        if (!result.ok) {
+          deliveryWarnings.push(`Email send skipped: ${result.reason}`);
+        }
+      } catch (err) {
+        this.logger.error(
+          { err, caseId, commId: comm.id },
+          'sendCommunication: email send threw',
+        );
+        deliveryWarnings.push('Email send skipped: internal error');
+      }
+    }
+
     return { ...comm, deliveryWarnings };
   }
 
@@ -2694,6 +2722,58 @@ export class ProcessingService {
     const text = (body ?? '').trim();
     if (!text) return { ok: false, reason: 'empty body' };
     return this.enqueueWhatsAppForCase({ caseId, actorUserId, body: text });
+  }
+
+  /**
+   * Resolve the best email + display name for a case's client. Prefers the
+   * Client record (post-conversion) then falls back to the originating Lead.
+   * Returns null only if the case itself is missing; `email` may be null when
+   * neither party has an email on file.
+   */
+  private async resolveCaseClientContact(
+    caseId: string,
+  ): Promise<{ email: string | null; name: string } | null> {
+    const c = await this.prisma.processingCase.findUnique({
+      where: { id: caseId },
+      select: {
+        client: { select: { email: true, firstName: true, lastName: true } },
+        lead: { select: { email: true, firstName: true, lastName: true } },
+      },
+    });
+    if (!c) return null;
+    const email = c.client?.email ?? c.lead?.email ?? null;
+    const first = c.client?.firstName ?? c.lead?.firstName ?? '';
+    const last = c.client?.lastName ?? c.lead?.lastName ?? '';
+    const name = `${first} ${last}`.trim() || 'there';
+    return { email, name };
+  }
+
+  /**
+   * Send a branded case message to the client by email. Used by
+   * sendCommunication (officer ticks the Email channel) and by
+   * ClientNudgeService as a fallback when WhatsApp can't deliver. Returns the
+   * same {ok, reason?} shape as sendNudgeWhatsApp so callers treat both
+   * channels uniformly. Never throws — failures come back as {ok:false}.
+   */
+  async sendCaseEmailToClient(
+    caseId: string,
+    subject: string,
+    body: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const text = (body ?? '').trim();
+    if (!text) return { ok: false, reason: 'empty body' };
+    const contact = await this.resolveCaseClientContact(caseId);
+    if (!contact) return { ok: false, reason: 'case not found' };
+    if (!contact.email) {
+      return { ok: false, reason: 'client has no email on file' };
+    }
+    const ok = await this.email.sendCaseMessageToClient({
+      to: contact.email,
+      clientName: contact.name,
+      subject: subject?.trim() || 'Update on your application',
+      bodyText: text,
+    });
+    return ok ? { ok: true } : { ok: false, reason: 'email delivery failed' };
   }
 
   async sendCaseWhatsApp(caseId: string, body: string, user: RequestUser) {

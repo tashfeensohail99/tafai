@@ -12,10 +12,11 @@
  *   EXPIRY_30D / EXPIRY_7D — accepted doc expiring within 30/7 days
  *   ATTESTATION_REMINDER — doc attestation still REQUIRED_PENDING
  *
- * Each nudge respects the 24-hour WhatsApp customer-service window (enforced by
- * enqueueWhatsAppForCase); the nudge is logged as FAILED if the window is closed.
- * This is correct behaviour — we don't use template messages, so we cannot send
- * outside the window.
+ * Delivery: WhatsApp first (clients are most responsive there). If the 24-hour
+ * WhatsApp customer-service window is closed — or there's no conversation yet —
+ * we fall back to email so the reminder still reaches the client. Each attempt
+ * is recorded as a ClientReminder (channel WHATSAPP or EMAIL); a nudge is only
+ * logged as FAILED when it can't be delivered on either channel.
  */
 import {
   Injectable,
@@ -148,7 +149,7 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
       }
 
       if (nudgesSent > 0) {
-        this.log.log(`nudge sweep: ${nudgesSent} WhatsApp nudge(s) sent`);
+        this.log.log(`nudge sweep: ${nudgesSent} client nudge(s) sent`);
       }
     } finally {
       this.running = false;
@@ -179,7 +180,8 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
       `Please upload them via your client portal as soon as possible. ` +
       `Reply here if you need any help.`;
 
-    return this.send(caseId, body, ReminderType.DOCS_REQUEST, actorId, now, missing.map((i) => i.documentName));
+    const subject = `Documents still needed — your ${service} application`;
+    return this.send(caseId, body, ReminderType.DOCS_REQUEST, actorId, now, missing.map((i) => i.documentName), subject);
   }
 
   // ---------- Nudge: rejected docs ------------------------------------------
@@ -205,7 +207,8 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
       `Please check the notes in your client portal and re-upload. ` +
       `Reply here if you have any questions.`;
 
-    return this.send(caseId, body, ReminderType.DOC_REJECTED, actorId, now, rejected.map((i) => i.documentName));
+    const subject = `Action needed: documents to re-submit — ${service}`;
+    return this.send(caseId, body, ReminderType.DOC_REJECTED, actorId, now, rejected.map((i) => i.documentName), subject);
   }
 
   // ---------- Nudge: expiring docs ------------------------------------------
@@ -257,7 +260,8 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
         `expire within 7 days:\n\n${list}\n\n` +
         `Please renew them and upload updated copies immediately to avoid a delay in your application.`;
 
-      sent += await this.send(caseId, body, ReminderType.EXPIRY_7D, actorId, now, urgentDocs.map((i) => i.documentName));
+      const subject = `Urgent: documents expiring within 7 days — ${service}`;
+      sent += await this.send(caseId, body, ReminderType.EXPIRY_7D, actorId, now, urgentDocs.map((i) => i.documentName), subject);
       if (sent > 0) {
         // Mark expiryAlertSentAt on each doc
         await this.prisma.caseDocumentItem
@@ -278,7 +282,8 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
         `will expire within 30 days:\n\n${list}\n\n` +
         `Please arrange renewal in advance to avoid any disruption to your application.`;
 
-      const s = await this.send(caseId, body, ReminderType.EXPIRY_30D, actorId, now, soonDocs.map((i) => i.documentName));
+      const subject = `Reminder: documents expiring within 30 days — ${service}`;
+      const s = await this.send(caseId, body, ReminderType.EXPIRY_30D, actorId, now, soonDocs.map((i) => i.documentName), subject);
       sent += s;
       if (s > 0) {
         await this.prisma.caseDocumentItem
@@ -318,14 +323,17 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
       `Please arrange attestation by the relevant authority (HEC, MOFA, IBCC, etc.) ` +
       `and upload the attested copies. Reply here if you need guidance on which authority to contact.`;
 
-    return this.send(caseId, body, ReminderType.ATTESTATION_REMINDER, actorId, now, pending.map((i) => i.documentName));
+    const subject = `Attestation required — your ${service} documents`;
+    return this.send(caseId, body, ReminderType.ATTESTATION_REMINDER, actorId, now, pending.map((i) => i.documentName), subject);
   }
 
   // ---------- Helpers -------------------------------------------------------
 
   /**
-   * Check whether a nudge of this type was already sent for this case within
-   * the type's cooldown period.
+   * Check whether a nudge of this type was already delivered for this case —
+   * on EITHER WhatsApp or email — within the type's cooldown period. Counting
+   * both channels means a successful email fallback also suppresses the next
+   * WhatsApp attempt, so we never double-nudge across channels.
    */
   private async recentlySent(
     caseId: string,
@@ -338,7 +346,7 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
       where: {
         caseId,
         reminderType: type,
-        channel: ReminderChannel.WHATSAPP,
+        channel: { in: [ReminderChannel.WHATSAPP, ReminderChannel.EMAIL] },
         deliveryStatus: ReminderDeliveryStatus.SENT,
         sentAt: { gt: cutoff },
       },
@@ -348,8 +356,11 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Send one WhatsApp nudge and record a ClientReminder.
-   * Returns 1 on success, 0 on failure or window-expired.
+   * Deliver one nudge and record a ClientReminder. WhatsApp is tried first
+   * (clients are most responsive there); if it can't deliver — 24h window
+   * closed, no conversation yet, or an error — we fall back to email so the
+   * reminder still reaches the client. Returns 1 if EITHER channel delivered,
+   * 0 if both failed.
    */
   private async send(
     caseId: string,
@@ -358,39 +369,80 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
     actorId: string,
     now: Date,
     docNames: string[],
+    subject: string,
   ): Promise<number> {
-    const result = await this.processingService
+    // 1) WhatsApp first.
+    const wa = await this.processingService
       .sendNudgeWhatsApp(caseId, body, actorId)
       .catch((e: Error) => ({ ok: false as const, reason: e.message }));
 
-    const status = result.ok
-      ? ReminderDeliveryStatus.SENT
-      : ReminderDeliveryStatus.FAILED;
+    if (wa.ok) {
+      await this.record(caseId, type, ReminderChannel.WHATSAPP, now, true, null, docNames, body);
+      return 1;
+    }
 
+    // 2) WhatsApp could not deliver → email fallback.
+    const em = await this.processingService
+      .sendCaseEmailToClient(caseId, subject, body)
+      .catch((e: Error) => ({ ok: false as const, reason: e.message }));
+
+    if (em.ok) {
+      await this.record(caseId, type, ReminderChannel.EMAIL, now, true, null, docNames, body);
+      this.log.debug(
+        `nudge ${type} for case ${caseId}: WhatsApp unavailable (${wa.reason}) — emailed instead`,
+      );
+      return 1;
+    }
+
+    // 3) Neither channel delivered — record one FAILED row carrying both reasons.
+    await this.record(
+      caseId,
+      type,
+      ReminderChannel.EMAIL,
+      now,
+      false,
+      `whatsapp: ${wa.reason ?? 'n/a'}; email: ${em.reason ?? 'n/a'}`,
+      docNames,
+      body,
+    );
+    this.log.debug(
+      `nudge ${type} for case ${caseId}: not delivered — wa=${wa.reason} email=${em.reason}`,
+    );
+    return 0;
+  }
+
+  /**
+   * Persist a ClientReminder row. Best-effort — the send already happened, so
+   * a record-keeping failure must not bubble up and block the sweep.
+   */
+  private async record(
+    caseId: string,
+    type: ReminderType,
+    channel: ReminderChannel,
+    now: Date,
+    sent: boolean,
+    errorMessage: string | null,
+    docNames: string[],
+    body: string,
+  ): Promise<void> {
     await this.prisma.clientReminder
       .create({
         data: {
           caseId,
           reminderType: type,
-          channel: ReminderChannel.WHATSAPP,
+          channel,
           scheduledAt: now,
-          sentAt: result.ok ? now : undefined,
-          deliveryStatus: status,
+          sentAt: sent ? now : undefined,
+          deliveryStatus: sent
+            ? ReminderDeliveryStatus.SENT
+            : ReminderDeliveryStatus.FAILED,
           renderedContent: JSON.stringify({ docNames, body: body.slice(0, 500) }),
-          errorMessage: result.ok ? null : result.reason,
+          errorMessage,
         },
       })
       .catch(() => {
         /* record-keeping is best-effort; the send already happened */
       });
-
-    if (!result.ok) {
-      this.log.debug(
-        `nudge ${type} for case ${caseId}: window closed or error — ${result.reason}`,
-      );
-      return 0;
-    }
-    return 1;
   }
 }
 

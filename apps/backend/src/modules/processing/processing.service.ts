@@ -1704,8 +1704,14 @@ export class ProcessingService {
     }
 
     if (dto.decision === 'REJECTED') {
-      if (!dto.rejectionReasonCodes || dto.rejectionReasonCodes.length === 0) {
-        throw new BadRequestException('At least one rejection reason is required');
+      // A rejection must carry a reason the client can act on — accept EITHER a
+      // structured reason code OR a free-text note (the review UI provides the
+      // note). Requiring codes-only made every reject fail since the UI never
+      // sent codes.
+      const hasCode = !!dto.rejectionReasonCodes && dto.rejectionReasonCodes.length > 0;
+      const hasNote = !!dto.rejectionNote && dto.rejectionNote.trim().length > 0;
+      if (!hasCode && !hasNote) {
+        throw new BadRequestException('A rejection reason or note is required');
       }
     }
 

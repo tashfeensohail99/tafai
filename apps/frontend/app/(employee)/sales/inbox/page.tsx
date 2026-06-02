@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from 'react';
 import { Inbox as InboxIcon, MessageSquare, Search } from 'lucide-react';
 import {
   listThreads,
@@ -45,6 +45,11 @@ export default function SalesInboxPage() {
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // How many pages we've loaded — so the 30s/focus reconcile re-fetches the
+  // same depth instead of collapsing the list back to the first 100.
+  const pagesRef = useRef(1);
   const { socket } = useWhatsAppSocket();
   const isMobile = useIsMobile();
   // Debounce: only fetch after typing pauses for 300ms. Without this, every
@@ -61,28 +66,83 @@ export default function SalesInboxPage() {
   // `background: true` skips the loading spinner — used by realtime refreshes
   // so an incoming message updates the list in place without a flash. Foreground
   // (initial load, filter/search change) still shows the skeleton.
+  // Filter/search change → reset pagination depth back to page 1.
+  useEffect(() => { pagesRef.current = 1; }, [filter, debouncedSearch]);
+
+  // The "Pending" tab maps to needsReply (responseDeadlineAt set) — the literal
+  // WhatsAppThreadStatus.PENDING value is never written by any code path, so
+  // filtering by status='PENDING' would always return zero.
+  const scopeQuery = useCallback(
+    () => (filter === 'PENDING' ? { needsReply: true } : filter !== 'ALL' ? { status: filter } : {}),
+    [filter],
+  );
+
   const reload = useCallback(async (opts?: { background?: boolean }) => {
     if (!opts?.background) setLoading(true);
     try {
-      // The "Pending" tab maps to needsReply (responseDeadlineAt set) — the
-      // literal WhatsAppThreadStatus.PENDING value is never written by any
-      // code path, so filtering by status='PENDING' would always return zero.
-      const res = await listThreads({
-        ...(filter === 'PENDING'
-          ? { needsReply: true }
-          : filter !== 'ALL'
-          ? { status: filter }
-          : {}),
-        ...(debouncedSearch ? { search: debouncedSearch } : {}),
-        limit: 100,
-      });
-      setItems(res.items);
+      const scope = scopeQuery();
+      const searchPart = debouncedSearch ? { search: debouncedSearch } : {};
+      // Re-fetch as many pages as the agent had scrolled to, so a background
+      // reconcile (every 30s / on focus) doesn't collapse the list back to the
+      // first 100 — it preserves the full scrolled-open inbox.
+      const pages = Math.max(1, pagesRef.current);
+      let acc: ThreadListItem[] = [];
+      let cursor: string | undefined;
+      let last: string | null = null;
+      for (let i = 0; i < pages; i++) {
+        const res = await listThreads({ ...scope, ...searchPart, limit: 100, ...(cursor ? { cursor } : {}) });
+        if (i === 0) {
+          acc = res.items;
+        } else {
+          const seen = new Set(acc.map((t) => t.id));
+          acc = [...acc, ...res.items.filter((t) => !seen.has(t.id))];
+        }
+        last = res.nextCursor;
+        if (!res.nextCursor) break;
+        cursor = res.nextCursor;
+      }
+      setItems(acc);
+      setNextCursor(last);
     } finally {
       if (!opts?.background) setLoading(false);
     }
-  }, [filter, debouncedSearch]);
+  }, [scopeQuery, debouncedSearch]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  // Load the next page of OLDER chats (cursor pagination). Appends + dedupes,
+  // and remembers the new depth so the reconcile keeps it.
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const res = await listThreads({
+        ...scopeQuery(),
+        ...(debouncedSearch ? { search: debouncedSearch } : {}),
+        limit: 100,
+        cursor: nextCursor,
+      });
+      setItems((prev) => {
+        const seen = new Set(prev.map((t) => t.id));
+        return [...prev, ...res.items.filter((t) => !seen.has(t.id))];
+      });
+      setNextCursor(res.nextCursor);
+      pagesRef.current = Math.min(pagesRef.current + 1, 40); // cap ~4000 chats
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, nextCursor, scopeQuery, debouncedSearch]);
+
+  // Infinite scroll: load older chats when the list nears the bottom.
+  const onListScroll = useCallback(
+    (e: UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      if (nextCursor && !loadingMore && el.scrollHeight - el.scrollTop - el.clientHeight < 280) {
+        void loadMore();
+      }
+    },
+    [nextCursor, loadingMore, loadMore],
+  );
 
   // Auto-select first thread on desktop only — moved out of `reload` so it
   // only happens once on initial mount, not after every reload.
@@ -293,6 +353,7 @@ export default function SalesInboxPage() {
 
         {/* Thread list */}
         <div
+          onScroll={onListScroll}
           style={{
             flex: 1,
             overflowY: 'auto',
@@ -321,14 +382,35 @@ export default function SalesInboxPage() {
               <div style={{ fontSize: 14 }}>No chats assigned to you yet</div>
             </div>
           ) : (
-            items.map((t) => (
-              <ThreadRow
-                key={t.id}
-                item={t}
-                active={activeId === t.id}
-                onSelect={handleSelect}
-              />
-            ))
+            <>
+              {items.map((t) => (
+                <ThreadRow
+                  key={t.id}
+                  item={t}
+                  active={activeId === t.id}
+                  onSelect={handleSelect}
+                />
+              ))}
+              {nextCursor ? (
+                <button
+                  type="button"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  style={{
+                    all: 'unset',
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'center',
+                    padding: 12,
+                    cursor: loadingMore ? 'default' : 'pointer',
+                    color: 'var(--sos-text-muted)',
+                    fontSize: 12.5,
+                  }}
+                >
+                  {loadingMore ? 'Loading older chats…' : 'Load older chats'}
+                </button>
+              ) : null}
+            </>
           )}
         </div>
       </div>

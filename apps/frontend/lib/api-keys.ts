@@ -121,3 +121,54 @@ export interface AiRecentRun {
 export function getRecentAiRuns(): Promise<AiRecentRun[]> {
   return apiFetch<AiRecentRun[]>('/admin/ai/recent-runs', { cache: 'no-store' });
 }
+
+// ─── Bot knowledge editor (RAG facts the bot answers from) ────────────────
+
+export interface AiKnowledgeEntry {
+  id: string;
+  type: string;
+  programKey: string | null;
+  queryEn: string | null;
+  queryUr: string | null;
+  answerEn: string;
+  answerUr: string | null;
+  sourceFile: string;
+  chunkIndex: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeInput {
+  queryEn: string;
+  answerEn: string;
+  answerUr?: string;
+  programKey?: string;
+}
+
+export function listKnowledge(search?: string): Promise<AiKnowledgeEntry[]> {
+  const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+  return apiFetch<AiKnowledgeEntry[]>(`/admin/ai/knowledge${qs}`, { cache: 'no-store' });
+}
+
+export function createKnowledge(input: KnowledgeInput): Promise<AiKnowledgeEntry> {
+  return apiFetch<AiKnowledgeEntry>('/admin/ai/knowledge', {
+    method: 'POST',
+    body: JSON.stringify(input),
+    cache: 'no-store',
+  });
+}
+
+export function updateKnowledge(id: string, input: KnowledgeInput): Promise<AiKnowledgeEntry> {
+  return apiFetch<AiKnowledgeEntry>(`/admin/ai/knowledge/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+    cache: 'no-store',
+  });
+}
+
+export function deleteKnowledge(id: string): Promise<{ id: string; deleted: boolean }> {
+  return apiFetch<{ id: string; deleted: boolean }>(`/admin/ai/knowledge/${id}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}

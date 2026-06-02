@@ -2562,6 +2562,8 @@ model DocumentAiAssessment {
   // the OCR text (e.g. ["MOFA","HEC"]). Suggestion only — surfaced as a hint
   // next to the manual "Mark attested" control; never auto-marks attestation.
   detectedAuthorities String[]          @default([])
+  // P4f: dominant non-Latin script in OCR text — translation-needed hint.
+  detectedLanguage  String?
   ocrTier           String?
   costCents         Float               @default(0)
   cacheHit          Boolean             @default(false)

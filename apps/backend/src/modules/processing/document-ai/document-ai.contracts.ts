@@ -80,6 +80,9 @@ export interface ParserResponse {
   // text (e.g. ["MOFA", "HEC"]). Optional — absent on responses cached before
   // the parser added it. Suggestion only; never auto-marks attestation.
   detectedAuthorities?: string[];
+  // P4f: dominant non-Latin script detected in OCR text (e.g. "Arabic/Urdu").
+  // null/absent = primarily Latin script (no translation hint). Suggestion only.
+  detectedLanguage?: string | null;
   errorMessage: string | null;
 }
 

@@ -16,6 +16,7 @@ import { ActivityTimelineService } from '../../activity-timeline/activity-timeli
 import { DocumentParserClient } from './document-parser.client';
 import { ApiKeysService } from '../../api-keys/api-keys.service';
 import { computeValidityExpiry } from '../expiry';
+import { applyCrmAutoFill } from '../crm-auto-fill.helper';
 import {
   DOC_AI_QUEUE,
   type DocAiJob,
@@ -252,7 +253,7 @@ export class DocumentAiService {
 
   private async autoApprove(
     version: { id: string; documentItemId: string; caseId: string },
-    item: { documentName: string; validityRule: string | null; validityMonths: number | null },
+    item: { documentName: string; validityRule: string | null; validityMonths: number | null; docType?: string | null },
     resp: ParserResponse,
     aiAssessmentId: string,
     clientId: string | null,
@@ -308,6 +309,18 @@ export class DocumentAiService {
         },
       });
     });
+
+    // P4g: CRM auto-fill — best-effort, non-fatal.
+    if (clientId && item.docType && resp.extracted && typeof resp.extracted === 'object') {
+      void applyCrmAutoFill(
+        this.prisma,
+        clientId,
+        item.docType,
+        resp.extracted as Record<string, unknown>,
+        version.caseId,
+        null, // system action
+      ).catch(() => {});
+    }
 
     this.timeline
       .record({

@@ -195,6 +195,17 @@ export function listThreads(opts: {
 }
 
 /**
+ * Resolve a single lead's WhatsApp thread directly (by lead id, with a
+ * server-side phone fallback) — regardless of how old it is. Backs the
+ * lead/client-profile WhatsApp tab, which previously scanned only the most
+ * recent inbox page and missed older conversations.
+ */
+export async function getThreadForLead(leadId: string): Promise<ThreadListItem | null> {
+  const res = await apiFetch<{ item: ThreadListItem | null }>(`/whatsapp/threads/by-lead/${leadId}`);
+  return res.item ?? null;
+}
+
+/**
  * Fetch a single thread in the exact list-row shape — used by the realtime
  * patch path to refresh just one row on a socket event instead of refetching
  * the whole list. Resolves to null when the thread no longer exists or is no

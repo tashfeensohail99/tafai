@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import { RequireAnyPermissions } from '../../../common/decorators/require-permissions.decorator';
@@ -86,5 +98,22 @@ export class WhatsAppCallsController {
   @Post(':id/hangup')
   hangup(@Param('id', ParseUUIDPipe) id: string) {
     return this.calls.hangup(id);
+  }
+
+  // Recording upload (rep's browser, on hang-up). Any authenticated employee —
+  // they're uploading their own call. 64MB cap (opus audio is tiny).
+  @Post(':id/recording')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 64 * 1024 * 1024 } }))
+  recording(@Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File) {
+    if (!file) return { error: 'No file uploaded' };
+    return this.calls.saveRecording(id, file.buffer, file.mimetype, file.originalname);
+  }
+
+  // Signed URL to play/download the recording — admin/manager only.
+  @Get(':id/recording')
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermissions('whatsapp.view_all_inboxes')
+  recordingUrl(@Param('id', ParseUUIDPipe) id: string) {
+    return this.calls.recordingSignedUrl(id);
   }
 }

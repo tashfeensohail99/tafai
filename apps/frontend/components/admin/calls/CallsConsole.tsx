@@ -42,6 +42,9 @@ interface CallRow {
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
+  hasRecording?: boolean;
+  transcript?: string | null;
+  transcriptStatus?: string | null;
 }
 interface CallsResponse {
   items: CallRow[];
@@ -110,6 +113,7 @@ export function CallsConsole() {
   const [dir, setDir] = useState<DirFilter>('all');
   const [outcome, setOutcome] = useState<OutcomeFilter>('all');
   const [search, setSearch] = useState('');
+  const [detail, setDetail] = useState<CallRow | null>(null);
 
   // Initial + refresh load (stats + first page in parallel).
   useEffect(() => {
@@ -267,6 +271,7 @@ export function CallsConsole() {
                   <Th>Outcome</Th>
                   <Th>Duration</Th>
                   <Th>Handled by</Th>
+                  <Th>Recording</Th>
                 </tr>
               </thead>
               <tbody>
@@ -295,6 +300,32 @@ export function CallsConsole() {
                       </Td>
                       <Td>{fmtDuration(c.durationSeconds)}</Td>
                       <Td>{c.answeredByEmployeeName ?? c.assignedEmployeeName ?? '—'}</Td>
+                      <Td>
+                        {c.hasRecording ? (
+                          <button
+                            type="button"
+                            onClick={() => setDetail(c)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              padding: '4px 10px',
+                              borderRadius: 8,
+                              cursor: 'pointer',
+                              border: '1px solid var(--sos-border-strong)',
+                              background: 'var(--sos-surface-1)',
+                              color: 'var(--sos-text-primary)',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            ▶ Play{c.transcript ? ' · transcript' : ''}
+                          </button>
+                        ) : (
+                          <span style={{ color: 'var(--sos-text-muted)' }}>—</span>
+                        )}
+                      </Td>
                     </tr>
                   );
                 })}
@@ -310,6 +341,90 @@ export function CallsConsole() {
           ) : null}
         </div>
       )}
+
+      {detail ? <CallDetailModal call={detail} onClose={() => setDetail(null)} /> : null}
+    </div>
+  );
+}
+
+function CallDetailModal({ call, onClose }: { call: CallRow; onClose: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await apiFetch<{ url: string }>(`/whatsapp/calls/${call.id}/recording`);
+        if (!cancelled) setUrl(r.url);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : 'Could not load recording');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [call.id]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 3000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="sos-glass sos-glass--strong"
+        style={{ width: 'min(560px, 96vw)', maxHeight: '85vh', overflowY: 'auto', borderRadius: 16, padding: 20 }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, color: 'var(--sos-text-primary)' }}>
+            {call.contactName ?? call.phone ?? 'Call'}
+            <span style={{ color: 'var(--sos-text-muted)', fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+              {fmtWhen(call.createdAt)} · {fmtDuration(call.durationSeconds)}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{ background: 'transparent', border: 'none', color: 'var(--sos-text-muted)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {err ? (
+          <div style={{ color: 'var(--sos-status-danger)', fontSize: 13, marginBottom: 12 }}>{err}</div>
+        ) : url ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <audio controls autoPlay src={url} style={{ width: '100%' }} />
+        ) : (
+          <div style={{ color: 'var(--sos-text-muted)', fontSize: 13 }}>Loading recording…</div>
+        )}
+
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sos-text-muted)', marginBottom: 6 }}>Transcript</div>
+          {call.transcript ? (
+            <div style={{ fontSize: 13, color: 'var(--sos-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+              {call.transcript}
+            </div>
+          ) : call.transcriptStatus === 'PENDING' ? (
+            <div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>Transcribing… check back shortly.</div>
+          ) : call.transcriptStatus === 'FAILED' ? (
+            <div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>Transcription unavailable for this call.</div>
+          ) : (
+            <div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>No transcript.</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

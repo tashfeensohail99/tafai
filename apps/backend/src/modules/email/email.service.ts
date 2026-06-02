@@ -366,6 +366,39 @@ export class EmailService {
       attachments: [{ filename: opts.fileName, content: opts.pdf, contentType: 'application/pdf' }],
     });
   }
+
+  /**
+   * A free-form message about a client's processing case. Used by:
+   *   - the Processing "Send message" panel when the officer ticks the Email
+   *     channel, and
+   *   - the client-nudge cron as a fallback when WhatsApp can't deliver (24h
+   *     window closed / no conversation yet).
+   * `bodyText` is plain text and may contain newlines and bullet characters
+   * (the same body we send over WhatsApp); we escape it and turn line breaks
+   * into <br/> so it reads cleanly as HTML. Reply-to is admin@ so client
+   * replies land in the shared mailbox.
+   */
+  async sendCaseMessageToClient(opts: {
+    to: string;
+    clientName: string;
+    subject: string;
+    bodyText: string;
+  }): Promise<boolean> {
+    const safeBody = escHtml(opts.bodyText).replace(/\n/g, '<br/>');
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">${escHtml(opts.subject)}</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Dear ${escHtml(opts.clientName)},</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:18px;margin-bottom:20px;">
+        <p style="margin:0;font-size:14px;color:#0f172a;line-height:1.7;">${safeBody}</p>
+      </div>
+      <p style="font-size:13px;color:#64748b;">You can upload documents and track your application anytime in your client portal. If you have any questions, just reply to this email or contact us at <a href="mailto:admin@tashfeengroup.com" style="color:#7c3aed;">admin@tashfeengroup.com</a>.</p>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: opts.subject,
+      html: baseTemplate(opts.subject, content),
+      replyTo: 'admin@tashfeengroup.com',
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

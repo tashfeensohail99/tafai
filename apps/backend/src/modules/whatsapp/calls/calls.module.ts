@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { StorageModule } from '../../storage/storage.module';
 import { WhatsAppRealtimeModule } from '../realtime/realtime.module';
 import { WhatsAppCallsService } from './calls.service';
 import { WhatsAppCallsController } from './calls.controller';
@@ -7,7 +8,7 @@ import { WhatsAppCallsController } from './calls.controller';
 // ConfigService are globally available; we import RealtimeModule for the
 // publisher (CALL_ENDED fanout).
 @Module({
-  imports: [WhatsAppRealtimeModule],
+  imports: [WhatsAppRealtimeModule, StorageModule],
   controllers: [WhatsAppCallsController],
   providers: [WhatsAppCallsService],
 })

@@ -13,6 +13,8 @@ import {
   WhatsAppMessageStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { StorageService } from '../../storage/storage.service';
+import { OpenAiService } from '../../ai/openai.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WhatsAppRealtimePublisher } from '../realtime/publisher.service';
 import { WHATSAPP_WS_EVENTS } from '../queues/queue-contracts';
@@ -34,6 +36,8 @@ export class WhatsAppCallsService {
     private readonly metaFactory: WhatsAppMetaClientFactory,
     private readonly publisher: WhatsAppRealtimePublisher,
     private readonly config: ConfigService,
+    private readonly storage: StorageService,
+    private readonly openai: OpenAiService,
   ) {}
 
   /** ICE servers for the browser RTCPeerConnection (STUN always; TURN if configured). */
@@ -146,6 +150,9 @@ export class WhatsAppCallsService {
         createdAt: true,
         startedAt: true,
         endedAt: true,
+        recordingKey: true,
+        transcript: true,
+        transcriptStatus: true,
       },
     });
 
@@ -211,6 +218,9 @@ export class WhatsAppCallsService {
         createdAt: r.createdAt,
         startedAt: r.startedAt,
         endedAt: r.endedAt,
+        hasRecording: !!r.recordingKey,
+        transcript: r.transcript,
+        transcriptStatus: r.transcriptStatus,
       };
     });
 
@@ -391,5 +401,63 @@ export class WhatsAppCallsService {
 
     this.log.log(`outbound call ${callRow.id} (waCallId ${callId}) initiated for thread ${thread.id}`);
     return { callId: callRow.id };
+  }
+
+  // ── Recording + transcription (internal QA / AI-training corpus) ──────────
+
+  /**
+   * Store a call recording (both sides, mixed + uploaded by the rep's browser
+   * on hang-up) and kick off Whisper transcription in the background. Best-
+   * effort: a failure here never affects the call.
+   */
+  async saveRecording(id: string, buffer: Buffer, mimeType: string, filename: string) {
+    const call = await this.prisma.whatsAppCall.findUnique({ where: { id }, select: { id: true } });
+    if (!call) throw new NotFoundException('Call not found');
+    if (!buffer?.length) throw new BadRequestException('Empty recording');
+
+    const mime = mimeType || 'audio/webm';
+    const { key } = await this.storage.upload(
+      buffer,
+      mime,
+      'whatsapp-call-recordings',
+      filename || 'call.webm',
+    );
+    await this.prisma.whatsAppCall.update({
+      where: { id },
+      data: { recordingKey: key, recordingMimeType: mime, transcriptStatus: 'PENDING' },
+    });
+
+    // Transcribe in the background using the in-memory buffer (no re-download).
+    void this.transcribeRecording(id, buffer, filename || 'call.webm');
+    this.log.log(`recording stored for call ${id} (${buffer.length} bytes)`);
+    return { ok: true };
+  }
+
+  /** Background Whisper transcription. Updates transcript + status; never throws. */
+  private async transcribeRecording(id: string, buffer: Buffer, filename: string): Promise<void> {
+    try {
+      const res = await this.openai.transcribe(buffer, filename);
+      await this.prisma.whatsAppCall.update({
+        where: { id },
+        data: { transcript: res?.text ?? null, transcriptStatus: res ? 'DONE' : 'FAILED' },
+      });
+      this.log.log(`transcript ${res ? 'done' : 'failed'} for call ${id}`);
+    } catch (err) {
+      this.log.error(`transcribe failed for call ${id}: ${(err as Error).message}`);
+      await this.prisma.whatsAppCall
+        .update({ where: { id }, data: { transcriptStatus: 'FAILED' } })
+        .catch(() => undefined);
+    }
+  }
+
+  /** Signed URL to play/download a call recording (admin). */
+  async recordingSignedUrl(id: string) {
+    const call = await this.prisma.whatsAppCall.findUnique({
+      where: { id },
+      select: { recordingKey: true, recordingMimeType: true },
+    });
+    if (!call?.recordingKey) throw new NotFoundException('No recording for this call');
+    const url = await this.storage.getSignedUrl(call.recordingKey);
+    return { url, mimeType: call.recordingMimeType ?? 'audio/webm' };
   }
 }

@@ -66,6 +66,11 @@ export function CallDock() {
   const outboundThreadRef = useRef<string | null>(null);
   // Mirror of the active call id so socket handlers read fresh state.
   const activeIdRef = useRef<string | null>(null);
+  // Call recording (both sides, mixed) → uploaded on hang-up for QA/AI training.
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingCtxRef = useRef<AudioContext | null>(null);
+  const recordingCallIdRef = useRef<string | null>(null);
 
   const playRingTone = useCallback(() => {
     try {
@@ -104,7 +109,100 @@ export function CallDock() {
     }
   }, []);
 
+  // Begin recording both sides once media is flowing. Mixes the local mic and
+  // the remote audio (read off the <audio> element's srcObject) into one track
+  // via the Web Audio API, then a MediaRecorder. Idempotent + best-effort: any
+  // failure (e.g. older mobile browsers without MediaRecorder) is swallowed so
+  // it can never break the call itself.
+  const beginRecording = useCallback(() => {
+    try {
+      if (mediaRecorderRef.current) return; // already recording
+      if (typeof MediaRecorder === 'undefined') return; // unsupported
+      const local = localStreamRef.current;
+      const remote = (remoteAudioRef.current?.srcObject as MediaStream | null) ?? null;
+      if (!local && !remote) return;
+      const Ctor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      const ctx = new Ctor();
+      recordingCtxRef.current = ctx;
+      const dest = ctx.createMediaStreamDestination();
+      if (local) {
+        try {
+          ctx.createMediaStreamSource(local).connect(dest);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (remote) {
+        try {
+          ctx.createMediaStreamSource(remote).connect(dest);
+        } catch {
+          /* ignore */
+        }
+      }
+      recordedChunksRef.current = [];
+      let rec: MediaRecorder;
+      try {
+        rec = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' });
+      } catch {
+        rec = new MediaRecorder(dest.stream);
+      }
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+      recordingCallIdRef.current = activeIdRef.current;
+      mediaRecorderRef.current = rec;
+      rec.start(1000); // 1s timeslices so the last chunk is small on stop
+    } catch {
+      /* recording is best-effort — never break the call */
+    }
+  }, []);
+
+  // Stop recording and upload the blob to the call's recording endpoint. The
+  // callId is captured at record-start since activeIdRef is cleared in teardown.
+  const stopAndUploadRecording = useCallback(() => {
+    const rec = mediaRecorderRef.current;
+    const callId = recordingCallIdRef.current;
+    mediaRecorderRef.current = null;
+    recordingCallIdRef.current = null;
+    if (!rec) {
+      try {
+        recordingCtxRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      recordingCtxRef.current = null;
+      return;
+    }
+    rec.onstop = () => {
+      try {
+        recordingCtxRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      recordingCtxRef.current = null;
+      const chunks = recordedChunksRef.current;
+      recordedChunksRef.current = [];
+      if (!callId || callId === 'pending' || chunks.length === 0) return;
+      const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+      if (blob.size < 2000) return; // skip near-empty (no real audio)
+      const fd = new FormData();
+      fd.append('file', blob, `call-${callId}.webm`);
+      void apiFetch(`/whatsapp/calls/${callId}/recording`, { method: 'POST', body: fd }).catch(
+        () => undefined,
+      );
+    };
+    try {
+      rec.stop();
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const teardown = useCallback(() => {
+    stopAndUploadRecording();
     stopRing();
     if (ringTimeoutRef.current) {
       clearTimeout(ringTimeoutRef.current);
@@ -135,7 +233,7 @@ export function CallDock() {
     setSeconds(0);
     setShowReqPerm(false);
     outboundThreadRef.current = null;
-  }, [stopRing]);
+  }, [stopRing, stopAndUploadRecording]);
 
   // Incoming-call ring (targeted to this rep by the backend).
   useWhatsAppEvent<IncomingCall>(
@@ -299,6 +397,11 @@ export function CallDock() {
   }, [startOutbound]);
 
   useEffect(() => () => teardown(), [teardown]);
+
+  // Start recording the moment media connects (covers inbound + outbound).
+  useEffect(() => {
+    if (phase === 'in-call') beginRecording();
+  }, [phase, beginRecording]);
 
   async function accept() {
     if (!call) return;

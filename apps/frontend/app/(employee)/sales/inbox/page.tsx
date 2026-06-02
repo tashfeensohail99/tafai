@@ -66,8 +66,13 @@ export default function SalesInboxPage() {
   // `background: true` skips the loading spinner — used by realtime refreshes
   // so an incoming message updates the list in place without a flash. Foreground
   // (initial load, filter/search change) still shows the skeleton.
-  // Filter/search change → reset pagination depth back to page 1.
-  useEffect(() => { pagesRef.current = 1; }, [filter, debouncedSearch]);
+  // Filter/search change → reset pagination depth back to page 1 AND clear
+  // the cursor. Bug: without the cursor reset, loadMore() passed the previous
+  // filter's cursor to the new filter's query and fetched the wrong threads.
+  useEffect(() => {
+    pagesRef.current = 1;
+    setNextCursor(null);
+  }, [filter, debouncedSearch]);
 
   // The "Pending" tab maps to needsReply (responseDeadlineAt set) — the literal
   // WhatsAppThreadStatus.PENDING value is never written by any code path, so
@@ -307,7 +312,18 @@ export default function SalesInboxPage() {
         >
           {FILTERS.map((f) => {
             const active = filter === f.key;
-            const count = f.key === 'ALL' ? items.length : items.filter((t) => t.status === f.key).length;
+            // Count threads in the currently-loaded list that belong to this
+            // tab. For "Pending" we check responseDeadlineAt (agent-turn clock
+            // running), NOT status — WhatsAppThreadStatus.PENDING is never
+            // written by any code path; pending chats have status=OPEN +
+            // responseDeadlineAt set. For "All" when not on the All tab, show
+            // the total loaded; when ON a filtered tab, count matches items.
+            const count =
+              f.key === 'ALL'
+                ? items.length
+                : f.key === 'PENDING'
+                  ? items.filter((t) => t.responseDeadlineAt != null).length
+                  : items.filter((t) => t.status === f.key).length;
             return (
               <button
                 key={f.key}

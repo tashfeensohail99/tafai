@@ -38,6 +38,7 @@ import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocumentIntakeService } from './document-ai/document-intake.service';
 import { reconcileIdentity } from './identity-reconciliation';
 import { computeValidityExpiry } from './expiry';
+import { applyCrmAutoFill } from './crm-auto-fill.helper';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
@@ -1597,14 +1598,18 @@ export class ProcessingService {
     // Phase 4b — on accept, derive the document's expiry from the latest AI
     // assessment's extracted fields + the slot's validity rule, so the
     // submission gate (which blocks on validityExpiryDate < now) actually bites.
+    // P4g: also hoist extracted + clientId so the CRM auto-fill can run
+    //      after the transaction without a second round-trip.
     let acceptedExpiry: Date | null = null;
+    let extracted: Record<string, unknown> | null = null;
+    let caseClientId: string | null = null;
     if (dto.decision === 'ACCEPTED') {
       const assess = await this.prisma.documentAiAssessment.findFirst({
         where: { caseId, versionId: item.latestVersionId! },
         orderBy: { createdAt: 'desc' },
         select: { extracted: true },
       });
-      const extracted =
+      extracted =
         assess?.extracted && typeof assess.extracted === 'object' && !Array.isArray(assess.extracted)
           ? (assess.extracted as Record<string, unknown>)
           : null;
@@ -1612,6 +1617,12 @@ export class ProcessingService {
         { validityRule: item.validityRule, validityMonths: item.validityMonths },
         extracted,
       );
+      // Fetch clientId for the CRM auto-fill that runs post-transaction.
+      const pc = await this.prisma.processingCase.findUnique({
+        where: { id: caseId },
+        select: { clientId: true },
+      });
+      caseClientId = pc?.clientId ?? null;
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -1653,6 +1664,20 @@ export class ProcessingService {
         },
       });
     });
+
+    // P4g: CRM auto-fill — non-fatal, best-effort after the transaction lands.
+    // Copies extracted identity fields (name, DOB, passport/CNIC) into Client
+    // record for empty fields only. Failure here never undoes the doc acceptance.
+    if (dto.decision === 'ACCEPTED' && caseClientId && extracted && item.docType) {
+      void applyCrmAutoFill(
+        this.prisma,
+        caseClientId,
+        item.docType,
+        extracted,
+        caseId,
+        user.id,
+      ).catch((e: Error) => this.logger.warn(`P4g auto-fill failed: ${e.message}`));
+    }
 
     // Non-fatal — timeline failure must never undo the completed document review.
     this.timeline.record({

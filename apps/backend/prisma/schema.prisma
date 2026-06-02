@@ -2253,6 +2253,7 @@ enum ReminderType {
   STAGE_UPDATE
   SUBMISSION_CONFIRMED
   DECISION_RECEIVED
+  ATTESTATION_REMINDER   // P5-nudges: remind client to arrange attestation
   @@schema("crm")
 }
 

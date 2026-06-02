@@ -15,6 +15,7 @@ import { DocumentIntakeService } from './document-ai/document-intake.service';
 import { DocIntakeProcessor } from './document-ai/doc-intake.processor';
 import { DocumentExpirySweeperService } from './document-expiry-sweeper.service';
 import { SubmissionPackageService } from './submission-package.service';
+import { ClientNudgeService } from './client-nudge.service';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { SubmissionPackageService } from './submission-package.service';
     DocIntakeProcessor,
     DocumentExpirySweeperService,
     SubmissionPackageService,
+    ClientNudgeService,
   ],
   // DocumentAiService is exported so the client portal (PortalModule) can run
   // the same AI assessment on client-uploaded documents. DocumentIntakeService

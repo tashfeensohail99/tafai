@@ -2530,6 +2530,22 @@ export class ProcessingService {
     };
   }
 
+  /**
+   * P5-nudges: system-initiated WhatsApp send (no user context).
+   * Used by ClientNudgeService for cron-driven reminders.
+   * `actorUserId` defaults to the assigned officer; pass '' to send as unattributed.
+   * Returns same {ok, reason?} shape as enqueueWhatsAppForCase.
+   */
+  async sendNudgeWhatsApp(
+    caseId: string,
+    body: string,
+    actorUserId = '',
+  ): Promise<{ ok: boolean; messageId?: string; reason?: string }> {
+    const text = (body ?? '').trim();
+    if (!text) return { ok: false, reason: 'empty body' };
+    return this.enqueueWhatsAppForCase({ caseId, actorUserId, body: text });
+  }
+
   async sendCaseWhatsApp(caseId: string, body: string, user: RequestUser) {
     await this.assertCaseAccessById(caseId, user);
     const text = (body ?? '').trim();

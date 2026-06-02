@@ -133,19 +133,19 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <h2 style={{ fontSize: ‘clamp(28px, 4.2vw, 42px)’, fontWeight: 700, lineHeight: 1.1, letterSpacing: ‘-0.02em’, maxWidth: 460 }}>
+          <h2 style={{ fontSize: 'clamp(28px, 4.2vw, 42px)', fontWeight: 700, lineHeight: 1.1, letterSpacing: '-0.02em', maxWidth: 460 }}>
             {brandHeadline}
           </h2>
-          <p style={{ marginTop: 18, color: ‘rgb(255 255 255 / 0.7)’, fontSize: 15, lineHeight: 1.6, maxWidth: 480 }}>
+          <p style={{ marginTop: 18, color: 'rgb(255 255 255 / 0.7)', fontSize: 15, lineHeight: 1.6, maxWidth: 480 }}>
             {brandSubtext}
           </p>
 
-          <div style={{ marginTop: 32, display: ‘flex’, flexDirection: ‘column’, gap: 14, maxWidth: 480 }}>
+          <div style={{ marginTop: 32, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 480 }}>
             {brandFeatures.map((item) => (
               <div
                 key={item.title}
                 className="flex items-start gap-3 rounded-xl px-4 py-3"
-                style={{ background: ‘rgb(255 255 255 / 0.05)’, border: ‘1px solid rgb(255 255 255 / 0.08)’ }}
+                style={{ background: 'rgb(255 255 255 / 0.05)', border: '1px solid rgb(255 255 255 / 0.08)' }}
               >
                 <div
                   style={{
@@ -153,20 +153,20 @@ export default function LoginPage() {
                     height: 8,
                     borderRadius: 999,
                     marginTop: 7,
-                    background: ‘#a5b4fc’,
-                    boxShadow: ‘0 0 10px rgb(165 180 252 / 0.6)’,
+                    background: '#a5b4fc',
+                    boxShadow: '0 0 10px rgb(165 180 252 / 0.6)',
                   }}
                 />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{item.title}</div>
-                  <div style={{ color: ‘rgb(255 255 255 / 0.65)’, fontSize: 13, marginTop: 2 }}>{item.body}</div>
+                  <div style={{ color: 'rgb(255 255 255 / 0.65)', fontSize: 13, marginTop: 2 }}>{item.body}</div>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        <div style={{ fontSize: 12, color: ‘rgb(255 255 255 / 0.5)’ }}>
+        <div style={{ fontSize: 12, color: 'rgb(255 255 255 / 0.5)' }}>
           © {new Date().getFullYear()} Tashfeen Immigration Solutions
         </div>
       </aside>

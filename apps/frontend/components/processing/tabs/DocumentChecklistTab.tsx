@@ -139,6 +139,20 @@ function AiAssessmentBlock({ a }: { a: ApiDocumentAiAssessment }) {
         </StatusBadge>
         {conf ? <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{conf} confidence</span> : null}
         {a.autoApproved ? <StatusBadge tone="success" size="sm">Auto-approved</StatusBadge> : null}
+        {/* P4f: translation-needed hint */}
+        {a.detectedLanguage ? (
+          <span
+            title={`AI detected non-Latin script (${a.detectedLanguage}) in this document — it may need certified translation. Suggestion only; confirm with associate.`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999,
+              fontSize: 11, fontWeight: 600,
+              background: 'var(--sos-status-warning-soft)', color: 'var(--sos-status-warning)',
+              border: '1px solid var(--sos-status-warning-border)',
+            }}
+          >
+            ⚠ translation needed · {a.detectedLanguage}
+          </span>
+        ) : null}
         {a.detectedDocType ? (
           <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>detected: {a.detectedDocType}</span>
         ) : null}

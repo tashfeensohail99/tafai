@@ -789,6 +789,9 @@ export interface ApiDocumentAiAssessment {
   /** P4c-2: attestation authorities detected in the OCR text (e.g. ["MOFA","HEC"]).
    *  Suggestion only — shown as a hint next to the manual "Mark attested" control. */
   detectedAuthorities?: string[];
+  /** P4f: dominant non-Latin script hint (e.g. "Arabic/Urdu"). null = primarily Latin.
+   *  Suggestion only — shown as an amber "translation needed" chip on the checklist. */
+  detectedLanguage?: string | null;
   autoApproved: boolean;
   ocrTier: string | null;
   errorMessage: string | null;

@@ -68,6 +68,7 @@ import { CorrectionRequestModal } from './CorrectionRequestModal';
 import { CancelCaseModal } from './CancelCaseModal';
 import { CorrectionsTab } from './tabs/CorrectionsTab';
 import { MilestonesTab } from './tabs/MilestonesTab';
+import { SubmissionPackagePanel } from './SubmissionPackagePanel';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Tabs -----------------------------------------------------------
@@ -372,7 +373,11 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
 
         {/* Layout: sidebar + main — responsive via sos-workspace-split CSS class */}
         <div className="sos-workspace-split" style={{ gap: '16px', alignItems: 'flex-start' }}>
-          <CaseMetaSidebar c={c} />
+          {/* Sidebar column — meta rail + P4e submission package */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <CaseMetaSidebar c={c} />
+            <SubmissionPackagePanel caseId={c.id} caseStage={c.stage} />
+          </div>
 
           {/* Tab panel */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0' }}>

@@ -2375,6 +2375,10 @@ model ProcessingCase {
   completedAt             DateTime?
   cancelledAt             DateTime?
   cancellationReason      String?
+  // P4e — auto-assembled submission package
+  submissionPackageKey        String?    // storage key of the assembled PDF
+  submissionPackageAssembledAt DateTime?  // when it was last assembled
+  submissionPackageDocCount   Int?       // how many docs were included
   createdAt               DateTime               @default(now())
   updatedAt               DateTime               @updatedAt
   createdByUserId         String

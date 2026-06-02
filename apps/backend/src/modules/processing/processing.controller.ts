@@ -28,6 +28,7 @@ import {
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { ProcessingService } from './processing.service';
+import { SubmissionPackageService } from './submission-package.service';
 import {
   AcknowledgeIntakeDto,
   AddDocumentItemDto,
@@ -64,7 +65,10 @@ import {
 @Controller('processing')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class ProcessingController {
-  constructor(private readonly processingService: ProcessingService) {}
+  constructor(
+    private readonly processingService: ProcessingService,
+    private readonly submissionPackageService: SubmissionPackageService,
+  ) {}
 
   // -------------------------------------------------------------------------
   // INTAKE
@@ -788,5 +792,29 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.reopenDocumentItem(caseId, itemId, user);
+  }
+
+  // -------------------------------------------------------------------------
+  // P4e — SUBMISSION PACKAGE
+  // -------------------------------------------------------------------------
+
+  /** Assemble (or re-assemble) the merged PDF submission package for a case. */
+  @Post('cases/:caseId/submission-package/assemble')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  assembleSubmissionPackage(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.submissionPackageService.assemblePackage(caseId, user);
+  }
+
+  /** Return info (signed URL) for the most-recently assembled package, if any. */
+  @Get('cases/:caseId/submission-package')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getSubmissionPackage(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.submissionPackageService.getPackageInfo(caseId, user);
   }
 }

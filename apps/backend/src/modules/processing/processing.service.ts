@@ -1083,7 +1083,10 @@ export class ProcessingService {
 
     if (
       toStage === ProcessingCaseStage.READY_FOR_SUBMISSION ||
-      toStage === ProcessingCaseStage.DOCUMENTS_COMPLETE
+      toStage === ProcessingCaseStage.DOCUMENTS_COMPLETE ||
+      // Re-assert at the actual submission step too — a doc can expire (or its
+      // attestation lapse) while the case sits in READY_FOR_SUBMISSION.
+      toStage === ProcessingCaseStage.SUBMITTED
     ) {
       await this.assertDocumentsReadyForSubmission(caseId);
     }
@@ -3836,13 +3839,27 @@ export class ProcessingService {
    * Rule 2: Hard gate — all CRITICAL and REQUIRED docs must be ACCEPTED
    * (or WAIVED / NOT_APPLICABLE). No EXPIRED docs in blocking criticalities.
    */
-  private async assertDocumentsReadyForSubmission(caseId: string) {
+  /**
+   * Pure submission-readiness check (P4d). Returns the human-readable list of
+   * blockers that prevent final submission — empty array means ready. Used both
+   * by the hard stage gate (assertDocumentsReadyForSubmission) and surfaced to
+   * the UI via getSubmissionReadiness so the associate sees what's outstanding
+   * BEFORE attempting the transition. Scoped to CRITICAL + REQUIRED docs.
+   */
+  private async computeSubmissionBlockers(caseId: string): Promise<string[]> {
     const items = await this.prisma.caseDocumentItem.findMany({
       where: {
         caseId,
         criticality: { in: [DocumentCriticality.CRITICAL, DocumentCriticality.REQUIRED] },
       },
+      select: {
+        documentName: true,
+        status: true,
+        validityExpiryDate: true,
+        attestationStatus: true,
+      },
     });
+    const now = new Date();
 
     const notAccepted = items.filter(
       (i) =>
@@ -3850,16 +3867,18 @@ export class ProcessingService {
         i.status !== DocumentItemStatus.WAIVED &&
         i.status !== DocumentItemStatus.NOT_APPLICABLE,
     );
-
     const expired = items.filter(
       (i) =>
         i.status === DocumentItemStatus.EXPIRED ||
-        (i.validityExpiryDate != null &&
-          i.validityExpiryDate < new Date()),
+        (i.validityExpiryDate != null && i.validityExpiryDate < now),
+    );
+    // Attestation still pending (P4d): a doc may be ACCEPTED but its required
+    // attestation chain isn't done yet — we must not file an un-attested doc.
+    const attestationPending = items.filter(
+      (i) => i.attestationStatus === 'REQUIRED_PENDING',
     );
 
     const blockers: string[] = [];
-
     if (notAccepted.length > 0) {
       blockers.push(
         `${notAccepted.length} required document(s) not yet accepted: ${notAccepted.map((i) => i.documentName).join(', ')}`,
@@ -3867,10 +3886,30 @@ export class ProcessingService {
     }
     if (expired.length > 0) {
       blockers.push(
-        `${expired.length} critical document(s) expired: ${expired.map((i) => i.documentName).join(', ')}`,
+        `${expired.length} document(s) expired — a renewed copy is needed: ${expired.map((i) => i.documentName).join(', ')}`,
       );
     }
+    if (attestationPending.length > 0) {
+      blockers.push(
+        `${attestationPending.length} document(s) still need attestation: ${attestationPending.map((i) => i.documentName).join(', ')}`,
+      );
+    }
+    return blockers;
+  }
 
+  /** Public readiness for the UI: { ready, blockers }. Access-checked. */
+  async getSubmissionReadiness(
+    caseId: string,
+    user: RequestUser,
+  ): Promise<{ ready: boolean; blockers: string[] }> {
+    const processingCase = await this.findCaseOrThrow(caseId);
+    this.assertCaseAccess(processingCase, user);
+    const blockers = await this.computeSubmissionBlockers(caseId);
+    return { ready: blockers.length === 0, blockers };
+  }
+
+  private async assertDocumentsReadyForSubmission(caseId: string) {
+    const blockers = await this.computeSubmissionBlockers(caseId);
     if (blockers.length > 0) {
       throw new BadRequestException({
         message: 'Case does not meet submission requirements',

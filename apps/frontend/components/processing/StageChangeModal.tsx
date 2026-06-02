@@ -3,13 +3,15 @@
 // Shows allowed next stages for the current stage, stage-specific required
 // fields, and a GateCheckResult component if documents must pass a hard gate.
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
   ChevronRight,
   Layers,
+  Loader2,
+  ShieldCheck,
   X,
   XCircle,
 } from 'lucide-react';
@@ -26,7 +28,7 @@ import {
   getDocumentProgress,
 } from '@/components/processing/mockData';
 import { stageTone } from './ProcessingDashboardPage';
-import { changeCaseStage } from '@/lib/processing';
+import { changeCaseStage, getSubmissionReadiness } from '@/lib/processing';
 
 // ---------- Allowed transitions (mirrors backend ALLOWED_TRANSITIONS) ------
 
@@ -48,8 +50,13 @@ const ALLOWED_TRANSITIONS: Record<ProcessingStage, ProcessingStage[]> = {
   CANCELLED: [],
 };
 
-// Stages that require all CRITICAL+REQUIRED docs to be accepted
+// Stages that require all CRITICAL+REQUIRED docs to be accepted (frontend mirror)
 const DOC_GATE_STAGES: ProcessingStage[] = ['READY_FOR_SUBMISSION', 'DOCUMENTS_COMPLETE'];
+
+// Stages that also trigger the server-side quality gate (doc status + expiry +
+// attestation-pending). This is the authoritative check — the frontend doc gate
+// above is an instant visual preview only.
+const SUBMISSION_GATE_STAGES: ProcessingStage[] = ['READY_FOR_SUBMISSION', 'SUBMITTED'];
 
 // Stage-specific required fields
 type ExtraField = { key: string; label: string; placeholder: string; required: boolean };
@@ -117,6 +124,52 @@ function GateCheckResult({ c, toStage }: { c: MockProcessingCase; toStage: Proce
   );
 }
 
+// ---------- Server quality gate result -----------------------------------
+// P4d: shows the server-side submission readiness check (doc status + expiry +
+// attestation-pending). This is the authoritative gate; the frontend doc check
+// above is an instant preview only.
+
+function ServerGateResult({
+  loading,
+  readiness,
+}: {
+  loading: boolean;
+  readiness: { ready: boolean; blockers: string[] } | null;
+}) {
+  if (loading) {
+    return (
+      <div style={{ padding: '10px 14px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', border: '1px solid var(--sos-border-subtle)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12.5px', color: 'var(--sos-text-muted)', marginTop: 12 }}>
+        <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+        Checking submission readiness…
+      </div>
+    );
+  }
+  if (!readiness) return null;
+
+  if (readiness.ready) {
+    return (
+      <div style={{ padding: '10px 14px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-status-success-soft)', border: '1px solid var(--sos-status-success-border)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12.5px', color: 'var(--sos-status-success)', fontWeight: 500, marginTop: 12 }}>
+        <ShieldCheck size={14} />
+        Quality gate passed — all documents accepted, none expired, attestation complete
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '12px 14px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--sos-status-danger)', fontWeight: 600, marginBottom: '8px' }}>
+        <AlertTriangle size={15} />
+        Quality gate blocked — {readiness.blockers.length} issue{readiness.blockers.length !== 1 ? 's' : ''} must be resolved
+      </div>
+      <ul style={{ margin: 0, padding: '0 0 0 18px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {readiness.blockers.map((b, i) => (
+          <li key={i} style={{ fontSize: '12px', color: 'var(--sos-text-primary)', lineHeight: 1.5 }}>{b}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ---------- Stage change modal --------------------------------------------
 
 interface StageChangeModalProps {
@@ -134,6 +187,29 @@ export function StageChangeModal({ caseRecord: c, onClose, onChanged }: StageCha
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // P4d — Server-side submission quality gate (doc status + expiry + attestation).
+  // Fetched whenever the target stage is one that triggers the backend gate.
+  // null = not yet loaded / not applicable; {ready, blockers} = result.
+  const [serverReadiness, setServerReadiness] = useState<{ ready: boolean; blockers: string[] } | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+
+  const needsServerGate = toStage ? SUBMISSION_GATE_STAGES.includes(toStage) : false;
+
+  useEffect(() => {
+    if (!needsServerGate) {
+      setServerReadiness(null);
+      return;
+    }
+    let cancelled = false;
+    setServerReadiness(null);
+    setReadinessLoading(true);
+    getSubmissionReadiness(c.id)
+      .then((r) => { if (!cancelled) setServerReadiness(r); })
+      .catch(() => { if (!cancelled) setServerReadiness({ ready: false, blockers: ['Could not verify submission readiness — please try again.'] }); })
+      .finally(() => { if (!cancelled) setReadinessLoading(false); });
+    return () => { cancelled = true; };
+  }, [c.id, toStage, needsServerGate]);
 
   // Front-end mirror of the backend doc gate so the manager sees blockers
   // before they click. Backend re-checks server-side too — this is a UX
@@ -153,6 +229,8 @@ export function StageChangeModal({ caseRecord: c, onClose, onChanged }: StageCha
   const canSubmit =
     !!toStage &&
     (needsDocGate ? docBlockers.length === 0 : true) &&
+    // Server gate: must have loaded and confirmed ready (blocks while loading too)
+    (needsServerGate ? (serverReadiness?.ready === true) : true) &&
     extraFields.every((f) => !f.required || !!fields[f.key]?.trim());
 
   async function handleSubmit() {
@@ -275,8 +353,13 @@ export function StageChangeModal({ caseRecord: c, onClose, onChanged }: StageCha
           </div>
         </div>
 
-        {/* Document gate check */}
+        {/* Document gate check (fast local mirror) */}
         {toStage ? <GateCheckResult c={c} toStage={toStage} /> : null}
+
+        {/* P4d: Server quality gate — expiry + attestation + doc status */}
+        {needsServerGate ? (
+          <ServerGateResult loading={readinessLoading} readiness={serverReadiness} />
+        ) : null}
 
         {/* Stage-specific fields */}
         {extraFields.length > 0 ? (

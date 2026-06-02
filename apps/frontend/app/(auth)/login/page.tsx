@@ -62,6 +62,30 @@ export default function LoginPage() {
     }
   }
 
+  // ---------- Branding panel copy — role-aware ----------------------------
+
+  const isClientRole = role === 'CLIENT';
+
+  const brandHeadline = isClientRole
+    ? 'Your immigration case, tracked from documents to decision.'
+    : 'One workspace, from first touch to approval.';
+
+  const brandSubtext = isClientRole
+    ? 'See exactly where your application stands, upload documents, and get notified the moment something needs attention.'
+    : 'Tashfeen connects sales, finance, and processing teams so every lead moves forward without anything falling through the cracks.';
+
+  const brandFeatures = isClientRole
+    ? [
+        { title: 'Live case status', body: 'See your application stage and document progress at a glance.' },
+        { title: 'Secure document upload', body: 'Upload passport, CNIC, and any requested documents directly.' },
+        { title: 'Direct officer messages', body: 'Communicate with your processing officer and get timely updates.' },
+      ]
+    : [
+        { title: 'Auto-routed leads', body: 'CRM and walk-in leads land in the right rep queue automatically.' },
+        { title: 'Smart follow-ups', body: 'Never miss an SLA. Calls, WhatsApp, and reminders in one place.' },
+        { title: 'Clean handover', body: 'Send finance a complete receipt and sales note in one click.' },
+      ];
+
   return (
     <div
       className="sos-login-shell"
@@ -109,23 +133,19 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <h2 style={{ fontSize: 'clamp(28px, 4.2vw, 42px)', fontWeight: 700, lineHeight: 1.1, letterSpacing: '-0.02em', maxWidth: 460 }}>
-            One workspace, from first touch to finance handover.
+          <h2 style={{ fontSize: ‘clamp(28px, 4.2vw, 42px)’, fontWeight: 700, lineHeight: 1.1, letterSpacing: ‘-0.02em’, maxWidth: 460 }}>
+            {brandHeadline}
           </h2>
-          <p style={{ marginTop: 18, color: 'rgb(255 255 255 / 0.7)', fontSize: 15, lineHeight: 1.6, maxWidth: 480 }}>
-            Tashfeen helps your sales team move every assigned lead through follow-ups, appointments, and payment hand-offs without losing track.
+          <p style={{ marginTop: 18, color: ‘rgb(255 255 255 / 0.7)’, fontSize: 15, lineHeight: 1.6, maxWidth: 480 }}>
+            {brandSubtext}
           </p>
 
-          <div style={{ marginTop: 32, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 480 }}>
-            {[
-              { title: 'Auto-routed leads', body: 'CRM and walk-in leads land in the right rep’s queue.' },
-              { title: 'Smart follow-ups', body: 'Never miss an SLA. Calls, WhatsApp, and reminders.' },
-              { title: 'Clean handover', body: 'Send finance a complete receipt + sales note in one click.' },
-            ].map((item) => (
+          <div style={{ marginTop: 32, display: ‘flex’, flexDirection: ‘column’, gap: 14, maxWidth: 480 }}>
+            {brandFeatures.map((item) => (
               <div
                 key={item.title}
                 className="flex items-start gap-3 rounded-xl px-4 py-3"
-                style={{ background: 'rgb(255 255 255 / 0.05)', border: '1px solid rgb(255 255 255 / 0.08)' }}
+                style={{ background: ‘rgb(255 255 255 / 0.05)’, border: ‘1px solid rgb(255 255 255 / 0.08)’ }}
               >
                 <div
                   style={{
@@ -133,21 +153,21 @@ export default function LoginPage() {
                     height: 8,
                     borderRadius: 999,
                     marginTop: 7,
-                    background: '#a5b4fc',
-                    boxShadow: '0 0 10px rgb(165 180 252 / 0.6)',
+                    background: ‘#a5b4fc’,
+                    boxShadow: ‘0 0 10px rgb(165 180 252 / 0.6)’,
                   }}
                 />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{item.title}</div>
-                  <div style={{ color: 'rgb(255 255 255 / 0.65)', fontSize: 13, marginTop: 2 }}>{item.body}</div>
+                  <div style={{ color: ‘rgb(255 255 255 / 0.65)’, fontSize: 13, marginTop: 2 }}>{item.body}</div>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        <div style={{ fontSize: 12, color: 'rgb(255 255 255 / 0.5)' }}>
-          © {new Date().getFullYear()} Tashfeen — Sales Workspace v2
+        <div style={{ fontSize: 12, color: ‘rgb(255 255 255 / 0.5)’ }}>
+          © {new Date().getFullYear()} Tashfeen Immigration Solutions
         </div>
       </aside>
 

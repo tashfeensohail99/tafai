@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import type { Route } from 'next';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -15,6 +16,8 @@ import {
   CLIENT_STAGE_TONE,
   CLIENT_NEXT_ACTION,
   fmtDate,
+  getProfile,
+  type PortalProfile,
   type ProcessingCaseStage,
 } from '@/lib/portal';
 import { useClientSession } from '@/components/layout/ClientPortalShell';
@@ -120,6 +123,17 @@ function ActionCard({ tone, icon, title, description, href, cta }: ActionCardPro
 
 export function ClientCaseOverviewPage() {
   const { user, activeCase } = useClientSession();
+  const [profile, setProfile] = useState<PortalProfile | null>(null);
+
+  useEffect(() => {
+    getProfile().then(setProfile).catch(() => {});
+  }, []);
+
+  // Show first name if available, fall back to email prefix, then full email.
+  const displayName =
+    profile?.firstName?.trim() ||
+    user.email.split('@')[0] ||
+    user.email;
 
   if (!activeCase) {
     return (
@@ -146,7 +160,7 @@ export function ClientCaseOverviewPage() {
           Welcome back
         </div>
         <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--sos-text-primary)', margin: 0 }}>
-          {user.email}
+          {displayName}
         </h1>
         <div style={{ fontSize: '14px', color: 'var(--sos-text-muted)', marginTop: '4px' }}>
           {activeCase.service} · {activeCase.targetCountry ?? '—'}

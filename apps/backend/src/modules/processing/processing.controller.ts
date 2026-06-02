@@ -38,6 +38,7 @@ import {
   CreateCaseMilestoneDto,
   CreateCorrectionRequestDto,
   CreateDocumentTemplateDto,
+  CreateManualClientCaseDto,
   CreateProcessingCaseDto,
   CreateProcessingNoteDto,
   CreateProcessingTaskDto,
@@ -81,6 +82,20 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.createFromHandover(dto, user);
+  }
+
+  /**
+   * Manual client on-ramp — a Processing Manager creates a client + case
+   * directly (no Finance handover). Gated by the manager-only intake
+   * acknowledge permission (the processing_manager role already holds it).
+   */
+  @Post('clients')
+  @RequirePermissions('processing.intake.acknowledge')
+  createManualClientCase(
+    @Body() dto: CreateManualClientCaseDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.createManualClientCase(dto, user);
   }
 
   @Get('intake')

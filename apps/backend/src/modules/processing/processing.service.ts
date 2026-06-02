@@ -33,6 +33,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
+import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { getMilestonesForService } from './milestone-templates';
 import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocumentIntakeService } from './document-ai/document-intake.service';
@@ -55,6 +56,7 @@ import {
   CreateAuthoritySubmissionDto,
   CreateCorrectionRequestDto,
   CreateDocumentTemplateDto,
+  CreateManualClientCaseDto,
   CreateProcessingCaseDto,
   CreateProcessingNoteDto,
   CreateProcessingTaskDto,
@@ -308,6 +310,117 @@ export class ProcessingService {
       actorUserId: user.id,
       metadata: { handoverId: dto.financeHandoverId, priority: processingCase.priority },
     }).catch(() => { /* timeline is non-fatal — processing_audit_log is the source of truth */ });
+
+    return processingCase;
+  }
+
+  /**
+   * Manual client on-ramp (Processing Manager). Creates a Lead → Client →
+   * INTAKE_PENDING ProcessingCase WITHOUT a Finance handover, so the case
+   * lands in the intake queue exactly like a finance-originated one. Used to
+   * (a) onboard pre-existing clients and (b) generate clients to exercise a
+   * service's checklist / attestation / communication flows.
+   *
+   * Reuses LeadsService.convertToClient (dedupes by phone/email, so importing
+   * a person who already exists links to their existing Client). The Lead is
+   * created directly (not via the sales intake path) so round-robin never
+   * fires, and convertToClient flips it to CONVERTED in the same tx so it
+   * never surfaces as an assignable sales lead.
+   */
+  async createManualClientCase(dto: CreateManualClientCaseDto, user: RequestUser) {
+    const service = dto.service.trim();
+    if (!isCanonicalServiceCode(service)) {
+      throw new BadRequestException(`Unknown service code: ${service}`);
+    }
+    const firstName = dto.firstName.trim();
+    const lastName = dto.lastName.trim();
+    const email = dto.email?.trim() || null;
+    const targetCountry = dto.targetCountry.trim();
+
+    // Reference code generated before the tx (the generator reads counts off
+    // the live table; same pattern as leads.service / lead-import).
+    const referenceCode = await generateLeadReferenceCode(this.prisma);
+
+    // Phone is optional for imported/test clients. Client.phone is @unique +
+    // required, so when blank we store a unique, clearly non-dialable
+    // placeholder keyed off the reference code. The manager edits in the real
+    // number later (WhatsApp stays inactive until then).
+    const phone = dto.phone?.trim() || `MANUAL-${referenceCode}`;
+
+    const processingCase = await this.prisma.$transaction(async (tx) => {
+      // 1. Lead (manual origin). Created direct → no round-robin.
+      const lead = await tx.lead.create({
+        data: {
+          referenceCode,
+          firstName,
+          lastName,
+          email,
+          phone,
+          nationality: dto.nationality?.trim() || null,
+          targetCountry,
+          serviceInterest: service,
+          sourceChannel: 'PROCESSING_MANUAL',
+          createdByUserId: user.id,
+        },
+      });
+
+      // 2. Lead → Client (reuse; dedupes by phone/email, sets portal access,
+      //    flips lead to CONVERTED).
+      const conversion = await this.leadsService.convertToClient(
+        lead.id,
+        user.id,
+        'Created by Processing Manager (manual client)',
+        tx,
+      );
+      const clientId = conversion.client.id;
+
+      // 3. The case — financeHandoverId null (no finance origin).
+      const created = await tx.processingCase.create({
+        data: {
+          financeHandoverId: null,
+          leadId: lead.id,
+          clientId,
+          service,
+          targetCountry,
+          priority: dto.priority ?? ProcessingCasePriority.NORMAL,
+          processingNote: 'Manually created by Processing Manager',
+          createdByUserId: user.id,
+        },
+        include: { lead: true, client: true },
+      });
+
+      // 4. Audit
+      await tx.processingAuditLog.create({
+        data: {
+          caseId: created.id,
+          actorUserId: user.id,
+          action: 'manual_client_created',
+          entityType: 'processing_case',
+          entityId: created.id,
+          newValues: {
+            stage: created.stage,
+            service,
+            targetCountry,
+            referenceCode,
+            wasExistingClient: conversion.wasExistingClient,
+          },
+        },
+      });
+
+      return created;
+    });
+
+    // Timeline (post-commit, non-fatal).
+    this.timeline.record({
+      entityType: 'processing_case',
+      entityId: processingCase.id,
+      leadId: processingCase.leadId ?? undefined,
+      clientId: processingCase.clientId ?? undefined,
+      eventType: TimelineEventType.PROCESSING_CASE_CREATED,
+      description: `Processing case opened (manual) — ${service} / ${targetCountry}`,
+      actorUserId: user.id,
+      metadata: { manual: true, priority: processingCase.priority },
+    }).catch(() => { /* timeline is non-fatal */ });
 
     return processingCase;
   }

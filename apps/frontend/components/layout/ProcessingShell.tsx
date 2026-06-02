@@ -19,6 +19,7 @@ import {
   Send,
   Settings2,
   Sparkles,
+  UserPlus,
   Wallet,
   X,
 } from 'lucide-react';
@@ -85,6 +86,7 @@ function buildProcessingNav(intakePending: number, isManager: boolean): DrawerMe
   ];
   if (isManager) {
     items.push({ label: 'Manager Queue', href: '/processing/intake', icon: Inbox, caption: 'New from Finance — assign', badge: intakePending || undefined });
+    items.push({ label: 'New Client', href: '/processing/new-client', icon: UserPlus, caption: 'Manually add a client' });
   }
   items.push(
     { label: 'My Cases', href: '/processing/cases', icon: FolderKanban, caption: 'Your active caseload' },

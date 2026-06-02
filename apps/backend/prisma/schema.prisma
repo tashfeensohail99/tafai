@@ -2352,7 +2352,11 @@ model ProgramRequirementSet {
 
 model ProcessingCase {
   id                      String                 @id @default(uuid())
-  financeHandoverId       String                 @unique
+  // Nullable: finance-originated cases carry their handover; cases created
+  // manually by a Processing Manager have none. @unique still holds — Postgres
+  // permits multiple NULLs under a unique index, so one-case-per-handover is
+  // preserved for the finance path.
+  financeHandoverId       String?                @unique
   leadId                  String
   // Per the platform rule "No ProcessingCase without Client" — every case is
   // owned by a Client. Lead→Client conversion happens automatically when
@@ -2385,7 +2389,7 @@ model ProcessingCase {
   createdByUserId         String
   updatedByUserId         String?
 
-  financeHandover  FinanceHandover                @relation(fields: [financeHandoverId], references: [id])
+  financeHandover  FinanceHandover?               @relation(fields: [financeHandoverId], references: [id])
   lead             Lead                           @relation(fields: [leadId], references: [id])
   client           Client                         @relation(fields: [clientId], references: [id])
   branch           Branch?                        @relation(fields: [branchId], references: [id])

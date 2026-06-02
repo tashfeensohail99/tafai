@@ -166,13 +166,13 @@ function AcknowledgeModal({
             <div style={{ fontWeight: 600, color: 'var(--sos-text-primary)' }}>
               {c.financeHandover
                 ? fmtAmount(Number(c.financeHandover.submittedAmount), c.financeHandover.currency)
-                : '—'}
+                : 'Manually created'}
             </div>
           </div>
           <div>
             <div style={{ color: 'var(--sos-text-muted)', fontSize: 11, marginBottom: 2 }}>Receipt file</div>
             <div style={{ fontWeight: 500, color: 'var(--sos-text-primary)', fontSize: 12 }}>
-              {c.financeHandover?.receiptFileName ?? '—'}
+              {c.financeHandover?.receiptFileName ?? 'No payment on file'}
             </div>
           </div>
           <div>

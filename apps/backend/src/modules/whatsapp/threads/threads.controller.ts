@@ -182,6 +182,20 @@ export class WhatsAppThreadsController {
    * @Get(':id') for clarity (the extra path segment means it wouldn't
    * collide anyway).
    */
+  // Resolve a lead's WhatsApp thread directly (by leadId + phone fallback),
+  // regardless of how old it is. Declared before ':id' so "by-lead" isn't
+  // parsed as a thread UUID. Backs the lead/client-profile WhatsApp tab.
+  @Get('by-lead/:leadId')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async byLead(
+    @CurrentUser() user: RequestUser,
+    @Param('leadId', ParseUUIDPipe) leadId: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    const item = await this.threads.findForLead(caller, leadId);
+    return { item };
+  }
+
   @Get(':id/list-item')
   @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
   async listItem(

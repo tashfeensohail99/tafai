@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { EmptyState, GlassCard } from '@/components/sales-v2/ui';
-import { listThreads, type ThreadListItem } from '@/lib/whatsapp';
+import { getThreadForLead, type ThreadListItem } from '@/lib/whatsapp';
 import { WhatsAppChatPanel } from './WhatsAppChatPanel';
 
 /**
@@ -20,11 +20,11 @@ import { WhatsAppChatPanel } from './WhatsAppChatPanel';
  */
 export function WhatsAppLeadTab({
   leadId,
-  leadPhone,
   renderHeaderActions,
 }: {
   leadId: string;
-  leadPhone: string | null;
+  /** Accepted for API compatibility; the lookup now resolves by lead + phone server-side. */
+  leadPhone?: string | null;
   renderHeaderActions?: (threadId: string) => ReactNode;
 }) {
   const [thread, setThread] = useState<ThreadListItem | null | undefined>(undefined);
@@ -33,15 +33,12 @@ export function WhatsAppLeadTab({
     let cancelled = false;
     async function load() {
       try {
-        // Pull a generous page; threads are sorted by lastMessageAt desc.
-        // The backend already scopes by role; we just look up by lead id.
-        const res = await listThreads({});
+        // Direct lookup by lead (with a server-side phone fallback) — finds the
+        // conversation no matter how old, instead of scanning only the most
+        // recent inbox page (which missed older chats on busy numbers).
+        const t = await getThreadForLead(leadId);
         if (cancelled) return;
-        const match =
-          res.items.find((t) => t.lead?.id === leadId) ??
-          (leadPhone ? res.items.find((t) => t.lead?.phone === leadPhone) : undefined) ??
-          null;
-        setThread(match);
+        setThread(t);
       } catch {
         if (!cancelled) setThread(null);
       }
@@ -50,7 +47,7 @@ export function WhatsAppLeadTab({
     return () => {
       cancelled = true;
     };
-  }, [leadId, leadPhone]);
+  }, [leadId]);
 
   if (thread === undefined) {
     return (

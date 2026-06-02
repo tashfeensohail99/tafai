@@ -259,6 +259,46 @@ export class WhatsAppThreadsService {
   }
 
   /**
+   * Resolve the WhatsApp thread for a given lead DIRECTLY — by leadId, with a
+   * phone-number fallback (covers front-desk / duplicate leads whose thread got
+   * linked to a different lead record). Unlike scanning the recent inbox page,
+   * this finds the conversation no matter how old or how busy the inbox is —
+   * which is why the lead-profile WhatsApp tab uses it. Applies the caller's
+   * authorization scope; returns null when none is found or visible.
+   */
+  async findForLead(caller: CallerContext, leadId: string) {
+    const scope = await this.resolveCallerLeadScope(caller);
+    if (scope === 'none') return null;
+
+    const lead = await this.prisma.lead.findUnique({
+      where: { id: leadId },
+      select: { phone: true },
+    });
+    const digits = lead?.phone ? lead.phone.replace(/\D/g, '') : '';
+
+    const orMatch: Prisma.WhatsAppThreadWhereInput[] = [{ leadId }];
+    // Phone fallback — a thread for the same number that got linked to a
+    // different (e.g. auto-created or duplicate) lead. Require a real number so
+    // we never match on an empty string. Scoped callers are still constrained
+    // by `where.lead` below, so this only broadens what an admin can resolve.
+    if (digits.length >= 6) orMatch.push({ waContactId: { contains: digits } });
+
+    const where: Prisma.WhatsAppThreadWhereInput = {
+      AND: [
+        { OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] },
+        { OR: orMatch },
+      ],
+    };
+    if (scope !== 'all') where.lead = scope;
+
+    return this.prisma.whatsAppThread.findFirst({
+      where,
+      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      include: THREAD_LIST_INCLUDE,
+    });
+  }
+
+  /**
    * True inbox counters for the KPI chips. Computed with COUNT queries over
    * the whole table (scoped to the caller) — NOT from the paginated list —
    * so "Active 30" stops being a lie that just reflected the first page size.

@@ -3,9 +3,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from 'react';
 import { Inbox as InboxIcon, MessageSquare, Search } from 'lucide-react';
 import {
+  getThreadStats,
   listThreads,
   threadMatchesSearch,
   type ThreadListItem,
+  type ThreadStats,
   type WhatsAppThreadStatus,
 } from '@/lib/whatsapp';
 import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realtime';
@@ -47,6 +49,10 @@ export default function SalesInboxPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Real DB counts for the tab badges — fetched from the stats endpoint so
+  // they reflect the full table (All / Open / Pending / Resolved), NOT just
+  // the 100 threads loaded on the current page.
+  const [stats, setStats] = useState<ThreadStats | null>(null);
   // How many pages we've loaded — so the 30s/focus reconcile re-fetches the
   // same depth instead of collapsing the list back to the first 100.
   const pagesRef = useRef(1);
@@ -82,8 +88,20 @@ export default function SalesInboxPage() {
     [filter],
   );
 
+  // Fetch just the tab counts without reloading the thread list.
+  // Used by the realtime reconcile so counts stay live without full refetches.
+  const refreshStats = useCallback(async () => {
+    try {
+      setStats(await getThreadStats());
+    } catch {
+      /* non-critical — existing counts stay */
+    }
+  }, []);
+
   const reload = useCallback(async (opts?: { background?: boolean }) => {
     if (!opts?.background) setLoading(true);
+    // Fetch stats in parallel — always use the real DB totals for tab badges.
+    void refreshStats();
     try {
       const scope = scopeQuery();
       const searchPart = debouncedSearch ? { search: debouncedSearch } : {};
@@ -111,7 +129,7 @@ export default function SalesInboxPage() {
     } finally {
       if (!opts?.background) setLoading(false);
     }
-  }, [scopeQuery, debouncedSearch]);
+  }, [scopeQuery, debouncedSearch, refreshStats]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -312,14 +330,25 @@ export default function SalesInboxPage() {
         >
           {FILTERS.map((f) => {
             const active = filter === f.key;
-            // Count threads in the currently-loaded list that belong to this
-            // tab. For "Pending" we check responseDeadlineAt (agent-turn clock
-            // running), NOT status — WhatsAppThreadStatus.PENDING is never
-            // written by any code path; pending chats have status=OPEN +
-            // responseDeadlineAt set. For "All" when not on the All tab, show
-            // the total loaded; when ON a filtered tab, count matches items.
-            const count =
-              f.key === 'ALL'
+            // Use real DB totals from the stats endpoint — NOT a count of the
+            // loaded page (which caps at 100 and makes All=100, Open=100 look
+            // identical even when there are 500+ conversations).
+            //   All  → stats.total  (every thread this rep can see)
+            //   Open → stats.active (status=OPEN)
+            //   Pending → stats.awaitingReply (responseDeadlineAt set)
+            //   Resolved → stats.resolved (status=RESOLVED)
+            const count = stats
+              ? f.key === 'ALL'
+                ? stats.total
+                : f.key === 'PENDING'
+                  ? stats.awaitingReply
+                  : f.key === 'OPEN'
+                    ? stats.active
+                    : f.key === 'RESOLVED'
+                      ? stats.resolved
+                      : 0
+              : // Stats not yet loaded — fall back to page-based count while fetching.
+                f.key === 'ALL'
                 ? items.length
                 : f.key === 'PENDING'
                   ? items.filter((t) => t.responseDeadlineAt != null).length

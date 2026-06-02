@@ -78,6 +78,10 @@ export interface ApiProcessingCaseDetail {
   completedAt: string | null;
   cancelledAt: string | null;
   cancellationReason: string | null;
+  // P4e — submission package
+  submissionPackageKey: string | null;
+  submissionPackageAssembledAt: string | null;
+  submissionPackageDocCount: number | null;
   createdAt: string;
   updatedAt: string;
   lead: {
@@ -460,6 +464,39 @@ export function getSubmissionReadiness(
     `/processing/cases/${caseId}/submission-readiness`,
     { cache: 'no-store' },
   );
+}
+
+/**
+ * P4e — Submission package.
+ * Returns the previously assembled package info (signed URL + metadata) if one
+ * exists for the case, or { exists: false } if not yet assembled.
+ */
+export function getSubmissionPackage(caseId: string): Promise<
+  | { exists: true; key: string; fileName: string; sizeBytes: number; documentCount: number; assembledAt: string; signedUrl: string }
+  | { exists: false }
+> {
+  return apiFetch(`/processing/cases/${caseId}/submission-package`, {
+    cache: 'no-store',
+  });
+}
+
+/**
+ * P4e — Trigger assembly of the merged PDF submission package.
+ * Returns the assembled package result including a signed download URL.
+ * Throws 400 with { message, blockers } if the quality gate fails.
+ */
+export function assembleSubmissionPackage(caseId: string): Promise<{
+  key: string;
+  fileName: string;
+  sizeBytes: number;
+  documentCount: number;
+  assembledAt: string;
+  signedUrl: string;
+}> {
+  return apiFetch(`/processing/cases/${caseId}/submission-package/assemble`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
 }
 
 /**

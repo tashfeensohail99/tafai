@@ -237,7 +237,15 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             break;
           }
         }
-        const fresh = await listMessages(threadId, cursor ? { after: cursor } : {});
+        // Fetch new messages AND refresh the thread object in parallel.
+        // The thread refresh is critical: the backend stamps a fresh
+        // windowExpiresAt (+24h) on every inbound message, but if we only
+        // append messages the stale thread.windowExpiresAt stays in state
+        // and the composer stays locked even though the window is now open.
+        const [fresh, updatedThread] = await Promise.all([
+          listMessages(threadId, cursor ? { after: cursor } : {}),
+          getThread(threadId),
+        ]);
         if (fresh.length) {
           setMessages((prev) => {
             const seen = new Set(prev.map((m) => m.id));
@@ -245,6 +253,9 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             return add.length ? [...prev, ...add] : prev;
           });
         }
+        // Always update the thread so windowExpiresAt, unreadCount, and
+        // other thread-level fields reflect the latest server state.
+        setThread(updatedThread);
       } catch {
         void reload(); // fall back to a full refetch if the tail fetch fails
       } finally {

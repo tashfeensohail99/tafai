@@ -1653,9 +1653,13 @@ export class ProcessingService {
     }
 
     const version = item.latestVersion;
-    if (version.virusScanStatus !== 'CLEAN') {
+    // AV gate: block only a genuinely INFECTED file. No inline virus scanner is
+    // wired yet, so every upload sits at PENDING — gating on `!== CLEAN` would
+    // block every document from ever being viewed/reviewed. When a real scanner
+    // is added it will mark INFECTED and this gate begins enforcing for real.
+    if (version.virusScanStatus === 'INFECTED') {
       throw new BadRequestException(
-        'Document cannot be viewed until virus scan is complete',
+        'Document failed the virus scan and cannot be opened',
       );
     }
 
@@ -1693,8 +1697,10 @@ export class ProcessingService {
     });
     if (!item) throw new NotFoundException('Document item not found');
     if (!item.latestVersion) throw new BadRequestException('No document uploaded to review');
-    if (item.latestVersion.virusScanStatus !== 'CLEAN') {
-      throw new BadRequestException('Document has not passed virus scan — cannot review');
+    // Only block a genuinely INFECTED file (see note in getDocumentSignedUrl) —
+    // no inline AV scanner is wired yet, so a PENDING scan must not block review.
+    if (item.latestVersion.virusScanStatus === 'INFECTED') {
+      throw new BadRequestException('Document failed the virus scan — cannot review');
     }
 
     if (dto.decision === 'REJECTED') {

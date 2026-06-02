@@ -146,6 +146,17 @@ export class ProcessingController {
     return this.processingService.getCaseById(caseId, user);
   }
 
+  // P4d — submission readiness: { ready, blockers }. Surfaced in the workspace
+  // so the associate sees outstanding blockers before attempting to submit.
+  @Get('cases/:caseId/submission-readiness')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getSubmissionReadiness(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getSubmissionReadiness(caseId, user);
+  }
+
   @Patch('cases/:caseId/stage')
   @RequirePermissions('processing.case.update_stage')
   changeCaseStage(

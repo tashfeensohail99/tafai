@@ -447,6 +447,22 @@ export function changeCaseStage(
 }
 
 /**
+ * P4d — Submission-quality gate.
+ * Returns whether a case is clear to move to READY_FOR_SUBMISSION / SUBMITTED,
+ * plus a list of human-readable blocker messages when it is not.
+ * The same check runs server-side on the stage-change endpoint — this is for
+ * surfacing the blockers proactively in the UI before the user clicks Confirm.
+ */
+export function getSubmissionReadiness(
+  caseId: string,
+): Promise<{ ready: boolean; blockers: string[] }> {
+  return apiFetch<{ ready: boolean; blockers: string[] }>(
+    `/processing/cases/${caseId}/submission-readiness`,
+    { cache: 'no-store' },
+  );
+}
+
+/**
  * Reassign a processing case to a different officer. Manager-only
  * (server-side permission `processing.case.assign`). Server validates the
  * assignee holds a processing-side role; rejects sales/finance/support.

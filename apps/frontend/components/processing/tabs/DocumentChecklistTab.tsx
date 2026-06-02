@@ -576,6 +576,7 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
               documentName: i.documentName,
               attestationStatus: i.attestationStatus ?? 'NOT_REQUIRED',
               attestationChain: i.attestationChain ?? null,
+              detectedAuthorities: i.aiAssessments?.[0]?.detectedAuthorities ?? [],
             }))}
             onUpdate={async (itemId, status) => {
               await updateDocumentAttestation(c.id, itemId, { status });

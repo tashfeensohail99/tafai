@@ -76,6 +76,10 @@ export interface ParserResponse {
   costCents: number;
   cacheHit: boolean;
   modelVersion: string;
+  // P4c-2: attestation authorities whose stamp keywords were found in the OCR
+  // text (e.g. ["MOFA", "HEC"]). Optional — absent on responses cached before
+  // the parser added it. Suggestion only; never auto-marks attestation.
+  detectedAuthorities?: string[];
   errorMessage: string | null;
 }
 

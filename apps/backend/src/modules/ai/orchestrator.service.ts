@@ -371,11 +371,29 @@ export class OrchestratorService {
     // today?" branch of the welcome.
     const isBareGreeting = this.isBareGreeting(input.inboundText);
 
+    // ── Strict grounding gate ──────────────────────────────────────────────
+    // For a substantive question with NO confident, on-point KB match, the bot
+    // is NOT allowed to answer from its own (parametric) knowledge — it must
+    // clarify or book instead. This deterministically kills the "improvise"
+    // path that produced wrong program facts (e.g. "C11 is for skilled
+    // workers", "a doctor may be eligible for C11"). Exemptions: bare greetings
+    // and the booking-flow states (giving a time / confirming) don't need KB
+    // grounding, and the persona's KNOWN FACTS (office, hours, service NAMES)
+    // stay answerable regardless. STRICT_GROUNDING_FLOOR is the main tuning
+    // knob — raise it for stricter, lower it for chattier.
+    const STRICT_GROUNDING_FLOOR = 0.62;
+    const strictGate =
+      topSim < STRICT_GROUNDING_FLOOR &&
+      !isBareGreeting &&
+      nextAiState !== 'HANDED_OFF' &&
+      nextAiState !== 'APPOINTMENT_AVAILABILITY';
+
     const systemPrompt = this.systemPrompt({
       language,
       currentState: thread.aiState,
       nextState: nextAiState,
       confident,
+      strictGate,
       // Sanitize: empty / placeholder / digit-only first names get dropped so
       // the bot doesn't greet "Hi Customer 1234" or "Hi +92345…". Imports
       // sometimes leave junk in firstName until sales cleans it up.
@@ -403,6 +421,15 @@ export class OrchestratorService {
     if (this.looksLikeGuarantee(reply)) {
       this.log.warn(`Guarantee phrase detected, escalating instead: "${reply.slice(0, 80)}…"`);
       reply = this.escalationFallback(language);
+    }
+
+    // Strict-grounding backstop. In a gated turn the model was told to ONLY
+    // clarify or book. If it nonetheless leaked an eligibility claim or a
+    // fee/amount, we deterministically swap in the safe pivot rather than let a
+    // guess reach the customer — the belt to the prompt's braces.
+    if (strictGate && this.leaksSpecifics(reply)) {
+      this.log.warn(`Strict-grounding backstop tripped: "${reply.slice(0, 80)}…"`);
+      reply = this.groundingFallback(language);
     }
 
     // Dedup guard: don't repeat ourselves verbatim if the bot just sent a
@@ -926,6 +953,7 @@ export class OrchestratorService {
     currentState: string;
     nextState: string;
     confident: boolean;
+    strictGate: boolean;
     leadFirstName: string | null;
     agentFirstName: string | null;
     isFirstBotReply: boolean;
@@ -935,6 +963,7 @@ export class OrchestratorService {
       language,
       nextState,
       confident,
+      strictGate,
       leadFirstName,
       agentFirstName,
       isFirstBotReply,
@@ -982,6 +1011,20 @@ export class OrchestratorService {
     };
 
     return [
+      // STRICT GROUNDING GATE — prepended (and therefore dominant) only on a
+      // substantive question we have no confident KB match for. Locks the bot
+      // to clarify-or-book so it can never improvise program facts/eligibility.
+      ...(strictGate
+        ? [
+            `⛔ GROUNDING GATE — ACTIVE THIS TURN (this overrides answering).`,
+            `The knowledge base has NO confident match for this question — it is NOT in the CONTEXT below. You therefore do NOT have reliable information to answer it, and you MUST NOT answer it or state ANY specifics.`,
+            `Do EXACTLY ONE of these (in the house voice/language described further down):`,
+            `  (a) Ask ONE short clarifying question to pin down what they need — e.g. which service: work permit / PR / study permit / visit visa; OR`,
+            `  (b) Offer a quick consultation call to go through the exact details with you.`,
+            `FORBIDDEN this turn: naming a program as the answer, saying what a program "is for", any eligibility ("you qualify" / "you may be eligible" / "you can apply"), any fees / minimum funds / timelines / requirements, and any guess. If even slightly unsure, choose (b). (You MAY still greet and use the KNOWN FACTS below — office, hours, phone, the service-name list — normally.)`,
+            ``,
+          ]
+        : []),
       `You are an Immigration Solutions Associate at Tashfeen Immigration Solutions (TIS), an immigration consultancy + law firm in Islamabad. You chat with prospective clients yourself on WhatsApp — answering their questions and booking consultation calls directly with you. You ARE the consultant they'll be talking to; never defer to a separate "manager" as if it's someone else.`,
       ``,
       `PRIMARY MISSION`,
@@ -1243,6 +1286,27 @@ export class OrchestratorService {
     if (/(بند\s*کرو|روک\s*دو|پریشان\s*نہ|تنگ\s*نہ|بلاک\s*کرو|بلاک\s*کریں)/.test(text)) return true;
 
     return false;
+  }
+
+  /**
+   * Narrow leak detector for the strict-grounding backstop. Flags the two
+   * highest-risk hallucination signals that should NEVER appear on an
+   * ungrounded turn: an eligibility/qualification assertion, or a concrete
+   * fee/amount. Kept deliberately narrow so it doesn't trip on a legitimate
+   * clarifying question (which names services but asserts nothing).
+   */
+  private leaksSpecifics(text: string): boolean {
+    const t = text.toLowerCase();
+    if (/\b(eligible|eligibility|qualif(?:y|ies|ied))\b/.test(t)) return true;
+    if (/(?:cad|usd|pkr|rs\.?|\$)\s?\d/.test(t)) return true;
+    return false;
+  }
+
+  /** Safe pivot used when the strict gate / backstop blocks an answer. */
+  private groundingFallback(language: string): string {
+    return language === 'ur_roman'
+      ? 'Is ka exact answer main aap ko ek short call par accurately bata sakta hoon. Phone, Google Meet ya office visit — kya prefer karenge?'
+      : "I'd rather give you the exact answer on a quick call so it's accurate for your case. Phone, Google Meet, or office visit — what works?";
   }
 
   private optOutAcknowledgement(language: string): string {

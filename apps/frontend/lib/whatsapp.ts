@@ -439,7 +439,12 @@ export interface WhatsAppTemplate {
 }
 
 export function listTemplates(channelId: string): Promise<WhatsAppTemplate[]> {
-  return apiFetch<WhatsAppTemplate[]>(`/whatsapp/channels/${channelId}/templates`);
+  // no-store: template approvals change server-side (Meta review + sync), so the
+  // picker must always fetch the live list — never a cached one that could still
+  // show only the old set (e.g. just hello_world before newer approvals synced).
+  return apiFetch<WhatsAppTemplate[]>(`/whatsapp/channels/${channelId}/templates`, {
+    cache: 'no-store',
+  });
 }
 
 /**

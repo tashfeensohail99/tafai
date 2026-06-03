@@ -2,6 +2,8 @@
 // Sales OS — Appointments (premium dark glass redesign).
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
+import type { Route } from 'next';
 import {
   Briefcase,
   CalendarCheck,
@@ -946,10 +948,20 @@ function AppointmentRow({
   item: Appointment;
   divider: boolean;
 }) {
+  const router = useRouter();
   const [first, last] = item.clientName.split(' ');
   const meta = TYPE_META[item.type];
+  const clickable = !!item.leadId;
+  const openLead = () => { if (clickable) router.push(`/sales/leads/${item.leadId}` as Route); };
   return (
     <div
+      onClick={openLead}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openLead(); } : undefined}
+      title={clickable ? `Open ${item.clientName}'s lead` : undefined}
+      onMouseEnter={clickable ? (e) => (e.currentTarget.style.background = 'var(--sos-surface-hover)') : undefined}
+      onMouseLeave={clickable ? (e) => (e.currentTarget.style.background = 'transparent') : undefined}
       style={{
         display: 'grid',
         gridTemplateColumns: 'auto auto minmax(0, 1fr) auto',
@@ -957,6 +969,8 @@ function AppointmentRow({
         alignItems: 'center',
         padding: '16px 20px',
         borderTop: divider ? '1px solid var(--sos-divider)' : 'none',
+        cursor: clickable ? 'pointer' : 'default',
+        transition: 'background 150ms',
       }}
     >
       <DateBadge iso={item.scheduledAt} />
@@ -1062,9 +1076,19 @@ function AppointmentRow({
 }
 
 function PastRow({ item, divider }: { item: Appointment; divider: boolean }) {
+  const router = useRouter();
   const [first, last] = item.clientName.split(' ');
+  const clickable = !!item.leadId;
+  const openLead = () => { if (clickable) router.push(`/sales/leads/${item.leadId}` as Route); };
   return (
     <div
+      onClick={openLead}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openLead(); } : undefined}
+      title={clickable ? `Open ${item.clientName}'s lead` : undefined}
+      onMouseEnter={clickable ? (e) => (e.currentTarget.style.background = 'var(--sos-surface-hover)') : undefined}
+      onMouseLeave={clickable ? (e) => (e.currentTarget.style.background = 'transparent') : undefined}
       style={{
         display: 'grid',
         gridTemplateColumns: 'auto minmax(0, 1fr) auto',
@@ -1072,6 +1096,8 @@ function PastRow({ item, divider }: { item: Appointment; divider: boolean }) {
         alignItems: 'center',
         padding: '12px 20px',
         borderTop: divider ? '1px solid var(--sos-divider)' : 'none',
+        cursor: clickable ? 'pointer' : 'default',
+        transition: 'background 150ms',
       }}
     >
       <div

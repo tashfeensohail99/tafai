@@ -37,6 +37,8 @@ export function TemplatePickerModal(props: {
   onClose: () => void;
   threadId: string;
   channelId: string;
+  /** Pre-fills {{1}} with the contact's name (the common case for greetings). */
+  contactName?: string | null;
   onSent: () => void;
 }) {
   const [templates, setTemplates] = useState<WhatsAppTemplate[] | null>(null);
@@ -82,9 +84,16 @@ export function TemplatePickerModal(props: {
 
   const expectedParams = selected ? countTemplateBodyParams(selected) : 0;
 
+  // Pre-fill {{1}} with the contact's name — most of our templates greet with
+  // it. The agent can still edit it before sending; other placeholders start
+  // empty.
   useEffect(() => {
-    setParams(Array.from({ length: expectedParams }, () => ''));
-  }, [expectedParams, selectedId]);
+    setParams(
+      Array.from({ length: expectedParams }, (_, i) =>
+        i === 0 && props.contactName ? props.contactName : '',
+      ),
+    );
+  }, [expectedParams, selectedId, props.contactName]);
 
   const allParamsFilled = params.slice(0, expectedParams).every((v) => v.trim().length > 0);
 
@@ -262,7 +271,11 @@ export function TemplatePickerModal(props: {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div className="sos-eyebrow">Parameters</div>
                   {Array.from({ length: expectedParams }).map((_, i) => (
-                    <Field key={i} label={`{{${i + 1}}}`} required>
+                    <Field
+                      key={i}
+                      label={i === 0 && props.contactName ? `{{1}} (name)` : `{{${i + 1}}}`}
+                      required
+                    >
                       <FormInput
                         value={params[i] ?? ''}
                         onChange={(e) => {

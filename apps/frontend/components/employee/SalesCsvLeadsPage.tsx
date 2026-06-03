@@ -20,7 +20,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { apiFetch } from '@/lib/api-client';
-import { renderWelcomeMessage, waMeLink } from '@/lib/lead-imports-api';
+import { renderWelcomeMessage, waWebLink } from '@/lib/lead-imports-api';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 /**
@@ -199,7 +199,7 @@ export function SalesCsvLeadsPage() {
                   const batch = lead.importRows?.[0]?.batch;
                   const importedAt = lead.importRows?.[0]?.createdAt ?? lead.createdAt;
                   const text = renderWelcomeMessage(null, { firstName: lead.firstName });
-                  const link = waMeLink(lead.phone, text);
+                  const link = waWebLink(lead.phone, text);
                   return (
                     <tr key={lead.id} style={{ borderBottom: '1px solid var(--sos-divider)' }}>
                       <td style={{ padding: '14px 16px' }}>

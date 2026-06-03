@@ -200,6 +200,7 @@ export class ReportsService {
       openFollowUpCounts,
       overdueFollowUpCounts,
       upcomingApptCounts,
+      awaitingReplyThreads,
     ] = await this.prisma.$transaction([
       this.prisma.employee.count({ where: { deletedAt: null, isActive: true } }),
       this.prisma.lead.count({ where: { deletedAt: null } }),
@@ -280,6 +281,17 @@ export class ReportsService {
         },
         _count: { _all: true },
       }),
+      // Conversations awaiting the rep's reply: responseDeadlineAt is non-null
+      // exactly when it's the agent's turn (a customer message is unanswered);
+      // it's cleared the moment the agent replies. Scoped to threads whose lead
+      // is assigned to a (non-deleted) rep, so we can group by salesperson.
+      this.prisma.whatsAppThread.findMany({
+        where: {
+          responseDeadlineAt: { not: null },
+          lead: { assignedEmployeeId: { not: null }, deletedAt: null },
+        },
+        select: { lead: { select: { assignedEmployeeId: true } } },
+      }),
     ]);
 
     // Build per-employeeId lookup tables once.
@@ -292,6 +304,13 @@ export class ReportsService {
     const openFollowUpMap = idx(openFollowUpCounts);
     const overdueFollowUpMap = idx(overdueFollowUpCounts);
     const upcomingApptMap = idx(upcomingApptCounts);
+    // Awaiting-reply threads grouped by the assigned rep (relation field, so
+    // a plain groupBy can't do it — tally in JS; the backlog is small).
+    const awaitingReplyMap = new Map<string, number>();
+    for (const t of awaitingReplyThreads) {
+      const aid = t.lead?.assignedEmployeeId;
+      if (aid) awaitingReplyMap.set(aid, (awaitingReplyMap.get(aid) ?? 0) + 1);
+    }
 
     const agents = employees.map((e) => {
       const newLeads = newMap.get(e.id) ?? 0;
@@ -314,6 +333,7 @@ export class ReportsService {
         openFollowUps: openFollowUpMap.get(e.id) ?? 0,
         overdueFollowUps: overdueFollowUpMap.get(e.id) ?? 0,
         upcomingAppointments: upcomingApptMap.get(e.id) ?? 0,
+        awaitingReply: awaitingReplyMap.get(e.id) ?? 0,
         slaScore,
         slaBreaches: e.slaResponsesBreached,
       };
@@ -326,6 +346,7 @@ export class ReportsService {
         convertedThisMonth,
         overdueFollowUps,
         appointmentsToday,
+        awaitingReply: awaitingReplyThreads.length,
       },
       agents,
     };

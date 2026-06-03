@@ -438,7 +438,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
           <>
             {labelForServiceCode(lead.service)} → {lead.targetCountry} ·{' '}
             {lead.assignmentType === 'ADMIN'
-              ? `Admin · ${lead.assignedBy?.split('·')[1]?.trim() ?? 'front desk'}`
+              ? `Admin · ${lead.assignedBy ?? 'Unassigned'}`
               : 'Auto CRM'}{' '}
             · Assigned {fmtRelative(lead.assignedAt)}
           </>

@@ -181,6 +181,26 @@ function defaultNextAction(stage: LeadStage): string {
   }
 }
 
+/**
+ * Derive how a lead entered the CRM — "Auto CRM" (auto-captured from an inbound
+ * digital touch and round-robin assigned) vs "Admin" (a staff member entered it
+ * or bulk-imported it). There is no stored "assigned by" flag, so we classify
+ * off the lead's sourceChannel. Rule (confirmed with the business): WhatsApp,
+ * Meta lead forms, Facebook/Instagram, Website, and inbound calls (UAN/Phone)
+ * are Auto CRM; walk-in, referral, manual create, CSV import, seeds, and
+ * unknown/blank are Admin. Match is a case-insensitive substring so custom
+ * channel labels ("Web form", "Callback", "Meta-Ad") still classify correctly.
+ */
+const AUTO_CRM_SOURCE_KEYWORDS = [
+  'whatsapp', 'meta', 'facebook', 'instagram', 'web', 'uan', 'phone', 'call',
+];
+
+export function deriveAssignmentType(sourceChannel?: string | null): 'ADMIN' | 'AUTO_CRM' {
+  const s = (sourceChannel ?? '').toLowerCase().trim();
+  if (!s) return 'ADMIN';
+  return AUTO_CRM_SOURCE_KEYWORDS.some((k) => s.includes(k)) ? 'AUTO_CRM' : 'ADMIN';
+}
+
 export function adaptLead(api: ApiLead): Lead {
   const stage = mapStatus(api.status);
   return {
@@ -197,7 +217,7 @@ export function adaptLead(api: ApiLead): Lead {
     assignedBy: api.assignedEmployee
       ? `${api.assignedEmployee.firstName} ${api.assignedEmployee.lastName}`
       : undefined,
-    assignmentType: 'ADMIN',
+    assignmentType: deriveAssignmentType(api.sourceChannel),
     assignedAt: api.createdAt,
     priority: mapPriority(api.priority),
     stage,

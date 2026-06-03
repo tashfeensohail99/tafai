@@ -13,6 +13,27 @@ import {
   AlertTriangle,
   Send,
   Check,
+  // Document-type icons for the roster doc tiles
+  FileText,
+  FileUser,
+  FileCheck,
+  BookUser,
+  IdCard,
+  Camera,
+  ShieldCheck,
+  HeartPulse,
+  Languages,
+  GraduationCap,
+  Briefcase,
+  Landmark,
+  Baby,
+  HeartHandshake,
+  PlaneTakeoff,
+  ScrollText,
+  Receipt,
+  Users,
+  NotebookPen,
+  type LucideIcon,
 } from 'lucide-react';
 import { STAGE_LABEL, PRIORITY_LABEL, fmtRelative } from '@/components/processing/mockData';
 import { stageTone, priorityTone } from '@/components/processing/ProcessingDashboardPage';
@@ -287,46 +308,91 @@ function ActionIcon({
   );
 }
 
-// Per-document status tile styling. Five visual buckets:
-//  grey outline = not submitted · blue dot = submitted (awaiting review) ·
-//  amber tick = under review / expiring · green tick = verified / waived ·
-//  red cross = rejected / expired.
-type Glyph = 'check' | 'x' | 'dot' | null;
-const DOC_TILE: Record<string, { bg: string; border: string; glyph: Glyph; label: string }> = {
-  ACCEPTED: { bg: 'var(--sos-status-success)', border: 'transparent', glyph: 'check', label: 'Verified' },
-  WAIVED: { bg: 'var(--sos-status-success)', border: 'transparent', glyph: 'check', label: 'Waived' },
-  UNDER_REVIEW: { bg: 'var(--sos-status-warning)', border: 'transparent', glyph: 'check', label: 'Under review' },
-  EXPIRING_SOON: { bg: 'var(--sos-status-warning)', border: 'transparent', glyph: 'check', label: 'Expiring soon' },
-  SUBMITTED: { bg: 'var(--sos-brand-primary)', border: 'transparent', glyph: 'dot', label: 'Submitted' },
-  REJECTED: { bg: 'var(--sos-status-danger)', border: 'transparent', glyph: 'x', label: 'Rejected' },
-  EXPIRED: { bg: 'var(--sos-status-danger)', border: 'transparent', glyph: 'x', label: 'Expired' },
-  NOT_SUBMITTED: { bg: 'transparent', border: 'var(--sos-border-strong, #cbd5e1)', glyph: null, label: 'Not submitted' },
+// Map a document name to a meaningful type icon. Keyword-matched against the
+// checklist's documentName so each requirement shows a recognisable glyph
+// (passport, ID, photo, degree, medical, bank…) instead of a generic file.
+function pickDocIcon(name: string): LucideIcon {
+  const n = name.toLowerCase();
+  const has = (...ks: string[]) => ks.some((k) => n.includes(k));
+  if (has('passport')) return BookUser;
+  if (has('cnic', 'nicop', 'nadra', 'national id', 'identity card', 'id card', 'b-form', 'b form')) return IdCard;
+  if (has('photo', 'photograph', 'picture')) return Camera;
+  if (has('birth')) return Baby;
+  if (has('marriage', 'nikah', 'spouse', 'wedding')) return HeartHandshake;
+  if (has('police', 'character', 'pcc', 'clearance')) return ShieldCheck;
+  if (has('medical', 'health', 'fitness', 'gamca')) return HeartPulse;
+  if (has('ielts', 'pte', 'toefl', 'language', 'english test')) return Languages;
+  if (has('degree', 'education', 'transcript', 'diploma', 'hec', 'matric', 'intermediate', 'bachelor', 'master', 'academic', 'marksheet', 'result card')) return GraduationCap;
+  if (has('experience', 'employment', 'service letter', 'salary', 'job', 'work permit')) return Briefcase;
+  if (has('bank', 'statement', 'financial', 'fund', 'affidavit of support', 'sponsor')) return Landmark;
+  if (has('visa', 'travel', 'ticket', 'itinerary')) return PlaneTakeoff;
+  if (has('offer', 'admission', 'acceptance', 'loa', 'enrol', 'i-20', 'i20')) return FileCheck;
+  if (has('tax', 'ntn', 'fbr', 'income')) return Receipt;
+  if (has('family', 'dependent', 'children', 'child', 'frc', 'family registration')) return Users;
+  if (has('affidavit', 'undertaking', 'declaration', 'agreement')) return ScrollText;
+  if (has('cv', 'resume', 'curriculum')) return FileUser;
+  if (has('cover', 'sop', 'statement of purpose', 'letter')) return NotebookPen;
+  return FileText;
+}
+
+// Status -> tile treatment. The icon colour carries the status and a tiny
+// corner badge overlays a tick (verified / under-review / expiring) or a cross
+// (rejected / expired) so terminal states read instantly while the type icon
+// still shows WHAT the document is. Five buckets:
+//  grey = not submitted · blue = submitted · amber tick = under review /
+//  expiring · green tick = verified / waived · red cross = rejected / expired.
+const DOC_STATUS: Record<string, { icon: string; bg: string; ring: string; badge: 'check' | 'x' | null; label: string }> = {
+  ACCEPTED: { icon: 'var(--sos-status-success)', bg: 'rgba(22,163,74,0.12)', ring: 'rgba(22,163,74,0.35)', badge: 'check', label: 'Verified' },
+  WAIVED: { icon: 'var(--sos-status-success)', bg: 'rgba(22,163,74,0.12)', ring: 'rgba(22,163,74,0.35)', badge: 'check', label: 'Waived' },
+  EXPIRING_SOON: { icon: 'var(--sos-status-warning)', bg: 'rgba(217,119,6,0.14)', ring: 'rgba(217,119,6,0.38)', badge: 'check', label: 'Verified · expiring soon' },
+  UNDER_REVIEW: { icon: 'var(--sos-status-warning)', bg: 'rgba(217,119,6,0.14)', ring: 'rgba(217,119,6,0.38)', badge: 'check', label: 'Under review' },
+  SUBMITTED: { icon: 'var(--sos-brand-primary)', bg: 'var(--sos-brand-primary-soft)', ring: 'var(--sos-brand-primary)', badge: null, label: 'Submitted' },
+  REJECTED: { icon: 'var(--sos-status-danger)', bg: 'rgba(220,38,38,0.12)', ring: 'rgba(220,38,38,0.35)', badge: 'x', label: 'Rejected' },
+  EXPIRED: { icon: 'var(--sos-status-danger)', bg: 'rgba(220,38,38,0.12)', ring: 'rgba(220,38,38,0.35)', badge: 'x', label: 'Expired' },
+  NOT_SUBMITTED: { icon: 'var(--sos-text-muted)', bg: 'var(--sos-surface-2)', ring: 'var(--sos-border-subtle)', badge: null, label: 'Not submitted' },
 };
 
 function DocTile({ status, label }: { status: string; label: string }) {
-  const v = DOC_TILE[status] ?? DOC_TILE.NOT_SUBMITTED;
+  const Icon = pickDocIcon(label);
+  const s = DOC_STATUS[status] ?? DOC_STATUS.NOT_SUBMITTED;
   return (
     <span
-      title={`${label} — ${v.label}`}
+      title={`${label} — ${s.label}`}
       style={{
-        width: 17,
-        height: 17,
-        borderRadius: 4,
+        position: 'relative',
+        width: 26,
+        height: 26,
         flexShrink: 0,
-        background: v.bg,
-        border: `1.5px solid ${v.border === 'transparent' ? v.bg : v.border}`,
+        borderRadius: 7,
+        background: s.bg,
+        border: `1px solid ${s.ring}`,
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: v.glyph === null ? 'transparent' : '#fff',
+        color: s.icon,
+        opacity: status === 'NOT_SUBMITTED' ? 0.65 : 1,
       }}
     >
-      {v.glyph === 'check' ? (
-        <Check size={11} strokeWidth={3} />
-      ) : v.glyph === 'x' ? (
-        <X size={11} strokeWidth={3} />
-      ) : v.glyph === 'dot' ? (
-        <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff' }} />
+      <Icon size={15} strokeWidth={2} />
+      {s.badge ? (
+        <span
+          style={{
+            position: 'absolute',
+            right: -3,
+            bottom: -3,
+            width: 12,
+            height: 12,
+            borderRadius: '50%',
+            background: s.icon,
+            color: '#fff',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: '1.5px solid var(--sos-surface-1)',
+          }}
+        >
+          {s.badge === 'check' ? <Check size={8} strokeWidth={4} /> : <X size={8} strokeWidth={4} />}
+        </span>
       ) : null}
     </span>
   );
@@ -347,7 +413,7 @@ function DocProgress({
   const extra = docs.length - shown.length;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, alignItems: 'center' }}>
         {shown.map((d, i) => (
           <DocTile key={i} status={d.status} label={d.label} />
         ))}

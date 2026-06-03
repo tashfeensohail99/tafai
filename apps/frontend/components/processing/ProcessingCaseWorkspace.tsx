@@ -50,9 +50,11 @@ import {
 } from '@/components/processing/mockData';
 import {
   fetchProcessingCase,
+  fetchCaseFinance,
   casePersonName,
   casePersonPhone,
   type ApiProcessingCaseDetail,
+  type CaseFinanceSummary,
 } from '@/lib/processing';
 import { labelForServiceCode } from '@/lib/service-types';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
@@ -63,6 +65,7 @@ import { WhatsAppTab } from './tabs/WhatsAppTab';
 import { InternalNotesTab } from './tabs/InternalNotesTab';
 import { TasksTab } from './tabs/TasksTab';
 import { SubmissionsTab } from './tabs/SubmissionsTab';
+import { FinanceTab } from './tabs/FinanceTab';
 import { StageChangeModal } from './StageChangeModal';
 import { ProcessingAssignmentModal } from './ProcessingAssignmentModal';
 import { CorrectionRequestModal } from './CorrectionRequestModal';
@@ -74,7 +77,7 @@ import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Tabs -----------------------------------------------------------
 
-type TabKey = 'milestones' | 'documents' | 'timeline' | 'communications' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
+type TabKey = 'milestones' | 'documents' | 'timeline' | 'communications' | 'finance' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
   // Milestones first — the case-progress narrative the associate works
@@ -83,6 +86,7 @@ const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
   { key: 'documents', label: 'Documents', Icon: FileSearch },
   { key: 'timeline', label: 'Timeline', Icon: History },
   { key: 'communications', label: 'Comms', Icon: MessageSquare },
+  { key: 'finance', label: 'Finance', Icon: Wallet },
   { key: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle },
   { key: 'notes', label: 'Notes', Icon: StickyNote },
   { key: 'tasks', label: 'Tasks', Icon: ClipboardList },
@@ -92,116 +96,76 @@ const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
 
 // ---------- Left metadata rail --------------------------------------------
 
-function CaseMetaSidebar({ c }: { c: MockProcessingCase }) {
-  const docProgress = (() => {
-    const core = c.documentItems.filter((i) => i.criticality === 'CRITICAL' || i.criticality === 'REQUIRED');
-    const accepted = core.filter((i) => i.status === 'ACCEPTED' || i.status === 'WAIVED' || i.status === 'NOT_APPLICABLE').length;
-    const rejected = core.filter((i) => i.status === 'REJECTED').length;
-    return { accepted, total: core.length, rejected };
-  })();
-  const docPct = docProgress.total > 0 ? Math.round((docProgress.accepted / docProgress.total) * 100) : 0;
-
+function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <aside style={{ width: '260px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      {/* Client card */}
-      <GlassCard variant="panel" padded="md">
-        <div style={{ marginBottom: '4px', fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Client</div>
-        <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--sos-text-primary)', display: 'flex', alignItems: 'center', gap: '7px' }}>
-          <User size={14} style={{ color: 'var(--sos-text-muted)' }} />
-          {c.clientName}
-        </div>
-        <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Phone size={12} /> {c.clientPhone}
-        </div>
-        <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--sos-text-muted)' }}>
-          <Globe size={12} /> {c.service} · {c.targetCountry}
-        </div>
-      </GlassCard>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+      {children}
+    </div>
+  );
+}
 
-      {/* Stage + priority */}
-      <GlassCard variant="panel" padded="md">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div>
-            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '5px' }}>Stage</div>
-            <StatusBadge tone={stageTone(c.stage)} size="md">{STAGE_LABEL[c.stage]}</StatusBadge>
-          </div>
-          <div>
-            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '5px' }}>Priority</div>
-            <StatusBadge tone={priorityTone(c.priority)} size="md" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>
-          </div>
-          <div>
-            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Time in stage</div>
-            <div style={{ fontSize: '13px', color: c.daysInCurrentStage >= 5 ? 'var(--sos-status-warning)' : 'var(--sos-text-primary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
-              {c.daysInCurrentStage >= 5 ? <AlertTriangle size={13} /> : <CalendarClock size={13} />}
-              {c.daysInCurrentStage}d in current stage
-            </div>
-          </div>
-        </div>
-      </GlassCard>
+function MetaDivider() {
+  return <span aria-hidden="true" style={{ width: 1, alignSelf: 'stretch', minHeight: 30, background: 'var(--sos-border-subtle)' }} />;
+}
 
-      {/* Document progress */}
-      {c.documentItems.length > 0 ? (
-        <GlassCard variant="panel" padded="md">
-          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-            Document progress
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <div style={{ flex: 1, height: '7px', background: 'var(--sos-surface-hover)', borderRadius: '999px', overflow: 'hidden' }}>
-              <div style={{ width: `${docPct}%`, height: '100%', background: docPct === 100 ? 'var(--sos-status-success)' : 'var(--sos-brand-gradient)', borderRadius: '999px', transition: 'width 400ms ease' }} />
-            </div>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--sos-text-primary)', minWidth: '36px', textAlign: 'right' }}>{docPct}%</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '11.5px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--sos-status-success)' }}>
-              <CheckCircle2 size={11} /> {docProgress.accepted} accepted
-            </div>
-            {docProgress.rejected > 0 ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--sos-status-danger)' }}>
-                <XCircle size={11} /> {docProgress.rejected} rejected
-              </div>
-            ) : null}
-            <div style={{ color: 'var(--sos-text-muted)' }}>{docProgress.total} required</div>
-          </div>
-        </GlassCard>
-      ) : null}
-
-      {/* Finance summary */}
-      <GlassCard variant="panel" padded="md">
-        <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Finance</div>
-        <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--sos-text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Wallet size={14} style={{ color: 'var(--sos-brand-accent)' }} />
-          {fmtAmount(c.financeAmount, c.financeCurrency)}
-        </div>
-        <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)', marginTop: '4px' }}>
-          Sent by {c.handoverOfficerName} · {fmtRelative(c.createdAt)}
-        </div>
-        {c.financeHandoverNote ? (
-          <div style={{ marginTop: '10px', padding: '8px 10px', borderRadius: 'var(--sos-radius-sm)', background: 'var(--sos-status-info-soft)', border: '1px solid var(--sos-status-info-border)', fontSize: '12px', color: 'var(--sos-text-primary)' }}>
-            {c.financeHandoverNote}
-          </div>
-        ) : null}
-      </GlassCard>
-
-      {/* Assigned officer */}
-      <GlassCard variant="panel" padded="md">
-        <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Assigned officer</div>
-        {c.assignedOfficer ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'var(--sos-brand-primary-soft)', border: '1px solid var(--sos-brand-primary-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: 'var(--sos-brand-primary-strong)', flexShrink: 0 }}>
-              {c.assignedOfficer.initials}
-            </div>
-            <div>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{c.assignedOfficer.name}</div>
-              <div style={{ fontSize: '11px', color: 'var(--sos-text-muted)' }}>{c.assignedOfficer.role}</div>
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--sos-status-warning)', fontWeight: 500 }}>
-            <ShieldAlert size={14} /> Unassigned
-          </div>
-        )}
-      </GlassCard>
-    </aside>
+// Compact horizontal meta bar — replaces the tall vertical rail. The client
+// name + assignee now live in the page header, so this keeps just the
+// at-a-glance state (stage, priority, time-in-stage) plus a clickable finance
+// KPI that opens the Finance tab. Wraps gracefully on narrow widths.
+function CaseMetaBar({
+  c,
+  finance,
+  financeLoading,
+  onOpenFinance,
+}: {
+  c: MockProcessingCase;
+  finance: CaseFinanceSummary | null;
+  financeLoading: boolean;
+  onOpenFinance: () => void;
+}) {
+  const overdue = c.daysInCurrentStage >= 5;
+  const round0 = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+        <MetaItem label="Stage">
+          <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
+        </MetaItem>
+        <MetaDivider />
+        <MetaItem label="Priority">
+          <StatusBadge tone={priorityTone(c.priority)} size="sm" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>
+        </MetaItem>
+        <MetaDivider />
+        <MetaItem label="Time in stage">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 600, color: overdue ? 'var(--sos-status-warning)' : 'var(--sos-text-primary)' }}>
+            {overdue ? <AlertTriangle size={13} /> : <CalendarClock size={13} />}
+            {c.daysInCurrentStage}d
+          </span>
+        </MetaItem>
+        <MetaDivider />
+        <button
+          type="button"
+          onClick={onOpenFinance}
+          title="Open the Finance tab"
+          style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+        >
+          <MetaItem label="Finance">
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>
+              <Wallet size={13} style={{ color: 'var(--sos-brand-accent)' }} />
+              {financeLoading
+                ? '…'
+                : finance && finance.totalAgreed > 0
+                  ? `${round0(finance.totalPaid)} / ${round0(finance.totalAgreed)} ${finance.currency}`
+                  : 'No finance'}
+              {finance && finance.balance > 0 ? (
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--sos-status-warning)' }}>· {round0(finance.balance)} due</span>
+              ) : null}
+            </span>
+          </MetaItem>
+        </button>
+      </div>
+    </GlassCard>
   );
 }
 
@@ -234,11 +198,26 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   // without a hard reload.
   const [refetchTick, setRefetchTick] = useState(0);
 
+  // Finance summary — powers the Finance tab + the header meta KPI. Refetched
+  // alongside the case so new payments show without a hard reload.
+  const [finance, setFinance] = useState<CaseFinanceSummary | null>(null);
+  const [financeLoading, setFinanceLoading] = useState(true);
+
   useEffect(() => {
     let cancelled = false;
     fetchProcessingCase(caseId)
       .then((r) => { if (!cancelled) setApi(r); })
       .catch((e: unknown) => { if (!cancelled) setLoadErr(e instanceof Error ? e.message : 'Failed to load case'); });
+    return () => { cancelled = true; };
+  }, [caseId, refetchTick]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFinanceLoading(true);
+    fetchCaseFinance(caseId)
+      .then((r) => { if (!cancelled) setFinance(r); })
+      .catch(() => { if (!cancelled) setFinance(null); })
+      .finally(() => { if (!cancelled) setFinanceLoading(false); });
     return () => { cancelled = true; };
   }, [caseId, refetchTick]);
 
@@ -339,17 +318,14 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
       ) : null}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {/* Breadcrumb */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--sos-text-muted)' }}>
-          <Link href={'/processing' as Route} style={{ color: 'var(--sos-text-muted)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <ArrowLeft size={13} /> Processing
+        {/* Back to My Cases */}
+        <div>
+          <Link
+            href={'/processing/cases' as Route}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '13px', fontWeight: 600, color: 'var(--sos-text-muted)', textDecoration: 'none' }}
+          >
+            <ArrowLeft size={14} /> Back to My Cases
           </Link>
-          <ChevronRight size={13} />
-          <Link href={'/processing/cases' as Route} style={{ color: 'var(--sos-text-muted)', textDecoration: 'none' }}>
-            Cases
-          </Link>
-          <ChevronRight size={13} />
-          <span style={{ color: 'var(--sos-text-primary)', fontWeight: 500 }}>{c.clientName}</span>
         </div>
 
         {/* Title bar */}
@@ -358,6 +334,10 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
             <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>{c.clientName}</div>
             <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', marginTop: '3px' }}>
               {c.service} · {c.targetCountry} · Case #{c.id}
+            </div>
+            <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <User size={12} />
+              {c.assignedOfficer ? `${c.assignedOfficer.name} · ${c.assignedOfficer.role}` : 'Unassigned'}
             </div>
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -378,60 +358,60 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           </div>
         </div>
 
-        {/* Layout: sidebar + main — responsive via sos-workspace-split CSS class */}
-        <div className="sos-workspace-split" style={{ gap: '16px', alignItems: 'flex-start' }}>
-          {/* Sidebar column — meta rail + P4e submission package */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <CaseMetaSidebar c={c} />
-            <SubmissionPackagePanel caseId={c.id} caseStage={c.stage} />
+        {/* Compact horizontal meta bar (replaces the tall vertical rail) */}
+        <CaseMetaBar c={c} finance={finance} financeLoading={financeLoading} onOpenFinance={() => setActiveTab('finance')} />
+
+        {/* Full-width tab panel */}
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0' }}>
+          {/* Tab bar */}
+          <div style={{ display: 'flex', gap: '2px', padding: '4px', background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-md)', marginBottom: '12px', overflowX: 'auto' }}>
+            {TABS.map((tab) => {
+              const Icon = tab.Icon;
+              const isActive = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '7px 14px',
+                    borderRadius: 'calc(var(--sos-radius-md) - 2px)',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: isActive ? 600 : 500,
+                    color: isActive ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-muted)',
+                    background: isActive ? 'var(--sos-brand-primary-soft)' : 'transparent',
+                    transition: 'all 150ms',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <Icon size={13} />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Tab panel */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0' }}>
-            {/* Tab bar */}
-            <div style={{ display: 'flex', gap: '2px', padding: '4px', background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-md)', marginBottom: '12px', overflowX: 'auto' }}>
-              {TABS.map((tab) => {
-                const Icon = tab.Icon;
-                const isActive = activeTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setActiveTab(tab.key)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '7px 14px',
-                      borderRadius: 'calc(var(--sos-radius-md) - 2px)',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: isActive ? 600 : 500,
-                      color: isActive ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-muted)',
-                      background: isActive ? 'var(--sos-brand-primary-soft)' : 'transparent',
-                      transition: 'all 150ms',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    <Icon size={13} />
-                    {tab.label}
-                  </button>
-                );
-              })}
+          {/* Tab content */}
+          {activeTab === 'milestones' && <MilestonesTab c={c} />}
+          {activeTab === 'documents' && <DocumentChecklistTab c={c} />}
+          {activeTab === 'timeline' && <CaseTimelineTab c={c} />}
+          {activeTab === 'communications' && <CommunicationsTab c={c} />}
+          {activeTab === 'finance' && <FinanceTab finance={finance} loading={financeLoading} />}
+          {activeTab === 'whatsapp' && <WhatsAppTab c={c} />}
+          {activeTab === 'notes' && <InternalNotesTab c={c} />}
+          {activeTab === 'tasks' && <TasksTab c={c} />}
+          {activeTab === 'corrections' && <CorrectionsTab c={c} />}
+          {activeTab === 'submissions' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <SubmissionPackagePanel caseId={c.id} caseStage={c.stage} />
+              <SubmissionsTab c={c} />
             </div>
-
-            {/* Tab content */}
-            {activeTab === 'milestones' && <MilestonesTab c={c} />}
-            {activeTab === 'documents' && <DocumentChecklistTab c={c} />}
-            {activeTab === 'timeline' && <CaseTimelineTab c={c} />}
-            {activeTab === 'communications' && <CommunicationsTab c={c} />}
-            {activeTab === 'whatsapp' && <WhatsAppTab c={c} />}
-            {activeTab === 'notes' && <InternalNotesTab c={c} />}
-            {activeTab === 'tasks' && <TasksTab c={c} />}
-            {activeTab === 'corrections' && <CorrectionsTab c={c} />}
-            {activeTab === 'submissions' && <SubmissionsTab c={c} />}
-          </div>
+          )}
         </div>
       </div>
     </>

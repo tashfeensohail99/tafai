@@ -165,6 +165,15 @@ export class ProcessingController {
     return this.processingService.getCaseById(caseId, user);
   }
 
+  // Finance summary for the case's client (agreed / paid / balance + ledger
+  // lists). Powers the workspace Finance tab; aggregates by lead + client so it
+  // covers manual clients too.
+  @Get('cases/:caseId/finance')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getCaseFinance(@Param('caseId', ParseUUIDPipe) caseId: string) {
+    return this.processingService.getCaseFinance(caseId);
+  }
+
   // P4d — submission readiness: { ready, blockers }. Surfaced in the workspace
   // so the associate sees outstanding blockers before attempting to submit.
   @Get('cases/:caseId/submission-readiness')

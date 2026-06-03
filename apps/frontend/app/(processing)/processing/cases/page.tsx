@@ -10,7 +10,6 @@ import {
   Mail,
   Phone,
   ArrowUpRight,
-  FileText,
   AlertTriangle,
   Send,
   Check,
@@ -55,7 +54,7 @@ const STAGES: ProcessingStage[] = [
 
 const PRIORITIES: ProcessingPriority[] = ['CRITICAL', 'URGENT', 'NORMAL', 'LOW'];
 
-const GRID = 'minmax(230px, 2.3fr) minmax(190px, 1.6fr) minmax(150px, 1.2fr) minmax(120px, 1fr) 188px';
+const GRID = 'minmax(220px, 2.2fr) minmax(170px, 1.4fr) minmax(150px, 1.2fr) minmax(170px, 1.5fr) 188px';
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -288,27 +287,82 @@ function ActionIcon({
   );
 }
 
-function DocProgress({ p }: { p: ApiProcessingCaseListItem['docProgress'] }) {
-  if (!p || p.total === 0) {
+// Per-document status tile styling. Five visual buckets:
+//  grey outline = not submitted · blue dot = submitted (awaiting review) ·
+//  amber tick = under review / expiring · green tick = verified / waived ·
+//  red cross = rejected / expired.
+type Glyph = 'check' | 'x' | 'dot' | null;
+const DOC_TILE: Record<string, { bg: string; border: string; glyph: Glyph; label: string }> = {
+  ACCEPTED: { bg: 'var(--sos-status-success)', border: 'transparent', glyph: 'check', label: 'Verified' },
+  WAIVED: { bg: 'var(--sos-status-success)', border: 'transparent', glyph: 'check', label: 'Waived' },
+  UNDER_REVIEW: { bg: 'var(--sos-status-warning)', border: 'transparent', glyph: 'check', label: 'Under review' },
+  EXPIRING_SOON: { bg: 'var(--sos-status-warning)', border: 'transparent', glyph: 'check', label: 'Expiring soon' },
+  SUBMITTED: { bg: 'var(--sos-brand-primary)', border: 'transparent', glyph: 'dot', label: 'Submitted' },
+  REJECTED: { bg: 'var(--sos-status-danger)', border: 'transparent', glyph: 'x', label: 'Rejected' },
+  EXPIRED: { bg: 'var(--sos-status-danger)', border: 'transparent', glyph: 'x', label: 'Expired' },
+  NOT_SUBMITTED: { bg: 'transparent', border: 'var(--sos-border-strong, #cbd5e1)', glyph: null, label: 'Not submitted' },
+};
+
+function DocTile({ status, label }: { status: string; label: string }) {
+  const v = DOC_TILE[status] ?? DOC_TILE.NOT_SUBMITTED;
+  return (
+    <span
+      title={`${label} — ${v.label}`}
+      style={{
+        width: 17,
+        height: 17,
+        borderRadius: 4,
+        flexShrink: 0,
+        background: v.bg,
+        border: `1.5px solid ${v.border === 'transparent' ? v.bg : v.border}`,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: v.glyph === null ? 'transparent' : '#fff',
+      }}
+    >
+      {v.glyph === 'check' ? (
+        <Check size={11} strokeWidth={3} />
+      ) : v.glyph === 'x' ? (
+        <X size={11} strokeWidth={3} />
+      ) : v.glyph === 'dot' ? (
+        <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff' }} />
+      ) : null}
+    </span>
+  );
+}
+
+function DocProgress({
+  p,
+  docs,
+}: {
+  p: ApiProcessingCaseListItem['docProgress'];
+  docs: ApiProcessingCaseListItem['documents'];
+}) {
+  if (!docs || docs.length === 0) {
     return <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>Not started</span>;
   }
-  const pct = Math.round((p.verified / p.total) * 100);
-  const complete = p.verified >= p.total;
+  const MAX = 16;
+  const shown = docs.slice(0, MAX);
+  const extra = docs.length - shown.length;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--sos-text-secondary)' }}>
-        <FileText size={12} style={{ color: 'var(--sos-text-muted)' }} />
-        <span style={{ fontWeight: 600 }}>{p.verified}/{p.total}</span>
-        <span style={{ color: 'var(--sos-text-muted)' }}>verified</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+        {shown.map((d, i) => (
+          <DocTile key={i} status={d.status} label={d.label} />
+        ))}
+        {extra > 0 ? <span style={{ fontSize: 10.5, color: 'var(--sos-text-muted)' }}>+{extra}</span> : null}
       </div>
-      <div style={{ height: 5, borderRadius: 999, background: 'var(--sos-surface-2)', overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: complete ? 'var(--sos-status-success)' : 'var(--sos-brand-primary)', transition: 'width 200ms' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--sos-text-muted)' }}>
+        <span>
+          <strong style={{ color: 'var(--sos-text-secondary)' }}>{p.verified}/{p.total}</strong> verified
+        </span>
+        {p.criticalMissing > 0 ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--sos-status-danger)', fontWeight: 600 }}>
+            <AlertTriangle size={10} /> {p.criticalMissing} critical
+          </span>
+        ) : null}
       </div>
-      {p.criticalMissing > 0 ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: 'var(--sos-status-danger)', fontWeight: 600 }}>
-          <AlertTriangle size={11} /> {p.criticalMissing} critical missing
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -451,7 +505,7 @@ export default function CasesPage() {
 
       <GlassCard variant="panel" padded={false}>
         <div style={{ overflowX: 'auto' }}>
-          <div style={{ minWidth: 920 }}>
+          <div style={{ minWidth: 980 }}>
             {/* Header */}
             <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 14, padding: '9px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
               <span>Client / Case</span>
@@ -534,7 +588,7 @@ export default function CasesPage() {
                     </div>
 
                     {/* Documents */}
-                    <DocProgress p={c.docProgress} />
+                    <DocProgress p={c.docProgress} docs={c.documents} />
 
                     {/* Quick actions */}
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>

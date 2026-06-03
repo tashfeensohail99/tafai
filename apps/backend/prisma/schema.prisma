@@ -3186,6 +3186,16 @@ model WhatsAppMessage {
 
 // Mirror of Meta's approved templates per WABA. Required to send outbound
 // messages outside the 24-hour window.
+/// Which department(s) may pick a template in the inbox composer. Our own
+/// metadata (Meta has no such concept), so it is preserved across template sync.
+enum WhatsAppTemplateDepartment {
+  SALES
+  FINANCE
+  PROCESSING
+
+  @@schema("whatsapp")
+}
+
 model WhatsAppTemplate {
   id              String                  @id @default(uuid())
   channelId       String
@@ -3196,6 +3206,8 @@ model WhatsAppTemplate {
   components      Json
   qualityRating   String?
   rejectedReason  String?
+  /// Departments allowed to pick this template. Empty = shared (everyone sees it).
+  departments     WhatsAppTemplateDepartment[] @default([])
   lastSyncAt      DateTime
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt

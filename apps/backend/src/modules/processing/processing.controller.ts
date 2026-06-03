@@ -493,6 +493,29 @@ export class ProcessingController {
   }
 
   // -------------------------------------------------------------------------
+  // CROSS-DEPARTMENT HISTORY — Sales/Finance notes + call history/transcripts
+  // -------------------------------------------------------------------------
+
+  @Get('cases/:caseId/background')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getCaseBackground(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getCaseBackground(caseId, user);
+  }
+
+  @Get('cases/:caseId/calls/:callId/recording')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getCaseCallRecording(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('callId', ParseUUIDPipe) callId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getCaseCallRecordingUrl(caseId, callId, user);
+  }
+
+  // -------------------------------------------------------------------------
   // NOTES
   // -------------------------------------------------------------------------
 

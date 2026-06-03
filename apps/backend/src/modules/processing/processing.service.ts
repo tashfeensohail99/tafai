@@ -3220,6 +3220,174 @@ export class ProcessingService {
     return { success: true };
   }
 
+  // -------------------------------------------------------------------------
+  // CROSS-DEPARTMENT HISTORY — Sales/Finance notes + call history (read-only)
+  // for the case-workspace "History" tab. Joins by the case's lead/client.
+  // -------------------------------------------------------------------------
+
+  async getCaseBackground(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+
+    const pc = await this.prisma.processingCase.findUnique({
+      where: { id: caseId },
+      select: { leadId: true, clientId: true },
+    });
+    if (!pc) throw new NotFoundException('Processing case not found');
+
+    const [lead, agreements, handovers, calls] = await Promise.all([
+      this.prisma.lead.findUnique({ where: { id: pc.leadId }, select: { notes: true } }),
+      this.prisma.agreement.findMany({
+        where: { leadId: pc.leadId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          salesNotes: true,
+          financeNotes: true,
+          createdByUserId: true,
+          financeReviewedByUserId: true,
+          reviewedAt: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.financeHandover.findMany({
+        where: { leadId: pc.leadId },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          notes: true,
+          financeNotes: true,
+          createdByUserId: true,
+          reviewedByUserId: true,
+          submittedAt: true,
+          reviewedAt: true,
+        },
+      }),
+      this.prisma.whatsAppCall.findMany({
+        where: { OR: [{ leadId: pc.leadId }, ...(pc.clientId ? [{ clientId: pc.clientId }] : [])] },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        select: {
+          id: true,
+          direction: true,
+          status: true,
+          durationSeconds: true,
+          createdAt: true,
+          startedAt: true,
+          assignedEmployeeId: true,
+          answeredByEmployeeId: true,
+          transcript: true,
+          transcriptStatus: true,
+          recordingKey: true,
+        },
+      }),
+    ]);
+
+    // Resolve display names. Note authors are UserAccount ids → map via the
+    // Employee that owns each account (fall back to the account email). Call
+    // reps are Employee ids directly.
+    const userIds = new Set<string>();
+    for (const a of agreements) {
+      if (a.createdByUserId) userIds.add(a.createdByUserId);
+      if (a.financeReviewedByUserId) userIds.add(a.financeReviewedByUserId);
+    }
+    for (const h of handovers) {
+      if (h.createdByUserId) userIds.add(h.createdByUserId);
+      if (h.reviewedByUserId) userIds.add(h.reviewedByUserId);
+    }
+    const empIds = new Set<string>();
+    for (const c of calls) {
+      if (c.assignedEmployeeId) empIds.add(c.assignedEmployeeId);
+      if (c.answeredByEmployeeId) empIds.add(c.answeredByEmployeeId);
+    }
+
+    const [empByUser, empById, accounts] = await Promise.all([
+      userIds.size
+        ? this.prisma.employee.findMany({
+            where: { userId: { in: [...userIds] } },
+            select: { userId: true, firstName: true, lastName: true },
+          })
+        : Promise.resolve([]),
+      empIds.size
+        ? this.prisma.employee.findMany({
+            where: { id: { in: [...empIds] } },
+            select: { id: true, firstName: true, lastName: true },
+          })
+        : Promise.resolve([]),
+      userIds.size
+        ? this.prisma.userAccount.findMany({
+            where: { id: { in: [...userIds] } },
+            select: { id: true, email: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const nameByUser = new Map(empByUser.map((e) => [e.userId, `${e.firstName} ${e.lastName}`.trim()]));
+    const emailByUser = new Map(accounts.map((a) => [a.id, a.email]));
+    const nameByEmp = new Map(empById.map((e) => [e.id, `${e.firstName} ${e.lastName}`.trim()]));
+    const userName = (id: string | null): string | null =>
+      id ? nameByUser.get(id) || emailByUser.get(id) || null : null;
+
+    type DeptNote = { source: string; label: string; text: string; author: string | null; at: Date | null };
+    const salesNotes: DeptNote[] = [];
+    const financeNotes: DeptNote[] = [];
+
+    if (lead?.notes?.trim()) {
+      salesNotes.push({ source: 'lead', label: 'Sales — lead note', text: lead.notes.trim(), author: null, at: null });
+    }
+    for (const a of agreements) {
+      if (a.salesNotes?.trim()) {
+        salesNotes.push({ source: 'agreement', label: 'Sales — agreement note', text: a.salesNotes.trim(), author: userName(a.createdByUserId), at: a.createdAt });
+      }
+      if (a.financeNotes?.trim()) {
+        financeNotes.push({ source: 'agreement', label: 'Finance — agreement review', text: a.financeNotes.trim(), author: userName(a.financeReviewedByUserId ?? a.createdByUserId), at: a.reviewedAt ?? a.createdAt });
+      }
+    }
+    for (const h of handovers) {
+      if (h.notes?.trim()) {
+        financeNotes.push({ source: 'handover', label: 'Finance — handover note', text: h.notes.trim(), author: userName(h.createdByUserId), at: h.submittedAt });
+      }
+      if (h.financeNotes?.trim()) {
+        financeNotes.push({ source: 'handover', label: 'Finance — review note', text: h.financeNotes.trim(), author: userName(h.reviewedByUserId ?? h.createdByUserId), at: h.reviewedAt ?? h.submittedAt });
+      }
+    }
+
+    const callItems = calls.map((c) => {
+      const repId = c.answeredByEmployeeId ?? c.assignedEmployeeId;
+      return {
+        id: c.id,
+        direction: c.direction,
+        status: c.status,
+        durationSeconds: c.durationSeconds,
+        at: c.startedAt ?? c.createdAt,
+        rep: repId ? nameByEmp.get(repId) ?? null : null,
+        transcript: c.transcript,
+        transcriptStatus: c.transcriptStatus,
+        hasRecording: !!c.recordingKey,
+      };
+    });
+
+    return { salesNotes, financeNotes, calls: callItems };
+  }
+
+  /** Signed URL for a call recording, scoped to a case the user can access. */
+  async getCaseCallRecordingUrl(caseId: string, callId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const pc = await this.prisma.processingCase.findUnique({
+      where: { id: caseId },
+      select: { leadId: true, clientId: true },
+    });
+    if (!pc) throw new NotFoundException('Processing case not found');
+    const call = await this.prisma.whatsAppCall.findUnique({
+      where: { id: callId },
+      select: { leadId: true, clientId: true, recordingKey: true, recordingMimeType: true },
+    });
+    if (!call) throw new NotFoundException('Call not found');
+    const belongs =
+      (!!call.leadId && call.leadId === pc.leadId) ||
+      (!!call.clientId && call.clientId === pc.clientId);
+    if (!belongs) throw new ForbiddenException('Call does not belong to this case');
+    if (!call.recordingKey) throw new NotFoundException('No recording for this call');
+    const url = await this.storage.getSignedUrl(call.recordingKey);
+    return { url, mimeType: call.recordingMimeType ?? null };
+  }
+
   /**
    * P5-nudges: system-initiated WhatsApp send (no user context).
    * Used by ClientNudgeService for cron-driven reminders.

@@ -17,6 +17,7 @@ import {
   AlertCircle,
   FileSearch,
   Globe,
+  Headphones,
   History,
   Layers,
   Loader2,
@@ -62,6 +63,7 @@ import { labelForServiceCode } from '@/lib/service-types';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
 import { DocumentChecklistTab } from './tabs/DocumentChecklistTab';
 import { CaseTimelineTab } from './tabs/CaseTimelineTab';
+import { CaseHistoryTab } from './tabs/CaseHistoryTab';
 import { CommunicationsTab } from './tabs/CommunicationsTab';
 import { WhatsAppTab } from './tabs/WhatsAppTab';
 import { InternalNotesTab } from './tabs/InternalNotesTab';
@@ -79,7 +81,7 @@ import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Tabs -----------------------------------------------------------
 
-type TabKey = 'milestones' | 'documents' | 'timeline' | 'communications' | 'finance' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
+type TabKey = 'milestones' | 'documents' | 'timeline' | 'history' | 'communications' | 'finance' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
   // Milestones first — the case-progress narrative the associate works
@@ -87,6 +89,7 @@ const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
   { key: 'milestones', label: 'Milestones', Icon: Sparkles },
   { key: 'documents', label: 'Documents', Icon: FileSearch },
   { key: 'timeline', label: 'Timeline', Icon: History },
+  { key: 'history', label: 'History', Icon: Headphones },
   { key: 'communications', label: 'Comms', Icon: MessageSquare },
   { key: 'finance', label: 'Finance', Icon: Wallet },
   { key: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle },
@@ -471,6 +474,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           {activeTab === 'milestones' && <MilestonesTab c={c} />}
           {activeTab === 'documents' && <DocumentChecklistTab c={c} />}
           {activeTab === 'timeline' && <CaseTimelineTab c={c} />}
+          {activeTab === 'history' && <CaseHistoryTab c={c} />}
           {activeTab === 'communications' && <CommunicationsTab c={c} />}
           {activeTab === 'finance' && <FinanceTab finance={finance} loading={financeLoading} />}
           {activeTab === 'whatsapp' && <WhatsAppTab c={c} />}

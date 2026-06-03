@@ -182,6 +182,15 @@ export class WhatsAppMessagesService {
   async sendTemplate(caller: CallerContext, input: SendTemplateInput) {
     const thread = await this.thread(caller, input.threadId);
     const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
+    // Render the template's body with the supplied parameters so the chat
+    // bubble + inbox preview show what the customer actually receives, instead
+    // of a bare "Template: <name>" placeholder. Does NOT affect what's sent to
+    // Meta (the processor still sends templateName + components).
+    const renderedBody = await this.renderTemplateBody(
+      thread.channelId,
+      input.templateName,
+      input.components,
+    );
     const message = await this.prisma.whatsAppMessage.create({
       data: {
         threadId: thread.id,
@@ -193,6 +202,7 @@ export class WhatsAppMessagesService {
         status: WhatsAppMessageStatus.QUEUED,
         templateName: input.templateName,
         templateLanguage: input.language,
+        body: renderedBody,
         payload: { components: input.components ?? [] } as unknown as Prisma.InputJsonValue,
         sentByEmployeeId: senderEmployeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
@@ -214,6 +224,35 @@ export class WhatsAppMessagesService {
       });
     }
     return message;
+  }
+
+  /**
+   * Resolve a template's BODY text and fill its {{1}}, {{2}}… placeholders with
+   * the parameters the agent supplied, so we can store the real message text on
+   * the WhatsAppMessage row (used purely for our chat/inbox display — Meta gets
+   * the structured template + components separately). Returns null when the
+   * template or its body can't be resolved, so the UI falls back to a label.
+   */
+  private async renderTemplateBody(
+    channelId: string,
+    templateName: string,
+    components: Array<Record<string, unknown>> | undefined,
+  ): Promise<string | null> {
+    try {
+      const tpl = await this.prisma.whatsAppTemplate.findFirst({
+        where: { channelId, name: templateName },
+        select: { components: true },
+      });
+      const tplComps = (tpl?.components ?? []) as Array<{ type?: string; text?: string }>;
+      const bodyText = tplComps.find((c) => (c.type ?? '').toUpperCase() === 'BODY')?.text;
+      if (!bodyText) return null;
+      const sent = (components ?? []) as Array<{ type?: string; parameters?: Array<{ text?: string }> }>;
+      const values =
+        sent.find((c) => (c.type ?? '').toLowerCase() === 'body')?.parameters?.map((p) => p?.text ?? '') ?? [];
+      return bodyText.replace(/\{\{(\d+)\}\}/g, (_, n: string) => values[Number(n) - 1] ?? `{{${n}}}`);
+    } catch {
+      return null;
+    }
   }
 
   /**

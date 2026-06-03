@@ -234,11 +234,20 @@ export function SalesCsvLeadsPage() {
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                         <a
                           href={link}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          target="tashfeen-whatsapp"
+                          onClick={(e) => {
+                            // Reuse ONE WhatsApp tab instead of spawning a fresh,
+                            // cold-loading tab on every click (the old target="_blank"
+                            // behaviour). window.open with a fixed window name navigates
+                            // the existing WhatsApp tab to the new chat and focuses it,
+                            // so reps aren't left with a pile of slow WhatsApp tabs.
+                            e.preventDefault();
+                            const w = window.open(link, 'tashfeen-whatsapp');
+                            if (w) w.focus();
+                          }}
                           className="sos-btn sos-btn--primary sos-btn--sm"
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-                          title="Opens WhatsApp on this device with the welcome message pre-filled"
+                          title="Opens WhatsApp with the welcome message pre-filled (reuses one WhatsApp tab)"
                         >
                           <MessageSquare size={13} /> WhatsApp
                         </a>

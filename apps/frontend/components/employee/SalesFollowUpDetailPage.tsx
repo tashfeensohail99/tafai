@@ -328,8 +328,13 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
             {lead && phoneClean ? (
               <a
                 href={`https://wa.me/${phoneClean.replace('+', '')}`}
-                target="_blank"
-                rel="noopener noreferrer"
+                target="tashfeen-whatsapp"
+                onClick={(e) => {
+                  // Reuse one WhatsApp tab instead of cold-loading a new one each click.
+                  e.preventDefault();
+                  const w = window.open(`https://wa.me/${phoneClean.replace('+', '')}`, 'tashfeen-whatsapp');
+                  if (w) w.focus();
+                }}
                 className="sos-btn sos-btn--secondary"
                 style={{ textDecoration: 'none' }}
               >

@@ -275,11 +275,12 @@ export function renderWelcomeMessage(
 }
 
 /**
- * Build a `wa.me` deep link that opens the rep's personal WhatsApp
- * with the welcome message pre-filled. Strips non-digits from the
- * phone (wa.me wants pure digits, no `+`).
+ * Build a WhatsApp Web deep link that opens the rep's WhatsApp straight to the
+ * lead's chat with the welcome message pre-filled. We target web.whatsapp.com
+ * (not wa.me) to skip the wa.me "Continue to Chat" interstitial — our reps work
+ * in WhatsApp Web, so this lands on the chat in one hop. Pure digits, no `+`.
  */
-export function waMeLink(phoneE164: string, text: string): string {
+export function waWebLink(phoneE164: string, text: string): string {
   const digits = phoneE164.replace(/\D/g, '');
-  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+  return `https://web.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(text)}`;
 }

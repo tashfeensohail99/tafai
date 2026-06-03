@@ -453,12 +453,12 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
               <Phone size={15} /> Call now
             </a>
             <a
-              href={`https://wa.me/${phoneClean.replace('+', '')}`}
+              href={`https://web.whatsapp.com/send?phone=${phoneClean.replace('+', '')}`}
               target="tashfeen-whatsapp"
               onClick={(e) => {
                 // Reuse one WhatsApp tab instead of cold-loading a new one each click.
                 e.preventDefault();
-                const w = window.open(`https://wa.me/${phoneClean.replace('+', '')}`, 'tashfeen-whatsapp');
+                const w = window.open(`https://web.whatsapp.com/send?phone=${phoneClean.replace('+', '')}`, 'tashfeen-whatsapp');
                 if (w) w.focus();
               }}
               className="sos-btn sos-btn--secondary"

@@ -996,6 +996,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         onClose={() => setTemplateOpen(false)}
         threadId={thread.id}
         channelId={thread.channelId}
+        contactName={thread.client?.firstName || thread.lead?.firstName || displayName || ''}
         onSent={() => {
           setTemplateOpen(false);
           void reload();

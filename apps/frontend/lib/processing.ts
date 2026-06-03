@@ -1204,8 +1204,11 @@ export interface ApiCaseWhatsAppMessage {
   direction: 'INBOUND' | 'OUTBOUND';
   type: string;
   body: string | null;
-  mediaUrl: string | null;
+  /** Short-lived signed URL for media re-hosted to our storage (photos / voice
+   *  / docs). Null for un-cached media (renders a placeholder). */
+  mediaSignedUrl: string | null;
   mediaMimeType: string | null;
+  mediaFilename: string | null;
   status: string;
   createdAt: string;
 }
@@ -1215,10 +1218,13 @@ export interface ApiCaseWhatsApp {
   windowExpiresAt: string | null;
   windowOpen: boolean;
   messages: ApiCaseWhatsAppMessage[];
+  /** True when an older page exists — drives the "Load older messages" button. */
+  hasMore?: boolean;
 }
 
-export function fetchCaseWhatsApp(caseId: string): Promise<ApiCaseWhatsApp> {
-  return apiFetch<ApiCaseWhatsApp>(`/processing/cases/${caseId}/whatsapp`, { cache: 'no-store' });
+export function fetchCaseWhatsApp(caseId: string, before?: string): Promise<ApiCaseWhatsApp> {
+  const tail = before ? `?before=${encodeURIComponent(before)}` : '';
+  return apiFetch<ApiCaseWhatsApp>(`/processing/cases/${caseId}/whatsapp${tail}`, { cache: 'no-store' });
 }
 
 // ---------------------------------------------------------------------------

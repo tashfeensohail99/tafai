@@ -3275,7 +3275,7 @@ export class ProcessingService {
   // thread lookup is keyed off this case's lead/client).
   // -------------------------------------------------------------------------
 
-  async getCaseWhatsApp(caseId: string, user: RequestUser) {
+  async getCaseWhatsApp(caseId: string, user: RequestUser, before?: string) {
     await this.assertCaseAccessById(caseId, user);
     const processingCase = await this.prisma.processingCase.findUnique({
       where: { id: caseId },
@@ -3294,13 +3294,20 @@ export class ProcessingService {
       select: { id: true, windowExpiresAt: true },
     });
     if (!thread) {
-      return { threadId: null, windowExpiresAt: null, windowOpen: false, messages: [] };
+      return { threadId: null, windowExpiresAt: null, windowOpen: false, messages: [], hasMore: false };
     }
 
-    const messages = await this.prisma.whatsAppMessage.findMany({
-      where: { threadId: thread.id },
+    // Paginated for COMPLETE history: the newest page by default; "load older"
+    // passes `before` (the oldest loaded message's createdAt) to walk back.
+    const PAGE = 50;
+    const beforeDate = before ? new Date(before) : null;
+    const rows = await this.prisma.whatsAppMessage.findMany({
+      where: {
+        threadId: thread.id,
+        ...(beforeDate && !Number.isNaN(beforeDate.getTime()) ? { createdAt: { lt: beforeDate } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: PAGE,
       select: {
         id: true,
         direction: true,
@@ -3310,14 +3317,44 @@ export class ProcessingService {
         mediaMimeType: true,
         status: true,
         createdAt: true,
+        payload: true,
       },
     });
+    const hasMore = rows.length === PAGE;
+
+    // Inbound media is re-hosted to our storage on arrival, so `mediaUrl` holds
+    // an S3 key we can sign here for inline display (photos/voice/docs). meta:<id>
+    // / http refs (outbound voice, un-cached) aren't servable without the
+    // WhatsApp module — those fall back to a placeholder on the client.
+    const messages = await Promise.all(
+      rows.reverse().map(async (m) => {
+        const key =
+          m.mediaUrl && !m.mediaUrl.startsWith('meta:') && !m.mediaUrl.startsWith('http')
+            ? m.mediaUrl
+            : null;
+        const mediaSignedUrl = key ? await this.storage.getSignedUrl(key).catch(() => null) : null;
+        const payload = m.payload as { filename?: string; document?: { filename?: string } } | null;
+        const mediaFilename = payload?.document?.filename ?? payload?.filename ?? null;
+        return {
+          id: m.id,
+          direction: m.direction,
+          type: m.type,
+          body: m.body,
+          mediaMimeType: m.mediaMimeType,
+          mediaSignedUrl,
+          mediaFilename,
+          status: m.status,
+          createdAt: m.createdAt,
+        };
+      }),
+    );
 
     return {
       threadId: thread.id,
       windowExpiresAt: thread.windowExpiresAt,
       windowOpen: !!thread.windowExpiresAt && thread.windowExpiresAt.getTime() > Date.now(),
-      messages: messages.reverse(), // oldest-first for chat display
+      messages, // oldest-first for chat display
+      hasMore,
     };
   }
 

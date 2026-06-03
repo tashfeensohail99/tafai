@@ -140,6 +140,7 @@ function buildService() {
     { sendWelcomeClient: jest.fn(), sendCaseMessageToClient: jest.fn() } as any, // EmailService mock
     { createInvoice: jest.fn(), recordPayment: jest.fn(), verifyPayment: jest.fn() } as any, // FinanceService mock (NC)
     { convertToBase: jest.fn() } as any, // FxService mock (NC)
+    { create: jest.fn() } as any, // NotificationsService mock (note mentions)
   );
 
   return { service, prismaMock, auditMock, storageMock, timelineMock };

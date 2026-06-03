@@ -2746,6 +2746,11 @@ model ProcessingNote {
   createdByUserId String
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
+  // Set when the author/manager edits the body (drives the "edited" label).
+  editedAt        DateTime?
+  // Soft-delete: hidden from the notes list but retained for the audit trail.
+  deletedAt       DateTime?
+  deletedByUserId String?
 
   case      ProcessingCase @relation(fields: [caseId], references: [id])
   createdBy UserAccount    @relation("ProcessingNoteCreatedBy", fields: [createdByUserId], references: [id])

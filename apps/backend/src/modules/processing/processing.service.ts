@@ -47,6 +47,7 @@ import { ActivityTimelineService } from '../activity-timeline/activity-timeline.
 import { StorageService } from '../storage/storage.service';
 import { LeadsService } from '../leads/leads.service';
 import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { FinanceService } from '../finance/finance.service';
 import { FxService } from '../../common/fx/fx.service';
 import {
@@ -64,6 +65,7 @@ import {
   CreateManualClientCaseDto,
   CreateProcessingCaseDto,
   CreateProcessingNoteDto,
+  UpdateProcessingNoteDto,
   CreateProcessingTaskDto,
   EscalateCorrectionRequestDto,
   ListCorrectionRequestsQueryDto,
@@ -229,6 +231,9 @@ export class ProcessingService {
     // currency (default PKR) and converted here before the invoice is written.
     // FxModule is @Global().
     private readonly fx: FxService,
+    // In-app notifications — used to alert teammates @mentioned in a case note.
+    // NotificationsModule is @Global() so no extra module import is needed.
+    private readonly notifications: NotificationsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -2791,6 +2796,7 @@ export class ProcessingService {
     return this.prisma.processingNote.findMany({
       where: {
         caseId,
+        deletedAt: null,
         ...(!canViewManagerOnly
           ? { noteType: { not: ProcessingNoteType.MANAGER_ONLY } }
           : {}),
@@ -2800,6 +2806,66 @@ export class ProcessingService {
       },
       orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
     });
+  }
+
+  /** A user may edit/delete their own note; managers (note.view_all or
+   *  case.view_all) may manage any note. */
+  private canManageNote(noteAuthorId: string, user: RequestUser): boolean {
+    return (
+      noteAuthorId === user.id ||
+      user.permissions.includes('processing.note.view_all') ||
+      user.permissions.includes('processing.case.view_all')
+    );
+  }
+
+  /** Alert @mentioned teammates — in-app notification + best-effort email.
+   *  Skips the author, de-dupes, and never throws into the note write. */
+  private async notifyNoteMentions(params: {
+    mentionIds: string[];
+    authorId: string;
+    caseId: string;
+    snippet: string;
+  }): Promise<void> {
+    const targets = [...new Set(params.mentionIds)].filter((id) => !!id && id !== params.authorId);
+    if (targets.length === 0) return;
+    try {
+      const [pc, accounts] = await Promise.all([
+        this.prisma.processingCase.findUnique({
+          where: { id: params.caseId },
+          select: { lead: { select: { referenceCode: true, firstName: true, lastName: true } } },
+        }),
+        this.prisma.userAccount.findMany({
+          where: { id: { in: targets } },
+          select: { id: true, email: true },
+        }),
+      ]);
+      const ref = pc?.lead?.referenceCode ?? 'a case';
+      const clientName = pc?.lead ? `${pc.lead.firstName} ${pc.lead.lastName}`.trim() : '';
+      const link = `/processing/cases/${params.caseId}?tab=notes`;
+      const raw = params.snippet.trim();
+      const snippet = raw.length > 160 ? `${raw.slice(0, 157)}…` : raw;
+      const safe = snippet.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      await Promise.all(
+        accounts.map(async (a) => {
+          await this.notifications.create({
+            userId: a.id,
+            type: 'processing_note_mention',
+            title: `You were mentioned in a note · ${ref}`,
+            body: snippet,
+            link,
+          });
+          await this.email
+            .sendMail({
+              to: a.email,
+              subject: `You were mentioned in a case note — ${ref}`,
+              html: `<p>You were mentioned in an internal note on case <strong>${ref}</strong>${clientName ? ` (${clientName})` : ''}.</p><p style="white-space:pre-wrap;border-left:3px solid #ddd;padding-left:10px;color:#444">${safe}</p>`,
+            })
+            .catch(() => undefined);
+        }),
+      );
+    } catch (e) {
+      this.logger.warn(`note mention notify failed: ${(e as Error).message}`);
+    }
   }
 
   async createNote(caseId: string, dto: CreateProcessingNoteDto, user: RequestUser) {
@@ -2812,6 +2878,7 @@ export class ProcessingService {
         mentions: dto.mentions ?? [],
         createdByUserId: user.id,
       },
+      include: { createdBy: { select: { id: true, email: true } } },
     });
 
     await this.prisma.processingAuditLog.create({
@@ -2825,18 +2892,100 @@ export class ProcessingService {
       },
     });
 
+    await this.notifyNoteMentions({
+      mentionIds: dto.mentions ?? [],
+      authorId: user.id,
+      caseId,
+      snippet: dto.content,
+    });
+
     return note;
+  }
+
+  async updateNote(
+    caseId: string,
+    noteId: string,
+    dto: UpdateProcessingNoteDto,
+    user: RequestUser,
+  ) {
+    await this.assertCaseAccessById(caseId, user);
+    const note = await this.prisma.processingNote.findFirst({
+      where: { id: noteId, caseId, deletedAt: null },
+    });
+    if (!note) throw new NotFoundException('Note not found');
+    if (!this.canManageNote(note.createdByUserId, user)) {
+      throw new ForbiddenException('You can only edit your own notes');
+    }
+
+    const updated = await this.prisma.processingNote.update({
+      where: { id: noteId },
+      data: {
+        ...(dto.content !== undefined ? { content: dto.content } : {}),
+        ...(dto.noteType !== undefined ? { noteType: dto.noteType } : {}),
+        ...(dto.mentions !== undefined ? { mentions: dto.mentions } : {}),
+        editedAt: new Date(),
+      },
+      include: { createdBy: { select: { id: true, email: true } } },
+    });
+
+    await this.prisma.processingAuditLog.create({
+      data: {
+        caseId,
+        actorUserId: user.id,
+        action: 'note_edited',
+        entityType: 'processing_note',
+        entityId: noteId,
+        newValues: { noteType: updated.noteType },
+      },
+    });
+
+    // Only ping people newly added to the mention list on this edit.
+    if (dto.mentions) {
+      const before = new Set(note.mentions);
+      const added = dto.mentions.filter((id) => !before.has(id));
+      await this.notifyNoteMentions({ mentionIds: added, authorId: user.id, caseId, snippet: updated.content });
+    }
+
+    return updated;
+  }
+
+  async deleteNote(caseId: string, noteId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const note = await this.prisma.processingNote.findFirst({
+      where: { id: noteId, caseId, deletedAt: null },
+    });
+    if (!note) throw new NotFoundException('Note not found');
+    if (!this.canManageNote(note.createdByUserId, user)) {
+      throw new ForbiddenException('You can only delete your own notes');
+    }
+    // Soft-delete — hidden from the list but retained for the audit trail.
+    await this.prisma.processingNote.update({
+      where: { id: noteId },
+      data: { deletedAt: new Date(), deletedByUserId: user.id },
+    });
+    await this.prisma.processingAuditLog.create({
+      data: {
+        caseId,
+        actorUserId: user.id,
+        action: 'note_deleted',
+        entityType: 'processing_note',
+        entityId: noteId,
+        oldValues: { noteType: note.noteType },
+      },
+    });
+    return { success: true };
   }
 
   async toggleNotePin(caseId: string, noteId: string, user: RequestUser) {
     await this.assertCaseAccessById(caseId, user);
     const note = await this.prisma.processingNote.findFirst({
-      where: { id: noteId, caseId },
+      where: { id: noteId, caseId, deletedAt: null },
     });
     if (!note) throw new NotFoundException('Note not found');
     return this.prisma.processingNote.update({
       where: { id: noteId },
       data: { isPinned: !note.isPinned },
+      include: { createdBy: { select: { id: true, email: true } } },
     });
   }
 

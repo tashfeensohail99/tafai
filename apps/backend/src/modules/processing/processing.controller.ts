@@ -41,6 +41,7 @@ import {
   CreateManualClientCaseDto,
   CreateProcessingCaseDto,
   CreateProcessingNoteDto,
+  UpdateProcessingNoteDto,
   CreateProcessingTaskDto,
   EscalateCorrectionRequestDto,
   ListCorrectionRequestsQueryDto,
@@ -123,6 +124,15 @@ export class ProcessingController {
   @Get('officers')
   @RequireAnyPermissions('processing.case.assign', 'processing.case.view_all')
   listProcessingOfficers() {
+    return this.processingService.listProcessingOfficers();
+  }
+
+  // Same processing-team roster as /officers, but reachable by anyone who can
+  // write a note — powers the @mention picker on the case Notes tab (assign /
+  // view_all are manager-only, so associates couldn't use /officers).
+  @Get('note-mention-candidates')
+  @RequireAnyPermissions('processing.note.create', 'processing.note.view_all')
+  listNoteMentionCandidates() {
     return this.processingService.listProcessingOfficers();
   }
 
@@ -546,6 +556,29 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.toggleNotePin(caseId, noteId, user);
+  }
+
+  // Edit / soft-delete a note. The service enforces author-or-manager; the
+  // route just needs a note-capable role.
+  @Patch('cases/:caseId/notes/:noteId')
+  @RequireAnyPermissions('processing.note.create', 'processing.note.view_all')
+  updateNote(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('noteId', ParseUUIDPipe) noteId: string,
+    @Body() dto: UpdateProcessingNoteDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.updateNote(caseId, noteId, dto, user);
+  }
+
+  @Delete('cases/:caseId/notes/:noteId')
+  @RequireAnyPermissions('processing.note.create', 'processing.note.view_all')
+  deleteNote(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('noteId', ParseUUIDPipe) noteId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.deleteNote(caseId, noteId, user);
   }
 
   // -------------------------------------------------------------------------

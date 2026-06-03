@@ -11,7 +11,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ArrayMaxSize, IsArray, IsOptional, IsString, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsOptional, IsString, MinLength, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import {
@@ -29,11 +30,38 @@ class SendTextDto {
   @IsOptional() @IsString() idempotencyKey?: string;
 }
 
+// Meta template "parameters" entry. We only send text params today; declaring
+// `type` + `text` is what lets them survive the global ValidationPipe
+// (whitelist + transform). An untyped Record<> here was being collapsed to an
+// empty array by the pipe, producing the malformed `components: [[]]` that Meta
+// rejected with error 100 ("template.components.0 ... missing : 'type'").
+class TemplateParamDto {
+  @IsString() type!: string;
+  @IsOptional() @IsString() text?: string;
+}
+
+// Meta template component (header / body / button). `parameters` is preserved
+// + validated via @ValidateNested + @Type so the nested structure survives.
+class TemplateComponentDto {
+  @IsString() type!: string;
+  @IsOptional() @IsString() sub_type?: string;
+  @IsOptional() @IsString() index?: string;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TemplateParamDto)
+  parameters?: TemplateParamDto[];
+}
+
 class SendTemplateDto {
   @IsString() @MinLength(1) templateName!: string;
   @IsString() @MinLength(2) language!: string;
-  @IsOptional() @IsArray() @ArrayMaxSize(20)
-  components?: Array<Record<string, unknown>>;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => TemplateComponentDto)
+  components?: TemplateComponentDto[];
   @IsOptional() @IsString() idempotencyKey?: string;
 }
 
@@ -79,7 +107,12 @@ export class WhatsAppMessagesController {
     @Body() dto: SendTemplateDto,
   ) {
     const caller = await this.callerContext(user);
-    return this.messages.sendTemplate(caller, { threadId, ...dto });
+    return this.messages.sendTemplate(caller, {
+      threadId,
+      ...dto,
+      // Validated nested DTO instances — structurally the Meta components JSON.
+      components: dto.components as unknown as Array<Record<string, unknown>> | undefined,
+    });
   }
 
   /**

@@ -1948,7 +1948,13 @@ export class ProcessingService {
     const client = c?.client ?? null;
 
     const items = await this.prisma.caseDocumentItem.findMany({
-      where: { caseId, latestVersionId: { not: null } },
+      // A rejected document is off the table: its extracted identity (and any
+      // conflict it raised) must drop out of the panel the moment it's rejected.
+      where: {
+        caseId,
+        latestVersionId: { not: null },
+        status: { not: DocumentItemStatus.REJECTED },
+      },
       select: { id: true, documentName: true, docType: true, latestVersionId: true },
     });
     const versionIds = items

@@ -1211,6 +1211,51 @@ export function markCaseTabSeen(caseId: string, tab: string): Promise<{ success:
   });
 }
 
+// ---------------------------------------------------------------------------
+// Cross-department history — Sales/Finance notes + call history & transcripts
+// surfaced read-only on the case-workspace "History" tab.
+// ---------------------------------------------------------------------------
+
+/** A note authored in another department (Sales or Finance), shown read-only. */
+export interface CrossDeptNote {
+  source: string;          // 'lead' | 'agreement' | 'handover'
+  label: string;           // e.g. "Sales — lead note", "Finance — review note"
+  text: string;
+  author: string | null;   // resolved name or email
+  at: string | null;       // ISO timestamp
+}
+
+/** A phone call on this client's lead/contact, with transcript + recording flag. */
+export interface CaseCall {
+  id: string;
+  direction: string;       // INBOUND | OUTBOUND
+  status: string;          // ANSWERED | MISSED | ENDED | FAILED | RINGING
+  durationSeconds: number | null;
+  at: string;              // ISO
+  rep: string | null;      // employee who handled the call
+  transcript: string | null;
+  transcriptStatus: string | null; // PENDING | DONE | FAILED | null
+  hasRecording: boolean;
+}
+
+export interface CaseBackground {
+  salesNotes: CrossDeptNote[];
+  financeNotes: CrossDeptNote[];
+  calls: CaseCall[];
+}
+
+export function fetchCaseBackground(caseId: string): Promise<CaseBackground> {
+  return apiFetch<CaseBackground>(`/processing/cases/${caseId}/background`, { cache: 'no-store' });
+}
+
+/** Fetch a short-lived signed URL to play a call recording (scoped to the case). */
+export function getCaseCallRecordingUrl(
+  caseId: string,
+  callId: string,
+): Promise<{ url: string; mimeType: string | null }> {
+  return apiFetch(`/processing/cases/${caseId}/calls/${callId}/recording`, { cache: 'no-store' });
+}
+
 export function sendCaseWhatsApp(
   caseId: string,
   body: string,

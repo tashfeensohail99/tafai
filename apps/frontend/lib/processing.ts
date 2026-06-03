@@ -1183,6 +1183,34 @@ export function fetchCaseWhatsApp(caseId: string): Promise<ApiCaseWhatsApp> {
   return apiFetch<ApiCaseWhatsApp>(`/processing/cases/${caseId}/whatsapp`, { cache: 'no-store' });
 }
 
+// ---------------------------------------------------------------------------
+// Tab activity — per-user "new items" counts for the case-workspace tab badges
+// ---------------------------------------------------------------------------
+
+/** Count of unseen items per workspace tab (since this user last opened it). */
+export interface CaseTabActivity {
+  notes: number;
+  communications: number;
+  tasks: number;
+  corrections: number;
+  documents: number;
+  whatsapp: number;
+}
+
+export function fetchCaseTabActivity(caseId: string): Promise<CaseTabActivity> {
+  return apiFetch<CaseTabActivity>(`/processing/cases/${caseId}/tab-activity`, { cache: 'no-store' });
+}
+
+/** Mark a workspace tab as seen now for the current user (clears its badge). */
+export function markCaseTabSeen(caseId: string, tab: string): Promise<{ success: boolean }> {
+  return apiFetch(`/processing/cases/${caseId}/tab-seen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tab }),
+    cache: 'no-store',
+  });
+}
+
 export function sendCaseWhatsApp(
   caseId: string,
   body: string,

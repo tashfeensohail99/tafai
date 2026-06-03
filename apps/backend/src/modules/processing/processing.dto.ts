@@ -559,6 +559,18 @@ export class SendCaseWhatsAppDto {
   body!: string;
 }
 
+// Workspace tab keys whose "last viewed" we track per user for the new-item
+// count badges. Mirrors the TabKey union in the frontend workspace.
+export const CASE_TAB_KEYS = [
+  'milestones', 'documents', 'timeline', 'communications', 'finance',
+  'whatsapp', 'notes', 'tasks', 'submissions', 'corrections',
+] as const;
+
+export class MarkCaseTabSeenDto {
+  @IsIn(CASE_TAB_KEYS as unknown as string[])
+  tab!: string;
+}
+
 export class ReviewDocumentDto {
   @IsEnum(DocReviewDecisionType)
   decision!: DocReviewDecisionType;

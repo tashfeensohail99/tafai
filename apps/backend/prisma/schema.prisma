@@ -2670,6 +2670,26 @@ model CorrectionRequest {
   @@schema("processing")
 }
 
+/// Per-user, per-case record of when a user last opened each workspace tab.
+/// Powers the "new items" count badges on the case workspace — a tab's badge
+/// counts items created/updated after the user's lastSeenAt for that tab.
+/// Intentionally has no FK relations: it is lightweight view-state, only ever
+/// queried by (caseId, userId), and must never block a case/user delete.
+model CaseTabView {
+  id         String   @id @default(uuid())
+  caseId     String
+  userId     String
+  tab        String
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([caseId, userId, tab])
+  @@index([caseId, userId])
+  @@map("case_tab_views")
+  @@schema("processing")
+}
+
 model CaseCommunication {
   id                String                   @id @default(uuid())
   caseId            String

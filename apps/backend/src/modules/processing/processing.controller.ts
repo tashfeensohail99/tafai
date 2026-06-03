@@ -47,6 +47,7 @@ import {
   ListIntakeQueueQueryDto,
   ListProcessingCasesQueryDto,
   MarkCaseForRefundDto,
+  MarkCaseTabSeenDto,
   ReportDateRangeQueryDto,
   ReportExportQueryDto,
   RequestDocumentDto,
@@ -466,6 +467,29 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.sendCaseWhatsApp(caseId, dto.body, user);
+  }
+
+  // -------------------------------------------------------------------------
+  // TAB ACTIVITY — per-user "new items" count badges on the case workspace
+  // -------------------------------------------------------------------------
+
+  @Get('cases/:caseId/tab-activity')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  getCaseTabActivity(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getCaseTabActivity(caseId, user);
+  }
+
+  @Post('cases/:caseId/tab-seen')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  markCaseTabSeen(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: MarkCaseTabSeenDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.markCaseTabSeen(caseId, dto.tab, user);
   }
 
   // -------------------------------------------------------------------------

@@ -55,6 +55,9 @@ export interface ApiProcessingCaseListItem {
   /** Per-row checklist progress for the roster view (verified/total, with a
    *  blocking-gap flag). NOT_APPLICABLE items are excluded from `total`. */
   docProgress: { total: number; verified: number; rejected: number; criticalMissing: number };
+  /** Per-document status strip for the roster tiles (excludes NOT_APPLICABLE).
+   *  status is a DocumentItemStatus value. */
+  documents: Array<{ label: string; status: string }>;
 }
 
 /** Full case detail returned by `GET /processing/cases/:id`. */

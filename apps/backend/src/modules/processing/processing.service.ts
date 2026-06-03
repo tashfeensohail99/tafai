@@ -1026,7 +1026,7 @@ export class ProcessingService {
           lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true } },
           client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
           assignedOfficer: { select: { id: true, email: true } },
-          documentItems: { select: { status: true, criticality: true } },
+          documentItems: { select: { documentName: true, status: true, criticality: true }, orderBy: { documentName: 'asc' } },
           _count: { select: { documentItems: true } },
         },
         orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
@@ -1058,6 +1058,9 @@ export class ProcessingService {
       return {
         ...c,
         docProgress: { total: counted.length, verified, rejected, criticalMissing },
+        // Per-document status strip for the roster tiles (excludes
+        // NOT_APPLICABLE so only real requirements show).
+        documents: counted.map((i) => ({ label: i.documentName, status: i.status })),
       };
     });
 

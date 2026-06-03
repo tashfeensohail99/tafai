@@ -173,9 +173,9 @@ export function ProcessingCreateClientPage() {
               Client created
             </div>
             <div style={{ fontSize: 13.5, color: 'var(--sos-text-muted)', marginTop: 6, lineHeight: 1.55 }}>
-              <strong>{done.name}</strong> has been added and a case is now in the{' '}
-              <strong>intake queue</strong>. Acknowledge it to assign an associate and build the
-              document checklist.
+              <strong>{done.name}</strong> has been added with a ready document checklist, and a
+              case is now in the <strong>intake queue</strong>. Acknowledge it to assign an
+              associate.
             </div>
 
             {/* Outcome chips */}
@@ -474,8 +474,9 @@ export function ProcessingCreateClientPage() {
             }}
           >
             <Info size={14} style={{ flexShrink: 0 }} />
-            The checklist + milestones are built when you acknowledge the case in the intake queue
-            (where you also confirm the program, e.g. C11 / LMIA).
+            The document checklist + milestones are created automatically, so the client can start
+            uploading right away. Acknowledge the case in the intake queue to assign an associate
+            (and confirm the program, e.g. C11 / LMIA).
           </div>
 
           {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}

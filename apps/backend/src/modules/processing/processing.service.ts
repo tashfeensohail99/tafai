@@ -497,6 +497,19 @@ export class ProcessingService {
         include: { lead: true, client: true },
       });
 
+      // Seed the document checklist + milestones now so the client's portal
+      // immediately shows what to upload. Manual clients skip the finance
+      // handover, so without this nothing would be seeded until a manager
+      // acknowledges. acknowledgeIntake is idempotent (skips if already
+      // seeded), so a later acknowledge won't duplicate the checklist.
+      await this.seedChecklistAndMilestones(tx, {
+        caseId: created.id,
+        service,
+        targetCountry,
+        programCode: null,
+        actorUserId: user.id,
+      });
+
       await tx.processingAuditLog.create({
         data: {
           caseId: created.id,
@@ -738,6 +751,90 @@ export class ProcessingService {
    * Acknowledge an intake case: assign officer + move to DOCUMENTS_COLLECTION
    * + auto-build checklist from template.
    */
+  /**
+   * Seed a case's document checklist (from DocumentRequirementTemplate via the
+   * program-first → service → GLOBAL lookup ladder) plus its per-service
+   * milestone narrative. Shared by acknowledgeIntake (finance-origin cases) and
+   * createManualClientCase (manual clients) so both produce an identical
+   * checklist. All writes use the supplied `tx`. Returns how many template
+   * items were created (0 + a logged warning when no template matched).
+   */
+  private async seedChecklistAndMilestones(
+    tx: Prisma.TransactionClient,
+    params: { caseId: string; service: string; targetCountry: string; programCode?: string | null; actorUserId: string },
+  ): Promise<{ documentCount: number }> {
+    const { caseId, service, targetCountry, actorUserId } = params;
+    const programCode = params.programCode?.trim() || null;
+
+    const findTemplates = (where: Prisma.DocumentRequirementTemplateWhereInput) =>
+      tx.documentRequirementTemplate.findMany({
+        where: { ...where, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+
+    let templates: Awaited<ReturnType<typeof findTemplates>> = [];
+    if (programCode) {
+      templates = await findTemplates({ programCode, targetCountry });
+      if (templates.length === 0) {
+        templates = await findTemplates({ programCode, targetCountry: 'GLOBAL' });
+      }
+    }
+    if (templates.length === 0) {
+      templates = await findTemplates({ service, targetCountry });
+    }
+    if (templates.length === 0) {
+      templates = await findTemplates({ service, targetCountry: 'GLOBAL' });
+    }
+
+    if (templates.length === 0) {
+      this.logger.warn(
+        `seedChecklistAndMilestones: no DocumentRequirementTemplate for service="${service}" / country="${targetCountry}" (and no GLOBAL fallback). Empty checklist — items can be added by hand.`,
+      );
+    } else {
+      await tx.caseDocumentItem.createMany({
+        data: templates.map((t) => ({
+          caseId,
+          templateId: t.id,
+          documentName: t.documentName,
+          description: t.description ?? undefined,
+          criticality: t.criticality,
+          expectedFormats: t.expectedFormats,
+          maxFileSizeMb: t.maxFileSizeMb,
+          validityRule: t.validityRule,
+          validityMonths: t.validityMonths ?? undefined,
+          validityBufferDays: t.validityBufferDays,
+          docType: t.docType ?? undefined,
+          documentKind: t.documentKind,
+          photoSpec: t.photoSpec ?? undefined,
+          applicantRole: t.applicantRole,
+          stageGroup: t.stageGroup,
+          attestationChain: t.attestationChain ?? undefined,
+          attestationStatus: t.attestationRequired ? 'REQUIRED_PENDING' : 'NOT_REQUIRED',
+          translationStatus: t.translationRequired ? 'REQUIRED_PENDING' : 'NOT_REQUIRED',
+          whyText: t.whyText ?? undefined,
+          exampleGoodUrl: t.exampleGoodUrl ?? undefined,
+          exampleBadUrl: t.exampleBadUrl ?? undefined,
+          sortOrder: t.sortOrder,
+        })),
+      });
+    }
+
+    const milestoneTemplates = getMilestonesForService(service);
+    if (milestoneTemplates.length > 0) {
+      await tx.caseMilestone.createMany({
+        data: milestoneTemplates.map((m, idx) => ({
+          caseId,
+          title: m.title,
+          description: m.description ?? null,
+          sortOrder: idx,
+          ...(idx === 0 ? { completedAt: new Date(), completedByUserId: actorUserId } : {}),
+        })),
+      });
+    }
+
+    return { documentCount: templates.length };
+  }
+
   async acknowledgeIntake(
     caseId: string,
     dto: AcknowledgeIntakeDto,
@@ -814,105 +911,21 @@ export class ProcessingService {
         },
       });
 
-      // Auto-build checklist from templates. Lookup ladder (program-specific
-      // first, then the generic service baseline):
-      //   1. (programCode, targetCountry)  — e.g. C11·Canada
-      //   2. (programCode, 'GLOBAL')        — program, any country
-      //   3. (service, targetCountry)       — generic, country-specific
-      //   4. (service, 'GLOBAL')            — generic baseline
-      //      (see migrations 20260528130000 + 20260531150000)
-      //   5. Empty checklist + warning — officer adds items by hand.
-      const findTemplates = (where: Prisma.DocumentRequirementTemplateWhereInput) =>
-        tx.documentRequirementTemplate.findMany({
-          where: { ...where, isActive: true },
-          orderBy: { sortOrder: 'asc' },
-        });
-
-      let templates: Awaited<ReturnType<typeof findTemplates>> = [];
-      if (effectiveProgramCode) {
-        templates = await findTemplates({
-          programCode: effectiveProgramCode,
-          targetCountry: processingCase.targetCountry,
-        });
-        if (templates.length === 0) {
-          templates = await findTemplates({
-            programCode: effectiveProgramCode,
-            targetCountry: 'GLOBAL',
-          });
-        }
-      }
-      if (templates.length === 0) {
-        templates = await findTemplates({
+      // Seed the document checklist + milestones from templates — UNLESS this
+      // case was already seeded (e.g. a manually-created client gets its
+      // checklist at create time). Idempotent so re-acknowledging a
+      // pre-seeded case never duplicates the checklist.
+      const alreadySeeded = await tx.caseDocumentItem.count({ where: { caseId } });
+      let checklistItemsCreated = 0;
+      if (alreadySeeded === 0) {
+        const seed = await this.seedChecklistAndMilestones(tx, {
+          caseId,
           service: effectiveService,
           targetCountry: processingCase.targetCountry,
+          programCode: effectiveProgramCode,
+          actorUserId: user.id,
         });
-      }
-      if (templates.length === 0) {
-        templates = await findTemplates({ service: effectiveService, targetCountry: 'GLOBAL' });
-      }
-
-      // Soft fallback: if NO template exists for this service yet, don't
-      // block the officer — they can still acknowledge + add doc items
-      // manually via POST /cases/:id/documents. We just log a warning so
-      // the admin team knows a template is missing.
-      if (templates.length === 0) {
-        this.logger.warn(
-          `acknowledgeIntake: no DocumentRequirementTemplate for service="${effectiveService}" / country="${processingCase.targetCountry}" (and no GLOBAL fallback). Case acknowledged with an empty checklist — officer can add doc items manually.`,
-        );
-      } else {
-        await tx.caseDocumentItem.createMany({
-          data: templates.map((t) => ({
-            caseId,
-            templateId: t.id,
-            documentName: t.documentName,
-            description: t.description ?? undefined,
-            criticality: t.criticality,
-            expectedFormats: t.expectedFormats,
-            maxFileSizeMb: t.maxFileSizeMb,
-            validityRule: t.validityRule,
-            validityMonths: t.validityMonths ?? undefined,
-            validityBufferDays: t.validityBufferDays,
-            // Phase D — carry the doc-type + photo requirement onto the
-            // per-case item so the parser knows what to validate against.
-            docType: t.docType ?? undefined,
-            documentKind: t.documentKind,
-            photoSpec: t.photoSpec ?? undefined,
-            // Phase F — carry program/attestation/staging + client guidance.
-            applicantRole: t.applicantRole,
-            stageGroup: t.stageGroup,
-            attestationChain: t.attestationChain ?? undefined,
-            attestationStatus: t.attestationRequired ? 'REQUIRED_PENDING' : 'NOT_REQUIRED',
-            translationStatus: t.translationRequired ? 'REQUIRED_PENDING' : 'NOT_REQUIRED',
-            whyText: t.whyText ?? undefined,
-            exampleGoodUrl: t.exampleGoodUrl ?? undefined,
-            exampleBadUrl: t.exampleBadUrl ?? undefined,
-            sortOrder: t.sortOrder,
-          })),
-        });
-      }
-
-      // Per-case-type milestone checklist — the granular progress narrative
-      // the associate ticks off (e.g. WORK_PERMIT cases get LMIA + Offer
-      // Letter; E2_VISA gets Business Meeting + Incorporation). Independent
-      // of the gated stage machine. See milestone-templates.ts.
-      // "Case Initiated" is the first milestone in every template — we mark
-      // it complete immediately so the timeline reflects what just happened.
-      const milestoneTemplates = getMilestonesForService(effectiveService);
-      if (milestoneTemplates.length > 0) {
-        await tx.caseMilestone.createMany({
-          data: milestoneTemplates.map((m, idx) => ({
-            caseId,
-            title: m.title,
-            description: m.description ?? null,
-            sortOrder: idx,
-            // First milestone is "Case Initiated" by convention — auto-tick
-            // it here so the associate doesn't have to. If a template ever
-            // omits it from position 0 the only consequence is no auto-tick.
-            ...(idx === 0
-              ? { completedAt: new Date(), completedByUserId: user.id }
-              : {}),
-          })),
-        });
+        checklistItemsCreated = seed.documentCount;
       }
 
       // Audit
@@ -932,7 +945,7 @@ export class ProcessingService {
             stage: ProcessingCaseStage.DOCUMENTS_COLLECTION,
             service: effectiveService,
             assignedOfficerId: officerId,
-            checklistItemsCreated: templates.length,
+            checklistItemsCreated,
           },
         },
       });

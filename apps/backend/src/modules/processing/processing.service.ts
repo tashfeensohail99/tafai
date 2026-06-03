@@ -1020,9 +1020,13 @@ export class ProcessingService {
       this.prisma.processingCase.findMany({
         where: whereClause,
         include: {
-          lead: { select: { id: true, firstName: true, lastName: true, phone: true } },
-          client: { select: { id: true, firstName: true, lastName: true, phone: true } },
+          // email + sourceChannel power the roster's email shortcut + the
+          // "Manual" tag; documentItems (status/criticality only) feed the
+          // per-row doc-progress summary computed below.
+          lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true } },
+          client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
           assignedOfficer: { select: { id: true, email: true } },
+          documentItems: { select: { status: true, criticality: true } },
           _count: { select: { documentItems: true } },
         },
         orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
@@ -1032,7 +1036,32 @@ export class ProcessingService {
       this.prisma.processingCase.count({ where: whereClause }),
     ]);
 
-    return { cases, total, page: query.page ?? 1, limit: query.limit ?? 20 };
+    // Per-row document progress for the roster view. "Done" = anything that
+    // satisfies the slot (accepted, waived, or accepted-but-expiring); we drop
+    // NOT_APPLICABLE from the denominator so the X/Y reads against real
+    // requirements. criticalMissing flags blocking gaps at a glance.
+    const DONE_STATUSES = new Set<DocumentItemStatus>([
+      DocumentItemStatus.ACCEPTED,
+      DocumentItemStatus.WAIVED,
+      DocumentItemStatus.EXPIRING_SOON,
+    ]);
+    const casesWithProgress = cases.map((c) => {
+      const counted = c.documentItems.filter((i) => i.status !== DocumentItemStatus.NOT_APPLICABLE);
+      const verified = counted.filter((i) => DONE_STATUSES.has(i.status)).length;
+      const rejected = counted.filter((i) => i.status === DocumentItemStatus.REJECTED).length;
+      const criticalMissing = counted.filter(
+        (i) =>
+          (i.criticality === DocumentCriticality.CRITICAL ||
+            i.criticality === DocumentCriticality.REQUIRED) &&
+          !DONE_STATUSES.has(i.status),
+      ).length;
+      return {
+        ...c,
+        docProgress: { total: counted.length, verified, rejected, criticalMissing },
+      };
+    });
+
+    return { cases: casesWithProgress, total, page: query.page ?? 1, limit: query.limit ?? 20 };
   }
 
   async getCaseById(caseId: string, user: RequestUser) {

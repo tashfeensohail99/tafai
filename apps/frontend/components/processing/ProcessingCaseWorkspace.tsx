@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
+import { useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
   CalendarClock,
@@ -214,7 +215,13 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const { user } = useProcessingSession();
   const [api, setApi] = useState<ApiProcessingCaseDetail | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('milestones');
+  // Deep-link support: /processing/cases/:id?tab=whatsapp opens straight onto
+  // that tab (used by the cases-roster quick actions). Falls back to milestones.
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const t = searchParams.get('tab');
+    return t && TABS.some((tab) => tab.key === t) ? (t as TabKey) : 'milestones';
+  });
   const [showStageModal, setShowStageModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);

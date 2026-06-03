@@ -3626,6 +3626,14 @@ export class ProcessingService {
                 : `[Resolved] ${dto.resolutionNote}` }
             : {}),
         },
+        // Return the full correction (same shape as the list endpoint) so the
+        // caller can swap it straight into its list without losing fields like
+        // reasonCodes — a thin {status} payload here crashes the officer UI.
+        include: {
+          documentItem: { select: { id: true, documentName: true, status: true } },
+          raisedBy: { select: { id: true, email: true } },
+          resolvedBy: { select: { id: true, email: true } },
+        },
       });
 
       await tx.processingAuditLog.create({
@@ -3645,7 +3653,7 @@ export class ProcessingService {
       return result;
     });
 
-    return { success: true, correctionId, status: updated.status };
+    return updated;
   }
 
   /**
@@ -3684,6 +3692,14 @@ export class ProcessingService {
             ? `${correction.officerNote}\n\n[Escalated] ${dto.escalationReason}`
             : `[Escalated] ${dto.escalationReason}`,
         },
+        // Return the full correction (same shape as the list endpoint) so the
+        // caller can swap it straight into its list without losing fields like
+        // reasonCodes — a thin {status} payload here crashes the officer UI.
+        include: {
+          documentItem: { select: { id: true, documentName: true, status: true } },
+          raisedBy: { select: { id: true, email: true } },
+          resolvedBy: { select: { id: true, email: true } },
+        },
       });
 
       await tx.processingAuditLog.create({
@@ -3703,7 +3719,7 @@ export class ProcessingService {
       return result;
     });
 
-    return { success: true, correctionId, status: updated.status };
+    return updated;
   }
 
   // -------------------------------------------------------------------------

@@ -102,7 +102,7 @@ function CorrectionCard({
             {cr.clientMessage}
           </div>
 
-          {cr.reasonCodes.length > 0 ? (
+          {(cr.reasonCodes?.length ?? 0) > 0 ? (
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
               {cr.reasonCodes.map((r) => (
                 <span key={r} style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 4, background: 'var(--sos-surface-hover)', color: 'var(--sos-text-muted)' }}>{r}</span>
@@ -267,11 +267,13 @@ export function CorrectionsTab({ c }: { c: MockProcessingCase }) {
 
   async function handleResolve(id: string, note?: string) {
     const updated = await resolveCaseCorrection(c.id, id, { resolutionNote: note });
-    setItems((prev) => prev.map((cr) => (cr.id === id ? updated : cr)));
+    // Merge onto the existing row rather than replacing it, so we never drop
+    // fields (e.g. reasonCodes) if the API ever returns a partial payload.
+    setItems((prev) => prev.map((cr) => (cr.id === id ? { ...cr, ...updated } : cr)));
   }
   async function handleEscalate(id: string, reason: string) {
     const updated = await escalateCaseCorrection(c.id, id, { escalationReason: reason });
-    setItems((prev) => prev.map((cr) => (cr.id === id ? updated : cr)));
+    setItems((prev) => prev.map((cr) => (cr.id === id ? { ...cr, ...updated } : cr)));
   }
 
   const open = items.filter((cr) => cr.status === 'SENT' || cr.status === 'IN_PROGRESS' || cr.status === 'ESCALATED');

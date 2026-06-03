@@ -1040,7 +1040,7 @@ export class ProcessingService {
           // email + sourceChannel power the roster's email shortcut + the
           // "Manual" tag; documentItems (status/criticality only) feed the
           // per-row doc-progress summary computed below.
-          lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true } },
+          lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true, notes: true } },
           client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
           assignedOfficer: { select: { id: true, email: true } },
           documentItems: { select: { documentName: true, status: true, criticality: true }, orderBy: { documentName: 'asc' } },
@@ -1062,6 +1062,58 @@ export class ProcessingService {
       DocumentItemStatus.WAIVED,
       DocumentItemStatus.EXPIRING_SOON,
     ]);
+    // --- Cross-department history hint per row: whether Sales/Finance notes
+    // exist for this client, and the call count + last-call time. Lets the team
+    // spot prior context before opening a case. Batched (no N+1): one query each
+    // for agreements / handovers / calls across all rows' leads + clients.
+    const histLeadIds = [...new Set(cases.map((c) => c.leadId))];
+    const histClientIds = [...new Set(cases.map((c) => c.clientId).filter((x): x is string => !!x))];
+    const [histAgreements, histHandovers, histCalls] = await Promise.all([
+      histLeadIds.length
+        ? this.prisma.agreement.findMany({
+            where: { leadId: { in: histLeadIds }, deletedAt: null },
+            select: { leadId: true, salesNotes: true, financeNotes: true },
+          })
+        : Promise.resolve([]),
+      histLeadIds.length
+        ? this.prisma.financeHandover.findMany({
+            where: { leadId: { in: histLeadIds } },
+            select: { leadId: true, notes: true, financeNotes: true },
+          })
+        : Promise.resolve([]),
+      histLeadIds.length || histClientIds.length
+        ? this.prisma.whatsAppCall.findMany({
+            where: { OR: [{ leadId: { in: histLeadIds } }, { clientId: { in: histClientIds } }] },
+            select: { leadId: true, clientId: true, createdAt: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const histSalesLeads = new Set<string>();
+    const histFinanceLeads = new Set<string>();
+    for (const a of histAgreements) {
+      if (a.salesNotes?.trim()) histSalesLeads.add(a.leadId);
+      if (a.financeNotes?.trim()) histFinanceLeads.add(a.leadId);
+    }
+    for (const h of histHandovers) {
+      if (h.notes?.trim() || h.financeNotes?.trim()) histFinanceLeads.add(h.leadId);
+    }
+    const historyFor = (leadId: string, clientId: string | null, leadNotes: string | null) => {
+      let callCount = 0;
+      let lastCallAt: Date | null = null;
+      for (const r of histCalls) {
+        if ((r.leadId && r.leadId === leadId) || (r.clientId && clientId && r.clientId === clientId)) {
+          callCount += 1;
+          if (!lastCallAt || r.createdAt > lastCallAt) lastCallAt = r.createdAt;
+        }
+      }
+      return {
+        hasSalesNotes: histSalesLeads.has(leadId) || !!leadNotes?.trim(),
+        hasFinanceNotes: histFinanceLeads.has(leadId),
+        callCount,
+        lastCallAt,
+      };
+    };
+
     const casesWithProgress = cases.map((c) => {
       const counted = c.documentItems.filter((i) => i.status !== DocumentItemStatus.NOT_APPLICABLE);
       const verified = counted.filter((i) => DONE_STATUSES.has(i.status)).length;
@@ -1078,6 +1130,8 @@ export class ProcessingService {
         // Per-document status strip for the roster tiles (excludes
         // NOT_APPLICABLE so only real requirements show).
         documents: counted.map((i) => ({ label: i.documentName, status: i.status })),
+        // Cross-department context hint for the roster (see History tab).
+        history: historyFor(c.leadId, c.clientId, c.lead?.notes ?? null),
       };
     });
 

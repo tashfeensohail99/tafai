@@ -156,10 +156,11 @@ const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'danger' | 'n
   UNQUALIFIED: 'neutral',
 };
 
-// Friendly lead-status labels. NEW reads as "Pending" — assigned but the
-// agent hasn't sent a message yet — matching the sales lead list.
+// Friendly lead-status labels. "New" is the lead's PIPELINE stage (assigned,
+// not yet moved to Contacted) — deliberately distinct from "Awaiting reply",
+// which is a messaging signal (client texted, rep hasn't personally replied).
 const STATUS_LABEL: Record<string, string> = {
-  NEW: 'Pending',
+  NEW: 'New',
   CONTACTED: 'Contacted',
   QUALIFIED: 'Qualified',
   PROPOSAL_SENT: 'Proposal sent',
@@ -208,6 +209,9 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
 
   const [employee, setEmployee] = useState<EmployeeDetail | null>(null);
   const [leads, setLeads] = useState<AssignedLead[]>([]);
+  // Lead IDs for this rep's "awaiting reply" chats (client texted, no human
+  // reply) — same rule as the overview KPI, so the count matches there.
+  const [awaitingReplyIds, setAwaitingReplyIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -249,15 +253,20 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const [emp, leadList] = await Promise.all([
+      const [emp, leadList, awaitingIds] = await Promise.all([
         apiFetch<EmployeeDetail>(`/employees/${employeeId}`),
         // limit=1000 (the API's max) so the status tabs + KPI counts reflect the
         // agent's FULL roster — without it the endpoint defaults to 250 rows and
-        // a busy rep's counts (e.g. "Pending") would be computed from a slice.
+        // a busy rep's counts (e.g. "New") would be computed from a slice.
         apiFetch<AssignedLead[]>(`/leads?assignedEmployeeId=${employeeId}&limit=1000`),
+        // Conversations the rep hasn't personally replied to (best-effort).
+        apiFetch<string[]>(`/reports/sales-agent/${employeeId}/awaiting-reply-leads`).catch(
+          () => [] as string[],
+        ),
       ]);
       setEmployee(emp);
       setLeads(leadList ?? []);
+      setAwaitingReplyIds(new Set(awaitingIds ?? []));
       // Auto-pick the first lead so the right pane isn't empty on first paint.
       if (!selectedLeadId && leadList && leadList.length > 0) {
         setSelectedLeadId(leadList[0].id);
@@ -304,7 +313,11 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
   const filteredLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
     return leads.filter((l) => {
-      if (statusFilter !== 'ALL' && l.status !== statusFilter) return false;
+      if (statusFilter === 'AWAITING_REPLY') {
+        if (!awaitingReplyIds.has(l.id)) return false;
+      } else if (statusFilter !== 'ALL' && l.status !== statusFilter) {
+        return false;
+      }
       if (!q) return true;
       return (
         l.firstName.toLowerCase().includes(q) ||
@@ -314,7 +327,7 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
         (l.referenceCode ?? '').toLowerCase().includes(q)
       );
     });
-  }, [leads, search, statusFilter]);
+  }, [leads, search, statusFilter, awaitingReplyIds]);
 
   // KPI snapshots
   const kpis = useMemo(() => {
@@ -623,7 +636,12 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
               </div>
 
               {/* Lead-status filter tabs */}
-              <StatusTabs leads={leads} value={statusFilter} onChange={setStatusFilter} />
+              <StatusTabs
+                leads={leads}
+                value={statusFilter}
+                onChange={setStatusFilter}
+                awaitingReplyCount={awaitingReplyIds.size}
+              />
 
               <div
                 className="sos-scroll"
@@ -750,6 +768,23 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                         }}
                       >
                         <StatusBadge tone={tone} size="sm">{STATUS_LABEL[lead.status] ?? lead.status}</StatusBadge>
+                        {awaitingReplyIds.has(lead.id) ? (
+                          <span
+                            title="Client messaged — rep hasn't personally replied (bot or no reply)"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              fontSize: 10,
+                              padding: '1px 6px',
+                              borderRadius: 999,
+                              background: 'var(--sos-status-warning-soft, rgba(245,158,11,0.12))',
+                              color: 'var(--sos-status-warning)',
+                              border: '1px solid var(--sos-status-warning)',
+                            }}
+                          >
+                            Awaiting reply
+                          </span>
+                        ) : null}
                         <span
                           style={{ fontSize: 10.5, color: 'var(--sos-text-faint)' }}
                         >
@@ -904,18 +939,23 @@ function StatusTabs({
   leads,
   value,
   onChange,
+  awaitingReplyCount,
 }: {
   leads: AssignedLead[];
   value: string;
   onChange: (s: string) => void;
+  awaitingReplyCount: number;
 }) {
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     for (const l of leads) m.set(l.status, (m.get(l.status) ?? 0) + 1);
     return m;
   }, [leads]);
-  const tabs: Array<{ key: string; label: string; count: number }> = [
+  // "Awaiting reply" is a cross-cutting filter (a messaging signal), not a
+  // pipeline status — it sits right after All and is highlighted when > 0.
+  const tabs: Array<{ key: string; label: string; count: number; highlight?: boolean }> = [
     { key: 'ALL', label: 'All', count: leads.length },
+    { key: 'AWAITING_REPLY', label: 'Awaiting reply', count: awaitingReplyCount, highlight: true },
     ...STATUS_TAB_ORDER.filter((s) => (counts.get(s) ?? 0) > 0).map((s) => ({
       key: s,
       label: STATUS_LABEL[s] ?? s,
@@ -934,6 +974,7 @@ function StatusTabs({
     >
       {tabs.map((t) => {
         const active = value === t.key;
+        const danger = !!t.highlight && t.count > 0;
         return (
           <button
             key={t.key}
@@ -948,9 +989,19 @@ function StatusTabs({
               fontSize: 12,
               fontWeight: 500,
               cursor: 'pointer',
-              border: `1px solid ${active ? 'var(--sos-border-accent)' : 'var(--sos-border)'}`,
+              border: `1px solid ${
+                active
+                  ? 'var(--sos-border-accent)'
+                  : danger
+                    ? 'var(--sos-status-warning)'
+                    : 'var(--sos-border)'
+              }`,
               background: active ? 'var(--sos-brand-primary-soft)' : 'var(--sos-surface)',
-              color: active ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)',
+              color: active
+                ? 'var(--sos-brand-primary-strong)'
+                : danger
+                  ? 'var(--sos-status-warning)'
+                  : 'var(--sos-text-secondary)',
             }}
           >
             {t.label}

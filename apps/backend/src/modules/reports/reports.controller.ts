@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
@@ -29,5 +29,16 @@ export class ReportsController {
   @RequirePermissions('reports.view')
   getSalesOverview() {
     return this.reportsService.getSalesOverview();
+  }
+
+  /**
+   * Lead IDs for an agent's "awaiting reply" conversations — active WhatsApp
+   * threads where the client texted but the human rep never replied (bot/no
+   * reply). Lets the agent-detail page drill into the overview's count.
+   */
+  @Get('sales-agent/:employeeId/awaiting-reply-leads')
+  @RequirePermissions('reports.view')
+  getAgentAwaitingReplyLeads(@Param('employeeId', ParseUUIDPipe) employeeId: string) {
+    return this.reportsService.getAgentAwaitingReplyLeadIds(employeeId);
   }
 }

@@ -421,38 +421,43 @@ export class ProcessingService {
     let loginProvisioned = false;
     let alreadyHadLogin = false;
 
+    // 1. Lead (manual origin, created direct → no round-robin) + 2. Lead →
+    //    Client. These run on COMMITTED rows, OUTSIDE our transaction:
+    //    convertToClient writes its own audit + timeline rows on a separate
+    //    (non-transactional) connection, and ActivityTimeline has FK relations
+    //    to Lead/Client — so wrapping convertToClient in our interactive tx
+    //    made those writes reference an as-yet-uncommitted lead/client and fail
+    //    the FK, 500-ing the whole create. This mirrors how Finance calls it.
+    const lead = await this.prisma.lead.create({
+      data: {
+        referenceCode,
+        firstName,
+        lastName,
+        email,
+        phone,
+        nationality: dto.nationality?.trim() || null,
+        targetCountry,
+        serviceInterest: service,
+        sourceChannel: 'PROCESSING_MANUAL',
+        createdByUserId: user.id,
+      },
+    });
+    const conversion = await this.leadsService.convertToClient(
+      lead.id,
+      user.id,
+      'Created by Processing Manager (manual client)',
+    );
+    const clientId = conversion.client.id;
+
+    // 3. Portal login + ACTIVE flip + the case + audit — atomic, and all direct
+    //    tx ops on the already-committed lead/client (no cross-connection
+    //    writes), so no uncommitted-FK problem.
     const processingCase = await this.prisma.$transaction(async (tx) => {
-      // 1. Lead (manual origin). Created direct → no round-robin.
-      const lead = await tx.lead.create({
-        data: {
-          referenceCode,
-          firstName,
-          lastName,
-          email,
-          phone,
-          nationality: dto.nationality?.trim() || null,
-          targetCountry,
-          serviceInterest: service,
-          sourceChannel: 'PROCESSING_MANUAL',
-          createdByUserId: user.id,
-        },
-      });
-
-      // 2. Lead → Client (reuse; dedupes by phone/email, sets portal access,
-      //    flips lead to CONVERTED).
-      const conversion = await this.leadsService.convertToClient(
-        lead.id,
-        user.id,
-        'Created by Processing Manager (manual client)',
-        tx,
-      );
-      const clientId = conversion.client.id;
-
-      // 3. Provision a portal login. A client signs in with a UserAccount whose
-      //    email == Client.email + the `client` role; the portal gate also
-      //    requires Client.status ACTIVE + portalAccessEnabled. Idempotent: if a
-      //    login already exists for this email we keep it (and don't re-email a
-      //    fresh password). convertToClient set NEW_CLIENT, so flip to ACTIVE.
+      // Provision a portal login. A client signs in with a UserAccount whose
+      // email == Client.email + the `client` role; the portal gate also
+      // requires Client.status ACTIVE + portalAccessEnabled. Idempotent: if a
+      // login already exists for this email we keep it (and don't re-email a
+      // fresh password). convertToClient set NEW_CLIENT, so flip to ACTIVE.
       const existingUser = await tx.userAccount.findUnique({
         where: { email },
         select: { id: true },
@@ -477,7 +482,7 @@ export class ProcessingService {
         data: { status: ClientStatus.ACTIVE, portalAccessEnabled: true },
       });
 
-      // 4. The case — financeHandoverId null (no finance origin).
+      // The case — financeHandoverId null (no finance origin).
       const created = await tx.processingCase.create({
         data: {
           financeHandoverId: null,
@@ -492,7 +497,6 @@ export class ProcessingService {
         include: { lead: true, client: true },
       });
 
-      // 5. Audit
       await tx.processingAuditLog.create({
         data: {
           caseId: created.id,

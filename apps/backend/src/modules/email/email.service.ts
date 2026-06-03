@@ -145,6 +145,25 @@ export class EmailService {
     });
   }
 
+  /**
+   * Client portal welcome — sent when Processing manually creates a client and
+   * provisions their portal login. Mirrors sendWelcomeEmployee but with
+   * client-facing copy (track application, upload documents, message the team).
+   */
+  async sendWelcomeClient(opts: {
+    to: string;
+    firstName: string;
+    email: string;
+    tempPassword: string;
+    loginUrl?: string;
+  }): Promise<boolean> {
+    return this.sendMail({
+      to: opts.to,
+      subject: 'Your Tashfeen client portal is ready',
+      html: buildWelcomeClientEmail(opts),
+    });
+  }
+
   async sendPresenceOfflineWarning(opts: {
     to: string;
     firstName: string;
@@ -610,6 +629,37 @@ function buildWelcomeEmployeeEmail(opts: {
     </a>
   `;
   return baseTemplate('Welcome to Tashfeen', content);
+}
+
+function buildWelcomeClientEmail(opts: {
+  firstName: string;
+  email: string;
+  tempPassword: string;
+  loginUrl?: string;
+}): string {
+  const url = opts.loginUrl ?? 'https://tashfeengroup.com/login';
+  const content = `
+    <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Welcome to Tashfeen, ${escHtml(opts.firstName)}!</h2>
+    <p style="margin:0 0 24px;font-size:14px;color:#64748b;">Your secure client portal is ready. Sign in to track your application, upload documents, and message your case team — all in one place.</p>
+
+    <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:20px;margin-bottom:24px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${infoRow('Portal URL', url)}
+        ${infoRow('Email (username)', opts.email)}
+        ${infoRow('Temporary password', opts.tempPassword)}
+      </table>
+      <p style="margin:16px 0 0;font-size:12px;color:#7c3aed;font-weight:600;">
+        For your security, you'll be asked to set a new password the first time you sign in.
+      </p>
+    </div>
+
+    <a href="${escHtml(url)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">
+      Open your portal
+    </a>
+
+    <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;">If you didn't expect this email, please contact us at <a href="mailto:admin@tashfeengroup.com" style="color:#7c3aed;">admin@tashfeengroup.com</a>.</p>
+  `;
+  return baseTemplate('Your Tashfeen client portal', content);
 }
 
 function buildAppointmentEmail(opts: {

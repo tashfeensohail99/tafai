@@ -1,15 +1,19 @@
 import {
   IsArray,
+  IsDateString,
+  IsEmail,
   IsEnum,
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumberString,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { SERVICE_TYPE_CODES } from '../../common/service-types';
 import { Transform, Type } from 'class-transformer';
@@ -63,11 +67,51 @@ export class CreateProcessingCaseDto {
 }
 
 /**
+ * Optional finance snapshot for a manually-created client. The firm's ledger
+ * is CAD-based, so `totalFee` (and any `amountReceived`) are entered in
+ * `currency` (default PKR on the client) and converted to CAD at the live rate
+ * when the invoice + payment are written — exactly how Finance records a
+ * foreign-currency payment. When present, the manual client gets a real
+ * Invoice (+ a verified Payment + Receipt if amountReceived > 0), so a
+ * sales/finance-bypassed client still shows an authentic paid/balance.
+ */
+export class ManualClientFinanceDto {
+  @IsNumberString()
+  totalFee!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  currency?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  amountReceived?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  paymentMethod?: string;
+
+  @IsOptional()
+  @IsDateString()
+  paidAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  transactionRef?: string;
+}
+
+/**
  * Manual client creation — a Processing Manager's second on-ramp (no Finance
  * handover). Creates Lead (sourceChannel PROCESSING_MANUAL) → Client → an
  * INTAKE_PENDING case that lands in the intake queue like a finance case.
- * Email + phone are optional (imported old clients / test clients may lack
- * them); a blank phone gets a unique non-dialable placeholder server-side.
+ * Email is required (the client is provisioned a portal login and emailed
+ * their credentials on create); phone stays optional (a blank phone gets a
+ * unique non-dialable placeholder server-side). An optional `finance` block
+ * records the agreed fee + any payment received so the client is "in the
+ * complete loop" despite bypassing Sales + Finance.
  */
 export class CreateManualClientCaseDto {
   @IsString()
@@ -80,10 +124,9 @@ export class CreateManualClientCaseDto {
   @MaxLength(120)
   lastName!: string;
 
-  @IsOptional()
-  @IsString()
+  @IsEmail()
   @MaxLength(160)
-  email?: string;
+  email!: string;
 
   @IsOptional()
   @IsString()
@@ -107,6 +150,11 @@ export class CreateManualClientCaseDto {
   @IsOptional()
   @IsEnum(ProcessingCasePriority)
   priority?: ProcessingCasePriority;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ManualClientFinanceDto)
+  finance?: ManualClientFinanceDto;
 }
 
 /**

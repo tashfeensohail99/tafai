@@ -48,10 +48,13 @@ export interface ApiProcessingCaseListItem {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  lead: { id: string; firstName: string; lastName: string; phone: string };
-  client: { id: string; firstName: string; lastName: string; phone: string };
+  lead: { id: string; referenceCode: string; firstName: string; lastName: string; phone: string; email: string | null; sourceChannel: string | null };
+  client: { id: string; firstName: string; lastName: string; phone: string; email: string | null };
   assignedOfficer: { id: string; email: string } | null;
   _count: { documentItems: number };
+  /** Per-row checklist progress for the roster view (verified/total, with a
+   *  blocking-gap flag). NOT_APPLICABLE items are excluded from `total`. */
+  docProgress: { total: number; verified: number; rejected: number; criticalMissing: number };
 }
 
 /** Full case detail returned by `GET /processing/cases/:id`. */

@@ -130,6 +130,29 @@ function datesAgree(a: string, b: string): boolean {
   return !!ka && ka === kb;
 }
 
+/**
+ * Pick the value the documents most agree on, clustering equivalent values with
+ * the field's own (possibly fuzzy) comparator. Returns the representative of the
+ * largest cluster; ties resolve to the first-seen value. Used as the reference
+ * when there is no CRM anchor, so the majority wins and a lone outlier is the
+ * one flagged — rather than whichever document happened to be processed first.
+ */
+function pickReference(
+  values: string[],
+  agree: (a: string, b: string) => boolean,
+): string | null {
+  const clusters: Array<{ rep: string; count: number }> = [];
+  for (const v of values) {
+    const c = clusters.find((cl) => agree(cl.rep, v));
+    if (c) c.count++;
+    else clusters.push({ rep: v, count: 1 });
+  }
+  if (clusters.length === 0) return null;
+  let best = clusters[0];
+  for (const c of clusters) if (c.count > best.count) best = c;
+  return best.rep;
+}
+
 // ── field extraction from the parser's `extracted` blob ─────────────────────
 
 function extractValue(
@@ -206,23 +229,16 @@ export function reconcileIdentity(
       });
     }
 
-    // Determine agreement: every present value must agree with a reference.
-    // Reference = the CRM value if present, else the first document value.
-    const reference = crmValue ?? (sources[0]?.value ?? null);
+    // Determine agreement against a reference value. Reference = the CRM value
+    // when present; otherwise the value the documents most agree on (majority
+    // cluster), so a single odd-one-out is the one flagged rather than whichever
+    // document happens to be processed first.
+    const reference = crmValue ?? pickReference(sources.map((s) => s.value), def.agree);
     let conflict = false;
     for (const s of sources) {
       const ok = reference != null ? def.agree(reference, s.value) : true;
       s.matchesReference = ok;
       if (!ok) conflict = true;
-    }
-    // Also catch doc-vs-doc divergence when there's no CRM anchor.
-    if (!conflict && crmValue == null && sources.length >= 2) {
-      for (let i = 1; i < sources.length; i++) {
-        if (!def.agree(sources[0].value, sources[i].value)) {
-          conflict = true;
-          sources[i].matchesReference = false;
-        }
-      }
     }
 
     let status: FieldStatus;

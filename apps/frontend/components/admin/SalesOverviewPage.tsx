@@ -38,6 +38,8 @@ interface AgentRow {
   openFollowUps: number;
   overdueFollowUps: number;
   upcomingAppointments: number;
+  /** Conversations awaiting this rep's reply (client messaged, no reply yet). */
+  awaitingReply?: number;
   /** Response-SLA on-time score (0–100). Starts at 100 with no history. */
   slaScore?: number;
   /** Lifetime count of replies that breached the Response-SLA. */
@@ -309,6 +311,7 @@ export function SalesOverviewPage() {
                   {[
                     'Agent',
                     'SLA score',
+                    'Awaiting reply',
                     'Assigned',
                     'New (30d)',
                     'Converted (30d)',
@@ -428,6 +431,14 @@ export function SalesOverviewPage() {
                     {/* Response-SLA score */}
                     <td style={{ padding: '14px 16px' }}>
                       <SlaScorePill score={a.slaScore ?? 100} breaches={a.slaBreaches ?? 0} />
+                    </td>
+
+                    {/* Awaiting reply — unanswered chats the rep hasn't replied to */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill
+                        value={a.awaitingReply ?? 0}
+                        tone={(a.awaitingReply ?? 0) > 0 ? 'danger' : 'muted'}
+                      />
                     </td>
 
                     {/* Assigned (big number) */}

@@ -212,7 +212,15 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+
+  // Reassign-a-lead modal state (reuses POST /leads/:id/assign).
+  const [reassignLead, setReassignLead] = useState<AssignedLead | null>(null);
+  const [employees, setEmployees] = useState<Array<{ id: string; firstName: string; lastName: string }>>([]);
+  const [reassignTargetId, setReassignTargetId] = useState('');
+  const [reassigning, setReassigning] = useState(false);
+  const [reassignError, setReassignError] = useState<string | null>(null);
 
   // Layout state.
   // `narrow`        — viewport too tight for the two-pane layout, so we
@@ -263,18 +271,47 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
     void load();
   }, [load]);
 
+  // Candidate reps for the reassign picker (admin-only page).
+  useEffect(() => {
+    if (!canView) return;
+    apiFetch<Array<{ id: string; firstName: string; lastName: string }>>('/employees')
+      .then((list) => setEmployees(list ?? []))
+      .catch(() => setEmployees([]));
+  }, [canView]);
+
+  const handleReassign = async () => {
+    if (!reassignLead || !reassignTargetId) return;
+    setReassigning(true);
+    setReassignError(null);
+    try {
+      await apiFetch(`/leads/${reassignLead.id}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ assignedEmployeeId: reassignTargetId }),
+      });
+      setReassignLead(null);
+      setReassignTargetId('');
+      await load(); // the reassigned lead drops off this agent's roster
+    } catch (err) {
+      setReassignError(err instanceof Error ? err.message : 'Reassign failed');
+    } finally {
+      setReassigning(false);
+    }
+  };
+
   const filteredLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return leads;
-    return leads.filter(
-      (l) =>
+    return leads.filter((l) => {
+      if (statusFilter !== 'ALL' && l.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
         l.firstName.toLowerCase().includes(q) ||
         l.lastName.toLowerCase().includes(q) ||
         l.phone.includes(q) ||
         (l.email ?? '').toLowerCase().includes(q) ||
-        (l.referenceCode ?? '').toLowerCase().includes(q),
-    );
-  }, [leads, search]);
+        (l.referenceCode ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [leads, search, statusFilter]);
 
   // KPI snapshots
   const kpis = useMemo(() => {
@@ -582,6 +619,9 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                 ) : null}
               </div>
 
+              {/* Lead-status filter tabs */}
+              <StatusTabs leads={leads} value={statusFilter} onChange={setStatusFilter} />
+
               <div
                 className="sos-scroll"
                 style={{
@@ -611,12 +651,18 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                 const selected = lead.id === selectedLeadId;
                 const tone = STATUS_TONE[lead.status] ?? 'neutral';
                 return (
-                  <button
+                  <div
                     key={lead.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedLeadId(lead.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedLeadId(lead.id);
+                      }
+                    }}
                     style={{
-                      all: 'unset',
                       cursor: 'pointer',
                       display: 'block',
                       width: '100%',
@@ -635,12 +681,12 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                     }}
                     onMouseEnter={(e) => {
                       if (!selected)
-                        (e.currentTarget as HTMLButtonElement).style.background =
+                        (e.currentTarget as HTMLElement).style.background =
                           'rgba(255,255,255,0.025)';
                     }}
                     onMouseLeave={(e) => {
                       if (!selected)
-                        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                        (e.currentTarget as HTMLElement).style.background = 'transparent';
                     }}
                   >
                     <div
@@ -706,9 +752,34 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
                         >
                           {fmtRelative(lead.updatedAt)}
                         </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setReassignLead(lead);
+                            setReassignTargetId('');
+                            setReassignError(null);
+                          }}
+                          title="Reassign this lead to another salesperson"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            marginTop: 2,
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            fontSize: 10.5,
+                            cursor: 'pointer',
+                            border: '1px solid var(--sos-border)',
+                            background: 'var(--sos-surface)',
+                            color: 'var(--sos-text-secondary)',
+                          }}
+                        >
+                          <Shield size={10} /> Reassign
+                        </button>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })
             )}
@@ -735,6 +806,155 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
           )}
         </GlassCard>
       </div>
+
+      {reassignLead ? (
+        <div
+          onClick={() => { if (!reassigning) setReassignLead(null); }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(440px, 92vw)',
+              background: 'var(--sos-surface-1)',
+              border: '1px solid var(--sos-border)',
+              borderRadius: 'var(--sos-radius-lg)',
+              padding: 20,
+              boxShadow: '0 12px 48px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: 4 }}>
+              Reassign lead
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+              Move <strong>{reassignLead.firstName} {reassignLead.lastName}</strong> to another salesperson.
+              They become the assigned rep (sticky for future inbound) and are notified.
+            </div>
+            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--sos-text-muted)' }}>
+              Assign to
+            </label>
+            <select
+              className="sos-select"
+              value={reassignTargetId}
+              onChange={(e) => setReassignTargetId(e.target.value)}
+              style={{ width: '100%', marginTop: 6 }}
+            >
+              <option value="">Select a salesperson…</option>
+              {employees
+                .filter((emp) => emp.id !== employeeId)
+                .map((emp) => (
+                  <option key={emp.id} value={emp.id}>{emp.firstName} {emp.lastName}</option>
+                ))}
+            </select>
+            {reassignError ? (
+              <div style={{ marginTop: 10, fontSize: 12, color: 'var(--sos-status-danger)' }}>{reassignError}</div>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              <button
+                type="button"
+                disabled={reassigning}
+                onClick={() => setReassignLead(null)}
+                className="sos-btn sos-btn--ghost sos-btn--sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={reassigning || !reassignTargetId}
+                onClick={() => void handleReassign()}
+                className="sos-btn sos-btn--primary sos-btn--sm"
+              >
+                {reassigning ? 'Reassigning…' : 'Reassign'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lead-status filter tabs
+// ---------------------------------------------------------------------------
+
+const STATUS_TAB_ORDER = [
+  'NEW',
+  'CONTACTED',
+  'QUALIFIED',
+  'FOLLOW_UP',
+  'PROPOSAL_SENT',
+  'CONVERTED',
+  'LOST',
+  'DUPLICATE',
+  'UNQUALIFIED',
+];
+
+function StatusTabs({
+  leads,
+  value,
+  onChange,
+}: {
+  leads: AssignedLead[];
+  value: string;
+  onChange: (s: string) => void;
+}) {
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of leads) m.set(l.status, (m.get(l.status) ?? 0) + 1);
+    return m;
+  }, [leads]);
+  const tabs: Array<{ key: string; label: string; count: number }> = [
+    { key: 'ALL', label: 'All', count: leads.length },
+    ...STATUS_TAB_ORDER.filter((s) => (counts.get(s) ?? 0) > 0).map((s) => ({
+      key: s,
+      label: STATUS_LABEL[s] ?? s,
+      count: counts.get(s) ?? 0,
+    })),
+  ];
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap',
+        padding: '10px 14px',
+        borderBottom: '1px solid var(--sos-divider)',
+      }}
+    >
+      {tabs.map((t) => {
+        const active = value === t.key;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => onChange(t.key)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '4px 10px',
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+              border: `1px solid ${active ? 'var(--sos-border-accent)' : 'var(--sos-border)'}`,
+              background: active ? 'var(--sos-brand-primary-soft)' : 'var(--sos-surface)',
+              color: active ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)',
+            }}
+          >
+            {t.label}
+            <span style={{ opacity: 0.7 }}>{t.count}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

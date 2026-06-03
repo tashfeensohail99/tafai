@@ -251,7 +251,10 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
     try {
       const [emp, leadList] = await Promise.all([
         apiFetch<EmployeeDetail>(`/employees/${employeeId}`),
-        apiFetch<AssignedLead[]>(`/leads?assignedEmployeeId=${employeeId}`),
+        // limit=1000 (the API's max) so the status tabs + KPI counts reflect the
+        // agent's FULL roster — without it the endpoint defaults to 250 rows and
+        // a busy rep's counts (e.g. "Pending") would be computed from a slice.
+        apiFetch<AssignedLead[]>(`/leads?assignedEmployeeId=${employeeId}&limit=1000`),
       ]);
       setEmployee(emp);
       setLeads(leadList ?? []);

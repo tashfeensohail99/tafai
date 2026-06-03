@@ -554,7 +554,7 @@ function FilterSelect({
 function LeadCard({ lead }: { lead: Lead }) {
   const assignedLabel =
     lead.assignmentType === 'ADMIN'
-      ? `Admin · ${lead.assignedBy?.split('·')[1]?.trim() ?? 'Front desk'}`
+      ? `Admin · ${lead.assignedBy ?? 'Unassigned'}`
       : 'Auto CRM';
 
   return (

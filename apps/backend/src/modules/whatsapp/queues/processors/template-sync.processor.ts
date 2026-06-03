@@ -49,6 +49,9 @@ export class TemplateSyncProcessor extends WorkerHost {
 
     const now = new Date();
     for (const t of templates) {
+      // Meta's built-in `hello_world` sample can't be deleted on their side
+      // (the API rejects it) and is just noise in the picker — never track it.
+      if (t.name === 'hello_world') continue;
       await this.prisma.whatsAppTemplate.upsert({
         where: {
           channelId_name_language: {

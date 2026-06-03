@@ -8,9 +8,11 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import * as bcrypt from 'bcrypt';
 import {
   AuthorityDecision,
+  ClientStatus,
   CorrectionRequiredAction,
   CorrectionStatus,
   CorrectionType,
@@ -45,6 +47,8 @@ import { ActivityTimelineService } from '../activity-timeline/activity-timeline.
 import { StorageService } from '../storage/storage.service';
 import { LeadsService } from '../leads/leads.service';
 import { EmailService } from '../email/email.service';
+import { FinanceService } from '../finance/finance.service';
+import { FxService } from '../../common/fx/fx.service';
 import {
   WHATSAPP_QUEUE,
   type OutboundMessageJob,
@@ -96,6 +100,29 @@ function officerDisplayName(
     ? `${officer.employee.firstName} ${officer.employee.lastName}`.trim()
     : '';
   return name || officer.email;
+}
+
+/**
+ * Generate a strong, readable temporary portal password for a manually-created
+ * client. Guarantees at least one upper, one lower and two digits; uses an
+ * unambiguous, HTML-safe charset (no 0/O/1/l/I and none of <>&"' so it renders
+ * cleanly in the welcome email). The client must change it on first login
+ * (mustChangePassword), so this only needs to be sturdy for one sign-in.
+ */
+function generateTempPassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digit = '23456789';
+  const all = upper + lower + digit;
+  const pick = (set: string) => set[randomBytes(1)[0] % set.length];
+  const chars = [pick(upper), pick(lower), pick(digit), pick(digit)];
+  for (let i = 0; i < 8; i++) chars.push(pick(all));
+  // Fisher–Yates shuffle (crypto bytes) so required chars aren't always first.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomBytes(1)[0] % (i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
 }
 
 // Stage gate: which transitions are allowed from each stage
@@ -194,6 +221,14 @@ export class ProcessingService {
     // nudge cron's email fallback when WhatsApp can't deliver. EmailModule is
     // @Global() so no extra module import is needed.
     private readonly email: EmailService,
+    // Manual-client finance snapshot reuses the canonical Finance engine
+    // (invoice → record → verify → receipt) so the records are identical to a
+    // finance-originated client. FinanceModule is imported by ProcessingModule.
+    private readonly financeService: FinanceService,
+    // CAD is the firm's ledger base; the agreed fee is entered in the client's
+    // currency (default PKR) and converted here before the invoice is written.
+    // FxModule is @Global().
+    private readonly fx: FxService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -339,8 +374,29 @@ export class ProcessingService {
     }
     const firstName = dto.firstName.trim();
     const lastName = dto.lastName.trim();
-    const email = dto.email?.trim() || null;
+    const email = dto.email.trim();
     const targetCountry = dto.targetCountry.trim();
+
+    // Validate the optional finance block up front (before any writes) so a bad
+    // amount fails cleanly. The records themselves are written post-commit via
+    // the Finance engine. Fee + payment are entered in `financeCurrency`
+    // (default PKR) and converted to the CAD ledger base.
+    const financeCurrency = (dto.finance?.currency?.trim() || 'PKR').toUpperCase();
+    let feeAmount = 0;
+    let receivedAmount = 0;
+    if (dto.finance) {
+      feeAmount = Number(dto.finance.totalFee);
+      receivedAmount = dto.finance.amountReceived ? Number(dto.finance.amountReceived) : 0;
+      if (!Number.isFinite(feeAmount) || feeAmount <= 0) {
+        throw new BadRequestException('Total service fee must be a positive number');
+      }
+      if (!Number.isFinite(receivedAmount) || receivedAmount < 0) {
+        throw new BadRequestException('Amount received must be zero or a positive number');
+      }
+      if (receivedAmount > feeAmount + 0.01) {
+        throw new BadRequestException('Amount received cannot exceed the total service fee');
+      }
+    }
 
     // Reference code generated before the tx (the generator reads counts off
     // the live table; same pattern as leads.service / lead-import).
@@ -351,6 +407,19 @@ export class ProcessingService {
     // placeholder keyed off the reference code. The manager edits in the real
     // number later (WhatsApp stays inactive until then).
     const phone = dto.phone?.trim() || `MANUAL-${referenceCode}`;
+
+    // Pre-compute portal-login material OUTSIDE the tx — bcrypt is CPU-heavy
+    // (~200ms) and shouldn't hold the transaction open. Only consumed if the
+    // client doesn't already have a login.
+    const clientRole = await this.prisma.role.findUnique({ where: { name: 'client' } });
+    if (!clientRole) {
+      this.logger.warn('No "client" role found — manual client will be created without a portal login.');
+    }
+    const tempPassword = generateTempPassword();
+    const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+    let loginProvisioned = false;
+    let alreadyHadLogin = false;
 
     const processingCase = await this.prisma.$transaction(async (tx) => {
       // 1. Lead (manual origin). Created direct → no round-robin.
@@ -379,7 +448,36 @@ export class ProcessingService {
       );
       const clientId = conversion.client.id;
 
-      // 3. The case — financeHandoverId null (no finance origin).
+      // 3. Provision a portal login. A client signs in with a UserAccount whose
+      //    email == Client.email + the `client` role; the portal gate also
+      //    requires Client.status ACTIVE + portalAccessEnabled. Idempotent: if a
+      //    login already exists for this email we keep it (and don't re-email a
+      //    fresh password). convertToClient set NEW_CLIENT, so flip to ACTIVE.
+      const existingUser = await tx.userAccount.findUnique({
+        where: { email },
+        select: { id: true },
+      });
+      if (existingUser) {
+        alreadyHadLogin = true;
+      } else if (clientRole) {
+        await tx.userAccount.create({
+          data: {
+            email,
+            passwordHash,
+            status: 'ACTIVE',
+            mustChangePassword: true,
+            emailVerifiedAt: new Date(),
+            userRoles: { create: [{ roleId: clientRole.id }] },
+          },
+        });
+        loginProvisioned = true;
+      }
+      await tx.client.update({
+        where: { id: clientId },
+        data: { status: ClientStatus.ACTIVE, portalAccessEnabled: true },
+      });
+
+      // 4. The case — financeHandoverId null (no finance origin).
       const created = await tx.processingCase.create({
         data: {
           financeHandoverId: null,
@@ -394,7 +492,7 @@ export class ProcessingService {
         include: { lead: true, client: true },
       });
 
-      // 4. Audit
+      // 5. Audit
       await tx.processingAuditLog.create({
         data: {
           caseId: created.id,
@@ -408,6 +506,8 @@ export class ProcessingService {
             targetCountry,
             referenceCode,
             wasExistingClient: conversion.wasExistingClient,
+            loginProvisioned,
+            hasFinance: Boolean(dto.finance),
           },
         },
       });
@@ -415,19 +515,179 @@ export class ProcessingService {
       return created;
     });
 
-    // Timeline (post-commit, non-fatal).
-    this.timeline.record({
-      entityType: 'processing_case',
-      entityId: processingCase.id,
-      leadId: processingCase.leadId ?? undefined,
-      clientId: processingCase.clientId ?? undefined,
-      eventType: TimelineEventType.PROCESSING_CASE_CREATED,
-      description: `Processing case opened (manual) — ${service} / ${targetCountry}`,
-      actorUserId: user.id,
-      metadata: { manual: true, priority: processingCase.priority },
-    }).catch(() => { /* timeline is non-fatal */ });
+    // --- Post-commit side effects. None of these unwind the client/case;
+    //     they're best-effort and reported back in the response. ---
 
-    return processingCase;
+    // (a) Welcome email with portal credentials — fire-and-forget.
+    if (loginProvisioned) {
+      void this.email
+        .sendWelcomeClient({
+          to: email,
+          firstName,
+          email,
+          tempPassword,
+          loginUrl: 'https://tashfeengroup.com/login',
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Welcome email failed for manual client ${processingCase.clientId}: ${err instanceof Error ? err.message : err}`,
+          );
+        });
+    }
+
+    // (b) Finance snapshot — authentic CAD invoice (+ verified payment + receipt).
+    const finance =
+      dto.finance && processingCase.clientId
+        ? await this.recordManualClientFinance({
+            clientId: processingCase.clientId,
+            feeAmount,
+            receivedAmount,
+            currency: financeCurrency,
+            paymentMethod: dto.finance.paymentMethod,
+            paidAt: dto.finance.paidAt,
+            transactionRef: dto.finance.transactionRef,
+            referenceCode,
+            actorUserId: user.id,
+          })
+        : null;
+
+    // (c) Timeline (non-fatal).
+    this.timeline
+      .record({
+        entityType: 'processing_case',
+        entityId: processingCase.id,
+        leadId: processingCase.leadId ?? undefined,
+        clientId: processingCase.clientId ?? undefined,
+        eventType: TimelineEventType.PROCESSING_CASE_CREATED,
+        description: `Processing case opened (manual) — ${service} / ${targetCountry}`,
+        actorUserId: user.id,
+        metadata: {
+          manual: true,
+          priority: processingCase.priority,
+          loginProvisioned,
+          financeRecorded: Boolean(finance?.recorded),
+        },
+      })
+      .catch(() => {
+        /* timeline is non-fatal */
+      });
+
+    return {
+      ...processingCase,
+      portalLogin: { provisioned: loginProvisioned, alreadyHadLogin, email },
+      finance,
+    };
+  }
+
+  /**
+   * Record an authentic finance snapshot for a manually-created client by
+   * reusing the Finance engine — so the records are identical to a
+   * finance-originated client (sequential invoice/receipt numbers, FX→CAD at
+   * the live rate, maker-checker, audit, receipt PDF). The firm's ledger is
+   * CAD, so the agreed fee is converted to CAD for the invoice; the payment
+   * converts itself inside recordPayment. Best-effort: a failure here never
+   * unwinds the already-committed client/case — it's surfaced in the response.
+   *
+   * No leadId/caseId is set on the invoice on purpose — that keeps
+   * verifyPayment from auto-creating a CRM `Case` (it only does so when the
+   * invoice carries a lead); this client already has its ProcessingCase.
+   */
+  private async recordManualClientFinance(input: {
+    clientId: string;
+    feeAmount: number;
+    receivedAmount: number;
+    currency: string;
+    paymentMethod?: string;
+    paidAt?: string;
+    transactionRef?: string;
+    referenceCode: string;
+    actorUserId: string;
+  }): Promise<{
+    recorded: boolean;
+    currency: string;
+    feeAmount: number;
+    receivedAmount: number;
+    baseCurrency: string;
+    invoiceNumber?: string;
+    receiptNumber?: string;
+    paymentStatus?: string;
+    error?: string;
+  }> {
+    const { clientId, feeAmount, receivedAmount, currency, actorUserId } = input;
+    let invoiceNumber: string | undefined;
+    let baseCurrency = 'CAD';
+    try {
+      // Convert the agreed fee to the CAD base for the invoice. Same cached rate
+      // as the payment conversion within this request, so paid% is consistent
+      // whether read in the source currency or in CAD.
+      const feeConv = await this.fx.convertToBase(feeAmount, currency);
+      baseCurrency = feeConv.baseCurrency;
+      const feeBase = feeConv.baseAmount;
+      const note =
+        currency === baseCurrency
+          ? `Agreed service fee recorded via Processing manual client (${input.referenceCode}).`
+          : `Agreed service fee: ${feeAmount.toLocaleString()} ${currency} ≈ ${feeBase.toLocaleString()} ${baseCurrency} @ ${feeConv.rate}. Recorded via Processing manual client (${input.referenceCode}).`;
+
+      const invoice = await this.financeService.createInvoice(
+        {
+          clientId,
+          subtotal: feeBase.toFixed(2),
+          currency: baseCurrency,
+          notes: note,
+        },
+        actorUserId,
+      );
+      invoiceNumber = invoice.invoiceNumber;
+
+      let receiptNumber: string | undefined;
+      let paymentStatus: string | undefined;
+      if (receivedAmount > 0) {
+        const payment = await this.financeService.recordPayment(
+          {
+            invoiceId: invoice.id,
+            amount: receivedAmount.toString(),
+            currency,
+            paymentMethod: input.paymentMethod,
+            transactionRef: input.transactionRef,
+            paidAt: input.paidAt,
+            internalReference: `processing-manual:${input.referenceCode}`,
+          },
+          actorUserId,
+        );
+        const verified = await this.financeService.verifyPayment(
+          payment.id,
+          { notes: 'Recorded by Processing on manual client creation' },
+          actorUserId,
+        );
+        receiptNumber = verified.receipt?.receiptNumber;
+        paymentStatus = verified.payment.status;
+      }
+
+      return {
+        recorded: true,
+        currency,
+        feeAmount,
+        receivedAmount,
+        baseCurrency,
+        invoiceNumber,
+        receiptNumber,
+        paymentStatus,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to record finance';
+      this.logger.error(
+        `Manual client finance recording failed (client=${clientId}): ${msg}`,
+      );
+      return {
+        recorded: false,
+        currency,
+        feeAmount,
+        receivedAmount,
+        baseCurrency,
+        invoiceNumber,
+        error: msg,
+      };
+    }
   }
 
   async listIntakeQueue(query: ListIntakeQueueQueryDto) {

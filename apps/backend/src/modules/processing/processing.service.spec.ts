@@ -137,6 +137,9 @@ function buildService() {
     { add: jest.fn() } as any, // outbound WhatsApp queue mock
     { enqueue: jest.fn() } as any, // DocumentAiService mock (D2)
     { explodeBundleToInbound: jest.fn().mockResolvedValue(0) } as any, // DocumentIntakeService mock (P2)
+    { sendWelcomeClient: jest.fn(), sendCaseMessageToClient: jest.fn() } as any, // EmailService mock
+    { createInvoice: jest.fn(), recordPayment: jest.fn(), verifyPayment: jest.fn() } as any, // FinanceService mock (NC)
+    { convertToBase: jest.fn() } as any, // FxService mock (NC)
   );
 
   return { service, prismaMock, auditMock, storageMock, timelineMock };

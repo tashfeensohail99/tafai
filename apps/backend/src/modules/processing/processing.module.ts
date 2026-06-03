@@ -5,6 +5,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { StorageModule } from '../storage/storage.module';
 import { ActivityTimelineModule } from '../activity-timeline/activity-timeline.module';
 import { LeadsModule } from '../leads/leads.module';
+import { FinanceModule } from '../finance/finance.module';
 import { ProcessingController } from './processing.controller';
 import { ProcessingService } from './processing.service';
 import { DOC_AI_QUEUE } from './document-ai/document-ai.contracts';
@@ -23,6 +24,10 @@ import { ClientNudgeService } from './client-nudge.service';
     StorageModule,
     ActivityTimelineModule,
     LeadsModule,
+    // Manual-client creation records an authentic CAD invoice (+ verified
+    // payment + receipt) via the Finance engine. FinanceModule exports
+    // FinanceService; no cycle (Finance imports Cases/Leads, not Processing).
+    FinanceModule,
     ConfigModule,
     // Phase D2 — document-AI assessment queue (Redis root is the @Global
     // WhatsAppQueuesModule; we just register our own queue name here). The

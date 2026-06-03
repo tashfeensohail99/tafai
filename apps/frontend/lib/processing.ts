@@ -488,17 +488,49 @@ export async function uploadOfficerDocument(
  * Manual client creation (Processing Manager). Creates Lead → Client →
  * INTAKE_PENDING case with no Finance handover; returns the created case.
  */
+/** Optional finance snapshot entered on the manual-client form. Amounts are
+ *  strings (entered in `currency`, default PKR) and converted to the CAD ledger
+ *  base server-side. */
+export interface ManualClientFinanceInput {
+  totalFee: string;
+  currency?: string;
+  amountReceived?: string;
+  paymentMethod?: string;
+  paidAt?: string;
+  transactionRef?: string;
+}
+
+/** Result of POST /processing/clients — the case plus what the create flow
+ *  provisioned (portal login + finance records). */
+export interface ManualClientCreateResult extends ApiProcessingCaseDetail {
+  portalLogin: { provisioned: boolean; alreadyHadLogin: boolean; email: string };
+  finance:
+    | {
+        recorded: boolean;
+        currency: string;
+        feeAmount: number;
+        receivedAmount: number;
+        baseCurrency: string;
+        invoiceNumber?: string;
+        receiptNumber?: string;
+        paymentStatus?: string;
+        error?: string;
+      }
+    | null;
+}
+
 export function createManualClientCase(body: {
   firstName: string;
   lastName: string;
-  email?: string;
+  email: string;
   phone?: string;
   service: string;
   targetCountry: string;
   nationality?: string;
   priority?: ProcessingPriority;
-}): Promise<ApiProcessingCaseDetail> {
-  return apiFetch<ApiProcessingCaseDetail>('/processing/clients', {
+  finance?: ManualClientFinanceInput;
+}): Promise<ManualClientCreateResult> {
+  return apiFetch<ManualClientCreateResult>('/processing/clients', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

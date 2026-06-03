@@ -518,11 +518,14 @@ export class WhatsAppThreadsController {
     // sent an agreement (status != DRAFT). Narrower than view_all_inboxes
     // so finance can't peek into pre-agreement Sales negotiations.
     const canViewFinanceScope = !canViewAll && perms.includes('whatsapp.view_finance_scope');
+    // Processing closed-loop scope — only their own clients' threads.
+    const canViewProcessingScope = !canViewAll && perms.includes('whatsapp.view_processing_scope');
     return {
       userId: user.id,
       employeeId: employee?.id ?? null,
       canViewAll,
       canViewFinanceScope,
+      canViewProcessingScope,
     };
   }
 }

@@ -65,7 +65,7 @@ import { DocumentChecklistTab } from './tabs/DocumentChecklistTab';
 import { CaseTimelineTab } from './tabs/CaseTimelineTab';
 import { CaseHistoryTab } from './tabs/CaseHistoryTab';
 import { CommunicationsTab } from './tabs/CommunicationsTab';
-import { WhatsAppTab } from './tabs/WhatsAppTab';
+import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
 import { InternalNotesTab } from './tabs/InternalNotesTab';
 import { TasksTab } from './tabs/TasksTab';
 import { SubmissionsTab } from './tabs/SubmissionsTab';
@@ -477,7 +477,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           {activeTab === 'history' && <CaseHistoryTab c={c} />}
           {activeTab === 'communications' && <CommunicationsTab c={c} />}
           {activeTab === 'finance' && <FinanceTab finance={finance} loading={financeLoading} />}
-          {activeTab === 'whatsapp' && <WhatsAppTab c={c} />}
+          {activeTab === 'whatsapp' && <WhatsAppLeadTab leadId={api.leadId} />}
           {activeTab === 'notes' && <InternalNotesTab c={c} />}
           {activeTab === 'tasks' && <TasksTab c={c} />}
           {activeTab === 'corrections' && <CorrectionsTab c={c} />}

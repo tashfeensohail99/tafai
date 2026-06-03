@@ -32,6 +32,13 @@ interface CallerContext {
    * Implies the caller is NEVER part of the round-robin assignment pool.
    */
   canViewFinanceScope: boolean;
+  /**
+   * Processing closed-loop scope: caller may open threads for leads/clients
+   * that have a ProcessingCase (i.e. the client reached processing). Lets the
+   * processing team use the WhatsApp chat for their own clients without
+   * full-inbox access. Additive — never widens Sales/Finance scope.
+   */
+  canViewProcessingScope: boolean;
 }
 
 /**
@@ -222,16 +229,38 @@ export class WhatsAppThreadsService {
   private async resolveCallerLeadScope(
     caller: CallerContext,
   ): Promise<'all' | 'none' | Prisma.LeadWhereInput> {
-    if (!caller.canViewAll && !caller.canViewFinanceScope) {
-      if (!caller.employeeId) return 'none';
-      return { assignedEmployeeId: caller.employeeId, deletedAt: null };
-    }
+    if (caller.canViewAll) return 'all';
     if (caller.canViewFinanceScope) {
       const ids = await this.eligibleLeadIdsForFinance();
       if (ids.length === 0) return 'none';
       return { id: { in: ids }, deletedAt: null };
     }
-    return 'all';
+    if (caller.canViewProcessingScope) {
+      // Only leads that have reached processing (have a case) — this covers the
+      // client's thread for the processing team without exposing the inbox.
+      return { processingCases: { some: {} }, deletedAt: null };
+    }
+    if (!caller.employeeId) return 'none';
+    return { assignedEmployeeId: caller.employeeId, deletedAt: null };
+  }
+
+  /** True when a thread's lead/client has a ProcessingCase — the processing
+   *  team's closed-loop WhatsApp scope. */
+  private async threadInProcessingScope(
+    leadId: string | null,
+    clientId: string | null,
+  ): Promise<boolean> {
+    if (!leadId && !clientId) return false;
+    const pc = await this.prisma.processingCase.findFirst({
+      where: {
+        OR: [
+          ...(leadId ? [{ leadId }] : []),
+          ...(clientId ? [{ clientId }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    return !!pc;
   }
 
   /**
@@ -483,6 +512,11 @@ export class WhatsAppThreadsService {
         if (!hasAgreement) {
           throw new ForbiddenException('Thread not visible to Finance until Sales sends an agreement');
         }
+      } else if (caller.canViewProcessingScope) {
+        // Processing can open a thread only for one of their own clients
+        // (lead/client has a ProcessingCase).
+        const inScope = await this.threadInProcessingScope(t.lead?.id ?? null, t.client?.id ?? null);
+        if (!inScope) throw new ForbiddenException('Thread not in your processing scope');
       } else if (!caller.employeeId || t.lead?.assignedEmployeeId !== caller.employeeId) {
         throw new ForbiddenException('Thread not assigned to you');
       }

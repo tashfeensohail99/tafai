@@ -102,6 +102,7 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'whatsapp.view_all_inboxes', module: 'whatsapp', description: 'View all WhatsApp threads across agents (manager / admin)' },
   { key: 'whatsapp.view_finance_scope', module: 'whatsapp', description: 'View WhatsApp threads of leads with a non-draft agreement (Finance closed-loop comms; narrower than view_all_inboxes)' },
   { key: 'whatsapp.send_message', module: 'whatsapp', description: 'Send WhatsApp messages to assigned threads' },
+  { key: 'whatsapp.view_processing_scope', module: 'whatsapp', description: 'View/reply WhatsApp threads of leads/clients that have a processing case (Processing closed-loop comms; narrower than view_all_inboxes)' },
   { key: 'whatsapp.reassign', module: 'whatsapp', description: 'Manually reassign WhatsApp threads to other agents' },
   { key: 'whatsapp.manage_channels', module: 'whatsapp', description: 'Connect / pause / rotate-token on WhatsApp Business numbers' },
   { key: 'whatsapp.manage_templates', module: 'whatsapp', description: 'Sync and review WhatsApp approved templates' },
@@ -186,6 +187,7 @@ const SYSTEM_ROLES: {
       'documents.view_assigned', 'documents.upload', 'documents.verify',
       'appointments.view_assigned', 'appointments.create',
       'communications.view', 'communications.send',
+      'whatsapp.view_inbox', 'whatsapp.send_message', 'whatsapp.view_processing_scope',
     ],
   },
   {
@@ -204,6 +206,7 @@ const SYSTEM_ROLES: {
       'processing.task.create',
       'processing.communication.send',
       'processing.checklist.manage',
+      'whatsapp.view_inbox', 'whatsapp.send_message', 'whatsapp.view_processing_scope',
       'processing.report.view', 'processing.report.export',
       'reports.view', 'reports.export',
       'employees.view_all',
@@ -224,6 +227,7 @@ const SYSTEM_ROLES: {
       'processing.note.create',
       'processing.task.create',
       'processing.communication.send',
+      'whatsapp.view_inbox', 'whatsapp.send_message', 'whatsapp.view_processing_scope',
     ],
   },
   {

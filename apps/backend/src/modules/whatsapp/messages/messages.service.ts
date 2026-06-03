@@ -42,6 +42,11 @@ interface CallerContext {
    * leads where Sales has sent an agreement (status != DRAFT).
    */
   canViewFinanceScope?: boolean;
+  /**
+   * Processing closed-loop scope: caller may see/send on threads only for
+   * leads/clients that have a ProcessingCase.
+   */
+  canViewProcessingScope?: boolean;
 }
 
 interface SendTextInput {
@@ -519,6 +524,19 @@ export class WhatsAppMessagesService {
         if (!hasAgreement) {
           throw new ForbiddenException('Thread not visible to Finance until Sales sends an agreement');
         }
+      } else if (caller.canViewProcessingScope) {
+        // Processing may send only on a thread for one of their own clients
+        // (lead/client has a ProcessingCase).
+        const inProcessing = await this.prisma.processingCase.findFirst({
+          where: {
+            OR: [
+              ...(t.leadId ? [{ leadId: t.leadId }] : []),
+              ...(t.clientId ? [{ clientId: t.clientId }] : []),
+            ],
+          },
+          select: { id: true },
+        });
+        if (!inProcessing) throw new ForbiddenException('Thread not in your processing scope');
       } else if (!caller.employeeId || t.lead?.assignedEmployeeId !== caller.employeeId) {
         throw new ForbiddenException('Thread not assigned to you');
       }

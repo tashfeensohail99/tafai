@@ -159,8 +159,9 @@ export class WhatsAppMessagesController {
     });
     const perms = user.permissions ?? [];
     const canViewAll = perms.includes('whatsapp.view_all_inboxes');
-    // Finance closed-loop scope (see threads.controller.ts for rationale).
+    // Finance + Processing closed-loop scopes (see threads.controller.ts).
     const canViewFinanceScope = !canViewAll && perms.includes('whatsapp.view_finance_scope');
-    return { userId: user.id, employeeId: employee?.id ?? null, canViewAll, canViewFinanceScope };
+    const canViewProcessingScope = !canViewAll && perms.includes('whatsapp.view_processing_scope');
+    return { userId: user.id, employeeId: employee?.id ?? null, canViewAll, canViewFinanceScope, canViewProcessingScope };
   }
 }

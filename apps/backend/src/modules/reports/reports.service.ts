@@ -9,6 +9,7 @@ import {
   LeadStatus,
   PaymentStatus,
   ProcessingCaseStage,
+  WhatsAppMessageDirection,
   WhatsAppThreadStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -281,14 +282,27 @@ export class ReportsService {
         },
         _count: { _all: true },
       }),
-      // Conversations awaiting the rep's reply: responseDeadlineAt is non-null
-      // exactly when it's the agent's turn (a customer message is unanswered);
-      // it's cleared the moment the agent replies. Scoped to threads whose lead
-      // is assigned to a (non-deleted) rep, so we can group by salesperson.
+      // Conversations the *human* rep hasn't personally replied to: the client
+      // has texted (>=1 inbound) but every outbound so far is the AI bot
+      // (sentByEmployeeId NULL) or there's no reply at all. Bot replies do NOT
+      // count as the rep replying — this catches reps letting the bot carry the
+      // chat without ever typing a word. Scoped to active threads whose lead is
+      // assigned to a (non-deleted) rep, so we can group by salesperson.
       this.prisma.whatsAppThread.findMany({
         where: {
-          responseDeadlineAt: { not: null },
+          status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
           lead: { assignedEmployeeId: { not: null }, deletedAt: null },
+          AND: [
+            { messages: { some: { direction: WhatsAppMessageDirection.INBOUND } } },
+            {
+              messages: {
+                none: {
+                  direction: WhatsAppMessageDirection.OUTBOUND,
+                  sentByEmployeeId: { not: null },
+                },
+              },
+            },
+          ],
         },
         select: { lead: { select: { assignedEmployeeId: true } } },
       }),

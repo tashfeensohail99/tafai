@@ -154,3 +154,34 @@ export interface PresenceDailyReport {
 export function fetchPresenceDailyReport(): Promise<PresenceDailyReport> {
   return apiFetch<PresenceDailyReport>('/whatsapp/presence/daily-report');
 }
+
+// ---- Templates (department routing) -------------------------------------
+
+export type TemplateDepartment = 'SALES' | 'FINANCE' | 'PROCESSING';
+
+export interface AdminTemplate {
+  id: string;
+  channelId: string;
+  name: string;
+  language: string;
+  category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+  status: 'APPROVED' | 'PENDING' | 'REJECTED' | 'PAUSED' | 'DISABLED';
+  /** Departments allowed to pick this template. Empty = shared (everyone). */
+  departments: TemplateDepartment[];
+}
+
+/** Every template (any status) with its department tags — admin only. */
+export function listAdminTemplates(): Promise<AdminTemplate[]> {
+  return apiFetch<AdminTemplate[]>('/whatsapp/templates', { cache: 'no-store' });
+}
+
+/** Set which departments may pick a template (empty array = shared). */
+export function setTemplateDepartments(
+  id: string,
+  departments: TemplateDepartment[],
+): Promise<{ id: string; name: string; language: string; departments: TemplateDepartment[] }> {
+  return apiFetch(`/whatsapp/templates/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ departments }),
+  });
+}

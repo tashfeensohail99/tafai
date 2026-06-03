@@ -366,6 +366,34 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Lead IDs for one agent's conversations awaiting their personal reply — the
+   * per-agent, drill-down version of the overview's awaiting-reply count. Same
+   * rule: active threads assigned to this rep where the client has texted but
+   * no human has replied (every outbound is the AI bot, or none).
+   */
+  async getAgentAwaitingReplyLeadIds(employeeId: string): Promise<string[]> {
+    const threads = await this.prisma.whatsAppThread.findMany({
+      where: {
+        status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
+        lead: { assignedEmployeeId: employeeId, deletedAt: null },
+        AND: [
+          { messages: { some: { direction: WhatsAppMessageDirection.INBOUND } } },
+          {
+            messages: {
+              none: {
+                direction: WhatsAppMessageDirection.OUTBOUND,
+                sentByEmployeeId: { not: null },
+              },
+            },
+          },
+        ],
+      },
+      select: { leadId: true },
+    });
+    return threads.map((t) => t.leadId).filter((id): id is string => !!id);
+  }
+
   async getWorkflowBoard() {
     const [salesQueue, financeQueue, processingQueue, pendingDocuments, handoverHistory] = await this.prisma.$transaction([
       this.prisma.lead.findMany({

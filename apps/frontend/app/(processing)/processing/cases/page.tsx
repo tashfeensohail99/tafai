@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Send,
   Check,
+  StickyNote,
   // Document-type icons for the roster doc tiles
   FileText,
   FileUser,
@@ -624,6 +625,31 @@ export default function CasesPage() {
                           {c.lead.referenceCode} · {labelForServiceCode(c.service)}
                         </div>
                         <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>Pakistan → {c.targetCountry}</div>
+                        {c.history && (c.history.hasSalesNotes || c.history.hasFinanceNotes || c.history.callCount > 0) ? (
+                          <Link
+                            href={`/processing/cases/${c.id}?tab=history` as Route}
+                            title="Open History — sales / finance notes + call transcripts"
+                            style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap', textDecoration: 'none' }}
+                          >
+                            {(c.history.hasSalesNotes || c.history.hasFinanceNotes) ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 600, color: 'var(--sos-brand-primary-strong)', background: 'var(--sos-brand-primary-soft)', padding: '1px 6px', borderRadius: 999 }}>
+                                <StickyNote size={10} />
+                                {c.history.hasSalesNotes && c.history.hasFinanceNotes
+                                  ? 'Sales + Finance notes'
+                                  : c.history.hasSalesNotes
+                                    ? 'Sales notes'
+                                    : 'Finance notes'}
+                              </span>
+                            ) : null}
+                            {c.history.callCount > 0 ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 600, color: 'var(--sos-text-secondary)', background: 'var(--sos-surface-hover)', padding: '1px 6px', borderRadius: 999 }}>
+                                <Phone size={10} />
+                                {c.history.callCount} {c.history.callCount === 1 ? 'call' : 'calls'}
+                                {c.history.lastCallAt ? ` · ${fmtRelative(c.history.lastCallAt)}` : ''}
+                              </span>
+                            ) : null}
+                          </Link>
+                        ) : null}
                       </div>
                     </div>
 

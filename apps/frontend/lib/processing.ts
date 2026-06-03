@@ -58,6 +58,17 @@ export interface ApiProcessingCaseListItem {
   /** Per-document status strip for the roster tiles (excludes NOT_APPLICABLE).
    *  status is a DocumentItemStatus value. */
   documents: Array<{ label: string; status: string }>;
+  /** Cross-department context hint: whether Sales/Finance notes exist for this
+   *  client, and the call count + last-call time. Powers the roster history pill
+   *  (which deep-links to the case's History tab). Only the main cases list
+   *  populates this — the intake-queue / refund-lane endpoints reuse this type
+   *  without it, so it's optional and consumers must guard. */
+  history?: {
+    hasSalesNotes: boolean;
+    hasFinanceNotes: boolean;
+    callCount: number;
+    lastCallAt: string | null;
+  };
 }
 
 /** Full case detail returned by `GET /processing/cases/:id`. */

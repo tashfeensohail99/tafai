@@ -1060,6 +1060,7 @@ export function requestMissingDocuments(caseId: string): Promise<RequestMissingR
 
 export type IdentityFieldStatus = 'agree' | 'conflict' | 'insufficient';
 export type IdentityOverallStatus = 'ok' | 'review' | 'insufficient';
+export type IdentityReferenceFrom = 'passport' | 'nationalId' | 'crm' | 'documents' | null;
 
 export interface ApiIdentitySource {
   itemId: string;
@@ -1073,6 +1074,9 @@ export interface ApiIdentityFieldRow {
   key: 'name' | 'dateOfBirth' | 'passportNumber' | 'nationalId';
   label: string;
   crmValue: string | null;
+  crmMatches: boolean | null;
+  referenceValue: string | null;
+  referenceFrom: IdentityReferenceFrom;
   sources: ApiIdentitySource[];
   status: IdentityFieldStatus;
 }
@@ -1087,6 +1091,9 @@ export interface ApiIdentityReconciliation {
   fields: ApiIdentityFieldRow[];
   overall: IdentityOverallStatus;
   documentCount: number;
+  referenceFrom: IdentityReferenceFrom;
+  referenceItemId: string | null;
+  referenceDocumentName: string | null;
 }
 
 export function fetchIdentityReconciliation(

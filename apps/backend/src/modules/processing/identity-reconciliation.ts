@@ -16,6 +16,8 @@
 
 export type FieldStatus = 'agree' | 'conflict' | 'insufficient';
 export type OverallStatus = 'ok' | 'review' | 'insufficient';
+/** Where a field's reference value came from, in priority order. */
+export type ReferenceFrom = 'passport' | 'nationalId' | 'crm' | 'documents' | null;
 
 export interface IdentityClient {
   firstName: string | null;
@@ -46,6 +48,12 @@ export interface IdentityFieldRow {
   key: 'name' | 'dateOfBirth' | 'passportNumber' | 'nationalId';
   label: string;
   crmValue: string | null;
+  /** Does the CRM-stored value agree with the reference? null = nothing to compare. */
+  crmMatches: boolean | null;
+  /** The value every source is checked against (from the reference document). */
+  referenceValue: string | null;
+  /** Where referenceValue came from (passport > national-ID > CRM > documents). */
+  referenceFrom: ReferenceFrom;
   sources: IdentitySource[];
   status: FieldStatus;
 }
@@ -61,6 +69,10 @@ export interface IdentityReconciliation {
   overall: OverallStatus;
   /** How many documents contributed at least one identity value. */
   documentCount: number;
+  /** The primary anchor the whole panel is checked against. */
+  referenceFrom: ReferenceFrom;
+  referenceItemId: string | null;
+  referenceDocumentName: string | null;
 }
 
 // ── normalizers / comparators ───────────────────────────────────────────────
@@ -104,6 +116,15 @@ function idsAgree(a: string, b: string): boolean {
   const na = normId(a);
   const nb = normId(b);
   return na.length > 0 && na === nb;
+}
+
+/** Identity reference hierarchy — recognise the authoritative document types. */
+function isPassport(docType: string | null): boolean {
+  return !!docType && /passport/i.test(docType);
+}
+function isNationalId(docType: string | null): boolean {
+  if (!docType) return false;
+  return /cnic/i.test(docType) || /national[\s_-]?id(entity)?/i.test(docType);
 }
 
 /** Parse common date encodings to a YYYY-MM-DD key; null if unparseable. */
@@ -229,29 +250,82 @@ export function reconcileIdentity(
       });
     }
 
-    // Determine agreement against a reference value. Reference = the CRM value
-    // when present; otherwise the value the documents most agree on (majority
-    // cluster), so a single odd-one-out is the one flagged rather than whichever
-    // document happens to be processed first.
-    const reference = crmValue ?? pickReference(sources.map((s) => s.value), def.agree);
+    // Reference hierarchy: the passport is the source of truth for a person's
+    // identity, then the national-ID / CNIC, then the CRM record, and only if
+    // none of those carry this field do we fall back to the value the documents
+    // most agree on. Everything (including the CRM value) is checked against it.
+    const passportSrc = sources.find((s) => isPassport(s.docType));
+    const nationalIdSrc = sources.find((s) => isNationalId(s.docType));
+    let reference: string | null;
+    let referenceFrom: ReferenceFrom;
+    if (passportSrc) {
+      reference = passportSrc.value;
+      referenceFrom = 'passport';
+    } else if (nationalIdSrc) {
+      reference = nationalIdSrc.value;
+      referenceFrom = 'nationalId';
+    } else if (crmValue != null) {
+      reference = crmValue;
+      referenceFrom = 'crm';
+    } else if (sources.length > 0) {
+      reference = pickReference(sources.map((s) => s.value), def.agree);
+      referenceFrom = 'documents';
+    } else {
+      reference = null;
+      referenceFrom = null;
+    }
+
     let conflict = false;
     for (const s of sources) {
       const ok = reference != null ? def.agree(reference, s.value) : true;
       s.matchesReference = ok;
       if (!ok) conflict = true;
     }
+    const crmMatches =
+      crmValue != null && reference != null ? def.agree(reference, crmValue) : null;
 
     let status: FieldStatus;
     if (sources.length === 0) status = 'insufficient';
     else if (conflict) status = 'conflict';
     else status = 'agree';
 
-    return { key: def.key, label: def.label, crmValue, sources, status };
+    return {
+      key: def.key,
+      label: def.label,
+      crmValue,
+      crmMatches,
+      referenceValue: reference,
+      referenceFrom,
+      sources,
+      status,
+    };
   });
 
   const anyConflict = fields.some((f) => f.status === 'conflict');
   const anyData = fields.some((f) => f.sources.length > 0);
   const overall: OverallStatus = !anyData ? 'insufficient' : anyConflict ? 'review' : 'ok';
+
+  // The primary anchor for the whole panel: the passport doc if one contributed
+  // identity data, else the national-ID / CNIC doc, else the CRM record, else
+  // the documents themselves.
+  const passportDoc = docs.find((d) => isPassport(d.docType) && contributingDocs.has(d.itemId));
+  const nationalIdDoc = docs.find((d) => isNationalId(d.docType) && contributingDocs.has(d.itemId));
+  let referenceFrom: ReferenceFrom = null;
+  let referenceItemId: string | null = null;
+  let referenceDocumentName: string | null = null;
+  if (passportDoc) {
+    referenceFrom = 'passport';
+    referenceItemId = passportDoc.itemId;
+    referenceDocumentName = passportDoc.documentName;
+  } else if (nationalIdDoc) {
+    referenceFrom = 'nationalId';
+    referenceItemId = nationalIdDoc.itemId;
+    referenceDocumentName = nationalIdDoc.documentName;
+  } else if (fields.some((f) => f.crmValue != null)) {
+    referenceFrom = 'crm';
+  } else if (contributingDocs.size > 0) {
+    referenceFrom = 'documents';
+  }
 
   return {
     client: {
@@ -263,5 +337,8 @@ export function reconcileIdentity(
     fields,
     overall,
     documentCount: contributingDocs.size,
+    referenceFrom,
+    referenceItemId,
+    referenceDocumentName,
   };
 }

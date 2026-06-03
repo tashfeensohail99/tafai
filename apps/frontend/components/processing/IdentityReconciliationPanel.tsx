@@ -1,10 +1,10 @@
 'use client';
 // Identity reconciliation (Phase 4) — case-level identity consistency check.
-// Reframed for clarity: lead with a plain-English verdict, then a per-DOCUMENT
-// list that answers "does this file belong to the client?" at a glance. The raw
-// field-by-field grid is tucked behind a toggle for the rarer case where the
-// same person's documents merely disagree on a detail (a DOB typo, etc.).
-// Flag-only by design: it never rejects anything; a human always decides.
+// Document-first for clarity: lead with a plain-English verdict, then one line
+// per document answering "does this file belong to the client?". Everything is
+// checked against a single reference, chosen by hierarchy on the backend:
+// passport > national-ID / CNIC > CRM record > the documents themselves. The
+// raw field-by-field grid sits behind a toggle. Flag-only: never auto-rejects.
 
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -22,6 +22,7 @@ import {
   fetchIdentityReconciliation,
   type ApiIdentityReconciliation,
   type IdentityOverallStatus,
+  type IdentityReferenceFrom,
 } from '@/lib/processing';
 
 const OVERALL: Record<
@@ -33,10 +34,26 @@ const OVERALL: Record<
   insufficient: { tone: 'neutral', label: 'No data yet', icon: ShieldQuestion },
 };
 
+// Plain-English name for the reference source.
+function refLabel(from: IdentityReferenceFrom, docName: string | null): string | null {
+  switch (from) {
+    case 'passport':
+      return 'the passport';
+    case 'nationalId':
+      return docName ? `the ${docName}` : 'the CNIC';
+    case 'crm':
+      return 'the CRM record';
+    case 'documents':
+      return 'the documents';
+    default:
+      return null;
+  }
+}
+
 // ── per-document pivot ───────────────────────────────────────────────────────
-// The API gives us field rows (name / DOB / ...) each listing the documents that
-// supplied a value. To answer "is this file the right person?" we flip that into
-// one entry per document, carrying which fields it agreed/disagreed on.
+// The API gives field rows (name / DOB / ...) each listing the documents that
+// supplied a value. Flip that into one entry per document so we can answer
+// "is this file the right person?" without cross-referencing.
 interface DocCell {
   label: string;
   value: string;
@@ -48,9 +65,11 @@ interface DocView {
   cells: DocCell[];
   nameMismatch: boolean;
   anyMismatch: boolean;
+  isReference: boolean;
 }
 
 function buildDocViews(data: ApiIdentityReconciliation): DocView[] {
+  const refId = data.referenceItemId;
   const map = new Map<string, DocView>();
   for (const f of data.fields) {
     for (const s of f.sources) {
@@ -62,6 +81,7 @@ function buildDocViews(data: ApiIdentityReconciliation): DocView[] {
           cells: [],
           nameMismatch: false,
           anyMismatch: false,
+          isReference: s.itemId === refId,
         };
         map.set(s.itemId, dv);
       }
@@ -72,8 +92,9 @@ function buildDocViews(data: ApiIdentityReconciliation): DocView[] {
       }
     }
   }
-  // Worst first: different name, then other detail mismatches, then matches.
-  const rank = (d: DocView) => (d.nameMismatch ? 0 : d.anyMismatch ? 1 : 2);
+  // Reference first, then different-name, then other detail mismatches, then matches.
+  const rank = (d: DocView) =>
+    d.isReference ? -1 : d.nameMismatch ? 0 : d.anyMismatch ? 1 : 2;
   return [...map.values()].sort(
     (a, b) => rank(a) - rank(b) || a.documentName.localeCompare(b.documentName),
   );
@@ -112,12 +133,14 @@ export function IdentityReconciliationPanel({ caseId }: { caseId: string }) {
   const Icon = meta.icon;
   const mismatchCount = docViews.filter((d) => d.anyMismatch).length;
   const clientName = data.client.name ?? 'this client';
+  const reference = refLabel(data.referenceFrom, data.referenceDocumentName);
 
-  const crmChips: Array<[string, string]> = [];
-  if (data.client.name) crmChips.push(['Name', data.client.name]);
-  if (data.client.dateOfBirth) crmChips.push(['Date of birth', data.client.dateOfBirth]);
-  if (data.client.passportNumber) crmChips.push(['Passport #', data.client.passportNumber]);
-  if (data.client.nationalId) crmChips.push(['CNIC', data.client.nationalId]);
+  // CRM values that disagree with the reference (e.g. a CNIC typo on file).
+  const crmConflicts = data.fields.filter((f) => f.crmMatches === false);
+  // CRM "on file" chips, annotated with whether each agrees with the reference.
+  const crmChips = data.fields
+    .filter((f) => f.crmValue)
+    .map((f) => ({ label: f.label, value: f.crmValue as string, ok: f.crmMatches }));
 
   return (
     <GlassCard variant="panel" padded="md">
@@ -159,49 +182,71 @@ export function IdentityReconciliationPanel({ caseId }: { caseId: string }) {
           <div style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--sos-text-secondary)' }}>
             {data.overall === 'ok' ? (
               <>
-                All <strong>{data.documentCount}</strong> documents agree this is{' '}
-                <strong style={{ color: 'var(--sos-text-primary)' }}>{clientName}</strong>.
+                All <strong>{data.documentCount}</strong> documents agree on{' '}
+                <strong style={{ color: 'var(--sos-text-primary)' }}>{clientName}</strong>
+                {reference ? <> &mdash; checked against {reference}</> : null}.
               </>
             ) : (
               <>
                 <strong style={{ color: 'var(--sos-status-warning)' }}>{mismatchCount}</strong> of{' '}
                 <strong>{data.documentCount}</strong> documents don&apos;t match{' '}
-                <strong style={{ color: 'var(--sos-text-primary)' }}>{clientName}</strong>. Check the
-                flagged ones before accepting &mdash; they may belong to someone else or be the wrong
-                file.
+                {reference ? <>{reference}</> : <strong>{clientName}</strong>}. Check the flagged
+                ones before accepting &mdash; they may belong to someone else or be the wrong file.
               </>
             )}
           </div>
 
-          {/* 2 — who we're checking against */}
+          {/* 2 — the CRM record on file, annotated against the reference */}
           {crmChips.length > 0 ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-              <span
-                style={{
-                  fontSize: 10.5,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  color: 'var(--sos-text-muted)',
-                }}
-              >
-                On file
-              </span>
-              {crmChips.map(([k, v]) => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
                 <span
-                  key={k}
                   style={{
-                    fontSize: 11.5,
-                    padding: '2px 8px',
-                    borderRadius: 'var(--sos-radius-sm)',
-                    background: 'var(--sos-surface)',
-                    border: '1px solid var(--sos-border-subtle)',
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
                     color: 'var(--sos-text-muted)',
                   }}
                 >
-                  {k}: <strong style={{ color: 'var(--sos-text-primary)' }}>{v}</strong>
+                  On file (CRM)
                 </span>
-              ))}
+                {crmChips.map((c) => {
+                  const bad = c.ok === false;
+                  return (
+                    <span
+                      key={c.label}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 11.5,
+                        padding: '2px 8px',
+                        borderRadius: 'var(--sos-radius-sm)',
+                        background: 'var(--sos-surface)',
+                        border: `1px solid ${bad ? 'var(--sos-status-warning)' : 'var(--sos-border-subtle)'}`,
+                        color: 'var(--sos-text-muted)',
+                      }}
+                    >
+                      {bad ? <X size={11} style={{ color: 'var(--sos-status-warning)' }} /> : null}
+                      {c.label}: <strong style={{ color: 'var(--sos-text-primary)' }}>{c.value}</strong>
+                    </span>
+                  );
+                })}
+              </div>
+              {crmConflicts.length > 0 && reference ? (
+                <div style={{ fontSize: 11.5, color: 'var(--sos-status-warning)', lineHeight: 1.5 }}>
+                  {crmConflicts.map((f) => (
+                    <div key={f.key}>
+                      CRM {f.label} (<strong>{f.crmValue}</strong>) doesn&apos;t match {reference}
+                      {f.referenceValue ? (
+                        <> (<strong>{f.referenceValue}</strong>)</>
+                      ) : null}{' '}
+                      &mdash; consider updating the CRM.
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -210,12 +255,23 @@ export function IdentityReconciliationPanel({ caseId }: { caseId: string }) {
             {docViews.map((d) => {
               const matchedLabels = d.cells.filter((c) => c.matches).map((c) => c.label);
               const offCells = d.cells.filter((c) => !c.matches);
-              const tone: BadgeTone = d.anyMismatch ? 'warning' : 'success';
-              const verdict = !d.anyMismatch
-                ? 'Matches'
-                : d.nameMismatch
-                  ? 'Different name'
-                  : 'Check detail';
+              const tone: BadgeTone = d.isReference
+                ? 'info'
+                : d.anyMismatch
+                  ? 'warning'
+                  : 'success';
+              const verdict = d.isReference
+                ? 'Reference'
+                : !d.anyMismatch
+                  ? 'Matches'
+                  : d.nameMismatch
+                    ? 'Different name'
+                    : 'Check detail';
+              const accent = d.isReference
+                ? 'var(--sos-brand-primary-strong)'
+                : d.anyMismatch
+                  ? 'var(--sos-status-warning)'
+                  : 'var(--sos-status-success)';
               return (
                 <div
                   key={d.itemId}
@@ -227,13 +283,13 @@ export function IdentityReconciliationPanel({ caseId }: { caseId: string }) {
                     borderRadius: 'var(--sos-radius-md)',
                     background: 'var(--sos-surface-hover)',
                     border: '1px solid var(--sos-border-subtle)',
-                    borderLeft: `3px solid ${
-                      d.anyMismatch ? 'var(--sos-status-warning)' : 'var(--sos-status-success)'
-                    }`,
+                    borderLeft: `3px solid ${accent}`,
                   }}
                 >
                   <span style={{ marginTop: 1, flexShrink: 0 }}>
-                    {d.anyMismatch ? (
+                    {d.isReference ? (
+                      <ShieldCheck size={14} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+                    ) : d.anyMismatch ? (
                       <AlertTriangle size={14} style={{ color: 'var(--sos-status-warning)' }} />
                     ) : (
                       <Check size={14} style={{ color: 'var(--sos-status-success)' }} />
@@ -246,7 +302,11 @@ export function IdentityReconciliationPanel({ caseId }: { caseId: string }) {
                       </span>
                       <StatusBadge tone={tone} size="sm">{verdict}</StatusBadge>
                     </div>
-                    {d.anyMismatch ? (
+                    {d.isReference ? (
+                      <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)', marginTop: 3 }}>
+                        Source of truth &mdash; every other document is checked against this.
+                      </div>
+                    ) : d.anyMismatch ? (
                       <div
                         style={{
                           fontSize: 11.5,
@@ -274,7 +334,7 @@ export function IdentityReconciliationPanel({ caseId }: { caseId: string }) {
             })}
           </div>
 
-          {/* 4 — field-by-field detail (collapsible; for same-person-detail-differs cases) */}
+          {/* 4 — field-by-field detail (collapsible) */}
           <div>
             <button
               type="button"

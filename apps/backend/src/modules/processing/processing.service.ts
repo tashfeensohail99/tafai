@@ -3118,6 +3118,108 @@ export class ProcessingService {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // TAB ACTIVITY — per-user "new items" count badges on the case workspace
+  // -------------------------------------------------------------------------
+
+  /**
+   * Count, per workspace tab, the items newer than the moment this user last
+   * opened that tab. Powers the count badges so an officer can see new notes /
+   * documents / corrections / WhatsApp / tasks without opening each tab. A tab
+   * with no record yet counts everything (the user has never looked); it clears
+   * to zero once they open the tab (markCaseTabSeen).
+   */
+  async getCaseTabActivity(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+
+    const views = await this.prisma.caseTabView.findMany({
+      where: { caseId, userId: user.id },
+      select: { tab: true, lastSeenAt: true },
+    });
+    const EPOCH = new Date(0);
+    const seen = new Map(views.map((v) => [v.tab, v.lastSeenAt]));
+    const since = (tab: string): Date => seen.get(tab) ?? EPOCH;
+
+    // Resolve the case's WhatsApp thread once so we can count unseen INBOUND
+    // messages (same lookup the WhatsApp tab uses).
+    const pc = await this.prisma.processingCase.findUnique({
+      where: { id: caseId },
+      select: { leadId: true, clientId: true },
+    });
+    const thread = pc
+      ? await this.prisma.whatsAppThread.findFirst({
+          where: {
+            OR: [
+              ...(pc.leadId ? [{ leadId: pc.leadId }] : []),
+              ...(pc.clientId ? [{ clientId: pc.clientId }] : []),
+            ],
+          },
+          orderBy: { lastMessageAt: 'desc' },
+          select: { id: true },
+        })
+      : null;
+
+    const [notes, communications, tasks, corrections, inboundDocs, docVersions, whatsapp] =
+      await Promise.all([
+        this.prisma.processingNote.count({
+          where: { caseId, createdAt: { gt: since('notes') } },
+        }),
+        this.prisma.caseCommunication.count({
+          where: { caseId, createdAt: { gt: since('communications') } },
+        }),
+        this.prisma.processingTask.count({
+          where: { caseId, createdAt: { gt: since('tasks') } },
+        }),
+        this.prisma.correctionRequest.count({
+          // updatedAt — so a newly-escalated/resolved correction also counts.
+          where: { caseId, updatedAt: { gt: since('corrections') } },
+        }),
+        this.prisma.inboundDocument.count({
+          where: { caseId, status: 'PENDING', createdAt: { gt: since('documents') } },
+        }),
+        this.prisma.clientDocumentVersion.count({
+          where: { caseId, uploadedAt: { gt: since('documents') } },
+        }),
+        thread
+          ? this.prisma.whatsAppMessage.count({
+              where: {
+                threadId: thread.id,
+                direction: 'INBOUND',
+                createdAt: { gt: since('whatsapp') },
+              },
+            })
+          : Promise.resolve(0),
+      ]);
+
+    return {
+      notes,
+      communications,
+      tasks,
+      corrections,
+      // A "new document" is one that arrived: a pending inbound doc OR a freshly
+      // uploaded version against a checklist slot.
+      documents: inboundDocs + docVersions,
+      whatsapp,
+    };
+  }
+
+  /** Mark a workspace tab as seen (now) for this user — clears its badge. */
+  async markCaseTabSeen(caseId: string, tab: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const ALLOWED = new Set([
+      'milestones', 'documents', 'timeline', 'communications', 'finance',
+      'whatsapp', 'notes', 'tasks', 'submissions', 'corrections',
+    ]);
+    if (!ALLOWED.has(tab)) throw new BadRequestException('Unknown tab');
+    const now = new Date();
+    await this.prisma.caseTabView.upsert({
+      where: { caseId_userId_tab: { caseId, userId: user.id, tab } },
+      create: { caseId, userId: user.id, tab, lastSeenAt: now },
+      update: { lastSeenAt: now },
+    });
+    return { success: true };
+  }
+
   /**
    * P5-nudges: system-initiated WhatsApp send (no user context).
    * Used by ClientNudgeService for cron-driven reminders.

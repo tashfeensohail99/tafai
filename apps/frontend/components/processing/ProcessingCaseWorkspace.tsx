@@ -3,7 +3,7 @@
 // Full case view with left metadata rail and tabbed panel.
 // Tabs: Documents · Timeline · Communications · Notes · Tasks · Submissions
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useSearchParams } from 'next/navigation';
@@ -51,6 +51,8 @@ import {
 import {
   fetchProcessingCase,
   fetchCaseFinance,
+  fetchCaseTabActivity,
+  markCaseTabSeen,
   casePersonName,
   casePersonPhone,
   type ApiProcessingCaseDetail,
@@ -221,6 +223,50 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
     return () => { cancelled = true; };
   }, [caseId, refetchTick]);
 
+  // --- Tab "new items" badges -----------------------------------------------
+  // Per-user unseen counts per tab (notes / documents / corrections / whatsapp
+  // / comms / tasks). Opening a tab marks it seen so its badge clears. The
+  // active tab never shows a badge (you're already looking at it).
+  const [tabActivity, setTabActivity] = useState<Record<string, number>>({});
+  const activeTabRef = useRef<TabKey>(activeTab);
+  activeTabRef.current = activeTab;
+
+  const loadActivity = useCallback(() => {
+    fetchCaseTabActivity(caseId)
+      .then((a) => setTabActivity(a as unknown as Record<string, number>))
+      .catch(() => { /* non-fatal — badges just keep their last values */ });
+  }, [caseId]);
+
+  const markSeen = useCallback((tab: TabKey) => {
+    setTabActivity((prev) => ({ ...prev, [tab]: 0 })); // optimistic clear
+    markCaseTabSeen(caseId, tab).catch(() => { /* non-fatal */ });
+  }, [caseId]);
+
+  const switchTab = useCallback((next: TabKey) => {
+    markSeen(activeTabRef.current); // finished viewing the current tab
+    setActiveTab(next);
+    markSeen(next);                 // now viewing the next tab
+  }, [markSeen]);
+
+  // Pull counts on load + whenever the case is refetched.
+  useEffect(() => { loadActivity(); }, [loadActivity, refetchTick]);
+
+  // Mark the initially-open tab (deep-link or default) seen, once per case.
+  useEffect(() => { markSeen(activeTabRef.current); }, [caseId, markSeen]);
+
+  // Keep counts live while the workspace is open: refresh on a slow poll + on
+  // window focus, and re-mark the active tab seen each tick so its badge never
+  // accrues while it's the tab you're looking at.
+  useEffect(() => {
+    const tick = () => {
+      loadActivity();
+      markCaseTabSeen(caseId, activeTabRef.current).catch(() => { /* non-fatal */ });
+    };
+    window.addEventListener('focus', tick);
+    const id = window.setInterval(tick, 60000);
+    return () => { window.removeEventListener('focus', tick); window.clearInterval(id); };
+  }, [caseId, loadActivity]);
+
   if (loadErr) {
     return (
       <GlassCard variant="panel" padded="lg">
@@ -368,11 +414,13 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
             {TABS.map((tab) => {
               const Icon = tab.Icon;
               const isActive = activeTab === tab.key;
+              // The active tab is always "seen", so it never shows a badge.
+              const newCount = isActive ? 0 : (tabActivity[tab.key] ?? 0);
               return (
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => setActiveTab(tab.key)}
+                  onClick={() => switchTab(tab.key)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -391,6 +439,29 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
                 >
                   <Icon size={13} />
                   {tab.label}
+                  {newCount > 0 ? (
+                    <span
+                      aria-label={`${newCount} new`}
+                      title={`${newCount} new since you last looked`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minWidth: '16px',
+                        height: '16px',
+                        padding: '0 5px',
+                        marginLeft: '1px',
+                        borderRadius: '8px',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        color: '#fff',
+                        background: 'var(--sos-status-danger)',
+                      }}
+                    >
+                      {newCount > 99 ? '99+' : newCount}
+                    </span>
+                  ) : null}
                 </button>
               );
             })}

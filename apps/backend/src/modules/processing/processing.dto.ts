@@ -591,9 +591,25 @@ export class ReviewDocumentDto {
 
 export class CreateProcessingNoteDto {
   @IsString()
-  @MinLength(10)
+  @MinLength(1)
   @MaxLength(5000)
   content!: string;
+
+  @IsOptional()
+  @IsEnum(ProcessingNoteType)
+  noteType?: ProcessingNoteType;
+
+  @IsOptional()
+  @IsUUID(undefined, { each: true })
+  mentions?: string[];
+}
+
+export class UpdateProcessingNoteDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(5000)
+  content?: string;
 
   @IsOptional()
   @IsEnum(ProcessingNoteType)

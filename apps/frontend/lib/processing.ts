@@ -447,6 +447,12 @@ export function fetchProcessingOfficers(): Promise<ApiProcessingOfficer[]> {
   return apiFetch<ApiProcessingOfficer[]>('/processing/officers', { cache: 'no-store' });
 }
 
+/** Processing teammates who can be @mentioned in a case note. Same roster as
+ *  /officers but reachable by any note-capable user (associates included). */
+export function fetchNoteMentionCandidates(): Promise<ApiProcessingOfficer[]> {
+  return apiFetch<ApiProcessingOfficer[]>('/processing/note-mention-candidates', { cache: 'no-store' });
+}
+
 export function changeCaseStage(
   caseId: string,
   body: {
@@ -659,6 +665,7 @@ export interface ApiProcessingNote {
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
+  editedAt?: string | null;
   createdBy?: { id: string; email: string } | null;
 }
 
@@ -687,6 +694,26 @@ export function pinCaseNote(
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+export function updateCaseNote(
+  caseId: string,
+  noteId: string,
+  body: { content?: string; noteType?: ProcessingNoteType; mentions?: string[] },
+): Promise<ApiProcessingNote> {
+  return apiFetch<ApiProcessingNote>(`/processing/cases/${caseId}/notes/${noteId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+export function deleteCaseNote(caseId: string, noteId: string): Promise<{ success: boolean }> {
+  return apiFetch(`/processing/cases/${caseId}/notes/${noteId}`, {
+    method: 'DELETE',
     cache: 'no-store',
   });
 }

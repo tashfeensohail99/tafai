@@ -1067,6 +1067,101 @@ export class ProcessingService {
     return { cases: casesWithProgress, total, page: query.page ?? 1, limit: query.limit ?? 20 };
   }
 
+  /**
+   * Compact finance summary for a case's client — agreed fee, paid, balance,
+   * plus the invoice / payment / receipt lists. Aggregated by BOTH the case's
+   * lead and client so it covers finance-originated AND manually-created
+   * clients (whose invoices are keyed by clientId only). Money figures are in
+   * the CAD ledger base, matching how payments apply to invoices. Powers the
+   * Finance tab on the case workspace (the /finance/customer endpoint is
+   * finance-permission-gated + lead-only, so processing can't reuse it).
+   */
+  async getCaseFinance(caseId: string) {
+    const pc = await this.prisma.processingCase.findUnique({
+      where: { id: caseId },
+      select: { id: true, leadId: true, clientId: true },
+    });
+    if (!pc) throw new NotFoundException('Case not found');
+
+    const ownerOr: Array<{ leadId: string } | { clientId: string }> = [];
+    if (pc.leadId) ownerOr.push({ leadId: pc.leadId });
+    if (pc.clientId) ownerOr.push({ clientId: pc.clientId });
+    if (ownerOr.length === 0) {
+      return { currency: 'CAD', totalAgreed: 0, totalPaid: 0, balance: 0, contract: null, invoices: [], payments: [], receipts: [] };
+    }
+
+    const num = (d: Prisma.Decimal | string | number | null | undefined): number =>
+      d == null ? 0 : Number(d.toString());
+
+    const [contract, invoices, payments, receipts] = await Promise.all([
+      this.prisma.serviceContract.findFirst({
+        where: { OR: ownerOr, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { contractNumber: true, totalAmount: true, currency: true, status: true },
+      }),
+      this.prisma.invoice.findMany({
+        where: { OR: ownerOr, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, invoiceNumber: true, status: true, currency: true, totalAmount: true, paidAmount: true, dueDate: true, notes: true, createdAt: true },
+      }),
+      this.prisma.payment.findMany({
+        where: { deletedAt: null, invoice: { OR: ownerOr } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, amount: true, currency: true, baseAmount: true, status: true, paymentMethod: true, transactionRef: true, paidAt: true },
+      }),
+      this.prisma.receipt.findMany({
+        where: { OR: ownerOr },
+        orderBy: { issuedAt: 'desc' },
+        select: { id: true, receiptNumber: true, amount: true, currency: true, paymentMethod: true, issuedAt: true, voidedAt: true },
+      }),
+    ]);
+
+    const totalPaid = invoices.reduce((s, i) => s + num(i.paidAmount), 0);
+    const invoiceTotal = invoices.reduce((s, i) => s + num(i.totalAmount), 0);
+    const totalAgreed = contract ? num(contract.totalAmount) : invoiceTotal;
+    const currency = contract?.currency || invoices[0]?.currency || 'CAD';
+
+    return {
+      currency,
+      totalAgreed,
+      totalPaid,
+      balance: Math.max(0, totalAgreed - totalPaid),
+      contract: contract
+        ? { contractNumber: contract.contractNumber, totalAmount: num(contract.totalAmount), currency: contract.currency, status: contract.status }
+        : null,
+      invoices: invoices.map((i) => ({
+        id: i.id,
+        invoiceNumber: i.invoiceNumber,
+        status: i.status,
+        currency: i.currency,
+        totalAmount: num(i.totalAmount),
+        paidAmount: num(i.paidAmount),
+        dueDate: i.dueDate,
+        notes: i.notes,
+        createdAt: i.createdAt,
+      })),
+      payments: payments.map((p) => ({
+        id: p.id,
+        amount: num(p.amount),
+        currency: p.currency,
+        baseAmount: num(p.baseAmount),
+        status: p.status,
+        paymentMethod: p.paymentMethod,
+        transactionRef: p.transactionRef,
+        paidAt: p.paidAt,
+      })),
+      receipts: receipts.map((r) => ({
+        id: r.id,
+        receiptNumber: r.receiptNumber,
+        amount: num(r.amount),
+        currency: r.currency,
+        paymentMethod: r.paymentMethod,
+        issuedAt: r.issuedAt,
+        voided: Boolean(r.voidedAt),
+      })),
+    };
+  }
+
   async getCaseById(caseId: string, user: RequestUser) {
     const processingCase = await this.prisma.processingCase.findUnique({
       where: { id: caseId },

@@ -1242,6 +1242,52 @@ export function sendCaseCommunication(
 }
 
 // ---------------------------------------------------------------------------
+// Case finance summary (workspace Finance tab)
+// ---------------------------------------------------------------------------
+
+export interface CaseFinanceSummary {
+  currency: string;
+  totalAgreed: number;
+  totalPaid: number;
+  balance: number;
+  contract: { contractNumber: string; totalAmount: number; currency: string; status: string } | null;
+  invoices: Array<{
+    id: string;
+    invoiceNumber: string;
+    status: string;
+    currency: string;
+    totalAmount: number;
+    paidAmount: number;
+    dueDate: string | null;
+    notes: string | null;
+    createdAt: string;
+  }>;
+  payments: Array<{
+    id: string;
+    amount: number;
+    currency: string;
+    baseAmount: number;
+    status: string;
+    paymentMethod: string | null;
+    transactionRef: string | null;
+    paidAt: string | null;
+  }>;
+  receipts: Array<{
+    id: string;
+    receiptNumber: string;
+    amount: number;
+    currency: string;
+    paymentMethod: string | null;
+    issuedAt: string;
+    voided: boolean;
+  }>;
+}
+
+export function fetchCaseFinance(caseId: string): Promise<CaseFinanceSummary> {
+  return apiFetch<CaseFinanceSummary>(`/processing/cases/${caseId}/finance`, { cache: 'no-store' });
+}
+
+// ---------------------------------------------------------------------------
 // Authority submissions
 // ---------------------------------------------------------------------------
 

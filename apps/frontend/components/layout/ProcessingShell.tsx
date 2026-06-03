@@ -16,6 +16,8 @@ import {
   LayoutGrid,
   LogOut,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Send,
   Settings2,
   Sparkles,
@@ -124,6 +126,27 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const session = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Desktop sidebar rail (collapsed, icon-only) — persisted across sessions so
+  // the user's space preference sticks. Mobile keeps its off-canvas drawer.
+  const [railed, setRailed] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('proc.sidebar.railed') === '1') setRailed(true);
+    } catch {
+      /* localStorage unavailable — default expanded */
+    }
+  }, []);
+  const toggleRail = () => {
+    setRailed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('proc.sidebar.railed', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
   // Sidebar KPIs come from /processing/dashboard. Refreshed every 30s so the
   // intake badge + "ready to file" counter track reality without the user
   // hitting refresh. Survives a single failure (keeps the last good values).
@@ -210,7 +233,7 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
 
   return (
     <ProcessingSessionContext.Provider value={sessionValue}>
-      <div className="sos-shell">
+      <div className={`sos-shell ${railed ? 'is-railed' : ''}`}>
         {/* ── Sidebar ─────────────────────────────────────────────────── */}
         <aside className={`sos-sidebar sos-scroll ${mobileOpen ? 'is-open' : ''}`}>
           <div className="sos-sidebar__brand">
@@ -221,6 +244,16 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
               <div className="sos-sidebar__brand-name">Tashfeen</div>
               <div className="sos-sidebar__brand-tagline">Processing OS</div>
             </div>
+            {/* Desktop rail toggle — collapse to an icon rail / expand back. */}
+            <button
+              type="button"
+              className="sos-rail-toggle"
+              onClick={toggleRail}
+              aria-label={railed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={railed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
             <button
               type="button"
               aria-label="Close menu"

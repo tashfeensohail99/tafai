@@ -706,6 +706,59 @@
   box-shadow: var(--sos-shadow-glow);
 }
 
+/* ---------------------------------------------------------------
+   Desktop sidebar rail (collapsed) — shrinks the sidebar to an
+   icon-only rail to reclaim horizontal space. Toggled per-user in
+   ProcessingShell (persisted). Mobile keeps its off-canvas drawer
+   below, so these rules are scoped to desktop widths only.
+   --------------------------------------------------------------- */
+.sos-rail-toggle { display: none; } /* base: mobile uses the ☰ drawer toggle */
+
+@media (min-width: 1024px) {
+  .sos-sidebar { transition: width 200ms ease; }
+
+  .sos-rail-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    padding: 6px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--sos-sidebar-text-muted);
+    cursor: pointer;
+    transition: background 150ms ease, color 150ms ease;
+  }
+  .sos-rail-toggle:hover {
+    color: var(--sos-sidebar-text-strong);
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .sos-shell.is-railed .sos-sidebar { width: 76px; }
+  .sos-shell.is-railed .sos-sidebar__brand {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .sos-shell.is-railed .sos-sidebar__brand-logo,
+  .sos-shell.is-railed .sos-sidebar__brand-text,
+  .sos-shell.is-railed .sos-nav-section,
+  .sos-shell.is-railed .sos-nav-link__body,
+  .sos-shell.is-railed .sos-nav-link__badge,
+  .sos-shell.is-railed .sos-sidebar__panel,
+  .sos-shell.is-railed .sos-sidebar__user > div:not(.sos-sidebar__user-avatar) {
+    display: none;
+  }
+  .sos-shell.is-railed .sos-rail-toggle { margin-left: 0; }
+  .sos-shell.is-railed .sos-nav-link {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .sos-shell.is-railed .sos-sidebar__user { justify-content: center; }
+}
+
 @media (max-width: 1023px) {
   .sos-sidebar {
     position: fixed;

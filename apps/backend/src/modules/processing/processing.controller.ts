@@ -465,8 +465,9 @@ export class ProcessingController {
   getCaseWhatsApp(
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @CurrentUser() user: RequestUser,
+    @Query('before') before?: string,
   ) {
-    return this.processingService.getCaseWhatsApp(caseId, user);
+    return this.processingService.getCaseWhatsApp(caseId, user, before);
   }
 
   @Post('cases/:caseId/whatsapp')

@@ -1,30 +1,103 @@
 'use client';
 // WhatsApp Tab — the live two-way thread for this case's client, wired to
-// /processing/cases/:id/whatsapp (read) + POST (send). Scoped by case access
-// on the backend, so processing officers don't need WhatsApp-inbox perms.
-// Send respects the 24h customer-service window (enforced server-side too).
+// /processing/cases/:id/whatsapp (read, paginated) + POST (send). Scoped by
+// case access on the backend, so processing officers don't need WhatsApp-inbox
+// perms. Renders the COMPLETE history (load older), inline media (photos / voice
+// / documents), delivery/read ticks, and clock-time stamps. Send respects the
+// 24h customer-service window (enforced server-side too).
 
-import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, FileText, Image as ImageIcon, Loader2, MessageCircle, Send } from 'lucide-react';
-import { GlassCard, EmptyState, PrimaryButton } from '@/components/sales-v2/ui';
-import { type MockProcessingCase, fmtRelative } from '@/components/processing/mockData';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  CheckCheck,
+  Clock,
+  Download,
+  FileText,
+  Film,
+  Loader2,
+  MessageCircle,
+  Send,
+} from 'lucide-react';
+import { GlassCard, EmptyState, PrimaryButton, SecondaryButton } from '@/components/sales-v2/ui';
+import { type MockProcessingCase } from '@/components/processing/mockData';
 import {
   fetchCaseWhatsApp,
   sendCaseWhatsApp,
-  type ApiCaseWhatsApp,
   type ApiCaseWhatsAppMessage,
 } from '@/lib/processing';
 
+function fmtClock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toDateString() === now.toDateString()
+    ? time
+    : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
+function StatusTicks({ status }: { status: string }) {
+  const s = (status || '').toUpperCase();
+  if (s === 'READ') return <CheckCheck size={13} style={{ color: '#34b7f1' }} />;
+  if (s === 'DELIVERED') return <CheckCheck size={13} style={{ color: 'var(--sos-text-muted)' }} />;
+  if (s === 'SENT') return <Check size={13} style={{ color: 'var(--sos-text-muted)' }} />;
+  if (s === 'FAILED') return <span style={{ color: 'var(--sos-status-danger)', fontSize: 10 }}>failed</span>;
+  return <Clock size={11} style={{ color: 'var(--sos-text-muted)' }} />; // QUEUED / PENDING
+}
+
+function MediaUnavailable({ label }: { label: string }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--sos-text-muted)', fontStyle: 'italic', fontSize: 12.5 }}>
+      <AlertTriangle size={12} /> {label} · unavailable
+    </span>
+  );
+}
+
+function MessageBody({ m }: { m: ApiCaseWhatsAppMessage }) {
+  const t = (m.type || 'TEXT').toUpperCase();
+  const url = m.mediaSignedUrl;
+
+  if (t === 'IMAGE' || t === 'STICKER') {
+    return url ? (
+      <a href={url} target="_blank" rel="noopener noreferrer">
+        <img src={url} alt="photo" style={{ maxWidth: '100%', maxHeight: 260, borderRadius: 8, display: 'block' }} />
+      </a>
+    ) : <MediaUnavailable label="Photo" />;
+  }
+  if (t === 'AUDIO' || t === 'VOICE') {
+    return url ? (
+      // eslint-disable-next-line jsx-a11y/media-has-caption
+      <audio controls src={url} style={{ width: 220, maxWidth: '100%' }} />
+    ) : <MediaUnavailable label="Voice note" />;
+  }
+  if (t === 'VIDEO') {
+    return url ? (
+      <a href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--sos-brand-primary-strong)', fontSize: 13 }}>
+        <Film size={14} /> {m.mediaFilename || 'Video'} <Download size={12} />
+      </a>
+    ) : <MediaUnavailable label="Video" />;
+  }
+  if (t === 'DOCUMENT') {
+    return url ? (
+      <a href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--sos-brand-primary-strong)', fontSize: 13 }}>
+        <FileText size={14} /> {m.mediaFilename || 'Document'} <Download size={12} />
+      </a>
+    ) : <MediaUnavailable label={m.mediaFilename || 'Document'} />;
+  }
+  // TEXT and everything else
+  return <span style={{ whiteSpace: 'pre-wrap' }}>{m.body ?? ''}</span>;
+}
+
 function MessageBubble({ m }: { m: ApiCaseWhatsAppMessage }) {
   const outbound = m.direction === 'OUTBOUND';
-  const isMedia = ['IMAGE', 'DOCUMENT', 'VIDEO', 'AUDIO'].includes(m.type);
-  const mediaLabel =
-    m.type === 'IMAGE' ? 'Photo' : m.type === 'DOCUMENT' ? 'Document' : m.type === 'VIDEO' ? 'Video' : 'Voice note';
+  const isMedia = ['IMAGE', 'STICKER', 'AUDIO', 'VOICE', 'VIDEO', 'DOCUMENT'].includes((m.type || '').toUpperCase());
+  const hasCaption = isMedia && !!m.body && !['VIDEO', 'DOCUMENT'].includes((m.type || '').toUpperCase());
   return (
     <div style={{ display: 'flex', justifyContent: outbound ? 'flex-end' : 'flex-start' }}>
       <div
         style={{
-          maxWidth: '75%',
+          maxWidth: '78%',
           padding: '8px 12px',
           borderRadius: 12,
           fontSize: 13,
@@ -34,18 +107,11 @@ function MessageBubble({ m }: { m: ApiCaseWhatsAppMessage }) {
           color: 'var(--sos-text-primary)',
         }}
       >
-        {isMedia ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--sos-text-secondary)' }}>
-            {m.type === 'IMAGE' ? <ImageIcon size={13} /> : <FileText size={13} />}
-            {mediaLabel}
-            {m.body ? ` · ${m.body}` : ''}
-          </span>
-        ) : (
-          <span style={{ whiteSpace: 'pre-wrap' }}>{m.body ?? ''}</span>
-        )}
-        <div style={{ fontSize: 10, color: 'var(--sos-text-muted)', marginTop: 4, textAlign: outbound ? 'right' : 'left' }}>
-          {fmtRelative(m.createdAt)}
-          {outbound ? ` · ${m.status.toLowerCase()}` : ''}
+        <MessageBody m={m} />
+        {hasCaption ? <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>{m.body}</div> : null}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: outbound ? 'flex-end' : 'flex-start', gap: 4, fontSize: 10, color: 'var(--sos-text-muted)', marginTop: 4 }}>
+          <span>{fmtClock(m.createdAt)}</span>
+          {outbound ? <StatusTicks status={m.status} /> : null}
         </div>
       </div>
     </div>
@@ -53,36 +119,78 @@ function MessageBubble({ m }: { m: ApiCaseWhatsAppMessage }) {
 }
 
 export function WhatsAppTab({ c }: { c: MockProcessingCase }) {
-  const [data, setData] = useState<ApiCaseWhatsApp | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [windowOpen, setWindowOpen] = useState(false);
+  const [messages, setMessages] = useState<ApiCaseWhatsAppMessage[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendWarn, setSendWarn] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
-  async function load() {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const restoreHeightRef = useRef<number | null>(null);
+  const initialisedRef = useRef(false);
+
+  const merge = useCallback((incoming: ApiCaseWhatsAppMessage[]) => {
+    setMessages((prev) => {
+      const byId = new Map(prev.map((m) => [m.id, m]));
+      for (const m of incoming) byId.set(m.id, m); // incoming wins → status updates apply
+      return [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    });
+  }, []);
+
+  const loadLatest = useCallback(async () => {
     try {
       const d = await fetchCaseWhatsApp(c.id);
-      setData(d);
+      setThreadId(d.threadId);
+      setWindowOpen(d.windowOpen);
+      merge(d.messages);
+      if (!initialisedRef.current) { setHasMore(!!d.hasMore); initialisedRef.current = true; }
       setErr(null);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Failed to load WhatsApp');
     } finally {
       setLoading(false);
     }
+  }, [c.id, merge]);
+
+  useEffect(() => {
+    void loadLatest();
+    const t = setInterval(() => void loadLatest(), 15000); // light poll for new inbound + status
+    return () => clearInterval(t);
+  }, [loadLatest]);
+
+  async function loadOlder() {
+    if (!messages.length || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const d = await fetchCaseWhatsApp(c.id, messages[0].createdAt);
+      const fresh = d.messages.filter((m) => !messages.some((x) => x.id === m.id));
+      if (fresh.length) {
+        restoreHeightRef.current = scrollerRef.current?.scrollHeight ?? 0; // preserve view on prepend
+        merge(d.messages);
+      }
+      setHasMore(!!d.hasMore);
+    } catch {
+      /* non-fatal */
+    } finally {
+      setLoadingOlder(false);
+    }
   }
 
-  useEffect(() => {
-    void load();
-    const t = setInterval(() => void load(), 15000); // light poll for new inbound
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [c.id]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [data?.messages.length]);
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    if (restoreHeightRef.current != null) {
+      el.scrollTop = el.scrollHeight - restoreHeightRef.current; // keep position after loading older
+      restoreHeightRef.current = null;
+    } else {
+      el.scrollTop = el.scrollHeight; // stick to bottom on new / initial
+    }
+  }, [messages]);
 
   async function handleSend() {
     const body = draft.trim();
@@ -93,7 +201,7 @@ export function WhatsAppTab({ c }: { c: MockProcessingCase }) {
       const res = await sendCaseWhatsApp(c.id, body);
       if (res.success) {
         setDraft('');
-        await load();
+        await loadLatest();
       } else {
         setSendWarn(res.reason ?? 'Message could not be sent');
       }
@@ -122,8 +230,6 @@ export function WhatsAppTab({ c }: { c: MockProcessingCase }) {
     );
   }
 
-  const windowOpen = data?.windowOpen ?? false;
-
   return (
     <GlassCard variant="panel" padded="md">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -135,30 +241,39 @@ export function WhatsAppTab({ c }: { c: MockProcessingCase }) {
       </div>
 
       <div
-        ref={scrollRef}
-        style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 440, overflowY: 'auto', padding: '4px 2px', marginBottom: 10 }}
+        ref={scrollerRef}
+        style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 460, overflowY: 'auto', padding: '4px 2px', marginBottom: 10 }}
       >
-        {!data?.threadId ? (
+        {!threadId ? (
           <EmptyState
             Icon={MessageCircle}
             title="No WhatsApp conversation yet"
-            description="When this client messages your business number on WhatsApp, the conversation appears here."
+            description="When this client messages your business number on WhatsApp, the full conversation appears here."
           />
-        ) : data.messages.length === 0 ? (
+        ) : messages.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', textAlign: 'center', padding: 16 }}>No messages yet.</div>
         ) : (
-          data.messages.map((m) => <MessageBubble key={m.id} m={m} />)
+          <>
+            {hasMore ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '2px 0 6px' }}>
+                <SecondaryButton onClick={loadOlder} disabled={loadingOlder} iconLeft={loadingOlder ? <Loader2 size={13} className="sos-spin" /> : undefined}>
+                  {loadingOlder ? 'Loading…' : 'Load older messages'}
+                </SecondaryButton>
+              </div>
+            ) : null}
+            {messages.map((m) => <MessageBubble key={m.id} m={m} />)}
+          </>
         )}
       </div>
 
-      {data?.threadId && !windowOpen ? (
+      {threadId && !windowOpen ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', border: '1px solid var(--sos-border-subtle)' }}>
           <AlertTriangle size={14} style={{ color: 'var(--sos-status-warning)', marginTop: 1, flexShrink: 0 }} />
           <div style={{ fontSize: 12, color: 'var(--sos-text-secondary)' }}>
             The 24-hour reply window is closed — WhatsApp only allows free-text replies within 24h of the client&apos;s last message. They need to message first, or send an approved template from the WhatsApp inbox.
           </div>
         </div>
-      ) : data?.threadId ? (
+      ) : threadId ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {sendWarn ? <div style={{ fontSize: 12, color: 'var(--sos-status-danger)' }}>{sendWarn}</div> : null}
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>

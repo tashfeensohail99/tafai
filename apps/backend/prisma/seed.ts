@@ -25,6 +25,8 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'employees.view_all', module: 'employees', description: 'View all employees' },
   { key: 'employees.create', module: 'employees', description: 'Create employee profiles' },
   { key: 'employees.update', module: 'employees', description: 'Update employee profiles' },
+  // Attendance & payroll (camera-attendance integration)
+  { key: 'attendance.view', module: 'attendance', description: 'View attendance + camera integration' },
   // Leads
   { key: 'leads.view_all', module: 'leads', description: 'View all leads' },
   { key: 'leads.view_assigned', module: 'leads', description: 'View assigned leads only' },

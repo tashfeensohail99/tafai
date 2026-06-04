@@ -44,6 +44,7 @@ import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AppointmentRequestsModule } from './modules/appointment-requests/appointment-requests.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { AttendanceModule } from './modules/attendance/attendance.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     AiModule,
     AppointmentRequestsModule,
     NotificationsModule,
+    AttendanceModule,
   ],
   providers: [
     // Global: keep Employee.lastActivityAt fresh on every authenticated request

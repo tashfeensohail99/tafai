@@ -17,6 +17,7 @@ import { DocumentParserClient } from './document-parser.client';
 import { ApiKeysService } from '../../api-keys/api-keys.service';
 import { computeValidityExpiry } from '../expiry';
 import { applyCrmAutoFill } from '../crm-auto-fill.helper';
+import { humanizeDocType } from './document-doctype-map';
 import {
   DOC_AI_QUEUE,
   type DocAiJob,
@@ -112,6 +113,7 @@ export class DocumentAiService {
             validityMonths: true,
             validityBufferDays: true,
             status: true,
+            isAdditional: true,
           },
         },
       },
@@ -192,6 +194,25 @@ export class DocumentAiService {
     }
 
     const assessment = await this.storeAssessment(version, item, resp, errorMessage);
+
+    // Give ad-hoc "Additional document" items a real identity from what the AI
+    // detected — so the team sees *what the file is* right after upload, not a
+    // generic placeholder. Suggestion only: the file still goes through normal
+    // review, and we never overwrite a name the uploader actually typed. Only
+    // the display name changes (not docType), to avoid touching classification-
+    // dependent logic (CRM auto-fill, identity reconciliation).
+    if (item.isAdditional && item.documentName === 'Additional document' && resp?.detectedDocType) {
+      const detected = resp.detectedDocType.trim().toUpperCase();
+      if (detected && detected !== 'OTHER' && detected !== 'UNKNOWN') {
+        const label = humanizeDocType(detected);
+        if (label) {
+          item.documentName = label; // keep in-memory copy in sync for the auto-approve timeline line
+          await this.prisma.caseDocumentItem
+            .update({ where: { id: item.id }, data: { documentName: label } })
+            .catch((e) => this.log.warn(`assess: could not label additional doc ${item.id}: ${String(e)}`));
+        }
+      }
+    }
 
     if (resp && this.shouldAutoApprove(resp, item, version)) {
       await this.autoApprove(version, item, resp, assessment.id, processingCase?.clientId ?? null);

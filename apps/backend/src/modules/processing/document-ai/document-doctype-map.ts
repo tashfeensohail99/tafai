@@ -41,6 +41,25 @@ const PARSER_TO_SLOT: Record<string, string[]> = {
   //   NATIONAL_ID, LANGUAGE_TEST, ACCEPTANCE_LETTER, VISA, OTHER
 };
 
+// Acronyms that should stay upper-cased in a human label (rather than "Id").
+const DOCTYPE_ACRONYMS = new Set(['ID', 'LMIA', 'CNIC', 'SOP', 'NICOP', 'NTN', 'IELTS', 'PTE', 'GIC']);
+
+/**
+ * Human-friendly label for a parser/slot docType code, e.g.
+ * BANK_STATEMENT -> "Bank Statement", NATIONAL_ID -> "National ID".
+ * Falls back to title-casing any unknown snake_case code. Returns '' for empty.
+ */
+export function humanizeDocType(code: string | null | undefined): string {
+  if (!code) return '';
+  return code
+    .trim()
+    .toLowerCase()
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => (DOCTYPE_ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
 /**
  * Ordered slot-docType candidates for a parser-detected type, best-first.
  * Always includes the raw detected value first so an exact-vocab match wins.

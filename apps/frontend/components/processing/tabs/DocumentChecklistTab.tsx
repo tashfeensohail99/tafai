@@ -21,6 +21,7 @@ import {
   Inbox,
   Loader2,
   MailQuestion,
+  Plus,
   Send,
   ShieldAlert,
   Sparkles,
@@ -52,6 +53,7 @@ import {
   requestMissingDocuments,
   updateDocumentAttestation,
   uploadOfficerDocument,
+  uploadAdditionalDocument,
   type ApiCaseDocumentItem,
   type ApiDocumentAiAssessment,
   type ApiInboundDocument,
@@ -537,6 +539,8 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
   const [err, setErr] = useState<string | null>(null);
   const [reqMsg, setReqMsg] = useState<string | null>(null);
   const [reqBusy, setReqBusy] = useState(false);
+  const [addBusy, setAddBusy] = useState(false);
+  const addFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -572,6 +576,26 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
       setReqBusy(false);
     }
   }
+
+  async function handleAddAdditional(file: File | undefined) {
+    if (!file) return;
+    setAddBusy(true);
+    setErr(null);
+    try {
+      await uploadAdditionalDocument(c.id, file);
+      reload();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setAddBusy(false);
+      if (addFileRef.current) addFileRef.current.value = '';
+    }
+  }
+
+  // Template checklist vs the extra "Additional Documents" (client/officer-added,
+  // AI-classified). Kept separate so they don't mix with the required slots.
+  const checklistItems = items.filter((i) => !i.isAdditional);
+  const additionalItems = items.filter((i) => i.isAdditional);
 
   // Progress: count CRITICAL + REQUIRED items that are settled
   // (ACCEPTED / WAIVED / NOT_APPLICABLE).
@@ -649,12 +673,52 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
           {/* Inbound triage tray (WhatsApp/email/portal) */}
           <InboundTray caseId={c.id} items={items} onFiled={reload} />
 
-          {/* Items */}
+          {/* Required-checklist items */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {items.map((d) => (
+            {checklistItems.map((d) => (
               <DocumentRow key={d.id} d={d} caseId={c.id} onChange={handleChange} onReload={reload} />
             ))}
           </div>
+
+          {/* Additional Documents — extra files not on the template checklist
+              (client- or team-uploaded). AI-classified; review like any doc. */}
+          <GlassCard variant="panel" padded="md">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: additionalItems.length ? 10 : 0 }}>
+              <Sparkles size={15} style={{ color: 'var(--sos-text-secondary)' }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Additional Documents</span>
+              {additionalItems.length ? <StatusBadge tone="cyan" size="sm">{additionalItems.length}</StatusBadge> : null}
+              <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+                Extra files outside the checklist — the AI labels each; review and accept or reject.
+              </span>
+              <div style={{ marginLeft: 'auto' }}>
+                <input
+                  ref={addFileRef}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  style={{ display: 'none' }}
+                  onChange={(e) => handleAddAdditional(e.target.files?.[0])}
+                />
+                <SecondaryButton
+                  iconLeft={addBusy ? <Loader2 size={13} /> : <Plus size={13} />}
+                  onClick={() => addFileRef.current?.click()}
+                  disabled={addBusy}
+                >
+                  {addBusy ? 'Uploading…' : 'Add document'}
+                </SecondaryButton>
+              </div>
+            </div>
+            {additionalItems.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
+                None yet — anything the client or team adds outside the checklist shows up here.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {additionalItems.map((d) => (
+                  <DocumentRow key={d.id} d={d} caseId={c.id} onChange={handleChange} onReload={reload} />
+                ))}
+              </div>
+            )}
+          </GlassCard>
         </>
       )}
     </div>

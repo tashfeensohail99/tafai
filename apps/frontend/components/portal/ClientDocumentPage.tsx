@@ -8,6 +8,7 @@ import {
   Eye,
   FileText,
   Loader2,
+  Plus,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ import {
   getDocumentChecklist,
   getDocumentSignedUrl,
   uploadDocument,
+  uploadAdditionalDocument,
   type PortalDocumentItem,
 } from '@/lib/portal';
 import { useClientSession } from '@/components/layout/ClientPortalShell';
@@ -559,6 +561,118 @@ function ExpiryBanner({ doc }: { doc: PortalDocumentItem }) {
   );
 }
 
+// ---------- Additional document upload modal ----------------------------
+
+function AdditionalUploadModal({
+  caseId,
+  onClose,
+  onUploaded,
+}: {
+  caseId: string;
+  onClose: () => void;
+  onUploaded: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [note, setNote] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  function handleFile(f: File) {
+    if (f.size > 10 * 1024 * 1024) {
+      setError('File too large. Maximum size is 10 MB.');
+      return;
+    }
+    setError(null);
+    setFile(f);
+  }
+
+  async function handleUpload() {
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    try {
+      await uploadAdditionalDocument(caseId, file, note);
+      setDone(true);
+      onUploaded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <GlassCard variant="strong" padded="lg" style={{ width: '100%', maxWidth: '480px' }}>
+        <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: '4px' }}>
+          Upload an additional document
+        </div>
+        <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginBottom: '16px' }}>
+          Anything extra you&apos;d like to share (a family document, an extra bank statement, etc.). Your case team will review it.
+        </div>
+        {done ? (
+          <div style={{ padding: '24px', textAlign: 'center' }}>
+            <CheckCircle2 size={40} style={{ color: 'var(--sos-status-success)', marginBottom: '10px' }} />
+            <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '6px' }}>Upload received</div>
+            <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', marginBottom: '20px' }}>Your case team will review it shortly.</div>
+            <button type="button" className="sos-btn sos-btn--primary" onClick={onClose}>Done</button>
+          </div>
+        ) : (
+          <>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '6px' }}>
+              What is this document? <span style={{ fontWeight: 400, color: 'var(--sos-text-muted)' }}>(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Father's bank statement"
+              maxLength={120}
+              style={{ width: '100%', padding: '9px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-2)', color: 'var(--sos-text-primary)', fontSize: '13px', marginBottom: '14px' }}
+            />
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+              onClick={() => document.getElementById('additional-file-input')?.click()}
+              style={{ border: `2px dashed ${dragging ? 'var(--sos-brand-primary-strong)' : file ? 'var(--sos-status-success)' : 'var(--sos-border-subtle)'}`, borderRadius: 'var(--sos-radius-md)', padding: '28px', textAlign: 'center', cursor: 'pointer', background: dragging ? 'var(--sos-brand-primary-soft)' : file ? 'var(--sos-status-success-soft)' : 'var(--sos-surface-2)', marginBottom: '14px' }}
+            >
+              <input id="additional-file-input" type="file" accept=".pdf,.jpg,.jpeg,.png,.heic" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+              {file ? (
+                <>
+                  <CheckCircle2 size={28} style={{ color: 'var(--sos-status-success)', marginBottom: '6px' }} />
+                  <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-text-primary)' }}>{file.name}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--sos-text-muted)' }}>{(file.size / 1024 / 1024).toFixed(1)} MB · Click to change</div>
+                </>
+              ) : (
+                <>
+                  <Upload size={28} style={{ color: 'var(--sos-text-muted)', marginBottom: '8px' }} />
+                  <div style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--sos-text-primary)', marginBottom: '4px' }}>Drag &amp; drop or click to browse</div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--sos-text-muted)' }}>PDF, JPG, PNG, HEIC · Max 10 MB</div>
+                </>
+              )}
+            </div>
+            {error ? <div className="sos-banner sos-banner--danger" style={{ marginBottom: 10 }}>{error}</div> : null}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button type="button" className="sos-btn sos-btn--ghost" onClick={onClose} disabled={uploading}>Cancel</button>
+              <button type="button" className="sos-btn sos-btn--primary" onClick={handleUpload} disabled={!file || uploading}>
+                {uploading ? 'Uploading…' : 'Upload'}
+              </button>
+            </div>
+          </>
+        )}
+      </GlassCard>
+    </div>
+  );
+}
+
 // ---------- Page ---------------------------------------------------------
 
 export function ClientDocumentPage() {
@@ -568,6 +682,7 @@ export function ClientDocumentPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadTarget, setUploadTarget] = useState<PortalDocumentItem | null>(null);
   const [filter, setFilter] = useState<DocFilter>('ALL');
+  const [addingAdditional, setAddingAdditional] = useState(false);
 
   const load = useCallback(async () => {
     if (!activeCase) return;
@@ -604,7 +719,11 @@ export function ClientDocumentPage() {
     return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error}</div>;
   }
 
-  const filtered = docs.filter((d) => matchesFilter(d, filter));
+  // Required-checklist items vs the client's extra "Additional Documents" —
+  // keep them separate so additional uploads don't skew the required counts.
+  const checklistDocs = docs.filter((d) => !d.isAdditional);
+  const additionalDocs = docs.filter((d) => d.isAdditional);
+  const filtered = checklistDocs.filter((d) => matchesFilter(d, filter));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -617,11 +736,11 @@ export function ClientDocumentPage() {
         </div>
       </div>
 
-      <DocProgressBar docs={docs} />
+      <DocProgressBar docs={checklistDocs} />
 
       <AttestationPlanPanel
         audience="client"
-        items={docs.map((d) => ({
+        items={checklistDocs.map((d) => ({
           id: d.id,
           documentName: d.documentName,
           attestationStatus: d.attestation?.status ?? 'NOT_REQUIRED',
@@ -629,7 +748,7 @@ export function ClientDocumentPage() {
         }))}
       />
 
-      <DocFilterTabs docs={docs} active={filter} onChange={setFilter} />
+      <DocFilterTabs docs={checklistDocs} active={filter} onChange={setFilter} />
 
       <GlassCard variant="panel" padded="md">
         {filtered.length === 0 ? (
@@ -654,11 +773,45 @@ export function ClientDocumentPage() {
         )}
       </GlassCard>
 
+      {/* Additional Documents — extra files not on the required checklist. */}
+      <GlassCard variant="panel" padded="md">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: additionalDocs.length ? 12 : 0, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Additional Documents</div>
+            <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>
+              Share anything extra that isn&apos;t on the checklist — your team will review it.
+            </div>
+          </div>
+          <button
+            type="button"
+            className="sos-btn sos-btn--sm sos-btn--primary"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}
+            onClick={() => setAddingAdditional(true)}
+          >
+            <Plus size={14} /> Add a document
+          </button>
+        </div>
+        {additionalDocs.map((doc) => (
+          <DocumentRow key={doc.id} doc={doc} caseId={activeCase.id} onUpload={setUploadTarget} />
+        ))}
+      </GlassCard>
+
       {uploadTarget ? (
         <UploadModal
           doc={uploadTarget}
           caseId={activeCase.id}
           onClose={() => setUploadTarget(null)}
+          onUploaded={() => {
+            void load();
+            void refreshCases();
+          }}
+        />
+      ) : null}
+
+      {addingAdditional ? (
+        <AdditionalUploadModal
+          caseId={activeCase.id}
+          onClose={() => setAddingAdditional(false)}
           onUploaded={() => {
             void load();
             void refreshCases();

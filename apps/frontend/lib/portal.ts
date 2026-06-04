@@ -101,6 +101,8 @@ export interface PortalDocumentItem {
   requestDeadline: string | null;
   latestVersion: PortalDocumentVersion | null;
   canUpload: boolean;
+  /** Extra doc the client added that isn't part of the checklist ("Additional Documents"). */
+  isAdditional?: boolean;
   /** Raw codes — kept for audit, never displayed verbatim. */
   latestRejectionReasonCodes: string[];
   /** Backend-translated friendly messages. Render these. */
@@ -207,6 +209,38 @@ export async function uploadDocument(
       body: form,
     },
   );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const msg =
+      body && typeof body === 'object' && 'message' in body
+        ? String((body as { message?: unknown }).message)
+        : `Upload failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/**
+ * Upload an EXTRA document not tied to a checklist slot ("Additional Documents").
+ * `note` is the client's optional description. The server creates an optional
+ * ad-hoc item, AI-classifies it, and the team confirms it.
+ */
+export async function uploadAdditionalDocument(
+  caseId: string,
+  file: File,
+  note?: string,
+): Promise<{ id: string; documentItemId: string; status: DocumentItemStatus }> {
+  const { getAccessToken } = await import('./auth-client');
+  const token = getAccessToken();
+  const form = new FormData();
+  form.append('file', file);
+  if (note && note.trim()) form.append('note', note.trim());
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const res = await fetch(`${base}/portal/cases/${caseId}/additional-documents`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form,
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const msg =

@@ -22,6 +22,7 @@ import {
   Inbox,
   Loader2,
   MailQuestion,
+  Pencil,
   Plus,
   Send,
   ShieldAlert,
@@ -56,6 +57,7 @@ import {
   updateDocumentAttestation,
   uploadOfficerDocument,
   uploadAdditionalDocument,
+  renameAdditionalDocument,
   type ApiCaseDocumentItem,
   type ApiDocumentAiAssessment,
   type ApiInboundDocument,
@@ -168,18 +170,26 @@ function docDisplayName(d: ApiCaseDocumentItem): string {
   return d.documentName;
 }
 
-function AiAssessmentBlock({ a }: { a: ApiDocumentAiAssessment }) {
+function AiAssessmentBlock({ a, additional }: { a: ApiDocumentAiAssessment; additional?: boolean }) {
   const conf = a.confidence != null ? `${Math.round(a.confidence * 100)}%` : null;
   return (
     <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: 'var(--sos-text-secondary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-          <Sparkles size={12} /> AI check
+          <Sparkles size={12} /> {additional ? 'AI' : 'AI check'}
         </span>
-        <StatusBadge tone={DECISION_TONE[a.suggestedDecision] ?? 'neutral'} size="sm">
-          {DECISION_LABEL[a.suggestedDecision] ?? a.suggestedDecision}
-        </StatusBadge>
-        {conf ? <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{conf} confidence</span> : null}
+        {additional ? (
+          // Additional docs are identified, not pass/failed against a slot — show
+          // what the AI thinks it is, not an approve/reject verdict.
+          <StatusBadge tone="cyan" size="sm">Identified by AI</StatusBadge>
+        ) : (
+          <>
+            <StatusBadge tone={DECISION_TONE[a.suggestedDecision] ?? 'neutral'} size="sm">
+              {DECISION_LABEL[a.suggestedDecision] ?? a.suggestedDecision}
+            </StatusBadge>
+            {conf ? <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{conf} confidence</span> : null}
+          </>
+        )}
         {a.autoApproved ? <StatusBadge tone="success" size="sm">Auto-approved</StatusBadge> : null}
         {/* P4f: translation-needed hint */}
         {a.detectedLanguage ? (
@@ -202,7 +212,11 @@ function AiAssessmentBlock({ a }: { a: ApiDocumentAiAssessment }) {
       {a.errorMessage ? (
         <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sos-text-muted)' }}>AI couldn’t assess: {a.errorMessage}</div>
       ) : null}
-      {a.checks && a.checks.length > 0 ? (
+      {/* Slot-style ownership/completeness checks don't apply to catch-all
+          additional docs (and would show misleading red ✗ for a valid family /
+          third-party file) — hide them there. Covers older assessments that
+          stored checks before the backend stopped running them. */}
+      {!additional && a.checks && a.checks.length > 0 ? (
         <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {a.checks.map((ck) => (
             <span
@@ -438,11 +452,18 @@ function DocCard({ d, onOpen }: { d: ApiCaseDocumentItem; onOpen: () => void }) 
       {/* Compact AI verdict */}
       {ai ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, color: AI_DECISION_COLOR[ai.suggestedDecision] ?? 'var(--sos-text-muted)' }}>
-            <Sparkles size={11} />
-            {DECISION_LABEL[ai.suggestedDecision] ?? ai.suggestedDecision}
-            {ai.confidence != null ? ` · ${Math.round(ai.confidence * 100)}%` : ''}
-          </span>
+          {d.isAdditional ? (
+            // Catch-all extras are identified, not approved/rejected by the AI.
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, color: 'var(--sos-text-muted)' }}>
+              <Sparkles size={11} /> Identified by AI
+            </span>
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, color: AI_DECISION_COLOR[ai.suggestedDecision] ?? 'var(--sos-text-muted)' }}>
+              <Sparkles size={11} />
+              {DECISION_LABEL[ai.suggestedDecision] ?? ai.suggestedDecision}
+              {ai.confidence != null ? ` · ${Math.round(ai.confidence * 100)}%` : ''}
+            </span>
+          )}
           {ai.detectedLanguage ? (
             <span style={{ color: 'var(--sos-status-warning)', fontWeight: 600 }}>⚠ translation</span>
           ) : null}
@@ -486,8 +507,26 @@ function DocDetailModal({
   const [reviewNote, setReviewNote] = useState('');
   const [showWaive, setShowWaive] = useState(false);
   const [waiveReason, setWaiveReason] = useState('');
+  const [showRename, setShowRename] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function handleRename() {
+    const v = renameValue.trim();
+    if (v.length < 2) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const updated = await renameAdditionalDocument(caseId, d.id, v);
+      onChange(updated);
+      setShowRename(false);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to rename');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleUpload(file: File | undefined) {
     if (!file) return;
@@ -590,6 +629,17 @@ function DocDetailModal({
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
           <StatusIcon status={d.status} size={16} />
           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{docDisplayName(d)}</span>
+          {d.isAdditional ? (
+            <button
+              type="button"
+              onClick={() => { setRenameValue(docDisplayName(d)); setShowRename((s) => !s); }}
+              aria-label="Rename document"
+              title="Rename — correct the AI's guess or give it a clearer name"
+              style={{ flexShrink: 0, padding: 5, borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', cursor: 'pointer' }}
+            >
+              <Pencil size={13} />
+            </button>
+          ) : null}
           <button type="button" onClick={onClose} aria-label="Close" style={{ marginLeft: 'auto', padding: 6, borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', cursor: 'pointer', flexShrink: 0 }}>
             <X size={16} />
           </button>
@@ -597,6 +647,21 @@ function DocDetailModal({
 
         {/* Body */}
         <div style={{ padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          {showRename ? (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+              <input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="Document name (e.g. Family Registration Certificate)"
+                maxLength={120}
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') handleRename(); }}
+                style={{ flex: 1, minWidth: 0, padding: '7px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: 13, fontFamily: 'inherit' }}
+              />
+              <button type="button" onClick={() => setShowRename(false)} style={{ padding: '6px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>Cancel</button>
+              <PrimaryButton onClick={handleRename} disabled={busy || renameValue.trim().length < 2}>{busy ? 'Saving…' : 'Save name'}</PrimaryButton>
+            </div>
+          ) : null}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
             <StatusBadge tone={CRIT_TONE[d.criticality]} size="sm">{d.criticality}</StatusBadge>
             <StatusBadge tone={STATUS_TONE[d.status]} size="sm">{STATUS_LABEL[d.status]}</StatusBadge>
@@ -620,7 +685,7 @@ function DocDetailModal({
           </div>
 
           {d.aiAssessments && d.aiAssessments.length > 0 ? (
-            <AiAssessmentBlock a={d.aiAssessments[0]} />
+            <AiAssessmentBlock a={d.aiAssessments[0]} additional={d.isAdditional} />
           ) : null}
 
           {err ? (

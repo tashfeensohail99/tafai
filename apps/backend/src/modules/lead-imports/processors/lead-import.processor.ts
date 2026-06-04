@@ -145,6 +145,44 @@ export class LeadImportProcessor extends WorkerHost {
     batch: { defaultCountry: string; uploadedByUserId: string; selectedAgentIds: string[] },
     mapping: ColumnMapping,
   ): Promise<void> {
+    // Last-resort guard: a single row must NEVER crash the whole batch. The
+    // inner handler already records create-failures per row, but the pre-create
+    // steps (phone normalisation, dedupe, round-robin pick) could still throw on
+    // a malformed row — which previously failed the entire import and exhausted
+    // the worker's retries. Catch anything here, record the row as FAILED so it
+    // shows in the error CSV, and let the rest of the batch proceed.
+    try {
+      await this.processRowInner(batchId, rowNumber, row, batch, mapping);
+    } catch (err) {
+      const message = (err as Error)?.message ?? 'unknown error';
+      this.log.warn(`batch row ${rowNumber} crashed (recorded FAILED): ${message}`);
+      try {
+        await this.prisma.leadImportRow.create({
+          data: {
+            batchId,
+            rowNumber,
+            rawData: row as Prisma.InputJsonValue,
+            outcome: LeadImportRowOutcome.FAILED,
+            errorMessage: message.slice(0, 500),
+          },
+        });
+        await this.prisma.leadImportBatch.update({
+          where: { id: batchId },
+          data: { invalidCount: { increment: 1 } },
+        });
+      } catch (e2) {
+        this.log.error(`could not record crashed row ${rowNumber}: ${(e2 as Error).message}`);
+      }
+    }
+  }
+
+  private async processRowInner(
+    batchId: string,
+    rowNumber: number,
+    row: Record<string, string>,
+    batch: { defaultCountry: string; uploadedByUserId: string; selectedAgentIds: string[] },
+    mapping: ColumnMapping,
+  ): Promise<void> {
     const rawPhone = row[mapping.phone] ?? '';
 
     // 1. Normalise the phone first — bad phone → INVALID outcome.

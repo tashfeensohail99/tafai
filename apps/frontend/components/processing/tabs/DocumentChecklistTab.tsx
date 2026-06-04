@@ -15,6 +15,7 @@ import { useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronRight,
   ExternalLink,
   FileCheck2,
   FileX2,
@@ -27,6 +28,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -311,14 +313,133 @@ function InboundTray({
   );
 }
 
-function DocumentRow({
+// ── Shared per-document helpers (used by both the compact card and the modal) ──
+
+function docFlags(d: ApiCaseDocumentItem) {
+  const hasFile = !!d.latestVersion;
+  // Backend emits SUBMITTED when a doc is uploaded (client or officer); keep
+  // UPLOADED as a legacy alias. This is what gates the Accept/Reject control.
+  const canReview = hasFile && (d.status === 'SUBMITTED' || d.status === 'UPLOADED' || d.status === 'UNDER_REVIEW');
+  const canRequest = !hasFile && (d.status === 'NOT_SUBMITTED' || d.status === 'AWAITING_UPLOAD');
+  const canWaive = d.status !== 'ACCEPTED' && d.status !== 'WAIVED' && d.status !== 'NOT_APPLICABLE';
+  // Officer upload-on-behalf: allowed whenever the slot still needs a (better)
+  // file — i.e. not already accepted/waived/N-A. Lets the team upload for the
+  // client or replace a rejected/expired doc.
+  const canUpload = d.status !== 'ACCEPTED' && d.status !== 'WAIVED' && d.status !== 'NOT_APPLICABLE';
+  return { hasFile, canReview, canRequest, canWaive, canUpload };
+}
+
+function StatusIcon({ status, size = 15 }: { status: DocumentItemStatus; size?: number }) {
+  if (status === 'ACCEPTED') return <CheckCircle2 size={size} style={{ color: 'var(--sos-status-success)' }} />;
+  if (status === 'REJECTED' || status === 'EXPIRED') return <XCircle size={size} style={{ color: 'var(--sos-status-danger)' }} />;
+  if (status === 'WAIVED') return <ShieldAlert size={size} style={{ color: 'var(--sos-text-muted)' }} />;
+  return <FileCheck2 size={size} style={{ color: 'var(--sos-text-muted)' }} />;
+}
+
+// Phase 4b — live expiry emphasis from validityExpiryDate (warns even before
+// the 6-hourly sweep flips an accepted doc to EXPIRED).
+function ExpiryBadge({ d }: { d: ApiCaseDocumentItem }) {
+  if (!d.validityExpiryDate) return null;
+  const days = Math.floor((new Date(d.validityExpiryDate).getTime() - Date.now()) / 86_400_000);
+  if (days < 0 && d.status !== 'EXPIRED') return <StatusBadge tone="danger" size="sm">Expired</StatusBadge>;
+  if (days >= 0 && days <= 30) return <StatusBadge tone="warning" size="sm">Expires in {days}d</StatusBadge>;
+  return null;
+}
+
+// Left-border accent that tells you what a card needs at a glance.
+function cardAccent(d: ApiCaseDocumentItem): string {
+  const { canReview, canRequest } = docFlags(d);
+  if (d.status === 'REJECTED' || d.status === 'EXPIRED') return 'var(--sos-status-danger)';
+  if (canReview) return 'var(--sos-brand-primary)';
+  if (d.status === 'ACCEPTED') return 'var(--sos-status-success)';
+  if (canRequest || d.status === 'REQUESTED') return 'var(--sos-status-warning)';
+  return 'var(--sos-border-subtle)';
+}
+
+const AI_DECISION_COLOR: Record<string, string> = {
+  APPROVE: 'var(--sos-status-success)',
+  REJECT: 'var(--sos-status-danger)',
+  NEEDS_REVIEW: 'var(--sos-status-warning)',
+};
+
+// Compact, clickable card for the document grid. Everything actionable lives in
+// the detail modal (opened on click) so many docs stay scannable side-by-side.
+function DocCard({ d, onOpen }: { d: ApiCaseDocumentItem; onOpen: () => void }) {
+  const { canReview, canRequest } = docFlags(d);
+  const ai = d.aiAssessments && d.aiAssessments.length > 0 ? d.aiAssessments[0] : null;
+  const cta = canReview ? 'Review' : d.status === 'REJECTED' ? 'Re-upload' : canRequest ? 'Request' : 'Details';
+  const ctaColor = canReview
+    ? 'var(--sos-brand-primary)'
+    : d.status === 'REJECTED'
+      ? 'var(--sos-status-danger)'
+      : 'var(--sos-text-muted)';
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`Open ${d.documentName}`}
+      style={{
+        textAlign: 'left', cursor: 'pointer', font: 'inherit', width: '100%',
+        display: 'flex', flexDirection: 'column', gap: 8, minHeight: 138,
+        padding: '12px 14px', borderRadius: 'var(--sos-radius-md)',
+        border: '1px solid var(--sos-border-subtle)', borderLeft: `3px solid ${cardAccent(d)}`,
+        background: 'var(--sos-surface)', transition: 'background 150ms, box-shadow 150ms',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--sos-surface-hover)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.18)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--sos-surface)'; e.currentTarget.style.boxShadow = 'none'; }}
+    >
+      {/* Title */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <span style={{ marginTop: 1, flexShrink: 0, display: 'inline-flex' }}><StatusIcon status={d.status} /></span>
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+          {d.documentName}
+        </span>
+      </div>
+      {/* Criticality + status + expiry */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <StatusBadge tone={CRIT_TONE[d.criticality]} size="sm">{d.criticality}</StatusBadge>
+        <StatusBadge tone={STATUS_TONE[d.status]} size="sm">{STATUS_LABEL[d.status]}</StatusBadge>
+        <ExpiryBadge d={d} />
+      </div>
+      {/* Compact AI verdict */}
+      {ai ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, color: AI_DECISION_COLOR[ai.suggestedDecision] ?? 'var(--sos-text-muted)' }}>
+            <Sparkles size={11} />
+            {DECISION_LABEL[ai.suggestedDecision] ?? ai.suggestedDecision}
+            {ai.confidence != null ? ` · ${Math.round(ai.confidence * 100)}%` : ''}
+          </span>
+          {ai.detectedLanguage ? (
+            <span style={{ color: 'var(--sos-status-warning)', fontWeight: 600 }}>⚠ translation</span>
+          ) : null}
+        </div>
+      ) : null}
+      {/* Footer: version/updated + open affordance */}
+      <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 8, paddingTop: 4, fontSize: 11, color: 'var(--sos-text-muted)' }}>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {d.latestVersion ? `v${d.latestVersion.versionNumber} · ` : ''}Updated {fmtRelative(d.updatedAt)}
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 700, color: ctaColor, flexShrink: 0 }}>
+          {cta} <ChevronRight size={12} />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+// Full detail + all actions for a single document, in a modal. Reuses the exact
+// review/waive/upload/request logic the old inline row had — just relocated so
+// the grid stays compact.
+function DocDetailModal({
   d,
   caseId,
+  onClose,
   onChange,
   onReload,
 }: {
   d: ApiCaseDocumentItem;
   caseId: string;
+  onClose: () => void;
   onChange: (updated: ApiCaseDocumentItem) => void;
   onReload: () => void;
 }) {
@@ -405,55 +526,55 @@ function DocumentRow({
     }
   }
 
-  const hasFile = !!d.latestVersion;
-  // Backend emits SUBMITTED when a doc is uploaded (client or officer); keep
-  // UPLOADED as a legacy alias. This is what gates the Accept/Reject control.
-  const canReview = hasFile && (d.status === 'SUBMITTED' || d.status === 'UPLOADED' || d.status === 'UNDER_REVIEW');
-  const canRequest = !hasFile && (d.status === 'NOT_SUBMITTED' || d.status === 'AWAITING_UPLOAD');
-  const canWaive = d.status !== 'ACCEPTED' && d.status !== 'WAIVED' && d.status !== 'NOT_APPLICABLE';
-  // Officer upload-on-behalf: allowed whenever the slot still needs a (better)
-  // file — i.e. not already accepted/waived/N-A. Lets the team upload for the
-  // client or replace a rejected/expired doc.
-  const canUpload = d.status !== 'ACCEPTED' && d.status !== 'WAIVED' && d.status !== 'NOT_APPLICABLE';
+  const { hasFile, canReview, canRequest, canWaive, canUpload } = docFlags(d);
 
   return (
-    <GlassCard variant="default" padded="md">
-      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        <div style={{ marginTop: 2, color: d.status === 'ACCEPTED' ? 'var(--sos-status-success)' : d.status === 'REJECTED' ? 'var(--sos-status-danger)' : 'var(--sos-text-muted)' }}>
-          {d.status === 'ACCEPTED' ? <CheckCircle2 size={14} /> :
-            d.status === 'REJECTED' ? <XCircle size={14} /> :
-              d.status === 'WAIVED' ? <ShieldAlert size={14} /> :
-                <FileCheck2 size={14} />}
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000, display: 'flex',
+        alignItems: 'center', justifyContent: 'center', padding: 24,
+        background: 'rgba(2, 6, 23, 0.62)', backdropFilter: 'blur(2px)',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 'min(640px, 96vw)', maxHeight: '88vh', display: 'flex',
+          flexDirection: 'column', borderRadius: 'var(--sos-radius-lg)', overflow: 'hidden',
+          border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface)',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+          <StatusIcon status={d.status} size={16} />
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.documentName}</span>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ marginLeft: 'auto', padding: 6, borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+            <X size={16} />
+          </button>
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{d.documentName}</span>
+
+        {/* Body */}
+        <div style={{ padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
             <StatusBadge tone={CRIT_TONE[d.criticality]} size="sm">{d.criticality}</StatusBadge>
             <StatusBadge tone={STATUS_TONE[d.status]} size="sm">{STATUS_LABEL[d.status]}</StatusBadge>
-            {(() => {
-              // Phase 4b — live expiry emphasis from validityExpiryDate (warns
-              // even before the 6-hourly sweep flips an accepted doc to EXPIRED).
-              if (!d.validityExpiryDate) return null;
-              const days = Math.floor(
-                (new Date(d.validityExpiryDate).getTime() - Date.now()) / 86_400_000,
-              );
-              if (days < 0 && d.status !== 'EXPIRED') {
-                return <StatusBadge tone="danger" size="sm">Expired</StatusBadge>;
-              }
-              if (days >= 0 && days <= 30) {
-                return <StatusBadge tone="warning" size="sm">Expires in {days}d</StatusBadge>;
-              }
-              return null;
-            })()}
+            <ExpiryBadge d={d} />
+            {d.isAdditional ? <StatusBadge tone="cyan" size="sm">Additional</StatusBadge> : null}
             {d.latestVersion ? (
               <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>
                 v{d.latestVersion.versionNumber} · {d.latestVersion.fileName}
               </span>
             ) : null}
           </div>
+
           {d.description ? (
-            <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginBottom: 6, lineHeight: 1.5 }}>{d.description}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--sos-text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>{d.description}</div>
           ) : null}
+
           <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
             {d.expectedFormats.length > 0 ? `Accepted: ${d.expectedFormats.join(', ')} · ` : ''}
             {d.validityExpiryDate ? `Expires ${fmtRelative(d.validityExpiryDate)} · ` : ''}
@@ -469,9 +590,9 @@ function DocumentRow({
           ) : null}
 
           {showReview ? (
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
               <textarea
-                rows={2}
+                rows={3}
                 value={reviewNote}
                 onChange={(e) => setReviewNote(e.target.value)}
                 placeholder="Rejection note (required for REJECT)…"
@@ -484,9 +605,9 @@ function DocumentRow({
               </div>
             </div>
           ) : showWaive ? (
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
               <textarea
-                rows={2}
+                rows={3}
                 value={waiveReason}
                 onChange={(e) => setWaiveReason(e.target.value)}
                 placeholder="Why is this doc waived? (min 5 chars)"
@@ -498,7 +619,7 @@ function DocumentRow({
               </div>
             </div>
           ) : (
-            <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ marginTop: 14, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {hasFile ? (
                 <SecondaryButton iconLeft={<ExternalLink size={13} />} onClick={handleViewFile} disabled={busy}>View file</SecondaryButton>
               ) : null}
@@ -529,7 +650,7 @@ function DocumentRow({
           )}
         </div>
       </div>
-    </GlassCard>
+    </div>
   );
 }
 
@@ -541,6 +662,8 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
   const [reqBusy, setReqBusy] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
   const addFileRef = useRef<HTMLInputElement | null>(null);
+  // Which document's detail modal is open (compact-card grid → modal pattern).
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -596,6 +719,9 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
   // AI-classified). Kept separate so they don't mix with the required slots.
   const checklistItems = items.filter((i) => !i.isAdditional);
   const additionalItems = items.filter((i) => i.isAdditional);
+  // Resolve the open doc from live state so the modal always reflects the latest
+  // version/status after an action (and auto-closes if the item disappears).
+  const activeDoc = activeId ? (items.find((i) => i.id === activeId) ?? null) : null;
 
   // Progress: count CRITICAL + REQUIRED items that are settled
   // (ACCEPTED / WAIVED / NOT_APPLICABLE).
@@ -673,12 +799,21 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
           {/* Inbound triage tray (WhatsApp/email/portal) */}
           <InboundTray caseId={c.id} items={items} onFiled={reload} />
 
-          {/* Required-checklist items */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {checklistItems.map((d) => (
-              <DocumentRow key={d.id} d={d} caseId={c.id} onChange={handleChange} onReload={reload} />
-            ))}
-          </div>
+          {/* Required-checklist items — compact card grid. Open a card for full
+              details + actions (replaces the old long vertical list). */}
+          {checklistItems.length > 0 ? (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 2px 8px' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--sos-text-secondary)' }}>Checklist documents</span>
+                <StatusBadge tone="neutral" size="sm">{checklistItems.length}</StatusBadge>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 10 }}>
+                {checklistItems.map((d) => (
+                  <DocCard key={d.id} d={d} onOpen={() => setActiveId(d.id)} />
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {/* Additional Documents — extra files not on the template checklist
               (client- or team-uploaded). AI-classified; review like any doc. */}
@@ -712,15 +847,26 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
                 None yet — anything the client or team adds outside the checklist shows up here.
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 10 }}>
                 {additionalItems.map((d) => (
-                  <DocumentRow key={d.id} d={d} caseId={c.id} onChange={handleChange} onReload={reload} />
+                  <DocCard key={d.id} d={d} onOpen={() => setActiveId(d.id)} />
                 ))}
               </div>
             )}
           </GlassCard>
         </>
       )}
+
+      {/* Detail modal for the clicked card — full info + all actions */}
+      {activeDoc ? (
+        <DocDetailModal
+          d={activeDoc}
+          caseId={c.id}
+          onClose={() => setActiveId(null)}
+          onChange={handleChange}
+          onReload={reload}
+        />
+      ) : null}
     </div>
   );
 }

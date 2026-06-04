@@ -508,6 +508,38 @@ export async function uploadOfficerDocument(
 }
 
 /**
+ * Officer/team uploads an EXTRA document not tied to a checklist slot
+ * ("Additional Documents"). `note` optionally describes it. The server creates
+ * an optional ad-hoc item and AI-classifies it.
+ */
+export async function uploadAdditionalDocument(
+  caseId: string,
+  file: File,
+  note?: string,
+): Promise<ApiCaseDocumentItem> {
+  const { getAccessToken } = await import('./auth-client');
+  const token = getAccessToken();
+  const form = new FormData();
+  form.append('file', file);
+  if (note && note.trim()) form.append('note', note.trim());
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const res = await fetch(`${base}/processing/cases/${caseId}/additional-documents`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form,
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const msg =
+      errBody && typeof errBody === 'object' && 'message' in errBody
+        ? String((errBody as { message?: unknown }).message)
+        : `Upload failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/**
  * Manual client creation (Processing Manager). Creates Lead → Client →
  * INTAKE_PENDING case with no Finance handover; returns the created case.
  */
@@ -954,6 +986,8 @@ export interface ApiCaseDocumentItem {
   whyText?: string | null;
   sortOrder: number;
   isAddedManually: boolean;
+  /** Extra doc not part of the template checklist ("Additional Documents"). */
+  isAdditional?: boolean;
   createdAt: string;
   updatedAt: string;
   latestVersion?: {

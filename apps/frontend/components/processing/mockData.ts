@@ -511,10 +511,13 @@ export function fmtDate(iso: string): string {
 }
 
 export function fmtRelative(iso: string): string {
-  const d = new Date(iso);
-  const base = new Date('2026-05-11T12:00:00.000Z');
-  const diff = base.getTime() - d.getTime();
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return '';
+  // Use the real current time, not a fixed base. Clamp future timestamps (clock
+  // skew) to "just now" so we never render negative ("-34927m ago").
+  const diff = Date.now() - t;
   const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;

@@ -137,6 +137,37 @@ const DECISION_LABEL: Record<string, string> = {
   NEEDS_REVIEW: 'AI: needs review',
 };
 
+// Acronyms that should stay upper-cased in a human label (mirrors the backend).
+const DOCTYPE_ACRONYMS = new Set(['ID', 'LMIA', 'CNIC', 'SOP', 'NICOP', 'NTN', 'IELTS', 'PTE', 'GIC']);
+
+// BANK_STATEMENT -> "Bank Statement", NATIONAL_ID -> "National ID".
+function humanizeDocType(code: string | null | undefined): string {
+  if (!code) return '';
+  return code
+    .trim()
+    .toLowerCase()
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => (DOCTYPE_ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+// What to show as a document's title. For ad-hoc additional docs still named
+// the generic "Additional document", surface what the AI detected the file is
+// (e.g. "Bank Statement") so the team sees its identity at a glance. The backend
+// also persists this on assessment; this covers items assessed before that and
+// the brief window before a refetch.
+function docDisplayName(d: ApiCaseDocumentItem): string {
+  if (d.isAdditional && d.documentName === 'Additional document') {
+    const det = (d.aiAssessments?.[0]?.detectedDocType ?? '').trim().toUpperCase();
+    if (det && det !== 'OTHER' && det !== 'UNKNOWN') {
+      const label = humanizeDocType(det);
+      if (label) return label;
+    }
+  }
+  return d.documentName;
+}
+
 function AiAssessmentBlock({ a }: { a: ApiDocumentAiAssessment }) {
   const conf = a.confidence != null ? `${Math.round(a.confidence * 100)}%` : null;
   return (
@@ -165,7 +196,7 @@ function AiAssessmentBlock({ a }: { a: ApiDocumentAiAssessment }) {
           </span>
         ) : null}
         {a.detectedDocType ? (
-          <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>detected: {a.detectedDocType}</span>
+          <span style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginLeft: 'auto' }}>detected: {humanizeDocType(a.detectedDocType)}</span>
         ) : null}
       </div>
       {a.errorMessage ? (
@@ -365,8 +396,11 @@ const AI_DECISION_COLOR: Record<string, string> = {
 // Compact, clickable card for the document grid. Everything actionable lives in
 // the detail modal (opened on click) so many docs stay scannable side-by-side.
 function DocCard({ d, onOpen }: { d: ApiCaseDocumentItem; onOpen: () => void }) {
-  const { canReview, canRequest } = docFlags(d);
+  const { hasFile, canReview, canRequest } = docFlags(d);
   const ai = d.aiAssessments && d.aiAssessments.length > 0 ? d.aiAssessments[0] : null;
+  // File uploaded but the async AI assessment hasn't landed yet.
+  const analyzing = hasFile && !ai && (d.status === 'SUBMITTED' || d.status === 'UPLOADED' || d.status === 'UNDER_REVIEW');
+  const name = docDisplayName(d);
   const cta = canReview ? 'Review' : d.status === 'REJECTED' ? 'Re-upload' : canRequest ? 'Request' : 'Details';
   const ctaColor = canReview
     ? 'var(--sos-brand-primary)'
@@ -377,7 +411,7 @@ function DocCard({ d, onOpen }: { d: ApiCaseDocumentItem; onOpen: () => void }) 
     <button
       type="button"
       onClick={onOpen}
-      title={`Open ${d.documentName}`}
+      title={`Open ${name}`}
       style={{
         textAlign: 'left', cursor: 'pointer', font: 'inherit', width: '100%',
         display: 'flex', flexDirection: 'column', gap: 8, minHeight: 138,
@@ -392,7 +426,7 @@ function DocCard({ d, onOpen }: { d: ApiCaseDocumentItem; onOpen: () => void }) 
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <span style={{ marginTop: 1, flexShrink: 0, display: 'inline-flex' }}><StatusIcon status={d.status} /></span>
         <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-          {d.documentName}
+          {name}
         </span>
       </div>
       {/* Criticality + status + expiry */}
@@ -412,6 +446,10 @@ function DocCard({ d, onOpen }: { d: ApiCaseDocumentItem; onOpen: () => void }) 
           {ai.detectedLanguage ? (
             <span style={{ color: 'var(--sos-status-warning)', fontWeight: 600 }}>⚠ translation</span>
           ) : null}
+        </div>
+      ) : analyzing ? (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: 'var(--sos-text-muted)' }}>
+          <Sparkles size={11} /> Analyzing document…
         </div>
       ) : null}
       {/* Footer: version/updated + open affordance */}
@@ -551,7 +589,7 @@ function DocDetailModal({
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
           <StatusIcon status={d.status} size={16} />
-          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.documentName}</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{docDisplayName(d)}</span>
           <button type="button" onClick={onClose} aria-label="Close" style={{ marginLeft: 'auto', padding: 6, borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', cursor: 'pointer', flexShrink: 0 }}>
             <X size={16} />
           </button>
@@ -683,6 +721,15 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
     fetchCaseDocuments(c.id).then(setItems).catch(() => { /* keep prior state */ });
   }
 
+  // After an upload the AI assessment runs asynchronously (parser call takes a
+  // few seconds). Refetch a few times so the detected document type + verdict
+  // appear on their own — the team shouldn't have to refresh to see what the
+  // AI found.
+  function reloadWithAi() {
+    reload();
+    [4000, 9000, 16000].forEach((ms) => setTimeout(reload, ms));
+  }
+
   async function handleRequestMissing() {
     setReqBusy(true);
     setReqMsg(null);
@@ -706,7 +753,7 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
     setErr(null);
     try {
       await uploadAdditionalDocument(c.id, file);
-      reload();
+      reloadWithAi();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Upload failed');
     } finally {
@@ -864,7 +911,7 @@ export function DocumentChecklistTab({ c }: { c: MockProcessingCase }) {
           caseId={c.id}
           onClose={() => setActiveId(null)}
           onChange={handleChange}
-          onReload={reload}
+          onReload={reloadWithAi}
         />
       ) : null}
     </div>

@@ -193,6 +193,17 @@ export class DocumentAiService {
       this.log.warn(`assess: parser failed for version ${versionId}: ${errorMessage}`);
     }
 
+    // Additional documents are catch-all extras with no expected slot to
+    // validate against — the AI's role here is to *identify* the file, not to
+    // pass/fail it. The slot-style ownership/completeness checks (name / DOB /
+    // front+back) don't apply and would wrongly "reject" legitimate family or
+    // third-party documents (e.g. an FRC that lists several people, or a
+    // spouse's statement). Keep the detected type for labeling; the team makes
+    // the accept/reject call.
+    if (resp && item.isAdditional) {
+      resp = { ...resp, suggestedDecision: 'NEEDS_REVIEW', checks: [], reasonCodes: [] };
+    }
+
     const assessment = await this.storeAssessment(version, item, resp, errorMessage);
 
     // Give ad-hoc "Additional document" items a real identity from what the AI

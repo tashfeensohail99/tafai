@@ -545,6 +545,14 @@ export class RequestDocumentDto {
   message?: string; // custom message to client
 }
 
+// Rename an ad-hoc "Additional document" (e.g. correct a wrong AI guess).
+export class RenameAdditionalDocumentDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  name!: string;
+}
+
 // Phase E — file a triaged inbound document into a checklist slot.
 export class FileInboundDocumentDto {
   @IsUUID()

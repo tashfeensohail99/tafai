@@ -2056,6 +2056,33 @@ export class ProcessingService {
     return this.uploadOfficerDocument(caseId, item.id, file, user, ipAddress, userAgent);
   }
 
+  // Rename an additional document — lets the team correct a wrong AI label
+  // (e.g. an FRC the parser guessed as "National ID") or give it a clearer name.
+  // Only additional (ad-hoc) items can be renamed; template checklist slots keep
+  // their seeded names.
+  async renameAdditionalDocument(
+    caseId: string,
+    itemId: string,
+    name: string,
+    user: RequestUser,
+  ) {
+    await this.assertCaseAccessById(caseId, user);
+    const item = await this.prisma.caseDocumentItem.findFirst({
+      where: { id: itemId, caseId },
+      select: { id: true, isAdditional: true },
+    });
+    if (!item) throw new NotFoundException('Document item not found');
+    if (!item.isAdditional) {
+      throw new BadRequestException('Only additional documents can be renamed');
+    }
+    const trimmed = name.trim();
+    if (trimmed.length < 2) throw new BadRequestException('Name is too short');
+    return this.prisma.caseDocumentItem.update({
+      where: { id: itemId },
+      data: { documentName: trimmed },
+    });
+  }
+
   async waiveDocumentItem(
     caseId: string,
     itemId: string,

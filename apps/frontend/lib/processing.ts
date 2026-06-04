@@ -1047,6 +1047,23 @@ export function waiveDocumentItem(
   );
 }
 
+// Rename an additional document (correct a wrong AI label / clarify it).
+export function renameAdditionalDocument(
+  caseId: string,
+  itemId: string,
+  name: string,
+): Promise<ApiCaseDocumentItem> {
+  return apiFetch<ApiCaseDocumentItem>(
+    `/processing/cases/${caseId}/documents/${itemId}/name`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+      cache: 'no-store',
+    },
+  );
+}
+
 export function requestDocumentFromClient(
   caseId: string,
   itemId: string,

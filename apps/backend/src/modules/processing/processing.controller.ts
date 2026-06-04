@@ -63,6 +63,7 @@ import {
   UpdateProcessingTaskDto,
   UpdateAttestationDto,
   WaiveDocumentItemDto,
+  RenameAdditionalDocumentDto,
 } from './processing.dto';
 
 @Controller('processing')
@@ -415,6 +416,22 @@ export class ProcessingController {
       req.ip,
       req.headers['user-agent'],
     );
+  }
+
+  /**
+   * PATCH /processing/cases/:caseId/documents/:itemId/name
+   * Rename an additional document — correct a wrong AI label or clarify it.
+   * Only additional (ad-hoc) items can be renamed (enforced in the service).
+   */
+  @Patch('cases/:caseId/documents/:itemId/name')
+  @RequirePermissions('processing.document.upload')
+  renameAdditionalDocument(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: RenameAdditionalDocumentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.renameAdditionalDocument(caseId, itemId, dto.name, user);
   }
 
   @Post('cases/:caseId/documents/:itemId/review')

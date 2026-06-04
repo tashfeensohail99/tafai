@@ -2027,6 +2027,35 @@ export class ProcessingService {
     });
   }
 
+  /**
+   * Officer/team uploads an EXTRA document not tied to a checklist slot
+   * ("Additional Documents"). Creates an optional, ad-hoc item then runs it
+   * through the standard officer-upload pipeline (versioning + AI classify), so
+   * the AI labels what it is and the team can file it into a real slot.
+   */
+  async uploadAdditionalDocument(
+    caseId: string,
+    file: Express.Multer.File,
+    note: string | undefined,
+    user: RequestUser,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    await this.assertCaseAccessById(caseId, user);
+    const trimmedNote = note?.trim() || null;
+    const item = await this.prisma.caseDocumentItem.create({
+      data: {
+        caseId,
+        documentName: trimmedNote || 'Additional document',
+        description: trimmedNote,
+        criticality: DocumentCriticality.OPTIONAL,
+        isAddedManually: true,
+        isAdditional: true,
+      },
+    });
+    return this.uploadOfficerDocument(caseId, item.id, file, user, ipAddress, userAgent);
+  }
+
   async waiveDocumentItem(
     caseId: string,
     itemId: string,

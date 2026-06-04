@@ -267,6 +267,7 @@ export class PortalService {
         description: true,
         criticality: true,
         status: true,
+        isAdditional: true,
         expectedFormats: true,
         maxFileSizeMb: true,
         validityExpiryDate: true,
@@ -486,6 +487,48 @@ export class PortalService {
     });
 
     return result;
+  }
+
+  /**
+   * Client uploads an EXTRA document that isn't part of the checklist
+   * ("Additional Documents"). Creates an optional, ad-hoc CaseDocumentItem
+   * (isAdditional=true) then runs it through the exact same pipeline as a
+   * normal slot upload — versioning, status→SUBMITTED, AI classification, and
+   * multi-doc triage — so the AI labels what it is and the team confirms/files
+   * it. `note` is the client's optional description (e.g. "father's bank
+   * statement"); it becomes the item name until the AI/team relabels it.
+   */
+  async uploadAdditionalDocument(
+    caseId: string,
+    file: Express.Multer.File,
+    note: string | undefined,
+    user: RequestUser,
+    ipAddress: string | undefined,
+    userAgent: string | undefined,
+  ) {
+    const clientId = await this.resolveClientId(user);
+    await this.assertCaseOwnership(caseId, clientId);
+
+    if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      throw new BadRequestException(
+        `File type '${file.mimetype}' is not accepted. Allowed: PDF, JPG, PNG, HEIC.`,
+      );
+    }
+
+    const trimmedNote = note?.trim() || null;
+    const item = await this.prisma.caseDocumentItem.create({
+      data: {
+        caseId,
+        documentName: trimmedNote || 'Additional document',
+        description: trimmedNote,
+        criticality: 'OPTIONAL',
+        isAddedManually: true,
+        isAdditional: true,
+        status: DocumentItemStatus.NOT_SUBMITTED,
+      },
+    });
+
+    return this.uploadDocument(caseId, item.id, file, user, ipAddress, userAgent);
   }
 
   /**

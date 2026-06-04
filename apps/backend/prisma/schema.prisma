@@ -2473,6 +2473,10 @@ model CaseDocumentItem {
   waiveReason        String?
   sortOrder          Int                  @default(0)
   isAddedManually    Boolean              @default(false)
+  // Client- or officer-uploaded extra document that isn't part of the template
+  // checklist ("Additional Documents"). Optional by nature; AI classifies it
+  // and the team confirms / files it into a real slot.
+  isAdditional       Boolean              @default(false)
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 

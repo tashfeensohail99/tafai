@@ -116,6 +116,39 @@ export class PortalController {
   }
 
   /**
+   * POST /portal/cases/:caseId/additional-documents
+   * Client uploads an EXTRA document not tied to a checklist slot
+   * ("Additional Documents"). Optional `note` text field describes it.
+   * Separate path so it never collides with the `:itemId/upload` route.
+   */
+  @Post('cases/:caseId/additional-documents')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  uploadAdditionalDocument(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('note') note: string | undefined,
+    @CurrentUser() user: RequestUser,
+    @Req() req: Request,
+  ) {
+    if (!file) {
+      throw new Error('No file provided. Use multipart/form-data with field name "file".');
+    }
+    return this.portalService.uploadAdditionalDocument(
+      caseId,
+      file,
+      note,
+      user,
+      req.ip,
+      req.headers['user-agent'],
+    );
+  }
+
+  /**
    * GET /portal/cases/:caseId/documents/:itemId/signed-url
    * Issues a short-lived signed URL (default 5 min) for viewing the client's document.
    * Access is logged. storageKey is never exposed.

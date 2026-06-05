@@ -64,8 +64,17 @@ export class WhatsAppAssignmentService {
    * Ensure the lead behind a WhatsApp thread is assigned to an eligible
    * employee. Called from the webhook-ingest worker after every new inbound,
    * and exposed via API for manual "auto-assign now" actions.
+   *
+   * opts.forLiveCall — caller is a LIVE inbound call, which can't wait for the
+   * sweeper. When set and no ONLINE agent is available, we fall back to the full
+   * eligible pool (round-robin) so the call still rings the NEXT available rep
+   * (one rep — never the whole team). Messages leave this unset and keep the
+   * quiet ONLINE-only behavior.
    */
-  async ensureAssigned(threadId: string): Promise<AssignmentOutcome> {
+  async ensureAssigned(
+    threadId: string,
+    opts?: { forLiveCall?: boolean },
+  ): Promise<AssignmentOutcome> {
     return this.prisma.$transaction(async (tx) => {
       const thread = await tx.whatsAppThread.findUnique({
         where: { id: threadId },
@@ -188,17 +197,24 @@ export class WhatsAppAssignmentService {
       // agents do not receive new leads.
       const onlinePool = eligible.filter((e) => e.presenceStatus === PresenceStatus.ONLINE);
 
-      if (onlinePool.length === 0) {
+      // A live inbound call can't wait for the sweeper: if nobody is ONLINE,
+      // fall back to the full eligible pool so it still rings the next available
+      // rep (round-robin picks ONE — never the whole team). Messages keep the
+      // ONLINE-only pool and wait for the sweeper.
+      const pool =
+        onlinePool.length > 0 ? onlinePool : opts?.forLiveCall ? eligible : [];
+
+      if (pool.length === 0) {
         this.log.log(
-          { leadId: lead.id, basePool: eligible.length },
-          'assignment: no ONLINE agents — leaving unassigned until someone comes online (sweeper will pick up)',
+          { leadId: lead.id, basePool: eligible.length, forLiveCall: !!opts?.forLiveCall },
+          'assignment: no eligible agent to receive this lead — leaving unassigned (sweeper will pick up)',
         );
         return { leadId: lead.id, threadId, assignedEmployeeId: null, reason: null, retryAt: null };
       }
 
-      // 1. Sticky — preferred employee, but only if they're online.
+      // 1. Sticky — preferred employee, but only if they're in the pool.
       const sticky = lead.preferredEmployeeId
-        ? onlinePool.find((e) => e.id === lead.preferredEmployeeId)
+        ? pool.find((e) => e.id === lead.preferredEmployeeId)
         : undefined;
       if (sticky) {
         await this.applyAssignment(tx, threadId, lead, sticky.id, WhatsAppAssignmentReason.STICKY);
@@ -211,8 +227,8 @@ export class WhatsAppAssignmentService {
         };
       }
 
-      // 2. Strict round-robin among ONLINE agents.
-      const pick = pickRoundRobin(onlinePool, org.rrCursorEmployeeId);
+      // 2. Strict round-robin among the pool (next available rep).
+      const pick = pickRoundRobin(pool, org.rrCursorEmployeeId);
       await this.applyAssignment(
         tx,
         threadId,

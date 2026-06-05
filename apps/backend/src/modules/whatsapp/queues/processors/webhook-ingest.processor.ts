@@ -523,9 +523,11 @@ export class WebhookIngestProcessor extends WorkerHost {
       select: { id: true },
     });
 
-    // Same routing engine as inbound messages: sticky → round-robin → online.
+    // Same routing engine as inbound messages: sticky → round-robin. For a LIVE
+    // call we pass forLiveCall so it never drops to "unassigned" when nobody is
+    // ONLINE — it rings the next available rep (one rep) instead of nobody.
     try {
-      await this.assignment.ensureAssigned(thread.id);
+      await this.assignment.ensureAssigned(thread.id, { forLiveCall: true });
     } catch (err) {
       this.log.error(`call assignment failed for thread ${thread.id}: ${(err as Error).message}`);
     }

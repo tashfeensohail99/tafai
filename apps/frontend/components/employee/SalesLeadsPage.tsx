@@ -20,6 +20,7 @@ import {
   Sparkles,
   Users,
   Wallet,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   type Lead,
@@ -36,7 +37,6 @@ import {
   ButtonLink,
   EmptyState,
   GlassCard,
-  MetricCard,
   PageHeader,
   PrimaryButton,
   SecondaryButton,
@@ -181,6 +181,55 @@ function slaTone(s: string): BadgeTone {
   return 'neutral';
 }
 
+// Compact KPI tones (icon chip colors) for the one-line stat strip.
+const KPI_TONE: Record<string, { bg: string; color: string; border: string }> = {
+  info: { bg: 'var(--sos-status-info-soft)', color: 'var(--sos-status-info)', border: 'var(--sos-status-info-border)' },
+  accent: { bg: 'var(--sos-brand-primary-soft)', color: 'var(--sos-brand-primary-strong)', border: 'var(--sos-brand-primary-border)' },
+  success: { bg: 'var(--sos-status-success-soft)', color: 'var(--sos-status-success)', border: 'var(--sos-status-success-border)' },
+  danger: { bg: 'var(--sos-status-danger-soft)', color: 'var(--sos-status-danger)', border: 'var(--sos-status-danger-border)' },
+};
+
+/** Small, single-line KPI box (replaces the tall MetricCard on this page so the
+ *  four stats fit on one horizontal row). */
+function StatBox({
+  label,
+  value,
+  tone,
+  Icon,
+}: {
+  label: string;
+  value: number;
+  tone: keyof typeof KPI_TONE;
+  Icon: LucideIcon;
+}) {
+  const t = KPI_TONE[tone];
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, minWidth: 0,
+        padding: '10px 14px', borderRadius: 'var(--sos-radius-md)',
+        border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface)',
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 34, height: 34, flexShrink: 0, borderRadius: 'var(--sos-radius-md)',
+          background: t.bg, border: `1px solid ${t.border}`, color: t.color,
+        }}
+      >
+        <Icon size={16} />
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--sos-text-primary)', lineHeight: 1.1 }}>{value}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function SalesLeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -290,99 +339,65 @@ export function SalesLeadsPage() {
         }
       />
 
-      {/* KPIs */}
+      {/* Search — primary control, full-width, ABOVE the KPIs. */}
+      <div className="sos-topbar__search" style={{ width: '100%' }}>
+        <Search size={14} />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by name, phone, service…"
+          aria-label="Search leads"
+        />
+      </div>
+
+      {/* KPIs — compact one-line stat strip (replaces the tall MetricCards so
+          all four fit on a single horizontal row). */}
       <section
         style={{
           display: 'grid',
-          gap: '16px',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: '10px',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
         }}
       >
-        <MetricCard
-          label="Admin Assigned"
-          value={counts.ADMIN}
-          hint="Manually routed by admin"
-          tone="info"
-          Icon={Users}
-          footer="Priority queue from the front desk"
-        />
-        <MetricCard
-          label="Auto CRM Assigned"
-          value={counts.AUTO_CRM}
-          hint="Social media & website inflow"
-          tone="accent"
-          Icon={Sparkles}
-          footer="Fresh inbound demand from digital channels"
-        />
-        <MetricCard
-          label="SLA Active"
-          value={slaActive}
-          hint="Within first-response window"
-          tone="success"
-          Icon={Signal}
-          footer="Touches still on schedule"
-        />
-        <MetricCard
-          label="Overdue Leads"
+        <StatBox label="Admin Assigned" value={counts.ADMIN} tone="info" Icon={Users} />
+        <StatBox label="Auto CRM" value={counts.AUTO_CRM} tone="accent" Icon={Sparkles} />
+        <StatBox label="SLA Active" value={slaActive} tone="success" Icon={Signal} />
+        <StatBox
+          label="Overdue"
           value={counts.OVERDUE}
-          hint="Action required now"
           tone={counts.OVERDUE > 0 ? 'danger' : 'success'}
           Icon={CircleAlert}
-          footer={counts.OVERDUE > 0 ? 'Reach out before the queue cools' : 'All touches inside the window'}
         />
       </section>
 
-      {/* Toolbar */}
-      <GlassCard variant="default" padded="md">
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px',
-          }}
-        >
-          {/* Search — primary control, full-width, on top of the tabs.
-              (sos-search-input intentionally dropped here: it caps width at
-              320px for the inline-row layout; on its own row we want full width.) */}
-          <div className="sos-topbar__search" style={{ width: '100%' }}>
-            <Search size={14} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name, phone, service…"
-              aria-label="Search leads"
-            />
-          </div>
-
-          {/* Tabs */}
-          <div
-            className="sos-no-scrollbar"
-            style={{
-              display: 'flex',
-              gap: '6px',
-              padding: '4px',
-              background: 'var(--sos-bg-input)',
-              border: '1px solid var(--sos-border)',
-              borderRadius: 'var(--sos-radius-button)',
-              overflowX: 'auto',
-              maxWidth: '100%',
-            }}
+      {/* Tabs (segmented control, above the lead grid) */}
+      <div
+        className="sos-no-scrollbar"
+        style={{
+          display: 'flex',
+          gap: '6px',
+          padding: '4px',
+          background: 'var(--sos-bg-input)',
+          border: '1px solid var(--sos-border)',
+          borderRadius: 'var(--sos-radius-button)',
+          overflowX: 'auto',
+          width: 'fit-content',
+          maxWidth: '100%',
+        }}
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            aria-pressed={tab === t.key}
+            onClick={() => setTab(t.key)}
+            className="sos-tab"
           >
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                aria-pressed={tab === t.key}
-                onClick={() => setTab(t.key)}
-                className="sos-tab"
-              >
-                {t.label}
-                <span className="sos-tab__count">{counts[t.key]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </GlassCard>
+            {t.label}
+            <span className="sos-tab__count">{counts[t.key]}</span>
+          </button>
+        ))}
+      </div>
 
       {/* Advanced filter popup — opened by the "Filters" button. A modal so
           the team picks filters without scrolling the page. */}

@@ -337,12 +337,23 @@ export function SalesLeadsPage() {
         <div
           style={{
             display: 'flex',
-            flexWrap: 'wrap',
+            flexDirection: 'column',
             gap: '12px',
-            alignItems: 'center',
-            justifyContent: 'space-between',
           }}
         >
+          {/* Search — primary control, full-width, on top of the tabs.
+              (sos-search-input intentionally dropped here: it caps width at
+              320px for the inline-row layout; on its own row we want full width.) */}
+          <div className="sos-topbar__search" style={{ width: '100%' }}>
+            <Search size={14} />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by name, phone, service…"
+              aria-label="Search leads"
+            />
+          </div>
+
           {/* Tabs */}
           <div
             className="sos-no-scrollbar"
@@ -369,17 +380,6 @@ export function SalesLeadsPage() {
                 <span className="sos-tab__count">{counts[t.key]}</span>
               </button>
             ))}
-          </div>
-
-          {/* Search */}
-          <div className="sos-topbar__search sos-search-input">
-            <Search size={14} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name, phone, service…"
-              aria-label="Search leads"
-            />
           </div>
         </div>
       </GlassCard>

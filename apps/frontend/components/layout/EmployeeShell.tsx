@@ -11,7 +11,6 @@ import {
   Menu,
   MessageSquare,
   PhoneCall,
-  Search,
   Sparkles,
   Users,
   X,
@@ -358,28 +357,9 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
             </div>
 
             <div className="sos-topbar__actions">
-              <div className="sos-topbar__search">
-                <Search size={14} />
-                <input
-                  type="search"
-                  placeholder="Search leads, follow-ups, appointments…"
-                  aria-label="Search workspace"
-                />
-                <kbd
-                  style={{
-                    fontSize: '10px',
-                    fontWeight: 600,
-                    padding: '2px 6px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--sos-border)',
-                    color: 'var(--sos-text-faint)',
-                    background: 'var(--sos-surface-2)',
-                  }}
-                >
-                  ⌘K
-                </kbd>
-              </div>
-
+              {/* Global workspace search removed — it was a non-functional
+                  placeholder (no handler) that showed a broken search box on
+                  every employee page. Real lead search lives on /sales/leads. */}
               <ThemeToggle />
 
               <span className="sos-topbar__optional">

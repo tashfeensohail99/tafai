@@ -13,7 +13,6 @@ import {
   LogOut,
   Menu,
   Receipt,
-  Search,
   Sparkles,
   Users,
   X,
@@ -267,28 +266,9 @@ export function FinanceShell({ children }: { children: ReactNode }) {
             </div>
 
             <div className="sos-topbar__actions">
-              <div className="sos-topbar__search">
-                <Search size={14} />
-                <input
-                  type="search"
-                  placeholder="Search by client, receipt no, reference…"
-                  aria-label="Search finance workspace"
-                />
-                <kbd
-                  style={{
-                    fontSize: '10px',
-                    fontWeight: 600,
-                    padding: '2px 6px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--sos-border)',
-                    color: 'var(--sos-text-faint)',
-                    background: 'var(--sos-surface-2)',
-                  }}
-                >
-                  ⌘K
-                </kbd>
-              </div>
-
+              {/* Global workspace search removed — non-functional placeholder
+                  (no handler). Real search lives on the list pages (Customers,
+                  Receipts) that have their own working search. */}
               <ThemeToggle />
 
               <NotificationsBell iconSize={15} />

@@ -422,6 +422,10 @@ model Organization {
   phone     String?
   address   String?
   logoUrl   String?
+  // Camera-attendance: master switch for accepting employee-enrollment requests
+  // from the camera system. Default OFF — admin opts in. When false, the camera's
+  // enrollment-request endpoint returns "disabled".
+  attendanceEnrollmentEnabled Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -500,6 +504,50 @@ model Organization {
   apiKeys     ApiKey[]
 
   @@map("organizations")
+  @@schema("core")
+}
+
+enum AttendanceEnrollmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DUPLICATE
+
+  @@schema("core")
+}
+
+/// Camera-initiated walk-in/new-hire enrollment. The camera operator captures a
+/// face + basic details; we store a PENDING request that an admin must approve
+/// before any real (payable) employee is created. Never auto-creates an employee.
+model AttendanceEnrollmentRequest {
+  id     String                     @id @default(uuid())
+  status AttendanceEnrollmentStatus @default(PENDING)
+
+  // Captured by the camera operator.
+  firstName     String
+  lastName      String
+  email         String?
+  phone         String?
+  department    String?
+  cnic          String?
+  joiningDate   DateTime?
+  cameraEmpCode String? // the camera's temporary id, echoed back so they reconcile
+  note          String?
+  source        String    @default("camera")
+
+  // Resolution.
+  employeeId        String? // the Employee created on approval (the permanent link key)
+  matchedEmployeeId String? // existing Employee matched at submit time (DUPLICATE)
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([phone])
+  @@map("attendance_enrollment_requests")
   @@schema("core")
 }
 

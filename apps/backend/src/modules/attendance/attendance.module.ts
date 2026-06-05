@@ -3,20 +3,33 @@ import { AttendanceClient } from './attendance.client';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceDirectoryService } from './attendance-directory.service';
 import { AttendanceDirectoryController } from './attendance-directory.controller';
+import { AttendanceEnrollmentService } from './attendance-enrollment.service';
+import { AttendanceEnrollmentController } from './attendance-enrollment.controller';
+import { AttendanceEnrollmentAdminController } from './attendance-enrollment-admin.controller';
+import { UsersModule } from '../users/users.module';
+import { EmployeesModule } from '../employees/employees.module';
 
 /**
- * Camera-attendance integration (Phase 0 — foundations).
+ * Camera-attendance integration.
  *
  *  - AttendanceClient            : read-only HTTP client for Summit Attendance Cloud
  *  - AttendanceController        : admin connectivity probe (GET /attendance/ping)
  *  - AttendanceDirectory*        : outbound employee feed the camera polls
  *                                  (GET /integrations/attendance/employees)
- *
- * Later phases add the daily-attendance mirror, sync cron, and monthly payroll.
+ *  - AttendanceEnrollment*       : camera-initiated walk-in enrollment as an
+ *                                  admin-approved request (request -> approve ->
+ *                                  creates User+Employee). Reuses Users/Employees
+ *                                  services; gated by an org master on/off switch.
  */
 @Module({
-  controllers: [AttendanceController, AttendanceDirectoryController],
-  providers: [AttendanceClient, AttendanceDirectoryService],
+  imports: [UsersModule, EmployeesModule],
+  controllers: [
+    AttendanceController,
+    AttendanceDirectoryController,
+    AttendanceEnrollmentController,
+    AttendanceEnrollmentAdminController,
+  ],
+  providers: [AttendanceClient, AttendanceDirectoryService, AttendanceEnrollmentService],
   exports: [AttendanceClient],
 })
 export class AttendanceModule {}

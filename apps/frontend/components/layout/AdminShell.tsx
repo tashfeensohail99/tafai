@@ -85,7 +85,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'Users', href: '/admin/users', icon: UserRoundCog, caption: 'Accounts & access', permissionKey: 'users.view_all' },
       { label: 'Employees', href: '/admin/employees', icon: UsersRound, caption: 'Profiles & WhatsApp pool', permissionKey: 'employees.view_all' },
       { label: 'Camera Enrollments', href: '/admin/attendance', icon: ScanFace, caption: 'Approve camera walk-ins', permissionKey: 'employees.view_all' },
-      { label: 'Attendance', href: '/admin/attendance-log', icon: Clock, caption: 'Daily attendance & manual marking', permissionKey: 'attendance.view' },
+      { label: 'Attendance', href: '/admin/attendance-log', icon: Clock, caption: 'Daily attendance & manual marking', permissionKey: 'employees.view_all' },
       { label: 'Roles', href: '/admin/roles', icon: ShieldCheck, caption: 'Permissions matrix', permissionKey: 'settings.manage' },
       { label: 'Departments', href: '/admin/departments', icon: Building2, caption: 'Org units', permissionKey: 'settings.manage' },
       { label: 'Branches', href: '/admin/branches', icon: MapPinned, caption: 'Locations', permissionKey: 'settings.manage' },

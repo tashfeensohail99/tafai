@@ -9,8 +9,9 @@ import { AttendanceService } from './attendance.service';
 import { MarkAttendanceDto, SyncAttendanceDto } from './attendance.dto';
 
 /**
- * Admin-facing attendance endpoints. All gated to `attendance.view` (admin-only
- * per the seed grant). The camera side is read-only; here we pull the camera's
+ * Admin-facing attendance endpoints. Gated to `employees.view_all` — the same
+ * admin permission the Camera Enrollments page uses (so it's visible to the same
+ * people without a separate seed grant). The camera side is read-only; here we pull the camera's
  * computed daily attendance into core.attendance_records, expose it for viewing,
  * and allow manual marking / override.
  */
@@ -24,7 +25,7 @@ export class AttendanceController {
 
   /** Confirms the camera API is reachable + credentials work. */
   @Get('ping')
-  @RequirePermissions('attendance.view')
+  @RequirePermissions('employees.view_all')
   async ping(): Promise<{ configured: boolean; ok: boolean; employeeCount?: number; error?: string }> {
     const result = await this.client.ping();
     return { configured: this.client.configured, ...result };
@@ -32,7 +33,7 @@ export class AttendanceController {
 
   /** Daily board — every active employee + their attendance for `date` (default: today PKT). */
   @Get('daily')
-  @RequirePermissions('attendance.view')
+  @RequirePermissions('employees.view_all')
   async daily(@Query('date') date?: string) {
     const d =
       date && /^\d{4}-\d{2}-\d{2}$/.test(date)
@@ -43,7 +44,7 @@ export class AttendanceController {
 
   /** One employee's attendance over a date range. */
   @Get('records')
-  @RequirePermissions('attendance.view')
+  @RequirePermissions('employees.view_all')
   async records(
     @Query('employeeId') employeeId: string,
     @Query('from') from: string,
@@ -54,14 +55,14 @@ export class AttendanceController {
 
   /** Pull attendance from the camera for a date (or range) and store it. */
   @Post('sync')
-  @RequirePermissions('attendance.view')
+  @RequirePermissions('employees.view_all')
   async sync(@Body() dto: SyncAttendanceDto, @CurrentUser() user: RequestUser) {
     return this.attendance.sync(dto, user.id);
   }
 
   /** Manually set / correct one employee's attendance for a day (override). */
   @Post('mark')
-  @RequirePermissions('attendance.view')
+  @RequirePermissions('employees.view_all')
   async mark(@Body() dto: MarkAttendanceDto, @CurrentUser() user: RequestUser) {
     return this.attendance.mark(dto, user.id);
   }

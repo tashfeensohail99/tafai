@@ -65,7 +65,7 @@ interface EditState {
 
 export function AttendanceLogPage() {
   const { user } = useAdminSession();
-  const canView = user.permissions.includes('attendance.view');
+  const canView = user.permissions.includes('employees.view_all');
 
   const [date, setDate] = useState(todayPkt());
   const [rows, setRows] = useState<AttendanceDailyRow[]>([]);

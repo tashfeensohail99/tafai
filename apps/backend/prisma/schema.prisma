@@ -293,6 +293,18 @@ enum AuditAction {
   PROCESSING_TASK_CREATED
   PROCESSING_CASE_COMPLETED
   PROCESSING_CASE_CANCELLED
+  ATTENDANCE_POLICY_UPDATED
+  HOLIDAY_UPSERTED
+  COMPENSATION_UPDATED
+  ATTENDANCE_APPROVED
+  ATTENDANCE_ADJUSTED
+  ATTENDANCE_EXCEPTION_REVIEWED
+  OFFICIAL_DUTY_REVIEWED
+  LEAVE_REVIEWED
+  OVERTIME_REVIEWED
+  PAYROLL_GENERATED
+  PAYROLL_PERIOD_LOCKED
+  PAYROLL_PERIOD_UNLOCKED
   @@schema("audit")
 }
 
@@ -400,6 +412,104 @@ enum AttendanceStatus {
   HALF_DAY
   LATE
   ON_LEAVE
+  HOLIDAY
+  WEEKLY_OFF
+  OFFICIAL_DUTY
+  @@schema("core")
+}
+
+enum AttendanceDayType {
+  WORKING
+  SATURDAY
+  WEEKLY_OFF
+  HOLIDAY
+  @@schema("core")
+}
+
+enum AttendanceReviewStatus {
+  COMPUTED
+  NEEDS_REVIEW
+  APPROVED
+  LOCKED
+  @@schema("core")
+}
+
+enum AttendanceExceptionType {
+  LATE
+  EARLY_LEAVE
+  SHORT_HOURS
+  EXTRA_BREAK
+  UNSCHEDULED_EXIT
+  OVERTIME
+  MISSING_PUNCH
+  ABSENT
+  @@schema("core")
+}
+
+enum ExceptionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  @@schema("core")
+}
+
+enum OvertimeResolution {
+  PENDING
+  APPROVED_PAID
+  COMPENSATORY
+  REJECTED
+  IGNORED
+  @@schema("core")
+}
+
+enum OfficialDutyStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  @@schema("core")
+}
+
+enum LeaveKind {
+  ANNUAL
+  SICK
+  CASUAL
+  UNPAID
+  @@schema("core")
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  @@schema("core")
+}
+
+enum HolidayType {
+  NATIONAL
+  RELIGIOUS
+  COMPANY
+  EMERGENCY
+  @@schema("core")
+}
+
+enum PayrollPeriodStatus {
+  DRAFT
+  LOCKED
+  @@schema("core")
+}
+
+enum SaturdayPolicy {
+  OPTIONAL_WFH
+  OFF
+  WORKING
+  @@schema("core")
+}
+
+enum SalaryBasis {
+  THIRTY_DAYS
+  WORKING_DAYS
   @@schema("core")
 }
 
@@ -2029,12 +2139,36 @@ model AttendanceRecord {
   notes       String?
   isOverride  Boolean          @default(false)
   overriddenByUserId String?
+
+  // ── Computed layer (camera /daily computed minutes + policy applied) ──
+  dayType            AttendanceDayType @default(WORKING)
+  grossPresenceMin   Int      @default(0)   // minutes physically present (camera)
+  breakMin           Int      @default(0)   // lunch/break minutes (camera)
+  personalMin        Int      @default(0)   // personal-out minutes (camera)
+  personalOverMin    Int      @default(0)   // break/personal over the allowance
+  unscheduledExits   Int      @default(0)
+  lateMin            Int      @default(0)
+  earlyLeaveMin      Int      @default(0)
+  overtimeMin        Int      @default(0)   // captured after work-end (not auto-paid)
+
+  // ── Approved layer (admin overlay — payroll reads these) ──
+  officialDutyMin       Int   @default(0)   // approved official-duty minutes credited
+  approvedExtraBreakMin Int   @default(0)   // extra break the admin approved (not deducted)
+  netPayableMin         Int   @default(0)   // final payable minutes after approvals
+  reviewStatus       AttendanceReviewStatus @default(COMPUTED)
+  approvedByUserId   String?
+  approvedAt         DateTime?
+  source             String   @default("CAMERA") // CAMERA | MANUAL | MIXED
+  lockedPayrollPeriodId String?              // set when a payroll period locks this day
+
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
   @@unique([employeeId, date])
   @@index([employeeId])
   @@index([date])
+  @@index([reviewStatus])
+  @@index([lockedPayrollPeriodId])
   @@map("attendance_records")
   @@schema("core")
 }
@@ -3543,5 +3677,236 @@ model Notification {
   @@index([userId, read, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
   @@map("notifications")
+  @@schema("core")
+}
+
+// =============================================================================
+// PAYROLL + ATTENDANCE RULES ENGINE
+// Layered: Raw (attendance_records from camera) -> Computed (policy applied) ->
+// Approved (admin overlay: exceptions/duty/leave/adjustments) -> Payroll (locked
+// snapshot). Payroll reads ONLY the approved layer + compensation, never raw.
+// All FKs are plain String columns (no @relation) to match the existing
+// AttendanceRecord convention and keep the Employee model untouched.
+// =============================================================================
+
+/// Versioned attendance policy (one active row per org). Nothing is hard-coded;
+/// admins edit these knobs in the Policy Settings screen. A bump to `version`
+/// + the JSON snapshot stored on each Payslip keeps locked payroll reproducible.
+model AttendancePolicy {
+  id                  String   @id @default(uuid())
+  orgId               String
+  version             Int      @default(1)
+  isActive            Boolean  @default(true)
+  workStart           String   @default("09:00")
+  workEnd             String   @default("18:00")
+  breakStart          String   @default("12:30")
+  breakEnd            String   @default("14:00")
+  allowedBreakMin     Int      @default(90)   // 1.5h
+  graceMin            Int      @default(15)
+  fullDayMinMin       Int      @default(480)  // >= 8h net = full day
+  halfDayMinMin       Int      @default(240)  // >= 4h net = half day
+  workingDays         Int[]    @default([1, 2, 3, 4, 5]) // 0=Sun .. 6=Sat
+  saturdayPolicy      SaturdayPolicy @default(OPTIONAL_WFH)
+  overtimeRequiresApproval Boolean @default(true)
+  overtimeStartAfter  String   @default("18:00")
+  overtimeMinBlockMin Int      @default(30)
+  salaryBasis         SalaryBasis @default(THIRTY_DAYS)
+  roundingMin         Int      @default(0)    // round late/OT to nearest N min (0 = off)
+  annualLeaveQuota    Int      @default(14)
+  sickLeaveQuota      Int      @default(8)
+  casualLeaveQuota    Int      @default(10)
+  updatedByUserId     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([orgId, isActive])
+  @@map("attendance_policies")
+  @@schema("core")
+}
+
+/// Company / public holiday calendar. Holidays never count as absent.
+model Holiday {
+  id              String      @id @default(uuid())
+  orgId           String
+  date            DateTime    @db.Date
+  name            String
+  type            HolidayType @default(COMPANY)
+  createdByUserId String?
+  createdAt       DateTime    @default(now())
+
+  @@unique([orgId, date])
+  @@index([orgId])
+  @@map("holidays")
+  @@schema("core")
+}
+
+/// Effective-dated compensation history. The "active" comp for a date is the
+/// row with the latest effectiveFrom <= that date. Old payslips keep old pay.
+model EmployeeCompensation {
+  id              String   @id @default(uuid())
+  employeeId      String
+  basicSalary     Decimal  @db.Decimal(12, 2)
+  allowances      Decimal  @default(0) @db.Decimal(12, 2)
+  effectiveFrom   DateTime @db.Date
+  isActive        Boolean  @default(true)
+  remarks         String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  @@index([employeeId, effectiveFrom])
+  @@map("employee_compensations")
+  @@schema("core")
+}
+
+/// Typed, per-day exceptions surfaced for admin review. Unique per (employee,
+/// date, type) so a recompute upserts the computed `minutes`/`description`
+/// WITHOUT wiping an already-reviewed status/resolution.
+model AttendanceException {
+  id                 String   @id @default(uuid())
+  employeeId         String
+  date               DateTime @db.Date
+  type               AttendanceExceptionType
+  status             ExceptionStatus @default(PENDING)
+  minutes            Int      @default(0)
+  description        String?
+  overtimeResolution OvertimeResolution?
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  remark             String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([employeeId, date, type])
+  @@index([status])
+  @@index([employeeId, date])
+  @@map("attendance_exceptions")
+  @@schema("core")
+}
+
+/// Official-duty slip. When APPROVED, its minutes credit back into the day's
+/// payable time so the employee isn't penalised for off-site official work.
+model OfficialDutySlip {
+  id               String   @id @default(uuid())
+  employeeId       String
+  date             DateTime @db.Date
+  fromTime         String   // HH:MM
+  toTime           String   // HH:MM
+  minutes          Int      @default(0)
+  reason           String
+  location         String?
+  status           OfficialDutyStatus @default(PENDING)
+  attachmentKey    String?
+  createdByUserId  String?
+  approvedByUserId String?
+  approvedAt       DateTime?
+  remarks          String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([employeeId, date])
+  @@index([status])
+  @@map("official_duty_slips")
+  @@schema("core")
+}
+
+/// Immutable per-day adjustment trail (old/new value + reason + actor). Every
+/// manual correction or approval also writes one of these for audit.
+model AttendanceAdjustment {
+  id          String   @id @default(uuid())
+  employeeId  String
+  date        DateTime @db.Date
+  action      String   // e.g. APPROVE_EXTRA_BREAK, CORRECT_PUNCH, ADD_OFFICIAL_DUTY
+  oldValue    Json?
+  newValue    Json?
+  reason      String?
+  actorUserId String
+  createdAt   DateTime @default(now())
+
+  @@index([employeeId, date])
+  @@map("attendance_adjustments")
+  @@schema("core")
+}
+
+/// Leave requests. Approved PAID leave does not deduct; UNPAID deducts
+/// dailyRate * days. Balances = policy quota - approved days in the year.
+model LeaveRequest {
+  id               String   @id @default(uuid())
+  employeeId       String
+  kind             LeaveKind
+  fromDate         DateTime @db.Date
+  toDate           DateTime @db.Date
+  days             Int      @default(1)
+  paid             Boolean  @default(true)
+  reason           String?
+  status           LeaveStatus @default(PENDING)
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  remarks          String?
+  createdByUserId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([employeeId, status])
+  @@index([fromDate, toDate])
+  @@map("leave_requests")
+  @@schema("core")
+}
+
+/// A calendar-month payroll run. Once LOCKED, the month's attendance days are
+/// stamped lockedPayrollPeriodId and nothing silently changes the payslips.
+model PayrollPeriod {
+  id              String   @id @default(uuid())
+  orgId           String
+  year            Int
+  month           Int      // 1-12
+  startDate       DateTime @db.Date
+  endDate         DateTime @db.Date
+  status          PayrollPeriodStatus @default(DRAFT)
+  generatedAt     DateTime?
+  lockedByUserId  String?
+  lockedAt        DateTime?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([orgId, year, month])
+  @@map("payroll_periods")
+  @@schema("core")
+}
+
+/// One employee's payslip for a period. Carries a full policy + comp snapshot
+/// and a line-item breakdown so it's reproducible regardless of later edits.
+model Payslip {
+  id                   String   @id @default(uuid())
+  payrollPeriodId      String
+  employeeId           String
+  basicSalary          Decimal  @db.Decimal(12, 2)
+  allowances           Decimal  @default(0) @db.Decimal(12, 2)
+  dailyRate            Decimal  @db.Decimal(12, 2)
+  workingDays          Int      @default(0)
+  presentDays          Decimal  @default(0) @db.Decimal(5, 1)
+  absentDays           Decimal  @default(0) @db.Decimal(5, 1)
+  halfDays             Int      @default(0)
+  paidLeaveDays        Decimal  @default(0) @db.Decimal(5, 1)
+  unpaidLeaveDays      Decimal  @default(0) @db.Decimal(5, 1)
+  holidays             Int      @default(0)
+  lateDeduction        Decimal  @default(0) @db.Decimal(12, 2)
+  absenceDeduction     Decimal  @default(0) @db.Decimal(12, 2)
+  unpaidLeaveDeduction Decimal  @default(0) @db.Decimal(12, 2)
+  otherDeductions      Decimal  @default(0) @db.Decimal(12, 2)
+  overtimePay          Decimal  @default(0) @db.Decimal(12, 2)
+  additions            Decimal  @default(0) @db.Decimal(12, 2)
+  grossPay             Decimal  @default(0) @db.Decimal(12, 2)
+  totalDeductions      Decimal  @default(0) @db.Decimal(12, 2)
+  netPayable           Decimal  @default(0) @db.Decimal(12, 2)
+  policySnapshot       Json?
+  breakdown            Json?
+  remarks              String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([payrollPeriodId, employeeId])
+  @@index([employeeId])
+  @@map("payslips")
   @@schema("core")
 }

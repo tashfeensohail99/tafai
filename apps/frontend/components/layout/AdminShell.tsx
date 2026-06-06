@@ -86,6 +86,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'Employees', href: '/admin/employees', icon: UsersRound, caption: 'Profiles & WhatsApp pool', permissionKey: 'employees.view_all' },
       { label: 'Camera Enrollments', href: '/admin/attendance', icon: ScanFace, caption: 'Approve camera walk-ins', permissionKey: 'employees.view_all' },
       { label: 'Attendance', href: '/admin/attendance-log', icon: Clock, caption: 'Daily attendance & manual marking', permissionKey: 'employees.view_all' },
+      { label: 'Payroll', href: '/admin/payroll', icon: FileSpreadsheet, caption: 'Attendance rules, leave & payslips', permissionKey: 'employees.view_all' },
       { label: 'Roles', href: '/admin/roles', icon: ShieldCheck, caption: 'Permissions matrix', permissionKey: 'settings.manage' },
       { label: 'Departments', href: '/admin/departments', icon: Building2, caption: 'Org units', permissionKey: 'settings.manage' },
       { label: 'Branches', href: '/admin/branches', icon: MapPinned, caption: 'Locations', permissionKey: 'settings.manage' },
@@ -134,6 +135,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/audit')) return { title: 'Activity Logs', subtitle: 'Audit trail' };
   if (pathname.startsWith('/admin/employees')) return { title: 'Employees', subtitle: 'Profiles & WhatsApp pool' };
   if (pathname.startsWith('/admin/attendance-log')) return { title: 'Attendance', subtitle: 'Daily attendance & manual marking' };
+  if (pathname.startsWith('/admin/payroll')) return { title: 'Payroll & Attendance', subtitle: 'Rules engine, leave & payslips' };
   if (pathname.startsWith('/admin/attendance')) return { title: 'Camera Enrollments', subtitle: 'Approve camera-enrolled walk-ins' };
   if (pathname.startsWith('/admin/roles')) return { title: 'Roles & Permissions', subtitle: 'Permission matrix' };
   if (pathname.startsWith('/admin/departments')) return { title: 'Departments', subtitle: 'Organisational units' };

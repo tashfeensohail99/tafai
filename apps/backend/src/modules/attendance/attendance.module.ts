@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AttendanceClient } from './attendance.client';
+import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceDirectoryService } from './attendance-directory.service';
 import { AttendanceDirectoryController } from './attendance-directory.controller';
@@ -29,7 +30,7 @@ import { EmployeesModule } from '../employees/employees.module';
     AttendanceEnrollmentController,
     AttendanceEnrollmentAdminController,
   ],
-  providers: [AttendanceClient, AttendanceDirectoryService, AttendanceEnrollmentService],
+  providers: [AttendanceClient, AttendanceService, AttendanceDirectoryService, AttendanceEnrollmentService],
   exports: [AttendanceClient],
 })
 export class AttendanceModule {}

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   UseGuards,
@@ -84,6 +85,21 @@ export class UsersController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.usersService.activate(id, user.id);
+  }
+
+  /**
+   * Soft-delete ("Delete" / "Remove" in the admin UI). Removes the user from
+   * the users list + employee directory + camera attendance feed and kills
+   * their login, while retaining history for audit/payroll. Gated on the same
+   * `users.deactivate` permission as deactivate (both revoke all access).
+   */
+  @Delete(':id')
+  @RequirePermissions('users.deactivate')
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.usersService.remove(id, user.id);
   }
 
   /**

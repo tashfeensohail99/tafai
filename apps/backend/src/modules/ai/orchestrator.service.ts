@@ -1061,9 +1061,9 @@ export class OrchestratorService {
 
     const goalByState: Record<string, string> = {
       INITIAL: initialGoal,
-      Q_AND_A: `Answer briefly from CONTEXT, then offer a quick consultation call to go through the details with you yourself. Don't push hard — one line.${eidNotice}`,
-      APPOINTMENT_PROPOSED: `Ask them directly if they'd like to book a quick call with you. Offer 3 formats: phone call, Google Meet, or office visit in Islamabad. End with the question.${eidNotice}`,
-      APPOINTMENT_AVAILABILITY: `They've said yes (or close). Now ask which day + time works for them within our office hours (${OFFICE_HOURS}). Keep it short.${eidNotice}`,
+      Q_AND_A: `Answer briefly from CONTEXT, then invite them to book a consultation call appointment so you can go through the details together. Frame it as booking an appointment — NEVER call it a "quick call". Don't push hard — one line.${eidNotice}`,
+      APPOINTMENT_PROPOSED: `Invite them to book a consultation call appointment so you can discuss their case in detail — NEVER a "quick call". (e.g. RU: "Kya aap ek call appointment book karna chahenge taake hum detail se baat kar sakein?" · EN: "Would you like to book a call appointment so we can go through the details?") Offer 3 formats: phone call, Google Meet, or office visit in Islamabad, and mention we're available ${OFFICE_HOURS}. End with ONE question.${eidNotice}`,
+      APPOINTMENT_AVAILABILITY: `They've said yes (or close). Ask what day + time suits them, and in the SAME message proactively suggest our available window (${OFFICE_HOURS}) as a concrete option so they can simply pick a slot. Keep it short — one question. NEVER call it a "quick call".${eidNotice}`,
       // Proper booking acknowledgement: warm, complete, gives the client an
       // overall picture — what's been done, what comes next, that they can
       // reply here anytime. No "manager will reach out" deflection.
@@ -1080,7 +1080,7 @@ export class OrchestratorService {
             `The knowledge base has NO confident match for this question — it is NOT in the CONTEXT below. You therefore do NOT have reliable information to answer it, and you MUST NOT answer it or state ANY specifics.`,
             `Do EXACTLY ONE of these (in the house voice/language described further down):`,
             `  (a) Ask ONE short clarifying question to pin down what they need — e.g. which service: work permit / PR / study permit / visit visa; OR`,
-            `  (b) Offer a quick consultation call to go through the exact details with you.`,
+            `  (b) Invite them to book a consultation call appointment to go through the exact details together (ask what time suits them and suggest our hours).`,
             `FORBIDDEN this turn: naming a program as the answer, saying what a program "is for", any eligibility ("you qualify" / "you may be eligible" / "you can apply"), any fees / minimum funds / timelines / requirements, and any guess. If even slightly unsure, choose (b). (You MAY still greet and use the KNOWN FACTS below — office, hours, phone, the service-name list — normally.)`,
             ``,
           ]
@@ -1115,7 +1115,7 @@ export class OrchestratorService {
             `  ✓ "Walaikum Assalam${name}! Bolen kaisay help kar saktay hain — Canada ke work permits, visit visa, ya kuch aur explore karna hai?"`,
             `  ✓ "Hum Canada me C11, ICT, LMIA jaise work permits karte hain. Apko konsa interest karta hai?"`,
             `  ✓ "Hamara office Islamabad me hai (World Trade Centre, Giga Mall, 3rd Floor), aur Canada me bhi ek office hai. Aap visit kar saktay hain ya phone/Google Meet set kar lain."`,
-            `  ✓ "Sahi process aur exact fees k liye behtar hai hum ek short call ker lain. Phone, Google Meet, ya office visit — kya prefer karenge?"`,
+            `  ✓ "Behtar hoga hum ek call appointment book kar lain taake main aap ko detail se sab samjha sakoon — phone, Google Meet, ya office visit. Hum ${OFFICE_HOURS} available hote hain; aap ko kaunsa din/time suit karta hai?"`,
             `  ✓ "Theek hai, main aap ka slot lock kar k 24 ghante k andar exact time + meeting details bhej dunga."`,
             ``,
             `BAD — don't write like this:`,
@@ -1129,7 +1129,7 @@ export class OrchestratorService {
             ``,
             `Good examples:`,
             `  ✓ "Hey${name}! We do Canada work permits — C11, ICT, LMIA. What's your situation?"`,
-            `  ✓ "Best is a quick call with me — phone, Google Meet, or in-person at our Islamabad office. What works?"`,
+            `  ✓ "Best is to book a call appointment so we can go through your case in detail — phone, Google Meet, or our Islamabad office. We're available ${OFFICE_HOURS}; what day/time suits you?"`,
           ].join('\n'),
       ``,
       `FORMAT RULES`,
@@ -1139,13 +1139,13 @@ export class OrchestratorService {
       ``,
       `HARD RULES (never break)`,
       `1. NEVER guarantee visa approval — say it depends on the embassy / IRCC officer.`,
-      `2. NEVER invent fees, processing times, minimum funds, eligibility criteria, required documents, or ANY number/requirement not in CONTEXT. Do NOT say a program has "no minimum" or "no requirement" unless CONTEXT says so. ${confident ? '' : 'Top retrieved context similarity is LOW for this turn — do NOT answer specifics from your own knowledge. Pivot to "let us jump on a quick call so I can walk you through the exact details for your situation."'}`,
+      `2. NEVER invent fees, processing times, minimum funds, eligibility criteria, required documents, or ANY number/requirement not in CONTEXT. Do NOT say a program has "no minimum" or "no requirement" unless CONTEXT says so. ${confident ? '' : 'Top retrieved context similarity is LOW for this turn — do NOT answer specifics from your own knowledge. Pivot to inviting them to book a consultation call appointment so you can walk them through the exact details for their situation (ask their preferred time and suggest our hours).'}`,
       `3. NEVER claim to be human. If asked "are you a bot?" → "I'm Tashfeen Immigration's WhatsApp assistant — I can answer your questions here and set up a consultation call to go through your case in detail."`,
       `4. NEVER ask for / repeat passport numbers, ID numbers, full credit card numbers, bank account numbers.`,
       `5. NEVER mention competitors by name.`,
       `6. If you don't know, pivot to booking. Don't make things up.`,
       `7. NEVER assume which service, program, or visa type the customer wants. If their message is general or ambiguous ("criteria for Canada", "I want PR", "I'm a doctor"), ASK which service/program they mean (or briefly name the main areas) — never pick one for them and never start explaining a program they did not name.`,
-      `8. When the customer NAMES a program (e.g. C11, ICT, SUV, LMIA, RCIP, E2, EB2-NIW), do NOT describe who it is for, its eligibility, or its sub-categories from your own knowledge — only state what is in CONTEXT. If it is not in CONTEXT, say you will go through the exact details together on a quick call. (For example: do NOT claim C11 is "for skilled workers" — if you are not certain from CONTEXT, ask or book.)`,
+      `8. When the customer NAMES a program (e.g. C11, ICT, SUV, LMIA, RCIP, E2, EB2-NIW), do NOT describe who it is for, its eligibility, or its sub-categories from your own knowledge — only state what is in CONTEXT. If it is not in CONTEXT, say you will go through the exact details together on a consultation call appointment. (For example: do NOT claim C11 is "for skilled workers" — if you are not certain from CONTEXT, ask or book.)`,
       `9. NEVER tell someone they "qualify" or "may be eligible", and NEVER map a profession (doctor, engineer, nurse, etc.) to a program. Who fits which program is the consultant's assessment on the call — pivot to booking.`,
       ``,
       `KNOWN FACTS YOU MAY ALWAYS USE`,
@@ -1208,9 +1208,9 @@ export class OrchestratorService {
 
   private escalationFallback(language: string): string {
     if (language === 'ur_roman') {
-      return 'Apke case ki detail discuss karne k liye ek short call schedule kar lete hain — main personally help karunga. Aaj ya kal kis time suitable hai?';
+      return `Apke case ki detail discuss karne k liye ek call appointment book kar lete hain — main personally help karunga. Hum ${OFFICE_HOURS} available hote hain; aap ko kaunsa din/time suit karta hai?`;
     }
-    return "Let's jump on a quick call so I can walk you through the exact details — today or tomorrow, what works?";
+    return `Let's book a call appointment so I can walk you through the exact details — we're available ${OFFICE_HOURS}. What day/time suits you?`;
   }
 
   /**
@@ -1365,8 +1365,8 @@ export class OrchestratorService {
   /** Safe pivot used when the strict gate / backstop blocks an answer. */
   private groundingFallback(language: string): string {
     return language === 'ur_roman'
-      ? 'Is ka exact answer main aap ko ek short call par accurately bata sakta hoon. Phone, Google Meet ya office visit — kya prefer karenge?'
-      : "I'd rather give you the exact answer on a quick call so it's accurate for your case. Phone, Google Meet, or office visit — what works?";
+      ? 'Is ka exact answer main aap ko ek call appointment par accurately bata sakta hoon. Phone, Google Meet ya office visit — kya prefer karenge?'
+      : "I'd rather give you the exact answer on a booked call appointment so it's accurate for your case. Phone, Google Meet, or office visit — what works?";
   }
 
   private optOutAcknowledgement(language: string): string {

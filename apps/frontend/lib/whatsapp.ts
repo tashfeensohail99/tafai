@@ -275,7 +275,12 @@ export interface ThreadStats {
  * `items.length`, which only ever reflects the loaded page.
  */
 export function getThreadStats(): Promise<ThreadStats> {
-  return apiFetch<ThreadStats>('/whatsapp/threads/stats');
+  // no-store: the tab-count badges (All / Open / Pending / Resolved) must
+  // reflect the live DB. Without this they ride apiFetch's 10s GET cache, so
+  // the count a realtime refresh fetches right after an agent replies can be
+  // the stale pre-reply value — making "Pending" look stuck even though the
+  // replied chat already left the queue. Counts are cheap; always fetch fresh.
+  return apiFetch<ThreadStats>('/whatsapp/threads/stats', { cache: 'no-store' });
 }
 
 export function reassignThread(

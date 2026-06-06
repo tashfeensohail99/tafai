@@ -192,6 +192,11 @@ export default function SalesInboxPage() {
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
     },
     reconcile: () => void reload({ background: true }),
+    // Keep the tab counts (All / Open / Pending / Resolved) live with each
+    // burst of activity — so replying to a chat drops "Pending" within a
+    // beat, not only on the slow 30s reconcile. refreshStats() fetches the
+    // real DB totals (now no-store) without reloading the whole list.
+    onActivity: () => void refreshStats(),
   });
 
   // Stable handler so memo(ThreadRow) skips re-rendering unaffected rows when

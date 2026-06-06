@@ -257,6 +257,10 @@ export function WhatsAppAdminPage() {
       void refreshThreads();
       void refreshPresence();
     },
+    // Keep the KPI chips (Pending / overdue / unassigned …) live with each
+    // burst of activity, not only on the 30s reconcile — so a reply visibly
+    // drops "Pending" the moment it clears the thread.
+    onActivity: () => void refreshStats(),
   });
 
   // Auto-clear confirmation banner after 4 seconds so it doesn't linger.

@@ -134,14 +134,25 @@ export function useThreadListLivePatch(params: {
   matches: (row: ThreadListItem) => boolean;
   reconcile: () => void;
   reconcileOnFocus?: () => void;
+  /**
+   * Fired once per flushed burst of activity (debounced by LIVE_PATCH_BURST_MS).
+   * The per-row patch above keeps the LIST correct; this lets the caller also
+   * refresh lightweight derived state — chiefly the tab-count badges — so e.g.
+   * "Pending N" drops the moment an agent's reply clears a thread, instead of
+   * waiting for the 30s reconcile. Cheap + throttled; skipped on the >MAX
+   * branch (which already does a full reconcile that refreshes counts).
+   */
+  onActivity?: () => void;
 }): void {
   const { socket, setItems } = params;
   const matchesRef = useRef(params.matches);
   const reconcileRef = useRef(params.reconcile);
   const reconcileFocusRef = useRef(params.reconcileOnFocus ?? params.reconcile);
+  const onActivityRef = useRef(params.onActivity);
   matchesRef.current = params.matches;
   reconcileRef.current = params.reconcile;
   reconcileFocusRef.current = params.reconcileOnFocus ?? params.reconcile;
+  onActivityRef.current = params.onActivity;
 
   useEffect(() => {
     if (!socket) return;
@@ -181,6 +192,10 @@ export function useThreadListLivePatch(params: {
         next.sort(byLastMessageDesc);
         return next;
       });
+      // Counts move with activity, not on a 30s timer: refresh the tab badges
+      // now that a burst has been applied. The replied/resolved chat already
+      // left the LIST above; this makes its number drop in the same beat.
+      onActivityRef.current?.();
     };
 
     const onEvent = (payload: { threadId?: string } | undefined) => {

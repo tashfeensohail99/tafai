@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { AppointmentStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { OpenAiService } from './openai.service';
 import { KnowledgeService, type KnowledgeMatch } from './knowledge.service';
@@ -128,6 +129,32 @@ function clampToOfficeHours(proposed: Date): Date {
     d.setDate(d.getDate() + 1);
   }
   return d;
+}
+
+/**
+ * Find the first free 30-minute slot for a rep at/after `desired`, given the
+ * rep's already-booked intervals. Steps forward in 30-min increments, re-clamping
+ * each candidate into office hours / working days, until a slot that doesn't
+ * overlap any busy interval is found. This is what stops the bot from booking
+ * three customers into the same 10:00 with the same salesperson — it rolls the
+ * 2nd and 3rd to 10:30, 11:00, … (or the next working day). Pure + deterministic.
+ */
+function firstFreeSlot(
+  desired: Date,
+  durationMs: number,
+  busy: ReadonlyArray<{ s: number; e: number }>,
+): Date {
+  const SLOT_MS = 30 * 60_000;
+  let cand = clampToOfficeHours(new Date(desired));
+  for (let i = 0; i < 400; i++) {
+    const cs = cand.getTime();
+    const ce = cs + durationMs;
+    // Overlap test: [cs,ce) intersects [s,e)  ⇔  cs < e && s < ce.
+    const clash = busy.some((iv) => cs < iv.e && iv.s < ce);
+    if (!clash) return cand;
+    cand = clampToOfficeHours(new Date(cs + SLOT_MS));
+  }
+  return cand; // safety net (rep booked solid for ~2 weeks) — never expected
 }
 
 /**
@@ -651,21 +678,54 @@ export class OrchestratorService {
       const leadFullName = `${lead.firstName ?? ''} ${lead.lastName ?? ''}`.trim() || 'WhatsApp lead';
       const modalityLabel = this.modalityLabel(opts.modality);
 
-      const created = await this.prisma.appointment.create({
-        data: {
-          leadId: lead.id,
-          clientId: lead.convertedClientId ?? null,
-          assignedEmployeeId: lead.assignedEmployee.id,
-          title: `Consultation with ${leadFullName}`,
-          appointmentType,
-          scheduledAt,
-          durationMinutes: 30,
-          // Office visits carry the office address so the confirmation tells
-          // the client exactly where to come; calls/Meets have no location.
-          location: opts.modality === 'IN_PERSON' ? OFFICE_ADDRESS : null,
-          notes: `Auto-booked by AI assistant. Client said: "${opts.rawText}"`,
-        },
-        select: { id: true, scheduledAt: true, durationMinutes: true, appointmentType: true },
+      const empId = lead.assignedEmployee.id;
+      const durationMinutes = 30;
+
+      // Availability-aware booking — the fix for "3 customers booked into the
+      // same 10:00 with the same rep". Lock the rep row (serialises concurrent
+      // bookings, like the lead-assignment engine), read their already-booked
+      // intervals, and roll the requested time forward to the next FREE slot.
+      // The confirmation message + agent email below use created.scheduledAt, so
+      // the customer is always told the actual time we booked.
+      const created = await this.prisma.$transaction(async (tx) => {
+        // employees.id is a TEXT column (String @id) — compare text-to-text, no ::uuid cast.
+        await tx.$queryRaw`SELECT 1 FROM core.employees WHERE id = ${empId} FOR UPDATE`;
+        const winStart = new Date(scheduledAt.getTime() - 2 * 60 * 60_000);
+        const winEnd = new Date(scheduledAt.getTime() + 21 * 24 * 60 * 60_000);
+        const busyRows = await tx.appointment.findMany({
+          where: {
+            assignedEmployeeId: empId,
+            status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+            scheduledAt: { gte: winStart, lte: winEnd },
+          },
+          select: { scheduledAt: true, durationMinutes: true },
+        });
+        const busy = busyRows.map((b) => ({
+          s: b.scheduledAt.getTime(),
+          e: b.scheduledAt.getTime() + (b.durationMinutes ?? 30) * 60_000,
+        }));
+        const bookedAt = firstFreeSlot(scheduledAt, durationMinutes * 60_000, busy);
+        if (bookedAt.getTime() !== scheduledAt.getTime()) {
+          this.log.log(
+            `auto-book: ${scheduledAt.toISOString()} is taken for employee ${empId} → next free slot ${bookedAt.toISOString()}`,
+          );
+        }
+        return tx.appointment.create({
+          data: {
+            leadId: lead.id,
+            clientId: lead.convertedClientId ?? null,
+            assignedEmployeeId: empId,
+            title: `Consultation with ${leadFullName}`,
+            appointmentType,
+            scheduledAt: bookedAt,
+            durationMinutes,
+            // Office visits carry the office address so the confirmation tells
+            // the client exactly where to come; calls/Meets have no location.
+            location: opts.modality === 'IN_PERSON' ? OFFICE_ADDRESS : null,
+            notes: `Auto-booked by AI assistant. Client said: "${opts.rawText}"`,
+          },
+          select: { id: true, scheduledAt: true, durationMinutes: true, appointmentType: true },
+        });
       });
 
       await this.prisma.appointmentRequest.updateMany({

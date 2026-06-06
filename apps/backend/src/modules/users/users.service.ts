@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -205,6 +206,58 @@ export class UsersService {
       oldValues: { status: user.status },
       newValues: { status: 'INACTIVE' },
     });
+  }
+
+  /**
+   * Soft-delete ("Delete" / "Remove" in the admin UI). Unlike deactivate()
+   * — which only flips status to INACTIVE and leaves the row in the directory
+   * — this also sets `deletedAt`, so the person disappears from the users
+   * list, the employee directory, AND the camera attendance feed (all filter
+   * `deletedAt: null`). Their login dies (status INACTIVE + sessions revoked,
+   * and auth rejects accounts with deletedAt). We never HARD-delete: linked
+   * leads, appointments, WhatsApp messages, payroll and audit rows must stay
+   * intact, so history is retained. Re-hiring later = a fresh account.
+   */
+  async remove(id: string, actorUserId: string) {
+    if (id === actorUserId) {
+      // Guard against locking yourself out of the admin panel.
+      throw new BadRequestException('You cannot delete your own account.');
+    }
+    const user = await this.findById(id); // throws NotFound if missing/already removed
+    const now = new Date();
+
+    await this.prisma.$transaction([
+      this.prisma.userAccount.update({
+        where: { id },
+        data: { status: 'INACTIVE', deletedAt: now },
+      }),
+      // Revoke every active session so a held token can't keep working.
+      this.prisma.loginSession.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+      // Cascade to the linked employee (if any): off the routing pools and
+      // OUT of the camera attendance feed (it returns isActive + deletedAt:null
+      // only). updateMany → no error when the user has no employee row.
+      this.prisma.employee.updateMany({
+        where: { userId: id, deletedAt: null },
+        data: { isActive: false, deletedAt: now },
+      }),
+    ]);
+
+    // No dedicated USER_DELETED audit action exists; a soft-delete is a strong
+    // deactivation, so reuse USER_DEACTIVATED and mark removed:true in the
+    // payload to keep the trail unambiguous (avoids an enum migration).
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.USER_DEACTIVATED,
+      entityType: 'UserAccount',
+      entityId: id,
+      oldValues: { status: user.status, deletedAt: null },
+      newValues: { status: 'INACTIVE', deletedAt: now, removed: true },
+    });
+
+    return { success: true as const };
   }
 
   async activate(id: string, actorUserId: string) {

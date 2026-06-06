@@ -186,6 +186,25 @@ export function UsersAdminPage() {
     }
   }
 
+  // Soft-delete: removes the user from this list, the employee directory and
+  // the camera attendance feed, and ends their login. History is retained for
+  // audit/payroll (no hard delete). Works for active AND inactive users.
+  async function handleDelete(target: UserRow) {
+    if (target.id === user.id) return;
+    if (
+      !confirm(
+        `Delete ${target.email}?\n\nThis removes them from the users list, ends their login, and (if they're a staff/camera employee) drops them from the attendance feed. Their history is kept for audit/payroll. This can't be undone here.`,
+      )
+    )
+      return;
+    try {
+      await apiFetch(`/users/${target.id}`, { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Unable to delete user');
+    }
+  }
+
   const columns: DataTableColumn<UserRow>[] = [
     {
       key: 'email',
@@ -283,6 +302,19 @@ export function UsersAdminPage() {
               }}
             >
               Deactivate
+            </button>
+          ) : null}
+          {canDeactivate && row.id !== user.id ? (
+            <button
+              onClick={() => void handleDelete(row)}
+              className="rounded-md border px-3 py-1 text-xs font-medium"
+              style={{
+                borderColor: 'var(--sos-status-danger-border)',
+                color: 'var(--sos-text-inverse)',
+                background: 'var(--sos-status-danger)',
+              }}
+            >
+              Delete
             </button>
           ) : null}
         </div>

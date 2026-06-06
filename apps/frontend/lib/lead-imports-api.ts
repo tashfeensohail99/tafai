@@ -76,7 +76,6 @@ async function uploadMultipart<T>(
   file: File,
   fields: Record<string, string | string[]> = {},
 ): Promise<T> {
-  const token = getAccessToken();
   const form = new FormData();
   form.append('file', file);
   for (const [k, v] of Object.entries(fields)) {
@@ -86,16 +85,12 @@ async function uploadMultipart<T>(
       form.append(k, v);
     }
   }
-  const res = await fetch(`${baseUrl()}${path}`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: form,
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
+  // Route through apiFetch so the upload gets the SAME token-refresh-on-401 +
+  // retry the rest of the app has. Previously this was a raw fetch that only
+  // attached the current token — so an expired session failed the upload with
+  // "Authentication required" instead of silently refreshing. apiFetch leaves
+  // Content-Type unset for FormData (the browser sets the multipart boundary).
+  return apiFetch<T>(path, { method: 'POST', body: form });
 }
 
 export async function previewImport(file: File): Promise<PreviewResult> {

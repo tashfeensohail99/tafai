@@ -6,15 +6,20 @@ import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  Check,
   Clock,
   FileText,
   MessageSquare,
+  Send,
+  Upload,
 } from 'lucide-react';
 import { GlassCard, StatusBadge, type BadgeTone } from '@/components/sales-v2/ui';
 import {
   CLIENT_STAGE_LABEL,
   CLIENT_STAGE_TONE,
   CLIENT_NEXT_ACTION,
+  CLIENT_JOURNEY_PHASES,
+  clientJourneyPhase,
   fmtDate,
   getProfile,
   type PortalProfile,
@@ -121,6 +126,87 @@ function ActionCard({ tone, icon, title, description, href, cta }: ActionCardPro
   );
 }
 
+// A 5-step progress stepper so the client always sees where they are in the
+// overall journey and what comes next. Hidden for cancelled cases.
+function ClientJourney({ stage }: { stage: ProcessingCaseStage }) {
+  const current = clientJourneyPhase(stage);
+  if (current < 0) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: '16px' }}>
+      {CLIENT_JOURNEY_PHASES.map((p, i) => {
+        const done = i < current;
+        const isCurrent = i === current;
+        const reached = i <= current;
+        return (
+          <div key={p.key} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
+            {i > 0 ? (
+              <div style={{ position: 'absolute', top: '11px', left: '-50%', width: '100%', height: '2px', background: reached ? 'var(--sos-brand-primary)' : 'var(--sos-border-subtle)' }} />
+            ) : null}
+            <div
+              style={{
+                position: 'relative', zIndex: 1, width: '24px', height: '24px', borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: done ? 'var(--sos-brand-primary)' : isCurrent ? 'var(--sos-brand-primary-soft)' : 'var(--sos-surface-hover)',
+                border: `2px solid ${reached ? 'var(--sos-brand-primary)' : 'var(--sos-border-subtle)'}`,
+                color: done ? '#fff' : isCurrent ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-faint)',
+              }}
+            >
+              {done ? <Check size={12} /> : <span style={{ fontSize: '11px', fontWeight: 700 }}>{i + 1}</span>}
+            </div>
+            <span style={{ marginTop: '6px', fontSize: '10.5px', fontWeight: isCurrent ? 700 : 500, color: isCurrent ? 'var(--sos-text-primary)' : 'var(--sos-text-muted)', textAlign: 'center', lineHeight: 1.3 }}>
+              {p.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// First-visit "how this works" explainer. Dismissible; the choice is remembered
+// in localStorage so returning clients aren't nagged.
+function HowItWorks() {
+  const [hidden, setHidden] = useState(true);
+  useEffect(() => {
+    try {
+      setHidden(localStorage.getItem('tafsheen_portal_help_hidden') === '1');
+    } catch {
+      setHidden(false);
+    }
+  }, []);
+  if (hidden) return null;
+  const steps: { icon: React.ReactNode; text: string }[] = [
+    { icon: <Upload size={15} />, text: 'Upload your documents in the Documents tab — we tell you exactly which ones we need and why.' },
+    { icon: <Clock size={15} />, text: 'We review each document (usually within 1–2 business days) and let you know if anything needs a fix.' },
+    { icon: <Send size={15} />, text: 'Once everything is ready, we submit your application to the immigration authority on your behalf.' },
+    { icon: <MessageSquare size={15} />, text: 'We keep you posted at every step — and you can message your officer here anytime.' },
+  ];
+  function dismiss() {
+    try { localStorage.setItem('tafsheen_portal_help_hidden', '1'); } catch { /* ignore */ }
+    setHidden(true);
+  }
+  return (
+    <GlassCard variant="panel" padded="md" style={{ borderLeft: '3px solid var(--sos-brand-primary-strong)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '12px' }}>
+        <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>How your application works</div>
+        <button type="button" onClick={dismiss} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '12px', color: 'var(--sos-text-muted)', fontWeight: 600 }}>
+          Got it, hide
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {steps.map((s, i) => (
+          <div key={i} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+            <div style={{ flexShrink: 0, width: '28px', height: '28px', borderRadius: '8px', background: 'var(--sos-brand-primary-soft)', color: 'var(--sos-brand-primary-strong)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {s.icon}
+            </div>
+            <span style={{ fontSize: '12.5px', color: 'var(--sos-text-primary)', lineHeight: 1.5, paddingTop: '4px' }}>{s.text}</span>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  );
+}
+
 export function ClientCaseOverviewPage() {
   const { user, activeCase } = useClientSession();
   const [profile, setProfile] = useState<PortalProfile | null>(null);
@@ -167,6 +253,8 @@ export function ClientCaseOverviewPage() {
         </div>
       </div>
 
+      <HowItWorks />
+
       <GlassCard variant="strong" padded="lg">
         <div
           style={{
@@ -209,6 +297,8 @@ export function ClientCaseOverviewPage() {
             <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--sos-text-primary)', minWidth: '36px', textAlign: 'right' }}>{docPct}%</span>
           </div>
         </div>
+
+        <ClientJourney stage={stage} />
 
         {nextAction ? (
           <div

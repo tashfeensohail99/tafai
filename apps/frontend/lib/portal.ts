@@ -410,6 +410,40 @@ export const CLIENT_NEXT_ACTION: Record<ProcessingCaseStage, string | null> = {
   CANCELLED: null,
 };
 
+// High-level journey the client sees as a 5-step progress stepper. The 15
+// internal stages collapse into these phases so the client always knows where
+// they are and what's coming next.
+export const CLIENT_JOURNEY_PHASES: { key: string; label: string }[] = [
+  { key: 'DOCUMENTS', label: 'Documents' },
+  { key: 'PREPARING', label: 'Preparing' },
+  { key: 'SUBMITTED', label: 'Submitted' },
+  { key: 'REVIEW', label: 'Authority review' },
+  { key: 'DECISION', label: 'Decision' },
+];
+
+const CLIENT_PHASE_BY_STAGE: Record<ProcessingCaseStage, number> = {
+  INTAKE_PENDING: 0,
+  DOCUMENTS_COLLECTION: 0,
+  DOCUMENTS_UNDER_REVIEW: 0,
+  DOCUMENTS_INCOMPLETE: 0,
+  DOCUMENTS_COMPLETE: 0,
+  READY_FOR_SUBMISSION: 1,
+  SUBMITTED: 2,
+  UNDER_AUTHORITY_REVIEW: 3,
+  ADDITIONAL_INFO_REQUESTED: 3,
+  DECISION_RECEIVED: 3,
+  APPEAL_IN_PROGRESS: 3,
+  APPROVED: 4,
+  REJECTED: 4,
+  COMPLETED: 4,
+  CANCELLED: -1,
+};
+
+/** Index (0–4) of the client's current journey phase, or -1 if cancelled. */
+export function clientJourneyPhase(stage: ProcessingCaseStage): number {
+  return CLIENT_PHASE_BY_STAGE[stage] ?? 0;
+}
+
 export function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', {
     day: 'numeric',

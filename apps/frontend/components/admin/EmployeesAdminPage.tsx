@@ -256,6 +256,8 @@ export function EmployeesAdminPage() {
 
   const [deactivateTarget, setDeactivateTarget] = useState<{ userId: string; name: string } | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<{ userId: string; name: string } | null>(null);
+  // Which KPI card is acting as the active table filter (null = show all).
+  const [kpiFilter, setKpiFilter] = useState<'online' | 'active' | 'wapool' | 'inactive' | null>(null);
 
   const [loading, setLoading]       = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -532,6 +534,21 @@ export function EmployeesAdminPage() {
   const waPoolCount   = employees.filter((e) => e.whatsappInboxMember).length;
   const inactiveCount = employees.filter((e) => e.user?.status !== 'ACTIVE').length;
 
+  // ── KPI-card filter: clicking a card narrows the roster to that group ──────
+  const FILTER_LABEL: Record<'online' | 'active' | 'wapool' | 'inactive', string> = {
+    online: 'Online now',
+    active: 'Active accounts',
+    wapool: 'WhatsApp pool',
+    inactive: 'Inactive / pending',
+  };
+  const visibleEmployees = employees.filter((e) => {
+    if (kpiFilter === 'online') return presenceOf(e.lastActivityAt).label === 'Online';
+    if (kpiFilter === 'active') return e.user?.status === 'ACTIVE';
+    if (kpiFilter === 'wapool') return e.whatsappInboxMember;
+    if (kpiFilter === 'inactive') return e.user?.status !== 'ACTIVE';
+    return true;
+  });
+
   // ── loading / error guards ────────────────────────────────────────────────
 
   if (loading) return <LoadingState message="Loading employees…" />;
@@ -558,16 +575,18 @@ export function EmployeesAdminPage() {
 
       {/* ── KPI strip ── */}
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-        <MetricCard label="Total employees"    value={totalCount}    tone="info"    Icon={Users}         hint="All employee profiles" />
-        <MetricCard label="Online now"         value={onlineCount}   tone="success" Icon={UserCheck}     hint="Active in the last 10 min" />
-        <MetricCard label="Active accounts"    value={activeCount}   tone="info"    Icon={BadgeCheck}    hint="Status = ACTIVE" />
-        <MetricCard label="WhatsApp pool"      value={waPoolCount}   tone="accent"  Icon={MessageCircle} hint="In round-robin pool" />
+        <MetricCard label="Total employees"    value={totalCount}    tone="info"    Icon={Users}         hint="All employee profiles" onClick={() => setKpiFilter(null)} active={kpiFilter === null} />
+        <MetricCard label="Online now"         value={onlineCount}   tone="success" Icon={UserCheck}     hint="Active in the last 10 min" onClick={() => setKpiFilter((f) => (f === 'online' ? null : 'online'))} active={kpiFilter === 'online'} />
+        <MetricCard label="Active accounts"    value={activeCount}   tone="info"    Icon={BadgeCheck}    hint="Status = ACTIVE" onClick={() => setKpiFilter((f) => (f === 'active' ? null : 'active'))} active={kpiFilter === 'active'} />
+        <MetricCard label="WhatsApp pool"      value={waPoolCount}   tone="accent"  Icon={MessageCircle} hint="In round-robin pool" onClick={() => setKpiFilter((f) => (f === 'wapool' ? null : 'wapool'))} active={kpiFilter === 'wapool'} />
         <MetricCard
           label="Inactive / pending"
           value={inactiveCount}
           tone={inactiveCount > 0 ? 'warning' : 'neutral'}
           Icon={UserMinus}
           hint="Need attention"
+          onClick={() => setKpiFilter((f) => (f === 'inactive' ? null : 'inactive'))}
+          active={kpiFilter === 'inactive'}
         />
       </div>
 
@@ -799,7 +818,20 @@ export function EmployeesAdminPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 24px', borderBottom: '1px solid var(--sos-divider)' }}>
           <div>
             <div className="sos-eyebrow">Team roster</div>
-            <h2 className="sos-title" style={{ fontSize: 16, marginTop: 4 }}>All employees</h2>
+            <h2 className="sos-title" style={{ fontSize: 16, marginTop: 4 }}>
+              {kpiFilter ? FILTER_LABEL[kpiFilter] : 'All employees'}
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--sos-text-muted)', marginLeft: 8 }}>
+                {visibleEmployees.length}{kpiFilter ? ` of ${totalCount}` : ''}
+              </span>
+            </h2>
+            {kpiFilter ? (
+              <button
+                onClick={() => setKpiFilter(null)}
+                style={{ marginTop: 4, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--sos-brand-primary-strong)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                <X size={12} /> Show all employees
+              </button>
+            ) : null}
           </div>
           {!formOpen ? (
             <PrimaryButton size="sm" iconLeft={<Plus size={13} />} onClick={openCreate}>
@@ -808,9 +840,13 @@ export function EmployeesAdminPage() {
           ) : null}
         </div>
 
-        {employees.length === 0 ? (
+        {visibleEmployees.length === 0 ? (
           <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 14 }}>
-            No employees found. Create the first one above.
+            {employees.length === 0
+              ? 'No employees found. Create the first one above.'
+              : kpiFilter === 'online'
+                ? 'No employees are online right now.'
+                : `No employees match “${kpiFilter ? FILTER_LABEL[kpiFilter] : ''}”.`}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -832,7 +868,7 @@ export function EmployeesAdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {employees.map((emp) => {
+                {visibleEmployees.map((emp) => {
                   const roleName    = emp.user?.userRoles?.[0]?.role.name ?? '';
                   const roleDisplay = emp.user?.userRoles?.[0]?.role.displayName ?? '';
                   const statusActive = emp.user?.status === 'ACTIVE';

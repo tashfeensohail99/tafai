@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { PushService } from '../push/push.service';
 
 /**
  * In-app notifications shown in the bell badge on the employee shell.
- * Producers (right now just the AI orchestrator's auto-book path) call
- * `create()` directly — there's no fanout, no realtime push yet. The
- * frontend polls every 30 seconds; that's enough at the bot's volume.
+ * Producers call `create()` directly. The frontend polls every 30 seconds for
+ * the bell; in addition, every notification is fanned out to the recipient's
+ * registered devices via {@link PushService} (a no-op until push is configured
+ * and a device is registered), so the future mobile app gets the same events.
  *
  * All reads are scoped to the calling user. `markAllRead` and the
  * unread counter help the bell render quickly.
@@ -14,7 +16,10 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 export class NotificationsService {
   private readonly log = new Logger(NotificationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly push: PushService,
+  ) {}
 
   /** Create a notification. Caller already knows the recipient userId. */
   async create(input: {
@@ -39,6 +44,15 @@ export class NotificationsService {
       // break the business flow that produced the event.
       this.log.warn(`notification write failed (${input.type}): ${(e as Error).message}`);
     }
+
+    // Fan out to push (mobile/web). Fire-and-forget and self-contained — push
+    // failures are swallowed inside PushService and must not affect the caller.
+    void this.push.sendToUser(input.userId, {
+      title: input.title,
+      body: input.body ?? null,
+      link: input.link ?? null,
+      type: input.type,
+    });
   }
 
   /** Latest N notifications for the caller. Default 20. */

@@ -1,5 +1,5 @@
 'use client';
-import { apiFetch } from './api-client';
+import { apiFetch, apiFetchBlob } from './api-client';
 
 // ── Types (mirror backend) ──
 export interface AttendancePolicy {
@@ -68,5 +68,12 @@ export const fetchLeaveBalances = (employeeId: string, year?: number) => apiFetc
 export const fetchPeriods = () => apiFetch<PayrollPeriod[]>('/payroll/periods', { cache: 'no-store' });
 export const generatePayroll = (year: number, month: number) => apiFetch<{ periodId: string; generated: number; workingDays: number; unapprovedDays: number }>('/payroll/generate', json({ year, month }));
 export const fetchPayslips = (periodId: string) => apiFetch<{ period: PayrollPeriod; payslips: Payslip[] }>(`/payroll/periods/${periodId}/payslips`, { cache: 'no-store' });
+/** Fetch a single payslip as a branded PDF (authed) and open it in a new tab. */
+export async function openPayslipPdf(payslipId: string): Promise<void> {
+  const blob = await apiFetchBlob(`/payroll/payslips/${payslipId}/pdf`);
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 export const lockPeriod = (id: string) => apiFetch<PayrollPeriod>(`/payroll/periods/${id}/lock`, { method: 'POST', body: JSON.stringify({}) });
 export const unlockPeriod = (id: string) => apiFetch<PayrollPeriod>(`/payroll/periods/${id}/unlock`, { method: 'POST', body: JSON.stringify({}) });

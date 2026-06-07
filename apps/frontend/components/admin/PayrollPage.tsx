@@ -224,6 +224,22 @@ function LeaveTab({ emps, empName }: { emps: Emp[]; empName: (id: string) => str
 }
 
 // ─────────────────────────── Payroll ───────────────────────────
+function PayslipPdfButton({ id }: { id: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      title="Open payslip PDF"
+      disabled={busy}
+      onClick={async () => { setBusy(true); try { await P.openPayslipPdf(id); } catch { /* ignore */ } finally { setBusy(false); } }}
+      className="rounded-md border px-2 py-1 text-xs font-medium"
+      style={{ borderColor: 'var(--sos-border-subtle)', color: 'var(--sos-brand-primary-strong)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: busy ? 'wait' : 'pointer' }}
+    >
+      {busy ? <Loader2 size={12} className="sos-spin" /> : <FileDown size={12} />} PDF
+    </button>
+  );
+}
+
 function PayrollTab() {
   const now = new Date();
   const [year, setYear] = useState(now.getUTCFullYear());
@@ -280,7 +296,7 @@ function PayrollTab() {
           </div>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead><tr style={{ textAlign: 'left', color: 'var(--sos-text-muted)', fontSize: 11 }}>
-              <th style={{ padding: '8px 10px' }}>Employee</th><th style={{ padding: '8px 10px' }}>Basic</th><th style={{ padding: '8px 10px' }}>Present</th><th style={{ padding: '8px 10px' }}>Absent</th><th style={{ padding: '8px 10px' }}>Leave (P/U)</th><th style={{ padding: '8px 10px' }}>Deductions</th><th style={{ padding: '8px 10px' }}>OT</th><th style={{ padding: '8px 10px', textAlign: 'right' }}>Net payable</th>
+              <th style={{ padding: '8px 10px' }}>Employee</th><th style={{ padding: '8px 10px' }}>Basic</th><th style={{ padding: '8px 10px' }}>Present</th><th style={{ padding: '8px 10px' }}>Absent</th><th style={{ padding: '8px 10px' }}>Leave (P/U)</th><th style={{ padding: '8px 10px' }}>Deductions</th><th style={{ padding: '8px 10px' }}>OT</th><th style={{ padding: '8px 10px', textAlign: 'right' }}>Net payable</th><th style={{ padding: '8px 10px', textAlign: 'right' }}>Slip</th>
             </tr></thead>
             <tbody>{data.payslips.map((s) => (
               <tr key={s.id} style={{ borderTop: '1px solid var(--sos-border-subtle)' }}>
@@ -289,6 +305,7 @@ function PayrollTab() {
                 <td style={{ padding: '8px 10px' }}>{s.paidLeaveDays}/{s.unpaidLeaveDays}</td><td style={{ padding: '8px 10px', color: 'var(--sos-status-danger)' }}>Rs {money(s.totalDeductions)}</td>
                 <td style={{ padding: '8px 10px', color: 'var(--sos-status-success)' }}>{Number(s.overtimePay) > 0 ? `Rs ${money(s.overtimePay)}` : '—'}</td>
                 <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>Rs {money(s.netPayable)}</td>
+                <td style={{ padding: '8px 10px', textAlign: 'right' }}><PayslipPdfButton id={s.id} /></td>
               </tr>
             ))}</tbody>
           </table></div>

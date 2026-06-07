@@ -1,13 +1,16 @@
-import { Body, Controller, Delete, Get, Param, Post, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Patch, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { LeaveStatus, OfficialDutyStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { PayrollConfigService } from './payroll-config.service';
 import { AttendanceEngineService } from './attendance-engine.service';
 import { PayrollRunService } from './payroll-run.service';
+import { PayslipPdfService } from './payslip-pdf.service';
 import {
   AdjustDayDto, ApproveDayDto, CreateLeaveDto, CreateOfficialDutyDto, GeneratePayrollDto,
   RecomputeDto, ReviewDutyDto, ReviewExceptionDto, ReviewLeaveDto, SetCompensationDto,
@@ -27,6 +30,7 @@ export class PayrollController {
     private readonly config: PayrollConfigService,
     private readonly engine: AttendanceEngineService,
     private readonly run: PayrollRunService,
+    private readonly payslipPdf: PayslipPdfService,
   ) {}
 
   // ── Policy ──
@@ -71,6 +75,16 @@ export class PayrollController {
   @Get('periods') periods() { return this.run.listPeriods(); }
   @Post('generate') generate(@Body() dto: GeneratePayrollDto, @CurrentUser() u: RequestUser) { return this.run.generate(dto.year, dto.month, u.id); }
   @Get('periods/:id/payslips') payslips(@Param('id') id: string) { return this.run.listPayslips(id); }
+  @Get('payslips/:id/pdf')
+  @AuditDocumentAccess('Payslip', 'id')
+  async payslipPdfDownload(@Param('id') id: string, @Res() res: Response): Promise<void> {
+    const { buffer, fileName } = await this.payslipPdf.render(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  }
   @Post('periods/:id/lock') lock(@Param('id') id: string, @CurrentUser() u: RequestUser) { return this.run.lock(id, u.id); }
   @Post('periods/:id/unlock') unlock(@Param('id') id: string, @CurrentUser() u: RequestUser) { return this.run.unlock(id, u.id); }
 }

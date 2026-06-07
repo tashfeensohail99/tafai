@@ -3,6 +3,7 @@ import { PayrollController } from './payroll.controller';
 import { PayrollConfigService } from './payroll-config.service';
 import { AttendanceEngineService } from './attendance-engine.service';
 import { PayrollRunService } from './payroll-run.service';
+import { PayslipPdfService } from './payslip-pdf.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 
 /**
@@ -14,7 +15,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 @Module({
   imports: [AuditLogModule],
   controllers: [PayrollController],
-  providers: [PayrollConfigService, AttendanceEngineService, PayrollRunService],
+  providers: [PayrollConfigService, AttendanceEngineService, PayrollRunService, PayslipPdfService],
   exports: [PayrollConfigService, AttendanceEngineService],
 })
 export class PayrollModule {}

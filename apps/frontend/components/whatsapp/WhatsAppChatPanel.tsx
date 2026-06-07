@@ -796,15 +796,24 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                   Loading older messages…
                 </div>
               ) : null}
-              {messages.map((m) => (
-                <MessageBubble
-                  key={m.id}
-                  message={m}
-                  onImageClick={(url) => setLightboxUrl(url)}
-                  onReply={() => setReplyingTo(m)}
-                  allMessages={messages}
-                />
-              ))}
+              {messages.map((m, i) => {
+                const prev = i > 0 ? messages[i - 1] : null;
+                const showDay = !prev || chatDayKey(prev.createdAt) !== chatDayKey(m.createdAt);
+                const bubble = (
+                  <MessageBubble
+                    key={m.id}
+                    message={m}
+                    onImageClick={(url) => setLightboxUrl(url)}
+                    onReply={() => setReplyingTo(m)}
+                    allMessages={messages}
+                  />
+                );
+                if (!showDay) return bubble;
+                return [
+                  <DateSeparator key={`day-${m.id}`} label={formatDaySeparator(m.createdAt)} />,
+                  bubble,
+                ];
+              })}
             </>
           )}
 
@@ -3243,6 +3252,46 @@ function initialsOf(name: string): string {
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Local-day key (viewer's timezone) for grouping messages by calendar day —
+ *  same timezone formatTime() displays in, so separators line up with bubbles. */
+function chatDayKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/** WhatsApp-style day label: Today / Yesterday / weekday (last 7 days) / date. */
+function formatDaySeparator(iso: string): string {
+  const d = new Date(iso);
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Centered date chip shown between message groups, like WhatsApp. */
+function DateSeparator({ label }: { label: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', margin: '14px 0 8px' }}>
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: 'var(--sos-text-muted)',
+          background: 'var(--sos-surface-2)',
+          border: '1px solid var(--sos-border-subtle)',
+          borderRadius: 999,
+          padding: '3px 12px',
+          letterSpacing: '0.02em',
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
 }
 
 function formatRelativeShort(iso: string, now = new Date()): string {

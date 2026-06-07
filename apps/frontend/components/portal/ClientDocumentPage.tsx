@@ -7,6 +7,7 @@ import {
   Clock,
   Eye,
   FileText,
+  Info,
   Loader2,
   Plus,
   Upload,
@@ -183,9 +184,11 @@ function UploadModal({
         <div id="upload-modal-title" style={{ fontSize: '17px', fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: '4px' }}>
           Upload: {doc.documentName}
         </div>
-        <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginBottom: '16px' }}>
+        <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginBottom: '12px' }}>
           {doc.description ?? ''}
         </div>
+
+        <DocGuidance doc={doc} />
 
         {doc.latestRejectionMessages.length > 0 ? (
           <div style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-status-warning-soft)', border: '1px solid var(--sos-status-warning-border)', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
@@ -278,6 +281,43 @@ function UploadModal({
   );
 }
 
+// ---------- Per-document guidance (why we need it + good/bad examples) ----
+// All three fields come straight from the backend checklist response; we just
+// render them so the client understands what's needed and how to get it right.
+
+function DocGuidance({ doc }: { doc: PortalDocumentItem }) {
+  const why = doc.guidance?.whyText?.trim();
+  const good = doc.guidance?.exampleGoodUrl;
+  const bad = doc.guidance?.exampleBadUrl;
+  if (!why && !good && !bad) return null;
+  return (
+    <div style={{ marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {why ? (
+        <div style={{ display: 'flex', gap: '7px', alignItems: 'flex-start', padding: '8px 12px', borderRadius: 'var(--sos-radius-sm)', background: 'var(--sos-status-info-soft)', border: '1px solid var(--sos-status-info-border)' }}>
+          <Info size={14} style={{ color: 'var(--sos-status-info)', flexShrink: 0, marginTop: '1px' }} />
+          <span style={{ fontSize: '12px', color: 'var(--sos-text-primary)', lineHeight: 1.5 }}>
+            <strong style={{ fontWeight: 600 }}>Why we need this:</strong> {why}
+          </span>
+        </div>
+      ) : null}
+      {good || bad ? (
+        <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+          {good ? (
+            <a href={good} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11.5px', fontWeight: 600, color: 'var(--sos-status-success)', textDecoration: 'none' }}>
+              <CheckCircle2 size={12} /> See a good example
+            </a>
+          ) : null}
+          {bad ? (
+            <a href={bad} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11.5px', fontWeight: 600, color: 'var(--sos-status-danger)', textDecoration: 'none' }}>
+              <XCircle size={12} /> What to avoid
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ---------- Document row -------------------------------------------------
 
 function DocumentRow({
@@ -337,6 +377,8 @@ function DocumentRow({
               Get this attested ({doc.attestation.chain ? doc.attestation.chain.replace(/->/g, ' → ') : 'official attestation'}) before uploading — please start early, it can take time.
             </div>
           ) : null}
+
+          <DocGuidance doc={doc} />
 
           {doc.latestRejectionReasonCodes.length > 0 ? (
             <div style={{ marginBottom: '8px', padding: '8px 12px', borderRadius: 'var(--sos-radius-sm)', background: 'var(--sos-status-warning-soft)', border: '1px solid var(--sos-status-warning-border)', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>

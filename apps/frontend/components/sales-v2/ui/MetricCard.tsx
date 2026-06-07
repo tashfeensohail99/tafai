@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
 export type MetricTone = 'accent' | 'warm' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
@@ -13,6 +13,10 @@ interface MetricCardProps {
   tone?: MetricTone;
   Icon?: LucideIcon;
   footer?: ReactNode;
+  /** When provided, the whole card becomes a keyboard-accessible button. */
+  onClick?: () => void;
+  /** Highlights the card (ring) — use to show it's the active filter. */
+  active?: boolean;
 }
 
 const toneStyles: Record<
@@ -88,11 +92,36 @@ export function MetricCard({
   tone = 'accent',
   Icon,
   footer,
+  onClick,
+  active = false,
 }: MetricCardProps) {
   const t = toneStyles[tone];
+  const interactive = typeof onClick === 'function';
 
   return (
-    <div className="sos-metric">
+    <div
+      className="sos-metric"
+      {...(interactive
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            'aria-pressed': active,
+            onClick,
+            onKeyDown: (e: ReactKeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick?.();
+              }
+            },
+          }
+        : {})}
+      style={{
+        ...(interactive ? { cursor: 'pointer' } : {}),
+        outline: active ? `2px solid ${t.iconColor}` : undefined,
+        outlineOffset: active ? 2 : undefined,
+        transition: 'outline-color 140ms, transform 140ms',
+      }}
+    >
       <span aria-hidden className="sos-metric__glow" style={{ background: t.glow }} />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>

@@ -483,7 +483,9 @@ export class LeadsService {
     return lead;
   }
 
-  async update(id: string, dto: UpdateLeadDto, actorUserId: string) {
+  async update(id: string, dto: UpdateLeadDto, user: RequestUser) {
+    await this.assertLeadAccess(id, user);
+    const actorUserId = user.id;
     const existing = await this.findById(id);
 
     if (dto.phone || dto.email) {
@@ -602,7 +604,9 @@ export class LeadsService {
    * Hard delete is not exposed; if recovery is ever needed an admin can
    * clear deletedAt directly in the DB.
    */
-  async remove(id: string, actorUserId: string): Promise<void> {
+  async remove(id: string, user: RequestUser): Promise<void> {
+    await this.assertLeadAccess(id, user);
+    const actorUserId = user.id;
     // findById filters deletedAt:null, so this throws NotFound for an
     // already-deleted lead — exactly the behaviour we want.
     const existing = await this.findById(id);
@@ -643,15 +647,25 @@ export class LeadsService {
    * forensics later, and the volume here is admin-driven not automated
    * so the row count stays sane.
    */
-  async removeBulk(ids: string[], actorUserId: string): Promise<{ deleted: number }> {
+  async removeBulk(ids: string[], user: RequestUser): Promise<{ deleted: number }> {
     if (ids.length === 0) return { deleted: 0 };
+    const actorUserId = user.id;
+    const canViewAll = user.permissions.includes('leads.view_all');
     const now = new Date();
 
     // Look up which IDs are actually still alive so we only audit-log the
     // ones we successfully delete. updateMany doesn't tell us which rows
-    // matched, so this pre-fetch is cheap insurance.
+    // matched, so this pre-fetch is cheap insurance. Non-admins are scoped to
+    // their own assigned/created leads, so a bulk call can't reach across to
+    // another agent's leads by id.
     const targets = await this.prisma.lead.findMany({
-      where: { id: { in: ids }, deletedAt: null },
+      where: {
+        id: { in: ids },
+        deletedAt: null,
+        ...(!canViewAll
+          ? { OR: [{ assignedEmployee: { userId: user.id } }, { createdByUserId: user.id }] }
+          : {}),
+      },
       select: { id: true, referenceCode: true, status: true },
     });
     if (targets.length === 0) return { deleted: 0 };
@@ -691,7 +705,9 @@ export class LeadsService {
     return { deleted: targets.length };
   }
 
-  async assign(id: string, dto: AssignLeadDto, actorUserId: string) {
+  async assign(id: string, dto: AssignLeadDto, user: RequestUser) {
+    await this.assertLeadAccess(id, user);
+    const actorUserId = user.id;
     const existing = await this.findById(id);
 
     const updated = await this.prisma.lead.update({
@@ -1079,10 +1095,23 @@ export class LeadsService {
   }
 
   // ---------------------------------------------------------------------------
-  // Lead file attachments
+  // Lead access guard (shared by writes + file attachments)
   // ---------------------------------------------------------------------------
 
-  private async assertLeadAccess(leadId: string, user: RequestUser): Promise<void> {
+  /**
+   * Write/access guard for a single lead. Enforces the SAME ownership rule as
+   * reads (findByIdAccessible / findAllAccessible): an admin/manager holding
+   * `leads.view_all` may act on any lead; everyone else only on a lead they are
+   * assigned to or created. Throws 404 (not 403) for an inaccessible lead so we
+   * never confirm its existence to a user who shouldn't see it.
+   *
+   * Public so it guards both the internal write paths (update / remove / assign)
+   * and the controller's convert path (convertToClient itself is shared with the
+   * trusted finance auto-convert flow, so the user-facing access check lives at
+   * the entry point). This closes the gap where the controller permission alone
+   * let an agent reach another agent's lead by id.
+   */
+  async assertLeadAccess(leadId: string, user: RequestUser): Promise<void> {
     const canViewAll = user.permissions.includes('leads.view_all');
     const lead = await this.prisma.lead.findFirst({
       where: {

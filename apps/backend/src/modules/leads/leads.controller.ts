@@ -159,16 +159,20 @@ export class LeadsController {
     @Body() dto: AssignLeadDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.leadsService.assign(id, dto, user.id);
+    return this.leadsService.assign(id, dto, user);
   }
 
   @Post(':id/convert')
   @RequirePermissions('leads.convert')
-  convert(
+  async convert(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ConvertLeadDto,
     @CurrentUser() user: RequestUser,
   ) {
+    // Ownership scoping: a salesperson can only convert their own lead.
+    // (convertToClient itself is shared with the trusted finance auto-convert
+    // flow, so the access check lives here at the user-facing entry point.)
+    await this.leadsService.assertLeadAccess(id, user);
     return this.leadsService.convertToClient(id, user.id, dto.notes);
   }
 
@@ -179,7 +183,7 @@ export class LeadsController {
     @Body() dto: UpdateLeadDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.leadsService.update(id, dto, user.id);
+    return this.leadsService.update(id, dto, user);
   }
 
   /**
@@ -194,7 +198,7 @@ export class LeadsController {
     @Body() dto: BulkDeleteLeadsDto,
     @CurrentUser() user: RequestUser,
   ) {
-    const result = await this.leadsService.removeBulk(dto.ids, user.id);
+    const result = await this.leadsService.removeBulk(dto.ids, user);
     return { success: true, deleted: result.deleted };
   }
 
@@ -210,7 +214,7 @@ export class LeadsController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: RequestUser,
   ) {
-    await this.leadsService.remove(id, user.id);
+    await this.leadsService.remove(id, user);
     return { success: true };
   }
 

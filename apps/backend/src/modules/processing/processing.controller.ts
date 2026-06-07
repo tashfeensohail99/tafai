@@ -21,6 +21,7 @@ import { memoryStorage } from 'multer';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
+import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
 import {
   RequireAnyPermissions,
   RequirePermissions,
@@ -344,6 +345,7 @@ export class ProcessingController {
 
   @Get('cases/:caseId/documents/:itemId/signed-url')
   @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  @AuditDocumentAccess('ProcessingCaseDocument', 'itemId')
   getSignedDocumentUrl(
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,
@@ -469,6 +471,7 @@ export class ProcessingController {
 
   @Get('cases/:caseId/inbound-documents/:inboundId/signed-url')
   @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  @AuditDocumentAccess('InboundDocument', 'inboundId')
   getInboundDocumentSignedUrl(
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @Param('inboundId', ParseUUIDPipe) inboundId: string,
@@ -569,6 +572,7 @@ export class ProcessingController {
 
   @Get('cases/:caseId/calls/:callId/recording')
   @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  @AuditDocumentAccess('CallRecording', 'callId')
   getCaseCallRecording(
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @Param('callId', ParseUUIDPipe) callId: string,

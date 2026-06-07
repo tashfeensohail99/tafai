@@ -21,6 +21,7 @@ import {
   RequireAnyPermissions,
   RequirePermissions,
 } from '../../../common/decorators/require-permissions.decorator';
+import { AuditDocumentAccess } from '../../../common/decorators/audit-document-access.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -351,6 +352,7 @@ export class WhatsAppThreadsController {
    */
   @Get(':threadId/messages/:messageId/media')
   @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  @AuditDocumentAccess('WhatsAppMedia', 'messageId')
   async streamMedia(
     @CurrentUser() user: RequestUser,
     @Param('threadId', ParseUUIDPipe) threadId: string,

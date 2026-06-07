@@ -22,6 +22,7 @@ import {
   RequireAnyPermissions,
   RequirePermissions,
 } from '../../common/decorators/require-permissions.decorator';
+import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import {
@@ -247,6 +248,7 @@ export class LeadsController {
 
   @Get(':id/files/:fileId/url')
   @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  @AuditDocumentAccess('LeadFile', 'fileId')
   getFileUrl(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('fileId', ParseUUIDPipe) fileId: string,

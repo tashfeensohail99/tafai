@@ -11,6 +11,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequireAnyPermissions } from '../../common/decorators/require-permissions.decorator';
+import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { ExpensesService } from './expenses.service';
@@ -32,6 +33,7 @@ export class ExpensesController {
 
   @Get(':id/receipt-url')
   @RequireAnyPermissions('finance.view_all', ...WRITE)
+  @AuditDocumentAccess('ExpenseReceipt', 'id')
   receiptUrl(@Param('id', ParseUUIDPipe) id: string) {
     return this.expenses.getReceiptUrl(id);
   }

@@ -125,10 +125,22 @@ export class AttendanceService {
         });
         if (existing?.isOverride) { skipped++; continue; }
 
+        // Ingest the camera's computed minutes so the payroll rules engine has
+        // real inputs (it never re-derives break/late from raw punches).
+        const computed = {
+          grossPresenceMin: Math.max(0, Math.round(r.gross_presence_min ?? 0)),
+          breakMin: Math.max(0, Math.round(r.lunch_min ?? 0)),
+          personalMin: Math.max(0, Math.round(r.personal_min ?? 0)),
+          personalOverMin: Math.max(0, Math.round(r.personal_over_min ?? 0)),
+          unscheduledExits: Math.max(0, Math.round(r.unscheduled_exits ?? 0)),
+          overtimeMin: Math.max(0, Math.round(r.overtime_min ?? 0)),
+          lateMin: Math.max(0, Math.round(r.late_min ?? 0)),
+        };
+
         await this.prisma.attendanceRecord.upsert({
           where: { employeeId_date: { employeeId: empId, date: this.dateOnly(date) } },
-          create: { employeeId: empId, date: this.dateOnly(date), checkInAt: checkIn, checkOutAt: checkOut, status, notes, isOverride: false },
-          update: { checkInAt: checkIn, checkOutAt: checkOut, status, notes, isOverride: false },
+          create: { employeeId: empId, date: this.dateOnly(date), checkInAt: checkIn, checkOutAt: checkOut, status, notes, isOverride: false, ...computed },
+          update: { checkInAt: checkIn, checkOutAt: checkOut, status, notes, isOverride: false, ...computed },
         });
         imported++;
       }

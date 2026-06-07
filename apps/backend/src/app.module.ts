@@ -45,6 +45,7 @@ import { AiModule } from './modules/ai/ai.module';
 import { AppointmentRequestsModule } from './modules/appointment-requests/appointment-requests.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
 
 @Module({
   imports: [
@@ -100,6 +101,7 @@ import { AttendanceModule } from './modules/attendance/attendance.module';
     AppointmentRequestsModule,
     NotificationsModule,
     AttendanceModule,
+    PayrollModule,
   ],
   providers: [
     // Global: keep Employee.lastActivityAt fresh on every authenticated request

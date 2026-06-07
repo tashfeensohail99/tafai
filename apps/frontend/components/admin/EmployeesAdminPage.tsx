@@ -256,7 +256,6 @@ export function EmployeesAdminPage() {
 
   const [deactivateTarget, setDeactivateTarget] = useState<{ userId: string; name: string } | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<{ userId: string; name: string } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ userId: string; name: string } | null>(null);
 
   const [loading, setLoading]       = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -401,42 +400,6 @@ export function EmployeesAdminPage() {
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to deactivate user');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  // ── delete (soft-delete) ────────────────────────────────────────────────────
-  // Removes the employee from this directory, the users list and the camera
-  // attendance feed, and ends their login. History is retained for audit/payroll
-  // (no hard delete). Routes through the same /users soft-delete as the Users page.
-  async function handleDeleteClick(row: EmployeeRow) {
-    setError(null);
-    const fullName = `${row.firstName} ${row.lastName}`;
-    if (row.userId) {
-      setDeleteTarget({ userId: row.userId, name: fullName });
-      return;
-    }
-    try {
-      const detail = await apiFetch<EmployeeDetail>(`/employees/${row.id}`);
-      setDeleteTarget({ userId: detail.userId, name: fullName });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to resolve linked user account');
-    }
-  }
-
-  async function confirmDelete() {
-    if (!deleteTarget) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await apiFetch(`/users/${deleteTarget.userId}`, { method: 'DELETE' });
-      const name = deleteTarget.name;
-      setDeleteTarget(null);
-      setSuccess(`${name} has been removed.`);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to remove employee');
     } finally {
       setSubmitting(false);
     }
@@ -1002,13 +965,6 @@ export function EmployeesAdminPage() {
                               Reactivate
                             </button>
                           )}
-                          <button
-                            onClick={() => void handleDeleteClick(emp)}
-                            className="sos-btn sos-btn--sm"
-                            style={{ color: 'var(--sos-text-inverse)', background: 'var(--sos-status-danger)', borderColor: 'var(--sos-status-danger-border)' }}
-                          >
-                            Delete
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1038,16 +994,6 @@ export function EmployeesAdminPage() {
         confirmLabel={submitting ? 'Reactivating…' : 'Yes, reactivate'}
         onConfirm={() => void confirmReactivate()}
         onCancel={() => setReactivateTarget(null)}
-      />
-
-      {/* ── Delete (soft-delete) confirmation ── */}
-      <ConfirmationDialog
-        open={Boolean(deleteTarget)}
-        title={`Delete ${deleteTarget?.name ?? 'employee'}?`}
-        message="This removes them from the employee directory, the users list and the camera attendance feed, and ends their login. Their data and history are preserved for audit/payroll. This can't be undone here."
-        confirmLabel={submitting ? 'Removing…' : 'Yes, delete'}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

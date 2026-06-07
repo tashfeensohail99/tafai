@@ -44,6 +44,7 @@ import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AppointmentRequestsModule } from './modules/appointment-requests/appointment-requests.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { RemindersModule } from './modules/reminders/reminders.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
 
@@ -100,6 +101,7 @@ import { PayrollModule } from './modules/payroll/payroll.module';
     AiModule,
     AppointmentRequestsModule,
     NotificationsModule,
+    RemindersModule,
     AttendanceModule,
     PayrollModule,
   ],

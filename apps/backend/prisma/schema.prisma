@@ -92,6 +92,20 @@ enum FollowUpPriority {
   @@schema("crm")
 }
 
+enum ReminderJobKind {
+  APPOINTMENT_REMINDER
+  FOLLOWUP_DUE
+  FOLLOWUP_OVERDUE
+  @@schema("crm")
+}
+
+enum ReminderJobStatus {
+  PENDING
+  SENT
+  CANCELLED
+  @@schema("crm")
+}
+
 enum ClientStatus {
   // Pre-processing
   NEW_CLIENT
@@ -1543,6 +1557,44 @@ model Appointment {
   @@index([scheduledAt])
   @@index([status])
   @@map("appointments")
+  @@schema("crm")
+}
+
+/// Durable reminder ledger. Replaces the old in-memory setInterval sweeper so a
+/// process restart (deploy, crash) can never drop a reminder: every pending
+/// reminder is a row, and the dispatcher reconciles upcoming appointments +
+/// follow-ups into this table then fires the ones whose `runAt` has arrived.
+/// `dedupeKey` is unique so reconciling the same source twice is a no-op.
+model ReminderJob {
+  id            String            @id @default(uuid())
+  kind          ReminderJobKind
+  status        ReminderJobStatus @default(PENDING)
+  /// When the reminder should fire (UTC). For appointments this is
+  /// scheduledAt - leadMinutes; for follow-up "due" it's the dueAt instant.
+  runAt         DateTime
+  /// Stable identity for the (source row, reminder type) pair, e.g.
+  /// `appt:<id>`, `followup-due:<id>`, `followup-overdue:<userId>:<pktDate>`.
+  dedupeKey     String            @unique
+  /// Recipient user-account id (the assigned employee's login).
+  userId        String
+  leadId        String?
+  appointmentId String?
+  followUpId    String?
+  /// Notification payload — the single dispatch point (in-app today; push later).
+  title         String
+  body          String?
+  link          String?
+  attempts      Int               @default(0)
+  sentAt        DateTime?
+  lastError     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([status, runAt])
+  @@index([appointmentId])
+  @@index([followUpId])
+  @@index([userId])
+  @@map("reminder_jobs")
   @@schema("crm")
 }
 

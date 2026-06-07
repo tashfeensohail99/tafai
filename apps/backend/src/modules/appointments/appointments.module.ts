@@ -4,12 +4,14 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { WhatsAppNotificationsModule } from '../whatsapp/notifications/notifications.module';
 import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
-import { AppointmentReminderService } from './appointment-reminder.service';
 
+// NOTE: the old in-memory AppointmentReminderService was replaced by the
+// durable RemindersModule (reminder_jobs ledger), which reminds for both
+// appointments and follow-ups and survives restarts.
 @Module({
   imports: [AuditLogModule, ActivityTimelineModule, WhatsAppNotificationsModule],
   controllers: [AppointmentsController],
-  providers: [AppointmentsService, AppointmentReminderService],
+  providers: [AppointmentsService],
   exports: [AppointmentsService],
 })
 export class AppointmentsModule {}

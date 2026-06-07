@@ -32,6 +32,7 @@ import {
   XCircle,
   AlertTriangle,
   ShieldAlert,
+  Compass,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -49,6 +50,7 @@ import {
   PRIORITY_LABEL,
   type MockProcessingCase,
 } from '@/components/processing/mockData';
+import { STAGE_NEXT_STEP, STAGE_WAITING_ON_EXTERNAL } from '@/components/processing/stage-guidance';
 import {
   fetchProcessingCase,
   fetchCaseFinance,
@@ -169,6 +171,39 @@ function CaseMetaBar({
             </span>
           </MetaItem>
         </button>
+      </div>
+    </GlassCard>
+  );
+}
+
+// ---------- Next-step guidance banner -------------------------------------
+// Stage-driven "what to do now" so the next action is never a guess. Hidden
+// for terminal stages (Completed / Cancelled). Adds a gentle overdue nudge
+// when an officer-actionable case has sat in the same stage too long (not for
+// stages where we're legitimately waiting on the authority).
+function NextStepBanner({ c }: { c: MockProcessingCase }) {
+  const next = STAGE_NEXT_STEP[c.stage];
+  if (!next) return null;
+  const overdue = !STAGE_WAITING_ON_EXTERNAL.has(c.stage) && c.daysInCurrentStage >= 5;
+  const accent = overdue ? 'var(--sos-status-warning)' : 'var(--sos-brand-primary-strong)';
+  const accentSoft = overdue ? 'var(--sos-status-warning-soft)' : 'var(--sos-brand-primary-soft)';
+  return (
+    <GlassCard variant="panel" padded="md" style={{ borderLeft: `3px solid ${accent}` }}>
+      <div style={{ display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+        <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: accentSoft, color: accent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {overdue ? <AlertTriangle size={16} /> : <Compass size={16} />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--sos-text-muted)', marginBottom: 3 }}>
+            Next step
+          </div>
+          <div style={{ fontSize: 13.5, color: 'var(--sos-text-primary)', lineHeight: 1.5 }}>{next}</div>
+          {overdue ? (
+            <div style={{ fontSize: 12, color: 'var(--sos-status-warning)', marginTop: 5, fontWeight: 600 }}>
+              In “{STAGE_LABEL[c.stage]}” for {c.daysInCurrentStage} days — consider moving it forward.
+            </div>
+          ) : null}
+        </div>
       </div>
     </GlassCard>
   );
@@ -409,6 +444,9 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
 
         {/* Compact horizontal meta bar (replaces the tall vertical rail) */}
         <CaseMetaBar c={c} finance={finance} financeLoading={financeLoading} onOpenFinance={() => setActiveTab('finance')} />
+
+        {/* Stage-driven "what to do now" guidance for the officer */}
+        <NextStepBanner c={c} />
 
         {/* Full-width tab panel */}
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0' }}>

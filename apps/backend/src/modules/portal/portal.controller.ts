@@ -14,6 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { PortalService } from './portal.service';
@@ -154,6 +155,7 @@ export class PortalController {
    * Access is logged. storageKey is never exposed.
    */
   @Get('cases/:caseId/documents/:itemId/signed-url')
+  @AuditDocumentAccess('ClientDocument', 'itemId')
   getDocumentSignedUrl(
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,

@@ -21,6 +21,7 @@ import {
   RequireAnyPermissions,
   RequirePermissions,
 } from '../../common/decorators/require-permissions.decorator';
+import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { AgreementTemplatesService } from './agreement-templates.service';
@@ -251,6 +252,7 @@ export class AgreementsController {
 
   @Get(':id/pdf-url')
   @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
+  @AuditDocumentAccess('Agreement', 'id')
   getPdfUrl(@Param('id', ParseUUIDPipe) id: string) {
     return this.agreements.getPdfUrl(id);
   }

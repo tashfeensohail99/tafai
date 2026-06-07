@@ -17,6 +17,7 @@ import {
   RequireAnyPermissions,
   RequirePermissions,
 } from '../../common/decorators/require-permissions.decorator';
+import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { FinanceService } from './finance.service';
@@ -323,6 +324,7 @@ export class FinanceController {
    */
   @Get('receipts/:id/download')
   @RequireAnyPermissions('finance.view_all', 'finance.record_payment', 'finance_handover.view_own')
+  @AuditDocumentAccess('Receipt', 'id')
   async getReceiptDownloadUrl(@Param('id', ParseUUIDPipe) id: string) {
     return this.financeService.getReceiptDownloadUrl(id);
   }
@@ -339,6 +341,7 @@ export class FinanceController {
    */
   @Get('receipts/:id/pdf')
   @RequireAnyPermissions('finance.view_all', 'finance.record_payment', 'finance_handover.view_own')
+  @AuditDocumentAccess('Receipt', 'id')
   async streamReceiptPdf(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,

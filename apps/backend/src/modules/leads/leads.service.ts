@@ -16,6 +16,7 @@ import { StorageService } from '../storage/storage.service';
 import { AssignLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { assertConvertibleEmail } from './leads-conversion.util';
 
 @Injectable()
 export class LeadsService {
@@ -760,7 +761,13 @@ export class LeadsService {
     return this.findById(id);
   }
 
-  async convertToClient(id: string, actorUserId: string, notes?: string, tx?: Prisma.TransactionClient) {
+  async convertToClient(
+    id: string,
+    actorUserId: string,
+    notes?: string,
+    tx?: Prisma.TransactionClient,
+    opts?: { requireEmailVerified?: boolean },
+  ) {
     const prisma = tx ?? this.prisma;
     const lead = await prisma.lead.findUnique({
       where: { id, deletedAt: null },
@@ -795,6 +802,11 @@ export class LeadsService {
 
     const wasExistingClient = Boolean(client);
     if (!client) {
+      // Conversion rule: the user-facing convert requires a verified email
+      // before a NEW client is created. The trusted finance/processing paths
+      // pass nothing, so this never blocks a post-agreement auto-convert.
+      assertConvertibleEmail({ email: lead.email, emailVerified: lead.emailVerified }, opts);
+
       client = await prisma.client.create({
         data: {
           // The client inherits the lead's reference code so a single

@@ -67,6 +67,15 @@ enum FollowUpStatus {
   @@schema("crm")
 }
 
+/// Lead temperature (how warm/ready the prospect is). Field is named `priority`
+/// for historical reasons; the live data is HOT/WARM/COLD.
+enum LeadPriority {
+  HOT
+  WARM
+  COLD
+  @@schema("crm")
+}
+
 enum LeadImportStatus {
   QUEUED
   PROCESSING
@@ -1114,9 +1123,10 @@ model Lead {
   sourceChannel      String?
   referralPartnerId  String?
   status             LeadStatus @default(NEW)
-  priority           String?
+  priority           LeadPriority?
   notes              String?
   lostReason         String?
+  lostAt             DateTime?
   convertedAt        DateTime?
   convertedClientId  String?
   createdAt          DateTime   @default(now())

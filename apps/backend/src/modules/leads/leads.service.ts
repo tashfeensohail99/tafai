@@ -517,6 +517,14 @@ export class LeadsService {
         ...dto,
         ...emailVerificationReset,
         convertedAt: dto.status === LeadStatus.CONVERTED ? new Date() : undefined,
+        // Stamp lostAt when the lead is marked LOST; clear it if it's revived to
+        // any other status. Untouched when the update doesn't change status.
+        lostAt:
+          dto.status === LeadStatus.LOST
+            ? new Date()
+            : dto.status
+              ? null
+              : undefined,
       },
       include: {
         assignedEmployee: {

@@ -14,7 +14,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { LeadStatus } from '@prisma/client';
+import { LeadPriority, LeadStatus } from '@prisma/client';
 import { SERVICE_TYPE_CODES } from '../../common/service-types';
 
 export class ListLeadsQueryDto {
@@ -169,9 +169,8 @@ export class CreateLeadDto {
   referralPartnerId?: string;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  priority?: string;
+  @IsEnum(LeadPriority)
+  priority?: LeadPriority;
 
   @IsOptional()
   @IsString()
@@ -277,9 +276,8 @@ export class UpdateLeadDto {
   status?: LeadStatus;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  priority?: string;
+  @IsEnum(LeadPriority)
+  priority?: LeadPriority;
 
   @IsOptional()
   @IsString()

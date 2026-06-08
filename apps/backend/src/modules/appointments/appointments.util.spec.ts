@@ -1,6 +1,7 @@
 import {
   appointmentEnd,
   computeFreeSlots,
+  firstFreeSlot,
   intervalsOverlap,
   pktWorkingWindowUtc,
 } from './appointments.util';
@@ -78,6 +79,50 @@ describe('appointments.util', () => {
       const start = new Date('2026-06-08T09:00:00Z');
       const end = new Date('2026-06-08T09:50:00Z'); // 50 min → one 30-min slot fits
       expect(computeFreeSlots(start, end, [], 30)).toHaveLength(1);
+    });
+  });
+
+  // The shared "roll forward to the next open slot" search used by BOTH the
+  // WhatsApp bot (conflict:'advance') and the web's reject-with-suggestion path.
+  describe('firstFreeSlot', () => {
+    const ms = (iso: string) => new Date(iso).getTime();
+    const identity = (d: Date) => d; // isolate the slot math from any office-hours policy
+    const DUR = 30 * 60_000;
+
+    it('returns the desired time when the rep is free', () => {
+      const out = firstFreeSlot(new Date('2026-06-08T10:00:00Z'), DUR, [], identity);
+      expect(out.toISOString()).toBe('2026-06-08T10:00:00.000Z');
+    });
+
+    it('rolls forward 30 min when the desired slot is taken', () => {
+      const busy = [{ s: ms('2026-06-08T10:00:00Z'), e: ms('2026-06-08T10:30:00Z') }];
+      const out = firstFreeSlot(new Date('2026-06-08T10:00:00Z'), DUR, busy, identity);
+      expect(out.toISOString()).toBe('2026-06-08T10:30:00.000Z');
+    });
+
+    it('skips multiple consecutive busy slots', () => {
+      const busy = [
+        { s: ms('2026-06-08T10:00:00Z'), e: ms('2026-06-08T10:30:00Z') },
+        { s: ms('2026-06-08T10:30:00Z'), e: ms('2026-06-08T11:00:00Z') },
+      ];
+      const out = firstFreeSlot(new Date('2026-06-08T10:00:00Z'), DUR, busy, identity);
+      expect(out.toISOString()).toBe('2026-06-08T11:00:00.000Z');
+    });
+
+    it('treats a busy interval that only touches the edge as free (half-open)', () => {
+      // busy 09:30–10:00 touches desired 10:00 at the edge → 10:00 stays free.
+      const busy = [{ s: ms('2026-06-08T09:30:00Z'), e: ms('2026-06-08T10:00:00Z') }];
+      const out = firstFreeSlot(new Date('2026-06-08T10:00:00Z'), DUR, busy, identity);
+      expect(out.toISOString()).toBe('2026-06-08T10:00:00.000Z');
+    });
+
+    it('applies the injected clamp to each candidate', () => {
+      // Clamp that pushes any time before 11:00Z up to 11:00Z — proves the
+      // office-hours policy is honoured by the search, not hard-coded.
+      const clampTo11 = (d: Date) =>
+        d.getTime() < ms('2026-06-08T11:00:00Z') ? new Date('2026-06-08T11:00:00Z') : d;
+      const out = firstFreeSlot(new Date('2026-06-08T08:00:00Z'), DUR, [], clampTo11);
+      expect(out.toISOString()).toBe('2026-06-08T11:00:00.000Z');
     });
   });
 });

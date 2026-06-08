@@ -13,6 +13,7 @@ import {
 import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
+import { InfoHint } from '@/components/common/InfoHint';
 
 /** Hook: track viewport width so we can switch to single-pane on mobile. */
 function useIsMobile(threshold = 1024): boolean {
@@ -416,6 +417,20 @@ export default function SalesInboxPage() {
               </button>
             );
           })}
+          {/* ⓘ — hover explains what each tab means */}
+          <div style={{ display: 'flex', alignItems: 'center', padding: '0 10px', color: 'var(--sos-text-muted)' }}>
+            <InfoHint
+              align="right"
+              width={300}
+              title="What these tabs mean"
+              items={[
+                { term: 'Open', desc: 'Active conversations (not resolved).' },
+                { term: 'Pending', desc: "Awaiting your reply — the customer messaged after your last reply (the bot's replies don't count). = Uncontacted + follow-ups." },
+                { term: 'Uncontacted', desc: "You've never replied — only the AI bot greeted them. Needs your first reply." },
+                { term: 'Resolved', desc: "Conversations you've marked done." },
+              ]}
+            />
+          </div>
         </div>
 
         {/* Thread list */}

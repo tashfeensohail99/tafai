@@ -23,6 +23,7 @@ import {
   PageHeader,
   StatusBadge,
 } from '@/components/sales-v2/ui';
+import { InfoHint } from '@/components/common/InfoHint';
 
 interface AgentRow {
   employeeId: string;
@@ -38,7 +39,13 @@ interface AgentRow {
   openFollowUps: number;
   overdueFollowUps: number;
   upcomingAppointments: number;
-  /** Conversations awaiting this rep's reply (client messaged, no reply yet). */
+  /** "Pending" — chats awaiting this rep's reply (customer messaged more recently
+   *  than the rep's last manual reply; bot replies don't count). = uncontacted + follow-up. */
+  pending?: number;
+  /** "Uncontacted" — the subset of pending where NO human has ever replied
+   *  (only the bot greeted them). */
+  uncontacted?: number;
+  /** @deprecated back-compat alias for `pending`. */
   awaitingReply?: number;
   /** Response-SLA on-time score (0–100). Starts at 100 with no history. */
   slaScore?: number;
@@ -173,6 +180,37 @@ export function SalesOverviewPage() {
         description="Per-agent KPIs across the full team. Click any agent to see their assigned leads and a live timeline of every touch."
       />
 
+      {/* Terminology legend — what "Pending" vs "Uncontacted" mean */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 12.5,
+          color: 'var(--sos-text-muted)',
+          marginTop: -12,
+        }}
+      >
+        <InfoHint
+          title="What these columns mean"
+          width={340}
+          items={[
+            {
+              term: 'Pending',
+              desc: "Chats awaiting a human reply — the customer messaged more recently than the rep's last manual reply. Bot replies don't count. (= Uncontacted + follow-ups.)",
+            },
+            {
+              term: 'Uncontacted',
+              desc: 'The subset of Pending where NO human has ever replied — only the AI bot greeted them. These leads still need a first human touch.',
+            },
+          ]}
+        />
+        <span>
+          Hover the&nbsp;ⓘ&nbsp;— <strong style={{ color: 'var(--sos-text-secondary)' }}>Pending</strong> ={' '}
+          <strong style={{ color: 'var(--sos-text-secondary)' }}>Uncontacted</strong> (no human reply yet) + follow-ups.
+        </span>
+      </div>
+
       {/* Top totals */}
       <div
         style={{
@@ -305,13 +343,14 @@ export function SalesOverviewPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', minWidth: 1020, borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', minWidth: 1120, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--sos-surface-1)' }}>
                   {[
                     'Agent',
                     'SLA score',
-                    'Awaiting reply',
+                    'Pending',
+                    'Uncontacted',
                     'Assigned',
                     'New (30d)',
                     'Converted (30d)',
@@ -433,11 +472,19 @@ export function SalesOverviewPage() {
                       <SlaScorePill score={a.slaScore ?? 100} breaches={a.slaBreaches ?? 0} />
                     </td>
 
-                    {/* Awaiting reply — unanswered chats the rep hasn't replied to */}
+                    {/* Pending — chats awaiting the rep's reply (uncontacted + follow-up) */}
                     <td style={{ padding: '14px 16px' }}>
                       <NumPill
-                        value={a.awaitingReply ?? 0}
-                        tone={(a.awaitingReply ?? 0) > 0 ? 'danger' : 'muted'}
+                        value={a.pending ?? a.awaitingReply ?? 0}
+                        tone={(a.pending ?? a.awaitingReply ?? 0) > 0 ? 'primary' : 'muted'}
+                      />
+                    </td>
+
+                    {/* Uncontacted — pending subset with no human reply ever (bot greeting only) */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <NumPill
+                        value={a.uncontacted ?? 0}
+                        tone={(a.uncontacted ?? 0) > 0 ? 'danger' : 'muted'}
                       />
                     </td>
 

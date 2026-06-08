@@ -91,9 +91,14 @@ export function useWhatsAppSocket(): { socket: Socket | null; connected: boolean
   return { socket, connected };
 }
 
-// Sort threads the same way the backend list does: lastMessageAt DESC, nulls
-// last (treated as epoch 0 so they sink to the bottom).
+// Sort threads the SAME way the backend list does (so live patches don't
+// reorder differently from a reload): ACTION-REQUIRED FIRST — a chat awaiting a
+// human reply (customer wrote, the rep hasn't answered) outranks one that
+// isn't, so bot nudges that bump lastMessageAt can't bury a real reply. Within
+// each group: lastMessageAt DESC, nulls last (epoch 0 → sink to bottom).
 function byLastMessageDesc(a: ThreadListItem, b: ThreadListItem): number {
+  const aw = (b.awaitingReply ? 1 : 0) - (a.awaitingReply ? 1 : 0);
+  if (aw !== 0) return aw;
   const at = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
   const bt = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
   return bt - at;

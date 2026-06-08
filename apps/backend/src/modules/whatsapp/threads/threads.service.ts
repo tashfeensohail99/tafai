@@ -232,10 +232,18 @@ export class WhatsAppThreadsService {
 
     const rows = await this.prisma.whatsAppThread.findMany({
       where,
-      // `id` is the stable final tiebreaker — lastMessageAt/createdAt are not
-      // unique, and cursor pagination over a non-unique sort can skip or
-      // duplicate rows. A unique trailing key guarantees a total order.
-      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }, { id: 'desc' }],
+      // ACTION-REQUIRED FIRST: chats where the customer is waiting on a human
+      // reply (awaitingReply=true) sort above the rest, so the bot's outbound
+      // nudges — which bump lastMessageAt — can never bury a real customer reply
+      // that still needs answering. Within each group, most-recent first.
+      // `id` is the stable final tiebreaker (lastMessageAt/createdAt aren't
+      // unique; cursor pagination over a non-unique sort can skip/duplicate rows).
+      orderBy: [
+        { awaitingReply: 'desc' },
+        { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+        { id: 'desc' },
+      ],
       take: limit + 1,
       ...(opts.cursor ? { skip: 1, cursor: { id: opts.cursor } } : {}),
       include: THREAD_LIST_INCLUDE,

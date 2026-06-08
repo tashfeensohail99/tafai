@@ -28,10 +28,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # openssl/tini for runtime + prisma; chromium + font/render deps power the
-# headless-Chrome PDF engine (puppeteer-core). The Alpine package ships a
-# prebuilt browser so we never download one at npm-install time.
+# headless-Chrome PDF engine (puppeteer-core); ffmpeg transcodes WhatsApp voice
+# notes (OGG/OPUS → WAV) for transcription. All are Alpine packages baked into
+# the image layer, so the build never downloads a binary at npm-install time —
+# this replaces the flaky `ffmpeg-static` npm package whose post-install pulled
+# ffmpeg from a GitHub release and intermittently 504'd, failing the deploy.
 RUN apk add --no-cache \
-      openssl tini \
+      openssl tini ffmpeg \
       chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 # puppeteer-core launches the system Chromium at this path. The render

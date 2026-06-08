@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,6 +9,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AppointmentBookingService } from './appointment-booking.service';
 import {
   WhatsAppAppointmentNotifierService,
   type AppointmentConfirmationResult,
@@ -81,6 +81,7 @@ export class AppointmentsService {
     private readonly activityTimeline: ActivityTimelineService,
     private readonly notifications: NotificationsService,
     private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
+    private readonly booking: AppointmentBookingService,
   ) {}
 
   /**
@@ -412,37 +413,42 @@ export class AppointmentsService {
   async create(dto: CreateAppointmentDto, actorUserId: string) {
     const owner = await this.resolveOwner(dto.leadId, dto.clientId, dto.caseId);
 
-    // Double-booking guard: if the appointment lands on an agent, reject a time
-    // that overlaps one of their existing active appointments.
-    const effectiveEmployeeId = dto.assignedEmployeeId ?? owner.assignedEmployeeId;
-    if (effectiveEmployeeId) {
-      await this.assertNoConflict(
-        effectiveEmployeeId,
-        new Date(dto.scheduledAt),
-        dto.durationMinutes ?? 30,
-      );
-    }
-
-    const created = await this.prisma.appointment.create({
-      data: {
-        leadId: owner.leadId,
-        clientId: owner.clientId,
-        caseId: owner.caseId,
-        assignedEmployeeId: dto.assignedEmployeeId ?? owner.assignedEmployeeId,
-        createdByUserId: actorUserId,
-        title: dto.title,
-        appointmentType: dto.appointmentType,
-        scheduledAt: new Date(dto.scheduledAt),
-        durationMinutes: dto.durationMinutes ?? 30,
-        location: dto.location,
-        meetingLink: dto.meetingLink,
-        notes: dto.notes,
-      },
-      include: {
-        lead: { select: { id: true, firstName: true, lastName: true, phone: true } },
-        client: { select: { id: true, firstName: true, lastName: true, phone: true } },
-        case: { select: { id: true, caseNumber: true } },
-      },
+    // Double-booking guard via the shared booking engine (the same engine the
+    // WhatsApp bot uses): if the appointment lands on an agent, REJECT a time
+    // that overlaps one of their existing active appointments — the thrown 409
+    // carries `suggestedAt` (the next free slot) so the UI can offer it. The
+    // row-lock inside the engine makes the check+insert atomic, closing the
+    // race the old standalone guard had. Unassigned appointments skip the check.
+    const effectiveEmployeeId = dto.assignedEmployeeId ?? owner.assignedEmployeeId ?? null;
+    const durationMinutes = dto.durationMinutes ?? 30;
+    const { result: created } = await this.booking.withResolvedSlot({
+      employeeId: effectiveEmployeeId,
+      desiredAt: new Date(dto.scheduledAt),
+      durationMinutes,
+      conflict: 'reject',
+      clamp: clampToOfficeHoursPkt,
+      run: (bookedAt, tx) =>
+        tx.appointment.create({
+          data: {
+            leadId: owner.leadId,
+            clientId: owner.clientId,
+            caseId: owner.caseId,
+            assignedEmployeeId: effectiveEmployeeId,
+            createdByUserId: actorUserId,
+            title: dto.title,
+            appointmentType: dto.appointmentType,
+            scheduledAt: bookedAt,
+            durationMinutes,
+            location: dto.location,
+            meetingLink: dto.meetingLink,
+            notes: dto.notes,
+          },
+          include: {
+            lead: { select: { id: true, firstName: true, lastName: true, phone: true } },
+            client: { select: { id: true, firstName: true, lastName: true, phone: true } },
+            case: { select: { id: true, caseNumber: true } },
+          },
+        }),
     });
 
     await this.auditLog.log({
@@ -599,38 +605,10 @@ export class AppointmentsService {
     return this.findById(id);
   }
 
-  /**
-   * Throw if `employeeId` already has an active (SCHEDULED/CONFIRMED) appointment
-   * overlapping [startAt, startAt+duration). We fetch a generous candidate
-   * window (12h pad covers any realistic duration) and check exact overlap in
-   * JS, since an appointment's end is a computed value Prisma can't filter on.
-   */
-  private async assertNoConflict(
-    employeeId: string,
-    startAt: Date,
-    durationMinutes: number,
-    excludeId?: string,
-  ): Promise<void> {
-    const endAt = appointmentEnd(startAt, durationMinutes);
-    const windowStart = new Date(startAt.getTime() - 12 * 60 * 60_000);
-    const candidates = await this.prisma.appointment.findMany({
-      where: {
-        assignedEmployeeId: employeeId,
-        status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
-        scheduledAt: { gte: windowStart, lt: endAt },
-        ...(excludeId ? { id: { not: excludeId } } : {}),
-      },
-      select: { scheduledAt: true, durationMinutes: true, title: true },
-    });
-    const clash = candidates.find((c) =>
-      intervalsOverlap(startAt, endAt, c.scheduledAt, appointmentEnd(c.scheduledAt, c.durationMinutes)),
-    );
-    if (clash) {
-      throw new ConflictException(
-        `This agent already has "${clash.title}" booked at that time. Pick another slot.`,
-      );
-    }
-  }
+  // Double-booking detection now lives in the shared AppointmentBookingService
+  // (resolveSlot) — the same engine the WhatsApp bot uses. create() and
+  // reschedule() above delegate to it, so there is one conflict authority for
+  // the whole platform.
 
   /**
    * Move an appointment to a new time (and optionally duration), rejecting a
@@ -653,18 +631,27 @@ export class AppointmentsService {
 
     const newStart = new Date(dto.scheduledAt);
     const newDuration = dto.durationMinutes ?? existing.durationMinutes;
-    if (existing.assignedEmployeeId) {
-      await this.assertNoConflict(existing.assignedEmployeeId, newStart, newDuration, id);
-    }
-
-    await this.prisma.appointment.update({
-      where: { id },
-      data: {
-        scheduledAt: newStart,
-        durationMinutes: newDuration,
-        status: AppointmentStatus.SCHEDULED,
-        reminderSentAt: null, // re-arm the durable reminder for the new time
-      },
+    // Re-time through the shared booking engine: REJECT (with a suggested next
+    // slot in the 409) if the new time double-books the agent — atomically under
+    // the rep row-lock, excluding this appointment from its own busy set.
+    // Unassigned appointments skip the conflict check.
+    await this.booking.withResolvedSlot({
+      employeeId: existing.assignedEmployeeId,
+      desiredAt: newStart,
+      durationMinutes: newDuration,
+      conflict: 'reject',
+      clamp: clampToOfficeHoursPkt,
+      excludeAppointmentId: id,
+      run: (bookedAt, tx) =>
+        tx.appointment.update({
+          where: { id },
+          data: {
+            scheduledAt: bookedAt,
+            durationMinutes: newDuration,
+            status: AppointmentStatus.SCHEDULED,
+            reminderSentAt: null, // re-arm the durable reminder for the new time
+          },
+        }),
     });
     // Drop the stale pending reminder so the dispatcher recreates it at the new time.
     await this.prisma.reminderJob

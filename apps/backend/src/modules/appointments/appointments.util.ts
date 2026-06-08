@@ -59,3 +59,37 @@ export function computeFreeSlots(
   }
   return slots;
 }
+
+/**
+ * Find the first free `[start, start+durationMs)` slot for a rep at/after
+ * `desired`, given their already-booked intervals (as `{s,e}` epoch-ms). Steps
+ * forward in 30-minute increments, re-clamping each candidate into office hours
+ * / working days via the injected `clamp`, until a candidate overlaps no busy
+ * interval. Pure + deterministic.
+ *
+ * `clamp` is a policy input — NOT hard-coded — so the WhatsApp bot (which clamps
+ * in server-local hours) and the web/app (which clamps in explicit PKT) can each
+ * keep their own office-hours rule while sharing this one slot search. This is
+ * the platform's single "roll forward to the next open slot" routine, used both
+ * to auto-advance the bot and to suggest a next slot when the web rejects a
+ * double-booking.
+ */
+export function firstFreeSlot(
+  desired: Date,
+  durationMs: number,
+  busy: ReadonlyArray<{ s: number; e: number }>,
+  clamp: (proposed: Date) => Date,
+  slotMinutes: number = DEFAULT_SLOT_MINUTES,
+): Date {
+  const stepMs = slotMinutes * 60_000;
+  let cand = clamp(new Date(desired));
+  for (let i = 0; i < 400; i++) {
+    const cs = cand.getTime();
+    const ce = cs + durationMs;
+    // Overlap test: [cs,ce) intersects [s,e)  ⇔  cs < e && s < ce.
+    const clash = busy.some((iv) => cs < iv.e && iv.s < ce);
+    if (!clash) return cand;
+    cand = clamp(new Date(cs + stepMs));
+  }
+  return cand; // safety net (rep booked solid for ~2 weeks) — never expected
+}

@@ -199,8 +199,9 @@ export default function SalesInboxPage() {
         // Pending = follow-ups: awaiting a reply AND a human has replied before.
         if (!row.awaitingReply || row.lastHumanReplyAt == null) return false;
       } else if (filter === 'UNCONTACTED') {
-        // Awaiting a human reply AND no human has ever replied (bot greeting only).
-        if (!row.awaitingReply || row.lastHumanReplyAt != null) return false;
+        // No human has EVER replied (bot's auto-reply doesn't count). Independent
+        // of awaitingReply — any chat with no human reply belongs here.
+        if (row.lastHumanReplyAt != null) return false;
       } else if (filter !== 'ALL') {
         if (row.status !== filter) return false;
       }
@@ -230,7 +231,7 @@ export default function SalesInboxPage() {
   const visibleItems = useMemo(() => {
     if (filter === 'ALL') return items;
     if (filter === 'PENDING') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null);
-    if (filter === 'UNCONTACTED') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null);
+    if (filter === 'UNCONTACTED') return items.filter((t) => t.lastHumanReplyAt == null);
     return items.filter((t) => t.status === filter);
   }, [items, filter]);
 
@@ -369,13 +370,14 @@ export default function SalesInboxPage() {
             // identical even when there are 500+ conversations).
             //   All  → stats.total  (every thread this rep can see)
             //   Open → stats.active (status=OPEN)
-            //   Pending → follow-ups = stats.awaitingReply − stats.uncontacted
+            //   Pending → stats.awaitingReply (backend returns follow-ups here)
+            //   Uncontacted → stats.uncontacted (no human reply ever, all chats)
             //   Resolved → stats.resolved (status=RESOLVED)
             const count = stats
               ? f.key === 'ALL'
                 ? stats.total
                 : f.key === 'PENDING'
-                  ? Math.max(0, stats.awaitingReply - stats.uncontacted)
+                  ? stats.awaitingReply
                   : f.key === 'UNCONTACTED'
                     ? stats.uncontacted
                     : f.key === 'OPEN'
@@ -389,7 +391,7 @@ export default function SalesInboxPage() {
                 : f.key === 'PENDING'
                   ? items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null).length
                   : f.key === 'UNCONTACTED'
-                    ? items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null).length
+                    ? items.filter((t) => t.lastHumanReplyAt == null).length
                     : items.filter((t) => t.status === f.key).length;
             return (
               <button

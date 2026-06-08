@@ -62,6 +62,12 @@ export default registerAs('app', () => ({
     // present (free Google default); TURN is added only when TURN_URLS is set —
     // needed for restrictive networks / CGNAT. Host TURN on Cloudflare TURN or a
     // coturn VPS, NOT Railway (it lacks the UDP/port-range a TURN relay needs).
+    //
+    // Each TURN URL is advertised over BOTH udp AND tcp transports (unless a
+    // transport is already pinned), because many office / mobile networks block
+    // UDP to arbitrary ports — without a TCP relay path the rep's browser can't
+    // relay media and the call sits in "connecting" forever. `turns:` (TLS) is
+    // always TCP. For the most firewall-proof setup, also expose TLS-TURN on 443.
     iceServers: [
       {
         urls: (process.env.WHATSAPP_STUN_URLS ?? 'stun:stun.l.google.com:19302')
@@ -72,7 +78,14 @@ export default registerAs('app', () => ({
       ...(process.env.TURN_URLS
         ? [
             {
-              urls: process.env.TURN_URLS.split(',').map((u) => u.trim()).filter(Boolean),
+              urls: process.env.TURN_URLS.split(',')
+                .map((u) => u.trim())
+                .filter(Boolean)
+                .flatMap((u) => {
+                  if (/[?&]transport=/i.test(u)) return [u]; // caller pinned a transport
+                  if (u.startsWith('turns:')) return [`${u}?transport=tcp`]; // TLS is always TCP
+                  return [`${u}?transport=udp`, `${u}?transport=tcp`]; // both for plain turn:
+                }),
               username: process.env.TURN_USERNAME || undefined,
               credential: process.env.TURN_CREDENTIAL || undefined,
             },

@@ -24,7 +24,10 @@ function fmt(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-/** Resolve once ICE gathering completes (Meta uses non-trickle SDP), capped at 2.5s. */
+/** Resolve once ICE gathering completes (Meta uses non-trickle SDP), capped at 5s.
+ *  The cap must be generous enough to gather TURN relay candidates (UDP + the
+ *  TCP-relay fallback), which can take a couple of seconds on slow networks —
+ *  cutting it short drops the relay candidate and the call sticks in "connecting". */
 function waitForIce(pc: RTCPeerConnection): Promise<void> {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') return resolve();
@@ -38,7 +41,7 @@ function waitForIce(pc: RTCPeerConnection): Promise<void> {
     const t = setTimeout(() => {
       pc.removeEventListener('icegatheringstatechange', done);
       resolve();
-    }, 2500);
+    }, 5000);
     pc.addEventListener('icegatheringstatechange', done);
   });
 }

@@ -32,13 +32,16 @@ function useIsMobile(threshold = 1024): boolean {
 // human reply where NO human has ever replied — the bot greeting doesn't count.
 type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED';
 
-// Inbox tabs intentionally kept to just All + Open — no Pending / Uncontacted /
-// Resolved categorisation. Every chat is simply "all chats" or "the open ones".
-// (Resolved chats still appear under All.) The PENDING/UNCONTACTED/RESOLVED
-// branches elsewhere in this file are now unreachable but harmless.
+// Three non-overlapping tabs:
+//   All         — every chat (newest first)
+//   Open        — a human HAS replied (the active, being-handled pile)
+//   Uncontacted — NO human has ever replied yet (the to-do list)
+// Open + Uncontacted partition All exactly. When a rep first replies, the chat
+// moves from Uncontacted → Open automatically (lastHumanReplyAt gets stamped).
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
+  { key: 'UNCONTACTED', label: 'Uncontacted' },
 ];
 
 /**
@@ -85,18 +88,15 @@ export default function SalesInboxPage() {
     setNextCursor(null);
   }, [filter, debouncedSearch]);
 
-  // The "Pending" tab maps to needsReply (awaitingReply=true) — the literal
-  // WhatsAppThreadStatus.PENDING value is never written by any code path, so
-  // filtering by status='PENDING' would always return zero.
+  // Server-side filter per tab. Open = "a human has replied" (contacted);
+  // Uncontacted = "no human has ever replied"; All = no filter.
   const scopeQuery = useCallback(
     () =>
-      filter === 'PENDING'
-        ? { needsReply: true }
-        : filter === 'UNCONTACTED'
-          ? { uncontacted: true }
-          : filter !== 'ALL'
-            ? { status: filter }
-            : {},
+      filter === 'UNCONTACTED'
+        ? { uncontacted: true }
+        : filter === 'OPEN'
+          ? { contacted: true }
+          : {},
     [filter],
   );
 
@@ -117,10 +117,12 @@ export default function SalesInboxPage() {
     try {
       const scope = scopeQuery();
       const searchPart = debouncedSearch ? { search: debouncedSearch } : {};
-      // Re-fetch as many pages as the agent had scrolled to, so a background
-      // reconcile (every 30s / on focus) doesn't collapse the list back to the
-      // first 100 — it preserves the full scrolled-open inbox.
-      const pages = Math.max(1, pagesRef.current);
+      // "Uncontacted" is a bounded to-do queue — load EVERY page in one atomic
+      // pass so the list always equals the badge (no mid-load stop, which is
+      // what made it look like only ~65 of 200 loaded). Cap at 12 pages (1200)
+      // as a backstop. All / Open stay lazy: re-fetch as many pages as the agent
+      // had scrolled to, so a background reconcile doesn't collapse the list.
+      const pages = filter === 'UNCONTACTED' ? 12 : Math.max(1, pagesRef.current);
       let acc: ThreadListItem[] = [];
       let cursor: string | undefined;
       let last: string | null = null;
@@ -141,7 +143,7 @@ export default function SalesInboxPage() {
     } finally {
       if (!opts?.background) setLoading(false);
     }
-  }, [scopeQuery, debouncedSearch, refreshStats]);
+  }, [scopeQuery, debouncedSearch, refreshStats, filter]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -179,21 +181,9 @@ export default function SalesInboxPage() {
     [nextCursor, loadingMore, loadMore],
   );
 
-  // Pending / Uncontacted are bounded work-queues — a rep's actual to-do list.
-  // The rep needs to see EVERY chat, not the first 100, so the list matches the
-  // tab badge (e.g. "Uncontacted 198" must show 198, not stop at 100 and look
-  // broken). Auto-chain loadMore() until exhausted. The big All / Open tabs stay
-  // lazy (load-more on scroll) since they can be thousands of rows. Each page is
-  // one fast ~200ms query, and these queues are usually 1-3 pages — negligible.
-  useEffect(() => {
-    if (!(filter === 'UNCONTACTED' || filter === 'PENDING')) return;
-    if (!nextCursor || loading || loadingMore) return;
-    // Safety cap: don't auto-fetch dozens of pages for a pathological backlog —
-    // the load-more button + "N of M" footer cover the rare >600 case.
-    const tabTotal = filter === 'UNCONTACTED' ? stats?.uncontacted : stats?.awaitingReply;
-    if (tabTotal != null && tabTotal > 600) return;
-    void loadMore();
-  }, [filter, nextCursor, loading, loadingMore, loadMore, stats]);
+  // (Uncontacted full-load is handled atomically inside reload() above — no
+  // separate chained-loadMore effect, which could be interrupted mid-chain and
+  // leave the list short of the badge.)
 
   // Auto-select first thread on desktop only — moved out of `reload` so it
   // only happens once on initial mount, not after every reload.
@@ -212,16 +202,16 @@ export default function SalesInboxPage() {
     socket,
     setItems,
     matches: (row) => {
-      if (filter === 'PENDING') {
-        // Pending = follow-ups: awaiting a reply AND a human has replied before.
-        if (!row.awaitingReply || row.lastHumanReplyAt == null) return false;
-      } else if (filter === 'UNCONTACTED') {
-        // No human has EVER replied (bot's auto-reply doesn't count). Independent
-        // of awaitingReply — any chat with no human reply belongs here.
+      if (filter === 'UNCONTACTED') {
+        // No human has ever replied. The moment a rep replies, lastHumanReplyAt
+        // is stamped → this returns false → the chat drops out of Uncontacted.
         if (row.lastHumanReplyAt != null) return false;
-      } else if (filter !== 'ALL') {
-        if (row.status !== filter) return false;
+      } else if (filter === 'OPEN') {
+        // Open = a human has replied. A freshly-replied chat now matches here →
+        // it appears in Open (the "moved to Open" half of the transition).
+        if (row.lastHumanReplyAt == null) return false;
       }
+      // ALL: no status filter
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
     },
     reconcile: () => void reload({ background: true }),
@@ -246,22 +236,20 @@ export default function SalesInboxPage() {
   // under "Uncontacted", regardless of any cache/refresh timing. Mirrors
   // scopeQuery() and the realtime matches() predicate exactly.
   const visibleItems = useMemo(() => {
-    if (filter === 'ALL') return items;
-    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null);
     if (filter === 'UNCONTACTED') return items.filter((t) => t.lastHumanReplyAt == null);
-    return items.filter((t) => t.status === filter);
+    if (filter === 'OPEN') return items.filter((t) => t.lastHumanReplyAt != null);
+    return items; // ALL
   }, [items, filter]);
 
   // Real DB total for the active tab (from stats) — drives the "showing N of M"
   // footer so the loaded list and the tab badge are never confusingly different.
+  // Open = contacted = total − uncontacted (the complement of Uncontacted).
   const activeTabTotal = useMemo<number | null>(() => {
     if (!stats) return null;
     switch (filter) {
       case 'ALL': return stats.total;
-      case 'OPEN': return stats.active;
-      case 'PENDING': return stats.awaitingReply;
+      case 'OPEN': return stats.total - stats.uncontacted;
       case 'UNCONTACTED': return stats.uncontacted;
-      case 'RESOLVED': return stats.resolved;
       default: return null;
     }
   }, [stats, filter]);
@@ -396,34 +384,25 @@ export default function SalesInboxPage() {
         >
           {FILTERS.map((f) => {
             const active = filter === f.key;
-            // Use real DB totals from the stats endpoint — NOT a count of the
-            // loaded page (which caps at 100 and makes All=100, Open=100 look
-            // identical even when there are 500+ conversations).
-            //   All  → stats.total  (every thread this rep can see)
-            //   Open → stats.active (status=OPEN)
-            //   Pending → stats.awaitingReply (backend returns follow-ups here)
-            //   Uncontacted → stats.uncontacted (no human reply ever, all chats)
-            //   Resolved → stats.resolved (status=RESOLVED)
+            // Real DB totals from the stats endpoint — NOT a count of the loaded
+            // page. The three tabs partition every chat:
+            //   All         → stats.total
+            //   Open        → contacted = total − uncontacted (a human replied)
+            //   Uncontacted → stats.uncontacted (no human reply ever)
             const count = stats
               ? f.key === 'ALL'
                 ? stats.total
-                : f.key === 'PENDING'
-                  ? stats.awaitingReply
+                : f.key === 'OPEN'
+                  ? stats.total - stats.uncontacted
                   : f.key === 'UNCONTACTED'
                     ? stats.uncontacted
-                    : f.key === 'OPEN'
-                      ? stats.active
-                      : f.key === 'RESOLVED'
-                        ? stats.resolved
-                        : 0
+                    : 0
               : // Stats not yet loaded — fall back to page-based count while fetching.
                 f.key === 'ALL'
                 ? items.length
-                : f.key === 'PENDING'
-                  ? items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null).length
-                  : f.key === 'UNCONTACTED'
-                    ? items.filter((t) => t.lastHumanReplyAt == null).length
-                    : items.filter((t) => t.status === f.key).length;
+                : f.key === 'OPEN'
+                  ? items.filter((t) => t.lastHumanReplyAt != null).length
+                  : items.filter((t) => t.lastHumanReplyAt == null).length;
             return (
               <button
                 key={f.key}
@@ -472,10 +451,9 @@ export default function SalesInboxPage() {
               width={300}
               title="What these tabs mean"
               items={[
-                { term: 'Open', desc: 'Active conversations (not resolved).' },
-                { term: 'Pending', desc: "A follow-up: you replied before and the customer has written back — awaiting your next reply. (Leads you've never replied to are under Uncontacted, not here.)" },
-                { term: 'Uncontacted', desc: "You've never replied — only the AI bot greeted them. Needs your first reply. (Separate from Pending.)" },
-                { term: 'Resolved', desc: "Conversations you've marked done." },
+                { term: 'All', desc: 'Every chat, newest first.' },
+                { term: 'Open', desc: 'A human has replied at least once — the active, being-handled conversations.' },
+                { term: 'Uncontacted', desc: "No human has ever replied — only the AI bot greeted them. Your to-do list. The moment you reply, the chat moves to Open." },
               ]}
             />
           </div>

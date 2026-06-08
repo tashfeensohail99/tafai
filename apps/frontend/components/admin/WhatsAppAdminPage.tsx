@@ -71,13 +71,12 @@ function useIsMobile(threshold = 1024): boolean {
 // replied (the bot greeting doesn't count) — leads awaiting a first sales reply.
 type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED';
 
-// Inbox tabs intentionally kept to just All + Open — no Pending / Uncontacted /
-// Resolved categorisation. Every chat is simply "all chats" or "the open ones".
-// (Resolved chats still appear under All.) The PENDING/UNCONTACTED/RESOLVED
-// branches elsewhere in this file are now unreachable but harmless.
+// Three non-overlapping tabs: All (everything), Open (a human has replied), and
+// Uncontacted (no human has ever replied). Open + Uncontacted partition All.
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
+  { key: 'UNCONTACTED', label: 'Uncontacted' },
 ];
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -133,13 +132,11 @@ export function WhatsAppAdminPage() {
   // no thread row is ever written with status=PENDING.
   const buildQuery = useCallback(
     (cursor?: string) => ({
-      ...(filter === 'PENDING'
-        ? { needsReply: true as const }
-        : filter === 'UNCONTACTED'
-          ? { uncontacted: true as const }
-          : filter !== 'ALL'
-            ? { status: filter }
-            : {}),
+      ...(filter === 'UNCONTACTED'
+        ? { uncontacted: true as const }
+        : filter === 'OPEN'
+          ? { contacted: true as const } // "Open" = a human has replied
+          : {}),
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
       ...(unassignedOnly ? { unassigned: true } : {}),
       ...(agentFilter ? { employeeId: agentFilter } : {}),
@@ -248,14 +245,12 @@ export function WhatsAppAdminPage() {
     matches: (row) => {
       if (unassignedOnly && row.lead?.assignedEmployeeId) return false;
       if (agentFilter && row.lead?.assignedEmployeeId !== agentFilter) return false;
-      if (filter === 'PENDING') {
-        // Pending = follow-ups: awaiting a reply AND a human replied before.
-        if (!row.awaitingReply || row.lastHumanReplyAt == null) return false;
-      } else if (filter === 'UNCONTACTED') {
-        // No human has ever replied (bot doesn't count); independent of awaitingReply.
+      if (filter === 'UNCONTACTED') {
+        // No human has ever replied. A first reply stamps lastHumanReplyAt → drops out.
         if (row.lastHumanReplyAt != null) return false;
-      } else if (filter !== 'ALL') {
-        if (row.status !== filter) return false;
+      } else if (filter === 'OPEN') {
+        // Open = a human has replied. A freshly-replied chat appears here.
+        if (row.lastHumanReplyAt == null) return false;
       }
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
     },
@@ -297,10 +292,9 @@ export function WhatsAppAdminPage() {
   // stale row (e.g. a chat that got a human reply after it was loaded into the
   // Uncontacted list) can never render under the wrong tab. Mirrors scopeQuery.
   const visibleItems = useMemo(() => {
-    if (filter === 'ALL') return items;
-    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null);
     if (filter === 'UNCONTACTED') return items.filter((t) => t.lastHumanReplyAt == null);
-    return items.filter((t) => t.status === filter);
+    if (filter === 'OPEN') return items.filter((t) => t.lastHumanReplyAt != null);
+    return items; // ALL
   }, [items, filter]);
 
   const eligibleTeam = useMemo(
@@ -541,17 +535,15 @@ export function WhatsAppAdminPage() {
                   ? f.key === 'ALL'
                     ? stats.total
                     : f.key === 'OPEN'
-                      ? stats.active
-                      : f.key === 'PENDING'
-                        ? stats.awaitingReply
-                        : f.key === 'UNCONTACTED'
-                          ? stats.uncontacted
-                          : f.key === 'RESOLVED'
-                            ? stats.resolved
-                            : 0
+                      ? stats.total - stats.uncontacted // contacted = a human replied
+                      : f.key === 'UNCONTACTED'
+                        ? stats.uncontacted
+                        : 0
                   : f.key === 'ALL'
                     ? items.length
-                    : items.filter((t) => t.status === f.key).length;
+                    : f.key === 'OPEN'
+                      ? items.filter((t) => t.lastHumanReplyAt != null).length
+                      : items.filter((t) => t.lastHumanReplyAt == null).length;
                 return (
                   <button
                     key={f.key}

@@ -178,6 +178,22 @@ export default function SalesInboxPage() {
     [nextCursor, loadingMore, loadMore],
   );
 
+  // Pending / Uncontacted are bounded work-queues — a rep's actual to-do list.
+  // The rep needs to see EVERY chat, not the first 100, so the list matches the
+  // tab badge (e.g. "Uncontacted 198" must show 198, not stop at 100 and look
+  // broken). Auto-chain loadMore() until exhausted. The big All / Open tabs stay
+  // lazy (load-more on scroll) since they can be thousands of rows. Each page is
+  // one fast ~200ms query, and these queues are usually 1-3 pages — negligible.
+  useEffect(() => {
+    if (!(filter === 'UNCONTACTED' || filter === 'PENDING')) return;
+    if (!nextCursor || loading || loadingMore) return;
+    // Safety cap: don't auto-fetch dozens of pages for a pathological backlog —
+    // the load-more button + "N of M" footer cover the rare >600 case.
+    const tabTotal = filter === 'UNCONTACTED' ? stats?.uncontacted : stats?.awaitingReply;
+    if (tabTotal != null && tabTotal > 600) return;
+    void loadMore();
+  }, [filter, nextCursor, loading, loadingMore, loadMore, stats]);
+
   // Auto-select first thread on desktop only — moved out of `reload` so it
   // only happens once on initial mount, not after every reload.
   useEffect(() => {
@@ -234,6 +250,20 @@ export default function SalesInboxPage() {
     if (filter === 'UNCONTACTED') return items.filter((t) => t.lastHumanReplyAt == null);
     return items.filter((t) => t.status === filter);
   }, [items, filter]);
+
+  // Real DB total for the active tab (from stats) — drives the "showing N of M"
+  // footer so the loaded list and the tab badge are never confusingly different.
+  const activeTabTotal = useMemo<number | null>(() => {
+    if (!stats) return null;
+    switch (filter) {
+      case 'ALL': return stats.total;
+      case 'OPEN': return stats.active;
+      case 'PENDING': return stats.awaitingReply;
+      case 'UNCONTACTED': return stats.uncontacted;
+      case 'RESOLVED': return stats.resolved;
+      default: return null;
+    }
+  }, [stats, filter]);
 
   // Mobile single-pane: when a chat is selected we show only the chat;
   // back button returns to the list. On desktop both panes stay visible.
@@ -506,8 +536,22 @@ export default function SalesInboxPage() {
                     fontSize: 12.5,
                   }}
                 >
-                  {loadingMore ? 'Loading older chats…' : 'Load older chats'}
+                  {loadingMore
+                    ? `Loading…${activeTabTotal != null ? ` ${visibleItems.length} of ${activeTabTotal}` : ''}`
+                    : `Load older chats${activeTabTotal != null ? ` — ${visibleItems.length} of ${activeTabTotal}` : ''}`}
                 </button>
+              ) : activeTabTotal != null && visibleItems.length > 0 ? (
+                // Fully loaded — confirm the list matches the badge (no hidden rows).
+                <div
+                  style={{
+                    textAlign: 'center',
+                    padding: '10px 12px',
+                    color: 'var(--sos-text-muted)',
+                    fontSize: 11.5,
+                  }}
+                >
+                  {visibleItems.length} {visibleItems.length === 1 ? 'chat' : 'chats'}
+                </div>
               ) : null}
             </>
           )}

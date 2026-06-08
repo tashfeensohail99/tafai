@@ -1680,6 +1680,20 @@
   }
 }
 
+/* Booking layout: form (narrower, first) + lists (wider, second).
+   Single column on phones/tablets; two-pane at 900px+. Form-first ratio,
+   unlike .sos-detail-grid — keep them distinct. */
+.sos-booking-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 900px) {
+  .sos-booking-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  }
+}
+
 /* Auto-fit grid for KPI cards. Tight minimum on mobile, breathes out
    at wider sizes so the same JSX renders 1/2/3/4 columns naturally. */
 .sos-grid-kpi {

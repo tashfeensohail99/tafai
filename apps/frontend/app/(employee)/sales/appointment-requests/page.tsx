@@ -135,7 +135,58 @@ export default function AppointmentRequestsPage() {
         </GlassCard>
       ) : (
         <GlassCard variant="default" padded={false}>
-          <div style={{ overflowX: 'auto' }}>
+          {/* Mobile (<640px): stacked cards — the 7-col table needs horizontal
+              scroll on a phone. Actions (Open chat / Reject) are preserved. */}
+          <div className="sm:hidden" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12 }}>
+            {rows.map((r) => {
+              const tags = [r.preferredDay, r.preferredTime].filter(Boolean).join(' · ') || '(unspecified)';
+              const agentName = r.lead?.assignedEmployee
+                ? `${r.lead.assignedEmployee.firstName ?? ''} ${r.lead.assignedEmployee.lastName ?? ''}`.trim() || '—'
+                : '—';
+              return (
+                <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 14, borderRadius: 12, border: '1px solid var(--sos-border-subtle)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                    <div>
+                      <strong style={{ fontSize: 14 }}>{r.lead?.firstName} {r.lead?.lastName}</strong>
+                      <div className="sos-text-faint" style={{ fontSize: 12, marginTop: 2 }}>{r.lead?.phone}</div>
+                    </div>
+                    <StatusBadge tone={STATUS_TONE[r.status] ?? 'neutral'} size="sm" dot={false}>
+                      {r.status.toLowerCase()}
+                    </StatusBadge>
+                  </div>
+                  <div style={{ fontSize: 13 }}>{tags}</div>
+                  <div className="sos-text-faint" style={{ fontSize: 11.5 }} title={r.rawText}>
+                    "{r.rawText.slice(0, 80)}{r.rawText.length > 80 ? '…' : ''}"
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', fontSize: 12, color: 'var(--sos-text-faint)' }}>
+                    <span>{MODALITY_LABEL[r.modality ?? 'UNKNOWN']}</span>
+                    <span>{ageLabel(r.createdAt)}</span>
+                    <span>{agentName}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {r.threadId ? (
+                      <Link href={`/sales/inbox?threadId=${r.threadId}` as Route} style={{ textDecoration: 'none' }}>
+                        <GhostButton size="sm" iconLeft={<MessageCircle size={13} />}>Open chat</GhostButton>
+                      </Link>
+                    ) : null}
+                    {r.status === 'PENDING' ? (
+                      <GhostButton size="sm" iconLeft={<X size={13} />} onClick={() => void handleReject(r.id)} disabled={busy !== null}>
+                        Reject
+                      </GhostButton>
+                    ) : null}
+                    {r.status === 'CONFIRMED' ? (
+                      <span className="sos-text-faint" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <CalendarClock size={12} /> booked
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Desktop (>=640px): full table. */}
+          <div className="hidden sm:block" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
               <thead>
                 <tr>

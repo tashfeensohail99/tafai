@@ -61,7 +61,48 @@ export function AgreementsListPage() {
             <div style={{ marginTop: 8 }}>No agreements yet. Open a lead and click “Create Agreement”.</div>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <>
+          {/* Mobile (<640px): stacked cards — the 7-col table would force
+              horizontal scrolling on a phone. */}
+          <div className="sm:hidden" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12 }}>
+            {rows.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => router.push(`/sales/agreements/${a.id}` as Route)}
+                style={{
+                  textAlign: 'left',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  padding: 14,
+                  borderRadius: 12,
+                  border: '1px solid var(--sos-border-subtle)',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: 12.5, color: 'var(--sos-text-secondary)' }}>{a.agreementNumber}</span>
+                  <StatusBadge tone={STATUS_TONE[a.status]} size="sm" dot>
+                    {a.status.replace(/_/g, ' ').toLowerCase()}
+                  </StatusBadge>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
+                  {a.lead ? `${a.lead.firstName} ${a.lead.lastName}`.trim() : '—'}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: 12.5, color: 'var(--sos-text-faint)' }}>
+                  <span>{a.categoryKey}</span>
+                  <span style={{ fontFamily: 'monospace' }}>{a.lead?.referenceCode ?? '—'}</span>
+                  <span style={{ color: 'var(--sos-text-secondary)' }}>{a.currency} {a.totalAmount}</span>
+                  <span>Updated {new Date(a.updatedAt).toLocaleDateString('en-GB')}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Desktop (>=640px): the full table. */}
+          <div className="hidden sm:block" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
               <thead>
                 <tr>
@@ -95,6 +136,7 @@ export function AgreementsListPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </GlassCard>
     </div>

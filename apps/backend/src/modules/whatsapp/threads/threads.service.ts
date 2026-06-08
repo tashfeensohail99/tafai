@@ -19,6 +19,12 @@ interface ThreadListOptions {
    * count, so these are leads still awaiting a salesperson's first reply.
    */
   uncontacted?: boolean;
+  /**
+   * "Open" tab — the complement of Uncontacted: threads where a human HAS
+   * replied at least once (lastHumanReplyAt IS NOT NULL). Live, being-handled
+   * conversations. Open + Uncontacted partition every chat.
+   */
+  contacted?: boolean;
   /** Admin filter: only threads whose lead is assigned to this employee. */
   employeeId?: string;
   search?: string;
@@ -193,6 +199,12 @@ export class WhatsAppThreadsService {
       and.push({ lastHumanReplyAt: null });
     }
 
+    if (opts.contacted) {
+      // "Open" tab: the complement — a human HAS replied at least once. Together
+      // with Uncontacted this partitions every chat the caller can see.
+      and.push({ lastHumanReplyAt: { not: null } });
+    }
+
     if (opts.search) {
       const q = opts.search.trim();
       const digits = q.replace(/\D/g, '');
@@ -220,7 +232,10 @@ export class WhatsAppThreadsService {
 
     const rows = await this.prisma.whatsAppThread.findMany({
       where,
-      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      // `id` is the stable final tiebreaker — lastMessageAt/createdAt are not
+      // unique, and cursor pagination over a non-unique sort can skip or
+      // duplicate rows. A unique trailing key guarantees a total order.
+      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(opts.cursor ? { skip: 1, cursor: { id: opts.cursor } } : {}),
       include: THREAD_LIST_INCLUDE,

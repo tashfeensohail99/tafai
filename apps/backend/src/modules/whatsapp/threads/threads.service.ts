@@ -177,12 +177,13 @@ export class WhatsAppThreadsService {
     }
 
     if (opts.needsReply) {
-      // "Pending" tab semantic (real WhatsApp): the customer has messaged more
-      // recently than the last MANUAL human reply. `awaitingReply` is stamped
-      // true on every inbound and false only on a human send (sentByEmployeeId
-      // != null) — bot replies / auto-ack / templates never clear it. Derived
-      // from real message events, so a replied chat can't get stuck here.
-      and.push({ awaitingReply: true });
+      // "Pending" tab = FOLLOW-UPS only: awaiting a human reply AND a human has
+      // replied at least once before (lastHumanReplyAt != null). The chats no
+      // human has ever touched live in the separate "Uncontacted" tab below, so
+      // Pending and Uncontacted are now MUTUALLY EXCLUSIVE — a chat is in
+      // exactly one. (awaitingReply is stamped true on every inbound and false
+      // only on a manual human send; bot/auto/templates never clear it.)
+      and.push({ awaitingReply: true, lastHumanReplyAt: { not: null } });
     }
 
     if (opts.uncontacted) {

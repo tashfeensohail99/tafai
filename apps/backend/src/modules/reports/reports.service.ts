@@ -312,15 +312,22 @@ export class ReportsService {
     // Pending threads grouped by the assigned rep (relation field, so a plain
     // groupBy can't do it — tally in JS; the backlog is small). Uncontacted is
     // the subset with no human reply ever (lastHumanReplyAt null).
+    // Pending = FOLLOW-UPS only (a human has replied before → lastHumanReplyAt
+    // != null). Uncontacted = no human reply ever (lastHumanReplyAt == null).
+    // Mutually exclusive: every awaiting thread is in exactly one bucket.
     const pendingMap = new Map<string, number>();
     const uncontactedMap = new Map<string, number>();
     for (const t of pendingThreads) {
       const aid = t.lead?.assignedEmployeeId;
       if (!aid) continue;
-      pendingMap.set(aid, (pendingMap.get(aid) ?? 0) + 1);
-      if (t.lastHumanReplyAt === null) uncontactedMap.set(aid, (uncontactedMap.get(aid) ?? 0) + 1);
+      if (t.lastHumanReplyAt === null) {
+        uncontactedMap.set(aid, (uncontactedMap.get(aid) ?? 0) + 1);
+      } else {
+        pendingMap.set(aid, (pendingMap.get(aid) ?? 0) + 1);
+      }
     }
     const uncontactedTotal = pendingThreads.filter((t) => t.lastHumanReplyAt === null).length;
+    const pendingTotal = pendingThreads.length - uncontactedTotal;
 
     const agents = employees.map((e) => {
       const newLeads = newMap.get(e.id) ?? 0;
@@ -343,11 +350,11 @@ export class ReportsService {
         openFollowUps: openFollowUpMap.get(e.id) ?? 0,
         overdueFollowUps: overdueFollowUpMap.get(e.id) ?? 0,
         upcomingAppointments: upcomingApptMap.get(e.id) ?? 0,
-        // Pending = awaiting a human reply (uncontacted + follow-up).
-        // Uncontacted = subset with no human reply ever (bot greeting only).
+        // Pending = follow-ups (a human replied before, customer wrote back).
+        // Uncontacted = no human reply ever (bot greeting only). Disjoint sets.
         pending: pendingMap.get(e.id) ?? 0,
         uncontacted: uncontactedMap.get(e.id) ?? 0,
-        // Back-compat alias (= pending) so an older cached UI bundle still renders.
+        // Back-compat alias (= pending follow-ups) so an older cached UI bundle still renders.
         awaitingReply: pendingMap.get(e.id) ?? 0,
         slaScore,
         slaBreaches: e.slaResponsesBreached,
@@ -361,9 +368,9 @@ export class ReportsService {
         convertedThisMonth,
         overdueFollowUps,
         appointmentsToday,
-        pending: pendingThreads.length,
+        pending: pendingTotal,
         uncontacted: uncontactedTotal,
-        awaitingReply: pendingThreads.length, // back-compat alias (= pending)
+        awaitingReply: pendingTotal, // back-compat alias (= pending follow-ups)
       },
       agents,
     };

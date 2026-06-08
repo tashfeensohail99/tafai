@@ -196,7 +196,8 @@ export default function SalesInboxPage() {
     setItems,
     matches: (row) => {
       if (filter === 'PENDING') {
-        if (!row.awaitingReply) return false;
+        // Pending = follow-ups: awaiting a reply AND a human has replied before.
+        if (!row.awaitingReply || row.lastHumanReplyAt == null) return false;
       } else if (filter === 'UNCONTACTED') {
         // Awaiting a human reply AND no human has ever replied (bot greeting only).
         if (!row.awaitingReply || row.lastHumanReplyAt != null) return false;
@@ -228,7 +229,7 @@ export default function SalesInboxPage() {
   // scopeQuery() and the realtime matches() predicate exactly.
   const visibleItems = useMemo(() => {
     if (filter === 'ALL') return items;
-    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply);
+    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null);
     if (filter === 'UNCONTACTED') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null);
     return items.filter((t) => t.status === filter);
   }, [items, filter]);
@@ -368,13 +369,13 @@ export default function SalesInboxPage() {
             // identical even when there are 500+ conversations).
             //   All  → stats.total  (every thread this rep can see)
             //   Open → stats.active (status=OPEN)
-            //   Pending → stats.awaitingReply (awaitingReply column)
+            //   Pending → follow-ups = stats.awaitingReply − stats.uncontacted
             //   Resolved → stats.resolved (status=RESOLVED)
             const count = stats
               ? f.key === 'ALL'
                 ? stats.total
                 : f.key === 'PENDING'
-                  ? stats.awaitingReply
+                  ? Math.max(0, stats.awaitingReply - stats.uncontacted)
                   : f.key === 'UNCONTACTED'
                     ? stats.uncontacted
                     : f.key === 'OPEN'
@@ -386,7 +387,7 @@ export default function SalesInboxPage() {
                 f.key === 'ALL'
                 ? items.length
                 : f.key === 'PENDING'
-                  ? items.filter((t) => t.awaitingReply).length
+                  ? items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null).length
                   : f.key === 'UNCONTACTED'
                     ? items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null).length
                     : items.filter((t) => t.status === f.key).length;
@@ -439,8 +440,8 @@ export default function SalesInboxPage() {
               title="What these tabs mean"
               items={[
                 { term: 'Open', desc: 'Active conversations (not resolved).' },
-                { term: 'Pending', desc: "Awaiting your reply — the customer messaged after your last reply (the bot's replies don't count). = Uncontacted + follow-ups." },
-                { term: 'Uncontacted', desc: "You've never replied — only the AI bot greeted them. Needs your first reply." },
+                { term: 'Pending', desc: "A follow-up: you replied before and the customer has written back — awaiting your next reply. (Leads you've never replied to are under Uncontacted, not here.)" },
+                { term: 'Uncontacted', desc: "You've never replied — only the AI bot greeted them. Needs your first reply. (Separate from Pending.)" },
                 { term: 'Resolved', desc: "Conversations you've marked done." },
               ]}
             />

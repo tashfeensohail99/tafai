@@ -211,13 +211,29 @@ export function useThreadListLivePatch(params: {
 
     const interval = setInterval(() => reconcileRef.current(), LIVE_RECONCILE_MS);
     const onFocus = () => reconcileFocusRef.current();
-    if (typeof window !== 'undefined') window.addEventListener('focus', onFocus);
+    // visibilitychange catches the case window 'focus' misses: switching BACK to
+    // a background browser tab — where the setInterval above is throttled by the
+    // browser, so the list can go stale. Returning to the inbox now forces an
+    // immediate fresh reconcile, so a chat that became contacted while you were
+    // away drops out of "Uncontacted" right away instead of lingering.
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        reconcileFocusRef.current();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus);
+      document.addEventListener('visibilitychange', onVisible);
+    }
 
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
       clearInterval(interval);
-      if (typeof window !== 'undefined') window.removeEventListener('focus', onFocus);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onFocus);
+        document.removeEventListener('visibilitychange', onVisible);
+      }
       socket.off('whatsapp.message.new', onEvent);
       socket.off('whatsapp.message.status', onEvent);
       socket.off('whatsapp.thread.assigned', onEvent);

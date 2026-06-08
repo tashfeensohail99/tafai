@@ -202,7 +202,13 @@ export function listThreads(opts: {
   cursor?: string;
   limit?: number;
 } = {}): Promise<ThreadListResponse> {
-  return apiFetch<ThreadListResponse>(`/whatsapp/threads${buildQuery(opts)}`);
+  // no-store: the inbox is live data. The shared apiFetch in-memory cache (10s
+  // TTL) would otherwise let a reload/reconcile return a STALE list — e.g. a
+  // chat that just got a human reply would linger in the "Uncontacted" tab
+  // because the cached page still has awaitingReply=true. Always hit the DB.
+  return apiFetch<ThreadListResponse>(`/whatsapp/threads${buildQuery(opts)}`, {
+    cache: 'no-store',
+  });
 }
 
 /**
@@ -212,7 +218,9 @@ export function listThreads(opts: {
  * recent inbox page and missed older conversations.
  */
 export async function getThreadForLead(leadId: string): Promise<ThreadListItem | null> {
-  const res = await apiFetch<{ item: ThreadListItem | null }>(`/whatsapp/threads/by-lead/${leadId}`);
+  const res = await apiFetch<{ item: ThreadListItem | null }>(`/whatsapp/threads/by-lead/${leadId}`, {
+    cache: 'no-store',
+  });
   return res.item ?? null;
 }
 
@@ -223,8 +231,12 @@ export async function getThreadForLead(leadId: string): Promise<ThreadListItem |
  * longer visible to the caller (the caller should then drop it from the list).
  */
 export function getThreadListItem(threadId: string): Promise<ThreadListItem | null> {
+  // no-store: this backs the realtime "patch one row" path. A cached row would
+  // re-apply STALE state (e.g. awaitingReply=true after a reply already cleared
+  // it), which is exactly what kept replied chats stuck in the Uncontacted tab.
   return apiFetch<{ item: ThreadListItem | null }>(
     `/whatsapp/threads/${threadId}/list-item`,
+    { cache: 'no-store' },
   ).then((r) => r.item);
 }
 

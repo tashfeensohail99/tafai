@@ -199,6 +199,8 @@ export function listThreads(opts: {
   /** "Open" tab — the complement: chats where a human HAS replied at least once
    *  (lastHumanReplyAt IS NOT NULL). Open + Uncontacted partition every chat. */
   contacted?: boolean;
+  /** "Due (N)" chip — only chats whose lead has an OPEN follow-up due/overdue now. */
+  followUpDue?: boolean;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;
   search?: string;
@@ -286,6 +288,8 @@ export interface ThreadStats {
   awaitingReply: number;
   /** "Uncontacted" — pending conversations where no human has ever replied. */
   uncontacted: number;
+  /** "Due (N)" — chats whose lead has an OPEN follow-up due/overdue right now. */
+  followUpDue: number;
   /** Within the warn window (about to breach), not yet overdue. */
   approaching: number;
   /** Response-SLA deadline already passed, still unanswered. */

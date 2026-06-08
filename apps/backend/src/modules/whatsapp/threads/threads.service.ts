@@ -25,6 +25,13 @@ interface ThreadListOptions {
    * conversations. Open + Uncontacted partition every chat.
    */
   contacted?: boolean;
+  /**
+   * "Due follow-ups" filter — only threads whose lead has an OPEN CRM follow-up
+   * that is due or overdue (dueAt <= now). Powers the inbox "Due (N)" chip so a
+   * rep can pull up exactly the chats that need a scheduled follow-up today,
+   * regardless of the active tab.
+   */
+  followUpDue?: boolean;
   /** Admin filter: only threads whose lead is assigned to this employee. */
   employeeId?: string;
   search?: string;
@@ -203,6 +210,13 @@ export class WhatsAppThreadsService {
       // "Open" tab: the complement — a human HAS replied at least once. Together
       // with Uncontacted this partitions every chat the caller can see.
       and.push({ lastHumanReplyAt: { not: null } });
+    }
+
+    if (opts.followUpDue) {
+      // "Due (N)" chip: only chats whose lead has an OPEN CRM follow-up that is
+      // due or overdue right now. Live relation query — always accurate, no
+      // denormalized field to keep in sync.
+      and.push({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: new Date() } } } } } });
     }
 
     if (opts.search) {
@@ -395,6 +409,8 @@ export class WhatsAppThreadsService {
     unread: number;
     awaitingReply: number;
     uncontacted: number;
+    /** Chats whose lead has an OPEN follow-up due/overdue now — powers "Due (N)". */
+    followUpDue: number;
     approaching: number;
     overdue: number;
     slaScore: number | null;
@@ -402,7 +418,7 @@ export class WhatsAppThreadsService {
   }> {
     const empty = {
       total: 0, active: 0, resolved: 0, unassigned: 0, slaBreached: 0, unread: 0,
-      awaitingReply: 0, uncontacted: 0, approaching: 0, overdue: 0,
+      awaitingReply: 0, uncontacted: 0, followUpDue: 0, approaching: 0, overdue: 0,
       slaScore: null as number | null, slaScoreScope: null as 'self' | 'org' | null,
     };
     // Base visibility filter mirrors list(): drop soft-deleted leads, and
@@ -531,9 +547,16 @@ export class WhatsAppThreadsService {
       }
     }
 
+    // "Due (N)" chip: chats whose lead has an OPEN CRM follow-up due/overdue now.
+    // A separate live relation count (cheap — follow_ups is indexed on dueAt and
+    // status) so it's always accurate without a denormalized field to maintain.
+    const followUpDue = await this.prisma.whatsAppThread.count({
+      where: and({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
+    });
+
     return {
       total, active, resolved, unassigned, slaBreached, unread,
-      awaitingReply, uncontacted, approaching, overdue, slaScore, slaScoreScope,
+      awaitingReply, uncontacted, followUpDue, approaching, overdue, slaScore, slaScoreScope,
     };
   }
 

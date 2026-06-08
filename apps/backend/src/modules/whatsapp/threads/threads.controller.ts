@@ -104,6 +104,15 @@ class ListThreadsDto {
   @Transform(({ value }) => value === 'true' || value === true)
   contacted?: boolean;
 
+  /**
+   * "Due (N)" chip: only threads whose lead has an OPEN CRM follow-up that is
+   * due or overdue now. Validate as a real boolean (see note above).
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  followUpDue?: boolean;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
 

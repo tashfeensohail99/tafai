@@ -1011,6 +1011,12 @@ const ThreadRow = memo(function ThreadRow({
     ? `${item.lead.assignedEmployee.firstName} ${item.lead.assignedEmployee.lastName}`.trim()
     : null;
 
+  // Mirror the sales inbox: show the time of the last REAL activity (customer
+  // msg or rep reply), not the last raw message — otherwise a bot "just checking
+  // in" nudge stamps a fresh time on a chat the sort correctly keeps lower,
+  // making the list look mis-ordered. Bot-only greetings fall back to lastMessageAt.
+  const ts = item.lastHumanActivityAt ?? item.lastMessageAt;
+
   return (
     <div
       onClick={() => onSelect(item.id)}
@@ -1115,7 +1121,7 @@ const ThreadRow = memo(function ThreadRow({
               </span>
             ) : null}
           </span>
-          {item.lastMessageAt && (
+          {ts && (
             <span
               style={{
                 fontSize: 10.5,
@@ -1123,7 +1129,7 @@ const ThreadRow = memo(function ThreadRow({
                 flexShrink: 0,
               }}
             >
-              {formatRelativeShort(item.lastMessageAt)}
+              {formatRelativeShort(ts)}
             </span>
           )}
         </div>

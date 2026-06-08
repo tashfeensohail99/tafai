@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -164,4 +165,23 @@ export class CancelAppointmentDto {
   @IsString()
   @MaxLength(500)
   cancellationReason?: string;
+}
+
+export class RescheduleAppointmentDto {
+  @IsDateString()
+  scheduledAt!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  durationMinutes?: number;
+}
+
+export class AvailabilityQueryDto {
+  @IsUUID()
+  employeeId!: string;
+
+  /** PKT calendar day, YYYY-MM-DD. */
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
+  date!: string;
 }

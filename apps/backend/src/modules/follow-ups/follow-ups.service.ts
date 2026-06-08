@@ -19,6 +19,7 @@ import {
   CompleteFollowUpDto,
   CreateFollowUpDto,
   ListFollowUpsQueryDto,
+  RescheduleFollowUpDto,
   UpdateFollowUpDto,
 } from './follow-ups.dto';
 
@@ -338,6 +339,19 @@ export class FollowUpsService {
       },
     });
 
+    return updated;
+  }
+
+  /**
+   * Move a follow-up's due date. Reuses update() (access check + COMPLETED guard
+   * + audit + the RESCHEDULED timeline event) and then drops the stale pending
+   * due-reminder so the reminder dispatcher re-materialises it at the new dueAt.
+   */
+  async reschedule(id: string, dto: RescheduleFollowUpDto, user: RequestUser) {
+    const updated = await this.update(id, { dueAt: dto.dueAt }, user);
+    await this.prisma.reminderJob
+      .deleteMany({ where: { followUpId: id, status: 'PENDING', kind: 'FOLLOWUP_DUE' } })
+      .catch(() => undefined);
     return updated;
   }
 

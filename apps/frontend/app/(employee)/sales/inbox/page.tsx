@@ -27,12 +27,15 @@ function useIsMobile(threshold = 1024): boolean {
   return isMobile;
 }
 
-type Filter = WhatsAppThreadStatus | 'ALL';
+// 'UNCONTACTED' is a virtual filter (not a thread status): chats awaiting a
+// human reply where NO human has ever replied — the bot greeting doesn't count.
+type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED';
 
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
   { key: 'PENDING', label: 'Pending' },
+  { key: 'UNCONTACTED', label: 'Uncontacted' },
   { key: 'RESOLVED', label: 'Resolved' },
 ];
 
@@ -84,7 +87,14 @@ export default function SalesInboxPage() {
   // WhatsAppThreadStatus.PENDING value is never written by any code path, so
   // filtering by status='PENDING' would always return zero.
   const scopeQuery = useCallback(
-    () => (filter === 'PENDING' ? { needsReply: true } : filter !== 'ALL' ? { status: filter } : {}),
+    () =>
+      filter === 'PENDING'
+        ? { needsReply: true }
+        : filter === 'UNCONTACTED'
+          ? { uncontacted: true }
+          : filter !== 'ALL'
+            ? { status: filter }
+            : {},
     [filter],
   );
 
@@ -186,6 +196,9 @@ export default function SalesInboxPage() {
     matches: (row) => {
       if (filter === 'PENDING') {
         if (!row.awaitingReply) return false;
+      } else if (filter === 'UNCONTACTED') {
+        // Awaiting a human reply AND no human has ever replied (bot greeting only).
+        if (!row.awaitingReply || row.lastHumanReplyAt != null) return false;
       } else if (filter !== 'ALL') {
         if (row.status !== filter) return false;
       }
@@ -347,17 +360,21 @@ export default function SalesInboxPage() {
                 ? stats.total
                 : f.key === 'PENDING'
                   ? stats.awaitingReply
-                  : f.key === 'OPEN'
-                    ? stats.active
-                    : f.key === 'RESOLVED'
-                      ? stats.resolved
-                      : 0
+                  : f.key === 'UNCONTACTED'
+                    ? stats.uncontacted
+                    : f.key === 'OPEN'
+                      ? stats.active
+                      : f.key === 'RESOLVED'
+                        ? stats.resolved
+                        : 0
               : // Stats not yet loaded — fall back to page-based count while fetching.
                 f.key === 'ALL'
                 ? items.length
                 : f.key === 'PENDING'
                   ? items.filter((t) => t.awaitingReply).length
-                  : items.filter((t) => t.status === f.key).length;
+                  : f.key === 'UNCONTACTED'
+                    ? items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null).length
+                    : items.filter((t) => t.status === f.key).length;
             return (
               <button
                 key={f.key}

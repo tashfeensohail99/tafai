@@ -248,7 +248,8 @@ export function WhatsAppAdminPage() {
       if (unassignedOnly && row.lead?.assignedEmployeeId) return false;
       if (agentFilter && row.lead?.assignedEmployeeId !== agentFilter) return false;
       if (filter === 'PENDING') {
-        if (!row.awaitingReply) return false;
+        // Pending = follow-ups: awaiting a reply AND a human replied before.
+        if (!row.awaitingReply || row.lastHumanReplyAt == null) return false;
       } else if (filter === 'UNCONTACTED') {
         if (!row.awaitingReply || row.lastHumanReplyAt != null) return false;
       } else if (filter !== 'ALL') {
@@ -295,7 +296,7 @@ export function WhatsAppAdminPage() {
   // Uncontacted list) can never render under the wrong tab. Mirrors scopeQuery.
   const visibleItems = useMemo(() => {
     if (filter === 'ALL') return items;
-    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply);
+    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null);
     if (filter === 'UNCONTACTED') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null);
     return items.filter((t) => t.status === filter);
   }, [items, filter]);
@@ -540,7 +541,7 @@ export function WhatsAppAdminPage() {
                     : f.key === 'OPEN'
                       ? stats.active
                       : f.key === 'PENDING'
-                        ? stats.awaitingReply
+                        ? Math.max(0, stats.awaitingReply - stats.uncontacted)
                         : f.key === 'UNCONTACTED'
                           ? stats.uncontacted
                           : f.key === 'RESOLVED'

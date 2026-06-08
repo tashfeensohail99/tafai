@@ -197,7 +197,7 @@ export function SalesOverviewPage() {
           items={[
             {
               term: 'Pending',
-              desc: "Chats awaiting a human reply — the customer messaged more recently than the rep's last manual reply. Bot replies don't count. (= Uncontacted + follow-ups.)",
+              desc: "Follow-ups — the rep replied before and the customer has written back, awaiting the rep's next reply. Leads never replied to are counted under Uncontacted, separately (the two don't overlap).",
             },
             {
               term: 'Uncontacted',

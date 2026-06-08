@@ -201,7 +201,7 @@ export class ReportsService {
       openFollowUpCounts,
       overdueFollowUpCounts,
       upcomingApptCounts,
-      awaitingReplyThreads,
+      pendingThreads,
     ] = await this.prisma.$transaction([
       this.prisma.employee.count({ where: { deletedAt: null, isActive: true } }),
       this.prisma.lead.count({ where: { deletedAt: null } }),
@@ -282,29 +282,20 @@ export class ReportsService {
         },
         _count: { _all: true },
       }),
-      // Conversations the *human* rep hasn't personally replied to: the client
-      // has texted (>=1 inbound) but every outbound so far is the AI bot
-      // (sentByEmployeeId NULL) or there's no reply at all. Bot replies do NOT
-      // count as the rep replying — this catches reps letting the bot carry the
-      // chat without ever typing a word. Scoped to active threads whose lead is
-      // assigned to a (non-deleted) rep, so we can group by salesperson.
+      // Conversations awaiting a HUMAN reply, grouped by the assigned rep — the
+      // SAME signal the WhatsApp inbox uses, so the overview matches each rep's
+      // inbox exactly. `awaitingReply` = the customer has messaged more recently
+      // than the rep's last manual reply (bot replies don't clear it). We also
+      // carry `lastHumanReplyAt` so we can split out the "Uncontacted" subset
+      // (no human has EVER replied — only the bot greeted them).
+      //   Pending     = awaitingReply (uncontacted + follow-up)
+      //   Uncontacted = awaitingReply AND lastHumanReplyAt IS NULL
       this.prisma.whatsAppThread.findMany({
         where: {
-          status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
+          awaitingReply: true,
           lead: { assignedEmployeeId: { not: null }, deletedAt: null },
-          AND: [
-            { messages: { some: { direction: WhatsAppMessageDirection.INBOUND } } },
-            {
-              messages: {
-                none: {
-                  direction: WhatsAppMessageDirection.OUTBOUND,
-                  sentByEmployeeId: { not: null },
-                },
-              },
-            },
-          ],
         },
-        select: { lead: { select: { assignedEmployeeId: true } } },
+        select: { lastHumanReplyAt: true, lead: { select: { assignedEmployeeId: true } } },
       }),
     ]);
 
@@ -318,13 +309,18 @@ export class ReportsService {
     const openFollowUpMap = idx(openFollowUpCounts);
     const overdueFollowUpMap = idx(overdueFollowUpCounts);
     const upcomingApptMap = idx(upcomingApptCounts);
-    // Awaiting-reply threads grouped by the assigned rep (relation field, so
-    // a plain groupBy can't do it — tally in JS; the backlog is small).
-    const awaitingReplyMap = new Map<string, number>();
-    for (const t of awaitingReplyThreads) {
+    // Pending threads grouped by the assigned rep (relation field, so a plain
+    // groupBy can't do it — tally in JS; the backlog is small). Uncontacted is
+    // the subset with no human reply ever (lastHumanReplyAt null).
+    const pendingMap = new Map<string, number>();
+    const uncontactedMap = new Map<string, number>();
+    for (const t of pendingThreads) {
       const aid = t.lead?.assignedEmployeeId;
-      if (aid) awaitingReplyMap.set(aid, (awaitingReplyMap.get(aid) ?? 0) + 1);
+      if (!aid) continue;
+      pendingMap.set(aid, (pendingMap.get(aid) ?? 0) + 1);
+      if (t.lastHumanReplyAt === null) uncontactedMap.set(aid, (uncontactedMap.get(aid) ?? 0) + 1);
     }
+    const uncontactedTotal = pendingThreads.filter((t) => t.lastHumanReplyAt === null).length;
 
     const agents = employees.map((e) => {
       const newLeads = newMap.get(e.id) ?? 0;
@@ -347,7 +343,12 @@ export class ReportsService {
         openFollowUps: openFollowUpMap.get(e.id) ?? 0,
         overdueFollowUps: overdueFollowUpMap.get(e.id) ?? 0,
         upcomingAppointments: upcomingApptMap.get(e.id) ?? 0,
-        awaitingReply: awaitingReplyMap.get(e.id) ?? 0,
+        // Pending = awaiting a human reply (uncontacted + follow-up).
+        // Uncontacted = subset with no human reply ever (bot greeting only).
+        pending: pendingMap.get(e.id) ?? 0,
+        uncontacted: uncontactedMap.get(e.id) ?? 0,
+        // Back-compat alias (= pending) so an older cached UI bundle still renders.
+        awaitingReply: pendingMap.get(e.id) ?? 0,
         slaScore,
         slaBreaches: e.slaResponsesBreached,
       };
@@ -360,7 +361,9 @@ export class ReportsService {
         convertedThisMonth,
         overdueFollowUps,
         appointmentsToday,
-        awaitingReply: awaitingReplyThreads.length,
+        pending: pendingThreads.length,
+        uncontacted: uncontactedTotal,
+        awaitingReply: pendingThreads.length, // back-compat alias (= pending)
       },
       agents,
     };

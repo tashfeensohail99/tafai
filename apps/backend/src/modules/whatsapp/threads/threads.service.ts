@@ -187,9 +187,10 @@ export class WhatsAppThreadsService {
     }
 
     if (opts.uncontacted) {
-      // "Uncontacted" tab: pending AND no human has ever replied (bot greeting
-      // only) — the leads still waiting on a salesperson's first reply.
-      and.push({ awaitingReply: true, lastHumanReplyAt: null });
+      // "Uncontacted" tab: NO human has EVER replied (lastHumanReplyAt IS NULL),
+      // across ALL chats — the AI bot's auto-reply does not count. Independent of
+      // awaitingReply; disjoint from Pending (which requires a prior human reply).
+      and.push({ lastHumanReplyAt: null });
     }
 
     if (opts.search) {
@@ -432,8 +433,10 @@ export class WhatsAppThreadsService {
           this.prisma.whatsAppThread.count({ where: and({ slaBreached: true }) }),
           this.prisma.whatsAppThread.count({ where: and({ unreadCount: { gt: 0 } }) }),
           Promise.resolve(0), // finance never sees the "unassigned" chip
-          this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true }) }),
-          this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true, lastHumanReplyAt: null }) }),
+          // Pending = follow-ups (awaiting + a human replied before).
+          this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true, lastHumanReplyAt: { not: null } }) }),
+          // Uncontacted = NO human has ever replied (over all chats, bot ignored).
+          this.prisma.whatsAppThread.count({ where: and({ lastHumanReplyAt: null }) }),
           this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null, lte: now } }) }),
           this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }) }),
           this.prisma.whatsAppThread.count({ where: and({ status: 'RESOLVED' }) }),
@@ -455,8 +458,8 @@ export class WhatsAppThreadsService {
            count(*) FILTER (WHERE t."slaBreached")::int AS "slaBreached",
            count(*) FILTER (WHERE t."unreadCount" > 0)::int AS unread,
            count(*) FILTER (WHERE l.id IS NOT NULL AND l."assignedEmployeeId" IS NULL)::int AS unassigned,
-           count(*) FILTER (WHERE t."awaitingReply")::int AS "awaitingReply",
-           count(*) FILTER (WHERE t."awaitingReply" AND t."lastHumanReplyAt" IS NULL)::int AS uncontacted,
+           count(*) FILTER (WHERE t."awaitingReply" AND t."lastHumanReplyAt" IS NOT NULL)::int AS "awaitingReply",
+           count(*) FILTER (WHERE t."lastHumanReplyAt" IS NULL)::int AS uncontacted,
            count(*) FILTER (WHERE t."responseDeadlineAt" IS NOT NULL AND t."responseDeadlineAt" <= $1)::int AS overdue,
            count(*) FILTER (WHERE t."responseDeadlineAt" > $1 AND t."responseDeadlineAt" <= $2)::int AS approaching,
            count(*) FILTER (WHERE t.status::text = 'RESOLVED')::int AS resolved

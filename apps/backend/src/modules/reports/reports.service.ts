@@ -309,25 +309,27 @@ export class ReportsService {
     const openFollowUpMap = idx(openFollowUpCounts);
     const overdueFollowUpMap = idx(overdueFollowUpCounts);
     const upcomingApptMap = idx(upcomingApptCounts);
-    // Pending threads grouped by the assigned rep (relation field, so a plain
-    // groupBy can't do it — tally in JS; the backlog is small). Uncontacted is
-    // the subset with no human reply ever (lastHumanReplyAt null).
-    // Pending = FOLLOW-UPS only (a human has replied before → lastHumanReplyAt
-    // != null). Uncontacted = no human reply ever (lastHumanReplyAt == null).
-    // Mutually exclusive: every awaiting thread is in exactly one bucket.
+    // Pending = FOLLOW-UPS: awaiting a reply AND a human has replied before
+    // (taken from `pendingThreads`, the awaiting set). Uncontacted = NO human has
+    // EVER replied, across ALL the rep's chats (the bot's auto-reply doesn't
+    // count) — a separate query over every thread, not just awaiting ones.
+    // Disjoint buckets, and Uncontacted is now computed from ALL chats.
+    const uncontactedThreads = await this.prisma.whatsAppThread.findMany({
+      where: { lastHumanReplyAt: null, lead: { assignedEmployeeId: { not: null }, deletedAt: null } },
+      select: { lead: { select: { assignedEmployeeId: true } } },
+    });
     const pendingMap = new Map<string, number>();
     const uncontactedMap = new Map<string, number>();
     for (const t of pendingThreads) {
       const aid = t.lead?.assignedEmployeeId;
-      if (!aid) continue;
-      if (t.lastHumanReplyAt === null) {
-        uncontactedMap.set(aid, (uncontactedMap.get(aid) ?? 0) + 1);
-      } else {
-        pendingMap.set(aid, (pendingMap.get(aid) ?? 0) + 1);
-      }
+      if (aid && t.lastHumanReplyAt !== null) pendingMap.set(aid, (pendingMap.get(aid) ?? 0) + 1);
     }
-    const uncontactedTotal = pendingThreads.filter((t) => t.lastHumanReplyAt === null).length;
-    const pendingTotal = pendingThreads.length - uncontactedTotal;
+    for (const t of uncontactedThreads) {
+      const aid = t.lead?.assignedEmployeeId;
+      if (aid) uncontactedMap.set(aid, (uncontactedMap.get(aid) ?? 0) + 1);
+    }
+    const uncontactedTotal = uncontactedThreads.length;
+    const pendingTotal = pendingThreads.filter((t) => t.lastHumanReplyAt !== null).length;
 
     const agents = employees.map((e) => {
       const newLeads = newMap.get(e.id) ?? 0;

@@ -251,7 +251,8 @@ export function WhatsAppAdminPage() {
         // Pending = follow-ups: awaiting a reply AND a human replied before.
         if (!row.awaitingReply || row.lastHumanReplyAt == null) return false;
       } else if (filter === 'UNCONTACTED') {
-        if (!row.awaitingReply || row.lastHumanReplyAt != null) return false;
+        // No human has ever replied (bot doesn't count); independent of awaitingReply.
+        if (row.lastHumanReplyAt != null) return false;
       } else if (filter !== 'ALL') {
         if (row.status !== filter) return false;
       }
@@ -297,7 +298,7 @@ export function WhatsAppAdminPage() {
   const visibleItems = useMemo(() => {
     if (filter === 'ALL') return items;
     if (filter === 'PENDING') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt != null);
-    if (filter === 'UNCONTACTED') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null);
+    if (filter === 'UNCONTACTED') return items.filter((t) => t.lastHumanReplyAt == null);
     return items.filter((t) => t.status === filter);
   }, [items, filter]);
 
@@ -541,7 +542,7 @@ export function WhatsAppAdminPage() {
                     : f.key === 'OPEN'
                       ? stats.active
                       : f.key === 'PENDING'
-                        ? Math.max(0, stats.awaitingReply - stats.uncontacted)
+                        ? stats.awaitingReply
                         : f.key === 'UNCONTACTED'
                           ? stats.uncontacted
                           : f.key === 'RESOLVED'

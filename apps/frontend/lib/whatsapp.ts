@@ -193,9 +193,12 @@ export function listThreads(opts: {
   /** "Pending" tab — threads awaiting a human reply (awaitingReply=true: the
    *  customer messaged more recently than the last manual sales reply). */
   needsReply?: boolean;
-  /** "Uncontacted" tab — pending chats where NO human has ever replied
-   *  (awaitingReply=true AND lastHumanReplyAt IS NULL; bot greeting only). */
+  /** "Uncontacted" tab — chats where NO human has ever replied
+   *  (lastHumanReplyAt IS NULL; bot greeting only). */
   uncontacted?: boolean;
+  /** "Open" tab — the complement: chats where a human HAS replied at least once
+   *  (lastHumanReplyAt IS NOT NULL). Open + Uncontacted partition every chat. */
+  contacted?: boolean;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;
   search?: string;

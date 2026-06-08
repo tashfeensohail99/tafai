@@ -69,6 +69,16 @@ class ListThreadsDto {
   @Transform(({ value }) => value === 'true' || value === true)
   uncontacted?: boolean;
 
+  /**
+   * "Open" tab: the complement of Uncontacted — threads where a human HAS
+   * replied at least once (lastHumanReplyAt IS NOT NULL). These are the live,
+   * being-handled conversations. Open + Uncontacted partition every chat.
+   */
+  @IsOptional()
+  @IsBooleanString()
+  @Transform(({ value }) => value === 'true' || value === true)
+  contacted?: boolean;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
 

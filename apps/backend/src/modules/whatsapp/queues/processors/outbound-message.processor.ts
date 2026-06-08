@@ -123,7 +123,10 @@ export class OutboundMessageProcessor extends WorkerHost {
         data: {
           lastMessageAt: now,
           lastMessagePreview: preview,
-          ...(isHumanSend ? { lastHumanReplyAt: now, awaitingReply: false } : {}),
+          // A human (rep) reply is real activity → bump the inbox sort key.
+          // Bot/auto/template/campaign sends (sentByEmployeeId null) deliberately
+          // do NOT, so they can't push a chat up or bury a real reply.
+          ...(isHumanSend ? { lastHumanReplyAt: now, lastHumanActivityAt: now, awaitingReply: false } : {}),
         },
       });
 

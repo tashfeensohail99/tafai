@@ -3340,6 +3340,14 @@ model WhatsAppThread {
   lastCustomerMessageAt DateTime?
   lastHumanReplyAt      DateTime?
   awaitingReply         Boolean  @default(false)
+  // Most recent REAL conversation activity — the latest of an inbound customer
+  // message OR a manual human (rep) reply. Bot/auto/template/campaign sends
+  // (sentByEmployeeId IS NULL) never touch this. The inbox sorts by it so the
+  // freshest real chat is on top while the bot's "just checking in" nudges —
+  // which DO bump lastMessageAt — can neither push a chat up nor bury a real
+  // reply. = MAX(lastCustomerMessageAt, lastHumanReplyAt); maintained alongside
+  // both (inbound stamps it, a human send stamps it; the bot does not).
+  lastHumanActivityAt   DateTime?
 
   // --- Click-to-WhatsApp ad attribution ---
   // Populated when an inbound message arrives with a Meta `referral` block —
@@ -3397,6 +3405,9 @@ model WhatsAppThread {
   // so the [status, lastMessageAt] composite can't serve the sort — this
   // standalone index does.
   @@index([lastMessageAt(sort: Desc)])
+  // The inbox primary sort is lastHumanActivityAt DESC (newest real message on
+  // top; bot nudges excluded) — this index backs it.
+  @@index([lastHumanActivityAt(sort: Desc)])
   // Stats endpoint counts responseDeadlineAt three ways (set / overdue /
   // approaching) on every load (SLA timer).
   @@index([responseDeadlineAt])

@@ -246,14 +246,16 @@ export class WhatsAppThreadsService {
 
     const rows = await this.prisma.whatsAppThread.findMany({
       where,
-      // ACTION-REQUIRED FIRST: chats where the customer is waiting on a human
-      // reply (awaitingReply=true) sort above the rest, so the bot's outbound
-      // nudges — which bump lastMessageAt — can never bury a real customer reply
-      // that still needs answering. Within each group, most-recent first.
-      // `id` is the stable final tiebreaker (lastMessageAt/createdAt aren't
-      // unique; cursor pagination over a non-unique sort can skip/duplicate rows).
+      // NEWEST REAL ACTIVITY FIRST: order by lastHumanActivityAt (the latest
+      // inbound customer message OR manual rep reply) so a fresh reply jumps to
+      // the top — while the bot's "just checking in" nudges (which bump
+      // lastMessageAt but NOT lastHumanActivityAt) can neither push a chat up nor
+      // bury a real reply. Fall back to lastMessageAt for chats with no human
+      // activity yet (bot-only greetings) so they still order sensibly. `id` is
+      // the stable final tiebreaker (the timestamps aren't unique; cursor
+      // pagination over a non-unique sort can otherwise skip/duplicate rows).
       orderBy: [
-        { awaitingReply: 'desc' },
+        { lastHumanActivityAt: { sort: 'desc', nulls: 'last' } },
         { lastMessageAt: { sort: 'desc', nulls: 'last' } },
         { createdAt: 'desc' },
         { id: 'desc' },

@@ -45,6 +45,8 @@ import { AiModule } from './modules/ai/ai.module';
 import { AppointmentRequestsModule } from './modules/appointment-requests/appointment-requests.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { RemindersModule } from './modules/reminders/reminders.module';
+import { PushModule } from './modules/push/push.module';
+import { DevicesModule } from './modules/devices/devices.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
 
@@ -102,6 +104,8 @@ import { PayrollModule } from './modules/payroll/payroll.module';
     AppointmentRequestsModule,
     NotificationsModule,
     RemindersModule,
+    PushModule,
+    DevicesModule,
     AttendanceModule,
     PayrollModule,
   ],

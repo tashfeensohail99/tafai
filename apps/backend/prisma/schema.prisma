@@ -3732,6 +3732,35 @@ model Notification {
   @@schema("core")
 }
 
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+  @@schema("core")
+}
+
+/// A push-notification target: one row per (user, device). The mobile/web
+/// client registers its FCM token here on login and removes it on logout. Push
+/// delivery (PushService) fans every in-app Notification out to the user's
+/// registered devices. `token` is unique so a re-register from the same device
+/// is an upsert, not a duplicate. No FK to UserAccount by design — the row is a
+/// disposable transport address, pruned on logout or when FCM reports it stale.
+model DeviceToken {
+  id         String         @id @default(uuid())
+  userId     String
+  platform   DevicePlatform
+  token      String         @unique
+  /// Free-form client hint (model / app version) for admin debugging.
+  deviceInfo String?
+  lastSeenAt DateTime       @default(now())
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([userId])
+  @@map("device_tokens")
+  @@schema("core")
+}
+
 // =============================================================================
 // PAYROLL + ATTENDANCE RULES ENGINE
 // Layered: Raw (attendance_records from camera) -> Computed (policy applied) ->

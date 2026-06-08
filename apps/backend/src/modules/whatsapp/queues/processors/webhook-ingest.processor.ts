@@ -691,6 +691,8 @@ export class WebhookIngestProcessor extends WorkerHost {
         unreadCount: 1,
         // Pending: a customer message just arrived → awaiting a human reply.
         lastCustomerMessageAt: now,
+        // A customer message is real activity → bump the inbox sort key.
+        lastHumanActivityAt: now,
         awaitingReply: true,
         ...adReferralUpdate,
       },
@@ -705,6 +707,8 @@ export class WebhookIngestProcessor extends WorkerHost {
         // Pending: a customer message just arrived → awaiting a human reply.
         // (A bot auto-reply afterwards does NOT clear this — only a manual send.)
         lastCustomerMessageAt: now,
+        // A customer message is real activity → bump the inbox sort key.
+        lastHumanActivityAt: now,
         awaitingReply: true,
         status: 'OPEN',
         // Stamp firstInboundAt only if missing.

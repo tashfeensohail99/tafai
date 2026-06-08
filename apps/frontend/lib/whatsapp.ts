@@ -62,6 +62,10 @@ export interface ThreadListItem {
    *  greeting doesn't count). The "Uncontacted" tab is awaitingReply && this null. */
   lastHumanReplyAt: string | null;
   lastMessageAt: string | null;
+  /** Latest real activity — newest inbound customer msg or manual rep reply
+   *  (never the bot). The inbox sorts by this so new msgs surface but bot
+   *  nudges don't bump. */
+  lastHumanActivityAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
   /** Click-to-WhatsApp ad attribution — populated when the contact engaged

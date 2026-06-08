@@ -323,13 +323,8 @@ export function SalesAppointmentsPage() {
 
       <section
         ref={bookFormRef}
-        style={{
-          display: 'grid',
-          gap: '20px',
-          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.6fr)',
-          scrollMarginTop: '80px',
-        }}
-        className="sos-detail-grid"
+        style={{ scrollMarginTop: '80px' }}
+        className="sos-booking-grid"
       >
         <GlassCard variant="strong" padded="lg" glow="accent">
           <BookingHeader

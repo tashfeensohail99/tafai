@@ -185,11 +185,25 @@ const STEPS: StepDef[] = [
   },
 ];
 
+/** 10–15 digits (E.164 range), allowing +, spaces, dashes, parentheses. */
+function isValidPhone(p: string): boolean {
+  const trimmed = p.trim();
+  if (!/^[+\d][\d\s()-]+$/.test(trimmed)) return false;
+  const digits = trimmed.replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 15;
+}
+
+function isValidEmail(e: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
+}
+
 function validateStep(step: StepKey, f: FormState): string | null {
   if (step === 'CLIENT') {
     if (!f.firstName.trim()) return 'First name is required';
     if (!f.lastName.trim()) return 'Last name is required';
     if (!f.phone.trim()) return 'Phone number is required';
+    if (!isValidPhone(f.phone)) return 'Enter a valid phone number (10–15 digits, e.g. +92 300 1234567)';
+    if (f.email.trim() && !isValidEmail(f.email)) return 'Enter a valid email address (e.g. name@example.com)';
   }
   if (step === 'SOURCE' && !f.source) return 'Pick where this lead came from';
   if (step === 'INTEREST') {

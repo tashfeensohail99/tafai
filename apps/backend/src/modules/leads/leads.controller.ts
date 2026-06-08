@@ -173,7 +173,12 @@ export class LeadsController {
     // (convertToClient itself is shared with the trusted finance auto-convert
     // flow, so the access check lives here at the user-facing entry point.)
     await this.leadsService.assertLeadAccess(id, user);
-    return this.leadsService.convertToClient(id, user.id, dto.notes);
+    // Conversion rule: from the user-facing path a client is only created once
+    // the lead's email is verified. The trusted finance/processing auto-converts
+    // (post-agreement / post-payment) do not pass this flag.
+    return this.leadsService.convertToClient(id, user.id, dto.notes, undefined, {
+      requireEmailVerified: true,
+    });
   }
 
   @Patch(':id')

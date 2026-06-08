@@ -1010,9 +1010,9 @@ export class LeadsService {
     const canViewAll = user.permissions.includes('leads.view_all');
     const employeeId = canViewAll ? undefined : await this.findEmployeeIdByUserId(user.id);
 
-    // Common WHERE — applied to every count below so admin sees org-wide,
-    // agent sees their own book. Empty result for an agent without an
-    // employee row (would be a config error, but we no-op cleanly).
+    // Common WHERE — applied to every lead count below so admin sees org-wide,
+    // a rep sees their own book. Empty result for an agent without an employee
+    // row (would be a config error, but we no-op cleanly).
     if (!canViewAll && !employeeId) {
       return {
         activeLeads: 0,
@@ -1026,7 +1026,13 @@ export class LeadsService {
         recentLeads: [],
       };
     }
-    const scope = canViewAll ? {} : { assignedEmployeeId: employeeId };
+    // Scope MUST match the /sales/leads list (findAllAccessible) exactly so the
+    // dashboard tiles and the leads page agree: a non-admin sees leads assigned
+    // to them OR created by them (e.g. front-desk staff who entered/imported
+    // them), not just the ones currently assigned to them.
+    const scope: Prisma.LeadWhereInput = canViewAll
+      ? {}
+      : { OR: [{ assignedEmployee: { userId: user.id } }, { createdByUserId: user.id }] };
 
     const now = new Date();
     const startOfToday = new Date(now);
@@ -1035,8 +1041,8 @@ export class LeadsService {
     const [
       active,
       handovers,
-      totalLeads,
-      todayLeads,
+      sourceAll,
+      sourceToday,
       overdue,
       pipelineRows,
       recent,
@@ -1048,9 +1054,19 @@ export class LeadsService {
       this.prisma.lead.count({
         where: { ...scope, deletedAt: null, status: 'CONVERTED' },
       }),
-      this.prisma.lead.count({ where: { ...scope, deletedAt: null } }),
-      this.prisma.lead.count({
+      // Admin vs Auto-CRM split by sourceChannel — SAME classification the
+      // /sales/leads page uses (deriveAssignmentType), so the dashboard tiles
+      // match it exactly. groupBy keeps it to one round-trip (a few dozen
+      // distinct channel values) instead of loading every lead.
+      this.prisma.lead.groupBy({
+        by: ['sourceChannel'],
+        where: { ...scope, deletedAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['sourceChannel'],
         where: { ...scope, deletedAt: null, createdAt: { gte: startOfToday } },
+        _count: { _all: true },
       }),
       // SLA-overdue = followUps overdue today (matches the sidebar's overdueFollowUps)
       this.prisma.followUp.count({
@@ -1083,17 +1099,30 @@ export class LeadsService {
       }),
     ]);
 
+    // Classify each sourceChannel as Auto-CRM (auto-captured digital inflow) vs
+    // Admin (manual entry / CSV import / blank) — the SAME rule the leads list
+    // uses (deriveAssignmentType), so the dashboard tiles match /sales/leads.
+    const AUTO_CRM_SOURCE_KEYWORDS = ['whatsapp', 'meta', 'facebook', 'instagram', 'web', 'uan', 'phone', 'call'];
+    const splitBySource = (rows: Array<{ sourceChannel: string | null; _count: { _all: number } }>) => {
+      let auto = 0;
+      let admin = 0;
+      for (const r of rows) {
+        const v = (r.sourceChannel ?? '').toLowerCase().trim();
+        if (v.length > 0 && AUTO_CRM_SOURCE_KEYWORDS.some((k) => v.includes(k))) auto += r._count._all;
+        else admin += r._count._all;
+      }
+      return { auto, admin };
+    };
+    const allSplit = splitBySource(sourceAll);
+    const todaySplit = splitBySource(sourceToday);
+
     return {
       activeLeads: active,
       handovers,
-      // The Sales UI hardcodes assignmentType='ADMIN' for every lead today
-      // (we don't actually track AUTO_CRM-vs-ADMIN separately yet). Return
-      // total + today so the dashboard tile reads accurately, with auto=0
-      // to preserve the existing two-tile layout.
-      adminAssigned: totalLeads,
-      autoAssigned: 0,
-      adminToday: todayLeads,
-      autoToday: 0,
+      adminAssigned: allSplit.admin,
+      autoAssigned: allSplit.auto,
+      adminToday: todaySplit.admin,
+      autoToday: todaySplit.auto,
       overdue,
       pipeline: pipelineRows.map((r) => ({ stage: r.status, count: r._count as unknown as number })),
       recentLeads: recent.map((l) => ({

@@ -650,6 +650,16 @@ const ThreadRow = memo(function ThreadRow({
         ? `${item.lead.firstName} ${item.lead.lastName}`.trim()
         : item.waContactId;
 
+  // "Action required": the lead messaged and no human has answered yet, in a
+  // chat a human HAS handled before (lastHumanReplyAt set). The sort pins these
+  // to the top; the accent bar + "Reply" tag make it obvious WHY they're there.
+  const needsReply = item.awaitingReply && item.lastHumanReplyAt != null;
+  // Show the time of the last REAL activity (customer msg or rep reply), NOT the
+  // last raw message — otherwise a bot "just checking in" nudge would stamp a
+  // fresh time on a chat that's correctly sorted lower, making the list look
+  // mis-ordered. Falls back to lastMessageAt for bot-only greetings.
+  const ts = item.lastHumanActivityAt ?? item.lastMessageAt;
+
   return (
     <button
       type="button"
@@ -667,6 +677,10 @@ const ThreadRow = memo(function ThreadRow({
           alignItems: 'center',
           gap: 12,
           padding: '10px 16px',
+          // Action-required chats get a left accent bar so the block pinned to
+          // the top reads as "your reply queue". Transparent (not 0) on the rest
+          // so text stays aligned across every row.
+          borderLeft: needsReply ? '3px solid var(--wa-accent)' : '3px solid transparent',
           background: active ? 'var(--wa-composer-input-bg)' : 'transparent',
           borderBottom: '1px solid var(--sos-border-subtle)',
           transition: 'background 0.1s',
@@ -755,15 +769,15 @@ const ThreadRow = memo(function ThreadRow({
                 </span>
               ) : null}
             </span>
-            {item.lastMessageAt && (
+            {ts && (
               <span
                 style={{
                   fontSize: 11,
-                  color: item.unreadCount > 0 ? 'var(--wa-accent)' : 'var(--sos-text-faint)',
+                  color: needsReply || item.unreadCount > 0 ? 'var(--wa-accent)' : 'var(--sos-text-faint)',
                   flexShrink: 0,
                 }}
               >
-                {formatRelativeShort(item.lastMessageAt)}
+                {formatRelativeShort(ts)}
               </span>
             )}
           </div>
@@ -781,6 +795,25 @@ const ThreadRow = memo(function ThreadRow({
               {item.lastMessagePreview ?? ''}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              {needsReply && (
+                <span
+                  title="The lead replied — you haven't answered yet"
+                  style={{
+                    fontSize: 9.5,
+                    fontWeight: 800,
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                    color: 'var(--wa-accent)',
+                    border: '1px solid var(--wa-accent)',
+                    borderRadius: 4,
+                    padding: '0 5px',
+                    lineHeight: '15px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Reply
+                </span>
+              )}
               {item.unreadCount > 0 && (
                 <span
                   style={{

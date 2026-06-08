@@ -92,12 +92,18 @@ export function useWhatsAppSocket(): { socket: Socket | null; connected: boolean
 }
 
 // Sort threads the SAME way the backend list does (so live patches don't
-// reorder differently from a reload): NEWEST REAL ACTIVITY FIRST — order by
-// lastHumanActivityAt (newest inbound customer msg or manual rep reply; the bot
-// never touches it), so a fresh reply jumps to the top while bot nudges (which
-// bump lastMessageAt but NOT lastHumanActivityAt) can't push a chat up or bury
-// a real one. Fall back to lastMessageAt for bot-only chats. Nulls → epoch 0.
+// reorder differently from a reload): ACTION REQUIRED FIRST, then newest real
+// activity.
+//  1. awaitingReply — chats awaiting a human reply are pinned to the top so an
+//     unanswered lead never gets buried (mirrors the backend `awaitingReply
+//     desc` first sort key).
+//  2. lastHumanActivityAt (newest inbound customer msg or manual rep reply; the
+//     bot never touches it) — a fresh real message surfaces while bot nudges
+//     (which bump lastMessageAt but NOT lastHumanActivityAt) can't push a chat
+//     up or bury a real one.
+//  3. lastMessageAt fallback for bot-only chats. Nulls → epoch 0.
 function byLastMessageDesc(a: ThreadListItem, b: ThreadListItem): number {
+  if (a.awaitingReply !== b.awaitingReply) return a.awaitingReply ? -1 : 1;
   const aH = a.lastHumanActivityAt ? Date.parse(a.lastHumanActivityAt) : 0;
   const bH = b.lastHumanActivityAt ? Date.parse(b.lastHumanActivityAt) : 0;
   if (aH !== bH) return bH - aH;

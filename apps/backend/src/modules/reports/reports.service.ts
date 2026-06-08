@@ -331,6 +331,20 @@ export class ReportsService {
     const uncontactedTotal = uncontactedThreads.length;
     const pendingTotal = pendingThreads.filter((t) => t.lastHumanReplyAt !== null).length;
 
+    // "Open" = the complement of Uncontacted: a human HAS replied at least once
+    // (lastHumanReplyAt IS NOT NULL), over ALL the rep's chats. Mirrors the inbox
+    // Open tab. Open + Uncontacted = every chat the rep owns.
+    const contactedThreads = await this.prisma.whatsAppThread.findMany({
+      where: { lastHumanReplyAt: { not: null }, lead: { assignedEmployeeId: { not: null }, deletedAt: null } },
+      select: { lead: { select: { assignedEmployeeId: true } } },
+    });
+    const openMap = new Map<string, number>();
+    for (const t of contactedThreads) {
+      const aid = t.lead?.assignedEmployeeId;
+      if (aid) openMap.set(aid, (openMap.get(aid) ?? 0) + 1);
+    }
+    const openTotal = contactedThreads.length;
+
     const agents = employees.map((e) => {
       const newLeads = newMap.get(e.id) ?? 0;
       const converted = convertedMap.get(e.id) ?? 0;
@@ -352,10 +366,13 @@ export class ReportsService {
         openFollowUps: openFollowUpMap.get(e.id) ?? 0,
         overdueFollowUps: overdueFollowUpMap.get(e.id) ?? 0,
         upcomingAppointments: upcomingApptMap.get(e.id) ?? 0,
-        // Pending = follow-ups (a human replied before, customer wrote back).
-        // Uncontacted = no human reply ever (bot greeting only). Disjoint sets.
-        pending: pendingMap.get(e.id) ?? 0,
+        // Inbox-aligned split: Open = a human has replied; Uncontacted = no human
+        // has ever replied (bot greeting only). Open + Uncontacted = all chats.
+        open: openMap.get(e.id) ?? 0,
         uncontacted: uncontactedMap.get(e.id) ?? 0,
+        // Pending = follow-ups (a human replied before, customer wrote back) — kept
+        // for back-compat; no longer surfaced as its own inbox tab.
+        pending: pendingMap.get(e.id) ?? 0,
         // Back-compat alias (= pending follow-ups) so an older cached UI bundle still renders.
         awaitingReply: pendingMap.get(e.id) ?? 0,
         slaScore,
@@ -370,8 +387,9 @@ export class ReportsService {
         convertedThisMonth,
         overdueFollowUps,
         appointmentsToday,
-        pending: pendingTotal,
+        open: openTotal,
         uncontacted: uncontactedTotal,
+        pending: pendingTotal,
         awaitingReply: pendingTotal, // back-compat alias (= pending follow-ups)
       },
       agents,

@@ -39,12 +39,14 @@ interface AgentRow {
   openFollowUps: number;
   overdueFollowUps: number;
   upcomingAppointments: number;
-  /** "Pending" — chats awaiting this rep's reply (customer messaged more recently
-   *  than the rep's last manual reply; bot replies don't count). = uncontacted + follow-up. */
-  pending?: number;
-  /** "Uncontacted" — the subset of pending where NO human has ever replied
-   *  (only the bot greeted them). */
+  /** "Open" — chats where a human has replied at least once (being handled). */
+  open?: number;
+  /** "Uncontacted" — chats where NO human has ever replied (only the AI bot
+   *  greeted them). Open + Uncontacted = all the rep's chats. */
   uncontacted?: number;
+  /** Follow-ups (a human replied before, customer wrote back). Back-compat — no
+   *  longer surfaced as its own column. */
+  pending?: number;
   /** @deprecated back-compat alias for `pending`. */
   awaitingReply?: number;
   /** Response-SLA on-time score (0–100). Starts at 100 with no history. */
@@ -196,18 +198,18 @@ export function SalesOverviewPage() {
           width={340}
           items={[
             {
-              term: 'Pending',
-              desc: "Follow-ups — the rep replied before and the customer has written back, awaiting the rep's next reply. Leads never replied to are counted under Uncontacted, separately (the two don't overlap).",
+              term: 'Open',
+              desc: 'Chats where a human has replied at least once — the active, being-handled conversations. (Same as the inbox Open tab.)',
             },
             {
               term: 'Uncontacted',
-              desc: 'The subset of Pending where NO human has ever replied — only the AI bot greeted them. These leads still need a first human touch.',
+              desc: 'Chats where NO human has ever replied — only the AI bot greeted them. These leads still need a first human touch. (Same as the inbox Uncontacted tab.)',
             },
           ]}
         />
         <span>
-          Hover the&nbsp;ⓘ&nbsp;— <strong style={{ color: 'var(--sos-text-secondary)' }}>Pending</strong> ={' '}
-          <strong style={{ color: 'var(--sos-text-secondary)' }}>Uncontacted</strong> (no human reply yet) + follow-ups.
+          Hover the&nbsp;ⓘ&nbsp;— <strong style={{ color: 'var(--sos-text-secondary)' }}>Open</strong> (a human replied) +{' '}
+          <strong style={{ color: 'var(--sos-text-secondary)' }}>Uncontacted</strong> (no human reply yet) = all the rep&apos;s chats.
         </span>
       </div>
 
@@ -349,7 +351,7 @@ export function SalesOverviewPage() {
                   {[
                     'Agent',
                     'SLA score',
-                    'Pending',
+                    'Open',
                     'Uncontacted',
                     'Assigned',
                     'New (30d)',
@@ -472,15 +474,15 @@ export function SalesOverviewPage() {
                       <SlaScorePill score={a.slaScore ?? 100} breaches={a.slaBreaches ?? 0} />
                     </td>
 
-                    {/* Pending — chats awaiting the rep's reply (uncontacted + follow-up) */}
+                    {/* Open — chats where a human has replied (being handled) */}
                     <td style={{ padding: '14px 16px' }}>
                       <NumPill
-                        value={a.pending ?? a.awaitingReply ?? 0}
-                        tone={(a.pending ?? a.awaitingReply ?? 0) > 0 ? 'primary' : 'muted'}
+                        value={a.open ?? 0}
+                        tone={(a.open ?? 0) > 0 ? 'primary' : 'muted'}
                       />
                     </td>
 
-                    {/* Uncontacted — pending subset with no human reply ever (bot greeting only) */}
+                    {/* Uncontacted — no human reply ever (bot greeting only); needs first touch */}
                     <td style={{ padding: '14px 16px' }}>
                       <NumPill
                         value={a.uncontacted ?? 0}

@@ -730,23 +730,45 @@ export function WhatsAppAdminPage() {
                 ))
               )}
 
-              {/* Load-more footer: spinner while fetching the next page,
-                  or a subtle "all caught up" marker once fully loaded. */}
+              {/* Load-more footer: a real clickable button when more pages
+                  exist (infinite scroll alone gets stuck when a filtered list
+                  is too short to scroll), else an "all loaded" marker. */}
               {items.length > 0 ? (
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    fontSize: 11.5,
-                    color: 'var(--sos-text-faint)',
-                  }}
-                >
-                  {loadingMore
-                    ? 'Loading more…'
-                    : nextCursor
-                      ? 'Scroll for more'
-                      : `${items.length} conversation${items.length === 1 ? '' : 's'} loaded`}
-                </div>
+                nextCursor ? (
+                  <div style={{ padding: 12 }}>
+                    <button
+                      type="button"
+                      onClick={() => void loadMore()}
+                      disabled={loadingMore}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'center',
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--wa-accent)',
+                        background: 'transparent',
+                        color: 'var(--wa-accent)',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: loadingMore ? 'default' : 'pointer',
+                      }}
+                    >
+                      {loadingMore ? 'Loading more…' : `Load more (${visibleItems.length} shown)`}
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      fontSize: 11.5,
+                      color: 'var(--sos-text-faint)',
+                    }}
+                  >
+                    {visibleItems.length} conversation{visibleItems.length === 1 ? '' : 's'} loaded
+                  </div>
+                )
               ) : null}
             </div>
           </div>

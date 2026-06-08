@@ -117,12 +117,11 @@ export default function SalesInboxPage() {
     try {
       const scope = scopeQuery();
       const searchPart = debouncedSearch ? { search: debouncedSearch } : {};
-      // "Uncontacted" is a bounded to-do queue — load EVERY page in one atomic
-      // pass so the list always equals the badge (no mid-load stop, which is
-      // what made it look like only ~65 of 200 loaded). Cap at 12 pages (1200)
-      // as a backstop. All / Open stay lazy: re-fetch as many pages as the agent
-      // had scrolled to, so a background reconcile doesn't collapse the list.
-      const pages = filter === 'UNCONTACTED' ? 12 : Math.max(1, pagesRef.current);
+      // Lazy pagination on every tab: load the first page, then the user pulls
+      // more via the "Load more" button or infinite scroll. Re-fetch as many
+      // pages as they'd already scrolled to, so a background reconcile (30s /
+      // focus) doesn't collapse a scrolled-open list back to the first page.
+      const pages = Math.max(1, pagesRef.current);
       let acc: ThreadListItem[] = [];
       let cursor: string | undefined;
       let last: string | null = null;
@@ -500,25 +499,34 @@ export default function SalesInboxPage() {
                 />
               ))}
               {nextCursor ? (
-                <button
-                  type="button"
-                  onClick={() => void loadMore()}
-                  disabled={loadingMore}
-                  style={{
-                    all: 'unset',
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'center',
-                    padding: 12,
-                    cursor: loadingMore ? 'default' : 'pointer',
-                    color: 'var(--sos-text-muted)',
-                    fontSize: 12.5,
-                  }}
-                >
-                  {loadingMore
-                    ? `Loading…${activeTabTotal != null ? ` ${visibleItems.length} of ${activeTabTotal}` : ''}`
-                    : `Load older chats${activeTabTotal != null ? ` — ${visibleItems.length} of ${activeTabTotal}` : ''}`}
-                </button>
+                // Prominent, obvious "Load more" button (was easy-to-miss muted
+                // text). Infinite scroll also fires it, but the button is the
+                // reliable manual fallback — esp. when a filtered page is short
+                // and the list doesn't scroll on its own.
+                <div style={{ padding: 12 }}>
+                  <button
+                    type="button"
+                    onClick={() => void loadMore()}
+                    disabled={loadingMore}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'center',
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: '1px solid var(--wa-accent)',
+                      background: 'transparent',
+                      color: 'var(--wa-accent)',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: loadingMore ? 'default' : 'pointer',
+                    }}
+                  >
+                    {loadingMore
+                      ? `Loading…${activeTabTotal != null ? ` (${visibleItems.length} of ${activeTabTotal})` : ''}`
+                      : `Load more${activeTabTotal != null ? ` (${visibleItems.length} of ${activeTabTotal})` : ''}`}
+                  </button>
+                </div>
               ) : activeTabTotal != null && visibleItems.length > 0 ? (
                 // Fully loaded — confirm the list matches the badge (no hidden rows).
                 <div
@@ -529,7 +537,7 @@ export default function SalesInboxPage() {
                     fontSize: 11.5,
                   }}
                 >
-                  {visibleItems.length} {visibleItems.length === 1 ? 'chat' : 'chats'}
+                  {visibleItems.length} {visibleItems.length === 1 ? 'chat' : 'chats'} loaded
                 </div>
               ) : null}
             </>

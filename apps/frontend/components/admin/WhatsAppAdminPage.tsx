@@ -125,7 +125,7 @@ export function WhatsAppAdminPage() {
 
   // Shared list-query args built from the current filter state. Used by the
   // full reload, the realtime soft-refresh, and infinite-scroll paging so the
-  // three never drift. PENDING maps to needsReply (responseDeadlineAt set) —
+  // three never drift. PENDING maps to needsReply (awaitingReply=true) —
   // no thread row is ever written with status=PENDING.
   const buildQuery = useCallback(
     (cursor?: string) => ({
@@ -243,7 +243,7 @@ export function WhatsAppAdminPage() {
       if (unassignedOnly && row.lead?.assignedEmployeeId) return false;
       if (agentFilter && row.lead?.assignedEmployeeId !== agentFilter) return false;
       if (filter === 'PENDING') {
-        if (row.responseDeadlineAt == null) return false;
+        if (!row.awaitingReply) return false;
       } else if (filter !== 'ALL') {
         if (row.status !== filter) return false;
       }

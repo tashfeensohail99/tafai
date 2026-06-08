@@ -50,10 +50,14 @@ export interface ThreadListItem {
   slaDeadlineAt: string | null;
   slaBreached: boolean;
   /** SLA clock on the agent — set while a customer message awaits a reply,
-   *  cleared once the agent replies. Drives the inbox "Pending" tab. The
-   *  backend already returns this scalar; declared here so the realtime
-   *  patch path can evaluate Pending-tab membership client-side. */
+   *  cleared once the agent replies. Drives the SLA warn/breach timers. */
   responseDeadlineAt: string | null;
+  /** "Pending" = the customer has messaged more recently than the last MANUAL
+   *  human reply (bot replies / auto-ack / templates do NOT count). This is the
+   *  real-WhatsApp pending flag the inbox "Pending" tab filters on; the backend
+   *  returns it as a scalar so the realtime patch can evaluate membership
+   *  client-side. Derived from message events, so it can't get stuck. */
+  awaitingReply: boolean;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
@@ -183,7 +187,8 @@ export function listThreads(opts: {
   status?: WhatsAppThreadStatus;
   assignedToMe?: boolean;
   unassigned?: boolean;
-  /** "Pending" tab — threads awaiting an agent reply (responseDeadlineAt set). */
+  /** "Pending" tab — threads awaiting a human reply (awaitingReply=true: the
+   *  customer messaged more recently than the last manual sales reply). */
   needsReply?: boolean;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;

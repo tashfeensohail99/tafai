@@ -3326,6 +3326,21 @@ model WhatsAppThread {
   // Why the current assignment was made (sticky / round-robin / manual).
   lastAssignmentReason WhatsAppAssignmentReason?
 
+  // --- Pending = "awaiting a human reply" (real WhatsApp semantics) -----------
+  // Pending iff the customer has messaged more recently than the last MANUAL
+  // human reply. Bot replies, the auto-ack, templates and campaigns do NOT
+  // count as a reply (sentByEmployeeId is null for all of those). Maintained on
+  // every message: an inbound stamps lastCustomerMessageAt = now + awaitingReply
+  // = true; a human send (sentByEmployeeId != null) stamps lastHumanReplyAt =
+  // now + awaitingReply = false. The two timestamps are the source of truth
+  // (and back the migration backfill + any future reconcile); `awaitingReply`
+  // is the indexed boolean the inbox "Pending" tab filters on. This is fully
+  // derived from real message events, so it cannot get "stuck" the way the
+  // SLA clock could. (responseDeadlineAt is kept separately for the SLA timer.)
+  lastCustomerMessageAt DateTime?
+  lastHumanReplyAt      DateTime?
+  awaitingReply         Boolean  @default(false)
+
   // --- Click-to-WhatsApp ad attribution ---
   // Populated when an inbound message arrives with a Meta `referral` block —
   // i.e. the customer started the conversation by clicking a Facebook /
@@ -3383,8 +3398,10 @@ model WhatsAppThread {
   // standalone index does.
   @@index([lastMessageAt(sort: Desc)])
   // Stats endpoint counts responseDeadlineAt three ways (set / overdue /
-  // approaching) on every load, and the inbox "Pending" tab filters on it.
+  // approaching) on every load (SLA timer).
   @@index([responseDeadlineAt])
+  // The inbox "Pending" tab filters awaitingReply=true ordered by lastMessageAt.
+  @@index([awaitingReply, lastMessageAt(sort: Desc)])
   // Unread counter feeds the stats "unread" count and the inbox badge filter.
   @@index([unreadCount])
   @@map("threads")

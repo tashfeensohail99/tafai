@@ -50,6 +50,9 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
  */
 export default function SalesInboxPage() {
   const [filter, setFilter] = useState<Filter>('ALL');
+  // "Due (N)" chip toggle — when on, the list is filtered to chats whose lead
+  // has an OPEN follow-up due/overdue now (combines with the active tab).
+  const [followUpDueOnly, setFollowUpDueOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [items, setItems] = useState<ThreadListItem[]>([]);
@@ -86,18 +89,22 @@ export default function SalesInboxPage() {
   useEffect(() => {
     pagesRef.current = 1;
     setNextCursor(null);
-  }, [filter, debouncedSearch]);
+  }, [filter, debouncedSearch, followUpDueOnly]);
 
   // Server-side filter per tab. Open = "a human has replied" (contacted);
-  // Uncontacted = "no human has ever replied"; All = no filter.
+  // Uncontacted = "no human has ever replied"; All = no filter. The "Due (N)"
+  // chip layers an OPEN-follow-up-due filter on top of whichever tab is active.
   const scopeQuery = useCallback(
-    () =>
-      filter === 'UNCONTACTED'
-        ? { uncontacted: true }
-        : filter === 'OPEN'
-          ? { contacted: true }
-          : {},
-    [filter],
+    () => {
+      const base =
+        filter === 'UNCONTACTED'
+          ? { uncontacted: true as const }
+          : filter === 'OPEN'
+            ? { contacted: true as const }
+            : {};
+      return followUpDueOnly ? { ...base, followUpDue: true as const } : base;
+    },
+    [filter, followUpDueOnly],
   );
 
   // Fetch just the tab counts without reloading the thread list.
@@ -245,13 +252,16 @@ export default function SalesInboxPage() {
   // Open = contacted = total − uncontacted (the complement of Uncontacted).
   const activeTabTotal = useMemo<number | null>(() => {
     if (!stats) return null;
+    // While the "Due follow-ups" overlay is on, the list is a filtered subset
+    // that doesn't match any tab total — hide the "of M" so it's not misleading.
+    if (followUpDueOnly) return null;
     switch (filter) {
       case 'ALL': return stats.total;
       case 'OPEN': return stats.total - stats.uncontacted;
       case 'UNCONTACTED': return stats.uncontacted;
       default: return null;
     }
-  }, [stats, filter]);
+  }, [stats, filter, followUpDueOnly]);
 
   // Mobile single-pane: when a chat is selected we show only the chat;
   // back button returns to the list. On desktop both panes stay visible.
@@ -457,6 +467,50 @@ export default function SalesInboxPage() {
             />
           </div>
         </div>
+
+        {/* "Due follow-ups" quick filter — shows how many of your chats have an
+            OPEN follow-up due/overdue right now; tap to pull up exactly those
+            (layered on top of the active tab). Only rendered when there's
+            something due, or while the filter is active so it can be cleared. */}
+        {(followUpDueOnly || (stats?.followUpDue ?? 0) > 0) ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderBottom: '1px solid var(--sos-border-subtle)',
+              background: 'var(--wa-panel-header)',
+              flexShrink: 0,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setFollowUpDueOnly((v) => !v)}
+              title="Show only chats with a follow-up due or overdue"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 10px',
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: `1px solid ${followUpDueOnly ? 'var(--wa-accent)' : 'var(--sos-border-subtle)'}`,
+                background: followUpDueOnly ? 'var(--wa-accent)' : 'transparent',
+                color: followUpDueOnly ? '#fff' : 'var(--sos-text-secondary)',
+              }}
+            >
+              ⏰ Due follow-ups{stats ? ` (${stats.followUpDue})` : ''}
+            </button>
+            {followUpDueOnly ? (
+              <span style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>
+                showing chats with a follow-up due — tap to clear
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Thread list */}
         <div

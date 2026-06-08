@@ -15,13 +15,15 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFile, readFile, unlink } from 'node:fs/promises';
-import ffmpegStatic from 'ffmpeg-static';
 
 const execFileAsync = promisify(execFile);
-// Bundled static ffmpeg binary (ships in node_modules for the build platform),
-// so voice-note transcoding works regardless of whether the host image has a
-// system ffmpeg. Falls back to a PATH `ffmpeg` if the package resolves null.
-const FFMPEG_BIN = ffmpegStatic ?? 'ffmpeg';
+// Voice-note transcoding uses the system ffmpeg installed in the runtime image
+// via apk (see apps/backend/Dockerfile, runner stage). We deliberately do NOT
+// use the `ffmpeg-static` npm package: its post-install downloads the binary
+// from a GitHub release at `npm ci` time, which intermittently returns 504 and
+// fails the entire deploy. The apk package is deterministic and baked into the
+// image layer, so builds no longer depend on an external download.
+const FFMPEG_BIN = 'ffmpeg';
 import {
   Prisma,
   WhatsAppMessageDirection,

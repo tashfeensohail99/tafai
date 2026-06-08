@@ -32,12 +32,13 @@ function useIsMobile(threshold = 1024): boolean {
 // human reply where NO human has ever replied — the bot greeting doesn't count.
 type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED';
 
+// Inbox tabs intentionally kept to just All + Open — no Pending / Uncontacted /
+// Resolved categorisation. Every chat is simply "all chats" or "the open ones".
+// (Resolved chats still appear under All.) The PENDING/UNCONTACTED/RESOLVED
+// branches elsewhere in this file are now unreachable but harmless.
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
-  { key: 'PENDING', label: 'Pending' },
-  { key: 'UNCONTACTED', label: 'Uncontacted' },
-  { key: 'RESOLVED', label: 'Resolved' },
 ];
 
 /**

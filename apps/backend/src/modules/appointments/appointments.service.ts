@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -17,8 +18,16 @@ import {
   CancelAppointmentDto,
   CreateAppointmentDto,
   ListAppointmentsQueryDto,
+  RescheduleAppointmentDto,
   UpdateAppointmentDto,
 } from './appointments.dto';
+import {
+  appointmentEnd,
+  computeFreeSlots,
+  intervalsOverlap,
+  pktWorkingWindowUtc,
+  type Interval,
+} from './appointments.util';
 import { RequestUser } from '../../common/types/auth.types';
 
 // Office-hours backfill (PKT = UTC+5, no DST) — computed explicitly so it's
@@ -403,6 +412,17 @@ export class AppointmentsService {
   async create(dto: CreateAppointmentDto, actorUserId: string) {
     const owner = await this.resolveOwner(dto.leadId, dto.clientId, dto.caseId);
 
+    // Double-booking guard: if the appointment lands on an agent, reject a time
+    // that overlaps one of their existing active appointments.
+    const effectiveEmployeeId = dto.assignedEmployeeId ?? owner.assignedEmployeeId;
+    if (effectiveEmployeeId) {
+      await this.assertNoConflict(
+        effectiveEmployeeId,
+        new Date(dto.scheduledAt),
+        dto.durationMinutes ?? 30,
+      );
+    }
+
     const created = await this.prisma.appointment.create({
       data: {
         leadId: owner.leadId,
@@ -577,6 +597,140 @@ export class AppointmentsService {
     }
 
     return this.findById(id);
+  }
+
+  /**
+   * Throw if `employeeId` already has an active (SCHEDULED/CONFIRMED) appointment
+   * overlapping [startAt, startAt+duration). We fetch a generous candidate
+   * window (12h pad covers any realistic duration) and check exact overlap in
+   * JS, since an appointment's end is a computed value Prisma can't filter on.
+   */
+  private async assertNoConflict(
+    employeeId: string,
+    startAt: Date,
+    durationMinutes: number,
+    excludeId?: string,
+  ): Promise<void> {
+    const endAt = appointmentEnd(startAt, durationMinutes);
+    const windowStart = new Date(startAt.getTime() - 12 * 60 * 60_000);
+    const candidates = await this.prisma.appointment.findMany({
+      where: {
+        assignedEmployeeId: employeeId,
+        status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+        scheduledAt: { gte: windowStart, lt: endAt },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select: { scheduledAt: true, durationMinutes: true, title: true },
+    });
+    const clash = candidates.find((c) =>
+      intervalsOverlap(startAt, endAt, c.scheduledAt, appointmentEnd(c.scheduledAt, c.durationMinutes)),
+    );
+    if (clash) {
+      throw new ConflictException(
+        `This agent already has "${clash.title}" booked at that time. Pick another slot.`,
+      );
+    }
+  }
+
+  /**
+   * Move an appointment to a new time (and optionally duration), rejecting a
+   * double-booking. Re-arms the durable reminder for the new slot by clearing
+   * reminderSentAt and dropping any pending reminder job so the dispatcher
+   * re-materialises it.
+   */
+  async reschedule(id: string, dto: RescheduleAppointmentDto, actorUserId: string) {
+    const existing = await this.findById(id);
+    const reschedulable: AppointmentStatus[] = [
+      AppointmentStatus.SCHEDULED,
+      AppointmentStatus.CONFIRMED,
+      AppointmentStatus.RESCHEDULED,
+    ];
+    if (!reschedulable.includes(existing.status)) {
+      throw new BadRequestException(
+        `Cannot reschedule a ${existing.status.toLowerCase()} appointment.`,
+      );
+    }
+
+    const newStart = new Date(dto.scheduledAt);
+    const newDuration = dto.durationMinutes ?? existing.durationMinutes;
+    if (existing.assignedEmployeeId) {
+      await this.assertNoConflict(existing.assignedEmployeeId, newStart, newDuration, id);
+    }
+
+    await this.prisma.appointment.update({
+      where: { id },
+      data: {
+        scheduledAt: newStart,
+        durationMinutes: newDuration,
+        status: AppointmentStatus.SCHEDULED,
+        reminderSentAt: null, // re-arm the durable reminder for the new time
+      },
+    });
+    // Drop the stale pending reminder so the dispatcher recreates it at the new time.
+    await this.prisma.reminderJob
+      .deleteMany({ where: { appointmentId: id, status: 'PENDING' } })
+      .catch(() => undefined);
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.APPOINTMENT_UPDATED,
+      entityType: 'Appointment',
+      entityId: id,
+      oldValues: { scheduledAt: existing.scheduledAt, durationMinutes: existing.durationMinutes },
+      newValues: { scheduledAt: newStart, durationMinutes: newDuration },
+    });
+    await this.recordTimeline(
+      existing.leadId,
+      existing.clientId,
+      existing.caseId,
+      TimelineEventType.APPOINTMENT_RESCHEDULED,
+      `Appointment rescheduled: ${existing.title} → ${formatBellWhen(newStart)}`,
+      actorUserId,
+    );
+
+    return this.findById(id);
+  }
+
+  /**
+   * Free/busy for an agent on a PKT calendar day. Returns the office-hours
+   * window, the agent's busy intervals, and the open 30-minute slots — enough
+   * for the booking UI to offer conflict-free times.
+   */
+  async getAvailability(employeeId: string, dateStr: string) {
+    const window = pktWorkingWindowUtc(dateStr);
+    // Pad the lower bound so a long appointment starting before 09:00 is caught.
+    const fetchFrom = new Date(window.start.getTime() - 12 * 60 * 60_000);
+    const appts = await this.prisma.appointment.findMany({
+      where: {
+        assignedEmployeeId: employeeId,
+        status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+        scheduledAt: { gte: fetchFrom, lt: window.end },
+      },
+      select: { id: true, title: true, scheduledAt: true, durationMinutes: true },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    const busy: Interval[] = appts
+      .map((a) => ({ start: a.scheduledAt, end: appointmentEnd(a.scheduledAt, a.durationMinutes) }))
+      .filter((b) => intervalsOverlap(b.start, b.end, window.start, window.end));
+    const freeSlots = computeFreeSlots(window.start, window.end, busy);
+
+    return {
+      employeeId,
+      date: dateStr,
+      workStart: window.start.toISOString(),
+      workEnd: window.end.toISOString(),
+      busy: appts.map((a) => ({
+        id: a.id,
+        title: a.title,
+        start: a.scheduledAt.toISOString(),
+        end: appointmentEnd(a.scheduledAt, a.durationMinutes).toISOString(),
+      })),
+      freeSlots: freeSlots.map((s) => ({
+        start: s.start.toISOString(),
+        end: s.end.toISOString(),
+      })),
+    };
   }
 
   async cancel(id: string, dto: CancelAppointmentDto, actorUserId: string) {

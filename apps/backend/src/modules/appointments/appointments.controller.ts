@@ -21,9 +21,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { AppointmentsService } from './appointments.service';
 import {
+  AvailabilityQueryDto,
   CancelAppointmentDto,
   CreateAppointmentDto,
   ListAppointmentsQueryDto,
+  RescheduleAppointmentDto,
   UpdateAppointmentDto,
 } from './appointments.dto';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
@@ -121,6 +123,17 @@ export class AppointmentsController {
     res.send(ics);
   }
 
+  /**
+   * Free/busy for an agent on a PKT day → office-hours window + busy intervals +
+   * open 30-min slots. Mounted before @Get(':id') so "availability" isn't parsed
+   * as a UUID.
+   */
+  @Get('availability')
+  @RequireAnyPermissions('appointments.view_all', 'appointments.view_assigned')
+  availability(@Query() query: AvailabilityQueryDto) {
+    return this.appointmentsService.getAvailability(query.employeeId, query.date);
+  }
+
   @Get(':id')
   @RequireAnyPermissions('appointments.view_all', 'appointments.view_assigned')
   findById(
@@ -154,5 +167,16 @@ export class AppointmentsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.appointmentsService.cancel(id, dto, user.id);
+  }
+
+  /** Move an appointment to a new time, rejecting a double-booking. */
+  @Post(':id/reschedule')
+  @RequirePermissions('appointments.update')
+  reschedule(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RescheduleAppointmentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.appointmentsService.reschedule(id, dto, user.id);
   }
 }

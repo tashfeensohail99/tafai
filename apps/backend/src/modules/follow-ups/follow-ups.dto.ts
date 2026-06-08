@@ -135,3 +135,8 @@ export class CompleteFollowUpDto {
   @MaxLength(1000)
   outcomeNotes?: string;
 }
+
+export class RescheduleFollowUpDto {
+  @IsDateString()
+  dueAt!: string;
+}

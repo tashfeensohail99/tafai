@@ -23,6 +23,7 @@ import {
   CompleteFollowUpDto,
   CreateFollowUpDto,
   ListFollowUpsQueryDto,
+  RescheduleFollowUpDto,
   UpdateFollowUpDto,
 } from './follow-ups.dto';
 import { FollowUpsService } from './follow-ups.service';
@@ -81,5 +82,16 @@ export class FollowUpsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.followUpsService.complete(id, dto, user);
+  }
+
+  /** Move a follow-up's due date (re-arms its reminder). */
+  @Post(':id/reschedule')
+  @RequirePermissions('follow_ups.update')
+  reschedule(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RescheduleFollowUpDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.followUpsService.reschedule(id, dto, user);
   }
 }

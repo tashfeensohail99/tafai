@@ -13,7 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { IsBooleanString, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
@@ -38,13 +38,23 @@ class ListThreadsDto {
   status?: 'OPEN' | 'PENDING' | 'RESOLVED' | 'ARCHIVED';
 
   @IsOptional()
-  @IsBooleanString()
+  // NOTE: @Transform runs BEFORE validation (ValidationPipe transform:true), so
+  // by the time validators run the value is already a real boolean. Validate
+  // with @IsBoolean — using @IsBooleanString here rejected the transformed
+  // boolean with "must be a boolean string" (400), which silently broke the
+  // Open/Uncontacted list filters (the list fell back to client-side filtering).
+  @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   assignedToMe?: boolean;
 
   /** Admin filter: "unassigned" returns only threads with no Lead.assignedEmployeeId. */
   @IsOptional()
-  @IsBooleanString()
+  // NOTE: @Transform runs BEFORE validation (ValidationPipe transform:true), so
+  // by the time validators run the value is already a real boolean. Validate
+  // with @IsBoolean — using @IsBooleanString here rejected the transformed
+  // boolean with "must be a boolean string" (400), which silently broke the
+  // Open/Uncontacted list filters (the list fell back to client-side filtering).
+  @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   unassigned?: boolean;
 
@@ -55,7 +65,12 @@ class ListThreadsDto {
    * never written anywhere, so a literal status filter is empty.
    */
   @IsOptional()
-  @IsBooleanString()
+  // NOTE: @Transform runs BEFORE validation (ValidationPipe transform:true), so
+  // by the time validators run the value is already a real boolean. Validate
+  // with @IsBoolean — using @IsBooleanString here rejected the transformed
+  // boolean with "must be a boolean string" (400), which silently broke the
+  // Open/Uncontacted list filters (the list fell back to client-side filtering).
+  @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   needsReply?: boolean;
 
@@ -65,7 +80,12 @@ class ListThreadsDto {
    * does not count — these are leads still waiting on a salesperson's first reply.
    */
   @IsOptional()
-  @IsBooleanString()
+  // NOTE: @Transform runs BEFORE validation (ValidationPipe transform:true), so
+  // by the time validators run the value is already a real boolean. Validate
+  // with @IsBoolean — using @IsBooleanString here rejected the transformed
+  // boolean with "must be a boolean string" (400), which silently broke the
+  // Open/Uncontacted list filters (the list fell back to client-side filtering).
+  @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   uncontacted?: boolean;
 
@@ -75,7 +95,12 @@ class ListThreadsDto {
    * being-handled conversations. Open + Uncontacted partition every chat.
    */
   @IsOptional()
-  @IsBooleanString()
+  // NOTE: @Transform runs BEFORE validation (ValidationPipe transform:true), so
+  // by the time validators run the value is already a real boolean. Validate
+  // with @IsBoolean — using @IsBooleanString here rejected the transformed
+  // boolean with "must be a boolean string" (400), which silently broke the
+  // Open/Uncontacted list filters (the list fell back to client-side filtering).
+  @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   contacted?: boolean;
 

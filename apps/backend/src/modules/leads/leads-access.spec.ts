@@ -33,6 +33,7 @@ function makeService(prisma: ReturnType<typeof makePrisma>): LeadsService {
     { record: jest.fn() } as never,
     {} as never,
     {} as never,
+    { create: jest.fn() } as never,
   );
 }
 

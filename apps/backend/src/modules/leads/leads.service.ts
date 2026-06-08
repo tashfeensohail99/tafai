@@ -543,6 +543,28 @@ export class LeadsService {
       newValues: dto,
     });
 
+    // Semantic audit events for terminal status transitions, so "marked lost"
+    // and "marked duplicate" are first-class in the audit trail rather than
+    // buried inside a generic LEAD_UPDATED diff.
+    if (dto.status && dto.status !== existing.status) {
+      const semanticAction =
+        dto.status === LeadStatus.LOST
+          ? AuditAction.LEAD_LOST
+          : dto.status === LeadStatus.DUPLICATE
+            ? AuditAction.LEAD_DUPLICATE_MARKED
+            : null;
+      if (semanticAction) {
+        await this.auditLog.log({
+          actorUserId,
+          action: semanticAction,
+          entityType: 'Lead',
+          entityId: id,
+          oldValues: { status: existing.status },
+          newValues: { status: dto.status },
+        });
+      }
+    }
+
     // Status transition gets its own dedicated timeline event with a
     // status-specific eventType so the lead profile can render an icon
     // tone that matches (CONVERTED = green, others = neutral). When the
@@ -1198,6 +1220,19 @@ export class LeadsService {
       },
     });
 
+    await this.auditLog.log({
+      actorUserId: user.id,
+      action: AuditAction.LEAD_FILE_UPLOADED,
+      entityType: 'LeadFile',
+      entityId: created.id,
+      metadata: {
+        leadId,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+        sizeBytes: file.size,
+      },
+    });
+
     return created;
   }
 
@@ -1257,6 +1292,14 @@ export class LeadsService {
       description: `File deleted: ${record.fileName}`,
       actorUserId: user.id,
       metadata: { fileId: record.id, fileName: record.fileName },
+    });
+
+    await this.auditLog.log({
+      actorUserId: user.id,
+      action: AuditAction.LEAD_FILE_DELETED,
+      entityType: 'LeadFile',
+      entityId: record.id,
+      metadata: { leadId, fileName: record.fileName },
     });
 
     return { deleted: true };

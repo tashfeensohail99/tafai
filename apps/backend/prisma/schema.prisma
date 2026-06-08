@@ -319,6 +319,10 @@ enum AuditAction {
   PAYROLL_GENERATED
   PAYROLL_PERIOD_LOCKED
   PAYROLL_PERIOD_UNLOCKED
+  // Lead file attachments + agreement lifecycle
+  LEAD_FILE_UPLOADED
+  LEAD_FILE_DELETED
+  AGREEMENT_STATUS_CHANGED
   @@schema("audit")
 }
 

@@ -219,6 +219,20 @@ export default function SalesInboxPage() {
 
   const totalUnread = useMemo(() => items.reduce((acc, t) => acc + t.unreadCount, 0), [items]);
 
+  // Defensive render guard: only show rows that actually match the ACTIVE tab's
+  // rule. The list loads server-filtered, but if a row ever goes stale in
+  // `items` — e.g. a chat got a human reply *after* it was loaded into the
+  // Uncontacted list — this guarantees it can never RENDER under the wrong tab.
+  // A contacted chat (lastHumanReplyAt != null) is therefore impossible to show
+  // under "Uncontacted", regardless of any cache/refresh timing. Mirrors
+  // scopeQuery() and the realtime matches() predicate exactly.
+  const visibleItems = useMemo(() => {
+    if (filter === 'ALL') return items;
+    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply);
+    if (filter === 'UNCONTACTED') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null);
+    return items.filter((t) => t.status === filter);
+  }, [items, filter]);
+
   // Mobile single-pane: when a chat is selected we show only the chat;
   // back button returns to the list. On desktop both panes stay visible.
   const showList = !isMobile || activeId === null;
@@ -446,7 +460,7 @@ export default function SalesInboxPage() {
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
               Loading chats…
             </div>
-          ) : items.length === 0 ? (
+          ) : visibleItems.length === 0 ? (
             <div
               style={{
                 display: 'flex',
@@ -465,7 +479,7 @@ export default function SalesInboxPage() {
             </div>
           ) : (
             <>
-              {items.map((t) => (
+              {visibleItems.map((t) => (
                 <ThreadRow
                   key={t.id}
                   item={t}

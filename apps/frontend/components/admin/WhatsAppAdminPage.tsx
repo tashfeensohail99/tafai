@@ -290,6 +290,16 @@ export function WhatsAppAdminPage() {
   const slaScore = stats?.slaScore ?? null;
   const totalUnread = stats?.unread ?? items.reduce((acc, t) => acc + t.unreadCount, 0);
 
+  // Defensive render guard: only show rows matching the ACTIVE tab's rule, so a
+  // stale row (e.g. a chat that got a human reply after it was loaded into the
+  // Uncontacted list) can never render under the wrong tab. Mirrors scopeQuery.
+  const visibleItems = useMemo(() => {
+    if (filter === 'ALL') return items;
+    if (filter === 'PENDING') return items.filter((t) => t.awaitingReply);
+    if (filter === 'UNCONTACTED') return items.filter((t) => t.awaitingReply && t.lastHumanReplyAt == null);
+    return items.filter((t) => t.status === filter);
+  }, [items, filter]);
+
   const eligibleTeam = useMemo(
     () => team.filter((t) => t.whatsappInboxMember).sort((a, b) => a.name.localeCompare(b.name)),
     [team],
@@ -695,7 +705,7 @@ export function WhatsAppAdminPage() {
                 >
                   Loading conversations…
                 </div>
-              ) : items.length === 0 ? (
+              ) : visibleItems.length === 0 ? (
                 <div
                   style={{
                     display: 'flex',
@@ -713,7 +723,7 @@ export function WhatsAppAdminPage() {
                   <div style={{ fontSize: 14 }}>No conversations match these filters.</div>
                 </div>
               ) : (
-                items.map((t) => (
+                visibleItems.map((t) => (
                   <ThreadRow
                     key={t.id}
                     item={t}

@@ -58,6 +58,9 @@ export interface ThreadListItem {
    *  returns it as a scalar so the realtime patch can evaluate membership
    *  client-side. Derived from message events, so it can't get stuck. */
   awaitingReply: boolean;
+  /** Last MANUAL human reply (null = no human has ever replied — the bot's
+   *  greeting doesn't count). The "Uncontacted" tab is awaitingReply && this null. */
+  lastHumanReplyAt: string | null;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
@@ -190,6 +193,9 @@ export function listThreads(opts: {
   /** "Pending" tab — threads awaiting a human reply (awaitingReply=true: the
    *  customer messaged more recently than the last manual sales reply). */
   needsReply?: boolean;
+  /** "Uncontacted" tab — pending chats where NO human has ever replied
+   *  (awaitingReply=true AND lastHumanReplyAt IS NULL; bot greeting only). */
+  uncontacted?: boolean;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;
   search?: string;
@@ -261,8 +267,10 @@ export interface ThreadStats {
   unassigned: number;
   slaBreached: number;
   unread: number;
-  /** Response-SLA: conversations where it's currently the agent's turn. */
+  /** "Pending" — conversations awaiting a human reply (bot replies don't count). */
   awaitingReply: number;
+  /** "Uncontacted" — pending conversations where no human has ever replied. */
+  uncontacted: number;
   /** Within the warn window (about to breach), not yet overdue. */
   approaching: number;
   /** Response-SLA deadline already passed, still unanswered. */

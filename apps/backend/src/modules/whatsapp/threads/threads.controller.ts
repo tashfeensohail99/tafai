@@ -59,6 +59,16 @@ class ListThreadsDto {
   @Transform(({ value }) => value === 'true' || value === true)
   needsReply?: boolean;
 
+  /**
+   * "Uncontacted" tab: pending threads where NO human has ever replied
+   * (awaitingReply=true AND lastHumanReplyAt IS NULL). The bot's auto-greeting
+   * does not count — these are leads still waiting on a salesperson's first reply.
+   */
+  @IsOptional()
+  @IsBooleanString()
+  @Transform(({ value }) => value === 'true' || value === true)
+  uncontacted?: boolean;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
 

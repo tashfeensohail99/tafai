@@ -67,12 +67,15 @@ function useIsMobile(threshold = 1024): boolean {
   return isMobile;
 }
 
-type Filter = WhatsAppThreadStatus | 'ALL';
+// 'UNCONTACTED' is a virtual filter: pending chats where no human has ever
+// replied (the bot greeting doesn't count) — leads awaiting a first sales reply.
+type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED';
 
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
   { key: 'PENDING', label: 'Pending' },
+  { key: 'UNCONTACTED', label: 'Uncontacted' },
   { key: 'RESOLVED', label: 'Resolved' },
 ];
 
@@ -131,9 +134,11 @@ export function WhatsAppAdminPage() {
     (cursor?: string) => ({
       ...(filter === 'PENDING'
         ? { needsReply: true as const }
-        : filter !== 'ALL'
-          ? { status: filter }
-          : {}),
+        : filter === 'UNCONTACTED'
+          ? { uncontacted: true as const }
+          : filter !== 'ALL'
+            ? { status: filter }
+            : {}),
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
       ...(unassignedOnly ? { unassigned: true } : {}),
       ...(agentFilter ? { employeeId: agentFilter } : {}),
@@ -244,6 +249,8 @@ export function WhatsAppAdminPage() {
       if (agentFilter && row.lead?.assignedEmployeeId !== agentFilter) return false;
       if (filter === 'PENDING') {
         if (!row.awaitingReply) return false;
+      } else if (filter === 'UNCONTACTED') {
+        if (!row.awaitingReply || row.lastHumanReplyAt != null) return false;
       } else if (filter !== 'ALL') {
         if (row.status !== filter) return false;
       }
@@ -524,9 +531,11 @@ export function WhatsAppAdminPage() {
                       ? stats.active
                       : f.key === 'PENDING'
                         ? stats.awaitingReply
-                        : f.key === 'RESOLVED'
-                          ? stats.resolved
-                          : 0
+                        : f.key === 'UNCONTACTED'
+                          ? stats.uncontacted
+                          : f.key === 'RESOLVED'
+                            ? stats.resolved
+                            : 0
                   : f.key === 'ALL'
                     ? items.length
                     : items.filter((t) => t.status === f.key).length;

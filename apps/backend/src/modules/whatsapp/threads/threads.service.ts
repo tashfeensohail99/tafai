@@ -13,6 +13,12 @@ interface ThreadListOptions {
    * value is never written anywhere, so a literal status filter is dead).
    */
   needsReply?: boolean;
+  /**
+   * "Uncontacted" tab — pending threads where NO human has ever replied
+   * (awaitingReply=true AND lastHumanReplyAt IS NULL). The bot greeting doesn't
+   * count, so these are leads still awaiting a salesperson's first reply.
+   */
+  uncontacted?: boolean;
   /** Admin filter: only threads whose lead is assigned to this employee. */
   employeeId?: string;
   search?: string;
@@ -177,6 +183,12 @@ export class WhatsAppThreadsService {
       // != null) — bot replies / auto-ack / templates never clear it. Derived
       // from real message events, so a replied chat can't get stuck here.
       and.push({ awaitingReply: true });
+    }
+
+    if (opts.uncontacted) {
+      // "Uncontacted" tab: pending AND no human has ever replied (bot greeting
+      // only) — the leads still waiting on a salesperson's first reply.
+      and.push({ awaitingReply: true, lastHumanReplyAt: null });
     }
 
     if (opts.search) {
@@ -357,6 +369,7 @@ export class WhatsAppThreadsService {
     slaBreached: number;
     unread: number;
     awaitingReply: number;
+    uncontacted: number;
     approaching: number;
     overdue: number;
     slaScore: number | null;
@@ -364,7 +377,7 @@ export class WhatsAppThreadsService {
   }> {
     const empty = {
       total: 0, active: 0, resolved: 0, unassigned: 0, slaBreached: 0, unread: 0,
-      awaitingReply: 0, approaching: 0, overdue: 0,
+      awaitingReply: 0, uncontacted: 0, approaching: 0, overdue: 0,
       slaScore: null as number | null, slaScoreScope: null as 'self' | 'org' | null,
     };
     // Base visibility filter mirrors list(): drop soft-deleted leads, and
@@ -397,7 +410,7 @@ export class WhatsAppThreadsService {
     });
     const warnCutoff = new Date(now.getTime() + (org?.slaWarnBeforeSeconds ?? 60) * 1000);
 
-    const [total, active, slaBreached, unread, unassigned, awaitingReply, overdue, approaching, resolved] =
+    const [total, active, slaBreached, unread, unassigned, awaitingReply, uncontacted, overdue, approaching, resolved] =
       await Promise.all([
         this.prisma.whatsAppThread.count({ where: base }),
         this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
@@ -410,6 +423,8 @@ export class WhatsAppThreadsService {
           : Promise.resolve(0),
         // "Pending" tab badge — awaiting a human reply (bot replies don't count).
         this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true }) }),
+        // "Uncontacted" tab badge — pending AND no human has ever replied.
+        this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true, lastHumanReplyAt: null }) }),
         this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null, lte: now } }) }),
         this.prisma.whatsAppThread.count({
           where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }),
@@ -453,7 +468,7 @@ export class WhatsAppThreadsService {
 
     return {
       total, active, resolved, unassigned, slaBreached, unread,
-      awaitingReply, approaching, overdue, slaScore, slaScoreScope,
+      awaitingReply, uncontacted, approaching, overdue, slaScore, slaScoreScope,
     };
   }
 

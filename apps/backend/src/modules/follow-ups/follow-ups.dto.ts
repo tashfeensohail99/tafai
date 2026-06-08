@@ -1,12 +1,20 @@
 import {
   IsDateString,
   IsEnum,
+  IsIn,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { FollowUpPriority, FollowUpStatus } from '@prisma/client';
+
+/** Time buckets computed in Pakistan Standard Time (Asia/Karachi, UTC+5). */
+export type FollowUpBucket = 'overdue' | 'today' | 'upcoming';
 
 export class ListFollowUpsQueryDto {
   @IsOptional()
@@ -17,6 +25,14 @@ export class ListFollowUpsQueryDto {
   @IsOptional()
   @IsEnum(FollowUpStatus)
   status?: FollowUpStatus;
+
+  /**
+   * Backend-computed due bucket (implies status OPEN). Mutually exclusive with
+   * dueFrom/dueTo — when set, it defines the dueAt window itself.
+   */
+  @IsOptional()
+  @IsIn(['overdue', 'today', 'upcoming'])
+  bucket?: FollowUpBucket;
 
   @IsOptional()
   @IsUUID()
@@ -33,6 +49,21 @@ export class ListFollowUpsQueryDto {
   @IsOptional()
   @IsDateString()
   dueTo?: string;
+
+  /** 1-based page index. When omitted (with limit), all matches are returned. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  /** Page size; capped at 100 to bound the payload. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
 }
 
 export class CreateFollowUpDto {

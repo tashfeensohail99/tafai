@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import {
   RequireAnyPermissions,
@@ -30,10 +32,23 @@ import { FollowUpsService } from './follow-ups.service';
 export class FollowUpsController {
   constructor(private readonly followUpsService: FollowUpsService) {}
 
+  /**
+   * List follow-ups. Supports `?bucket=overdue|today|upcoming` (PKT) and
+   * `?page=&limit=` pagination. The JSON body is the items array (unchanged for
+   * existing clients); the total match count is returned in `X-Total-Count` for
+   * paginating clients.
+   */
   @Get()
   @RequireAnyPermissions('follow_ups.view_all', 'follow_ups.view_assigned')
-  findAll(@Query() query: ListFollowUpsQueryDto, @CurrentUser() user: RequestUser) {
-    return this.followUpsService.findAllAccessible(query, user);
+  async findAll(
+    @Query() query: ListFollowUpsQueryDto,
+    @CurrentUser() user: RequestUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { items, total } = await this.followUpsService.findAllAccessible(query, user);
+    res.setHeader('X-Total-Count', String(total));
+    res.setHeader('Access-Control-Expose-Headers', 'X-Total-Count');
+    return items;
   }
 
   @Get(':id')

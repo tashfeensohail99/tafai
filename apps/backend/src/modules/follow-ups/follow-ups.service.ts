@@ -30,58 +30,123 @@ export class FollowUpsService {
     private readonly activityTimeline: ActivityTimelineService,
   ) {}
 
+  /**
+   * List follow-ups with optional due-bucket (overdue/today/upcoming, computed
+   * in PKT) and pagination. Returns `{ items, total }`; the controller streams
+   * `items` as the JSON body (unchanged shape for existing clients) and exposes
+   * `total` via the `X-Total-Count` header for paginating clients (mobile app).
+   *
+   * When neither `page` nor `limit` is supplied, all matches are returned —
+   * preserving the previous unbounded behaviour for the web list.
+   */
   async findAllAccessible(query: ListFollowUpsQueryDto, user: RequestUser) {
-    return this.prisma.followUp.findMany({
-      where: {
-        ...(query.status ? { status: query.status } : {}),
-        ...(query.leadId ? { leadId: query.leadId } : {}),
-        ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
-        ...(query.dueFrom || query.dueTo
-          ? {
-              dueAt: {
-                ...(query.dueFrom ? { gte: new Date(query.dueFrom) } : {}),
-                ...(query.dueTo ? { lte: new Date(query.dueTo) } : {}),
-              },
-            }
-          : {}),
-        ...this.buildScopeFilter(user),
-        ...(query.search
-          ? {
-              OR: [
-                { title: { contains: query.search, mode: 'insensitive' } },
-                { description: { contains: query.search, mode: 'insensitive' } },
-                { contactMethod: { contains: query.search, mode: 'insensitive' } },
-                {
-                  lead: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              ],
-            }
-          : {}),
-      },
-      include: {
-        lead: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            status: true,
-            serviceInterest: true,
-            targetCountry: true,
+    const where = this.buildListWhere(query, user);
+
+    const paginate = query.page != null || query.limit != null;
+    const take = paginate ? query.limit ?? 50 : undefined;
+    const skip = paginate ? ((query.page ?? 1) - 1) * (take ?? 50) : undefined;
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.followUp.findMany({
+        where,
+        include: {
+          lead: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              phone: true,
+              status: true,
+              serviceInterest: true,
+              targetCountry: true,
+            },
+          },
+          assignedEmployee: {
+            select: { id: true, firstName: true, lastName: true },
           },
         },
-        assignedEmployee: {
-          select: { id: true, firstName: true, lastName: true },
-        },
-      },
-      orderBy: [{ dueAt: 'asc' }, { createdAt: 'desc' }],
-    });
+        orderBy: [{ dueAt: 'asc' }, { createdAt: 'desc' }],
+        ...(skip != null ? { skip } : {}),
+        ...(take != null ? { take } : {}),
+      }),
+      this.prisma.followUp.count({ where }),
+    ]);
+
+    return { items, total };
+  }
+
+  /**
+   * Build the list WHERE. Scope and free-text search are combined under `AND`
+   * (each can contribute its own `OR`) so the search clause can never clobber
+   * the ownership-scope clause — a view_assigned agent's search stays scoped to
+   * their own follow-ups.
+   */
+  private buildListWhere(
+    query: ListFollowUpsQueryDto,
+    user: RequestUser,
+  ): Prisma.FollowUpWhereInput {
+    const and: Prisma.FollowUpWhereInput[] = [this.buildScopeFilter(user)];
+
+    if (query.search) {
+      and.push({
+        OR: [
+          { title: { contains: query.search, mode: 'insensitive' } },
+          { description: { contains: query.search, mode: 'insensitive' } },
+          { contactMethod: { contains: query.search, mode: 'insensitive' } },
+          {
+            lead: {
+              OR: [
+                { firstName: { contains: query.search, mode: 'insensitive' } },
+                { lastName: { contains: query.search, mode: 'insensitive' } },
+                { phone: { contains: query.search, mode: 'insensitive' } },
+              ],
+            },
+          },
+        ],
+      });
+    }
+
+    const where: Prisma.FollowUpWhereInput = {
+      AND: and,
+      ...(query.leadId ? { leadId: query.leadId } : {}),
+      ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
+    };
+
+    if (query.bucket) {
+      // Buckets describe pending work, so they imply OPEN unless a status is
+      // explicitly requested. dueAt window is computed in PKT.
+      const { startOfToday, startOfTomorrow } = this.pktDayBoundsUtc(new Date());
+      where.status = query.status ?? FollowUpStatus.OPEN;
+      where.dueAt =
+        query.bucket === 'overdue'
+          ? { lt: startOfToday }
+          : query.bucket === 'today'
+            ? { gte: startOfToday, lt: startOfTomorrow }
+            : { gte: startOfTomorrow };
+    } else {
+      if (query.status) where.status = query.status;
+      if (query.dueFrom || query.dueTo) {
+        where.dueAt = {
+          ...(query.dueFrom ? { gte: new Date(query.dueFrom) } : {}),
+          ...(query.dueTo ? { lte: new Date(query.dueTo) } : {}),
+        };
+      }
+    }
+
+    return where;
+  }
+
+  /**
+   * Start of today and start of tomorrow as UTC instants, for the PKT calendar
+   * day that `now` falls in. PKT is a fixed UTC+5 offset (no DST since 2009).
+   */
+  private pktDayBoundsUtc(now: Date): { startOfToday: Date; startOfTomorrow: Date } {
+    const OFFSET_MS = 5 * 60 * 60_000;
+    const shifted = new Date(now.getTime() + OFFSET_MS);
+    shifted.setUTCHours(0, 0, 0, 0);
+    const startOfToday = new Date(shifted.getTime() - OFFSET_MS);
+    const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60_000);
+    return { startOfToday, startOfTomorrow };
   }
 
   async findByIdAccessible(id: string, user: RequestUser) {

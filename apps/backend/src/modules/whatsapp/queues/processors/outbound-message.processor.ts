@@ -113,11 +113,17 @@ export class OutboundMessageProcessor extends WorkerHost {
       //     in webhook-ingest. We DO NOT touch unreadCount here — outbound
       //     messages don't make the conversation "unread for the agent".
       const preview = previewOfOutbound(message);
+      // Pending clear: ONLY a manual human send (sentByEmployeeId != null) counts
+      // as "the agent replied" and clears the awaiting-reply flag. Bot replies,
+      // the auto-ack, templates and campaigns all have a null sender, so they
+      // leave the chat pending — exactly the real-WhatsApp rule.
+      const isHumanSend = message.sentByEmployeeId != null;
       await this.prisma.whatsAppThread.update({
         where: { id: message.threadId },
         data: {
           lastMessageAt: now,
           lastMessagePreview: preview,
+          ...(isHumanSend ? { lastHumanReplyAt: now, awaitingReply: false } : {}),
         },
       });
 

@@ -171,10 +171,12 @@ export class WhatsAppThreadsService {
     }
 
     if (opts.needsReply) {
-      // "Pending" tab semantic: threads where the SLA clock is running on
-      // the agent. responseDeadlineAt is set whenever a customer message
-      // arrives with no agent reply yet, cleared when the agent replies.
-      and.push({ responseDeadlineAt: { not: null } });
+      // "Pending" tab semantic (real WhatsApp): the customer has messaged more
+      // recently than the last MANUAL human reply. `awaitingReply` is stamped
+      // true on every inbound and false only on a human send (sentByEmployeeId
+      // != null) — bot replies / auto-ack / templates never clear it. Derived
+      // from real message events, so a replied chat can't get stuck here.
+      and.push({ awaitingReply: true });
     }
 
     if (opts.search) {
@@ -406,7 +408,8 @@ export class WhatsAppThreadsService {
               where: and({ lead: { assignedEmployeeId: null, deletedAt: null } }),
             })
           : Promise.resolve(0),
-        this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null } }) }),
+        // "Pending" tab badge — awaiting a human reply (bot replies don't count).
+        this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true }) }),
         this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null, lte: now } }) }),
         this.prisma.whatsAppThread.count({
           where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }),

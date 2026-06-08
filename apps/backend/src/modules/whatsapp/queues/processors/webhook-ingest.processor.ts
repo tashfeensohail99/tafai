@@ -689,6 +689,9 @@ export class WebhookIngestProcessor extends WorkerHost {
         lastMessageAt: now,
         lastMessagePreview: previewOf(msg),
         unreadCount: 1,
+        // Pending: a customer message just arrived → awaiting a human reply.
+        lastCustomerMessageAt: now,
+        awaitingReply: true,
         ...adReferralUpdate,
       },
       update: {
@@ -699,6 +702,10 @@ export class WebhookIngestProcessor extends WorkerHost {
         lastMessageAt: now,
         lastMessagePreview: previewOf(msg),
         unreadCount: { increment: 1 },
+        // Pending: a customer message just arrived → awaiting a human reply.
+        // (A bot auto-reply afterwards does NOT clear this — only a manual send.)
+        lastCustomerMessageAt: now,
+        awaitingReply: true,
         status: 'OPEN',
         // Stamp firstInboundAt only if missing.
         firstInboundAt: undefined,

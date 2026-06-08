@@ -80,7 +80,7 @@ export default function SalesInboxPage() {
     setNextCursor(null);
   }, [filter, debouncedSearch]);
 
-  // The "Pending" tab maps to needsReply (responseDeadlineAt set) — the literal
+  // The "Pending" tab maps to needsReply (awaitingReply=true) — the literal
   // WhatsAppThreadStatus.PENDING value is never written by any code path, so
   // filtering by status='PENDING' would always return zero.
   const scopeQuery = useCallback(
@@ -185,7 +185,7 @@ export default function SalesInboxPage() {
     setItems,
     matches: (row) => {
       if (filter === 'PENDING') {
-        if (row.responseDeadlineAt == null) return false;
+        if (!row.awaitingReply) return false;
       } else if (filter !== 'ALL') {
         if (row.status !== filter) return false;
       }
@@ -340,7 +340,7 @@ export default function SalesInboxPage() {
             // identical even when there are 500+ conversations).
             //   All  → stats.total  (every thread this rep can see)
             //   Open → stats.active (status=OPEN)
-            //   Pending → stats.awaitingReply (responseDeadlineAt set)
+            //   Pending → stats.awaitingReply (awaitingReply column)
             //   Resolved → stats.resolved (status=RESOLVED)
             const count = stats
               ? f.key === 'ALL'
@@ -356,7 +356,7 @@ export default function SalesInboxPage() {
                 f.key === 'ALL'
                 ? items.length
                 : f.key === 'PENDING'
-                  ? items.filter((t) => t.responseDeadlineAt != null).length
+                  ? items.filter((t) => t.awaitingReply).length
                   : items.filter((t) => t.status === f.key).length;
             return (
               <button

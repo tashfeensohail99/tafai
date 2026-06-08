@@ -410,29 +410,67 @@ export class WhatsAppThreadsService {
     });
     const warnCutoff = new Date(now.getTime() + (org?.slaWarnBeforeSeconds ?? 60) * 1000);
 
-    const [total, active, slaBreached, unread, unassigned, awaitingReply, uncontacted, overdue, approaching, resolved] =
-      await Promise.all([
-        this.prisma.whatsAppThread.count({ where: base }),
-        this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
-        this.prisma.whatsAppThread.count({ where: and({ slaBreached: true }) }),
-        this.prisma.whatsAppThread.count({ where: and({ unreadCount: { gt: 0 } }) }),
-        caller.canViewAll
-          ? this.prisma.whatsAppThread.count({
-              where: and({ lead: { assignedEmployeeId: null, deletedAt: null } }),
-            })
-          : Promise.resolve(0),
-        // "Pending" tab badge — awaiting a human reply (bot replies don't count).
-        this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true }) }),
-        // "Uncontacted" tab badge — pending AND no human has ever replied.
-        this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true, lastHumanReplyAt: null }) }),
-        this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null, lte: now } }) }),
-        this.prisma.whatsAppThread.count({
-          where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }),
-        }),
-        // Resolved tab count — keeps the inbox filter chips honest (was
-        // previously derived from the loaded page so it capped at PAGE_SIZE).
-        this.prisma.whatsAppThread.count({ where: and({ status: 'RESOLVED' }) }),
-      ]);
+    // PERF: the inbox badge counts used to be 10 separate COUNT() queries fired
+    // in parallel. Against a remote DB that's 10 cross-region round-trips PER
+    // stats call AND a momentary grab of up to 10 pooled connections (the pool
+    // is only 10), so a single stats refresh could starve concurrent chat
+    // opens. We now collapse them into ONE conditional-aggregation query for
+    // the admin/agent paths (verified identical to the per-count results).
+    // Finance keeps the per-count path: its scope is an id-array over the small
+    // agreement-lead set, so it isn't a hot path worth the raw-SQL branch.
+    const financeScoped = caller.canViewFinanceScope && !caller.canViewAll;
+    let total: number, active: number, slaBreached: number, unread: number,
+      unassigned: number, awaitingReply: number, uncontacted: number,
+      overdue: number, approaching: number, resolved: number;
+
+    if (financeScoped) {
+      [total, active, slaBreached, unread, unassigned, awaitingReply, uncontacted, overdue, approaching, resolved] =
+        await Promise.all([
+          this.prisma.whatsAppThread.count({ where: base }),
+          this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
+          this.prisma.whatsAppThread.count({ where: and({ slaBreached: true }) }),
+          this.prisma.whatsAppThread.count({ where: and({ unreadCount: { gt: 0 } }) }),
+          Promise.resolve(0), // finance never sees the "unassigned" chip
+          this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true }) }),
+          this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true, lastHumanReplyAt: null }) }),
+          this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null, lte: now } }) }),
+          this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }) }),
+          this.prisma.whatsAppThread.count({ where: and({ status: 'RESOLVED' }) }),
+        ]);
+    } else {
+      // Mirrors the `base`/`and` filter above: exclude soft-deleted leads
+      // (lead-less threads kept), and for a plain agent restrict to their own
+      // assigned leads. $1=now, $2=warnCutoff, $3=employeeId (agent only).
+      const params: unknown[] = [now, warnCutoff];
+      let scope = 'l."deletedAt" IS NULL';
+      if (!caller.canViewAll) {
+        params.push(caller.employeeId);
+        scope += ` AND l."assignedEmployeeId" = $${params.length}`;
+      }
+      const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, number | bigint | null>>>(
+        `SELECT
+           count(*)::int AS total,
+           count(*) FILTER (WHERE t.status::text = 'OPEN')::int AS active,
+           count(*) FILTER (WHERE t."slaBreached")::int AS "slaBreached",
+           count(*) FILTER (WHERE t."unreadCount" > 0)::int AS unread,
+           count(*) FILTER (WHERE l.id IS NOT NULL AND l."assignedEmployeeId" IS NULL)::int AS unassigned,
+           count(*) FILTER (WHERE t."awaitingReply")::int AS "awaitingReply",
+           count(*) FILTER (WHERE t."awaitingReply" AND t."lastHumanReplyAt" IS NULL)::int AS uncontacted,
+           count(*) FILTER (WHERE t."responseDeadlineAt" IS NOT NULL AND t."responseDeadlineAt" <= $1)::int AS overdue,
+           count(*) FILTER (WHERE t."responseDeadlineAt" > $1 AND t."responseDeadlineAt" <= $2)::int AS approaching,
+           count(*) FILTER (WHERE t.status::text = 'RESOLVED')::int AS resolved
+         FROM whatsapp.threads t
+         LEFT JOIN crm.leads l ON l.id = t."leadId"
+         WHERE ${scope}`,
+        ...params,
+      );
+      const r = rows[0] ?? {};
+      const num = (v: number | bigint | null | undefined): number => (v == null ? 0 : Number(v));
+      total = num(r.total); active = num(r.active); slaBreached = num(r.slaBreached);
+      unread = num(r.unread); unassigned = num(r.unassigned); awaitingReply = num(r.awaitingReply);
+      uncontacted = num(r.uncontacted); overdue = num(r.overdue); approaching = num(r.approaching);
+      resolved = num(r.resolved);
+    }
 
     // SLA score. Admins / managers (canViewAll) get the ORG-WIDE aggregate so
     // their dashboard shows a real team number rather than the personal-score

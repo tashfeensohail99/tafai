@@ -117,6 +117,17 @@ export class WhatsAppThreadsController {
     private readonly outboundQueue: Queue<OutboundMessageJob>,
   ) {}
 
+  /**
+   * PERF: cache the userId → employeeId lookup that buildCallerContext does on
+   * EVERY request. The mapping is effectively immutable (an employee's userId
+   * doesn't change after the row is created), so a short TTL removes one
+   * (cross-region) DB round-trip from every inbox list / stats / chat-open /
+   * mark-read call with no correctness risk. Permissions still come fresh from
+   * the JWT on each request — only the employee-id resolution is cached.
+   */
+  private readonly employeeIdCache = new Map<string, { employeeId: string | null; expires: number }>();
+  private static readonly EMPLOYEE_ID_TTL_MS = 60_000;
+
   @Get()
   @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
   async list(@CurrentUser() user: RequestUser, @Query() q: ListThreadsDto) {
@@ -520,10 +531,22 @@ export class WhatsAppThreadsController {
    * scope query results.
    */
   private async buildCallerContext(user: RequestUser) {
-    const employee = await this.prisma.employee.findUnique({
-      where: { userId: user.id },
-      select: { id: true },
-    });
+    // Cached userId → employeeId (60s TTL) — see employeeIdCache above.
+    let employeeId: string | null;
+    const cached = this.employeeIdCache.get(user.id);
+    if (cached && cached.expires > Date.now()) {
+      employeeId = cached.employeeId;
+    } else {
+      const employee = await this.prisma.employee.findUnique({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      employeeId = employee?.id ?? null;
+      this.employeeIdCache.set(user.id, {
+        employeeId,
+        expires: Date.now() + WhatsAppThreadsController.EMPLOYEE_ID_TTL_MS,
+      });
+    }
     const perms = user.permissions ?? [];
     const canViewAll = perms.includes('whatsapp.view_all_inboxes');
     // Finance scope: see threads only for leads where Sales has already
@@ -534,7 +557,7 @@ export class WhatsAppThreadsController {
     const canViewProcessingScope = !canViewAll && perms.includes('whatsapp.view_processing_scope');
     return {
       userId: user.id,
-      employeeId: employee?.id ?? null,
+      employeeId,
       canViewAll,
       canViewFinanceScope,
       canViewProcessingScope,

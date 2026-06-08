@@ -16,6 +16,7 @@ import { NumberingService } from '../../common/numbering/numbering.service';
 import { StorageService } from '../storage/storage.service';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   AgreementRenderService,
   type AgreementBioData,
@@ -60,6 +61,7 @@ export class AgreementsService {
     private readonly storage: StorageService,
     private readonly email: EmailService,
     private readonly numbering: NumberingService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -73,6 +75,24 @@ export class AgreementsService {
   ): Promise<void> {
     try {
       if (!createdByUserId) return;
+
+      // In-app notification (also fans out to push) — independent of email, so
+      // the Sales author is alerted in the bell + on mobile even with no email
+      // on file. Mirrors the email decision below.
+      await this.notifications.create({
+        userId: createdByUserId,
+        type: kind === 'approved' ? 'AGREEMENT_APPROVED' : 'AGREEMENT_CHANGES_REQUESTED',
+        title:
+          kind === 'approved'
+            ? `Agreement ${ctx.agreementNumber} approved`
+            : `Changes requested: ${ctx.agreementNumber}`,
+        body:
+          kind === 'changes'
+            ? ctx.note || 'Finance requested changes to your agreement.'
+            : 'Finance approved your agreement.',
+        link: ctx.leadId ? `/sales/leads/${ctx.leadId}` : '/sales/agreements',
+      });
+
       const user = await this.prisma.userAccount.findUnique({
         where: { id: createdByUserId },
         select: { email: true },

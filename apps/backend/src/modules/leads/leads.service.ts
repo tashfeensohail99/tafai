@@ -15,6 +15,7 @@ import { ActivityTimelineService } from '../activity-timeline/activity-timeline.
 import { StorageService } from '../storage/storage.service';
 import { AssignLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
 import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class LeadsService {
@@ -24,6 +25,7 @@ export class LeadsService {
     private readonly activityTimeline: ActivityTimelineService,
     private readonly storage: StorageService,
     private readonly email: EmailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
@@ -452,6 +454,7 @@ export class LeadsService {
     // Email — notify the assigned employee (fire-and-forget, non-blocking)
     if (lead.assignedEmployeeId) {
       void this.notifyAssignedEmployee(lead.assignedEmployeeId, {
+        leadId: lead.id,
         leadName: `${lead.firstName} ${lead.lastName}`,
         leadPhone: lead.phone,
         leadService: lead.serviceInterest ?? null,
@@ -745,6 +748,7 @@ export class LeadsService {
 
     // Email — notify the newly assigned employee (fire-and-forget)
     void this.notifyAssignedEmployee(dto.assignedEmployeeId, {
+      leadId: id,
       leadName: `${existing.firstName} ${existing.lastName}`,
       leadPhone: existing.phone,
       leadService: existing.serviceInterest ?? null,
@@ -1335,6 +1339,7 @@ export class LeadsService {
   private async notifyAssignedEmployee(
     assignedEmployeeId: string,
     lead: {
+      leadId: string;
       leadName: string;
       leadPhone: string;
       leadService: string | null;
@@ -1349,12 +1354,24 @@ export class LeadsService {
         select: {
           firstName: true,
           lastName: true,
-          user: { select: { email: true } },
+          user: { select: { id: true, email: true } },
         },
       });
+      if (!emp?.user) return;
 
-      if (!emp?.user?.email) return;
+      // In-app notification (also fans out to push). Fired for both the
+      // create-with-assignee path ("new lead assigned") and the manual
+      // assign/reassign path — neither of which is the bulk-import flow, so
+      // this can't spam an agent on a 500-row CSV upload.
+      await this.notifications.create({
+        userId: emp.user.id,
+        type: 'LEAD_ASSIGNED',
+        title: `New lead assigned: ${lead.leadName}`,
+        body: lead.leadService ? `${lead.leadService}${lead.leadCountry ? ` · ${lead.leadCountry}` : ''}` : lead.leadPhone,
+        link: `/sales/leads/${lead.leadId}`,
+      });
 
+      if (!emp.user.email) return;
       await this.email.sendLeadAssigned({
         to: emp.user.email,
         consultantName: `${emp.firstName} ${emp.lastName}`,
@@ -1366,7 +1383,7 @@ export class LeadsService {
         notes: lead.notes,
       });
     } catch {
-      // Email failure must never break the main request
+      // Notification/email failure must never break the main request
     }
   }
 

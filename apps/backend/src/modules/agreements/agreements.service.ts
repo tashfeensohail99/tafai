@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   AgreementStatus,
+  AuditAction,
   PaymentPlanType,
   Prisma,
   ServiceContractStatus,
@@ -17,6 +18,7 @@ import { StorageService } from '../storage/storage.service';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import {
   AgreementRenderService,
   type AgreementBioData,
@@ -62,6 +64,7 @@ export class AgreementsService {
     private readonly email: EmailService,
     private readonly numbering: NumberingService,
     private readonly notifications: NotificationsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   /**
@@ -1041,7 +1044,7 @@ export class AgreementsService {
     return parts.length ? `Updated ${parts.join(', ')}` : 'Updated agreement';
   }
 
-  private recordEvent(
+  private async recordEvent(
     agreementId: string,
     actorUserId: string | null,
     type: string,
@@ -1049,7 +1052,7 @@ export class AgreementsService {
     dataBefore: Prisma.InputJsonValue | null,
     dataAfter: Prisma.InputJsonValue | null,
   ) {
-    return this.prisma.agreementEvent.create({
+    const event = await this.prisma.agreementEvent.create({
       data: {
         agreementId,
         actorUserId: actorUserId ?? undefined,
@@ -1059,6 +1062,19 @@ export class AgreementsService {
         ...(dataAfter !== null ? { dataAfter } : {}),
       },
     });
+
+    // Mirror every agreement lifecycle transition into the audit trail. One
+    // point covers submit / approve / changes-requested / sent / signed /
+    // delete — the specific transition is carried in metadata.type.
+    await this.auditLog.log({
+      actorUserId: actorUserId ?? undefined,
+      action: AuditAction.AGREEMENT_STATUS_CHANGED,
+      entityType: 'Agreement',
+      entityId: agreementId,
+      newValues: { type, summary },
+    });
+
+    return event;
   }
 
   private generateAgreementNumber(): Promise<string> {

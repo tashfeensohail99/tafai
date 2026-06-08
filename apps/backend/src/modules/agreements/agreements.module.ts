@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 import { AgreementsController } from './agreements.controller';
 import { AgreementTemplatesService } from './agreement-templates.service';
 import { AgreementsService } from './agreements.service';
@@ -15,7 +16,7 @@ import { AgreementRenderService } from './agreement-render.service';
  * both @Global.
  */
 @Module({
-  imports: [StorageModule],
+  imports: [StorageModule, AuditLogModule],
   controllers: [AgreementsController],
   providers: [
     AgreementTemplatesService,

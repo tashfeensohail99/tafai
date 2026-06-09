@@ -2652,6 +2652,24 @@ function MessageBubble({
           </time>
           {isOut && <StatusIcon status={message.status} errorTitle={message.errorTitle} />}
         </div>
+        {/* Visible failure reason — so a failed send shows WHY (e.g. a Meta
+            billing block) instead of only a red ✗ the rep has to hover. */}
+        {isOut && message.status === 'FAILED' ? (
+          <div
+            title={`${message.errorTitle ?? 'Failed'}${message.errorCode ? ` (Meta code ${message.errorCode})` : ''}`}
+            style={{
+              marginTop: 5,
+              paddingTop: 4,
+              borderTop: '1px solid var(--sos-border-subtle)',
+              fontSize: 11.5,
+              lineHeight: 1.35,
+              fontWeight: 600,
+              color: 'var(--sos-status-danger)',
+            }}
+          >
+            ⚠ {failureReason(message.errorCode, message.errorTitle)}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -2697,6 +2715,41 @@ function StatusIcon({
       <Check size={12} />
     </span>
   );
+}
+
+/**
+ * Friendly, actionable reason for a failed outbound message, mapped from Meta's
+ * error code (stored on the message). Rendered as a visible red line under the
+ * bubble so reps see WHY a send failed instead of just a red ✗.
+ */
+function failureReason(code: string | null, title: string | null): string {
+  switch (code) {
+    case '131042':
+      return 'WhatsApp Business payment issue — check the payment method / billing in Meta Business Manager.';
+    case '131047':
+      return 'The 24-hour reply window is closed — use an approved template to reopen.';
+    case '131048':
+      return 'Meta rate limit reached for this number — try again shortly.';
+    case '131049':
+    case '130472':
+      return 'Meta limited this marketing message to the recipient — use a utility template or space sends out.';
+    case '131026':
+      return "This number can't receive WhatsApp messages.";
+    case '132000':
+    case '132001':
+    case '132005':
+    case '132007':
+    case '132012':
+    case '132015':
+    case '132016':
+      return `Template problem${title ? ` — ${title}` : ''}. Check the template's status / parameters in WhatsApp Manager.`;
+    case '190':
+      return 'WhatsApp connection expired — re-save the access token in Admin → Settings.';
+    case 'internal':
+      return title ?? 'Internal error while sending.';
+    default:
+      return title ? `Not delivered — ${title}` : 'Not delivered.';
+  }
 }
 
 // ---- Attach-menu item ---------------------------------------------------

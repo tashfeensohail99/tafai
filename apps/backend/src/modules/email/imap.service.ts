@@ -20,6 +20,10 @@ interface FetchedMessage {
 }
 
 const POLL_INTERVAL_MS = 3 * 60 * 1_000; // 3 minutes
+/** Max messages processed per poll — bounds how long the IMAP connection is
+ *  held open so a big backlog can't trip the socket timeout. The rest drain on
+ *  subsequent polls. */
+const MAX_PER_POLL = 30;
 
 @Injectable()
 export class ImapService implements OnModuleInit, OnModuleDestroy {
@@ -67,6 +71,11 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       secure,
       auth: { user, pass },
       logger: false, // suppress imapflow's default console output
+      // Fail fast on a dead connection, and give the socket a generous idle
+      // budget so a normal batch never trips Hostinger's "Socket timeout".
+      connectionTimeout: 20_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 120_000,
     });
 
     // ImapFlow emits 'error' on async socket failures (ETIMEOUT, ECONNRESET,
@@ -85,26 +94,56 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
     try {
       await client.connect();
+      const fetched: FetchedMessage[] = [];
       const lock = await client.getMailboxLock('INBOX');
 
       try {
-        // Only fetch UNSEEN messages to avoid reprocessing
+        // Only fetch UNSEEN messages to avoid reprocessing.
         const uids = await client.search({ seen: false }, { uid: true });
         if (!uids || uids.length === 0) return;
 
-        this.log.debug(`Found ${uids.length} unseen message(s)`);
+        // Bound work per poll so a large backlog can't hold the connection open
+        // long enough to time out; the remainder drains on subsequent polls.
+        const batch = uids.slice(0, MAX_PER_POLL);
+        this.log.debug(`Found ${uids.length} unseen message(s); processing ${batch.length}`);
 
+        // Drain the fetch stream into memory FIRST. The old code awaited the DB
+        // write (processMessage) *inside* the fetch loop — so while Postgres was
+        // slow (pool contention) the IMAP socket sat idle, Hostinger dropped it
+        // ("Socket timeout" → "Connection not available"), and the whole backlog
+        // was re-found unprocessed on every poll. Draining first keeps the IMAP
+        // read fast and contiguous; the slow DB work happens after.
         for await (const msg of client.fetch(
-          uids.join(','),
+          batch.join(','),
           { uid: true, envelope: true, bodyText: true, bodyHTML: true } as Parameters<typeof client.fetch>[1],
           { uid: true },
         ) as AsyncIterable<FetchedMessage>) {
-          await this.processMessage(msg);
-          // Mark as Seen after successful processing
-          await client.messageFlagsAdd({ uid: msg.uid }, ['\\Seen'], { uid: true });
+          fetched.push(msg);
         }
       } finally {
         lock.release();
+      }
+
+      // Store each (idempotent — dedup by messageId), collecting successes. A
+      // single bad message is logged and skipped, never aborting the batch.
+      // Anything stored-but-not-flagged simply gets re-flagged next poll, so no
+      // inbound email is ever lost.
+      const processedUids: number[] = [];
+      for (const msg of fetched) {
+        try {
+          await this.processMessage(msg);
+          processedUids.push(msg.uid);
+        } catch (e) {
+          this.log.warn(
+            `IMAP message uid=${msg.uid} failed (will retry next poll): ${(e as Error).message}`,
+          );
+        }
+      }
+
+      // Mark Seen in ONE batched call — minimal time on the wire.
+      if (processedUids.length > 0) {
+        await client.messageFlagsAdd({ uid: processedUids.join(',') }, ['\\Seen'], { uid: true });
+        this.log.debug(`Processed + marked Seen: ${processedUids.length} message(s)`);
       }
 
       await client.logout();

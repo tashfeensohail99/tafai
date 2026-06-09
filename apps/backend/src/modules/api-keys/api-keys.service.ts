@@ -207,6 +207,26 @@ export class ApiKeysService {
         } else {
           ok = true;
         }
+      } else if (row.provider === 'fcm') {
+        // Structural check: confirm the blob is a well-formed Google
+        // service-account JSON (catches pasting the wrong file / a truncated
+        // copy). We don't call Google here — PushService mints a token on the
+        // first real send and prunes dead device tokens itself.
+        try {
+          const sa = JSON.parse(plaintext) as Record<string, unknown>;
+          const missing = ['type', 'project_id', 'private_key', 'client_email', 'token_uri'].filter(
+            (k) => !sa[k],
+          );
+          if (missing.length > 0) {
+            error = `Not a valid service-account JSON — missing field(s): ${missing.join(', ')}`;
+          } else if (sa.type !== 'service_account') {
+            error = `Expected "type":"service_account" but got "${String(sa.type)}"`;
+          } else {
+            ok = true;
+          }
+        } catch {
+          error = 'Could not parse as JSON — paste the full service-account file contents.';
+        }
       } else {
         error = `No test handler implemented for provider "${row.provider}"`;
       }

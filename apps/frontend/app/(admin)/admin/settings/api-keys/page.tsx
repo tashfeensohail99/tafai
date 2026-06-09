@@ -44,6 +44,12 @@ const PROVIDERS: Array<{ key: string; label: string; hint: string }> = [
     hint:
       'Used by the WhatsApp AI bot for gpt-4o-mini compose + text-embedding-3-small knowledge search. Get one at platform.openai.com/api-keys.',
   },
+  {
+    key: 'fcm',
+    label: 'Firebase Cloud Messaging (push)',
+    hint:
+      'Service-account JSON used to deliver mobile/web push notifications. Firebase Console → Project Settings → Service accounts → Generate new private key, then paste the whole .json here.',
+  },
 ];
 
 function fmtDate(iso: string | null): string {
@@ -552,7 +558,7 @@ function KeyRow({
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong style={{ fontSize: 13 }}>{row.label}</strong>
           <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--sos-text-faint)' }}>
-            sk-…{row.keyTail}
+            {row.provider === 'openai' ? 'sk-…' : '…'}{row.keyTail}
           </span>
           {row.isActive ? (
             <StatusBadge tone="success" size="sm" dot={false}>active</StatusBadge>
@@ -662,10 +668,16 @@ function AddKeyModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
             <select
               className="sos-input"
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => {
+                const p = e.target.value;
+                setProvider(p);
+                // Default the label to something sensible for the chosen provider.
+                setLabel(p === 'fcm' ? 'Firebase service account' : 'Production OpenAI');
+              }}
               style={{ width: '100%' }}
             >
               <option value="openai">OpenAI</option>
+              <option value="fcm">Firebase Cloud Messaging (push)</option>
             </select>
           </Field>
 
@@ -673,27 +685,43 @@ function AddKeyModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
             <FormInput value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Production OpenAI" />
           </Field>
 
-          <Field label="API key" hint="Paste the full secret. Encrypted before storage; never returned after save.">
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                type={showKey ? 'text' : 'password'}
+          {provider === 'fcm' ? (
+            <Field
+              label="Service-account JSON"
+              hint="Paste the ENTIRE Firebase service-account .json file contents. Encrypted before storage; never returned after save."
+            >
+              <textarea
                 className="sos-input"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                placeholder="sk-..."
-                style={{ flex: 1, fontFamily: 'monospace', fontSize: 12.5 }}
-                autoComplete="new-password"
+                placeholder={'{\n  "type": "service_account",\n  "project_id": "…",\n  "private_key": "-----BEGIN PRIVATE KEY-----…",\n  "client_email": "…@….iam.gserviceaccount.com"\n}'}
+                rows={8}
+                style={{ width: '100%', fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
               />
-              <GhostButton
-                size="sm"
-                title={showKey ? 'Hide' : 'Show'}
-                onClick={() => setShowKey((v) => !v)}
-                iconLeft={showKey ? <EyeOff size={13} /> : <Eye size={13} />}
-              >
-                {showKey ? 'Hide' : 'Show'}
-              </GhostButton>
-            </div>
-          </Field>
+            </Field>
+          ) : (
+            <Field label="API key" hint="Paste the full secret. Encrypted before storage; never returned after save.">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  className="sos-input"
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  placeholder="sk-..."
+                  style={{ flex: 1, fontFamily: 'monospace', fontSize: 12.5 }}
+                  autoComplete="new-password"
+                />
+                <GhostButton
+                  size="sm"
+                  title={showKey ? 'Hide' : 'Show'}
+                  onClick={() => setShowKey((v) => !v)}
+                  iconLeft={showKey ? <EyeOff size={13} /> : <Eye size={13} />}
+                >
+                  {showKey ? 'Hide' : 'Show'}
+                </GhostButton>
+              </div>
+            </Field>
+          )}
 
           {error ? (
             <div className="sos-banner sos-banner--danger" style={{ display: 'flex', gap: 8 }}>

@@ -1,6 +1,6 @@
 import { IsBoolean, IsIn, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 
-const SUPPORTED_PROVIDERS = ['openai'] as const;
+const SUPPORTED_PROVIDERS = ['openai', 'fcm'] as const;
 
 export class UpsertApiKeyDto {
   @IsString()
@@ -15,7 +15,7 @@ export class UpsertApiKeyDto {
   /** Plaintext secret — accepted once, then encrypted at rest. */
   @IsString()
   @MinLength(8)
-  @MaxLength(2048)
+  @MaxLength(16384) // large enough for a full FCM service-account JSON (~2.5 KB), not just short API keys
   key!: string;
 }
 

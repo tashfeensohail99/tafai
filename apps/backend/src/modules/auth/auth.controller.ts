@@ -19,6 +19,7 @@ import {
   RefreshTokenDto,
   RequestPasswordResetDto,
   CompletePasswordResetDto,
+  ChangePasswordDto,
 } from './auth.dto';
 
 @Controller('auth')
@@ -55,20 +56,41 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: RequestUser) {
-    return user;
+    // Enriched profile: id/email/roles/permissions PLUS mustChangePassword +
+    // employee{name,department} that the mobile app needs (additive — web is
+    // unaffected).
+    return this.authService.getProfile(user);
   }
 
-  @Post('password-reset/request')
+  // Change own password (authenticated). Used by the mobile/web settings screen
+  // and the force-change-on-first-login flow (mustChangePassword).
+  @Post('password/change')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @Body() dto: ChangePasswordDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    await this.authService.changePassword(user.id, dto);
+    return { message: 'Password changed successfully' };
+  }
+
+  // Canonical paths are `password/reset-request` + `password/reset` (what the
+  // mobile app expects); the legacy `password-reset/*` paths are kept as aliases
+  // so nothing already pointing at them breaks.
+  @Post(['password/reset-request', 'password-reset/request'])
   @UseGuards(ThrottlerGuard)
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
   async requestPasswordReset(@Body() dto: RequestPasswordResetDto) {
     await this.authService.requestPasswordReset(dto);
+    return { message: 'If that email exists, a reset link has been sent.' };
   }
 
-  @Post('password-reset/complete')
+  @Post(['password/reset', 'password-reset/complete'])
   @UseGuards(ThrottlerGuard)
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
   async completePasswordReset(@Body() dto: CompletePasswordResetDto) {
     await this.authService.completePasswordReset(dto);
+    return { message: 'Password reset successfully' };
   }
 }

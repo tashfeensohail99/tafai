@@ -11,12 +11,16 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '@prisma/client';
 import type { StringValue } from 'ms';
-import { extractRolesAndPermissions } from '../../common/types/auth.types';
+import {
+  extractRolesAndPermissions,
+  type RequestUser,
+} from '../../common/types/auth.types';
 import {
   LoginDto,
   RefreshTokenDto,
   RequestPasswordResetDto,
   CompletePasswordResetDto,
+  ChangePasswordDto,
 } from './auth.dto';
 
 const BCRYPT_ROUNDS = 12;
@@ -297,6 +301,84 @@ export class AuthService {
       action: AuditAction.PASSWORD_RESET_COMPLETED,
       entityType: 'UserAccount',
       entityId: record.userId,
+    });
+  }
+
+  /**
+   * Enriched current-user profile for GET /auth/me. Returns the JWT identity
+   * (id/email/roles/permissions) PLUS the two fields the mobile app needs:
+   *   - mustChangePassword → drives the force-change-password-on-first-login gate
+   *   - employee {name, department} → header / profile display
+   * Additive only — the web app reads id/email/roles/permissions and is
+   * unaffected. One indexed lookup each; `employee` is null for accounts with no
+   * Employee profile (e.g. system/service accounts).
+   */
+  async getProfile(user: RequestUser) {
+    const [account, employee] = await Promise.all([
+      this.prisma.userAccount.findUnique({
+        where: { id: user.id },
+        select: { mustChangePassword: true },
+      }),
+      this.prisma.employee.findUnique({
+        where: { userId: user.id },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          department: { select: { id: true, name: true } },
+        },
+      }),
+    ]);
+    return {
+      ...user,
+      mustChangePassword: account?.mustChangePassword ?? false,
+      employee,
+    };
+  }
+
+  /**
+   * Change the authenticated user's own password (mobile/web settings + the
+   * force-change-on-first-login flow). Verifies the current password, rejects a
+   * no-op reuse, and clears `mustChangePassword`.
+   *
+   * Unlike a password *reset* (forgot-password, not logged in — which revokes
+   * all sessions), this deliberately does NOT revoke the caller's sessions: the
+   * user just authenticated and should stay logged in, which is essential for
+   * the first-login change flow. (Logging out other devices on change is a
+   * separate feature, intentionally out of scope.)
+   */
+  async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+    const user = await this.prisma.userAccount.findFirst({
+      where: { id: userId, deletedAt: null },
+    });
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const valid = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    if (!valid) throw new BadRequestException('Current password is incorrect');
+
+    const reused = await bcrypt.compare(dto.newPassword, user.passwordHash);
+    if (reused) {
+      throw new BadRequestException(
+        'New password must be different from the current password',
+      );
+    }
+
+    const hash = await bcrypt.hash(dto.newPassword, BCRYPT_ROUNDS);
+    await this.prisma.userAccount.update({
+      where: { id: userId },
+      data: {
+        passwordHash: hash,
+        passwordChangedAt: new Date(),
+        mustChangePassword: false,
+      },
+    });
+
+    await this.auditLog.log({
+      actorUserId: userId,
+      action: AuditAction.PASSWORD_RESET_COMPLETED,
+      entityType: 'UserAccount',
+      entityId: userId,
+      metadata: { via: 'self_service_change' },
     });
   }
 

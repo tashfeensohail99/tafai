@@ -257,7 +257,7 @@ Validation errors (422) may include:
 ## Notes for Flutter Team
 
 1. **Never store the access token on disk.** Use in-memory only. The `TokenStorage` class in `lib/core/auth/token_storage.dart` enforces this.
-2. **Never use public URLs for documents.** All file downloads go through `GET /storage/signed-url?key=...` which returns a short-lived (5 min) signed URL after a server-side permission check.
+2. **Never use public URLs for documents.** There is **no** generic `/storage/signed-url` endpoint — file access is **per-entity and permission-checked**. For the sales app the relevant one is **lead files**: `GET /leads/:id/files/:fileId/url` returns a short-lived (5 min) signed URL after a server-side access check (and audits the access). (Other modules expose their own, e.g. `GET /agreements/:id/pdf-url`.)
 3. **Permission gate UI elements** using `AuthUser.hasPermission(key)` — but always assume the backend will enforce RBAC independently. Never rely solely on frontend permission hiding.
 4. **mustChangePassword flag**: if `true` after login, redirect the user to the change-password screen before allowing any other navigation.
 5. **iOS note**: `FlutterSecureStorage` uses the iOS Keychain with `kSecAttrAccessibleWhenUnlocked`. No additional config needed.

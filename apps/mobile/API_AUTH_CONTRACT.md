@@ -28,18 +28,13 @@ Authenticate with email and password.
 }
 ```
 
-**Success 201**
+**Success 200** — returns **tokens only**. Call `GET /auth/me` immediately after
+login to load the user, roles, permissions, `mustChangePassword`, and employee
+profile (that enriched payload is documented under `/auth/me` below).
 ```json
 {
   "accessToken": "<jwt>",
-  "refreshToken": "<uuid>",
-  "user": {
-    "id": "uuid",
-    "email": "admin@tashfeen.com",
-    "roles": ["super_admin"],
-    "permissions": ["leads.view_all", "leads.create", "..."],
-    "mustChangePassword": false
-  }
+  "refreshToken": "<uuid>"
 }
 ```
 

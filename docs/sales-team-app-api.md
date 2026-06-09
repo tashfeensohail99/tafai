@@ -103,17 +103,48 @@ audited), `DELETE /leads/:id/files/:fileId`.
 
 ## 7. Appointment requests (bot-captured)
 
+The AI bot captures booking intents (day / time / modality) into `AppointmentRequest`
+rows; sales reviews them here, then books the real appointment from the chat.
+
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/appointment-requests` | Pending requests inbox (confirm exact path/filters against the controller). |
-| — | (confirm/decline + take-over) | Mirror the web sales flow. |
+| GET | `/sales/appointment-requests` | Inbox. `?status=PENDING\|CONFIRMED\|REJECTED\|EXPIRED` (default **PENDING**), `?search=` (name/phone). Scoped: `appointments.view_all` sees all; otherwise only the caller's assigned leads. Each row embeds the linked lead (name / phone / assigned agent). |
+| PATCH | `/sales/appointment-requests/:id/reject` | Decline a PENDING request. |
+
+> **No "confirm" endpoint** — to book, open the thread and create the appointment
+> via `POST /appointments` (§6); the bot's auto-CONFIRMED handshake then closes the
+> request. **Take over** the AI on that chat with `POST /whatsapp/threads/:id/take-over` (§8).
 
 ## 8. WhatsApp (chat)
 
-The app's chat tab reuses the existing WhatsApp endpoints (inbox list, per-lead
-thread, send message/template, media). Inbound activity already produces bell +
-push notifications. *(Map exact paths from the `whatsapp` module before building
-the chat screen — large surface, intentionally not duplicated here.)*
+**Threads** — base `/whatsapp/threads`:
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/whatsapp/threads` | Inbox list (scoped). Filters: `contacted`, `uncontacted`, `needsReply`, `followUpDue`, `assignedToMe`, `unassigned`, `employeeId`, `search`, `limit`, `cursor`. Sorted action-required first, then newest real activity. |
+| GET | `/whatsapp/threads/stats` | Tab-badge counts (total / uncontacted / followUpDue …). |
+| GET | `/whatsapp/threads/by-lead/:leadId` | The thread for a given lead (chat tab on a lead screen). |
+| GET | `/whatsapp/threads/:id` | Thread detail. |
+| GET | `/whatsapp/threads/:id/list-item` | Re-fetch one row (realtime patch). |
+| POST | `/whatsapp/threads/:id/read` | Mark the thread read (clears unread). |
+| POST | `/whatsapp/threads/:id/ai-toggle` | Turn the AI bot on/off for this chat. |
+| POST | `/whatsapp/threads/:id/take-over` | Human takes over (stops the bot). |
+| POST | `/whatsapp/threads/:id/reassign` | Reassign the chat's lead. |
+| GET | `/whatsapp/threads/:id/appointment-requests` | Bot-captured requests on this thread. |
+| GET | `/whatsapp/threads/:threadId/messages/:messageId/media` | Signed media for a media message. |
+
+**Messages** — base `/whatsapp/threads/:threadId/messages`:
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `` (base) | Message history (paginated). |
+| POST | `/text` | Free-form text. **Only inside the 24h window** (else `400` — use a template). |
+| POST | `/template` | Approved template (`templateName`, `language`, `components`). Works outside the window. |
+| POST | `/media` | Send image / document / etc. |
+
+Inbound activity already produces bell + push notifications. Realtime updates ride the
+existing WhatsApp socket (`whatsapp.message.new`, `…message.status`, `…thread.updated`).
+A failed send carries `errorCode` + `errorTitle` (e.g. Meta `131042` = billing) — surface it.
 
 ## 9. Agreements (read-mostly for sales)
 
@@ -125,8 +156,7 @@ the chat screen — large surface, intentionally not duplicated here.)*
 
 ## Open items before app GA
 
-1. **Confirm `/auth/me` + appointment-requests exact shapes** against the live
-   controllers (left intentionally loose above).
+1. ✅ **Done:** `/auth/me` enriched (`mustChangePassword` + `employee`), `POST /auth/password/change` added, forgot‑password emails wired (web `/reset-password` page), and the appointment‑requests + WhatsApp chat paths are confirmed above (§7–§8). The auth + chat contract is now accurate.
 2. **FCM service-account key** must be added in Admin → API Keys (`provider: fcm`)
    for push to actually deliver; until then `/devices/*` succeed but no push is
    sent (by design).

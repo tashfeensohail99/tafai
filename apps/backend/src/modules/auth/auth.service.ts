@@ -9,6 +9,7 @@ import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmailService } from '../email/email.service';
 import { AuditAction } from '@prisma/client';
 import type { StringValue } from 'ms';
 import {
@@ -36,6 +37,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly auditLog: AuditLogService,
+    private readonly email: EmailService,
   ) {}
 
   async login(
@@ -260,8 +262,25 @@ export class AuthService {
       entityId: user.id,
     });
 
-    // TODO: Send token via email when email module is ready
-    this.logger.log(`Password reset token generated for user ${user.id}`);
+    // Email the reset link. Best-effort: we never reveal success/failure to the
+    // caller (the endpoint always returns the same response to prevent user
+    // enumeration), but we log a failure so ops can see if SMTP is down.
+    const frontendUrl = process.env.FRONTEND_URL ?? 'https://tashfeengroup.com';
+    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+    const employee = await this.prisma.employee.findFirst({
+      where: { userId: user.id },
+      select: { firstName: true },
+    });
+    const sent = await this.email.sendPasswordReset({
+      to: user.email,
+      name: employee?.firstName ?? null,
+      resetUrl,
+    });
+    if (!sent) {
+      this.logger.warn(`Password reset email failed to send for user ${user.id}`);
+    } else {
+      this.logger.log(`Password reset email sent for user ${user.id}`);
+    }
   }
 
   async completePasswordReset(dto: CompletePasswordResetDto): Promise<void> {

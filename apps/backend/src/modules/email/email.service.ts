@@ -242,6 +242,20 @@ export class EmailService {
     });
   }
 
+  /** Forgot-password: emails the user a link to the reset page with their
+   *  one-hour reset token. */
+  async sendPasswordReset(opts: {
+    to: string;
+    name?: string | null;
+    resetUrl: string;
+  }): Promise<boolean> {
+    return this.sendMail({
+      to: opts.to,
+      subject: 'Reset your password — Tashfeen Immigration',
+      html: buildPasswordResetEmail(opts),
+    });
+  }
+
   async sendAppointmentConfirmation(opts: {
     to: string;
     clientName: string;
@@ -712,4 +726,32 @@ function buildLeadVerificationEmail(opts: {
     <p style="font-size:12px;color:#94a3b8;">This link expires in 48 hours. If you did not request this, you can safely ignore this email.</p>
   `;
   return baseTemplate('Verify your email — Tashfeen', content);
+}
+
+function buildPasswordResetEmail(opts: {
+  name?: string | null;
+  resetUrl: string;
+}): string {
+  const who = opts.name ? escHtml(opts.name) : 'there';
+  const content = `
+    <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Reset your password</h2>
+    <p style="margin:0 0 24px;font-size:14px;color:#64748b;">Hi ${who}, we received a request to reset your Tashfeen account password. Click the button below to choose a new one.</p>
+
+    <div style="text-align:center;margin:32px 0;">
+      <a href="${escHtml(opts.resetUrl)}"
+         style="display:inline-block;background:#7c3aed;color:#ffffff;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:700;letter-spacing:0.01em;">
+        Reset password
+      </a>
+    </div>
+
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px;">
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.6;">
+        If the button above doesn't work, copy and paste this link into your browser:<br/>
+        <a href="${escHtml(opts.resetUrl)}" style="color:#7c3aed;word-break:break-all;">${escHtml(opts.resetUrl)}</a>
+      </p>
+    </div>
+
+    <p style="font-size:12px;color:#94a3b8;">This link expires in 1 hour. If you did not request this, you can safely ignore this email — your password will not change.</p>
+  `;
+  return baseTemplate('Reset your password — Tashfeen', content);
 }

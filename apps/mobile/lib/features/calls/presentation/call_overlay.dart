@@ -92,6 +92,7 @@ class CallOverlay extends ConsumerWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     if (s.phase == CallPhase.connecting ||
+                        s.phase == CallPhase.reconnecting ||
                         s.phase == CallPhase.dialing) ...[
                       SizedBox(
                         height: 13,
@@ -185,6 +186,7 @@ class _InCallControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final canControl = state.phase == CallPhase.inCall ||
+        state.phase == CallPhase.reconnecting ||
         state.phase == CallPhase.connecting ||
         state.phase == CallPhase.dialing;
     return Column(

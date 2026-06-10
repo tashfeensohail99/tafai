@@ -74,7 +74,11 @@ class _CallHostState extends ConsumerState<CallHost>
     push.onAccept = (call) {
       final cur = ref.read(callControllerProvider);
       if (cur.isActive && cur.callId == call.callId) return; // already handling
-      endCallkit(call.callId);
+      // Keep the native Telecom call ALIVE (connected) for the whole call —
+      // ending it here made Android stop treating the app as in-call, so the
+      // OS dozed it ~30-40s after the screen turned off and the media path
+      // starved and dropped. It is ended in the controller's teardown.
+      markCallkitConnected(call.callId);
       final ctrl = ref.read(callControllerProvider.notifier);
       ctrl.prepareIncoming(CallIncoming(
         callId: call.callId,

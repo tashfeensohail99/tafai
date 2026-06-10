@@ -9,6 +9,7 @@ enum CallPhase {
   ringing, // inbound: ring screen shown, awaiting Accept/Decline
   connecting, // SDP exchanged, ICE negotiating
   inCall, // media connected
+  reconnecting, // media hiccup — grace period before giving up
   ended, // finished (brief terminal state before reset)
   error, // something failed
 }
@@ -144,6 +145,7 @@ class CallState {
         CallPhase.ringing => 'Incoming WhatsApp call',
         CallPhase.connecting => 'Connecting…',
         CallPhase.inCall => timerLabel,
+        CallPhase.reconnecting => 'Reconnecting…',
         CallPhase.ended => 'Call ended',
         CallPhase.error => errorText ?? 'Call failed',
         CallPhase.idle => '',

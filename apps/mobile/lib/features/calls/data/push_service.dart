@@ -87,6 +87,16 @@ Future<void> endCallkit(String callId) async {
   } catch (_) {}
 }
 
+/// Mark the native Telecom call as CONNECTED instead of ending it. Keeping the
+/// self-managed call active for the whole conversation is what keeps Android
+/// treating the app as "in a call" — without it the OS dozes the app ~30-40s
+/// after the screen turns off and the WebRTC media path starves and drops.
+Future<void> markCallkitConnected(String callId) async {
+  try {
+    await FlutterCallkitIncoming.setCallConnected(callId);
+  } catch (_) {}
+}
+
 /// FCM background handler — MUST be a top-level function annotated for the
 /// AOT entry-point tree-shaker. Runs in its own isolate when the app is
 /// backgrounded or killed; its only job is to ring via CallKit.

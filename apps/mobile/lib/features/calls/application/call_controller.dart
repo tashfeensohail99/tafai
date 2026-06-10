@@ -29,6 +29,7 @@ class CallController extends StateNotifier<CallState> {
   Timer? _dialTimeout; // outbound: give up if no answer
   Timer? _tick; // 1s call timer
   Timer? _endReset; // brief "ended" → idle
+  Timer? _disconnectGrace; // transient media drop — give ICE time to recover
 
   // Recording (best-effort; never breaks the call).
   MediaRecorder? _recorder;
@@ -307,10 +308,24 @@ class CallController extends StateNotifier<CallState> {
       switch (s) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
           _onConnected();
+        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+          // TRANSIENT: WebRTC fires `disconnected` on brief packet loss (Wi-Fi
+          // power-save, network blips) and usually recovers on its own.
+          // Tearing down here was killing live calls ~30-40s in. Show
+          // "Reconnecting…" and give ICE a grace window instead.
+          if (state.phase == CallPhase.inCall) {
+            state = state.copyWith(phase: CallPhase.reconnecting);
+            _disconnectGrace?.cancel();
+            _disconnectGrace = Timer(const Duration(seconds: 20), () {
+              if (state.phase == CallPhase.reconnecting) {
+                _teardown(reason: 'Connection lost');
+              }
+            });
+          }
         case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
         case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
           if (state.phase == CallPhase.inCall ||
+              state.phase == CallPhase.reconnecting ||
               state.phase == CallPhase.connecting) {
             _teardown(reason: 'Call ended');
           }
@@ -344,8 +359,19 @@ class CallController extends StateNotifier<CallState> {
   }
 
   void _onConnected() {
+    _disconnectGrace?.cancel();
+    _disconnectGrace = null;
     if (state.phase == CallPhase.inCall) return;
+    if (state.phase == CallPhase.reconnecting) {
+      // Recovered from a transient drop — resume without resetting the timer.
+      state = state.copyWith(phase: CallPhase.inCall);
+      return;
+    }
     state = state.copyWith(phase: CallPhase.inCall, durationSeconds: 0);
+    // Keep the native Telecom call marked CONNECTED for the whole call so
+    // Android holds the app at in-call priority (no doze → no media starve).
+    final id = state.callId;
+    if (id != null) unawaited(markCallkitConnected(id));
     _tick?.cancel();
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       state = state.copyWith(durationSeconds: state.durationSeconds + 1);
@@ -431,9 +457,11 @@ class CallController extends StateNotifier<CallState> {
     _ringTimeout?.cancel();
     _dialTimeout?.cancel();
     _tick?.cancel();
+    _disconnectGrace?.cancel();
     _ringTimeout = null;
     _dialTimeout = null;
     _tick = null;
+    _disconnectGrace = null;
 
     // Fire-and-forget the recording flush before tearing media down.
     unawaited(_stopAndUploadRecording());

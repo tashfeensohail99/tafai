@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   BadGatewayException,
+  ConflictException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -67,6 +68,12 @@ export class WhatsAppCallsService {
   async answer(id: string, sdpAnswer: string, userId: string) {
     if (!sdpAnswer) throw new NotFoundException('Missing sdpAnswer');
     const { call, client } = await this.clientForCall(id);
+    // A call can be answered exactly once. A duplicate accept (double-tap,
+    // duplicated client event) would re-send a second SDP to Meta and poison
+    // the already-established media session of the first answer.
+    if (call.status === 'ANSWERED' || call.status === 'ENDED') {
+      throw new ConflictException('Call already answered');
+    }
     await client.respondToCall({ callId: call.waCallId, action: 'accept', sdpAnswer });
     const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
     await this.prisma.whatsAppCall.update({

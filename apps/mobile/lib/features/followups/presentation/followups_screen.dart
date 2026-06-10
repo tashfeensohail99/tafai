@@ -312,11 +312,15 @@ class _FollowUpCard extends StatelessWidget {
                           Icon(_contactIcon(f.contactMethod),
                               size: 15, color: AppTokens.textMutedLight),
                           const SizedBox(width: 4),
-                          Text(
-                            _contactLabel(f.contactMethod),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppTokens.textMutedLight,
+                          Flexible(
+                            child: Text(
+                              _contactLabel(f.contactMethod),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTokens.textMutedLight,
+                              ),
                             ),
                           ),
                         ],

@@ -28,7 +28,10 @@ class IncomingCallPush {
     if (callId == null || callId.isEmpty) return null;
     return IncomingCallPush(
       callId: callId,
-      from: d['from']?.toString() ?? '',
+      // Backend sends `callerPhone` (`from` is a reserved FCM data key that
+      // gets the whole push rejected). `from` kept as fallback for CallKit
+      // extras we wrote ourselves.
+      from: (d['callerPhone'] ?? d['from'])?.toString() ?? '',
       leadName: (d['leadName']?.toString().isNotEmpty ?? false)
           ? d['leadName'].toString()
           : null,
@@ -64,11 +67,15 @@ Future<void> showIncomingCallkit(IncomingCallPush call) async {
     android: const AndroidParams(
       isCustomNotification: true,
       isShowLogo: false,
+      // Play the device's default ringtone for the whole ring (loops).
       ringtonePath: 'system_ringtone_default',
       backgroundColor: '#0D1B3A',
       actionColor: '#2563EB',
       incomingCallNotificationChannelName: 'Incoming WhatsApp Calls',
-      isShowCallID: false,
+      // Full-screen call UI over the lock screen (like a real phone call),
+      // and let it wake/turn on the screen.
+      isShowFullLockedScreen: true,
+      isShowCallID: true,
     ),
   );
   await FlutterCallkitIncoming.showCallkitIncoming(params);
@@ -77,6 +84,16 @@ Future<void> showIncomingCallkit(IncomingCallPush call) async {
 Future<void> endCallkit(String callId) async {
   try {
     await FlutterCallkitIncoming.endCall(callId);
+  } catch (_) {}
+}
+
+/// Mark the native Telecom call as CONNECTED instead of ending it. Keeping the
+/// self-managed call active for the whole conversation is what keeps Android
+/// treating the app as "in a call" — without it the OS dozes the app ~30-40s
+/// after the screen turns off and the WebRTC media path starves and drops.
+Future<void> markCallkitConnected(String callId) async {
+  try {
+    await FlutterCallkitIncoming.setCallConnected(callId);
   } catch (_) {}
 }
 
@@ -110,6 +127,10 @@ class CallPushService {
   bool _wired = false;
   StreamSubscription<CallEvent?>? _callkitSub;
 
+  /// A CallKit "Accept" that arrived before [onAccept] was wired (cold start
+  /// from the lock screen). Replayed once the app handler is ready.
+  IncomingCallPush? _pendingAccept;
+
   /// Invoked when the user accepts a CallKit incoming screen. Wired by CallHost
   /// to hand the call to the CallController.
   void Function(IncomingCallPush call)? onAccept;
@@ -120,6 +141,10 @@ class CallPushService {
   /// Call once at startup (before runApp ideally). Initializes Firebase and
   /// registers the background handler. No-op if Firebase isn't configured.
   Future<void> initEarly() async {
+    // Start listening for CallKit accept/decline NOW (before runApp), so a
+    // cold-start "Accept" from the lock screen is captured + buffered even
+    // before the app UI mounts. Independent of Firebase.
+    wire();
     try {
       await Firebase.initializeApp();
       _firebaseReady = true;
@@ -158,10 +183,22 @@ class CallPushService {
       switch (event.event) {
         case Event.actionCallAccept:
           final call = IncomingCallPush.fromData(extra);
-          if (call != null) onAccept?.call(call);
+          if (call != null) {
+            if (onAccept != null) {
+              onAccept!(call);
+            } else {
+              // App not mounted yet (cold start from lock screen) — buffer it
+              // and replay the moment CallHost wires the handler.
+              _pendingAccept = call;
+            }
+          }
         case Event.actionCallDecline:
-        case Event.actionCallEnded:
         case Event.actionCallTimeout:
+          // Real user declines only. actionCallEnded is deliberately NOT here:
+          // our own endCallkit() (dismissing the native screen right after
+          // Accept, or during teardown) fires it — mapping it to a decline was
+          // POSTing /reject immediately after /answer and killing the call
+          // mid-setup ("call not connecting").
           if (callId != null && callId.isNotEmpty) onDecline?.call(callId);
         default:
           break;
@@ -185,6 +222,35 @@ class CallPushService {
     } catch (e) {
       if (kDebugMode) debugPrint('[push] token register failed: $e');
     }
+  }
+
+  /// Deliver any CallKit "Accept" that arrived before [onAccept] was wired
+  /// (cold start from the lock screen). Call right after setting onAccept.
+  void replayPendingAccept() {
+    final p = _pendingAccept;
+    _pendingAccept = null;
+    if (p != null) onAccept?.call(p);
+  }
+
+  /// Cold-start fallback: if the app was launched by accepting a call, that call
+  /// is already active in the OS — connect straight to it (skip the home screen).
+  Future<void> checkColdStartAccept() async {
+    if (_pendingAccept != null) return; // the event path already has it
+    try {
+      final calls = await FlutterCallkitIncoming.activeCalls();
+      if (calls is List && calls.isNotEmpty && calls.first is Map) {
+        final m =
+            (calls.first as Map).map((k, v) => MapEntry(k.toString(), v));
+        final extra = (m['extra'] is Map)
+            ? (m['extra'] as Map).map((k, v) => MapEntry(k.toString(), v))
+            : <String, dynamic>{};
+        if (extra['callId'] == null && m['id'] != null) {
+          extra['callId'] = m['id'];
+        }
+        final call = IncomingCallPush.fromData(extra);
+        if (call != null) onAccept?.call(call);
+      }
+    } catch (_) {}
   }
 
   void dispose() {

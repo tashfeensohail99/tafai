@@ -13,6 +13,10 @@ class AuthRepository {
 
   AuthRepository(this._client, this._tokenStorage);
 
+  /// Load any persisted access token into memory (cold-start restore — e.g.
+  /// the app was relaunched by accepting a call).
+  Future<void> restoreSession() => _tokenStorage.restore();
+
   /// POST /auth/login — returns **tokens only**. Persists them; the caller then
   /// loads the profile via [me]. (The login response intentionally carries no
   /// user object — see API_AUTH_CONTRACT.md.)

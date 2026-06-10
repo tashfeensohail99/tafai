@@ -365,7 +365,7 @@ class _AppointmentCard extends StatelessWidget {
                   width: 60,
                   decoration: const BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [AppTokens.brandNavy, AppTokens.primary700],
+                      colors: [AppTokens.brandNavy, AppTokens.brandNavyLight],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
@@ -450,11 +450,15 @@ class _AppointmentCard extends StatelessWidget {
                             Icon(appointmentTypeIcon(a.appointmentType),
                                 size: 13, color: AppTokens.textMutedLight),
                             const SizedBox(width: 4),
-                            Text(
-                              '${a.typeLabel} · ${a.durationMinutes} min',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: AppTokens.textMutedLight,
+                            Expanded(
+                              child: Text(
+                                '${a.typeLabel} · ${a.durationMinutes} min',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppTokens.textMutedLight,
+                                ),
                               ),
                             ),
                           ],

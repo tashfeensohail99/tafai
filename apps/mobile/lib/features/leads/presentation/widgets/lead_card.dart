@@ -57,14 +57,14 @@ class LeadCard extends StatelessWidget {
                     width: 42,
                     height: 42,
                     decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.12),
+                      color: AppTokens.avatarTintLight,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     alignment: Alignment.center,
                     child: Text(
                       _initials(lead.fullName),
-                      style: TextStyle(
-                        color: statusColor,
+                      style: const TextStyle(
+                        color: AppTokens.avatarFg,
                         fontWeight: FontWeight.w800,
                         fontSize: 15,
                       ),

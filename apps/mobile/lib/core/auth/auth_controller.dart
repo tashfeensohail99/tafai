@@ -31,15 +31,37 @@ class AuthController extends StateNotifier<AuthState> {
     bootstrap();
   }
 
-  /// App-start: try to restore a session from the stored refresh token.
+  /// App-start: restore the persisted session.
+  ///
+  /// The access token is persisted (a call accept can cold-restart the app),
+  /// so try `me()` directly — the API client transparently refreshes on 401.
+  /// Only a real rejection signs the rep out; transient network errors (flaky
+  /// data right after a call) get brief retries instead of a false
+  /// "session expired" logout.
   Future<void> bootstrap() async {
-    try {
-      await _repo.refresh(); // throws UnauthorizedError when none/invalid
-      final user = await _repo.me();
-      state = AuthState(status: AuthStatus.authenticated, user: user);
-    } catch (_) {
-      state = const AuthState(status: AuthStatus.unauthenticated);
+    await _repo.restoreSession();
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final user = await _repo.me();
+        state = AuthState(status: AuthStatus.authenticated, user: user);
+        return;
+      } on UnauthorizedError {
+        // Access token dead and the inline refresh didn't save us — one
+        // explicit refresh attempt, then give up for real.
+        try {
+          await _repo.refresh();
+          final user = await _repo.me();
+          state = AuthState(status: AuthStatus.authenticated, user: user);
+        } catch (_) {
+          state = const AuthState(status: AuthStatus.unauthenticated);
+        }
+        return;
+      } catch (_) {
+        // Transient (network/server) — retry shortly.
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
     }
+    state = const AuthState(status: AuthStatus.unauthenticated);
   }
 
   Future<void> login({

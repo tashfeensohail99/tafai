@@ -21,14 +21,26 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <!-- flutter_callkit_incoming: native Telecom/ConnectionService call UI. -->
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS"/>
+    <!-- Ring full-screen over the lock screen + keep receiving calls in the
+         background. Requested at runtime from the in-app Call Setup screen. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <application
         android:label="Tashfeen"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- launchMode singleTask, NOT singleTop: the CallKit incoming screen
+             sits on top of MainActivity, so an Accept-launched intent with
+             singleTop spawned a SECOND MainActivity (= a second Flutter engine
+             = a second socket + call controller). Both engines then answered
+             the same call and the losing peer's failure tore down the winner's
+             UI. singleTask guarantees the one existing instance is reused. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"

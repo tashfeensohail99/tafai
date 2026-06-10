@@ -1,0 +1,214 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../domain/wa_message.dart';
+import '../domain/wa_stats.dart';
+import '../domain/wa_thread.dart';
+import 'whatsapp_repository.dart';
+
+/// The three inbox tabs — matching the web exactly.
+enum WaTab { all, open, uncontacted }
+
+class WaFilter {
+  final WaTab tab;
+  final String search;
+  final bool followUpDue;
+  const WaFilter({this.tab = WaTab.all, this.search = '', this.followUpDue = false});
+
+  WaFilter copyWith({WaTab? tab, String? search, bool? followUpDue}) => WaFilter(
+        tab: tab ?? this.tab,
+        search: search ?? this.search,
+        followUpDue: followUpDue ?? this.followUpDue,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is WaFilter &&
+      other.tab == tab &&
+      other.search == search &&
+      other.followUpDue == followUpDue;
+
+  @override
+  int get hashCode => Object.hash(tab, search, followUpDue);
+}
+
+final inboxFilterProvider = StateProvider<WaFilter>((_) => const WaFilter());
+
+/// Live tab-badge counts.
+final threadStatsProvider = FutureProvider.autoDispose<ThreadStats>((ref) {
+  return ref.watch(whatsappRepositoryProvider).stats();
+});
+
+// --- Threads (cursor pagination) ------------------------------------------
+
+class ThreadsState {
+  final List<WhatsappThread> items;
+  final String? nextCursor;
+  final bool loading;
+  final bool loadingMore;
+  final Object? error;
+  const ThreadsState({
+    this.items = const [],
+    this.nextCursor,
+    this.loading = true,
+    this.loadingMore = false,
+    this.error,
+  });
+
+  bool get hasMore => nextCursor != null;
+}
+
+class ThreadsController extends StateNotifier<ThreadsState> {
+  final WhatsappRepository _repo;
+  final WaFilter _filter;
+  ThreadsController(this._repo, this._filter) : super(const ThreadsState()) {
+    load();
+  }
+
+  ({bool? contacted, bool? uncontacted}) get _tabFlags => switch (_filter.tab) {
+        WaTab.open => (contacted: true, uncontacted: null),
+        WaTab.uncontacted => (contacted: null, uncontacted: true),
+        WaTab.all => (contacted: null, uncontacted: null),
+      };
+
+  Future<void> load() async {
+    state = const ThreadsState(loading: true);
+    try {
+      final f = _tabFlags;
+      final page = await _repo.listThreads(
+        contacted: f.contacted,
+        uncontacted: f.uncontacted,
+        followUpDue: _filter.followUpDue ? true : null,
+        search: _filter.search,
+      );
+      state = ThreadsState(
+        items: page.items,
+        nextCursor: page.nextCursor,
+        loading: false,
+      );
+    } catch (e) {
+      state = ThreadsState(loading: false, error: e);
+    }
+  }
+
+  Future<void> loadMore() async {
+    if (state.loading || state.loadingMore || !state.hasMore) return;
+    state = ThreadsState(
+      items: state.items,
+      nextCursor: state.nextCursor,
+      loading: false,
+      loadingMore: true,
+    );
+    try {
+      final f = _tabFlags;
+      final page = await _repo.listThreads(
+        contacted: f.contacted,
+        uncontacted: f.uncontacted,
+        followUpDue: _filter.followUpDue ? true : null,
+        search: _filter.search,
+        cursor: state.nextCursor,
+      );
+      state = ThreadsState(
+        items: [...state.items, ...page.items],
+        nextCursor: page.nextCursor,
+        loading: false,
+      );
+    } catch (_) {
+      // Keep what we have; just stop the spinner.
+      state = ThreadsState(
+        items: state.items,
+        nextCursor: state.nextCursor,
+        loading: false,
+      );
+    }
+  }
+
+  Future<void> refresh() => load();
+}
+
+final threadsControllerProvider = StateNotifierProvider.autoDispose
+    .family<ThreadsController, ThreadsState, WaFilter>((ref, filter) {
+  return ThreadsController(ref.watch(whatsappRepositoryProvider), filter);
+});
+
+// --- Messages (older-message pagination) ----------------------------------
+
+class MessagesState {
+  final List<ChatMessage> items;
+  final bool loading;
+  final bool loadingOlder;
+  final bool hasOlder;
+  final Object? error;
+  const MessagesState({
+    this.items = const [],
+    this.loading = true,
+    this.loadingOlder = false,
+    this.hasOlder = false,
+    this.error,
+  });
+}
+
+class MessagesController extends StateNotifier<MessagesState> {
+  final WhatsappRepository _repo;
+  final String _threadId;
+  MessagesController(this._repo, this._threadId)
+      : super(const MessagesState()) {
+    load();
+  }
+
+  Future<void> load() async {
+    state = const MessagesState(loading: true);
+    try {
+      final msgs = await _repo.messages(_threadId);
+      state = MessagesState(
+        items: msgs,
+        loading: false,
+        hasOlder: msgs.length >= 50,
+      );
+    } catch (e) {
+      state = MessagesState(loading: false, error: e);
+    }
+  }
+
+  Future<void> loadOlder() async {
+    if (state.loading || state.loadingOlder || !state.hasOlder || state.items.isEmpty) {
+      return;
+    }
+    state = MessagesState(
+      items: state.items,
+      loading: false,
+      loadingOlder: true,
+      hasOlder: state.hasOlder,
+    );
+    try {
+      final older =
+          await _repo.messages(_threadId, before: state.items.first.createdAt);
+      state = MessagesState(
+        items: [...older, ...state.items],
+        loading: false,
+        hasOlder: older.length >= 50,
+      );
+    } catch (_) {
+      state = MessagesState(
+        items: state.items,
+        loading: false,
+        hasOlder: state.hasOlder,
+      );
+    }
+  }
+
+  /// Append a just-sent message (optimistic tail update).
+  void append(ChatMessage m) {
+    state = MessagesState(
+      items: [...state.items, m],
+      loading: false,
+      hasOlder: state.hasOlder,
+    );
+  }
+
+  Future<void> refresh() => load();
+}
+
+final messagesControllerProvider = StateNotifierProvider.autoDispose
+    .family<MessagesController, MessagesState, String>((ref, threadId) {
+  return MessagesController(ref.watch(whatsappRepositoryProvider), threadId);
+});

@@ -17,30 +17,30 @@ abstract class AppTheme {
           elevation: 0,
           surfaceTintColor: Colors.transparent,
         ),
-        cardTheme: CardTheme(
+        cardTheme: const CardThemeData(
           color: AppTokens.surfaceLight,
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.all(AppTokens.radiusLg),
-            side: const BorderSide(color: AppTokens.borderLight),
+            side: BorderSide(color: AppTokens.borderLight),
           ),
         ),
-        inputDecorationTheme: InputDecorationTheme(
+        inputDecorationTheme: const InputDecorationTheme(
           filled: true,
           fillColor: AppTokens.surfaceLight,
           border: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(AppTokens.radiusMd),
-            borderSide: const BorderSide(color: AppTokens.borderStrongLight),
+            borderRadius: BorderRadius.all(AppTokens.radiusMd),
+            borderSide: BorderSide(color: AppTokens.borderStrongLight),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(AppTokens.radiusMd),
-            borderSide: const BorderSide(color: AppTokens.borderStrongLight),
+            borderRadius: BorderRadius.all(AppTokens.radiusMd),
+            borderSide: BorderSide(color: AppTokens.borderStrongLight),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(AppTokens.radiusMd),
-            borderSide: const BorderSide(color: AppTokens.primary600, width: 1.5),
+            borderRadius: BorderRadius.all(AppTokens.radiusMd),
+            borderSide: BorderSide(color: AppTokens.primary600, width: 1.5),
           ),
-          contentPadding: const EdgeInsets.symmetric(
+          contentPadding: EdgeInsets.symmetric(
             horizontal: AppTokens.space4,
             vertical: AppTokens.space3,
           ),
@@ -87,30 +87,30 @@ abstract class AppTheme {
           elevation: 0,
           surfaceTintColor: Colors.transparent,
         ),
-        cardTheme: CardTheme(
+        cardTheme: const CardThemeData(
           color: AppTokens.surfaceDark,
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.all(AppTokens.radiusLg),
-            side: const BorderSide(color: AppTokens.borderDark),
+            side: BorderSide(color: AppTokens.borderDark),
           ),
         ),
-        inputDecorationTheme: InputDecorationTheme(
+        inputDecorationTheme: const InputDecorationTheme(
           filled: true,
           fillColor: AppTokens.surfaceMutedDark,
           border: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(AppTokens.radiusMd),
-            borderSide: const BorderSide(color: AppTokens.borderStrongDark),
+            borderRadius: BorderRadius.all(AppTokens.radiusMd),
+            borderSide: BorderSide(color: AppTokens.borderStrongDark),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(AppTokens.radiusMd),
-            borderSide: const BorderSide(color: AppTokens.borderStrongDark),
+            borderRadius: BorderRadius.all(AppTokens.radiusMd),
+            borderSide: BorderSide(color: AppTokens.borderStrongDark),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(AppTokens.radiusMd),
-            borderSide: const BorderSide(color: AppTokens.primary500, width: 1.5),
+            borderRadius: BorderRadius.all(AppTokens.radiusMd),
+            borderSide: BorderSide(color: AppTokens.primary500, width: 1.5),
           ),
-          contentPadding: const EdgeInsets.symmetric(
+          contentPadding: EdgeInsets.symmetric(
             horizontal: AppTokens.space4,
             vertical: AppTokens.space3,
           ),

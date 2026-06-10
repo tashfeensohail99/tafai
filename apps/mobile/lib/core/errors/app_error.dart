@@ -33,6 +33,14 @@ final class ServerError extends AppError {
   const ServerError(this.statusCode, this.message);
 }
 
+/// 409 — a write was rejected because of a conflict. For appointment booking
+/// the server includes [suggestedAt]: the next free slot the UI can offer.
+final class ConflictError extends AppError {
+  final String message;
+  final DateTime? suggestedAt;
+  const ConflictError(this.message, {this.suggestedAt});
+}
+
 final class UnknownError extends AppError {
   final Object? cause;
   const UnknownError([this.cause]);

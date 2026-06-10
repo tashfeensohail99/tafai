@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/auth/auth_controller.dart';
+import '../../../../core/errors/app_error.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/theme/tokens.dart';
-import '../../data/auth_repository.dart';
-import '../../../../core/errors/app_error.dart';
+import '../../../../core/widgets/app_states.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -39,24 +40,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      await ref.read(authRepositoryProvider).login(
+      await ref.read(authControllerProvider.notifier).login(
             email: _emailController.text.trim(),
             password: _passwordController.text,
           );
-      if (mounted) context.go(AppRoutes.dashboard);
+      // Navigation is handled by the router redirect on auth-state change.
     } on AppError catch (e) {
-      setState(() {
-        _errorMessage = switch (e) {
-          UnauthorizedError() => 'Invalid email or password.',
-          NetworkError(:final message) => message,
-          ServerError(:final message) => message,
-          _ => 'Something went wrong. Please try again.',
-        };
-      });
+      setState(() => _errorMessage = _friendly(e));
+    } catch (_) {
+      setState(() => _errorMessage = 'Something went wrong. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
+
+  String _friendly(AppError e) => switch (e) {
+        UnauthorizedError() => 'Invalid email or password.',
+        ServerError(statusCode: 423) =>
+          'Account locked after too many attempts. Try again in 15 minutes.',
+        ServerError(statusCode: 429) =>
+          'Too many attempts. Please wait a moment and try again.',
+        NetworkError(:final message) => message,
+        ServerError(:final message) => message,
+        _ => 'Something went wrong. Please try again.',
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -72,10 +79,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Brand
                     Text(
-                      'Tafsheen',
+                      'Tashfeen',
                       style: Theme.of(context).textTheme.displayLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppTokens.space1),
+                    Text(
+                      'Immigration Solutions',
+                      style: Theme.of(context).textTheme.titleMedium,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: AppTokens.space2),
@@ -85,43 +97,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: AppTokens.space8),
-
-                    // Error banner
                     if (_errorMessage != null) ...[
-                      Container(
-                        padding: const EdgeInsets.all(AppTokens.space4),
-                        decoration: BoxDecoration(
-                          color: AppTokens.statusDangerBg,
-                          borderRadius: const BorderRadius.all(AppTokens.radiusMd),
-                          border: Border.all(color: AppTokens.statusDanger.withOpacity(0.4)),
-                        ),
-                        child: Text(
-                          _errorMessage!,
-                          style: const TextStyle(
-                            color: AppTokens.statusDanger,
-                            fontSize: AppTokens.fontSizeSm,
-                          ),
-                        ),
-                      ),
+                      ErrorBanner(_errorMessage!),
                       const SizedBox(height: AppTokens.space4),
                     ],
-
-                    // Email
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
                       autocorrect: false,
-                      decoration: const InputDecoration(labelText: 'Email address'),
+                      decoration:
+                          const InputDecoration(labelText: 'Email address'),
                       validator: (v) {
-                        if (v == null || v.trim().isEmpty) return 'Email is required';
+                        if (v == null || v.trim().isEmpty) {
+                          return 'Email is required';
+                        }
                         if (!v.contains('@')) return 'Enter a valid email';
                         return null;
                       },
                     ),
                     const SizedBox(height: AppTokens.space4),
-
-                    // Password
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
@@ -135,8 +130,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 ? Icons.visibility_outlined
                                 : Icons.visibility_off_outlined,
                           ),
-                          onPressed: () =>
-                              setState(() => _obscurePassword = !_obscurePassword),
+                          onPressed: () => setState(
+                              () => _obscurePassword = !_obscurePassword),
                         ),
                       ),
                       validator: (v) {
@@ -145,20 +140,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       },
                     ),
                     const SizedBox(height: AppTokens.space6),
-
-                    // Submit button
                     ElevatedButton(
                       onPressed: _loading ? null : _submit,
                       child: _loading
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
+                          ? const ButtonSpinner()
                           : const Text('Sign in'),
+                    ),
+                    const SizedBox(height: AppTokens.space2),
+                    TextButton(
+                      onPressed: _loading
+                          ? null
+                          : () => context.push(AppRoutes.forgotPassword),
+                      child: const Text('Forgot password?'),
                     ),
                   ],
                 ),

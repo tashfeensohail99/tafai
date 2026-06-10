@@ -14,42 +14,31 @@ dependencies:
   # Navigation
   go_router: ^14.0.0
 
-  # State management
+  # State management (plain Riverpod — no code generation)
   flutter_riverpod: ^2.5.0
-  riverpod_annotation: ^2.3.0
 
   # Networking
   dio: ^5.4.0
-  retrofit: ^4.1.0
 
-  # Secure storage (JWT tokens)
+  # Secure storage — refresh token in the keychain; access token in memory
   flutter_secure_storage: ^9.0.0
 
   # Local preferences
   shared_preferences: ^2.2.3
 
-  # UI
-  lucide_icons: ^1.0.0
-
-  # Utilities
-  freezed_annotation: ^2.4.0
-  json_annotation: ^4.9.0
+  # Date / number formatting
   intl: ^0.19.0
-  equatable: ^2.0.5
+
+  # Launch tel: / wa.me / mailto: for lead quick-actions
+  url_launcher: ^6.3.0
+
+  # File picking (media send, lead file upload)
+  file_picker: ^8.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
 
-  # Code generation
-  build_runner: ^2.4.0
-  freezed: ^2.4.0
-  json_serializable: ^6.8.0
-  riverpod_generator: ^2.3.0
-  retrofit_generator: ^8.1.0
-
 flutter:
   uses-material-design: true
-  assets:
-    - assets/images/

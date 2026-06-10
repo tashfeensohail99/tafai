@@ -5,7 +5,9 @@ import '../auth/token_storage.dart';
 
 const _defaultBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://10.0.2.2:3001', // Android emulator → host localhost
+  // Production API by default so device/emulator builds work out of the box.
+  // Override for local dev with --dart-define=API_BASE_URL=http://10.0.2.2:3001
+  defaultValue: 'https://backend-production-5a89.up.railway.app',
 );
 
 /// Creates a Dio instance with:

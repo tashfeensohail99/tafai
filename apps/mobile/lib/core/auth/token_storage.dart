@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// Keys used in secure storage
 abstract class _StorageKeys {
-  static const accessToken = 'access_token';
   static const refreshToken = 'refresh_token';
 }
 

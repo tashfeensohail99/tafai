@@ -32,7 +32,15 @@ class _CallHostState extends ConsumerState<CallHost>
     WidgetsBinding.instance.addObserver(this);
     _wirePush();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _sync(ref.read(authControllerProvider));
+      if (!mounted) return;
+      _sync(ref.read(authControllerProvider));
+      // Replay a buffered cold-start CallKit "Accept" only AFTER the first
+      // frame: the handler mutates the call provider, and Riverpod forbids
+      // modifying providers while the first widget tree is still building
+      // (doing it in initState red-screened the app on lock-screen accepts).
+      final push = CallPushService.instance;
+      push.replayPendingAccept();
+      push.checkColdStartAccept();
     });
   }
 
@@ -93,11 +101,10 @@ class _CallHostState extends ConsumerState<CallHost>
     push.onDecline = (callId) {
       ref.read(callControllerProvider.notifier).rejectById(callId);
     };
-    // If the user accepted from the lock screen and the app cold-started, the
-    // accept arrived before this handler existed — deliver it now so we go
-    // straight into the call instead of landing on the home screen.
-    push.replayPendingAccept();
-    push.checkColdStartAccept();
+    // NOTE: the cold-start accept replay (replayPendingAccept /
+    // checkColdStartAccept) is deliberately NOT here — _wirePush runs in
+    // initState, mid-first-build, where call-state changes are illegal.
+    // It happens in initState's post-frame callback instead.
   }
 
   void _sync(AuthState s) {

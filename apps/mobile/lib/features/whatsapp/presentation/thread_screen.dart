@@ -7,6 +7,7 @@ import '../../../core/errors/app_error.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
 import '../../../core/widgets/app_states.dart';
+import '../../calls/application/call_controller.dart';
 import '../../leads/presentation/lead_detail_screen.dart';
 import '../data/whatsapp_providers.dart';
 import '../data/whatsapp_repository.dart';
@@ -188,59 +189,14 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
+  /// Place a real in-app WhatsApp voice call to this contact. The global
+  /// CallOverlay (mounted above every route) takes over the UI from here.
   void _initiateCall() {
-    final phone = _thread.phone;
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(16)),
-        ),
-        title: const Text('WhatsApp Call'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 60,
-              height: 60,
-              decoration: const BoxDecoration(
-                color: AppTokens.waTeal,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.call, color: Colors.white, size: 28),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _thread.displayName,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-            ),
-            const SizedBox(height: 4),
-            Text(phone, style: const TextStyle(color: AppTokens.textMutedLight, fontSize: 13)),
-            const SizedBox(height: 12),
-            const Text(
-              'Initiating a call via the WhatsApp CRM. The contact will receive a WhatsApp call on their device.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, height: 1.4),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              _toast('Call initiated to $phone');
-            },
-            icon: const Icon(Icons.call, size: 16),
-            label: const Text('Call'),
-            style: FilledButton.styleFrom(backgroundColor: AppTokens.waTeal),
-          ),
-        ],
-      ),
-    );
+    ref.read(callControllerProvider.notifier).startOutbound(
+          threadId: _threadId,
+          name: _thread.displayName,
+          phone: _thread.phone,
+        );
   }
 
   @override

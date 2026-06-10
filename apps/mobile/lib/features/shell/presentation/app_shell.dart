@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -66,14 +67,26 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_tabs[index].label),
+        backgroundColor: AppTokens.brandNavy,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+        title: Text(
+          _tabs[index].label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+            letterSpacing: -0.3,
+          ),
+        ),
         actions: [
           IconButton(
             tooltip: 'Notifications',
             icon: Badge.count(
               count: unread,
               isLabelVisible: unread > 0,
-              child: const Icon(Icons.notifications_outlined),
+              child: const Icon(Icons.notifications_outlined, color: Colors.white),
             ),
             onPressed: _openNotifications,
           ),
@@ -81,13 +94,13 @@ class _AppShellState extends ConsumerState<AppShell> {
             tooltip: 'Account',
             icon: CircleAvatar(
               radius: 14,
-              backgroundColor: AppTokens.primary100,
+              backgroundColor: AppTokens.brandNavyLight,
               child: Text(
                 user?.initials ?? '?',
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  color: AppTokens.primary700,
+                  color: AppTokens.brandSilverText,
                 ),
               ),
             ),
@@ -165,18 +178,46 @@ class _AppShellState extends ConsumerState<AppShell> {
           InboxScreen(),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        onDestinationSelected: (i) =>
-            ref.read(shellIndexProvider.notifier).state = i,
-        destinations: [
-          for (final t in _tabs)
-            NavigationDestination(
-              icon: Icon(t.icon),
-              selectedIcon: Icon(t.selectedIcon),
-              label: t.label,
-            ),
-        ],
+      bottomNavigationBar: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: AppTokens.brandNavy,
+          surfaceTintColor: Colors.transparent,
+          indicatorColor: AppTokens.brandNavyLight,
+          height: 64,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 11,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected
+                  ? Colors.white
+                  : Colors.white.withValues(alpha: 0.55),
+            );
+          }),
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return IconThemeData(
+              color: selected
+                  ? Colors.white
+                  : Colors.white.withValues(alpha: 0.55),
+              size: 22,
+            );
+          }),
+        ),
+        child: NavigationBar(
+          selectedIndex: index,
+          onDestinationSelected: (i) =>
+              ref.read(shellIndexProvider.notifier).state = i,
+          destinations: [
+            for (final t in _tabs)
+              NavigationDestination(
+                icon: Icon(t.icon),
+                selectedIcon: Icon(t.selectedIcon),
+                label: t.label,
+              ),
+          ],
+        ),
       ),
     );
   }

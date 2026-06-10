@@ -4,7 +4,14 @@ import 'package:flutter/material.dart';
 /// All feature screens must read colors/typography from here,
 /// never hardcode hex values directly.
 abstract class AppTokens {
-  // Brand
+  // Tashfeen brand navy (from company logo)
+  static const brandNavy = Color(0xFF0D1B3A);       // logo background
+  static const brandNavyMid = Color(0xFF162040);    // slightly lighter
+  static const brandNavyLight = Color(0xFF1E2E54);  // hover/focus
+  static const brandNavySurface = Color(0xFF243266);// accent surface
+  static const brandSilverText = Color(0xFFBBCCE4); // text on navy
+
+  // Blue action (buttons, links — distinct from brand navy)
   static const primary50 = Color(0xFFEFF6FF);
   static const primary100 = Color(0xFFDBEAFE);
   static const primary500 = Color(0xFF3B82F6);

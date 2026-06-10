@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../../../core/theme/tokens.dart';
 import '../../../core/widgets/logo.dart';
 
 /// Shown while the session is being restored (auth status == unknown).
@@ -7,28 +9,31 @@ class SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF0F172A) : Colors.white,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TashfeenLogo(
-              size: 90,
-              showText: true,
-              textColor: isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280),
-            ),
-            const SizedBox(height: 52),
-            const SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: Color(0xFF2563EB),
+    // Always use brand navy — mirrors the company logo banner exactly.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: AppTokens.brandNavy,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const TashfeenLogo(
+                size: 96,
+                showText: true,
+                textColor: AppTokens.brandSilverText,
               ),
-            ),
-          ],
+              const SizedBox(height: 56),
+              SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white.withValues(alpha: 0.5),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

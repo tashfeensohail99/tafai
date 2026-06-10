@@ -5,7 +5,11 @@ import 'app_error.dart';
 AppError mapDioError(DioException e) {
   final status = e.response?.statusCode;
   final body = e.response?.data;
-  final message = (body is Map ? body['message']?.toString() : null) ?? e.message ?? 'Unknown error';
+  final rawMessage = body is Map ? body['message'] : null;
+  // NestJS validation errors return `message` as a string[] — join them.
+  final message = rawMessage is List
+      ? rawMessage.map((m) => m.toString()).join('\n')
+      : (rawMessage?.toString() ?? e.message ?? 'Unknown error');
 
   if (e.type == DioExceptionType.connectionTimeout ||
       e.type == DioExceptionType.receiveTimeout ||
@@ -19,9 +23,18 @@ AppError mapDioError(DioException e) {
     401 => const UnauthorizedError(),
     403 => const ForbiddenError(),
     404 => NotFoundError(message),
+    409 => _parseConflict(body, message),
     422 => _parseValidationError(body) ?? ServerError(422, message),
     _ => ServerError(status ?? 0, message),
   };
+}
+
+ConflictError _parseConflict(dynamic body, String message) {
+  DateTime? suggested;
+  if (body is Map && body['suggestedAt'] is String) {
+    suggested = DateTime.tryParse(body['suggestedAt'] as String);
+  }
+  return ConflictError(message, suggestedAt: suggested);
 }
 
 ValidationError? _parseValidationError(dynamic body) {

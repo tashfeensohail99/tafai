@@ -13,6 +13,7 @@ import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../../../notifications/notifications.service';
+import { PushService } from '../../../push/push.service';
 import { WhatsAppAssignmentService } from '../../routing/assignment.service';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
 import { computeSlaDeadline, type BusinessHours } from '../../routing/business-hours';
@@ -158,6 +159,10 @@ export class WebhookIngestProcessor extends WorkerHost {
     private readonly notifications: NotificationsService,
     private readonly assignment: WhatsAppAssignmentService,
     private readonly publisher: WhatsAppRealtimePublisher,
+    // High-priority FCM data push so a backgrounded / locked mobile device
+    // rings for the call (the open-tab socket emit above only reaches the web
+    // CallDock and foregrounded apps).
+    private readonly push: PushService,
     // Used to enqueue a re-host job for every inbound media (image / video
     // / audio / document / sticker). Meta's CDN URLs expire ~5 min, so we
     // copy the bytes to our own S3 bucket on first sight and persist the
@@ -374,6 +379,15 @@ export class WebhookIngestProcessor extends WorkerHost {
           WHATSAPP_WS_EVENTS.CALL_ENDED,
           { callId: existing.id },
         );
+        // Dismiss any native incoming-call ring on the rep's backgrounded /
+        // locked mobile device (the socket above only reaches foreground apps).
+        const emp = await this.prisma.employee.findUnique({
+          where: { id: existing.assignedEmployeeId },
+          select: { user: { select: { id: true } } },
+        });
+        if (emp?.user?.id) {
+          await this.push.sendCallCancel(emp.user.id, existing.id);
+        }
       }
       // Inbound call that was never answered → invite the caller to book a
       // time so the AI bot can schedule a callback/appointment. Guarded by the
@@ -591,6 +605,18 @@ export class WebhookIngestProcessor extends WorkerHost {
             threadId: thread.id,
           },
         );
+        // Also wake the rep's mobile app with a high-priority data push so it
+        // rings natively even when backgrounded / screen-locked. No-op until an
+        // FCM key is set in Admin → API Keys and a device has registered.
+        if (userId) {
+          await this.push.sendCallInvite(userId, {
+            callId: callRow.id,
+            from: phone,
+            leadName: who,
+            leadId: lead?.id ?? null,
+            threadId: thread.id,
+          });
+        }
       }
     } catch (err) {
       this.log.warn(`call routing/notify failed for ${call.id}: ${(err as Error).message}`);

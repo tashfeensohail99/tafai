@@ -13,9 +13,10 @@ class AuthRepository {
 
   AuthRepository(this._client, this._tokenStorage);
 
-  /// POST /auth/login
-  /// Returns the authenticated user and stores tokens.
-  Future<AuthUser> login({
+  /// POST /auth/login — returns **tokens only**. Persists them; the caller then
+  /// loads the profile via [me]. (The login response intentionally carries no
+  /// user object — see API_AUTH_CONTRACT.md.)
+  Future<void> login({
     required String email,
     required String password,
   }) async {
@@ -24,29 +25,25 @@ class AuthRepository {
         '/auth/login',
         data: {'email': email, 'password': password},
       );
-      final data = res.data!;
-      _tokenStorage.setAccessToken(data['accessToken'] as String);
-      if (data['refreshToken'] != null) {
-        await _tokenStorage.saveRefreshToken(data['refreshToken'] as String);
-      }
-      return AuthUser.fromJson(data['user'] as Map<String, dynamic>);
+      await _storeTokens(res.data!);
     } on DioException catch (e) {
       throw mapDioError(e);
     }
   }
 
-  /// POST /auth/logout — revokes all sessions server-side
+  /// POST /auth/logout — revokes all sessions server-side, then clears local tokens.
   Future<void> logout() async {
     try {
       await _client.post<void>('/auth/logout');
     } on DioException catch (_) {
-      // Ignore network errors on logout — clear local tokens regardless
+      // Ignore network errors on logout — clear local tokens regardless.
     } finally {
       await _tokenStorage.clearAll();
     }
   }
 
-  /// POST /auth/refresh — rotate refresh token
+  /// POST /auth/refresh — rotate tokens. Throws [UnauthorizedError] when there
+  /// is no stored refresh token or it is rejected.
   Future<void> refresh() async {
     final refreshToken = await _tokenStorage.getRefreshToken();
     if (refreshToken == null) throw const UnauthorizedError();
@@ -55,17 +52,13 @@ class AuthRepository {
         '/auth/refresh',
         data: {'refreshToken': refreshToken},
       );
-      final data = res.data!;
-      _tokenStorage.setAccessToken(data['accessToken'] as String);
-      if (data['refreshToken'] != null) {
-        await _tokenStorage.saveRefreshToken(data['refreshToken'] as String);
-      }
+      await _storeTokens(res.data!);
     } on DioException catch (e) {
       throw mapDioError(e);
     }
   }
 
-  /// GET /auth/me — fetch current user profile
+  /// GET /auth/me — current user profile (roles, permissions, employee, flag).
   Future<AuthUser> me() async {
     try {
       final res = await _client.get<Map<String, dynamic>>('/auth/me');
@@ -75,7 +68,25 @@ class AuthRepository {
     }
   }
 
-  /// POST /auth/password/reset-request
+  /// POST /auth/password/change — change own password.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _client.post<Map<String, dynamic>>(
+        '/auth/password/change',
+        data: {
+          'currentPassword': currentPassword,
+          'newPassword': newPassword,
+        },
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /auth/password/reset-request — always 200 (no user enumeration).
   Future<void> requestPasswordReset(String email) async {
     try {
       await _client.post<void>(
@@ -84,6 +95,15 @@ class AuthRepository {
       );
     } on DioException catch (e) {
       throw mapDioError(e);
+    }
+  }
+
+  Future<void> _storeTokens(Map<String, dynamic> data) async {
+    final access = data['accessToken'] as String?;
+    if (access != null) _tokenStorage.setAccessToken(access);
+    final refreshToken = data['refreshToken'] as String?;
+    if (refreshToken != null) {
+      await _tokenStorage.saveRefreshToken(refreshToken);
     }
   }
 }

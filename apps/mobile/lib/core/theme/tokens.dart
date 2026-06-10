@@ -4,7 +4,14 @@ import 'package:flutter/material.dart';
 /// All feature screens must read colors/typography from here,
 /// never hardcode hex values directly.
 abstract class AppTokens {
-  // Brand
+  // Tashfeen brand navy (from company logo)
+  static const brandNavy = Color(0xFF0D1B3A);       // logo background
+  static const brandNavyMid = Color(0xFF162040);    // slightly lighter
+  static const brandNavyLight = Color(0xFF1E2E54);  // hover/focus
+  static const brandNavySurface = Color(0xFF243266);// accent surface
+  static const brandSilverText = Color(0xFFBBCCE4); // text on navy
+
+  // Blue action (buttons, links — distinct from brand navy)
   static const primary50 = Color(0xFFEFF6FF);
   static const primary100 = Color(0xFFDBEAFE);
   static const primary500 = Color(0xFF3B82F6);
@@ -71,8 +78,43 @@ abstract class AppTokens {
 
   // Border radius
   static const radiusSm = Radius.circular(4);
-  static const radiusMd = Radius.circular(6);
-  static const radiusLg = Radius.circular(8);
-  static const radiusXl = Radius.circular(12);
+  static const radiusMd = Radius.circular(8);
+  static const radiusLg = Radius.circular(12);
+  static const radiusXl = Radius.circular(18);
+  static const radius2xl = Radius.circular(24);
   static const radiusFull = Radius.circular(9999);
+
+  // WhatsApp chat colors
+  static const waTeal = Color(0xFF128C7E);
+  static const waTealDark = Color(0xFF075E54);
+  static const waBubbleOut = Color(0xFFDCF8C6);
+  static const waBubbleOutText = Color(0xFF111827);
+  static const waBubbleIn = Color(0xFFFFFFFF);
+  static const waBubbleInText = Color(0xFF111827);
+  static const waChatBg = Color(0xFFECE5DD);
+  // Dark mode WA
+  static const waBubbleOutDark = Color(0xFF005C4B);
+  static const waBubbleOutTextDark = Color(0xFFE9FFEA);
+  static const waBubbleInDark = Color(0xFF1F2C34);
+  static const waBubbleInTextDark = Color(0xFFE9EDF0);
+  static const waChatBgDark = Color(0xFF0B141A);
+  static const waHeaderDark = Color(0xFF1F2C34);
+
+  // ── Premium layout tokens ───────────────────────────────────────────────────
+  /// Page background — cool blue-grey; cards sit on top with a white + shadow look.
+  static const pageBackground = Color(0xFFEEF1F8);
+
+  /// Multi-layer card shadow used by all premium card components.
+  static const List<BoxShadow> cardShadow = [
+    BoxShadow(color: Color(0x09000000), blurRadius: 10, offset: Offset(0, 1)),
+    BoxShadow(color: Color(0x06000000), blurRadius: 20, offset: Offset(0, 4)),
+  ];
+  static const List<BoxShadow> cardShadowSm = [
+    BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 1)),
+  ];
+
+  /// 14 dp rounded corners — standard premium card radius.
+  static const radiusCard   = Radius.circular(14.0);
+  /// 18 dp — for larger hero cards.
+  static const radiusCardLg = Radius.circular(18.0);
 }

@@ -1,0 +1,226 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/errors/app_error.dart';
+import '../../../core/theme/tokens.dart';
+import '../../../core/widgets/app_states.dart';
+import '../data/leads_repository.dart';
+import '../domain/lead.dart';
+
+/// Opens the create/edit lead form. Pass [existing] to edit; omit to create.
+/// Returns the saved [Lead] (the new lead on create, or the original object on
+/// a successful edit) or null if the user dismissed it.
+Future<Lead?> showLeadForm(BuildContext context, {Lead? existing}) {
+  return showModalBottomSheet<Lead>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => _LeadFormSheet(existing: existing),
+  );
+}
+
+class _LeadFormSheet extends ConsumerStatefulWidget {
+  final Lead? existing;
+  const _LeadFormSheet({this.existing});
+
+  @override
+  ConsumerState<_LeadFormSheet> createState() => _LeadFormSheetState();
+}
+
+class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
+  late final TextEditingController _first;
+  late final TextEditingController _last;
+  late final TextEditingController _phone;
+  late final TextEditingController _email;
+  late final TextEditingController _country;
+  late final TextEditingController _service;
+  late final TextEditingController _source;
+  late final TextEditingController _notes;
+  String? _priority;
+  bool _busy = false;
+  String? _error;
+
+  bool get _isEdit => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _first = TextEditingController(text: e?.firstName ?? '');
+    _last = TextEditingController(text: e?.lastName ?? '');
+    _phone = TextEditingController(text: e?.phone ?? '');
+    _email = TextEditingController(text: e?.email ?? '');
+    _country = TextEditingController(text: e?.targetCountry ?? '');
+    _service = TextEditingController(text: e?.serviceInterest ?? '');
+    _source = TextEditingController(text: e?.sourceChannel ?? '');
+    _notes = TextEditingController(text: e?.notes ?? '');
+    _priority = e?.priority;
+  }
+
+  @override
+  void dispose() {
+    for (final c in [
+      _first,
+      _last,
+      _phone,
+      _email,
+      _country,
+      _service,
+      _source,
+      _notes,
+    ]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final first = _first.text.trim();
+    final last = _last.text.trim();
+    final phone = _phone.text.trim();
+    if (first.isEmpty || last.isEmpty || phone.isEmpty) {
+      setState(() => _error = 'First name, last name and phone are required.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final repo = ref.read(leadsRepositoryProvider);
+    try {
+      if (_isEdit) {
+        await repo.update(
+          widget.existing!.id,
+          firstName: first,
+          lastName: last,
+          phone: phone,
+          email: _email.text.trim(),
+          serviceInterest: _service.text.trim(),
+          targetCountry: _country.text.trim(),
+          priority: _priority,
+          notes: _notes.text.trim(),
+        );
+        if (mounted) Navigator.of(context).pop(widget.existing);
+      } else {
+        final created = await repo.create(
+          firstName: first,
+          lastName: last,
+          phone: phone,
+          email: _email.text.trim(),
+          targetCountry: _country.text.trim(),
+          serviceInterest: _service.text.trim(),
+          sourceChannel: _source.text.trim(),
+          priority: _priority,
+          notes: _notes.text.trim(),
+        );
+        if (mounted) Navigator.of(context).pop(created);
+      }
+    } on AppError catch (e) {
+      if (mounted) setState(() => _error = messageForError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                AppTokens.space4, 0, AppTokens.space4, AppTokens.space5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_isEdit ? 'Edit lead' : 'New lead', style: t.titleMedium),
+                const SizedBox(height: AppTokens.space4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _field(_first, 'First name *',
+                          cap: TextCapitalization.words),
+                    ),
+                    const SizedBox(width: AppTokens.space3),
+                    Expanded(
+                      child: _field(_last, 'Last name *',
+                          cap: TextCapitalization.words),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppTokens.space3),
+                _field(_phone, 'Phone *', keyboard: TextInputType.phone),
+                const SizedBox(height: AppTokens.space3),
+                _field(_email, 'Email', keyboard: TextInputType.emailAddress),
+                const SizedBox(height: AppTokens.space3),
+                _field(_service, 'Service interest',
+                    cap: TextCapitalization.sentences),
+                const SizedBox(height: AppTokens.space3),
+                _field(_country, 'Target country',
+                    cap: TextCapitalization.words),
+                if (!_isEdit) ...[
+                  const SizedBox(height: AppTokens.space3),
+                  _field(_source, 'Source channel'),
+                ],
+                const SizedBox(height: AppTokens.space4),
+                Text('Priority', style: t.labelLarge),
+                const SizedBox(height: AppTokens.space2),
+                Wrap(
+                  spacing: AppTokens.space2,
+                  children: [
+                    for (final p in kLeadPriorities)
+                      ChoiceChip(
+                        label: Text(leadPriorityLabel(p)),
+                        selected: _priority == p,
+                        onSelected: (sel) =>
+                            setState(() => _priority = sel ? p : null),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppTokens.space3),
+                _field(_notes, 'Notes', maxLines: 3,
+                    cap: TextCapitalization.sentences),
+                if (_error != null) ...[
+                  const SizedBox(height: AppTokens.space3),
+                  ErrorBanner(_error!),
+                ],
+                const SizedBox(height: AppTokens.space4),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _busy ? null : _save,
+                    child: _busy
+                        ? const ButtonSpinner()
+                        : Text(_isEdit ? 'Save changes' : 'Create lead'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    TextInputType? keyboard,
+    int maxLines = 1,
+    TextCapitalization cap = TextCapitalization.none,
+  }) {
+    return TextField(
+      controller: c,
+      keyboardType: keyboard,
+      maxLines: maxLines,
+      textCapitalization: cap,
+      decoration: InputDecoration(labelText: label, isDense: true),
+    );
+  }
+}

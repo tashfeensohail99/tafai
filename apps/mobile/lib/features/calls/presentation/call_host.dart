@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/auth/auth_controller.dart';
 import '../../../core/auth/token_storage.dart';
+import '../../auth/data/auth_repository.dart';
 import '../application/call_controller.dart';
 import '../data/call_api.dart';
 import '../data/push_service.dart';
@@ -23,14 +24,45 @@ class CallHost extends ConsumerStatefulWidget {
   ConsumerState<CallHost> createState() => _CallHostState();
 }
 
-class _CallHostState extends ConsumerState<CallHost> {
+class _CallHostState extends ConsumerState<CallHost>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _wirePush();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _sync(ref.read(authControllerProvider));
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // OEMs (XOS etc.) freeze the socket while backgrounded — make sure we're
+    // connected again the moment the rep comes back, or rings never arrive.
+    if (state == AppLifecycleState.resumed) {
+      ref.read(realtimeServiceProvider).ensureConnected();
+    }
+  }
+
+  /// Fresh access token for the socket handshake. Pings /auth/me first so the
+  /// API client's interceptor refreshes an expired token (and restores the
+  /// persisted one on cold start) before we hand it to the gateway.
+  Future<String?> _freshToken() async {
+    final storage = ref.read(tokenStorageProvider);
+    try {
+      await ref.read(authRepositoryProvider).me();
+    } catch (_) {
+      // Offline or signed out — return whatever we have; the retry loop will
+      // try again with backoff.
+    }
+    return storage.accessToken;
   }
 
   void _wirePush() {
@@ -67,8 +99,7 @@ class _CallHostState extends ConsumerState<CallHost> {
   void _sync(AuthState s) {
     final realtime = ref.read(realtimeServiceProvider);
     if (s.isAuthenticated) {
-      final token = ref.read(tokenStorageProvider).accessToken;
-      if (token != null) realtime.connect(token);
+      realtime.start(_freshToken);
       // Ensure the controller is alive so it subscribes to call events.
       ref.read(callControllerProvider.notifier);
       // Register this device for high-priority call pushes (no-op until an FCM

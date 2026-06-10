@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,79 +10,129 @@ import '../domain/call_models.dart';
 
 /// Wraps the Socket.IO connection to the backend `/whatsapp/realtime` gateway.
 /// The gateway authenticates from `handshake.auth.token` (the JWT access token)
-/// and, on connect, joins the per-employee room — so this client only has to
-/// connect with the rep's token and listen for the three call events. Call
-/// rings are fanned out to the rep's room by the backend; no client-side join.
+/// and, on connect, joins the per-employee room — call rings are fanned out to
+/// that room, so this client only has to stay connected and listen.
+///
+/// Reconnection is managed HERE (socket.io's built-in reconnect is disabled):
+/// the built-in path re-sends the token captured at connect time, so once that
+/// access token expired every reconnect was rejected ("Unauthorized") and the
+/// app silently stopped receiving incoming-call rings. Each retry now awaits
+/// [_tokenProvider] for a FRESH token first.
 class RealtimeService {
   io.Socket? _socket;
   final _events = StreamController<RealtimeCallEvent>.broadcast();
   bool _connected = false;
-  String? _token;
+  bool _enabled = false;
+  bool _connecting = false;
+  Future<String?> Function()? _tokenProvider;
+  Timer? _retryTimer;
+  int _retryAttempt = 0;
 
   /// Broadcast stream of inbound call signaling events.
   Stream<RealtimeCallEvent> get events => _events.stream;
 
   bool get isConnected => _connected;
 
-  /// (Re)connect with the given JWT. No-op if already connected with the same
-  /// token. Safe to call repeatedly (e.g. on auth refresh / app resume).
-  void connect(String token) {
-    if (_socket != null && _token == token && _connected) return;
-    // Token changed or first connect → tear down any stale socket first.
-    if (_socket != null) {
-      _disposeSocket();
+  /// Enable the connection. [tokenProvider] is awaited before every
+  /// (re)connect attempt so the handshake always carries a valid token.
+  /// Safe to call repeatedly.
+  void start(Future<String?> Function() tokenProvider) {
+    _tokenProvider = tokenProvider;
+    _enabled = true;
+    _retryAttempt = 0;
+    _connect();
+  }
+
+  /// Kick a reconnect if we're enabled but not connected (e.g. on app resume —
+  /// OEMs like XOS freeze sockets in the background).
+  void ensureConnected() {
+    if (_enabled && !_connected && !_connecting) {
+      _retryAttempt = 0;
+      _connect();
     }
-    _token = token;
+  }
 
-    final socket = io.io(
-      apiBaseUrl,
-      <String, dynamic>{
-        'path': '/whatsapp/realtime',
-        'transports': ['websocket'],
-        'autoConnect': false,
-        'forceNew': true,
-        'auth': {'token': token},
-        // Resilience: keep retrying with backoff if the network drops.
-        'reconnection': true,
-        'reconnectionAttempts': double.infinity,
-        'reconnectionDelay': 1000,
-        'reconnectionDelayMax': 8000,
-      },
-    );
+  Future<void> _connect() async {
+    if (!_enabled || _connecting) return;
+    _connecting = true;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    try {
+      final token = await _tokenProvider?.call();
+      if (!_enabled) return;
+      if (token == null || token.isEmpty) {
+        _scheduleRetry();
+        return;
+      }
 
-    socket.onConnect((_) {
-      _connected = true;
-      if (kDebugMode) debugPrint('[realtime] connected');
-    });
-    socket.onDisconnect((_) {
-      _connected = false;
-      if (kDebugMode) debugPrint('[realtime] disconnected');
-    });
-    socket.onConnectError((e) {
-      _connected = false;
-      if (kDebugMode) debugPrint('[realtime] connect_error: $e');
-    });
+      _disposeSocket();
+      final socket = io.io(
+        apiBaseUrl,
+        <String, dynamic>{
+          'path': '/whatsapp/realtime',
+          'transports': ['websocket'],
+          'autoConnect': false,
+          'forceNew': true,
+          'auth': {'token': token},
+          // Built-in reconnection re-uses the (possibly expired) handshake
+          // token forever — we retry ourselves with a fresh one instead.
+          'reconnection': false,
+        },
+      );
 
-    socket.on('whatsapp.call.incoming', (data) {
-      final map = _asMap(data);
-      if (map != null) _events.add(CallIncoming.fromJson(map));
-    });
-    socket.on('whatsapp.call.answered', (data) {
-      final map = _asMap(data);
-      if (map != null) _events.add(CallAnswered.fromJson(map));
-    });
-    socket.on('whatsapp.call.ended', (data) {
-      final map = _asMap(data);
-      if (map != null) _events.add(CallEnded.fromJson(map));
-    });
+      socket.onConnect((_) {
+        _connected = true;
+        _retryAttempt = 0;
+        if (kDebugMode) debugPrint('[realtime] connected');
+      });
+      socket.onDisconnect((_) {
+        _connected = false;
+        if (kDebugMode) debugPrint('[realtime] disconnected');
+        _scheduleRetry();
+      });
+      socket.onConnectError((e) {
+        _connected = false;
+        if (kDebugMode) debugPrint('[realtime] connect_error: $e');
+        _scheduleRetry();
+      });
 
-    socket.connect();
-    _socket = socket;
+      socket.on('whatsapp.call.incoming', (data) {
+        final map = _asMap(data);
+        if (map != null) _events.add(CallIncoming.fromJson(map));
+      });
+      socket.on('whatsapp.call.answered', (data) {
+        final map = _asMap(data);
+        if (map != null) _events.add(CallAnswered.fromJson(map));
+      });
+      socket.on('whatsapp.call.ended', (data) {
+        final map = _asMap(data);
+        if (map != null) _events.add(CallEnded.fromJson(map));
+      });
+
+      socket.connect();
+      _socket = socket;
+    } finally {
+      _connecting = false;
+    }
+  }
+
+  void _scheduleRetry() {
+    if (!_enabled || _retryTimer != null) return;
+    // 2s, 4s, 8s, 16s, then 30s forever.
+    final seconds = math.min(30, 2 << math.min(_retryAttempt, 3));
+    _retryAttempt++;
+    _retryTimer = Timer(Duration(seconds: seconds), () {
+      _retryTimer = null;
+      _connect();
+    });
   }
 
   void disconnect() {
+    _enabled = false;
+    _tokenProvider = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _disposeSocket();
-    _token = null;
     _connected = false;
   }
 
@@ -96,7 +147,7 @@ class RealtimeService {
   }
 
   void dispose() {
-    _disposeSocket();
+    disconnect();
     _events.close();
   }
 

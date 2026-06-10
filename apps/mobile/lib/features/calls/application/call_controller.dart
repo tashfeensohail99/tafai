@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../data/call_api.dart';
+import '../data/push_service.dart';
 import '../data/realtime_service.dart';
 import '../domain/call_models.dart';
 
@@ -47,10 +48,23 @@ class CallController extends StateNotifier<CallState> {
       case CallIncoming():
         // Already on a call → ignore (web behaviour). The backend will time out.
         if (state.isActive) return;
-        prepareIncoming(e);
+        // Ring NATIVELY via CallKit for a real phone-call experience (system
+        // ringtone, full-screen over the lock screen). This is the foreground
+        // path; the FCM background handler shows the same CallKit screen when
+        // the app is backgrounded. Accept/Decline come back through
+        // CallHost → onAccept/onDecline. The plugin dedupes by call id, so a
+        // socket + push race just updates the one screen.
+        unawaited(showIncomingCallkit(IncomingCallPush(
+          callId: e.callId,
+          from: e.from,
+          leadName: e.leadName,
+          leadId: e.leadId,
+          threadId: e.threadId,
+        )));
       case CallAnswered():
         _onRemoteAnswer(e);
       case CallEnded():
+        unawaited(endCallkit(e.callId));
         if (e.callId == state.callId) {
           _teardown(reason: 'Call ended');
         }
@@ -406,6 +420,10 @@ class CallController extends StateNotifier<CallState> {
     bool terminal = true,
     bool error = false,
   }) {
+    // Dismiss any native CallKit incoming/ongoing screen for this call.
+    final callkitId = state.callId;
+    if (callkitId != null) unawaited(endCallkit(callkitId));
+
     _ringTimeout?.cancel();
     _dialTimeout?.cancel();
     _tick?.cancel();

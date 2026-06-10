@@ -64,11 +64,15 @@ Future<void> showIncomingCallkit(IncomingCallPush call) async {
     android: const AndroidParams(
       isCustomNotification: true,
       isShowLogo: false,
+      // Play the device's default ringtone for the whole ring (loops).
       ringtonePath: 'system_ringtone_default',
       backgroundColor: '#0D1B3A',
       actionColor: '#2563EB',
       incomingCallNotificationChannelName: 'Incoming WhatsApp Calls',
-      isShowCallID: false,
+      // Full-screen call UI over the lock screen (like a real phone call),
+      // and let it wake/turn on the screen.
+      isShowFullLockedScreen: true,
+      isShowCallID: true,
     ),
   );
   await FlutterCallkitIncoming.showCallkitIncoming(params);

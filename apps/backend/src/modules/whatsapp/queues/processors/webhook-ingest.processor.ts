@@ -906,6 +906,10 @@ export class WebhookIngestProcessor extends WorkerHost {
             title: `New WhatsApp from ${who}`,
             body: preview,
             link: '/sales/inbox',
+            // Mobile: tap opens this chat; tag collapses per-thread so the
+            // newest message replaces the previous notification.
+            pushData: { threadId: thread.id },
+            pushTag: thread.id,
           });
         }
       }

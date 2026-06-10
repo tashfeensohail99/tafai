@@ -39,7 +39,14 @@ export class PushService {
   /** Deliver a notification to every device the user has registered. */
   async sendToUser(
     userId: string,
-    msg: { title: string; body?: string | null; link?: string | null; type?: string | null },
+    msg: {
+      title: string;
+      body?: string | null;
+      link?: string | null;
+      type?: string | null;
+      data?: Record<string, string>;
+      tag?: string | null;
+    },
   ): Promise<void> {
     try {
       const devices = await this.prisma.deviceToken.findMany({
@@ -196,7 +203,14 @@ export class PushService {
     accessToken: string,
     deviceRowId: string,
     deviceToken: string,
-    msg: { title: string; body?: string | null; link?: string | null; type?: string | null },
+    msg: {
+      title: string;
+      body?: string | null;
+      link?: string | null;
+      type?: string | null;
+      data?: Record<string, string>;
+      tag?: string | null;
+    },
   ): Promise<void> {
     try {
       const url = `https://fcm.googleapis.com/v1/projects/${sa.projectId}/messages:send`;
@@ -207,6 +221,8 @@ export class PushService {
           body: msg.body,
           link: msg.link,
           type: msg.type,
+          data: msg.data,
+          tag: msg.tag,
         }),
       );
       const res = await this.httpsPost(

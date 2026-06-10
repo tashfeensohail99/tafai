@@ -28,6 +28,10 @@ export class NotificationsService {
     title: string;
     body?: string | null;
     link?: string | null;
+    /** Extra string payload for the mobile push (tap-routing, e.g. threadId). */
+    pushData?: Record<string, string>;
+    /** Collapse key for the mobile push (newest replaces same-tag notif). */
+    pushTag?: string | null;
   }): Promise<void> {
     try {
       await this.prisma.notification.create({
@@ -52,6 +56,8 @@ export class NotificationsService {
       body: input.body ?? null,
       link: input.link ?? null,
       type: input.type,
+      data: input.pushData,
+      tag: input.pushTag,
     });
   }
 

@@ -69,15 +69,25 @@ export function buildJwtClaims(
   };
 }
 
-/** FCM HTTP v1 `messages:send` body for a single device token. */
+/**
+ * FCM HTTP v1 `messages:send` body for a single device token.
+ *
+ * `channel_id` pins notifications to the app-created "tashfeen_messages"
+ * channel (heads-up + sound) instead of FCM's silent fallback channel.
+ * `tag` collapses notifications (e.g. per chat thread the newest message
+ * replaces the previous instead of stacking). `data` rides along for in-app
+ * tap-routing (firebase_messaging delivers it via onMessageOpenedApp).
+ */
 export function buildFcmMessage(input: {
   token: string;
   title: string;
   body?: string | null;
   link?: string | null;
   type?: string | null;
+  data?: Record<string, string>;
+  tag?: string | null;
 }): { message: Record<string, unknown> } {
-  const data: Record<string, string> = {};
+  const data: Record<string, string> = { ...(input.data ?? {}) };
   if (input.link) data.link = input.link;
   if (input.type) data.type = input.type;
   return {
@@ -85,7 +95,14 @@ export function buildFcmMessage(input: {
       token: input.token,
       notification: { title: input.title, body: input.body ?? '' },
       data,
-      android: { priority: 'HIGH', notification: { sound: 'default' } },
+      android: {
+        priority: 'HIGH',
+        notification: {
+          sound: 'default',
+          channel_id: 'tashfeen_messages',
+          ...(input.tag ? { tag: input.tag } : {}),
+        },
+      },
       apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default' } } },
     },
   };

@@ -131,12 +131,19 @@ class CallPushService {
   /// from the lock screen). Replayed once the app handler is ready.
   IncomingCallPush? _pendingAccept;
 
+  /// A message-notification tap that arrived before [onOpenThread] was wired.
+  String? _pendingThreadOpen;
+
   /// Invoked when the user accepts a CallKit incoming screen. Wired by CallHost
   /// to hand the call to the CallController.
   void Function(IncomingCallPush call)? onAccept;
 
   /// Invoked when the user declines/ends from CallKit. Wired by CallHost.
   void Function(String callId)? onDecline;
+
+  /// Invoked when the user taps a "new WhatsApp message" notification —
+  /// navigates straight into that chat. Wired by CallHost.
+  void Function(String threadId)? onOpenThread;
 
   /// Call once at startup (before runApp ideally). Initializes Firebase and
   /// registers the background handler. No-op if Firebase isn't configured.
@@ -149,9 +156,35 @@ class CallPushService {
       await Firebase.initializeApp();
       _firebaseReady = true;
       FirebaseMessaging.onBackgroundMessage(firebaseCallBackgroundHandler);
+      // App launched by tapping a message notification (killed-app case):
+      // capture the thread so we open the chat once the UI is mounted.
+      final initial = await FirebaseMessaging.instance.getInitialMessage();
+      if (initial != null) _handleNotifTap(initial);
+      // Notification tapped while the app was backgrounded.
+      FirebaseMessaging.onMessageOpenedApp.listen(_handleNotifTap);
     } catch (e) {
       if (kDebugMode) debugPrint('[push] Firebase not configured: $e');
     }
+  }
+
+  /// A notification was tapped — route by payload. Message notifications carry
+  /// `threadId` (set by the backend bell fan-out).
+  void _handleNotifTap(RemoteMessage m) {
+    final threadId = m.data['threadId']?.toString();
+    if (threadId == null || threadId.isEmpty) return;
+    if (onOpenThread != null) {
+      onOpenThread!(threadId);
+    } else {
+      _pendingThreadOpen = threadId; // UI not mounted yet — replay later
+    }
+  }
+
+  /// Deliver a buffered notification tap (cold start). Call after wiring
+  /// [onOpenThread].
+  void replayPendingThreadOpen() {
+    final t = _pendingThreadOpen;
+    _pendingThreadOpen = null;
+    if (t != null) onOpenThread?.call(t);
   }
 
   /// Wire foreground handlers + CallKit events. Idempotent.

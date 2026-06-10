@@ -37,8 +37,11 @@ class _CallHostState extends ConsumerState<CallHost> {
     final push = CallPushService.instance;
     push.wire();
     // CallKit "Accept" → close the native screen, take over with the in-app
-    // overlay, and run the WebRTC answer handshake.
+    // overlay, and run the WebRTC answer handshake — straight into the call,
+    // no detour through the home screen.
     push.onAccept = (call) {
+      final cur = ref.read(callControllerProvider);
+      if (cur.isActive && cur.callId == call.callId) return; // already handling
       endCallkit(call.callId);
       final ctrl = ref.read(callControllerProvider.notifier);
       ctrl.prepareIncoming(CallIncoming(
@@ -54,6 +57,11 @@ class _CallHostState extends ConsumerState<CallHost> {
     push.onDecline = (callId) {
       ref.read(callControllerProvider.notifier).rejectById(callId);
     };
+    // If the user accepted from the lock screen and the app cold-started, the
+    // accept arrived before this handler existed — deliver it now so we go
+    // straight into the call instead of landing on the home screen.
+    push.replayPendingAccept();
+    push.checkColdStartAccept();
   }
 
   void _sync(AuthState s) {

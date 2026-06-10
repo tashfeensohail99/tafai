@@ -114,6 +114,10 @@ class CallPushService {
   bool _wired = false;
   StreamSubscription<CallEvent?>? _callkitSub;
 
+  /// A CallKit "Accept" that arrived before [onAccept] was wired (cold start
+  /// from the lock screen). Replayed once the app handler is ready.
+  IncomingCallPush? _pendingAccept;
+
   /// Invoked when the user accepts a CallKit incoming screen. Wired by CallHost
   /// to hand the call to the CallController.
   void Function(IncomingCallPush call)? onAccept;
@@ -124,6 +128,10 @@ class CallPushService {
   /// Call once at startup (before runApp ideally). Initializes Firebase and
   /// registers the background handler. No-op if Firebase isn't configured.
   Future<void> initEarly() async {
+    // Start listening for CallKit accept/decline NOW (before runApp), so a
+    // cold-start "Accept" from the lock screen is captured + buffered even
+    // before the app UI mounts. Independent of Firebase.
+    wire();
     try {
       await Firebase.initializeApp();
       _firebaseReady = true;
@@ -162,7 +170,15 @@ class CallPushService {
       switch (event.event) {
         case Event.actionCallAccept:
           final call = IncomingCallPush.fromData(extra);
-          if (call != null) onAccept?.call(call);
+          if (call != null) {
+            if (onAccept != null) {
+              onAccept!(call);
+            } else {
+              // App not mounted yet (cold start from lock screen) — buffer it
+              // and replay the moment CallHost wires the handler.
+              _pendingAccept = call;
+            }
+          }
         case Event.actionCallDecline:
         case Event.actionCallEnded:
         case Event.actionCallTimeout:
@@ -189,6 +205,35 @@ class CallPushService {
     } catch (e) {
       if (kDebugMode) debugPrint('[push] token register failed: $e');
     }
+  }
+
+  /// Deliver any CallKit "Accept" that arrived before [onAccept] was wired
+  /// (cold start from the lock screen). Call right after setting onAccept.
+  void replayPendingAccept() {
+    final p = _pendingAccept;
+    _pendingAccept = null;
+    if (p != null) onAccept?.call(p);
+  }
+
+  /// Cold-start fallback: if the app was launched by accepting a call, that call
+  /// is already active in the OS — connect straight to it (skip the home screen).
+  Future<void> checkColdStartAccept() async {
+    if (_pendingAccept != null) return; // the event path already has it
+    try {
+      final calls = await FlutterCallkitIncoming.activeCalls();
+      if (calls is List && calls.isNotEmpty && calls.first is Map) {
+        final m =
+            (calls.first as Map).map((k, v) => MapEntry(k.toString(), v));
+        final extra = (m['extra'] is Map)
+            ? (m['extra'] as Map).map((k, v) => MapEntry(k.toString(), v))
+            : <String, dynamic>{};
+        if (extra['callId'] == null && m['id'] != null) {
+          extra['callId'] = m['id'];
+        }
+        final call = IncomingCallPush.fromData(extra);
+        if (call != null) onAccept?.call(call);
+      }
+    } catch (_) {}
   }
 
   void dispose() {

@@ -675,6 +675,27 @@ export class AppointmentsService {
       actorUserId,
     );
 
+    // Tell the customer about the new time on WhatsApp — automatically, every
+    // reschedule. The notifier itself enforces the 24h customer-service
+    // window (skips silently when it's closed) and never throws, so a
+    // WhatsApp hiccup can never break the reschedule.
+    try {
+      const result = await this.whatsappNotifier.sendConfirmationFor(id, actorUserId, {
+        kind: 'rescheduled',
+      });
+      if (!result.sent) {
+        this.log.debug(
+          { appointmentId: id, reason: result.reason },
+          'reschedule WhatsApp notice skipped',
+        );
+      }
+    } catch (err) {
+      this.log.warn(
+        { appointmentId: id, err: (err as Error).message },
+        'reschedule WhatsApp notice failed',
+      );
+    }
+
     return this.findById(id);
   }
 

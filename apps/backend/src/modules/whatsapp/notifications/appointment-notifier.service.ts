@@ -42,7 +42,9 @@ export class WhatsAppAppointmentNotifierService {
   async sendConfirmationFor(
     appointmentId: string,
     actorUserId: string,
+    opts?: { kind?: 'booked' | 'rescheduled' },
   ): Promise<AppointmentConfirmationResult> {
+    const kind = opts?.kind ?? 'booked';
     const appt = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
       select: {
@@ -93,9 +95,10 @@ export class WhatsAppAppointmentNotifierService {
     const sentByEmployeeId = await this.findEmployeeIdByUserId(actorUserId);
     const firstName = appt.lead?.firstName ?? appt.client?.firstName ?? null;
     // Best-effort AI summary of the recent chat so the client sees what the
-    // consultation is about. Falls back to the manually-typed notes (or
-    // nothing) on any failure.
-    const summary = await this.generateChatSummary(thread.id);
+    // consultation is about. Skipped for reschedules — the customer already
+    // knows the topic; that message should be short and only carry the new
+    // time. Falls back to the manually-typed notes (or nothing) on failure.
+    const summary = kind === 'booked' ? await this.generateChatSummary(thread.id) : null;
     const body = this.composeBody({
       firstName,
       appointmentType: appt.appointmentType,
@@ -105,6 +108,7 @@ export class WhatsAppAppointmentNotifierService {
       meetingLink: appt.meetingLink,
       notes: appt.notes,
       summary,
+      kind,
     });
 
     const message = await this.prisma.whatsAppMessage.create({
@@ -122,6 +126,7 @@ export class WhatsAppAppointmentNotifierService {
         payload: {
           source: 'appointment_confirmation',
           appointmentId: appt.id,
+          kind,
         } as unknown as Prisma.InputJsonValue,
       },
       select: { id: true },
@@ -141,12 +146,17 @@ export class WhatsAppAppointmentNotifierService {
     meetingLink: string | null;
     notes: string | null;
     summary: string | null;
+    kind?: 'booked' | 'rescheduled';
   }): string {
     const greeting = input.firstName ? `Hi ${input.firstName},` : 'Hi,';
     const typeLabel = formatAppointmentType(input.appointmentType);
     const { dateLine, timeLine } = formatScheduledAt(input.scheduledAt);
+    const headline =
+      input.kind === 'rescheduled'
+        ? `${greeting} your ${typeLabel} has been rescheduled — here is the new time:`
+        : `${greeting} your ${typeLabel} is confirmed.`;
     const lines: string[] = [
-      `${greeting} your ${typeLabel} is confirmed.`,
+      headline,
       '',
       dateLine,
       timeLine,

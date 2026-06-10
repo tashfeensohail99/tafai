@@ -29,10 +29,16 @@
         android:label="Tashfeen"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- launchMode singleTask, NOT singleTop: the CallKit incoming screen
+             sits on top of MainActivity, so an Accept-launched intent with
+             singleTop spawned a SECOND MainActivity (= a second Flutter engine
+             = a second socket + call controller). Both engines then answered
+             the same call and the losing peer's failure tore down the winner's
+             UI. singleTask guarantees the one existing instance is reused. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:taskAffinity=""

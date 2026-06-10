@@ -195,9 +195,18 @@ class CallController extends StateNotifier<CallState> {
 
   // ── Inbound accept / decline ────────────────────────────────────────────────
 
+  /// Re-entrancy latch: CallKit can deliver duplicate ACCEPT events; only one
+  /// answer flow may ever run per call.
+  bool _accepting = false;
+
   Future<void> acceptIncoming() async {
     final callId = state.callId;
     if (callId == null || state.phase != CallPhase.ringing) return;
+    if (_accepting) {
+      _log('accept: duplicate invocation ignored ($callId)');
+      return;
+    }
+    _accepting = true;
     _log('accept: start $callId');
     _ringTimeout?.cancel();
     state = state.copyWith(phase: CallPhase.connecting);
@@ -320,6 +329,19 @@ class CallController extends StateNotifier<CallState> {
   }
 
   Future<void> _openLocalMedia() async {
+    // Never leave a previous capture orphaned (open mic with no owner).
+    final old = _localStream;
+    _localStream = null;
+    if (old != null) {
+      for (final t in old.getTracks()) {
+        try {
+          t.stop();
+        } catch (_) {}
+      }
+      try {
+        await old.dispose();
+      } catch (_) {}
+    }
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
@@ -327,6 +349,15 @@ class CallController extends StateNotifier<CallState> {
   }
 
   Future<RTCPeerConnection> _createPeer(List<Map<String, dynamic>> ice) async {
+    // One live peer per controller — close any leftover before replacing it.
+    final leftover = _pc;
+    _pc = null;
+    if (leftover != null) {
+      _log('createPeer: closing leftover peer');
+      try {
+        await leftover.close();
+      } catch (_) {}
+    }
     final pc = await createPeerConnection({
       'iceServers': ice,
       'sdpSemantics': 'unified-plan',
@@ -340,6 +371,7 @@ class CallController extends StateNotifier<CallState> {
     }
 
     pc.onTrack = (RTCTrackEvent e) {
+      if (!identical(pc, _pc)) return; // stale peer — ignore
       if (e.streams.isNotEmpty) {
         _remoteStream = e.streams[0];
         // Audio-only: flutter_webrtc routes the remote audio to the device
@@ -351,6 +383,12 @@ class CallController extends StateNotifier<CallState> {
     pc.onIceGatheringState = (s) => _log('iceGatheringState: $s');
 
     pc.onConnectionState = (RTCPeerConnectionState s) {
+      // A replaced/closed peer's death throes must never tear down the live
+      // call — only the CURRENT peer may drive call state.
+      if (!identical(pc, _pc)) {
+        _log('connectionState(STALE peer): $s — ignored');
+        return;
+      }
       _log('connectionState: $s (phase=${state.phase.name})');
       switch (s) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
@@ -500,6 +538,7 @@ class CallController extends StateNotifier<CallState> {
     bool error = false,
   }) {
     _log('teardown: "$reason" (phase=${state.phase.name}, call=${state.callId})');
+    _accepting = false;
     unawaited(_releaseLocks());
     // Dismiss any native CallKit incoming/ongoing screen for this call.
     final callkitId = state.callId;

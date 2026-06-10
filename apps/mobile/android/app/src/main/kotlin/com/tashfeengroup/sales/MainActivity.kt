@@ -37,6 +37,11 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun acquireLocks() {
+        // In-call foreground service: keeps the process at in-call priority so
+        // screen-off doesn't demote us to a cached app the OEM cleaner kills.
+        try {
+            CallForegroundService.start(this)
+        } catch (_: Exception) {}
         try {
             if (wakeLock == null) {
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -58,6 +63,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun releaseLocks() {
+        try {
+            CallForegroundService.stop(this)
+        } catch (_: Exception) {}
         try {
             if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (_: Exception) {}

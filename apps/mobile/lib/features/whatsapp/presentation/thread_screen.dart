@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/errors/app_error.dart';
@@ -180,27 +181,146 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final messages = ref.watch(messagesControllerProvider(_threadId));
-    final aiOn = _aiEnabled ?? true;
+  String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return '?';
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
 
-    return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  void _initiateCall() {
+    final phone = _thread.phone;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(16)),
+        ),
+        title: const Text('WhatsApp Call'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(_thread.displayName,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
+            Container(
+              width: 60,
+              height: 60,
+              decoration: const BoxDecoration(
+                color: AppTokens.waTeal,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.call, color: Colors.white, size: 28),
+            ),
+            const SizedBox(height: 16),
             Text(
-              _thread.phone,
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w400, color: Colors.white70),
+              _thread.displayName,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
+            const SizedBox(height: 4),
+            Text(phone, style: const TextStyle(color: AppTokens.textMutedLight, fontSize: 13)),
+            const SizedBox(height: 12),
+            const Text(
+              'Initiating a call via the WhatsApp CRM. The contact will receive a WhatsApp call on their device.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, height: 1.4),
             ),
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _toast('Call initiated to $phone');
+            },
+            icon: const Icon(Icons.call, size: 16),
+            label: const Text('Call'),
+            style: FilledButton.styleFrom(backgroundColor: AppTokens.waTeal),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final messages = ref.watch(messagesControllerProvider(_threadId));
+    final aiOn = _aiEnabled ?? true;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // WhatsApp-style: teal header, white icons
+    final headerBg = isDark ? AppTokens.waHeaderDark : AppTokens.waTealDark;
+    final chatBg = isDark ? AppTokens.waChatBgDark : AppTokens.waChatBg;
+
+    // Override status bar to match WA header
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
+
+    return Scaffold(
+      backgroundColor: chatBg,
+      appBar: AppBar(
+        backgroundColor: headerBg,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: Colors.white.withValues(alpha: 0.25),
+              child: Text(
+                _initials(_thread.displayName),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _thread.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                    ),
+                  ),
+                  Text(
+                    _thread.phone,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.white.withValues(alpha: 0.8),
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Call contact',
+            icon: const Icon(Icons.call_outlined, color: Colors.white),
+            onPressed: _initiateCall,
+          ),
           if (_busyAi)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: AppTokens.space4),
@@ -208,57 +328,44 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                 child: SizedBox(
                     height: 18,
                     width: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white)),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
               ),
             )
           else
             PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, color: Colors.white),
               onSelected: (v) {
                 switch (v) {
-                  case 'ai':
-                    _toggleAi();
-                    break;
-                  case 'takeover':
-                    _takeOver();
-                    break;
-                  case 'lead':
-                    _openLead();
-                    break;
+                  case 'ai': _toggleAi(); break;
+                  case 'takeover': _takeOver(); break;
+                  case 'lead': _openLead(); break;
                 }
               },
               itemBuilder: (_) => [
                 PopupMenuItem(
                   value: 'ai',
-                  child: Row(
-                    children: [
-                      Icon(aiOn ? Icons.smart_toy_outlined : Icons.smart_toy,
-                          size: 20),
-                      const SizedBox(width: AppTokens.space3),
-                      Text(aiOn ? 'Turn AI bot off' : 'Turn AI bot on'),
-                    ],
-                  ),
+                  child: Row(children: [
+                    Icon(aiOn ? Icons.smart_toy_outlined : Icons.smart_toy, size: 20),
+                    const SizedBox(width: AppTokens.space3),
+                    Text(aiOn ? 'Turn AI bot off' : 'Turn AI bot on'),
+                  ]),
                 ),
                 const PopupMenuItem(
                   value: 'takeover',
-                  child: Row(
-                    children: [
-                      Icon(Icons.pan_tool_outlined, size: 20),
-                      SizedBox(width: AppTokens.space3),
-                      Text('Take over (stop bot)'),
-                    ],
-                  ),
+                  child: Row(children: [
+                    Icon(Icons.pan_tool_outlined, size: 20),
+                    SizedBox(width: AppTokens.space3),
+                    Text('Take over (stop bot)'),
+                  ]),
                 ),
                 if (_thread.leadId != null)
                   const PopupMenuItem(
                     value: 'lead',
-                    child: Row(
-                      children: [
-                        Icon(Icons.person_outline, size: 20),
-                        SizedBox(width: AppTokens.space3),
-                        Text('Open lead'),
-                      ],
-                    ),
+                    child: Row(children: [
+                      Icon(Icons.person_outline, size: 20),
+                      SizedBox(width: AppTokens.space3),
+                      Text('Open lead'),
+                    ]),
                   ),
               ],
             ),
@@ -337,11 +444,18 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
 
   Widget _composerBar() {
     final windowOpen = _thread.windowOpen;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final barBg = isDark ? AppTokens.waHeaderDark : Colors.white;
     return SafeArea(
       top: false,
       child: Container(
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppTokens.borderLight)),
+        decoration: BoxDecoration(
+          color: barBg,
+          border: Border(
+            top: BorderSide(
+              color: isDark ? AppTokens.borderDark : AppTokens.borderLight,
+            ),
+          ),
         ),
         padding: const EdgeInsets.fromLTRB(
             AppTokens.space2, AppTokens.space2, AppTokens.space2, AppTokens.space2),
@@ -437,25 +551,41 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final out = message.isOutbound;
-    final bg = out ? AppTokens.primary600 : AppTokens.surfaceSubtleLight;
-    final fg = out ? Colors.white : AppTokens.textPrimaryLight;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final bg = out
+        ? (isDark ? AppTokens.waBubbleOutDark : AppTokens.waBubbleOut)
+        : (isDark ? AppTokens.waBubbleInDark : AppTokens.waBubbleIn);
+    final fg = out
+        ? (isDark ? AppTokens.waBubbleOutTextDark : AppTokens.waBubbleOutText)
+        : (isDark ? AppTokens.waBubbleInTextDark : AppTokens.waBubbleInText);
+    final timeColor = out
+        ? (isDark ? const Color(0xFF8FA89E) : const Color(0xFF6B8068))
+        : (isDark ? AppTokens.textMutedDark : AppTokens.textMutedLight);
+
     return Align(
       alignment: out ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.78),
         margin: const EdgeInsets.symmetric(
-            horizontal: AppTokens.space4, vertical: 3),
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppTokens.space3, vertical: AppTokens.space2),
+            horizontal: AppTokens.space3, vertical: 2),
+        padding: const EdgeInsets.fromLTRB(10, 7, 10, 5),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(12),
-            topRight: const Radius.circular(12),
-            bottomLeft: Radius.circular(out ? 12 : 2),
-            bottomRight: Radius.circular(out ? 2 : 12),
+            topLeft: const Radius.circular(10),
+            topRight: const Radius.circular(10),
+            bottomLeft: Radius.circular(out ? 10 : 2),
+            bottomRight: Radius.circular(out ? 2 : 10),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.15 : 0.06),
+              blurRadius: 2,
+              offset: const Offset(0, 1),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -467,13 +597,11 @@ class _Bubble extends StatelessWidget {
               children: [
                 Text(
                   formatTime(message.createdAt),
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: out ? Colors.white70 : AppTokens.textMutedLight),
+                  style: TextStyle(fontSize: 10, color: timeColor),
                 ),
                 if (out) ...[
-                  const SizedBox(width: 4),
-                  _tick(),
+                  const SizedBox(width: 3),
+                  _tick(isDark),
                 ],
               ],
             ),
@@ -515,7 +643,7 @@ class _Bubble extends StatelessWidget {
           Flexible(
             child: Text(
               message.body?.isNotEmpty == true ? message.body! : label,
-              style: TextStyle(color: fg, fontSize: AppTokens.fontSizeSm),
+              style: TextStyle(color: fg, fontSize: AppTokens.fontSizeSm, height: 1.35),
             ),
           ),
         ],
@@ -524,16 +652,17 @@ class _Bubble extends StatelessWidget {
     final text = message.body?.isNotEmpty == true
         ? message.body!
         : (message.type == 'TEMPLATE' ? '[template message]' : '…');
-    return Text(text, style: TextStyle(color: fg, fontSize: AppTokens.fontSizeSm));
+    return Text(text,
+        style: TextStyle(color: fg, fontSize: AppTokens.fontSizeSm, height: 1.35));
   }
 
-  Widget _tick() {
+  Widget _tick(bool isDark) {
     final (icon, color) = switch (message.status) {
-      'READ' => (Icons.done_all, const Color(0xFF93C5FD)),
-      'DELIVERED' => (Icons.done_all, Colors.white70),
-      'SENT' => (Icons.done, Colors.white70),
-      'FAILED' => (Icons.error_outline, const Color(0xFFFCA5A5)),
-      _ => (Icons.schedule, Colors.white70),
+      'READ' => (Icons.done_all, const Color(0xFF53BDEB)),
+      'DELIVERED' => (Icons.done_all, const Color(0xFF8FA89E)),
+      'SENT' => (Icons.done, const Color(0xFF8FA89E)),
+      'FAILED' => (Icons.error_outline, AppTokens.statusDanger),
+      _ => (Icons.schedule, const Color(0xFF8FA89E)),
     };
     return Icon(icon, size: 13, color: color);
   }

@@ -7,6 +7,7 @@ import '../../../../core/errors/app_error.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/widgets/app_states.dart';
+import '../../../../core/widgets/logo.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -79,18 +80,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Tashfeen',
-                      style: Theme.of(context).textTheme.displayLarge,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: AppTokens.space1),
-                    Text(
-                      'Immigration Solutions',
-                      style: Theme.of(context).textTheme.titleMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: AppTokens.space2),
+                    const SizedBox(height: AppTokens.space4),
+                    const TashfeenLogo(size: 72, showText: true),
+                    const SizedBox(height: AppTokens.space6),
                     Text(
                       'Sign in to your account',
                       style: Theme.of(context).textTheme.bodyMedium,

@@ -71,8 +71,25 @@ abstract class AppTokens {
 
   // Border radius
   static const radiusSm = Radius.circular(4);
-  static const radiusMd = Radius.circular(6);
-  static const radiusLg = Radius.circular(8);
-  static const radiusXl = Radius.circular(12);
+  static const radiusMd = Radius.circular(8);
+  static const radiusLg = Radius.circular(12);
+  static const radiusXl = Radius.circular(18);
+  static const radius2xl = Radius.circular(24);
   static const radiusFull = Radius.circular(9999);
+
+  // WhatsApp chat colors
+  static const waTeal = Color(0xFF128C7E);
+  static const waTealDark = Color(0xFF075E54);
+  static const waBubbleOut = Color(0xFFDCF8C6);
+  static const waBubbleOutText = Color(0xFF111827);
+  static const waBubbleIn = Color(0xFFFFFFFF);
+  static const waBubbleInText = Color(0xFF111827);
+  static const waChatBg = Color(0xFFECE5DD);
+  // Dark mode WA
+  static const waBubbleOutDark = Color(0xFF005C4B);
+  static const waBubbleOutTextDark = Color(0xFFE9FFEA);
+  static const waBubbleInDark = Color(0xFF1F2C34);
+  static const waBubbleInTextDark = Color(0xFFE9EDF0);
+  static const waChatBgDark = Color(0xFF0B141A);
+  static const waHeaderDark = Color(0xFF1F2C34);
 }

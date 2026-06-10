@@ -6,6 +6,7 @@ import { ApiKeysService } from '../api-keys/api-keys.service';
 import {
   base64url,
   buildFcmMessage,
+  buildFcmDataMessage,
   buildJwtClaims,
   isStaleTokenError,
   parseServiceAccount,
@@ -59,6 +60,74 @@ export class PushService {
     } catch (e) {
       this.log.warn(`push sendToUser failed (${userId}): ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * Deliver a **data-only** high-priority message to every device the user has
+   * registered. Unlike [sendToUser], this carries no `notification` block, so
+   * Android hands it to the app's background message handler — used to ring an
+   * incoming call (CallKit / ConnectionService) even when backgrounded/locked.
+   */
+  async sendDataToUser(
+    userId: string,
+    data: Record<string, string>,
+    opts?: { ttlSeconds?: number },
+  ): Promise<void> {
+    try {
+      const devices = await this.prisma.deviceToken.findMany({
+        where: { userId },
+        select: { id: true, token: true },
+      });
+      if (devices.length === 0) return;
+
+      const sa = await this.getServiceAccount();
+      if (!sa) return; // push not configured — silent no-op
+
+      const accessToken = await this.getAccessToken(sa);
+      if (!accessToken) return;
+
+      await Promise.all(
+        devices.map((d) =>
+          this.sendOneData(sa, accessToken, d.id, d.token, data, opts?.ttlSeconds),
+        ),
+      );
+    } catch (e) {
+      this.log.warn(`push sendDataToUser failed (${userId}): ${(e as Error).message}`);
+    }
+  }
+
+  /** Ring the rep's devices for an incoming WhatsApp call (wakes the app). */
+  async sendCallInvite(
+    userId: string,
+    call: {
+      callId: string;
+      from: string;
+      leadName?: string | null;
+      leadId?: string | null;
+      threadId?: string | null;
+    },
+  ): Promise<void> {
+    await this.sendDataToUser(
+      userId,
+      {
+        type: 'incoming_call',
+        callId: call.callId,
+        from: call.from ?? '',
+        leadName: call.leadName ?? '',
+        leadId: call.leadId ?? '',
+        threadId: call.threadId ?? '',
+      },
+      { ttlSeconds: 45 },
+    );
+  }
+
+  /** Tell the rep's devices to stop ringing (answered elsewhere / cancelled). */
+  async sendCallCancel(userId: string, callId: string): Promise<void> {
+    await this.sendDataToUser(
+      userId,
+      { type: 'call_cancelled', callId },
+      { ttlSeconds: 30 },
+    );
   }
 
   // ── Credentials / auth ──
@@ -152,6 +221,37 @@ export class PushService {
       this.log.warn(`FCM send failed (${res.status}): ${res.body.slice(0, 200)}`);
     } catch (e) {
       this.log.warn(`FCM send error: ${(e as Error).message}`);
+    }
+  }
+
+  private async sendOneData(
+    sa: ServiceAccount,
+    accessToken: string,
+    deviceRowId: string,
+    deviceToken: string,
+    data: Record<string, string>,
+    ttlSeconds?: number,
+  ): Promise<void> {
+    try {
+      const url = `https://fcm.googleapis.com/v1/projects/${sa.projectId}/messages:send`;
+      const body = JSON.stringify(
+        buildFcmDataMessage({ token: deviceToken, data, ttlSeconds }),
+      );
+      const res = await this.httpsPost(
+        url,
+        { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body,
+      );
+      if (res.status === 200) return;
+      if (isStaleTokenError(res.status, res.body)) {
+        await this.prisma.deviceToken
+          .delete({ where: { id: deviceRowId } })
+          .catch(() => undefined);
+        return;
+      }
+      this.log.warn(`FCM data send failed (${res.status}): ${res.body.slice(0, 200)}`);
+    } catch (e) {
+      this.log.warn(`FCM data send error: ${(e as Error).message}`);
     }
   }
 

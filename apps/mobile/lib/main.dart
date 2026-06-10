@@ -3,9 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/settings/theme_provider.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
+import 'features/calls/data/push_service.dart';
 import 'features/calls/presentation/call_host.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Initialize Firebase + register the FCM background handler so incoming calls
+  // can ring while the app is backgrounded/locked. Guarded: a no-op until a
+  // Firebase config (google-services.json) is added.
+  await CallPushService.instance.initEarly();
   runApp(const ProviderScope(child: TafsheenApp()));
 }
 

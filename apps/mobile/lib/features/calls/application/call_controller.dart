@@ -192,6 +192,18 @@ class CallController extends StateNotifier<CallState> {
     await _safeReject();
   }
 
+  /// Decline a specific call id — used when CallKit's Decline is pressed and the
+  /// app may not hold matching ringing state (cold launch from a push).
+  Future<void> rejectById(String callId) async {
+    if (state.callId == callId && state.isActive) {
+      await _safeReject();
+      return;
+    }
+    try {
+      await _api.reject(callId);
+    } catch (_) {}
+  }
+
   Future<void> _safeReject() async {
     final callId = state.callId;
     _teardown(reason: 'Declined', terminal: false);

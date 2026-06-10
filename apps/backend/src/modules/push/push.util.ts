@@ -92,6 +92,38 @@ export function buildFcmMessage(input: {
 }
 
 /**
+ * FCM HTTP v1 body for a **data-only** high-priority message (no `notification`
+ * block). Android delivers this straight to the app's background message
+ * handler — even when backgrounded or the screen is locked — which is exactly
+ * what we need to ring an incoming call via a native CallKit/ConnectionService
+ * UI. A `notification` message would instead land silently in the tray.
+ *
+ * All `data` values MUST be strings (FCM rejects non-string data). A short TTL
+ * keeps a stale call push from ringing minutes late.
+ */
+export function buildFcmDataMessage(input: {
+  token: string;
+  data: Record<string, string>;
+  ttlSeconds?: number;
+}): { message: Record<string, unknown> } {
+  return {
+    message: {
+      token: input.token,
+      data: input.data,
+      android: {
+        priority: 'HIGH',
+        ttl: `${input.ttlSeconds ?? 60}s`,
+      },
+      // Android-only today; harmless for any future iOS VoIP bridge.
+      apns: {
+        headers: { 'apns-priority': '10', 'apns-push-type': 'background' },
+        payload: { aps: { 'content-available': 1 } },
+      },
+    },
+  };
+}
+
+/**
  * Should this token be pruned? FCM reports a permanently dead token as HTTP 404
  * (UNREGISTERED) or 400 INVALID_ARGUMENT on the `token` field. Anything else
  * (auth, quota, 5xx) is transient — keep the token and retry on a later event.

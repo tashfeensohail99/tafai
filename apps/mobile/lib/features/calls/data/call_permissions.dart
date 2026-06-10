@@ -1,3 +1,4 @@
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -7,22 +8,28 @@ class CallPermissionState {
   final bool notification;
   final bool overlay; // "Display over other apps" — full-screen ring on lock
   final bool battery; // ignore battery optimization — wake in background
+  final bool fullScreenIntent; // Android 14+ "Full screen notifications"
 
   const CallPermissionState({
     required this.microphone,
     required this.notification,
     required this.overlay,
     required this.battery,
+    required this.fullScreenIntent,
   });
 
   const CallPermissionState.unknown()
       : microphone = false,
         notification = false,
         overlay = false,
-        battery = false;
+        battery = false,
+        fullScreenIntent = false;
 
-  /// Mic + notifications + overlay are required to ring like a real call.
-  bool get essentialGranted => microphone && notification && overlay;
+  /// Everything needed to ring like a real call — incl. the Android 14+
+  /// full-screen notification permission, without which a locked phone shows
+  /// only a small silent notification instead of the ringing call screen.
+  bool get essentialGranted =>
+      microphone && notification && overlay && fullScreenIntent;
 
   /// Everything, incl. the recommended battery exemption.
   bool get allGranted => essentialGranted && battery;
@@ -30,7 +37,8 @@ class CallPermissionState {
 
 /// Wraps the runtime + special-access permission requests the call feature
 /// needs. Standard ones (mic, notifications) show the normal Android prompt;
-/// the "special access" ones (overlay, battery) open the relevant system page.
+/// the "special access" ones (overlay, battery, full-screen) open the relevant
+/// system page.
 class CallPermissions {
   Future<CallPermissionState> check() async {
     return CallPermissionState(
@@ -38,7 +46,19 @@ class CallPermissions {
       notification: await Permission.notification.isGranted,
       overlay: await Permission.systemAlertWindow.isGranted,
       battery: await Permission.ignoreBatteryOptimizations.isGranted,
+      fullScreenIntent: await _canUseFullScreenIntent(),
     );
+  }
+
+  /// Android 14+: whether the app may post full-screen (ringing) call
+  /// notifications. Older Android always allows it.
+  Future<bool> _canUseFullScreenIntent() async {
+    try {
+      final res = await FlutterCallkitIncoming.canUseFullScreenIntent();
+      return res is bool ? res : true;
+    } catch (_) {
+      return true; // older Android / iOS — not gated
+    }
   }
 
   Future<bool> requestMicrophone() async =>
@@ -54,6 +74,13 @@ class CallPermissions {
   /// Shows the "allow background battery usage" system dialog.
   Future<bool> requestBattery() async =>
       (await Permission.ignoreBatteryOptimizations.request()).isGranted;
+
+  /// Opens the Android 14+ "Full screen notifications" settings page.
+  Future<void> requestFullScreenIntent() async {
+    try {
+      await FlutterCallkitIncoming.requestFullIntentPermission();
+    } catch (_) {}
+  }
 
   /// Request the standard runtime prompts up front (mic + notifications).
   Future<void> requestStandard() async {

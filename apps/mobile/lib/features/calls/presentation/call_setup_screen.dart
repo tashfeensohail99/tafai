@@ -69,6 +69,9 @@ class _CallSetupScreenState extends ConsumerState<CallSetupScreen>
         await _perms.requestNotification();
         await _perms.requestOverlay();
         await _perms.requestBattery();
+        if (!_state.fullScreenIntent) {
+          await _perms.requestFullScreenIntent();
+        }
       });
 
   @override
@@ -120,6 +123,15 @@ class _CallSetupScreenState extends ConsumerState<CallSetupScreen>
                   granted: _state.overlay,
                   busy: _busy,
                   onAllow: () => _run(_perms.requestOverlay),
+                ),
+                _PermTile(
+                  icon: Icons.fullscreen,
+                  title: 'Full-screen call on lock screen',
+                  subtitle:
+                      'Android 14+: turn ON “Full screen notifications” so a locked phone shows the ringing call, not just a small notification.',
+                  granted: _state.fullScreenIntent,
+                  busy: _busy,
+                  onAllow: () => _run(_perms.requestFullScreenIntent),
                 ),
                 _PermTile(
                   icon: Icons.battery_charging_full,

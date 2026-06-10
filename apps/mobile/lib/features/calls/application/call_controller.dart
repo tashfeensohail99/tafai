@@ -159,12 +159,15 @@ class CallController extends StateNotifier<CallState> {
       _fail('Microphone permission is required to call.');
       return;
     }
-    await _acquireLocks();
+    unawaited(_acquireLocks()); // fire-and-forget — don't serialize on it
 
     try {
       _log('outbound: start thread=$threadId');
-      final ice = await _api.getIceServers();
-      await _openLocalMedia();
+      final results = await Future.wait<dynamic>([
+        _api.getIceServers(),
+        _openLocalMedia(),
+      ]);
+      final ice = results[0] as List<Map<String, dynamic>>;
       final pc = await _createPeer(ice);
 
       final offer = await pc.createOffer({
@@ -215,20 +218,22 @@ class CallController extends StateNotifier<CallState> {
       _fail('Microphone permission is required to answer.');
       return;
     }
-    await _acquireLocks();
+    unawaited(_acquireLocks()); // fire-and-forget — don't serialize on it
 
     try {
       final t0 = DateTime.now();
-      final results = await Future.wait([
+      // Network fetches and mic capture have no ordering dependency — run
+      // them concurrently to shave ~1s off connect time.
+      final results = await Future.wait<dynamic>([
         _api.getIceServers(),
         _api.getInboundOffer(callId),
+        _openLocalMedia(),
       ]);
-      _log('accept: ice+offer fetched in '
+      _log('accept: ice+offer+mic ready in '
           '${DateTime.now().difference(t0).inMilliseconds}ms');
       final ice = results[0] as List<Map<String, dynamic>>;
       final offer = results[1] as String;
 
-      await _openLocalMedia();
       final pc = await _createPeer(ice);
 
       await pc.setRemoteDescription(RTCSessionDescription(offer, 'offer'));
@@ -423,24 +428,42 @@ class CallController extends StateNotifier<CallState> {
     return pc;
   }
 
-  /// Non-trickle: resolve once ICE gathering completes, capped at 5s.
+  /// Non-trickle: the SDP we send must already carry usable candidates, so we
+  /// wait for ICE gathering — but not blindly. Waiting for full completion
+  /// burned 4-5s per call (TURN servers that answer slowly hold gathering
+  /// open). Instead: once a TURN relay candidate has arrived and gathering has
+  /// been quiet for 800ms, the SDP is good enough — go. Full completion or the
+  /// 5s cap still apply as backstops.
   Future<void> _waitForIce(RTCPeerConnection pc) async {
     if (pc.iceGatheringState ==
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
       return;
     }
     final completer = Completer<void>();
-    pc.onIceGatheringState = (state) {
-      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete &&
-          !completer.isCompleted) {
-        completer.complete();
+    Timer? quiet;
+    void done() {
+      if (!completer.isCompleted) completer.complete();
+    }
+
+    var haveRelay = false;
+    pc.onIceCandidate = (c) {
+      final cand = c.candidate ?? '';
+      if (cand.contains('typ relay')) haveRelay = true;
+      if (haveRelay) {
+        quiet?.cancel();
+        quiet = Timer(const Duration(milliseconds: 800), done);
       }
     };
-    final timeout = Timer(const Duration(seconds: 5), () {
-      if (!completer.isCompleted) completer.complete();
-    });
+    pc.onIceGatheringState = (state) {
+      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+        done();
+      }
+    };
+    final timeout = Timer(const Duration(seconds: 5), done);
     await completer.future;
     timeout.cancel();
+    quiet?.cancel();
+    pc.onIceCandidate = null;
   }
 
   void _onConnected() {

@@ -2,10 +2,12 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Firebase: processes google-services.json (FCM push for incoming calls).
+    id("com.google.gms.google-services")
 }
 
 android {
-    namespace = "com.tashfeengroup.tafsheen_mobile"
+    namespace = "com.tashfeengroup.sales"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -16,7 +18,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.tashfeengroup.tafsheen_mobile"
+        applicationId = "com.tashfeengroup.sales"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // flutter_webrtc requires API 23+; CallKit full-screen ring wants 23+ too.

@@ -1,4 +1,4 @@
-package com.tashfeengroup.tafsheen_mobile
+package com.tashfeengroup.sales
 
 import io.flutter.embedding.android.FlutterActivity
 

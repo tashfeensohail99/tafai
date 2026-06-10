@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "564376335319",
+    "project_id": "tashfeen-sales-app",
+    "storage_bucket": "tashfeen-sales-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:564376335319:android:016f69906a2f7a1ca5d192",
+        "android_client_info": {
+          "package_name": "com.tashfeengroup.sales"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRpUINpAr7cSllMLKNjPgt67m6dOAjRmk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

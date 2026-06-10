@@ -20,7 +20,7 @@ abstract class AppTheme {
       useMaterial3: true,
       brightness: brightness,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: AppTokens.primary600,
+        seedColor: AppTokens.brandNavy,
         brightness: brightness,
         surface: surface,
         onSurface: onSurface,
@@ -63,8 +63,8 @@ abstract class AppTheme {
         filled: true,
         fillColor: surface,
         floatingLabelStyle: const TextStyle(
-          color: AppTokens.primary600,
-          fontWeight: FontWeight.w500,
+          color: AppTokens.brandNavy,
+          fontWeight: FontWeight.w600,
         ),
         border: OutlineInputBorder(
           borderRadius: const BorderRadius.all(AppTokens.radiusMd),
@@ -76,7 +76,7 @@ abstract class AppTheme {
         ),
         focusedBorder: const OutlineInputBorder(
           borderRadius: BorderRadius.all(AppTokens.radiusMd),
-          borderSide: BorderSide(color: AppTokens.primary600, width: 1.5),
+          borderSide: BorderSide(color: AppTokens.brandNavy, width: 1.5),
         ),
         errorBorder: const OutlineInputBorder(
           borderRadius: BorderRadius.all(AppTokens.radiusMd),
@@ -93,7 +93,7 @@ abstract class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTokens.primary600,
+          backgroundColor: AppTokens.brandNavy,
           foregroundColor: Colors.white,
           elevation: 0,
           shape: const RoundedRectangleBorder(
@@ -120,7 +120,7 @@ abstract class AppTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: AppTokens.primary600,
+          foregroundColor: AppTokens.brandNavy,
           textStyle: const TextStyle(
             fontSize: AppTokens.fontSizeSm,
             fontWeight: FontWeight.w600,
@@ -129,7 +129,7 @@ abstract class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: surface,
-        indicatorColor: AppTokens.primary600.withValues(alpha: 0.12),
+        indicatorColor: AppTokens.brandNavy.withValues(alpha: 0.10),
         height: 64,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
@@ -137,13 +137,13 @@ abstract class AppTheme {
           return TextStyle(
             fontSize: 11,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            color: selected ? AppTokens.primary600 : textMuted,
+            color: selected ? AppTokens.brandNavy : textMuted,
           );
         }),
         iconTheme: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
           return IconThemeData(
-            color: selected ? AppTokens.primary600 : textMuted,
+            color: selected ? AppTokens.brandNavy : textMuted,
             size: 22,
           );
         }),

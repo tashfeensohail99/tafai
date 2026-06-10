@@ -218,7 +218,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         data: NavigationBarThemeData(
           backgroundColor: AppTokens.brandNavy,
           surfaceTintColor: Colors.transparent,
-          indicatorColor: AppTokens.brandNavyLight,
+          indicatorColor: Colors.white.withValues(alpha: 0.16),
           height: 64,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           labelTextStyle: WidgetStateProperty.resolveWith((states) {

@@ -141,7 +141,7 @@ class _GreetingBanner extends StatelessWidget {
           height: 46,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [AppTokens.brandNavy, AppTokens.primary700],
+              colors: [AppTokens.brandNavy, AppTokens.brandNavyLight],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -190,7 +190,7 @@ class _KpiGrid extends StatelessWidget {
               icon: Icons.people_alt_rounded,
               value: '${stats.assignedLeads}',
               label: 'Assigned leads',
-              accentColor: AppTokens.primary600,
+              accentColor: AppTokens.brandNavy,
             ),
           ),
           const SizedBox(width: AppTokens.space3),
@@ -199,7 +199,7 @@ class _KpiGrid extends StatelessWidget {
               icon: Icons.checklist_rounded,
               value: '${stats.openFollowUps}',
               label: 'Open follow-ups',
-              accentColor: AppTokens.statusInfo,
+              accentColor: AppTokens.brandNavy,
             ),
           ),
         ]),
@@ -375,14 +375,14 @@ class _RecentLeadTile extends StatelessWidget {
                   height: 38,
                   margin: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
+                    color: AppTokens.avatarTintLight,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     _initials(lead.fullName),
-                    style: TextStyle(
-                      color: color,
+                    style: const TextStyle(
+                      color: AppTokens.avatarFg,
                       fontWeight: FontWeight.w800,
                       fontSize: 13,
                     ),

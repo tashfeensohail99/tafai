@@ -334,23 +334,15 @@ class _ThreadTile extends StatelessWidget {
                 width: 46,
                 height: 46,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: awaiting
-                        ? [
-                            AppTokens.statusWarning,
-                            const Color(0xFFB45309),
-                          ]
-                        : [AppTokens.brandNavy, AppTokens.primary700],
+                  gradient: const LinearGradient(
+                    colors: [AppTokens.brandNavy, AppTokens.brandNavyLight],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
                   borderRadius: BorderRadius.circular(14),
                   boxShadow: [
                     BoxShadow(
-                      color: (awaiting
-                              ? AppTokens.statusWarning
-                              : AppTokens.brandNavy)
-                          .withValues(alpha: 0.20),
+                      color: AppTokens.brandNavy.withValues(alpha: 0.18),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),

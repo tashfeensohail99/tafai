@@ -75,27 +75,63 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         backgroundColor: AppTokens.brandNavy,
         body: Column(
           children: [
-            // ── Brand navy hero: logo ──────────────────────────────────────
+            // ── Brand navy hero ────────────────────────────────────────────
             SafeArea(
               bottom: false,
-              child: SizedBox(
-                height: 220,
-                child: const Center(
-                  child: TashfeenLogo(
-                    size: 80,
-                    showText: true,
-                    textColor: AppTokens.brandSilverText,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppTokens.space10),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Logo mark in a soft glass badge for a crisp, modern feel.
+                      Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(26),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.10),
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: const TashfeenLogo(size: 52, showText: false),
+                      ),
+                      const SizedBox(height: AppTokens.space5),
+                      const Text(
+                        'TASHFEEN',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 5,
+                          height: 1.0,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'SALES CRM',
+                        style: TextStyle(
+                          color: AppTokens.brandSilverText,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 3,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
 
-            // ── White card: sign-in form ───────────────────────────────────
+            // ── White sheet: sign-in form ──────────────────────────────────
             Expanded(
               child: Container(
+                width: double.infinity,
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
                 ),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(
@@ -111,12 +147,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Text(
-                            'Sign in to your account',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  color: AppTokens.textPrimaryLight,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                          const Text(
+                            'Welcome back',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              color: AppTokens.textPrimaryLight,
+                              letterSpacing: -0.4,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Sign in to continue to your dashboard.',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: AppTokens.textMutedLight,
+                              height: 1.4,
+                            ),
                           ),
                           const SizedBox(height: AppTokens.space6),
 
@@ -132,7 +179,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             autocorrect: false,
                             decoration: const InputDecoration(
                               labelText: 'Email address',
-                              prefixIcon: Icon(Icons.email_outlined, size: 20),
+                              prefixIcon: Icon(Icons.alternate_email, size: 20),
                             ),
                             validator: (v) {
                               if (v == null || v.trim().isEmpty) {
@@ -151,7 +198,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             onFieldSubmitted: (_) => _submit(),
                             decoration: InputDecoration(
                               labelText: 'Password',
-                              prefixIcon: const Icon(Icons.lock_outlined, size: 20),
+                              prefixIcon: const Icon(Icons.lock_outline, size: 20),
                               suffixIcon: IconButton(
                                 icon: Icon(
                                   _obscurePassword
@@ -168,27 +215,40 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               return null;
                             },
                           ),
-                          const SizedBox(height: AppTokens.space6),
 
-                          ElevatedButton(
-                            onPressed: _loading ? null : _submit,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTokens.brandNavy,
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor:
-                                  AppTokens.brandNavy.withValues(alpha: 0.5),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: _loading
+                                  ? null
+                                  : () => context.push(AppRoutes.forgotPassword),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 4, vertical: 4),
+                                minimumSize: const Size(0, 0),
+                                tapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text('Forgot password?'),
                             ),
-                            child: _loading
-                                ? const ButtonSpinner()
-                                : const Text('Sign in'),
                           ),
-                          const SizedBox(height: AppTokens.space2),
+                          const SizedBox(height: AppTokens.space4),
 
-                          TextButton(
-                            onPressed: _loading
-                                ? null
-                                : () => context.push(AppRoutes.forgotPassword),
-                            child: const Text('Forgot password?'),
+                          SizedBox(
+                            height: 52,
+                            child: ElevatedButton(
+                              onPressed: _loading ? null : _submit,
+                              style: ElevatedButton.styleFrom(
+                                textStyle: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                              child: _loading
+                                  ? const ButtonSpinner()
+                                  : const Text('Sign in'),
+                            ),
                           ),
                         ],
                       ),

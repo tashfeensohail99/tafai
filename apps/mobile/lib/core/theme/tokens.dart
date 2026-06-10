@@ -101,8 +101,15 @@ abstract class AppTokens {
   static const waHeaderDark = Color(0xFF1F2C34);
 
   // ── Premium layout tokens ───────────────────────────────────────────────────
-  /// Page background — cool blue-grey; cards sit on top with a white + shadow look.
-  static const pageBackground = Color(0xFFEEF1F8);
+  /// Page background — soft neutral grey; cards sit on top with a white + shadow
+  /// look. Kept near-neutral (not blue-tinted) so the UI reads calm/professional
+  /// rather than "themed".
+  static const pageBackground = Color(0xFFF4F5F7);
+
+  /// Single neutral avatar tint — used for all contact/lead avatars so lists
+  /// stay calm instead of a rainbow of status colours.
+  static const avatarTintLight = Color(0xFFEDF0F5);
+  static const avatarFg = brandNavy;
 
   /// Multi-layer card shadow used by all premium card components.
   static const List<BoxShadow> cardShadow = [

@@ -112,7 +112,9 @@ export class PushService {
       {
         type: 'incoming_call',
         callId: call.callId,
-        from: call.from ?? '',
+        // NOTE: `from` is a RESERVED FCM data key — using it gets the whole
+        // message rejected with 400 "Invalid data payload key: from".
+        callerPhone: call.from ?? '',
         leadName: call.leadName ?? '',
         leadId: call.leadId ?? '',
         threadId: call.threadId ?? '',

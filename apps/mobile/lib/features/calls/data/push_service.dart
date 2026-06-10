@@ -28,7 +28,10 @@ class IncomingCallPush {
     if (callId == null || callId.isEmpty) return null;
     return IncomingCallPush(
       callId: callId,
-      from: d['from']?.toString() ?? '',
+      // Backend sends `callerPhone` (`from` is a reserved FCM data key that
+      // gets the whole push rejected). `from` kept as fallback for CallKit
+      // extras we wrote ourselves.
+      from: (d['callerPhone'] ?? d['from'])?.toString() ?? '',
       leadName: (d['leadName']?.toString().isNotEmpty ?? false)
           ? d['leadName'].toString()
           : null,
@@ -180,8 +183,12 @@ class CallPushService {
             }
           }
         case Event.actionCallDecline:
-        case Event.actionCallEnded:
         case Event.actionCallTimeout:
+          // Real user declines only. actionCallEnded is deliberately NOT here:
+          // our own endCallkit() (dismissing the native screen right after
+          // Accept, or during teardown) fires it — mapping it to a decline was
+          // POSTing /reject immediately after /answer and killing the call
+          // mid-setup ("call not connecting").
           if (callId != null && callId.isNotEmpty) onDecline?.call(callId);
         default:
           break;

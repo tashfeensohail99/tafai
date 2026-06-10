@@ -210,7 +210,11 @@ class CallController extends StateNotifier<CallState> {
   /// app may not hold matching ringing state (cold launch from a push).
   Future<void> rejectById(String callId) async {
     if (state.callId == callId && state.isActive) {
-      await _safeReject();
+      // Only a RINGING call can be declined. Once we're answering/in-call,
+      // stale CallKit events must never tear the live call down.
+      if (state.phase == CallPhase.ringing) {
+        await _safeReject();
+      }
       return;
     }
     try {

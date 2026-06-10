@@ -11,12 +11,17 @@ import '../../../core/router/app_router.dart';
 import '../../../core/settings/theme_provider.dart';
 import '../../../core/theme/tokens.dart';
 import '../../appointments/presentation/appointments_screen.dart';
+import '../../calls/data/call_permissions.dart';
+import '../../calls/presentation/call_setup_screen.dart';
 import '../../dashboard/presentation/dashboard_screen.dart';
 import '../../leads/presentation/leads_list_screen.dart';
 import '../../followups/presentation/followups_screen.dart';
 import '../../notifications/data/notifications_providers.dart';
 import '../../notifications/presentation/notifications_screen.dart';
 import '../../whatsapp/presentation/inbox_screen.dart';
+
+/// Show the first-run call-permission onboarding at most once per app launch.
+bool _callSetupAutoShown = false;
 
 /// The authenticated home: a bottom-nav scaffold whose tabs hold the main
 /// work surfaces. Record-detail screens are pushed as separate routes over it.
@@ -45,6 +50,24 @@ class _AppShellState extends ConsumerState<AppShell> {
     _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       ref.invalidate(unreadCountProvider);
     });
+    // First run after login: if call permissions aren't set up, walk the rep
+    // through them so incoming calls ring properly. Shown at most once/launch.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowCallSetup());
+  }
+
+  Future<void> _maybeShowCallSetup() async {
+    if (_callSetupAutoShown || !mounted) return;
+    _callSetupAutoShown = true;
+    final status = await ref.read(callPermissionsProvider).check();
+    if (!mounted || status.essentialGranted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const CallSetupScreen(onboarding: true)),
+    );
+  }
+
+  void _openCallSetup() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const CallSetupScreen()));
   }
 
   @override
@@ -106,6 +129,9 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
             onSelected: (value) async {
               switch (value) {
+                case 'call-setup':
+                  _openCallSetup();
+                  break;
                 case 'change-password':
                   context.push(AppRoutes.changePassword);
                   break;
@@ -151,6 +177,16 @@ class _AppShellState extends ConsumerState<AppShell> {
                           size: 18),
                       const SizedBox(width: 10),
                       Text(isDark ? 'Light mode' : 'Dark mode'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'call-setup',
+                  child: Row(
+                    children: [
+                      Icon(Icons.call_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Call setup'),
                     ],
                   ),
                 ),

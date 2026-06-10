@@ -8,7 +8,7 @@ import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
 import '../../../core/widgets/app_states.dart';
-import '../../../core/widgets/badges.dart';
+import '../../../core/widgets/premium_ui.dart';
 import '../data/appointment_requests_repository.dart';
 import '../data/appointments_providers.dart';
 import '../data/appointments_repository.dart';
@@ -42,6 +42,8 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
     _refreshLists();
   }
 
+  String get _bucketKey => _upcoming ? 'upcoming' : 'past';
+
   @override
   Widget build(BuildContext context) {
     final async = _upcoming
@@ -59,51 +61,76 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
       ),
       body: Column(
         children: [
+          // ── pending requests banner ───────────────────────────────────────
           if (pendingRequests > 0)
-            Material(
-              color: AppTokens.statusInfoBg,
-              child: InkWell(
-                onTap: _openRequests,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppTokens.space4, vertical: AppTokens.space3),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.event_note_outlined,
-                          color: AppTokens.statusInfo, size: 18),
-                      const SizedBox(width: AppTokens.space2),
-                      Expanded(
-                        child: Text(
-                          '$pendingRequests booking request${pendingRequests == 1 ? '' : 's'} from chats',
-                          style: const TextStyle(
-                              color: AppTokens.statusInfo,
-                              fontWeight: FontWeight.w600),
-                        ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  AppTokens.space4, AppTokens.space3, AppTokens.space4, 0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppTokens.statusInfo.withValues(alpha: 0.08),
+                  borderRadius: const BorderRadius.all(AppTokens.radiusCard),
+                  border: Border.all(
+                      color: AppTokens.statusInfo.withValues(alpha: 0.3),
+                      width: 0.5),
+                  boxShadow: AppTokens.cardShadowSm,
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: _openRequests,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: AppTokens.space4,
+                          vertical: AppTokens.space3),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: AppTokens.statusInfo.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.event_note_outlined,
+                                color: AppTokens.statusInfo, size: 17),
+                          ),
+                          const SizedBox(width: AppTokens.space3),
+                          Expanded(
+                            child: Text(
+                              '$pendingRequests booking request${pendingRequests == 1 ? '' : 's'} from chats',
+                              style: const TextStyle(
+                                color: AppTokens.statusInfo,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right,
+                              color: AppTokens.statusInfo, size: 18),
+                        ],
                       ),
-                      const Icon(Icons.chevron_right,
-                          color: AppTokens.statusInfo),
-                    ],
+                    ),
                   ),
                 ),
               ),
             ),
+
+          // ── bucket tabs ───────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(
                 AppTokens.space4, AppTokens.space3, AppTokens.space4, 0),
-            child: SizedBox(
-              width: double.infinity,
-              child: SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(value: true, label: Text('Upcoming')),
-                  ButtonSegment(value: false, label: Text('Past')),
-                ],
-                selected: {_upcoming},
-                onSelectionChanged: (s) => setState(() => _upcoming = s.first),
-                showSelectedIcon: false,
-              ),
+            child: BucketTabBar(
+              selected: _bucketKey,
+              buckets: const ['upcoming', 'past'],
+              labels: const ['Upcoming', 'Past'],
+              onSelect: (b) => setState(() => _upcoming = b == 'upcoming'),
             ),
           ),
           const SizedBox(height: AppTokens.space3),
+
           Expanded(
             child: async.when(
               loading: () => const LoadingView(),
@@ -111,12 +138,15 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
               data: (items) => items.isEmpty
                   ? EmptyView(
                       icon: Icons.event_available_outlined,
-                      title: _upcoming ? 'No upcoming appointments' : 'No past appointments',
+                      title: _upcoming
+                          ? 'No upcoming appointments'
+                          : 'No past appointments',
                       message: _upcoming
                           ? 'Tap Book to schedule a consultation.'
                           : 'Completed and cancelled meetings show here.',
                     )
                   : RefreshIndicator(
+                      color: AppTokens.brandNavy,
                       onRefresh: () => ref.refresh((_upcoming
                               ? upcomingAppointmentsProvider
                               : pastAppointmentsProvider)
@@ -150,7 +180,7 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
   Future<void> _book() async {
     final empId = ref.read(currentUserProvider)?.employee?.id;
     if (empId == null || empId.isEmpty) {
-      _toast('Your employee profile is missing — can’t check availability.');
+      _toast("Your employee profile is missing — can't check availability.");
       return;
     }
     final lead = await showLeadPicker(context);
@@ -159,7 +189,8 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (_) => _NewAppointmentSheet(leadId: lead.id, leadName: lead.fullName, employeeId: empId),
+      builder: (_) => _NewAppointmentSheet(
+          leadId: lead.id, leadName: lead.fullName, employeeId: empId),
     );
     if (created != null && mounted) {
       _refreshLists();
@@ -169,9 +200,10 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
 
   // --- Reschedule ----------------------------------------------------------
   Future<void> _reschedule(Appointment a) async {
-    final empId = a.assignedEmployeeId ?? ref.read(currentUserProvider)?.employee?.id;
+    final empId =
+        a.assignedEmployeeId ?? ref.read(currentUserProvider)?.employee?.id;
     if (empId == null || empId.isEmpty) {
-      _toast('No agent on this appointment — can’t check availability.');
+      _toast("No agent on this appointment — can't check availability.");
       return;
     }
     final slot = await showSlotPicker(
@@ -256,8 +288,6 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
     }
   }
 
-  /// Shows the server's suggested next free slot on a 409; returns the instant
-  /// to retry with, or null if the user declines.
   Future<DateTime?> _offerSuggested(ConflictError e) async {
     final s = e.suggestedAt;
     if (s == null) {
@@ -289,7 +319,7 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ── Premium appointment card ──────────────────────────────────────────────────
 
 class _AppointmentCard extends StatelessWidget {
   final Appointment appt;
@@ -308,99 +338,182 @@ class _AppointmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
     final a = appt;
     final statusColor = appointmentStatusColor(a.status);
     final showActions = a.canReschedule || a.canCancel;
+    final local = a.scheduledAt.toLocal();
+    final day = '${local.day}';
+    final month = _monthAbbr(local.month);
+    final time = pktTime(a.scheduledAt);
 
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(AppTokens.space4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            InkWell(
-              onTap: onOpenLead,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: AppTokens.primary50,
-                    child: Icon(appointmentTypeIcon(a.appointmentType),
-                        size: 18, color: AppTokens.primary700),
+    return Container(
+      decoration: const BoxDecoration(
+        borderRadius: BorderRadius.all(AppTokens.radiusCard),
+        boxShadow: AppTokens.cardShadow,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.white,
+        child: InkWell(
+          onTap: onOpenLead,
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── navy date block ─────────────────────────────────────────
+                Container(
+                  width: 60,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [AppTokens.brandNavy, AppTokens.primary700],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                   ),
-                  const SizedBox(width: AppTokens.space3),
-                  Expanded(
+                  alignment: Alignment.center,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        day,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          height: 1.0,
+                        ),
+                      ),
+                      Text(
+                        month,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        time,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.9),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ── body ────────────────────────────────────────────────────
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        AppTokens.space3, AppTokens.space3,
+                        AppTokens.space3, AppTokens.space3),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(a.contactName,
-                            style: t.titleMedium,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 1),
-                        Text('${a.typeLabel} · ${a.durationMinutes} min',
-                            style: t.bodySmall
-                                ?.copyWith(color: AppTokens.textMutedLight)),
+                        // name + status
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                a.contactName,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTokens.textPrimaryLight,
+                                  letterSpacing: -0.2,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            PremiumStatusBadge(
+                              label: a.statusLabel,
+                              color: statusColor,
+                              compact: true,
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 3),
+
+                        // meeting type + duration
+                        Row(
+                          children: [
+                            Icon(appointmentTypeIcon(a.appointmentType),
+                                size: 13, color: AppTokens.textMutedLight),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${a.typeLabel} · ${a.durationMinutes} min',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTokens.textMutedLight,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        if (a.location != null &&
+                            a.location!.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          _MetaRow(
+                              icon: Icons.place_outlined,
+                              text: a.location!),
+                        ],
+                        if (a.meetingLink != null &&
+                            a.meetingLink!.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          _MetaRow(
+                              icon: Icons.link,
+                              text: a.meetingLink!),
+                        ],
+
+                        if (showActions) ...[
+                          const SizedBox(height: AppTokens.space2),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              if (a.canReschedule)
+                                CrmActionButton(
+                                  label: 'Reschedule',
+                                  filled: false,
+                                  onPressed: busy ? null : onReschedule,
+                                ),
+                              if (a.canCancel) ...[
+                                const SizedBox(width: AppTokens.space2),
+                                CrmActionButton(
+                                  label: 'Cancel',
+                                  filled: false,
+                                  color: AppTokens.statusDanger,
+                                  onPressed: busy ? null : onCancel,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                  const SizedBox(width: AppTokens.space2),
-                  StatusBadge(label: a.statusLabel, color: statusColor),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppTokens.space3),
-            Row(
-              children: [
-                const Icon(Icons.schedule,
-                    size: 15, color: AppTokens.textMutedLight),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(pktDateTime(a.scheduledAt),
-                      style: t.bodyMedium
-                          ?.copyWith(fontWeight: FontWeight.w600)),
                 ),
-                Text(relativeTime(a.scheduledAt),
-                    style: t.bodySmall
-                        ?.copyWith(color: AppTokens.textMutedLight)),
               ],
             ),
-            if (a.location != null && a.location!.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              _MetaRow(icon: Icons.place_outlined, text: a.location!),
-            ],
-            if (a.meetingLink != null && a.meetingLink!.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              _MetaRow(icon: Icons.link, text: a.meetingLink!),
-            ],
-            if (showActions) ...[
-              const SizedBox(height: AppTokens.space2),
-              Row(
-                children: [
-                  const Spacer(),
-                  if (a.canReschedule)
-                    TextButton(
-                      onPressed: busy ? null : onReschedule,
-                      child: const Text('Reschedule'),
-                    ),
-                  if (a.canCancel)
-                    TextButton(
-                      onPressed: busy ? null : onCancel,
-                      style: TextButton.styleFrom(
-                          foregroundColor: AppTokens.statusDanger),
-                      child: const Text('Cancel'),
-                    ),
-                ],
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
   }
+
+  static String _monthAbbr(int m) => const [
+        '', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+        'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
+      ][m];
 }
 
 class _MetaRow extends StatelessWidget {
@@ -412,23 +525,25 @@ class _MetaRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: AppTokens.textMutedLight),
-        const SizedBox(width: 6),
+        Icon(icon, size: 13, color: AppTokens.textMutedLight),
+        const SizedBox(width: 5),
         Expanded(
-          child: Text(text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: AppTokens.textSecondaryLight)),
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppTokens.textSecondaryLight,
+            ),
+          ),
         ),
       ],
     );
   }
 }
 
-// ---------------------------------------------------------------------------
+// ── New appointment sheet (unchanged logic, clean up badge import) ─────────────
 
 class _NewAppointmentSheet extends ConsumerStatefulWidget {
   final String leadId;
@@ -446,7 +561,8 @@ class _NewAppointmentSheet extends ConsumerStatefulWidget {
       _NewAppointmentSheetState();
 }
 
-class _NewAppointmentSheetState extends ConsumerState<_NewAppointmentSheet> {
+class _NewAppointmentSheetState
+    extends ConsumerState<_NewAppointmentSheet> {
   late final TextEditingController _titleCtrl;
   final _locationCtrl = TextEditingController();
   String _type = kAppointmentTypes.first;
@@ -543,7 +659,8 @@ class _NewAppointmentSheetState extends ConsumerState<_NewAppointmentSheet> {
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(AppTokens.space4, 0,
@@ -555,7 +672,8 @@ class _NewAppointmentSheetState extends ConsumerState<_NewAppointmentSheet> {
               Text('New appointment', style: t.titleMedium),
               const SizedBox(height: 2),
               Text('With ${widget.leadName}',
-                  style: t.bodySmall?.copyWith(color: AppTokens.textMutedLight)),
+                  style: t.bodySmall
+                      ?.copyWith(color: AppTokens.textMutedLight)),
               const SizedBox(height: AppTokens.space4),
               Text('Type', style: t.labelLarge),
               const SizedBox(height: AppTokens.space2),
@@ -593,10 +711,11 @@ class _NewAppointmentSheetState extends ConsumerState<_NewAppointmentSheet> {
                 margin: EdgeInsets.zero,
                 child: ListTile(
                   leading: const Icon(Icons.schedule),
-                  title: Text(_slot == null ? 'Choose a time' : pktDateTime(_slot!)),
-                  subtitle: Text(_slot == null
-                      ? 'Pick a free slot'
-                      : 'Tap to change'),
+                  title: Text(_slot == null
+                      ? 'Choose a time'
+                      : pktDateTime(_slot!)),
+                  subtitle:
+                      Text(_slot == null ? 'Pick a free slot' : 'Tap to change'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _busy ? null : _pickSlot,
                 ),
@@ -605,9 +724,8 @@ class _NewAppointmentSheetState extends ConsumerState<_NewAppointmentSheet> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: _sendWhatsApp,
-                onChanged: _busy
-                    ? null
-                    : (v) => setState(() => _sendWhatsApp = v),
+                onChanged:
+                    _busy ? null : (v) => setState(() => _sendWhatsApp = v),
                 title: const Text('Send WhatsApp confirmation'),
                 subtitle: const Text('Only if the chat window is open'),
               ),

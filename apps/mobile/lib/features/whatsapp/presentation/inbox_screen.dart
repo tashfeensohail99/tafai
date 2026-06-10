@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
 import '../../../core/widgets/app_states.dart';
+import '../../../core/widgets/premium_ui.dart';
 import '../data/whatsapp_providers.dart';
 import '../domain/wa_stats.dart';
 import '../domain/wa_thread.dart';
@@ -32,7 +33,6 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
   }
 
   void _onSearch(String v) {
-    setState(() {}); // clear-button visibility
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
       ref.read(inboxFilterProvider.notifier).update((f) => f.copyWith(search: v));
@@ -68,54 +68,51 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
 
     return Column(
       children: [
+        // ── search bar ────────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(
               AppTokens.space4, AppTokens.space3, AppTokens.space4, 0),
-          child: TextField(
+          child: PremiumSearchBar(
             controller: _searchCtrl,
+            hint: 'Search name or phone…',
             onChanged: _onSearch,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'Search name or phone…',
-              prefixIcon: const Icon(Icons.search),
-              isDense: true,
-              suffixIcon: _searchCtrl.text.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        _onSearch('');
-                      },
-                    ),
-            ),
           ),
         ),
-        const SizedBox(height: AppTokens.space2),
-        _InboxTabs(
-          selected: filter.tab,
-          all: stats.total,
-          open: stats.open,
-          uncontacted: stats.uncontacted,
-          onSelect: _setTab,
+        const SizedBox(height: AppTokens.space3),
+
+        // ── inline tab bar with counts ────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppTokens.space4),
+          child: _InboxTabs(
+            selected: filter.tab,
+            all: stats.total,
+            open: stats.open,
+            uncontacted: stats.uncontacted,
+            onSelect: _setTab,
+          ),
         ),
+
+        // ── due follow-up chip ────────────────────────────────────────────
         if (stats.followUpDue > 0 || filter.followUpDue)
           Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppTokens.space4, vertical: AppTokens.space2),
+            padding: const EdgeInsets.fromLTRB(
+                AppTokens.space4, AppTokens.space2, AppTokens.space4, 0),
             child: Row(
               children: [
-                FilterChip(
-                  avatar: const Icon(Icons.alarm, size: 16),
-                  label: Text('Due follow-ups (${stats.followUpDue})'),
+                CrmFilterChip(
+                  label: 'Due follow-ups',
+                  count: stats.followUpDue,
                   selected: filter.followUpDue,
-                  onSelected: (_) => _toggleDue(),
-                  visualDensity: VisualDensity.compact,
+                  onTap: _toggleDue,
+                  selectedColor: AppTokens.statusWarning,
                 ),
               ],
             ),
           ),
+        const SizedBox(height: AppTokens.space2),
         const Divider(height: 1),
+
+        // ── thread list ───────────────────────────────────────────────────
         Expanded(
           child: _ThreadsList(
             state: threads,
@@ -131,6 +128,8 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
     );
   }
 }
+
+// ── Inbox tab bar ─────────────────────────────────────────────────────────────
 
 class _InboxTabs extends StatelessWidget {
   final WaTab selected;
@@ -149,66 +148,93 @@ class _InboxTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppTokens.space4),
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+        boxShadow: AppTokens.cardShadowSm,
+      ),
       child: Row(
         children: [
-          _tab(context, 'All', all, WaTab.all),
-          _tab(context, 'Open', open, WaTab.open),
-          _tab(context, 'Uncontacted', uncontacted, WaTab.uncontacted),
+          Expanded(child: _InboxTabItem(
+            label: 'All', count: all, tab: WaTab.all,
+            selected: selected, onSelect: onSelect,
+          )),
+          Expanded(child: _InboxTabItem(
+            label: 'Open', count: open, tab: WaTab.open,
+            selected: selected, onSelect: onSelect,
+          )),
+          Expanded(child: _InboxTabItem(
+            label: 'New', count: uncontacted, tab: WaTab.uncontacted,
+            selected: selected, onSelect: onSelect,
+          )),
         ],
       ),
     );
   }
+}
 
-  Widget _tab(BuildContext context, String label, int count, WaTab tab) {
+class _InboxTabItem extends StatelessWidget {
+  final String label;
+  final int count;
+  final WaTab tab;
+  final WaTab selected;
+  final ValueChanged<WaTab> onSelect;
+
+  const _InboxTabItem({
+    required this.label,
+    required this.count,
+    required this.tab,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     final active = selected == tab;
-    final color = active ? AppTokens.primary600 : AppTokens.textMutedLight;
-    return Expanded(
-      child: InkWell(
-        onTap: () => onSelect(tab),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: AppTokens.space3),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: color,
-                        fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                        fontSize: AppTokens.fontSizeSm,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$count',
-                    style: TextStyle(
-                      color: color,
-                      fontWeight: FontWeight.w700,
-                      fontSize: AppTokens.fontSizeXs,
-                    ),
-                  ),
-                ],
+    return GestureDetector(
+      onTap: () => onSelect(tab),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          color: active ? AppTokens.brandNavy : Colors.transparent,
+          borderRadius: const BorderRadius.all(Radius.circular(9)),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: active ? Colors.white : AppTokens.textMutedLight,
+                fontSize: 13,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
               ),
-              const SizedBox(height: AppTokens.space2),
-              Container(
-                height: 2,
-                color: active ? AppTokens.primary600 : Colors.transparent,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '$count',
+              style: TextStyle(
+                color: active
+                    ? Colors.white.withValues(alpha: 0.75)
+                    : AppTokens.textDisabledLight,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
+
+// ── Thread list ───────────────────────────────────────────────────────────────
 
 class _ThreadsList extends StatelessWidget {
   final ThreadsState state;
@@ -239,6 +265,7 @@ class _ThreadsList extends StatelessWidget {
       );
     }
     return RefreshIndicator(
+      color: AppTokens.brandNavy,
       onRefresh: onRefresh,
       child: ListView.separated(
         itemCount: state.items.length + (state.hasMore ? 1 : 0),
@@ -246,7 +273,6 @@ class _ThreadsList extends StatelessWidget {
             const Divider(height: 1, indent: 78),
         itemBuilder: (context, i) {
           if (i >= state.items.length) {
-            // Sentinel — trigger the next page, show a spinner.
             WidgetsBinding.instance.addPostFrameCallback((_) => onLoadMore());
             return const Padding(
               padding: EdgeInsets.all(AppTokens.space4),
@@ -254,128 +280,27 @@ class _ThreadsList extends StatelessWidget {
                 child: SizedBox(
                   height: 22,
                   width: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: AppTokens.brandNavy),
                 ),
               ),
             );
           }
-          return _ThreadTile(thread: state.items[i], onTap: () => onOpen(state.items[i]));
+          return _ThreadTile(
+              thread: state.items[i],
+              onTap: () => onOpen(state.items[i]));
         },
       ),
     );
   }
 }
 
+// ── Thread tile ───────────────────────────────────────────────────────────────
+
 class _ThreadTile extends StatelessWidget {
   final WhatsappThread thread;
   final VoidCallback onTap;
   const _ThreadTile({required this.thread, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
-    final when = thread.lastMessageAt;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppTokens.space4, vertical: AppTokens.space3),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-              radius: 23,
-              backgroundColor: AppTokens.primary100,
-              child: Text(
-                _initials(thread.displayName),
-                style: const TextStyle(
-                    color: AppTokens.primary700, fontWeight: FontWeight.w700),
-              ),
-            ),
-            const SizedBox(width: AppTokens.space3),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          thread.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: t.titleSmall?.copyWith(
-                              fontWeight: thread.unreadCount > 0
-                                  ? FontWeight.w700
-                                  : FontWeight.w600),
-                        ),
-                      ),
-                      if (when != null)
-                        Text(relativeTime(when),
-                            style: t.bodySmall?.copyWith(
-                                color: AppTokens.textMutedLight, fontSize: 11)),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          thread.lastMessagePreview ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: t.bodySmall
-                              ?.copyWith(color: AppTokens.textMutedLight),
-                        ),
-                      ),
-                      if (thread.awaitingReply) ...[
-                        const SizedBox(width: AppTokens.space2),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: AppTokens.statusWarningBg,
-                            borderRadius:
-                                const BorderRadius.all(AppTokens.radiusSm),
-                            border:
-                                Border.all(color: AppTokens.statusWarning),
-                          ),
-                          child: const Text('Reply',
-                              style: TextStyle(
-                                  color: AppTokens.statusWarning,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700)),
-                        ),
-                      ],
-                      if (thread.unreadCount > 0) ...[
-                        const SizedBox(width: AppTokens.space2),
-                        Container(
-                          constraints:
-                              const BoxConstraints(minWidth: 20, minHeight: 20),
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          decoration: const BoxDecoration(
-                            color: AppTokens.statusSuccess,
-                            shape: BoxShape.rectangle,
-                            borderRadius: BorderRadius.all(AppTokens.radiusFull),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text('${thread.unreadCount}',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700)),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
@@ -383,5 +308,187 @@ class _ThreadTile extends StatelessWidget {
     final a = parts.first[0];
     final b = parts.length > 1 && parts[1].isNotEmpty ? parts[1][0] : '';
     return (a + b).toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final when = thread.lastMessageAt;
+    final hasUnread = thread.unreadCount > 0;
+    final awaiting = thread.awaitingReply;
+
+    return Material(
+      // Subtle amber tint on awaiting-reply rows
+      color: awaiting
+          ? AppTokens.statusWarning.withValues(alpha: 0.05)
+          : Colors.white,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppTokens.space4, vertical: 13),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── avatar ─────────────────────────────────────────────────
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: awaiting
+                        ? [
+                            AppTokens.statusWarning,
+                            const Color(0xFFB45309),
+                          ]
+                        : [AppTokens.brandNavy, AppTokens.primary700],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (awaiting
+                              ? AppTokens.statusWarning
+                              : AppTokens.brandNavy)
+                          .withValues(alpha: 0.20),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  _initials(thread.displayName),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: AppTokens.space3),
+
+              // ── content ────────────────────────────────────────────────
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // name + time
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            thread.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight:
+                                  hasUnread ? FontWeight.w700 : FontWeight.w600,
+                              color: AppTokens.textPrimaryLight,
+                              letterSpacing: -0.1,
+                            ),
+                          ),
+                        ),
+                        if (when != null) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            relativeTime(when),
+                            style: const TextStyle(
+                              color: AppTokens.textMutedLight,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+
+                    const SizedBox(height: 3),
+
+                    // preview + badges
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            thread.lastMessagePreview ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: hasUnread
+                                  ? AppTokens.textSecondaryLight
+                                  : AppTokens.textMutedLight,
+                              fontWeight: hasUnread
+                                  ? FontWeight.w500
+                                  : FontWeight.w400,
+                            ),
+                          ),
+                        ),
+
+                        // awaiting-reply badge
+                        if (awaiting) ...[
+                          const SizedBox(width: AppTokens.space2),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppTokens.statusWarning
+                                  .withValues(alpha: 0.12),
+                              borderRadius:
+                                  const BorderRadius.all(AppTokens.radiusFull),
+                              border: Border.all(
+                                color: AppTokens.statusWarning
+                                    .withValues(alpha: 0.4),
+                                width: 0.5,
+                              ),
+                            ),
+                            child: const Text(
+                              'REPLY',
+                              style: TextStyle(
+                                color: AppTokens.statusWarning,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ],
+
+                        // unread count badge
+                        if (hasUnread) ...[
+                          const SizedBox(width: AppTokens.space2),
+                          Container(
+                            constraints: const BoxConstraints(
+                                minWidth: 20, minHeight: 20),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 6),
+                            decoration: const BoxDecoration(
+                              color: AppTokens.statusSuccess,
+                              borderRadius:
+                                  BorderRadius.all(AppTokens.radiusFull),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              '${thread.unreadCount}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

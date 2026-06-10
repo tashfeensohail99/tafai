@@ -99,4 +99,22 @@ abstract class AppTokens {
   static const waBubbleInTextDark = Color(0xFFE9EDF0);
   static const waChatBgDark = Color(0xFF0B141A);
   static const waHeaderDark = Color(0xFF1F2C34);
+
+  // ── Premium layout tokens ───────────────────────────────────────────────────
+  /// Page background — cool blue-grey; cards sit on top with a white + shadow look.
+  static const pageBackground = Color(0xFFEEF1F8);
+
+  /// Multi-layer card shadow used by all premium card components.
+  static const List<BoxShadow> cardShadow = [
+    BoxShadow(color: Color(0x09000000), blurRadius: 10, offset: Offset(0, 1)),
+    BoxShadow(color: Color(0x06000000), blurRadius: 20, offset: Offset(0, 4)),
+  ];
+  static const List<BoxShadow> cardShadowSm = [
+    BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 1)),
+  ];
+
+  /// 14 dp rounded corners — standard premium card radius.
+  static const radiusCard   = Radius.circular(14.0);
+  /// 18 dp — for larger hero cards.
+  static const radiusCardLg = Radius.circular(18.0);
 }

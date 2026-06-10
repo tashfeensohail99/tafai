@@ -25,7 +25,7 @@ abstract class AppTheme {
         surface: surface,
         onSurface: onSurface,
       ),
-      scaffoldBackgroundColor: surfaceMuted,
+      scaffoldBackgroundColor: isDark ? AppTokens.surfaceDark : AppTokens.pageBackground,
     );
 
     return base.copyWith(
@@ -52,9 +52,10 @@ abstract class AppTheme {
         color: surface,
         elevation: 0,
         margin: EdgeInsets.zero,
+        shadowColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: const BorderRadius.all(AppTokens.radiusLg),
-          side: BorderSide(color: border),
+          borderRadius: const BorderRadius.all(AppTokens.radiusCard),
+          side: BorderSide(color: border.withValues(alpha: 0.6), width: 0.5),
         ),
         clipBehavior: Clip.antiAlias,
       ),
@@ -148,6 +149,40 @@ abstract class AppTheme {
         }),
         surfaceTintColor: Colors.transparent,
         elevation: 0,
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: isDark ? AppTokens.surfaceMutedDark : Colors.white,
+        selectedColor: AppTokens.brandNavy,
+        disabledColor: isDark ? AppTokens.surfaceSubtleDark : AppTokens.borderLight,
+        labelStyle: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: isDark ? AppTokens.textPrimaryDark : AppTokens.textSecondaryLight,
+        ),
+        secondaryLabelStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(20)),
+        ),
+        side: BorderSide(color: isDark ? AppTokens.borderDark : AppTokens.borderLight),
+        elevation: 0,
+        pressElevation: 0,
+        showCheckmark: false,
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: SegmentedButton.styleFrom(
+          backgroundColor: isDark ? AppTokens.surfaceMutedDark : Colors.white,
+          selectedBackgroundColor: AppTokens.brandNavy,
+          selectedForegroundColor: Colors.white,
+          foregroundColor: isDark ? AppTokens.textMutedDark : AppTokens.textSecondaryLight,
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(10)),
+          ),
+        ),
       ),
       dividerTheme: DividerThemeData(color: border, space: 1, thickness: 1),
       textTheme: TextTheme(

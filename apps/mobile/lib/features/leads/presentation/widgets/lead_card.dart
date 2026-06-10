@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/util/format.dart';
-import '../../../../core/widgets/badges.dart';
+import '../../../../core/widgets/premium_ui.dart';
 import '../../domain/lead.dart';
 import '../lead_visuals.dart';
 
@@ -12,73 +12,163 @@ class LeadCard extends StatelessWidget {
 
   const LeadCard({super.key, required this.lead, required this.onTap});
 
+  String _initials(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
+    final statusColor = leadStatusColor(lead.status);
+    final priorityColor = leadPriorityColor(lead.priority);
+
     final subtitle = [
       if (lead.serviceInterest != null) lead.serviceInterest!,
       if (lead.targetCountry != null) lead.targetCountry!,
-    ].join('  •  ');
+    ].join('  ·  ');
 
-    return Card(
-      margin: EdgeInsets.zero,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: const BorderRadius.all(AppTokens.radiusLg),
-        child: Padding(
-          padding: const EdgeInsets.all(AppTokens.space4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
+    return Container(
+      decoration: const BoxDecoration(
+        borderRadius: BorderRadius.all(AppTokens.radiusCard),
+        boxShadow: AppTokens.cardShadow,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.white,
+        child: InkWell(
+          onTap: onTap,
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── left accent strip ────────────────────────────────────────
+                Container(width: 4, color: statusColor),
+
+                // ── avatar + body ────────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 14, 0, 14),
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
                     child: Text(
-                      lead.fullName.isEmpty ? '(no name)' : lead.fullName,
-                      style: t.titleMedium,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      _initials(lead.fullName),
+                      style: TextStyle(
+                        color: statusColor,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
                     ),
                   ),
-                  if (lead.priority != null) ...[
-                    const SizedBox(width: AppTokens.space2),
-                    StatusBadge(
-                      label: lead.priorityLabel,
-                      color: leadPriorityColor(lead.priority),
+                ),
+
+                // ── text block ───────────────────────────────────────────────
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // name row
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                lead.fullName.isEmpty
+                                    ? '(no name)'
+                                    : lead.fullName,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTokens.textPrimaryLight,
+                                  letterSpacing: -0.3,
+                                  height: 1.2,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (lead.priority != null) ...[
+                              const SizedBox(width: 6),
+                              PremiumStatusBadge(
+                                label: lead.priorityLabel,
+                                color: priorityColor,
+                                compact: true,
+                              ),
+                            ],
+                          ],
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        // phone
+                        Row(
+                          children: [
+                            Icon(Icons.phone_outlined,
+                                size: 13,
+                                color: AppTokens.textMutedLight),
+                            const SizedBox(width: 4),
+                            Text(
+                              lead.phone,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTokens.textMutedLight,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        if (subtitle.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            subtitle,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppTokens.textMutedLight,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+
+                        const SizedBox(height: 8),
+
+                        // status row
+                        Row(
+                          children: [
+                            PremiumStatusBadge(
+                              label: lead.statusLabel,
+                              color: statusColor,
+                              compact: true,
+                            ),
+                            const Spacer(),
+                            Text(
+                              relativeTime(lead.updatedAt),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppTokens.textMutedLight,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: AppTokens.space1),
-              Row(
-                children: [
-                  const Icon(Icons.phone_outlined,
-                      size: 14, color: AppTokens.statusNeutral),
-                  const SizedBox(width: 4),
-                  Text(lead.phone, style: t.bodyMedium),
-                ],
-              ),
-              if (subtitle.isNotEmpty) ...[
-                const SizedBox(height: AppTokens.space1),
-                Text(
-                  subtitle,
-                  style: t.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
-              const SizedBox(height: AppTokens.space3),
-              Row(
-                children: [
-                  StatusBadge(
-                    label: lead.statusLabel,
-                    color: leadStatusColor(lead.status),
-                  ),
-                  const Spacer(),
-                  Text(relativeTime(lead.createdAt), style: t.bodySmall),
-                ],
-              ),
-            ],
+            ),
           ),
         ),
       ),

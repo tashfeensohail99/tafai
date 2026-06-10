@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/widgets/app_states.dart';
+import '../../../core/widgets/premium_ui.dart';
 import '../data/leads_providers.dart';
 import '../domain/lead.dart';
 import 'lead_form_sheet.dart';
@@ -32,7 +33,6 @@ class _LeadsListScreenState extends ConsumerState<LeadsListScreen> {
   }
 
   void _onSearchChanged(String value) {
-    setState(() {}); // refresh the clear-button visibility
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
       ref.read(leadsFilterProvider.notifier).update((f) => f.withSearch(value));
@@ -64,73 +64,64 @@ class _LeadsListScreenState extends ConsumerState<LeadsListScreen> {
         label: const Text('New lead'),
       ),
       body: Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-              AppTokens.space4, AppTokens.space3, AppTokens.space4, 0),
-          child: TextField(
-            controller: _searchController,
-            onChanged: _onSearchChanged,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'Search name, phone, email…',
-              prefixIcon: const Icon(Icons.search),
-              isDense: true,
-              suffixIcon: _searchController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        _searchController.clear();
-                        _onSearchChanged('');
-                      },
+        children: [
+          // ── premium search bar ────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppTokens.space4, AppTokens.space3, AppTokens.space4, 0),
+            child: PremiumSearchBar(
+              controller: _searchController,
+              hint: 'Search name, phone, email…',
+              onChanged: _onSearchChanged,
+            ),
+          ),
+          const SizedBox(height: AppTokens.space3),
+          // ── status filter chips ───────────────────────────────────────────
+          _StatusFilterBar(selected: filter.status, onSelect: _setStatus),
+          const SizedBox(height: AppTokens.space2),
+          Expanded(
+            child: async.when(
+              loading: () => const LoadingView(),
+              error: (e, _) => ErrorView(
+                error: e,
+                onRetry: () => ref.invalidate(leadsListProvider),
+              ),
+              data: (leads) {
+                if (leads.isEmpty) {
+                  final filtered = filter.search.isNotEmpty || filter.hasFilters;
+                  return EmptyView(
+                    icon: filtered ? Icons.search_off : Icons.people_outline,
+                    title: filtered ? 'No matching leads' : 'No leads yet',
+                    message: filtered
+                        ? 'Try a different search or clear the filters.'
+                        : 'Leads assigned to you will appear here.',
+                  );
+                }
+                return RefreshIndicator(
+                  color: AppTokens.brandNavy,
+                  onRefresh: () => ref.refresh(leadsListProvider.future),
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(AppTokens.space4,
+                        AppTokens.space1, AppTokens.space4, AppTokens.space16),
+                    itemCount: leads.length,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: AppTokens.space3),
+                    itemBuilder: (_, i) => LeadCard(
+                      lead: leads[i],
+                      onTap: () => context.push(AppRoutes.leadDetail(leads[i].id)),
                     ),
-            ),
-          ),
-        ),
-        const SizedBox(height: AppTokens.space2),
-        _StatusFilterBar(selected: filter.status, onSelect: _setStatus),
-        const SizedBox(height: AppTokens.space2),
-        Expanded(
-          child: async.when(
-            loading: () => const LoadingView(),
-            error: (e, _) => ErrorView(
-              error: e,
-              onRetry: () => ref.invalidate(leadsListProvider),
-            ),
-            data: (leads) {
-              if (leads.isEmpty) {
-                final filtered = filter.search.isNotEmpty || filter.hasFilters;
-                return EmptyView(
-                  icon: filtered ? Icons.search_off : Icons.people_outline,
-                  title: filtered ? 'No matching leads' : 'No leads yet',
-                  message: filtered
-                      ? 'Try a different search or clear the filters.'
-                      : 'Leads assigned to you will appear here.',
-                );
-              }
-              return RefreshIndicator(
-                onRefresh: () => ref.refresh(leadsListProvider.future),
-                child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(AppTokens.space4,
-                      AppTokens.space1, AppTokens.space4, AppTokens.space16),
-                  itemCount: leads.length,
-                  separatorBuilder: (_, __) =>
-                      const SizedBox(height: AppTokens.space3),
-                  itemBuilder: (_, i) => LeadCard(
-                    lead: leads[i],
-                    onTap: () => context.push(AppRoutes.leadDetail(leads[i].id)),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
       ),
     );
   }
 }
+
+// ── Status filter strip ───────────────────────────────────────────────────────
 
 class _StatusFilterBar extends StatelessWidget {
   final String? selected;
@@ -143,29 +134,24 @@ class _StatusFilterBar extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: AppTokens.space4),
+      clipBehavior: Clip.none,
       child: Row(
         children: [
-          _chip(context, 'All', selected == null, () => onSelect(null)),
+          CrmFilterChip(
+            label: 'All',
+            selected: selected == null,
+            onTap: () => onSelect(null),
+          ),
           for (final s in kLeadStatuses) ...[
             const SizedBox(width: AppTokens.space2),
-            _chip(context, leadStatusLabel(s), selected == s, () => onSelect(s)),
+            CrmFilterChip(
+              label: leadStatusLabel(s),
+              selected: selected == s,
+              onTap: () => onSelect(s),
+            ),
           ],
         ],
       ),
-    );
-  }
-
-  Widget _chip(
-    BuildContext context,
-    String label,
-    bool selected,
-    VoidCallback onTap,
-  ) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) => onTap(),
-      visualDensity: VisualDensity.compact,
     );
   }
 }

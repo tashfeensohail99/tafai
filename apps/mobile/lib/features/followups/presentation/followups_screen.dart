@@ -7,7 +7,7 @@ import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
 import '../../../core/widgets/app_states.dart';
-import '../../../core/widgets/badges.dart';
+import '../../../core/widgets/premium_ui.dart';
 import '../data/followups_providers.dart';
 import '../data/followups_repository.dart';
 import '../domain/follow_up.dart';
@@ -28,21 +28,15 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen> {
     final async = ref.watch(followUpsListProvider(_bucket));
     return Column(
       children: [
+        // ── bucket tab bar ────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(
               AppTokens.space4, AppTokens.space3, AppTokens.space4, 0),
-          child: SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'overdue', label: Text('Overdue')),
-                ButtonSegment(value: 'today', label: Text('Today')),
-                ButtonSegment(value: 'upcoming', label: Text('Upcoming')),
-              ],
-              selected: {_bucket},
-              onSelectionChanged: (s) => setState(() => _bucket = s.first),
-              showSelectedIcon: false,
-            ),
+          child: BucketTabBar(
+            selected: _bucket,
+            buckets: const ['overdue', 'today', 'upcoming'],
+            labels: const ['Overdue', 'Today', 'Upcoming'],
+            onSelect: (b) => setState(() => _bucket = b),
           ),
         ),
         const SizedBox(height: AppTokens.space3),
@@ -61,6 +55,7 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen> {
                         'No ${followUpBucketLabel(_bucket).toLowerCase()} follow-ups.',
                   )
                 : RefreshIndicator(
+                    color: AppTokens.brandNavy,
                     onRefresh: () =>
                         ref.refresh(followUpsListProvider(_bucket).future),
                     child: ListView.separated(
@@ -166,6 +161,8 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen> {
   }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 Color _dueColor(DateTime due) {
   final now = DateTime.now();
   if (due.isBefore(now)) return AppTokens.statusDanger;
@@ -189,6 +186,8 @@ Color _priorityColor(String? p) => switch (p) {
       _ => AppTokens.statusNeutral,
     };
 
+// ── Premium follow-up card ────────────────────────────────────────────────────
+
 class _FollowUpCard extends StatelessWidget {
   final FollowUp followUp;
   final bool busy;
@@ -206,80 +205,161 @@ class _FollowUpCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
     final f = followUp;
     final dueColor = _dueColor(f.dueAt);
     final highPriority = f.priority == 'URGENT' || f.priority == 'HIGH';
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(AppTokens.space4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            InkWell(
-              onTap: onOpenLead,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+
+    return Container(
+      decoration: const BoxDecoration(
+        borderRadius: BorderRadius.all(AppTokens.radiusCard),
+        boxShadow: AppTokens.cardShadow,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.white,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // left accent
+              Container(width: 4, color: dueColor),
+
+              // body
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppTokens.space4, AppTokens.space4,
+                      AppTokens.space4, AppTokens.space3),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(
-                          f.leadName,
-                          style: t.titleMedium,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                      // ── header row ──────────────────────────────────────
+                      GestureDetector(
+                        onTap: onOpenLead,
+                        behavior: HitTestBehavior.opaque,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                f.leadName,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTokens.textPrimaryLight,
+                                  letterSpacing: -0.2,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (highPriority) ...[
+                              const SizedBox(width: AppTokens.space2),
+                              PremiumStatusBadge(
+                                label: followUpPriorityLabel(f.priority),
+                                color: _priorityColor(f.priority),
+                                compact: true,
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      if (highPriority) ...[
-                        const SizedBox(width: AppTokens.space2),
-                        StatusBadge(
-                            label: followUpPriorityLabel(f.priority),
-                            color: _priorityColor(f.priority)),
-                      ],
+                      const SizedBox(height: 3),
+                      Text(
+                        f.title,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppTokens.textSecondaryLight,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+
+                      const SizedBox(height: AppTokens.space3),
+
+                      // ── due time row ────────────────────────────────────
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: dueColor.withValues(alpha: 0.10),
+                              borderRadius: const BorderRadius.all(
+                                  AppTokens.radiusFull),
+                              border: Border.all(
+                                  color: dueColor.withValues(alpha: 0.25),
+                                  width: 0.5),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.schedule,
+                                    size: 12, color: dueColor),
+                                const SizedBox(width: 4),
+                                Text(
+                                  relativeTime(f.dueAt),
+                                  style: TextStyle(
+                                    color: dueColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: AppTokens.space3),
+                          Icon(_contactIcon(f.contactMethod),
+                              size: 15, color: AppTokens.textMutedLight),
+                          const SizedBox(width: 4),
+                          Text(
+                            _contactLabel(f.contactMethod),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppTokens.textMutedLight,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: AppTokens.space3),
+
+                      // ── action buttons ──────────────────────────────────
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          CrmActionButton(
+                            label: 'Reschedule',
+                            icon: Icons.schedule,
+                            filled: false,
+                            onPressed: busy ? null : onReschedule,
+                          ),
+                          const SizedBox(width: AppTokens.space2),
+                          CrmActionButton(
+                            label: 'Done',
+                            icon: Icons.check_rounded,
+                            filled: true,
+                            color: AppTokens.statusSuccess,
+                            onPressed: busy ? null : onComplete,
+                          ),
+                        ],
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(f.title,
-                      style: t.bodyMedium,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: AppTokens.space3),
-            Row(
-              children: [
-                Icon(_contactIcon(f.contactMethod),
-                    size: 15, color: AppTokens.statusNeutral),
-                const SizedBox(width: AppTokens.space2),
-                Icon(Icons.schedule, size: 14, color: dueColor),
-                const SizedBox(width: 4),
-                Text(relativeTime(f.dueAt),
-                    style: t.bodySmall
-                        ?.copyWith(color: dueColor, fontWeight: FontWeight.w600)),
-              ],
-            ),
-            const SizedBox(height: AppTokens.space2),
-            Row(
-              children: [
-                const Spacer(),
-                TextButton(
-                  onPressed: busy ? null : onReschedule,
-                  child: const Text('Reschedule'),
-                ),
-                const SizedBox(width: AppTokens.space2),
-                FilledButton.tonalIcon(
-                  onPressed: busy ? null : onComplete,
-                  icon: const Icon(Icons.check, size: 18),
-                  label: const Text('Done'),
-                ),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  static String _contactLabel(String? m) => switch ((m ?? '').toUpperCase()) {
+        'WHATSAPP' => 'WhatsApp',
+        'EMAIL' => 'Email',
+        'IN_PERSON' || 'OFFICE' => 'In person',
+        'PHONE' => 'Phone',
+        _ => 'Call',
+      };
 }

@@ -13,6 +13,7 @@ import '../data/whatsapp_providers.dart';
 import '../data/whatsapp_repository.dart';
 import '../domain/wa_message.dart';
 import '../domain/wa_thread.dart';
+import 'media_preview_screen.dart';
 import 'template_picker_sheet.dart';
 
 class ThreadScreen extends ConsumerStatefulWidget {
@@ -152,12 +153,30 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
       _toast('Could not access file.');
       return;
     }
+
+    // WhatsApp-style: show a preview + optional caption and let the user
+    // confirm before anything is sent. Returns null if they back out.
+    const imageExts = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'};
+    final ext = (picked.extension ?? '').toLowerCase();
+    final caption = await Navigator.of(context).push<String?>(
+      MaterialPageRoute(
+        builder: (_) => MediaPreviewScreen(
+          filePath: path,
+          fileName: picked.name,
+          isImage: imageExts.contains(ext),
+          contactName: _thread.displayName,
+        ),
+      ),
+    );
+    if (caption == null || !mounted) return; // cancelled in the preview
+
     setState(() => _sending = true);
     try {
       final msg = await ref.read(whatsappRepositoryProvider).sendMedia(
             _threadId,
             filePath: path,
             fileName: picked.name,
+            caption: caption.isEmpty ? null : caption,
           );
       ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
       _jumpToBottom(animate: true);

@@ -8,7 +8,6 @@ import 'package:go_router/go_router.dart';
 import '../../../core/auth/auth_controller.dart';
 import '../../../core/navigation/shell_index.dart';
 import '../../../core/router/app_router.dart';
-import '../../../core/settings/theme_provider.dart';
 import '../../../core/theme/tokens.dart';
 import '../../appointments/presentation/appointments_screen.dart';
 import '../../calls/data/call_permissions.dart';
@@ -135,16 +134,12 @@ class _AppShellState extends ConsumerState<AppShell> {
                 case 'change-password':
                   context.push(AppRoutes.changePassword);
                   break;
-                case 'dark-mode':
-                  ref.read(themeModeProvider.notifier).toggle();
-                  break;
                 case 'logout':
                   await ref.read(authControllerProvider.notifier).logout();
                   break;
               }
             },
             itemBuilder: (context) {
-              final isDark = ref.read(themeModeProvider) == ThemeMode.dark;
               return [
                 PopupMenuItem<String>(
                   enabled: false,
@@ -167,19 +162,6 @@ class _AppShellState extends ConsumerState<AppShell> {
                   ),
                 ),
                 const PopupMenuDivider(),
-                PopupMenuItem<String>(
-                  value: 'dark-mode',
-                  child: Row(
-                    children: [
-                      Icon(isDark
-                          ? Icons.light_mode_outlined
-                          : Icons.dark_mode_outlined,
-                          size: 18),
-                      const SizedBox(width: 10),
-                      Text(isDark ? 'Light mode' : 'Dark mode'),
-                    ],
-                  ),
-                ),
                 const PopupMenuItem<String>(
                   value: 'call-setup',
                   child: Row(

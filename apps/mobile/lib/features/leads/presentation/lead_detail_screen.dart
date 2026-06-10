@@ -9,6 +9,7 @@ import '../../../core/util/launchers.dart';
 import '../../../core/widgets/app_states.dart';
 import '../../../core/widgets/badges.dart';
 import '../../agreements/presentation/agreements_screen.dart';
+import '../../followups/presentation/followup_form_sheet.dart';
 import '../data/employees_repository.dart';
 import '../data/leads_providers.dart';
 import '../data/leads_repository.dart';
@@ -164,9 +165,28 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
       ),
     );
     if (picked == null || picked == lead.status) return;
+
+    // Marking LOST requires a reason — that's the data that tells us WHY
+    // leads die. Stored as a timestamped entry in the lead's notes so it's
+    // visible on web and mobile alike.
+    String? notesWithReason;
+    if (picked == 'LOST') {
+      final reason = await _promptText(
+        title: 'Why was this lead lost?',
+        hint: 'e.g. Chose another consultant, budget, not eligible…',
+        confirmLabel: 'Mark lost',
+      );
+      if (reason == null || reason.trim().isEmpty) return; // cancelled
+      notesWithReason = _appendNote(lead.notes, 'Lost: ${reason.trim()}');
+    }
+
     setState(() => _busy = true);
     try {
-      await ref.read(leadsRepositoryProvider).update(lead.id, status: picked);
+      await ref.read(leadsRepositoryProvider).update(
+            lead.id,
+            status: picked,
+            notes: notesWithReason,
+          );
       ref.invalidate(leadDetailProvider(lead.id));
       ref.invalidate(leadsListProvider);
       _toast('Status updated to ${leadStatusLabel(picked)}');
@@ -175,6 +195,79 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Append a timestamped entry to the lead's free-text notes.
+  String _appendNote(String? existing, String entry) {
+    final now = DateTime.now();
+    final stamp =
+        '${now.day}/${now.month}/${now.year} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final prior = (existing ?? '').trim();
+    return prior.isEmpty ? '[$stamp] $entry' : '$prior\n\n[$stamp] $entry';
+  }
+
+  /// Simple one-field text prompt. Returns null on cancel.
+  Future<String?> _promptText({
+    required String title,
+    required String hint,
+    String confirmLabel = 'Save',
+  }) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(hintText: hint),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return result;
+  }
+
+  Future<void> _addNote(Lead lead) async {
+    final text = await _promptText(
+      title: 'Add note',
+      hint: 'What happened? (visible to the whole team)',
+      confirmLabel: 'Add note',
+    );
+    if (text == null || text.trim().isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(leadsRepositoryProvider).update(
+            lead.id,
+            notes: _appendNote(lead.notes, text.trim()),
+          );
+      ref.invalidate(leadDetailProvider(lead.id));
+      _toast('Note added');
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _newFollowUp(Lead lead) async {
+    final created = await showFollowUpForm(
+      context,
+      leadId: lead.id,
+      leadName: lead.fullName,
+    );
+    if (created == true) _toast('Follow-up created');
   }
 
   Future<void> _edit(Lead lead) async {
@@ -478,6 +571,26 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
                       fontWeight: FontWeight.w600)),
             ),
           ),
+        const SizedBox(height: AppTokens.space3),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: _busy ? null : () => _addNote(lead),
+                icon: const Icon(Icons.note_add_outlined),
+                label: const Text('Add note'),
+              ),
+            ),
+            const SizedBox(width: AppTokens.space3),
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: _busy ? null : () => _newFollowUp(lead),
+                icon: const Icon(Icons.add_task),
+                label: const Text('Follow-up'),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: AppTokens.space3),
         FilledButton.tonalIcon(
           onPressed: _busy ? null : () => _changeStatus(lead),

@@ -601,44 +601,69 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                 children: [
                   // Media attach (only inside window)
                   IconButton(
-                    tooltip: 'Send media',
-                    icon: const Icon(Icons.attach_file, size: 22),
+                    tooltip: 'Attach',
+                    icon: const Icon(Icons.add, size: 24),
                     onPressed: _sending ? null : _sendMedia,
                   ),
+                  // Rounded input pill: text field + quick-reply (⚡) and
+                  // template (✨) tucked inside on the right, WhatsApp-style.
                   Expanded(
-                    child: TextField(
-                      controller: _composer,
-                      minLines: 1,
-                      maxLines: 4,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(
-                        hintText: 'Type a message',
-                        isDense: true,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.all(AppTokens.radiusXl),
-                        ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? const Color(0xFF2A3942)
+                            : const Color(0xFFEFF2F5),
+                        borderRadius: const BorderRadius.all(AppTokens.radiusXl),
+                      ),
+                      padding: const EdgeInsets.only(left: 14, right: 2),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _composer,
+                              minLines: 1,
+                              maxLines: 4,
+                              textCapitalization: TextCapitalization.sentences,
+                              decoration: const InputDecoration(
+                                hintText: 'Type a message',
+                                isDense: true,
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                contentPadding:
+                                    EdgeInsets.symmetric(vertical: 10),
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Quick reply',
+                            icon: const Icon(Icons.bolt_outlined, size: 21),
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints(
+                                minWidth: 34, minHeight: 40),
+                            padding: EdgeInsets.zero,
+                            color: AppTokens.textMutedLight,
+                            onPressed: _sending ? null : _insertQuickReply,
+                          ),
+                          IconButton(
+                            tooltip: 'Send template',
+                            icon: const Icon(Icons.auto_awesome_outlined,
+                                size: 21),
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints(
+                                minWidth: 34, minHeight: 40),
+                            padding: EdgeInsets.zero,
+                            color: AppTokens.textMutedLight,
+                            onPressed: _sending ? null : _sendTemplate,
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                  // Quick replies — saved snippets inserted into the box
-                  IconButton(
-                    tooltip: 'Quick reply',
-                    icon: const Icon(Icons.bolt_outlined, size: 22),
-                    onPressed: _sending ? null : _insertQuickReply,
-                  ),
-                  // Voice note (inside window)
-                  IconButton(
-                    tooltip: 'Voice note',
-                    icon: const Icon(Icons.mic_none, size: 22),
-                    onPressed: _sending ? null : _startVoiceNote,
-                  ),
-                  // Template button (always available)
-                  IconButton(
-                    tooltip: 'Send template',
-                    icon: const Icon(Icons.auto_awesome_outlined, size: 22),
-                    onPressed: _sending ? null : _sendTemplate,
-                  ),
-                  // Send text button
+                  const SizedBox(width: AppTokens.space2),
+                  // One round button: mic when empty, send once you type —
+                  // exactly like real WhatsApp.
                   _sending
                       ? const Padding(
                           padding: EdgeInsets.all(AppTokens.space2),
@@ -647,9 +672,16 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                               width: 24,
                               child: CircularProgressIndicator(strokeWidth: 2)),
                         )
-                      : IconButton.filled(
-                          onPressed: _send,
-                          icon: const Icon(Icons.send),
+                      : ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: _composer,
+                          builder: (_, value, __) {
+                            final hasText = value.text.trim().isNotEmpty;
+                            return IconButton.filled(
+                              tooltip: hasText ? 'Send' : 'Voice note',
+                              onPressed: hasText ? _send : _startVoiceNote,
+                              icon: Icon(hasText ? Icons.send : Icons.mic_none),
+                            );
+                          },
                         ),
                 ],
               ))

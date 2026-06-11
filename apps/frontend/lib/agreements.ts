@@ -372,20 +372,96 @@ const COUNTRY_ADJECTIVES: Record<string, string> = {
   ireland: 'Irish',
   france: 'French',
   netherlands: 'Dutch',
+  norway: 'Norwegian',
+  sweden: 'Swedish',
+  denmark: 'Danish',
+  finland: 'Finnish',
+  austria: 'Austrian',
+  belgium: 'Belgian',
+  switzerland: 'Swiss',
+  'czech republic': 'Czech',
+  czechia: 'Czech',
+  slovakia: 'Slovak',
+  slovenia: 'Slovenian',
+  croatia: 'Croatian',
+  lithuania: 'Lithuanian',
+  latvia: 'Latvian',
+  estonia: 'Estonian',
+  luxembourg: 'Luxembourg',
+  cyprus: 'Cypriot',
+  bulgaria: 'Bulgarian',
+  albania: 'Albanian',
+  serbia: 'Serbian',
+  'united arab emirates': 'UAE',
+  uae: 'UAE',
+  'saudi arabia': 'Saudi',
+  qatar: 'Qatari',
+  oman: 'Omani',
+  kuwait: 'Kuwaiti',
+  bahrain: 'Bahraini',
+  japan: 'Japanese',
+  'south korea': 'South Korean',
+  china: 'Chinese',
+  singapore: 'Singaporean',
+  malaysia: 'Malaysian',
+  thailand: 'Thai',
+  azerbaijan: 'Azerbaijani',
+  georgia: 'Georgian',
+  'south africa': 'South African',
+  brazil: 'Brazilian',
 };
 
+/** Parsed destination-country terms; null when no country is known. */
+function countryTerms(
+  country?: string,
+): { name: string; adjective: string; isCanada: boolean } | null {
+  const c = (country || '').trim();
+  if (!c) return null;
+  return {
+    name: c,
+    adjective: COUNTRY_ADJECTIVES[c.toLowerCase()] ?? c,
+    isCanada: c.toLowerCase() === 'canada',
+  };
+}
+
 /**
- * Rewrite the template's hardcoded Canada wording for another destination
- * ("Canada" → country, "Canadian" → its adjective) — same rules as the
- * server, so the live preview matches the PDF. No-op for Canada/empty.
+ * Make the destination country appear everywhere in authored HTML — same
+ * rules as the server, so the live preview matches the PDF: Canada-authored
+ * wording is rewritten ("Canada" → country, "Canadian" → adjective), and
+ * country-less templates get the adjective injected into Embassy mentions.
  */
 function applyCountry(html: string, country?: string): string {
-  const c = (country || '').trim();
-  if (!c || c.toLowerCase() === 'canada') return html;
-  const adjective = COUNTRY_ADJECTIVES[c.toLowerCase()] ?? c;
-  return html
-    .replace(/\bCanadian\b/g, escapeHtml(adjective))
-    .replace(/\bCanada\b/g, escapeHtml(c));
+  const t = countryTerms(country);
+  if (!t) return html;
+  let out = html;
+  if (!t.isCanada) {
+    out = out
+      .replace(/\bCanadian\b/g, escapeHtml(t.adjective))
+      .replace(/\bCanada\b/g, escapeHtml(t.name));
+  }
+  // "(?! of )" keeps "the Embassy of X" intact — only bare mentions gain
+  // the adjective, and already-qualified ones can't double up.
+  const adj = escapeHtml(t.adjective);
+  out = out.replace(
+    /\b(the|The) (relevant |Relevant )?Embassy\b(?! of )/g,
+    (_m, the: string, rel: string | undefined) => `${the} ${rel ?? ''}${adj} Embassy`,
+  );
+  return out;
+}
+
+/** Title with the destination guaranteed present — mirror of the server. */
+function applyCountryTitle(title: string, country?: string): string {
+  const t = countryTerms(country);
+  if (!t) return title;
+  let out = title;
+  if (!t.isCanada) {
+    out = out.replace(/\bCanadian\b/g, t.adjective).replace(/\bCanada\b/g, t.name);
+  }
+  const low = out.toLowerCase();
+  if (low.includes(t.name.toLowerCase()) || low.includes(t.adjective.toLowerCase())) {
+    return out;
+  }
+  return `${t.name} — ${out}`;
 }
 
 /** Substitute bio + plan into a template body — same rules as the server. */
@@ -402,7 +478,7 @@ export function composeAgreementDocument(
       bio.agreementDate && bio.agreementDate.trim()
         ? bio.agreementDate
         : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
-    PROGRAM_TITLE: applyCountry(meta.programTitle || '', bio.country),
+    PROGRAM_TITLE: applyCountryTitle(meta.programTitle || '', bio.country),
     APPLICANT_NAME: bio.applicantName || '',
     FATHER_NAME: bio.fatherName || '',
     CNIC: bio.cnic || '',

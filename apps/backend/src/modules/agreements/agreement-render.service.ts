@@ -30,6 +30,43 @@ const COUNTRY_ADJECTIVES: Record<string, string> = {
   ireland: 'Irish',
   france: 'French',
   netherlands: 'Dutch',
+  norway: 'Norwegian',
+  sweden: 'Swedish',
+  denmark: 'Danish',
+  finland: 'Finnish',
+  austria: 'Austrian',
+  belgium: 'Belgian',
+  switzerland: 'Swiss',
+  'czech republic': 'Czech',
+  czechia: 'Czech',
+  slovakia: 'Slovak',
+  slovenia: 'Slovenian',
+  croatia: 'Croatian',
+  lithuania: 'Lithuanian',
+  latvia: 'Latvian',
+  estonia: 'Estonian',
+  luxembourg: 'Luxembourg',
+  cyprus: 'Cypriot',
+  bulgaria: 'Bulgarian',
+  albania: 'Albanian',
+  serbia: 'Serbian',
+  'united arab emirates': 'UAE',
+  uae: 'UAE',
+  'saudi arabia': 'Saudi',
+  qatar: 'Qatari',
+  oman: 'Omani',
+  kuwait: 'Kuwaiti',
+  bahrain: 'Bahraini',
+  japan: 'Japanese',
+  'south korea': 'South Korean',
+  china: 'Chinese',
+  singapore: 'Singaporean',
+  malaysia: 'Malaysian',
+  thailand: 'Thai',
+  azerbaijan: 'Azerbaijani',
+  georgia: 'Georgian',
+  'south africa': 'South African',
+  brazil: 'Brazilian',
 };
 
 /** A payment-plan row used when composing the Annexure-A table. */
@@ -166,35 +203,73 @@ export class AgreementRenderService {
     return out;
   }
 
-  /** Name + adjective for a non-Canada destination; null = no rewrite. */
+  /** Parsed destination-country terms; null when no country is known. */
   private countryTerms(
     country?: string,
-  ): { name: string; adjective: string } | null {
+  ): { name: string; adjective: string; isCanada: boolean } | null {
     const c = country?.trim();
-    if (!c || c.toLowerCase() === 'canada') return null;
-    return { name: c, adjective: COUNTRY_ADJECTIVES[c.toLowerCase()] ?? c };
+    if (!c) return null;
+    return {
+      name: c,
+      adjective: COUNTRY_ADJECTIVES[c.toLowerCase()] ?? c,
+      isCanada: c.toLowerCase() === 'canada',
+    };
   }
 
   /**
-   * Make the selected destination country appear EVERYWHERE: templates were
-   * authored for Canada, so for any other destination the literal mentions
-   * are rewritten ("Canada" → country, "Canadian" → its adjective).
+   * Make the selected destination country appear EVERYWHERE in authored HTML:
+   *  1. Canada-authored templates — rewrite the literal mentions
+   *     ("Canada" → country, "Canadian" → its adjective).
+   *  2. Templates that name no country at all (generic "the Embassy" /
+   *     "the relevant Embassy") — inject the destination's adjective, so a
+   *     Norway visit visa reads "the Norwegian Embassy".
    */
   private applyCountry(html: string, country?: string): string {
     const t = this.countryTerms(country);
     if (!t) return html;
-    return html
-      .replace(/\bCanadian\b/g, this.escapeHtml(t.adjective))
-      .replace(/\bCanada\b/g, this.escapeHtml(t.name));
+    let out = html;
+    if (!t.isCanada) {
+      out = out
+        .replace(/\bCanadian\b/g, this.escapeHtml(t.adjective))
+        .replace(/\bCanada\b/g, this.escapeHtml(t.name));
+    }
+    // "(?! of )" keeps "the Embassy of X" intact — only bare mentions gain
+    // the adjective, and already-qualified ones can't double up.
+    const adj = this.escapeHtml(t.adjective);
+    out = out.replace(
+      /\b(the|The) (relevant |Relevant )?Embassy\b(?! of )/g,
+      (_m, the: string, rel: string | undefined) =>
+        `${the} ${rel ?? ''}${adj} Embassy`,
+    );
+    return out;
   }
 
-  /** Plain-text variant of the rewrite — for document titles / token values. */
+  /** Plain-text Canada→country rewrite — for titles / token values. */
   applyCountryText(text: string, country?: string): string {
     const t = this.countryTerms(country);
-    if (!t) return text;
+    if (!t || t.isCanada) return text;
     return text
       .replace(/\bCanadian\b/g, t.adjective)
       .replace(/\bCanada\b/g, t.name);
+  }
+
+  /**
+   * Title with the destination guaranteed present: rewrite first; if the
+   * country still doesn't appear (generic titles like "Visit Visa"), prefix
+   * it — "Norway — Temporary Resident Visa – Visit Visa".
+   */
+  applyCountryTitle(title: string, country?: string): string {
+    const t = this.countryTerms(country);
+    if (!t) return title;
+    const out = this.applyCountryText(title, country);
+    const low = out.toLowerCase();
+    if (
+      low.includes(t.name.toLowerCase()) ||
+      low.includes(t.adjective.toLowerCase())
+    ) {
+      return out;
+    }
+    return `${t.name} — ${out}`;
   }
 
   /** Wrap composed body in the branded full HTML document. */
@@ -281,7 +356,7 @@ export class AgreementRenderService {
               month: 'long',
               year: 'numeric',
             }),
-      PROGRAM_TITLE: this.applyCountryText(programTitle, bio.country),
+      PROGRAM_TITLE: this.applyCountryTitle(programTitle, bio.country),
       APPLICANT_NAME: bio.applicantName ?? '',
       FATHER_NAME: bio.fatherName ?? '',
       CNIC: bio.cnic ?? '',
@@ -339,7 +414,7 @@ export class AgreementRenderService {
       agreementNumber,
     );
     return this.pdf.renderHtml(
-      this.wrapDocument(this.applyCountryText(programTitle, bio.country), inner),
+      this.wrapDocument(this.applyCountryTitle(programTitle, bio.country), inner),
       this.agreementPdfOptions(),
     );
   }
@@ -356,7 +431,7 @@ export class AgreementRenderService {
     country?: string,
   ): Promise<Buffer> {
     return this.pdf.renderHtml(
-      this.wrapDocument(this.applyCountryText(programTitle, country), innerHtml),
+      this.wrapDocument(this.applyCountryTitle(programTitle, country), innerHtml),
       this.agreementPdfOptions(),
     );
   }

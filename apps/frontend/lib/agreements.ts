@@ -446,22 +446,27 @@ function applyCountry(html: string, country?: string): string {
     /\b(the|The) (relevant |Relevant )?Embassy\b(?! of )/g,
     (_m, the: string, rel: string | undefined) => `${the} ${rel ?? ''}${adj} Embassy`,
   );
+  // "the Client's visa application" → "...visa application for Norway";
+  // skips already-qualified ("for X") and Embassy-bound ("application to")
+  // mentions, where the country is named by the Embassy injection instead.
+  out = out.replace(
+    /\bvisa application\b(?! (for|to)\b)/g,
+    `visa application for ${escapeHtml(t.name)}`,
+  );
+  // "by governmental authorities" → "by Norwegian governmental authorities";
+  // article-anchored so adjectivised mentions can't double up.
+  out = out.replace(
+    /\b(by|the) governmental authorit(y|ies)\b/g,
+    (_m, lead: string, tail: string) => `${lead} ${adj} governmental authorit${tail}`,
+  );
   return out;
 }
 
-/** Title with the destination guaranteed present — mirror of the server. */
-function applyCountryTitle(title: string, country?: string): string {
+/** Plain-text Canada→country rewrite — for the program-title token. */
+function applyCountryText(text: string, country?: string): string {
   const t = countryTerms(country);
-  if (!t) return title;
-  let out = title;
-  if (!t.isCanada) {
-    out = out.replace(/\bCanadian\b/g, t.adjective).replace(/\bCanada\b/g, t.name);
-  }
-  const low = out.toLowerCase();
-  if (low.includes(t.name.toLowerCase()) || low.includes(t.adjective.toLowerCase())) {
-    return out;
-  }
-  return `${t.name} — ${out}`;
+  if (!t || t.isCanada) return text;
+  return text.replace(/\bCanadian\b/g, t.adjective).replace(/\bCanada\b/g, t.name);
 }
 
 /** Substitute bio + plan into a template body — same rules as the server. */
@@ -478,7 +483,9 @@ export function composeAgreementDocument(
       bio.agreementDate && bio.agreementDate.trim()
         ? bio.agreementDate
         : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
-    PROGRAM_TITLE: applyCountryTitle(meta.programTitle || '', bio.country),
+    // Rewrite-only: the token may sit mid-sentence, where a country prefix
+    // reads badly. The PDF's big heading gains the prefix server-side.
+    PROGRAM_TITLE: applyCountryText(meta.programTitle || '', bio.country),
     APPLICANT_NAME: bio.applicantName || '',
     FATHER_NAME: bio.fatherName || '',
     CNIC: bio.cnic || '',

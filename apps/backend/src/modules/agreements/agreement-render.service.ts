@@ -241,6 +241,21 @@ export class AgreementRenderService {
       (_m, the: string, rel: string | undefined) =>
         `${the} ${rel ?? ''}${adj} Embassy`,
     );
+    // "the Client's visa application" → "...visa application for Norway".
+    // Skips ones already qualified ("for X") or mid-flow ("application to
+    // the Embassy", where the Embassy injection names the country instead).
+    out = out.replace(
+      /\bvisa application\b(?! (for|to)\b)/g,
+      `visa application for ${this.escapeHtml(t.name)}`,
+    );
+    // "determined by governmental authorities" → "by Norwegian governmental
+    // authorities". Anchored on the article so an already-adjectivised
+    // mention ("by Australian governmental authorities") can't double up.
+    out = out.replace(
+      /\b(by|the) governmental authorit(y|ies)\b/g,
+      (_m, lead: string, tail: string) =>
+        `${lead} ${adj} governmental authorit${tail}`,
+    );
     return out;
   }
 
@@ -356,7 +371,11 @@ export class AgreementRenderService {
               month: 'long',
               year: 'numeric',
             }),
-      PROGRAM_TITLE: this.applyCountryTitle(programTitle, bio.country),
+      // Rewrite-only (no country prefix): the token may sit mid-sentence
+      // ("the Client's {{PROGRAM_TITLE}} application to ..."), where a
+      // prefixed title reads badly. The big document heading gets the
+      // guaranteed-present treatment via applyCountryTitle at wrap time.
+      PROGRAM_TITLE: this.applyCountryText(programTitle, bio.country),
       APPLICANT_NAME: bio.applicantName ?? '',
       FATHER_NAME: bio.fatherName ?? '',
       CNIC: bio.cnic ?? '',

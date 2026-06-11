@@ -7,7 +7,8 @@
  * Creation/edit/delete happen inline so reps never leave the chat.
  */
 import { useEffect, useState } from 'react';
-import { Pencil, Plus, Trash2, X, Zap } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Modal } from './Modal';
 import {
   createQuickReply,
   deleteQuickReply,
@@ -189,38 +190,10 @@ export function QuickReplyPicker(props: {
   );
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.45)',
-        zIndex: 90,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 420,
-          maxWidth: 'calc(100vw - 32px)',
-          maxHeight: '70vh',
-          overflowY: 'auto',
-          background: 'var(--sos-surface-2, #1f2c33)',
-          border: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.08))',
-          borderRadius: 12,
-          padding: 14,
-          boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <Zap size={16} color="var(--wa-accent)" />
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)', flex: 1 }}>
-            Quick replies
-          </div>
-          {editing === null ? (
+    <Modal open={open} onClose={onClose} title="Quick replies" width={460}>
+      <div style={{ padding: 14, maxHeight: '62vh', overflowY: 'auto' }}>
+        {editing === null ? (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
             <button
               type="button"
               onClick={startNew}
@@ -229,17 +202,10 @@ export function QuickReplyPicker(props: {
                 gap: 4, fontSize: 12, color: 'var(--wa-accent)', fontWeight: 600,
               }}
             >
-              <Plus size={14} /> New
+              <Plus size={14} /> New quick reply
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onClose}
-            style={{ all: 'unset', cursor: 'pointer', color: 'var(--sos-text-muted)', padding: 4 }}
-          >
-            <X size={16} />
-          </button>
-        </div>
+          </div>
+        ) : null}
 
         {error ? (
           <div style={{ fontSize: 12, color: '#f87171', marginBottom: 8 }}>{error}</div>
@@ -319,6 +285,6 @@ export function QuickReplyPicker(props: {
           </>
         ) : null}
       </div>
-    </div>
+    </Modal>
   );
 }

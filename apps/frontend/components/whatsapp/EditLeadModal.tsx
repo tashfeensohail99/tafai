@@ -63,7 +63,11 @@ export function EditLeadModal(props: {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Re-prefill every time the modal opens against a (potentially) new lead.
+  // Re-prefill ONLY when the modal opens or a different lead is targeted —
+  // never on mere parent re-renders. The chat panel rebuilds the `lead`
+  // object on every render (and re-renders on every poll tick / incoming
+  // message), so depending on the object itself reset the form mid-typing:
+  // reps watched their email text vanish as messages arrived.
   useEffect(() => {
     if (!open || !lead) return;
     setFirstName(lead.firstName ?? '');
@@ -76,7 +80,9 @@ export function EditLeadModal(props: {
     setServiceFeeCurrency(lead.serviceFeeCurrency ?? 'CAD');
     setError(null);
     setSubmitting(false);
-  }, [open, lead]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- prefill is
+    // keyed on identity (open + lead.id), not on object reference.
+  }, [open, lead?.id]);
 
   async function handleSave() {
     if (!lead) return;

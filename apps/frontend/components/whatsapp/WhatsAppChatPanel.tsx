@@ -3117,83 +3117,94 @@ function ChatComposer(props: {
             />
           </div>
 
-          {/* Quick replies — saved snippets inserted into the typing box.
-              Session text only, so it follows the same window rule as the
-              textarea (disabled when the 24h window is closed). */}
-          <button
-            type="button"
-            title="Insert a quick reply"
-            onClick={props.onOpenQuickReplies}
-            disabled={props.disabled}
-            style={{
-              all: 'unset', cursor: props.disabled ? 'not-allowed' : 'pointer',
-              color: 'var(--sos-text-muted)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-              transition: 'background 0.15s',
-              opacity: props.disabled ? 0.4 : 1,
-            }}
-            onMouseEnter={(e) => {
-              if (!props.disabled)
-                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)';
-            }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-          >
-            <Zap size={20} />
-          </button>
-
-          {/* Template button */}
-          <button
-            type="button"
-            title="Send a template message"
-            onClick={props.onOpenTemplate}
-            style={{
-              all: 'unset', cursor: 'pointer',
-              color: props.disabled ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-              transition: 'background 0.15s',
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-          >
-            <FileText size={20} />
-          </button>
-
-          {/* Text input */}
-          <textarea
-            disabled={props.disabled}
-            value={props.value}
-            onChange={(e) => props.onChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!props.sending && props.value.trim()) props.onSend();
-              }
-            }}
-            placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
-            rows={1}
+          {/* Rounded input pill — WhatsApp-style. The textarea grows, with the
+              quick-reply (⚡) and template (📄) actions tucked inside the pill
+              on the right so they don't eat a separate column of space. */}
+          <div
             style={{
               flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: 2,
               background: 'var(--wa-composer-input-bg)',
-              color: 'var(--sos-text-primary)',
-              border: 'none',
-              borderRadius: 8,
-              padding: '9px 12px',
-              fontSize: 14,
-              lineHeight: '1.5',
-              resize: 'none',
-              outline: 'none',
-              maxHeight: 120,
-              fontFamily: 'inherit',
-              opacity: props.disabled ? 0.5 : 1,
+              borderRadius: 22,
+              padding: '0 4px 0 6px',
+              opacity: props.disabled ? 0.6 : 1,
             }}
-            onInput={(e) => {
-              const el = e.target as HTMLTextAreaElement;
-              el.style.height = 'auto';
-              el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-            }}
-          />
+          >
+            <textarea
+              disabled={props.disabled}
+              value={props.value}
+              onChange={(e) => props.onChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (!props.sending && props.value.trim()) props.onSend();
+                }
+              }}
+              placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
+              rows={1}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                background: 'transparent',
+                color: 'var(--sos-text-primary)',
+                border: 'none',
+                padding: '10px 6px',
+                fontSize: 14,
+                lineHeight: '1.4',
+                resize: 'none',
+                outline: 'none',
+                maxHeight: 120,
+                fontFamily: 'inherit',
+              }}
+              onInput={(e) => {
+                const el = e.target as HTMLTextAreaElement;
+                el.style.height = 'auto';
+                el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+              }}
+            />
+            {/* Quick replies — saved snippets inserted into the box. */}
+            <button
+              type="button"
+              title="Insert a quick reply"
+              onClick={props.onOpenQuickReplies}
+              disabled={props.disabled}
+              style={{
+                all: 'unset', cursor: props.disabled ? 'not-allowed' : 'pointer',
+                color: 'var(--sos-text-muted)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 32, height: 36, borderRadius: '50%', flexShrink: 0,
+                transition: 'color 0.15s',
+                opacity: props.disabled ? 0.4 : 1,
+              }}
+              onMouseEnter={(e) => {
+                if (!props.disabled)
+                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--wa-accent)';
+              }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-muted)'; }}
+            >
+              <Zap size={19} />
+            </button>
+            {/* Template message */}
+            <button
+              type="button"
+              title="Send a template message"
+              onClick={props.onOpenTemplate}
+              style={{
+                all: 'unset', cursor: 'pointer',
+                color: props.disabled ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 32, height: 36, borderRadius: '50%', flexShrink: 0,
+                transition: 'color 0.15s',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--wa-accent)'; }}
+              onMouseLeave={(e) => { if (!props.disabled) (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-muted)'; }}
+            >
+              <FileText size={19} />
+            </button>
+          </div>
 
           {/* Send or Mic button */}
           {props.value.trim() ? (

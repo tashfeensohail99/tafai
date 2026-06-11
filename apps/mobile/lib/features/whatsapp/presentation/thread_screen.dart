@@ -226,10 +226,18 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
         return;
       }
       final dir = await getTemporaryDirectory();
+      // Record Opus-in-Ogg directly — the exact format WhatsApp voice notes
+      // require. The web portal records Opus and delivers fine; AAC (m4a)
+      // re-encoded server-side produced a stream Meta refused (131053). 48 kHz
+      // is Opus's native rate.
       final path =
-          '${dir.path}/voice-${DateTime.now().millisecondsSinceEpoch}.m4a';
+          '${dir.path}/voice-${DateTime.now().millisecondsSinceEpoch}.ogg';
       await rec.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc, numChannels: 1),
+        const RecordConfig(
+          encoder: AudioEncoder.opus,
+          numChannels: 1,
+          sampleRate: 48000,
+        ),
         path: path,
       );
       setState(() {
@@ -283,7 +291,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
       final msg = await ref.read(whatsappRepositoryProvider).sendMedia(
             _threadId,
             filePath: path,
-            fileName: 'voice-note.m4a',
+            fileName: 'voice-note.ogg',
           );
       ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
       _jumpToBottom(animate: true);

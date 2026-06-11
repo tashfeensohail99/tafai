@@ -269,9 +269,9 @@ export class AgreementRenderService {
   }
 
   /**
-   * Title with the destination guaranteed present: rewrite first; if the
-   * country still doesn't appear (generic titles like "Visit Visa"), prefix
-   * it — "Norway — Temporary Resident Visa – Visit Visa".
+   * Title with the destination guaranteed present, in the firm's signed-
+   * agreement style: the country is APPENDED ("Temporary Resident Visa –
+   * Visit Visa Canada") when the title doesn't already name it.
    */
   applyCountryTitle(title: string, country?: string): string {
     const t = this.countryTerms(country);
@@ -284,7 +284,7 @@ export class AgreementRenderService {
     ) {
       return out;
     }
-    return `${t.name} — ${out}`;
+    return `${out} ${t.name}`;
   }
 
   /** Wrap composed body in the branded full HTML document. */

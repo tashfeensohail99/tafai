@@ -469,6 +469,23 @@ function applyCountryText(text: string, country?: string): string {
   return text.replace(/\bCanadian\b/g, t.adjective).replace(/\bCanada\b/g, t.name);
 }
 
+/**
+ * Document heading with the destination appended in the firm's signed-
+ * agreement style ("Temporary Resident Visa – Visit Visa Canada") unless the
+ * title already names the country. Mirror of the server's applyCountryTitle,
+ * so the editor preview heading matches the PDF.
+ */
+export function composeAgreementTitle(programTitle: string, country?: string): string {
+  const t = countryTerms(country);
+  if (!t) return programTitle;
+  const out = applyCountryText(programTitle, country);
+  const low = out.toLowerCase();
+  if (low.includes(t.name.toLowerCase()) || low.includes(t.adjective.toLowerCase())) {
+    return out;
+  }
+  return `${out} ${t.name}`;
+}
+
 /** Substitute bio + plan into a template body — same rules as the server. */
 export function composeAgreementDocument(
   bodyHtml: string,

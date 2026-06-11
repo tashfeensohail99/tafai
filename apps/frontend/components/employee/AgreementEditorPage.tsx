@@ -31,6 +31,7 @@ import {
 import {
   AGREEMENT_CURRENCIES,
   composeAgreementDocument,
+  composeAgreementTitle,
   getAgreement,
   previewAgreementPdf,
   submitAgreement,
@@ -497,7 +498,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
                   className="agreement-doc"
                   style={{ padding: '20px 24px', color: '#1a1d29', fontSize: 12.5, lineHeight: 1.6, outline: 'none', minHeight: 200 }}
                   dangerouslySetInnerHTML={{
-                    __html: `<h1 class="doc-title">${escapeTitle(data.template?.programTitle ?? '')}</h1>` +
+                    __html: `<h1 class="doc-title">${escapeTitle(composeAgreementTitle(data.template?.programTitle ?? '', bio.country))}</h1>` +
                       (previewHtml || '<p class="sos-text-faint">Fill the form to build the document…</p>'),
                   }}
                 />

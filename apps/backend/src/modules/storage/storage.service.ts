@@ -74,8 +74,19 @@ export class StorageService {
     originalFilename?: string,
   ): Promise<UploadResult> {
     const ext = originalFilename?.split('.').pop() ?? 'bin';
-    const key = `${folder}/${randomUUID()}.${ext}`;
+    return this.uploadAt(`${folder}/${randomUUID()}.${ext}`, buffer, mimeType);
+  }
 
+  /**
+   * Upload at a caller-chosen stable key (overwrites any existing object).
+   * For published artifacts — e.g. the Android app behind /downloads —
+   * where the same key must keep pointing at the latest version.
+   */
+  async uploadAt(
+    key: string,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<UploadResult> {
     if (this.mode === 'local') {
       this.logger.log(`[LOCAL] Skipped upload, stub key: ${key}`);
       return { key, bucket: this.bucket, sizeBytes: buffer.length, mimeType };

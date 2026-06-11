@@ -27,6 +27,7 @@ import { MetaLeadsModule } from './modules/meta-leads/meta-leads.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { QuickRepliesModule } from './modules/quick-replies/quick-replies.module';
+import { PublicDownloadsModule } from './modules/public-downloads/public-downloads.module';
 import { CasesModule } from './modules/cases/cases.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { FinanceModule } from './modules/finance/finance.module';
@@ -84,6 +85,7 @@ import { PayrollModule } from './modules/payroll/payroll.module';
     ClientsModule,
     AppointmentsModule,
     QuickRepliesModule,
+    PublicDownloadsModule,
     CasesModule,
     DocumentsModule,
     FinanceModule,

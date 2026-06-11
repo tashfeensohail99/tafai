@@ -279,8 +279,16 @@ export class WhatsAppMessagesService {
       );
     }
 
-    // Resolve Meta message type from MIME type
-    const mediaType = resolveMediaType(input.mimeType);
+    // Voice notes (filename convention voice-note.*) skip strict MIME
+    // validation — they're ALWAYS transcoded to Ogg/Opus below, and the
+    // mobile app's multipart parts arrive as application/octet-stream.
+    const isVoiceNote = input.filename.toLowerCase().startsWith('voice-note.');
+
+    // Resolve Meta message type from the MIME type; clients that upload a
+    // generic octet-stream (mobile multipart) fall back to the filename
+    // extension so gallery attachments survive too.
+    const effectiveMime = normalizeMediaMime(input.mimeType, input.filename);
+    const mediaType = isVoiceNote ? 'audio' : resolveMediaType(effectiveMime);
     if (!mediaType) {
       throw new BadRequestException(`Unsupported media MIME type: ${input.mimeType}`);
     }
@@ -299,12 +307,10 @@ export class WhatsAppMessagesService {
     // so the frontend can show "(#131009) Parameter value is not valid"
     // instead of the bare "Internal server error" that NestJS produces
     // for an unhandled non-HttpException.
-    // Detect voice notes by filename convention (frontend sends voice-note.*).
-    // Voice notes require OGG/OPUS format — transcode if the browser recorded
+    // Voice notes require OGG/OPUS format — transcode if the client recorded
     // in a different format (e.g. audio/mp4 on Chrome, audio/webm elsewhere).
-    const isVoiceNote = input.filename.toLowerCase().startsWith('voice-note.');
     let uploadBuffer = input.file;
-    let uploadMimeType = input.mimeType;
+    let uploadMimeType = effectiveMime;
     let uploadFilename = input.filename;
 
     if (isVoiceNote) {
@@ -597,4 +603,37 @@ function resolveMediaType(
   ];
   if (documentMimes.includes(base)) return 'document';
   return null;
+}
+
+/**
+ * Best-effort MIME for clients that upload without declaring one (the
+ * mobile app's multipart parts arrive as application/octet-stream): fall
+ * back to the filename extension. Unknown extensions keep the original
+ * MIME so the strict check above still rejects them.
+ */
+function normalizeMediaMime(mimeType: string, filename: string): string {
+  const base = (mimeType || '').split(';')[0].trim().toLowerCase();
+  if (base && base !== 'application/octet-stream') return base;
+  const ext = filename.toLowerCase().split('.').pop() ?? '';
+  const byExt: Record<string, string> = {
+    m4a: 'audio/mp4',
+    aac: 'audio/aac',
+    mp3: 'audio/mpeg',
+    ogg: 'audio/ogg',
+    opus: 'audio/ogg',
+    amr: 'audio/amr',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    mp4: 'video/mp4',
+    '3gp': 'video/3gp',
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    txt: 'text/plain',
+  };
+  return byExt[ext] ?? base;
 }

@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http_parser/http_parser.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/errors/error_mapper.dart';
@@ -233,6 +234,30 @@ class WhatsappRepository {
     }
   }
 
+  /// MIME type from the filename extension — the backend (and Meta behind
+  /// it) rejects untyped octet-stream uploads.
+  static MediaType? _mediaTypeFor(String name) {
+    final ext = name.toLowerCase().split('.').last;
+    const map = <String, List<String>>{
+      'm4a': ['audio', 'mp4'],
+      'aac': ['audio', 'aac'],
+      'mp3': ['audio', 'mpeg'],
+      'ogg': ['audio', 'ogg'],
+      'amr': ['audio', 'amr'],
+      'jpg': ['image', 'jpeg'],
+      'jpeg': ['image', 'jpeg'],
+      'png': ['image', 'png'],
+      'webp': ['image', 'webp'],
+      'gif': ['image', 'gif'],
+      'mp4': ['video', 'mp4'],
+      '3gp': ['video', '3gp'],
+      'pdf': ['application', 'pdf'],
+      'txt': ['text', 'plain'],
+    };
+    final m = map[ext];
+    return m == null ? null : MediaType(m[0], m[1]);
+  }
+
   /// POST /whatsapp/threads/:threadId/messages/media (multipart)
   Future<ChatMessage> sendMedia(
     String threadId, {
@@ -242,7 +267,13 @@ class WhatsappRepository {
   }) async {
     try {
       final form = FormData.fromMap({
-        'file': await MultipartFile.fromFile(filePath, filename: fileName),
+        // Declare the real content type — without it the part goes up as
+        // application/octet-stream and the backend rejects it for Meta.
+        'file': await MultipartFile.fromFile(
+          filePath,
+          filename: fileName,
+          contentType: _mediaTypeFor(fileName ?? filePath),
+        ),
         if (caption != null && caption.isNotEmpty) 'caption': caption,
       });
       final res = await _c.post<Map<String, dynamic>>(

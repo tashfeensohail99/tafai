@@ -19,6 +19,8 @@ dependencies:
 
   # Networking
   dio: ^5.4.0
+  # Declared multipart content types (dio already depends on it transitively)
+  http_parser: ^4.0.2
 
   # Secure storage — refresh token in the keychain; access token in memory
   flutter_secure_storage: ^9.0.0

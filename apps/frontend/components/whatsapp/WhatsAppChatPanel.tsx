@@ -51,6 +51,7 @@ import {
   UserPlus,
   Video as VideoIcon,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   GhostButton,
@@ -79,6 +80,8 @@ import { BookAppointmentModal, type AppointmentPrefill } from './BookAppointment
 import { AddFollowUpModal } from './AddFollowUpModal';
 import { EditLeadModal } from './EditLeadModal';
 import { TemplatePickerModal } from './TemplatePickerModal';
+import { QuickReplyPicker } from './QuickReplyPicker';
+import { fillQuickReply } from '@/lib/quick-replies';
 import { AiBotStrip } from './AiBotStrip';
 
 interface Props {
@@ -115,6 +118,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   const [bookPrefill, setBookPrefill] = useState<AppointmentPrefill | null>(null);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [quickRepliesOpen, setQuickRepliesOpen] = useState(false);
   const [editLeadOpen, setEditLeadOpen] = useState(false);
   // Fullscreen image viewer ("lightbox"). Holds the blob URL of the image
   // the user just clicked; null = closed. Escape / click-backdrop closes.
@@ -937,6 +941,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onSendMedia={handlePickMedia}
           onOpenCamera={() => setCameraOpen(true)}
           onOpenTemplate={() => setTemplateOpen(true)}
+          onOpenQuickReplies={() => setQuickRepliesOpen(true)}
           disabled={!withinWindow}
           sending={sending}
         />
@@ -998,6 +1003,16 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         onCreated={() => {
           setFollowUpOpen(false);
           void reload();
+        }}
+      />
+      <QuickReplyPicker
+        open={quickRepliesOpen}
+        onClose={() => setQuickRepliesOpen(false)}
+        onInsert={(body) => {
+          const filled = fillQuickReply(body, {
+            name: thread.lead?.firstName || thread.client?.firstName || null,
+          });
+          setDraft((d) => (d.trim() ? `${d} ${filled}` : filled));
         }}
       />
       <TemplatePickerModal
@@ -2799,6 +2814,7 @@ function ChatComposer(props: {
   onSendMedia: (file: File) => void;
   onOpenCamera: () => void;
   onOpenTemplate: () => void;
+  onOpenQuickReplies: () => void;
   disabled: boolean;
   sending: boolean;
 }) {
@@ -3100,6 +3116,31 @@ function ChatComposer(props: {
               onChange={onFileChosen}
             />
           </div>
+
+          {/* Quick replies — saved snippets inserted into the typing box.
+              Session text only, so it follows the same window rule as the
+              textarea (disabled when the 24h window is closed). */}
+          <button
+            type="button"
+            title="Insert a quick reply"
+            onClick={props.onOpenQuickReplies}
+            disabled={props.disabled}
+            style={{
+              all: 'unset', cursor: props.disabled ? 'not-allowed' : 'pointer',
+              color: 'var(--sos-text-muted)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+              transition: 'background 0.15s',
+              opacity: props.disabled ? 0.4 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!props.disabled)
+                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)';
+            }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+          >
+            <Zap size={20} />
+          </button>
 
           {/* Template button */}
           <button

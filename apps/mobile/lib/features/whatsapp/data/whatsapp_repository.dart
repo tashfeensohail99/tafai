@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/errors/error_mapper.dart';
 import '../domain/wa_message.dart';
+import '../domain/wa_quick_reply.dart';
 import '../domain/wa_stats.dart';
 import '../domain/wa_template.dart';
 import '../domain/wa_thread.dart';
@@ -249,6 +250,44 @@ class WhatsappRepository {
         data: form,
       );
       return ChatMessage.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  // ── Quick replies (saved snippets — not Meta templates) ──────────────────
+
+  /// GET /quick-replies — team + personal snippets for the composer.
+  Future<QuickReplyList> quickReplies() async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>('/quick-replies');
+      return QuickReplyList.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /quick-replies — `team` needs template-manager permission.
+  Future<void> createQuickReply({
+    required String title,
+    required String body,
+    bool team = false,
+  }) async {
+    try {
+      await _c.post<Map<String, dynamic>>('/quick-replies', data: {
+        'title': title,
+        'body': body,
+        if (team) 'team': true,
+      });
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// DELETE /quick-replies/:id — own snippets (team with manager permission).
+  Future<void> deleteQuickReply(String id) async {
+    try {
+      await _c.delete<void>('/quick-replies/$id');
     } on DioException catch (e) {
       throw mapDioError(e);
     }

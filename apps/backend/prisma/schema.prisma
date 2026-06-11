@@ -37,6 +37,7 @@ enum UserStatus {
   INACTIVE
   SUSPENDED
   PENDING_VERIFICATION
+
   @@schema("core")
 }
 
@@ -44,6 +45,7 @@ enum Gender {
   MALE
   FEMALE
   OTHER
+
   @@schema("core")
 }
 
@@ -57,6 +59,7 @@ enum LeadStatus {
   LOST
   DUPLICATE
   UNQUALIFIED
+
   @@schema("crm")
 }
 
@@ -64,6 +67,7 @@ enum FollowUpStatus {
   OPEN
   COMPLETED
   CANCELLED
+
   @@schema("crm")
 }
 
@@ -73,6 +77,7 @@ enum LeadPriority {
   HOT
   WARM
   COLD
+
   @@schema("crm")
 }
 
@@ -82,6 +87,7 @@ enum LeadImportStatus {
   COMPLETED
   FAILED
   PAUSED
+
   @@schema("crm")
 }
 
@@ -90,6 +96,7 @@ enum LeadImportRowOutcome {
   DUPLICATE
   INVALID
   FAILED
+
   @@schema("crm")
 }
 
@@ -98,6 +105,7 @@ enum FollowUpPriority {
   MEDIUM
   HIGH
   URGENT
+
   @@schema("crm")
 }
 
@@ -105,6 +113,7 @@ enum ReminderJobKind {
   APPOINTMENT_REMINDER
   FOLLOWUP_DUE
   FOLLOWUP_OVERDUE
+
   @@schema("crm")
 }
 
@@ -112,6 +121,7 @@ enum ReminderJobStatus {
   PENDING
   SENT
   CANCELLED
+
   @@schema("crm")
 }
 
@@ -135,6 +145,7 @@ enum ClientStatus {
   // Disabled states
   BLOCKED
   INACTIVE
+
   @@schema("crm")
 }
 
@@ -149,6 +160,7 @@ enum CaseStatus {
   WITHDRAWN
   COMPLETED
   ON_HOLD
+
   @@schema("processing")
 }
 
@@ -160,6 +172,7 @@ enum DocumentStatus {
   REJECTED
   EXPIRED
   REPLACEMENT_REQUIRED
+
   @@schema("processing")
 }
 
@@ -170,6 +183,7 @@ enum AppointmentStatus {
   CANCELLED
   NO_SHOW
   RESCHEDULED
+
   @@schema("crm")
 }
 
@@ -181,6 +195,7 @@ enum PaymentStatus {
   REFUNDED
   CANCELLED
   DISPUTED
+
   @@schema("finance")
 }
 
@@ -191,6 +206,7 @@ enum InvoiceStatus {
   PAID
   OVERDUE
   CANCELLED
+
   @@schema("finance")
 }
 
@@ -202,6 +218,7 @@ enum FinanceHandoverStatus {
   REJECTED
   CANCELLED
   SENT_TO_PROCESSING
+
   @@schema("finance")
 }
 
@@ -210,6 +227,7 @@ enum ServiceContractStatus {
   ACTIVE
   COMPLETED
   CANCELLED
+
   @@schema("finance")
 }
 
@@ -219,6 +237,7 @@ enum InstallmentStatus {
   PAID
   OVERDUE
   CANCELLED
+
   @@schema("finance")
 }
 
@@ -332,6 +351,7 @@ enum AuditAction {
   LEAD_FILE_UPLOADED
   LEAD_FILE_DELETED
   AGREEMENT_STATUS_CHANGED
+
   @@schema("audit")
 }
 
@@ -399,6 +419,7 @@ enum TimelineEventType {
   EMAIL_VERIFIED
   // --- Meta Lead Ads ---
   META_LEAD_CREATED
+
   @@schema("crm")
 }
 
@@ -408,6 +429,7 @@ enum PresenceStatus {
   ONLINE
   AWAY
   OFFLINE
+
   @@schema("core")
 }
 
@@ -420,6 +442,7 @@ enum AiJobType {
   INTERVIEW_SUMMARY
   SUGGESTED_REPLY
   BUSINESS_PLAN_DRAFT
+
   @@schema("ai")
 }
 
@@ -430,6 +453,7 @@ enum AiJobStatus {
   FAILED
   REVIEW_PENDING
   REVIEWED
+
   @@schema("ai")
 }
 
@@ -442,6 +466,7 @@ enum AttendanceStatus {
   HOLIDAY
   WEEKLY_OFF
   OFFICIAL_DUTY
+
   @@schema("core")
 }
 
@@ -450,6 +475,7 @@ enum AttendanceDayType {
   SATURDAY
   WEEKLY_OFF
   HOLIDAY
+
   @@schema("core")
 }
 
@@ -458,6 +484,7 @@ enum AttendanceReviewStatus {
   NEEDS_REVIEW
   APPROVED
   LOCKED
+
   @@schema("core")
 }
 
@@ -470,6 +497,7 @@ enum AttendanceExceptionType {
   OVERTIME
   MISSING_PUNCH
   ABSENT
+
   @@schema("core")
 }
 
@@ -477,6 +505,7 @@ enum ExceptionStatus {
   PENDING
   APPROVED
   REJECTED
+
   @@schema("core")
 }
 
@@ -486,6 +515,7 @@ enum OvertimeResolution {
   COMPENSATORY
   REJECTED
   IGNORED
+
   @@schema("core")
 }
 
@@ -494,6 +524,7 @@ enum OfficialDutyStatus {
   APPROVED
   REJECTED
   CANCELLED
+
   @@schema("core")
 }
 
@@ -502,6 +533,7 @@ enum LeaveKind {
   SICK
   CASUAL
   UNPAID
+
   @@schema("core")
 }
 
@@ -510,6 +542,7 @@ enum LeaveStatus {
   APPROVED
   REJECTED
   CANCELLED
+
   @@schema("core")
 }
 
@@ -518,12 +551,14 @@ enum HolidayType {
   RELIGIOUS
   COMPANY
   EMERGENCY
+
   @@schema("core")
 }
 
 enum PayrollPeriodStatus {
   DRAFT
   LOCKED
+
   @@schema("core")
 }
 
@@ -531,12 +566,14 @@ enum SaturdayPolicy {
   OPTIONAL_WFH
   OFF
   WORKING
+
   @@schema("core")
 }
 
 enum SalaryBasis {
   THIRTY_DAYS
   WORKING_DAYS
+
   @@schema("core")
 }
 
@@ -544,6 +581,7 @@ enum PartnerStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
+
   @@schema("core")
 }
 
@@ -552,59 +590,59 @@ enum PartnerStatus {
 // =============================================================================
 
 model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  legalName String?
-  email     String?
-  phone     String?
-  address   String?
-  logoUrl   String?
+  id                          String   @id @default(uuid())
+  name                        String
+  legalName                   String?
+  email                       String?
+  phone                       String?
+  address                     String?
+  logoUrl                     String?
   // Camera-attendance: master switch for accepting employee-enrollment requests
   // from the camera system. Default OFF — admin opts in. When false, the camera's
   // enrollment-request endpoint returns "disabled".
-  attendanceEnrollmentEnabled Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  attendanceEnrollmentEnabled Boolean  @default(false)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 
   // --- WhatsApp routing + SLA configuration --------------------------------
   // IANA timezone for business-hours math. Tashfeen defaults to Asia/Karachi.
-  timezone                String  @default("Asia/Karachi")
+  timezone                String    @default("Asia/Karachi")
   // Local-time business-hours window (24h "HH:MM").
-  hoursOpen               String  @default("09:00")
-  hoursClose              String  @default("18:00")
+  hoursOpen               String    @default("09:00")
+  hoursClose              String    @default("18:00")
   // Optional mid-day break (24h "HH:MM"). The SLA clock PAUSES during this
   // window and resumes at breakEnd — same way it pauses overnight. Null/empty
   // = no break. Tashfeen: 12:30–14:00 lunch.
-  breakStart              String? @default("12:30")
-  breakEnd                String? @default("14:00")
+  breakStart              String?   @default("12:30")
+  breakEnd                String?   @default("14:00")
   // Days of the week the team works. 0 = Sunday .. 6 = Saturday.
   // Tashfeen: Mon–Fri (Sat + Sun off).
-  workingDays             Int[]   @default([1, 2, 3, 4, 5])
+  workingDays             Int[]     @default([1, 2, 3, 4, 5])
   // First-response SLA target in seconds (legacy; kept for back-compat).
-  slaFirstResponseSeconds Int     @default(60)
+  slaFirstResponseSeconds Int       @default(60)
   // Unified Response-SLA target in seconds — applies to EVERY customer message
   // awaiting an agent reply (first + all follow-ups). The clock only runs while
   // it's the agent's turn (pause-on-customer). Tashfeen: 300s = 5 minutes.
-  slaResponseSeconds      Int     @default(300)
+  slaResponseSeconds      Int       @default(300)
   // How many minutes before the deadline the "approaching breach" warning
   // fires (sweeper). Default: warn when 1 minute remains.
-  slaWarnBeforeSeconds    Int     @default(60)
+  slaWarnBeforeSeconds    Int       @default(60)
   // Deterrent threshold shown in the breach warning copy ("leads are
   // reassigned after N SLA breaches"). We count breaches but do NOT auto-
   // reassign yet — flipping that on later is a one-line change.
-  slaReassignThreshold    Int     @default(10)
+  slaReassignThreshold    Int       @default(10)
   // Reward: when a lead is matured + sent to finance, the sales agent who
   // owned it banks this many on-time "wins" — repairing their SLA score for
   // past slow replies. Closing deals literally improves your standing.
-  slaHandoverBonus        Int     @default(5)
+  slaHandoverBonus        Int       @default(5)
   // Maker-checker (segregation of duties): a payment at or above this amount
   // must be VERIFIED by a different finance officer than the one who recorded
   // it. 0 disables the control. Default 100,000.
-  makerCheckerThreshold   Decimal @default(100000) @db.Decimal(12, 2)
+  makerCheckerThreshold   Decimal   @default(100000) @db.Decimal(12, 2)
   // Sales-tax / VAT / GST rate applied to invoices, as a percentage. 0 = the
   // firm doesn't charge tax (default). When > 0, invoices compute tax on the
   // net and show it as a separate line.
-  taxRatePercent          Decimal @default(0) @db.Decimal(5, 2)
+  taxRatePercent          Decimal   @default(0) @db.Decimal(5, 2)
   // Period lock (book close): payments/invoices effective-dated before this
   // instant are rejected, so a closed accounting period can't be altered.
   // NULL = no lock (default).
@@ -614,26 +652,26 @@ model Organization {
   // template supports {firstName}, {agentName}, {businessName} placeholders.
   // DISABLED by default per ops decision — flip to true (or set the column
   // true on the org row) to re-enable; the feature code stays in place.
-  autoAckEnabled          Boolean @default(false)
-  autoAckTemplate         String? @default("Hey {firstName}! 🌟 I'm {agentName} from {businessName} — you're in good hands. I've got your message and I'm right with you, give me just a moment! ✨")
+  autoAckEnabled          Boolean   @default(false)
+  autoAckTemplate         String?   @default("Hey {firstName}! 🌟 I'm {agentName} from {businessName} — you're in good hands. I've got your message and I'm right with you, give me just a moment! ✨")
   // Strict round-robin cursor — last Employee id picked. Engine selects the
   // next eligible employee with id > cursor (wrapping). Null = no cursor yet.
   rrCursorEmployeeId      String?
   // Approved template to auto-send to leads who message outside business hours.
   afterHoursTemplate      String?
-  afterHoursTemplateLang  String? @default("en")
+  afterHoursTemplateLang  String?   @default("en")
 
   // --- AI WhatsApp bot ------------------------------------------------------
   // When set, the AI orchestrator only fires for messages received AFTER this
   // moment. Lets ops flip the bot on for a future Monday (e.g. 2026-06-01) so
   // we can ingest data + smoke-test the admin UI before any client sees a
   // robotic reply. Null disables the bot entirely.
-  botEnabledAt            DateTime?
+  botEnabledAt DateTime?
   // Mode override. When AUTO (default): obeys the auto/shadow split based on
   // business hours + active-agent presence. When SHADOW_ONLY: never sends
   // automatically, only writes AI suggestions for human use. When DISABLED:
   // bot is off regardless of botEnabledAt.
-  botMode                 String @default("AUTO")
+  botMode      String    @default("AUTO")
 
   branches    Branch[]
   departments Department[]
@@ -696,20 +734,20 @@ model AttendanceEnrollmentRequest {
 /// plain text so the admin UI can render a masked preview without having to
 /// decrypt.
 model ApiKey {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   organizationId  String
-  provider        String   // 'openai' | (future: 'anthropic' | 'gemini' | …)
-  label           String   // human-friendly name e.g. "Production OpenAI"
-  keyEnc          String   // AES-256-GCM ciphertext of the secret
-  keyTail         String   // last 4 chars for "sk-…AbCd" UI preview
-  isActive        Boolean  @default(true)
+  provider        String // 'openai' | (future: 'anthropic' | 'gemini' | …)
+  label           String // human-friendly name e.g. "Production OpenAI"
+  keyEnc          String // AES-256-GCM ciphertext of the secret
+  keyTail         String // last 4 chars for "sk-…AbCd" UI preview
+  isActive        Boolean   @default(true)
   lastUsedAt      DateTime?
   lastTestedAt    DateTime?
   lastTestOk      Boolean?
   lastTestError   String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
   createdByUserId String?
-  updatedAt       DateTime @updatedAt
+  updatedAt       DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
 
@@ -731,7 +769,7 @@ model Branch {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization    Organization @relation(fields: [organizationId], references: [id])
+  organization    Organization     @relation(fields: [organizationId], references: [id])
   employees       Employee[]
   leads           Lead[]
   clients         Client[]
@@ -855,54 +893,54 @@ model RolePermission {
 }
 
 model UserAccount {
-  id                      String     @id @default(uuid())
-  email                   String     @unique
-  phone                   String?    @unique
-  passwordHash            String
-  status                  UserStatus @default(PENDING_VERIFICATION)
-  emailVerifiedAt         DateTime?
-  phoneVerifiedAt         DateTime?
-  lastLoginAt             DateTime?
-  failedLoginAttempts     Int        @default(0)
-  lockedUntil             DateTime?
-  passwordChangedAt       DateTime?
-  mustChangePassword      Boolean    @default(false)
-  twoFactorEnabled        Boolean    @default(false)
-  twoFactorSecret         String?
-  createdAt               DateTime   @default(now())
-  updatedAt               DateTime   @updatedAt
-  deletedAt               DateTime?
+  id                  String     @id @default(uuid())
+  email               String     @unique
+  phone               String?    @unique
+  passwordHash        String
+  status              UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt     DateTime?
+  phoneVerifiedAt     DateTime?
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int        @default(0)
+  lockedUntil         DateTime?
+  passwordChangedAt   DateTime?
+  mustChangePassword  Boolean    @default(false)
+  twoFactorEnabled    Boolean    @default(false)
+  twoFactorSecret     String?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  deletedAt           DateTime?
 
-  userRoles         UserRole[]
-  loginSessions     LoginSession[]
-  passwordResets    PasswordResetToken[]
-  employee          Employee?
-  partnerProfile    Partner?
-  notifications     Notification[]       @relation("UserNotifications")
-  auditActorLogs    AuditLog[]           @relation("AuditActor")
-  createdLeads      Lead[]               @relation("LeadCreatedBy")
-  uploadedLeadImportBatches LeadImportBatch[] @relation("LeadImportBatchUploadedBy")
-  createdClients    Client[]             @relation("ClientCreatedBy")
+  userRoles                  UserRole[]
+  loginSessions              LoginSession[]
+  passwordResets             PasswordResetToken[]
+  employee                   Employee?
+  partnerProfile             Partner?
+  notifications              Notification[]                @relation("UserNotifications")
+  auditActorLogs             AuditLog[]                    @relation("AuditActor")
+  createdLeads               Lead[]                        @relation("LeadCreatedBy")
+  uploadedLeadImportBatches  LeadImportBatch[]             @relation("LeadImportBatchUploadedBy")
+  createdClients             Client[]                      @relation("ClientCreatedBy")
   // Processing
-  assignedProcessingCases      ProcessingCase[]             @relation("ProcessingCaseOfficer")
-  createdProcessingCases       ProcessingCase[]             @relation("ProcessingCaseCreatedBy")
-  updatedProcessingCases       ProcessingCase[]             @relation("ProcessingCaseUpdatedBy")
-  processingStageChanges       ProcessingCaseStageHistory[] @relation("StageChangedBy")
-  createdDocTemplates          DocumentRequirementTemplate[] @relation("DocTemplateCreatedBy")
-  waivedDocItems               CaseDocumentItem[]           @relation("DocItemWaivedBy")
-  uploadedDocVersions          ClientDocumentVersion[]      @relation("DocVersionUploadedBy")
-  reviewedDocDecisions         DocumentReviewDecision[]     @relation("DocReviewedBy")
-  docAccessLogs                DocumentAccessLog[]          @relation("DocAccessedBy")
-  raisedCorrectionRequests     CorrectionRequest[]          @relation("CorrectionRaisedBy")
-  resolvedCorrectionRequests   CorrectionRequest[]          @relation("CorrectionResolvedBy")
-  sentCaseCommunications       CaseCommunication[]          @relation("CaseCommunicationSentBy")
-  processingNotes              ProcessingNote[]             @relation("ProcessingNoteCreatedBy")
-  assignedProcessingTasks      ProcessingTask[]             @relation("TaskAssignedTo")
-  createdProcessingTasks       ProcessingTask[]             @relation("TaskCreatedBy")
-  completedProcessingTasks     ProcessingTask[]             @relation("TaskCompletedBy")
-  authoritySubmissions         AuthoritySubmission[]        @relation("AuthoritySubmittedBy")
-  processingAuditLogs          ProcessingAuditLog[]         @relation("ProcessingAuditActor")
-  completedCaseMilestones      CaseMilestone[]              @relation("CaseMilestoneCompletedBy")
+  assignedProcessingCases    ProcessingCase[]              @relation("ProcessingCaseOfficer")
+  createdProcessingCases     ProcessingCase[]              @relation("ProcessingCaseCreatedBy")
+  updatedProcessingCases     ProcessingCase[]              @relation("ProcessingCaseUpdatedBy")
+  processingStageChanges     ProcessingCaseStageHistory[]  @relation("StageChangedBy")
+  createdDocTemplates        DocumentRequirementTemplate[] @relation("DocTemplateCreatedBy")
+  waivedDocItems             CaseDocumentItem[]            @relation("DocItemWaivedBy")
+  uploadedDocVersions        ClientDocumentVersion[]       @relation("DocVersionUploadedBy")
+  reviewedDocDecisions       DocumentReviewDecision[]      @relation("DocReviewedBy")
+  docAccessLogs              DocumentAccessLog[]           @relation("DocAccessedBy")
+  raisedCorrectionRequests   CorrectionRequest[]           @relation("CorrectionRaisedBy")
+  resolvedCorrectionRequests CorrectionRequest[]           @relation("CorrectionResolvedBy")
+  sentCaseCommunications     CaseCommunication[]           @relation("CaseCommunicationSentBy")
+  processingNotes            ProcessingNote[]              @relation("ProcessingNoteCreatedBy")
+  assignedProcessingTasks    ProcessingTask[]              @relation("TaskAssignedTo")
+  createdProcessingTasks     ProcessingTask[]              @relation("TaskCreatedBy")
+  completedProcessingTasks   ProcessingTask[]              @relation("TaskCompletedBy")
+  authoritySubmissions       AuthoritySubmission[]         @relation("AuthoritySubmittedBy")
+  processingAuditLogs        ProcessingAuditLog[]          @relation("ProcessingAuditActor")
+  completedCaseMilestones    CaseMilestone[]               @relation("CaseMilestoneCompletedBy")
 
   @@index([email])
   @@index([phone])
@@ -1004,8 +1042,8 @@ model Employee {
   // Response-SLA window. Score% = met / (met + breached) * 100, defaulting
   // to 100 when there's no history yet — so every agent STARTS at 100 and
   // works to keep it there. slaBreachCount drives the "10 breaches" warning.
-  slaResponsesMet     Int            @default(0)
-  slaResponsesBreached Int           @default(0)
+  slaResponsesMet      Int @default(0)
+  slaResponsesBreached Int @default(0)
 
   // --- Presence accountability (consequences for manual Away/Offline) ------
   // Penalty subtracted from the displayed SLA score; recovers +1 per day.
@@ -1021,18 +1059,18 @@ model Employee {
   offlinePenalizedDate String?
   penaltyDecayDate     String?
 
-  user        UserAccount  @relation(fields: [userId], references: [id])
-  department  Department?  @relation(fields: [departmentId], references: [id])
-  branch      Branch?      @relation(fields: [branchId], references: [id])
-  designation Designation? @relation(fields: [designationId], references: [id])
-  assignedLeads     Lead[]    @relation("LeadEmployee")
-  preferredByLeads  Lead[]    @relation("LeadPreferredEmployee")
-  assignedCases     Case[]    @relation("CaseAssignedEmployee")
-  assignedFollowUps FollowUp[] @relation("FollowUpAssignedEmployee")
+  user                 UserAccount       @relation(fields: [userId], references: [id])
+  department           Department?       @relation(fields: [departmentId], references: [id])
+  branch               Branch?           @relation(fields: [branchId], references: [id])
+  designation          Designation?      @relation(fields: [designationId], references: [id])
+  assignedLeads        Lead[]            @relation("LeadEmployee")
+  preferredByLeads     Lead[]            @relation("LeadPreferredEmployee")
+  assignedCases        Case[]            @relation("CaseAssignedEmployee")
+  assignedFollowUps    FollowUp[]        @relation("FollowUpAssignedEmployee")
   whatsappSentMessages WhatsAppMessage[] @relation("WhatsAppMessageSentBy")
   // Sales rep that originally owned the lead and stays with the client
   // after conversion. Used so processing can ping the original salesperson.
-  assignedClients   Client[]   @relation("ClientAssignedEmployee")
+  assignedClients      Client[]          @relation("ClientAssignedEmployee")
 
   @@index([departmentId])
   @@index([branchId])
@@ -1047,7 +1085,7 @@ model Employee {
 model PresenceDailyReport {
   id             String   @id @default(uuid())
   employeeId     String
-  reportDate     String   // 'YYYY-MM-DD' (Asia/Karachi)
+  reportDate     String // 'YYYY-MM-DD' (Asia/Karachi)
   employeeName   String
   awayMinutes    Int      @default(0)
   offlineMinutes Int      @default(0)
@@ -1061,21 +1099,21 @@ model PresenceDailyReport {
 }
 
 model Partner {
-  id              String        @id @default(uuid())
-  organizationId  String
-  branchId        String?
-  userId          String?       @unique
-  companyName     String
-  contactName     String
-  email           String?
-  phone           String?
-  referralCode    String        @unique
-  status          PartnerStatus @default(ACTIVE)
-  notes           String?
-  isActive        Boolean       @default(true)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  deletedAt       DateTime?
+  id             String        @id @default(uuid())
+  organizationId String
+  branchId       String?
+  userId         String?       @unique
+  companyName    String
+  contactName    String
+  email          String?
+  phone          String?
+  referralCode   String        @unique
+  status         PartnerStatus @default(ACTIVE)
+  notes          String?
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id])
   branch       Branch?      @relation(fields: [branchId], references: [id])
@@ -1096,12 +1134,12 @@ model Partner {
 // =============================================================================
 
 model Lead {
-  id                 String     @id @default(uuid())
+  id                 String        @id @default(uuid())
   /// Human-readable, sequential reference code (TIS-YYYY-NNNNN). Generated
   /// on insert by leads.service. Stays with the lead through conversion —
   /// the resulting Client inherits the same code so the customer carries
   /// one identifier from first contact through final payment + processing.
-  referenceCode      String     @unique
+  referenceCode      String        @unique
   branchId           String?
   assignedEmployeeId String?
   createdByUserId    String?
@@ -1118,26 +1156,26 @@ model Lead {
   /// on the single Invoice that all installment Payments roll up to. NULL
   /// while the deal is still being negotiated — finance falls back to the
   /// first handover's submittedAmount in that case.
-  serviceFeeAmount   Decimal? @db.Decimal(12, 2)
+  serviceFeeAmount   Decimal?      @db.Decimal(12, 2)
   serviceFeeCurrency String?
   sourceChannel      String?
   referralPartnerId  String?
-  status             LeadStatus @default(NEW)
+  status             LeadStatus    @default(NEW)
   priority           LeadPriority?
   notes              String?
   lostReason         String?
   lostAt             DateTime?
   convertedAt        DateTime?
   convertedClientId  String?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
   deletedAt          DateTime?
 
   // --- Email verification ---------------------------------------------------
-  emailVerified          Boolean   @default(false)
-  emailVerificationToken String?   @unique
+  emailVerified           Boolean   @default(false)
+  emailVerificationToken  String?   @unique
   emailVerificationSentAt DateTime?
-  emailVerifiedAt        DateTime?
+  emailVerifiedAt         DateTime?
 
   // --- WhatsApp routing -----------------------------------------------------
   // Sticky routing: lifetime preferred employee for this lead. Set on first
@@ -1145,26 +1183,29 @@ model Lead {
   // they're available; otherwise round-robin fallback.
   preferredEmployeeId String?
 
-  branch              Branch?      @relation(fields: [branchId], references: [id])
-  assignedEmployee    Employee?    @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
-  preferredEmployee   Employee?    @relation("LeadPreferredEmployee", fields: [preferredEmployeeId], references: [id])
-  createdBy           UserAccount? @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
-  referralPartner     Partner?     @relation(fields: [referralPartnerId], references: [id])
-  appointments        Appointment[] @relation("LeadAppointments")
-  invoices            Invoice[]     @relation("LeadInvoices")
-  serviceContracts    ServiceContract[] @relation("LeadServiceContracts")
-  followUps           FollowUp[]
-  financeHandovers    FinanceHandover[]
-  receipts            Receipt[]
-  timelineEvents      ActivityTimeline[]
-  processingCases     ProcessingCase[]
-  whatsappThread      WhatsAppThread? @relation("LeadWhatsAppThread")
-  whatsappMessages    WhatsAppMessage[] @relation("LeadWhatsAppMessages")
-  incomingEmails      IncomingEmail[]   @relation("LeadIncomingEmails")
+  branch            Branch?              @relation(fields: [branchId], references: [id])
+  assignedEmployee  Employee?            @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
+  preferredEmployee Employee?            @relation("LeadPreferredEmployee", fields: [preferredEmployeeId], references: [id])
+  createdBy         UserAccount?         @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
+  referralPartner   Partner?             @relation(fields: [referralPartnerId], references: [id])
+  appointments      Appointment[]        @relation("LeadAppointments")
+  invoices          Invoice[]            @relation("LeadInvoices")
+  serviceContracts  ServiceContract[]    @relation("LeadServiceContracts")
+  followUps         FollowUp[]
+  financeHandovers  FinanceHandover[]
+  receipts          Receipt[]
+  timelineEvents    ActivityTimeline[]
+  processingCases   ProcessingCase[]
+  whatsappThread    WhatsAppThread?      @relation("LeadWhatsAppThread")
+  whatsappMessages  WhatsAppMessage[]    @relation("LeadWhatsAppMessages")
+  incomingEmails    IncomingEmail[]      @relation("LeadIncomingEmails")
   // Reverse of Client.sourceLeadId. Typically 0..1 Client per Lead, but the
   // relation is modelled as one-to-many to keep Prisma's type generation
   // happy.
-  derivedClients      Client[]    @relation("ClientSourceLead")
+  derivedClients    Client[]             @relation("ClientSourceLead")
+  files             LeadFile[]
+  importRows        LeadImportRow[]
+  metaSubmissions   MetaLeadSubmission[]
 
   @@index([phone])
   @@index([email])
@@ -1178,9 +1219,6 @@ model Lead {
   @@index([deletedAt, createdAt(sort: Desc)])
   @@map("leads")
   @@schema("crm")
-  files               LeadFile[]
-  importRows          LeadImportRow[]
-  metaSubmissions     MetaLeadSubmission[]
 }
 
 /// Meta (Facebook/Instagram) Lead Ads form submission. One row per leadgen
@@ -1228,63 +1266,63 @@ model MetaLeadSubmission {
 /// Counts are denormalised onto the batch for fast dashboard render —
 /// they're updated by the lead-import worker as each row is processed.
 model LeadImportBatch {
-  id              String                @id @default(uuid())
+  id               String   @id @default(uuid())
   /// Sequential reference LB-YYYY-NNNNN. Generated on insert.
-  batchNumber     String                @unique
+  batchNumber      String   @unique
   /// Human label admin sets when uploading. e.g. "May FB Ads".
-  name            String
+  name             String
   uploadedByUserId String
-  uploadedAt      DateTime              @default(now())
+  uploadedAt       DateTime @default(now())
 
   // Source file (kept for forensics + re-download).
-  fileName        String
-  fileKey         String
-  fileMimeType    String?
-  fileSizeBytes   Int?
+  fileName      String
+  fileKey       String
+  fileMimeType  String?
+  fileSizeBytes Int?
 
   // Counts (live-updated by the worker)
-  totalRows       Int                   @default(0)
-  importedCount   Int                   @default(0)
-  duplicateCount  Int                   @default(0)
-  invalidCount    Int                   @default(0)
-  assignedCount   Int                   @default(0)
+  totalRows      Int @default(0)
+  importedCount  Int @default(0)
+  duplicateCount Int @default(0)
+  invalidCount   Int @default(0)
+  assignedCount  Int @default(0)
 
-  status          LeadImportStatus      @default(QUEUED)
+  status LeadImportStatus @default(QUEUED)
 
   /// The agent pool the admin chose at upload time. Subset of (or equal to)
   /// the WhatsApp/sales pool. Empty means "use whoever is currently eligible".
-  selectedAgentIds  String[]            @default([])
+  selectedAgentIds String[] @default([])
 
   /// CSV-header → lead-field map the admin applied at upload time.
   /// Shape: { phone: "Mobile Number", firstName: "Name", country: "Country", ... }
-  columnMapping     Json
+  columnMapping Json
 
   /// Default country code used when normalising phones in this batch
   /// (e.g. "PK" turns "03331120001" into "+923331120001"). Per-batch
   /// rather than global because admins sometimes upload mixed-origin lists.
-  defaultCountry    String              @default("PK")
+  defaultCountry String @default("PK")
 
   /// Per-batch override of the global welcome message template. NULL = use
   /// global default.
-  welcomeMessage    String?
+  welcomeMessage String?
 
   /// Generated post-run CSV of every row that failed (with reason).
   /// Downloadable from the batch detail page.
-  errorReportKey    String?
+  errorReportKey String?
 
-  startedAt         DateTime?
-  completedAt       DateTime?
-  pausedAt          DateTime?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+  pausedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   /// Soft-delete marker. When admin "deletes" a batch via the admin UI we
   /// stamp this + cascade soft-delete every Lead created from this batch.
   /// The row itself is kept so the audit trail (who uploaded what / when /
   /// counts) survives — we just hide it from the lead-imports list.
-  deletedAt         DateTime?
+  deletedAt   DateTime?
 
-  uploadedBy        UserAccount         @relation("LeadImportBatchUploadedBy", fields: [uploadedByUserId], references: [id])
-  rows              LeadImportRow[]
+  uploadedBy UserAccount     @relation("LeadImportBatchUploadedBy", fields: [uploadedByUserId], references: [id])
+  rows       LeadImportRow[]
 
   @@index([uploadedByUserId])
   @@index([status])
@@ -1297,7 +1335,7 @@ model LeadImportBatch {
 /// original raw cell values for audit even when validation failed, and
 /// links to the resulting Lead (whether newly created or matched by dedupe).
 model LeadImportRow {
-  id                 String                @id @default(uuid())
+  id                 String               @id @default(uuid())
   batchId            String
   /// 1-based row number in the original file (excluding header).
   rowNumber          Int
@@ -1314,10 +1352,10 @@ model LeadImportRow {
   /// the row didn't create a new assignment — e.g. duplicate that kept
   /// its existing assignee).
   assignedEmployeeId String?
-  createdAt          DateTime              @default(now())
+  createdAt          DateTime             @default(now())
 
-  batch              LeadImportBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  lead               Lead?                 @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  batch LeadImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  lead  Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
   @@index([batchId])
   @@index([leadId])
@@ -1336,7 +1374,7 @@ model LeadFile {
   fileSizeBytes    Int?
   createdAt        DateTime @default(now())
 
-  lead             Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@index([leadId])
   @@map("lead_files")
@@ -1376,31 +1414,31 @@ model FollowUp {
 // =============================================================================
 
 model Client {
-  id                String       @id @default(uuid())
+  id                  String       @id @default(uuid())
   /// Inherits the originating Lead's referenceCode (TIS-YYYY-NNNNN) on
   /// conversion. Same identifier carries the customer from first contact
   /// through every invoice + receipt + processing case for life.
-  referenceCode     String       @unique
-  branchId          String?
-  createdByUserId   String?
-  firstName         String
-  lastName          String
-  email             String?      @unique
-  phone             String       @unique
-  alternatePhone    String?
-  nationality       String?
-  dateOfBirth       DateTime?
-  gender            Gender?
-  passportNumber    String?
-  passportExpiry    DateTime?
-  nationalId        String?
+  referenceCode       String       @unique
+  branchId            String?
+  createdByUserId     String?
+  firstName           String
+  lastName            String
+  email               String?      @unique
+  phone               String       @unique
+  alternatePhone      String?
+  nationality         String?
+  dateOfBirth         DateTime?
+  gender              Gender?
+  passportNumber      String?
+  passportExpiry      DateTime?
+  nationalId          String?
   // CNIC is the Pakistani national-ID format. Stored separately from
   // `nationalId` so the existing field can keep its generic meaning while
   // forms that need a strict CNIC validate this column.
-  cnic              String?
-  address           String?
-  status            ClientStatus @default(NEW_CLIENT)
-  portalAccessEnabled Boolean   @default(false)
+  cnic                String?
+  address             String?
+  status              ClientStatus @default(NEW_CLIENT)
+  portalAccessEnabled Boolean      @default(false)
 
   // Provenance + ownership. Populated automatically when Finance sends a
   // verified case to Processing (the moment Lead becomes Client). Existing
@@ -1410,27 +1448,27 @@ model Client {
   serviceType        String?
   targetCountry      String?
 
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-  deletedAt         DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 
-  branch             Branch?      @relation(fields: [branchId], references: [id])
-  createdBy          UserAccount? @relation("ClientCreatedBy", fields: [createdByUserId], references: [id])
-  sourceLead         Lead?        @relation("ClientSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
-  assignedEmployee   Employee?    @relation("ClientAssignedEmployee", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
-  cases              Case[]
-  documents          ClientDocument[]
-  appointments       Appointment[] @relation("ClientAppointments")
-  invoices           Invoice[]     @relation("ClientInvoices")
-  serviceContracts   ServiceContract[] @relation("ClientServiceContracts")
-  receipts           Receipt[]
-  timelineEvents     ActivityTimeline[]
-  processingCases    ProcessingCase[]
-  reminders          ClientReminder[]
+  branch           Branch?            @relation(fields: [branchId], references: [id])
+  createdBy        UserAccount?       @relation("ClientCreatedBy", fields: [createdByUserId], references: [id])
+  sourceLead       Lead?              @relation("ClientSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  assignedEmployee Employee?          @relation("ClientAssignedEmployee", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  cases            Case[]
+  documents        ClientDocument[]
+  appointments     Appointment[]      @relation("ClientAppointments")
+  invoices         Invoice[]          @relation("ClientInvoices")
+  serviceContracts ServiceContract[]  @relation("ClientServiceContracts")
+  receipts         Receipt[]
+  timelineEvents   ActivityTimeline[]
+  processingCases  ProcessingCase[]
+  reminders        ClientReminder[]
   // WhatsApp chat history follows the client after lead-to-client conversion.
-  whatsappThreads    WhatsAppThread[]  @relation("ClientWhatsAppThreads")
-  whatsappMessages   WhatsAppMessage[] @relation("ClientWhatsAppMessages")
-  incomingEmails     IncomingEmail[]   @relation("ClientIncomingEmails")
+  whatsappThreads  WhatsAppThread[]   @relation("ClientWhatsAppThreads")
+  whatsappMessages WhatsAppMessage[]  @relation("ClientWhatsAppMessages")
+  incomingEmails   IncomingEmail[]    @relation("ClientIncomingEmails")
 
   @@index([phone])
   @@index([email])
@@ -1466,9 +1504,9 @@ model Case {
   updatedAt          DateTime   @updatedAt
   deletedAt          DateTime?
 
-  client           Client     @relation(fields: [clientId], references: [id])
-  department       Department? @relation(fields: [departmentId], references: [id])
-  assignedEmployee Employee?   @relation("CaseAssignedEmployee", fields: [assignedEmployeeId], references: [id])
+  client           Client             @relation(fields: [clientId], references: [id])
+  department       Department?        @relation(fields: [departmentId], references: [id])
+  assignedEmployee Employee?          @relation("CaseAssignedEmployee", fields: [assignedEmployeeId], references: [id])
   documents        ClientDocument[]
   appointments     Appointment[]
   timelineEvents   ActivityTimeline[]
@@ -1486,14 +1524,14 @@ model Case {
 // =============================================================================
 
 model DocumentRequirement {
-  id            String  @id @default(uuid())
+  id            String   @id @default(uuid())
   serviceType   String
   targetCountry String?
   name          String
   description   String?
-  isRequired    Boolean @default(true)
-  isActive      Boolean @default(true)
-  sortOrder     Int     @default(0)
+  isRequired    Boolean  @default(true)
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -1541,25 +1579,25 @@ model ClientDocument {
 // =============================================================================
 
 model Appointment {
-  id               String            @id @default(uuid())
-  leadId           String?
-  clientId         String?
-  caseId           String?
+  id                 String            @id @default(uuid())
+  leadId             String?
+  clientId           String?
+  caseId             String?
   assignedEmployeeId String?
-  createdByUserId  String?
-  title            String
-  appointmentType  String
-  status           AppointmentStatus @default(SCHEDULED)
-  scheduledAt      DateTime
-  durationMinutes  Int               @default(30)
-  location         String?
-  meetingLink      String?
-  notes            String?
-  reminderSentAt   DateTime?
-  completedAt      DateTime?
+  createdByUserId    String?
+  title              String
+  appointmentType    String
+  status             AppointmentStatus @default(SCHEDULED)
+  scheduledAt        DateTime
+  durationMinutes    Int               @default(30)
+  location           String?
+  meetingLink        String?
+  notes              String?
+  reminderSentAt     DateTime?
+  completedAt        DateTime?
   cancellationReason String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
   lead   Lead?   @relation("LeadAppointments", fields: [leadId], references: [id])
   client Client? @relation("ClientAppointments", fields: [clientId], references: [id])
@@ -1644,10 +1682,10 @@ model Invoice {
   status          InvoiceStatus @default(DRAFT)
   currency        String        @default("CAD")
   subtotal        Decimal       @db.Decimal(12, 2)
-  taxAmount       Decimal       @db.Decimal(12, 2) @default(0)
-  discountAmount  Decimal       @db.Decimal(12, 2) @default(0)
+  taxAmount       Decimal       @default(0) @db.Decimal(12, 2)
+  discountAmount  Decimal       @default(0) @db.Decimal(12, 2)
   totalAmount     Decimal       @db.Decimal(12, 2)
-  paidAmount      Decimal       @db.Decimal(12, 2) @default(0)
+  paidAmount      Decimal       @default(0) @db.Decimal(12, 2)
   dueDate         DateTime?
   notes           String?
   createdByUserId String?
@@ -1657,12 +1695,12 @@ model Invoice {
   /// corrections go via void + reversing entry so the audit trail is intact.
   deletedAt       DateTime?
 
-  lead     Lead?     @relation("LeadInvoices", fields: [leadId], references: [id])
-  client   Client?   @relation("ClientInvoices", fields: [clientId], references: [id])
-  installment Installment? @relation(fields: [installmentId], references: [id])
-  payments Payment[]
-  receipts Receipt[]
-  creditNotes CreditNote[]
+  lead             Lead?             @relation("LeadInvoices", fields: [leadId], references: [id])
+  client           Client?           @relation("ClientInvoices", fields: [clientId], references: [id])
+  installment      Installment?      @relation(fields: [installmentId], references: [id])
+  payments         Payment[]
+  receipts         Receipt[]
+  creditNotes      CreditNote[]
   financeHandovers FinanceHandover[]
 
   @@index([leadId])
@@ -1679,29 +1717,29 @@ model Invoice {
 /// client expects ("Generate Next Installment Invoice" in the accounting
 /// flowchart).
 model ServiceContract {
-  id              String                @id @default(uuid())
+  id                 String                @id @default(uuid())
   /// Sequential reference SC-YYYY-NNNNN. Generated on insert.
-  contractNumber  String                @unique
+  contractNumber     String                @unique
   /// Originating lead. Required at creation — the client record may not
   /// exist yet at the moment of signing.
-  leadId          String?
+  leadId             String?
   /// Client after lead conversion. One of leadId/clientId is required.
-  clientId        String?
-  totalAmount     Decimal               @db.Decimal(12, 2)
-  currency        String                @default("CAD")
+  clientId           String?
+  totalAmount        Decimal               @db.Decimal(12, 2)
+  currency           String                @default("CAD")
   /// When the lead actually signed the agreement.
-  signedDate      DateTime?
+  signedDate         DateTime?
   /// Storage key for the uploaded agreement PDF (S3).
   agreementKey       String?
   agreementFileName  String?
   agreementMimeType  String?
   agreementSizeBytes Int?
-  status          ServiceContractStatus @default(DRAFT)
-  notes           String?
-  createdByUserId String
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
-  deletedAt       DateTime?
+  status             ServiceContractStatus @default(DRAFT)
+  notes              String?
+  createdByUserId    String
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  deletedAt          DateTime?
 
   lead         Lead?         @relation("LeadServiceContracts", fields: [leadId], references: [id])
   client       Client?       @relation("ClientServiceContracts", fields: [clientId], references: [id])
@@ -1720,23 +1758,23 @@ model ServiceContract {
 /// PENDING with no Invoice yet, INVOICED with a draft Invoice waiting on
 /// payment, PAID once the linked Invoice's Payment is verified, etc.).
 model Installment {
-  id            String            @id @default(uuid())
-  contractId    String
-  sequence      Int
-  dueDate       DateTime
-  amount        Decimal           @db.Decimal(12, 2)
+  id                 String            @id @default(uuid())
+  contractId         String
+  sequence           Int
+  dueDate            DateTime
+  amount             Decimal           @db.Decimal(12, 2)
   /// Human-readable label, e.g. "First installment on signing", "On visa
   /// approval", "After medical exam".
-  description   String?
-  status        InstallmentStatus @default(PENDING)
+  description        String?
+  status             InstallmentStatus @default(PENDING)
   /// Revenue recognition (accrual): set when this milestone / performance
   /// obligation is actually delivered. Revenue is EARNED at this point
   /// regardless of when cash arrived; until then, cash collected against the
   /// contract is unearned (deferred) revenue — a liability, not income.
   recognizedAt       DateTime?
   recognizedByUserId String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
   contract ServiceContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   invoice  Invoice?
@@ -1750,37 +1788,37 @@ model Installment {
 }
 
 model Payment {
-  id               String        @id @default(uuid())
-  invoiceId        String
-  amount           Decimal       @db.Decimal(12, 2)
-  currency         String        @default("CAD")
+  id                String        @id @default(uuid())
+  invoiceId         String
+  amount            Decimal       @db.Decimal(12, 2)
+  currency          String        @default("CAD")
   /// FX: `amount`/`currency` are what was actually received (e.g. PKR on the
   /// bank slip). `baseAmount` is the CAD equivalent booked to the ledger and
   /// `fxRate` is the rate used (1 CAD = fxRate <currency>), stamped at record
   /// time so historical records never move when the live rate changes.
-  baseAmount       Decimal?      @db.Decimal(12, 2)
-  baseCurrency     String        @default("CAD")
-  fxRate           Decimal?      @db.Decimal(18, 8)
-  status           PaymentStatus @default(PENDING)
-  paymentMethod    String?
-  transactionRef   String?
-  paidAt           DateTime?
-  verifiedByUserId String?
-  verifiedAt       DateTime?
-  notes            String?
+  baseAmount        Decimal?      @db.Decimal(12, 2)
+  baseCurrency      String        @default("CAD")
+  fxRate            Decimal?      @db.Decimal(18, 8)
+  status            PaymentStatus @default(PENDING)
+  paymentMethod     String?
+  transactionRef    String?
+  paidAt            DateTime?
+  verifiedByUserId  String?
+  verifiedAt        DateTime?
+  notes             String?
   /// Internal-only annotation (NOT shown on client-facing PDFs). Used for
   /// audit breadcrumbs like "handover:<id>" that link a payment back to the
   /// workflow row that created it, without polluting the client's receipt.
   internalReference String?
-  receiptKey       String?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  receiptKey        String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
   /// Soft-delete / void marker — payments are never hard-deleted (audit).
-  deletedAt        DateTime?
+  deletedAt         DateTime?
 
-  invoice Invoice @relation(fields: [invoiceId], references: [id])
+  invoice         Invoice          @relation(fields: [invoiceId], references: [id])
   financeHandover FinanceHandover?
-  receipt Receipt?
+  receipt         Receipt?
 
   @@index([invoiceId])
   @@index([status])
@@ -1794,27 +1832,27 @@ model Payment {
 /// storage key for the rendered PDF. The PDF is a regeneratable artifact
 /// — the source of truth lives in this row.
 model Receipt {
-  id                String   @id @default(uuid())
-  receiptNumber     String   @unique
-  paymentId         String   @unique
-  leadId            String?
-  clientId          String?
-  invoiceId         String
-  amount            Decimal  @db.Decimal(12, 2)
-  currency          String
-  paymentMethod     String?
-  transactionRef    String?
-  issuedByUserId    String
-  issuedAt          DateTime @default(now())
+  id             String    @id @default(uuid())
+  receiptNumber  String    @unique
+  paymentId      String    @unique
+  leadId         String?
+  clientId       String?
+  invoiceId      String
+  amount         Decimal   @db.Decimal(12, 2)
+  currency       String
+  paymentMethod  String?
+  transactionRef String?
+  issuedByUserId String
+  issuedAt       DateTime  @default(now())
   // S3 key for the rendered PDF. NULL until the render completes; the
   // download endpoint will trigger a regenerate if it's missing.
-  pdfStorageKey     String?
-  pdfGeneratedAt    DateTime?
-  voidedAt          DateTime?
-  voidReason        String?
-  voidedByUserId    String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @default(now()) @updatedAt
+  pdfStorageKey  String?
+  pdfGeneratedAt DateTime?
+  voidedAt       DateTime?
+  voidReason     String?
+  voidedByUserId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
 
   payment Payment @relation(fields: [paymentId], references: [id])
   invoice Invoice @relation(fields: [invoiceId], references: [id])
@@ -1835,20 +1873,20 @@ model Receipt {
 /// reversal happens, so the original invoice/receipt stay intact and the
 /// refund shows as an explicit negative entry rather than silently vanishing.
 model CreditNote {
-  id               String    @id @default(uuid())
-  creditNoteNumber String    @unique
+  id               String   @id @default(uuid())
+  creditNoteNumber String   @unique
   invoiceId        String
   /// The payment being reversed, when the credit note stems from a refund.
   paymentId        String?
   leadId           String?
   clientId         String?
-  amount           Decimal   @db.Decimal(12, 2)
+  amount           Decimal  @db.Decimal(12, 2)
   currency         String
   reason           String?
   issuedByUserId   String
-  issuedAt         DateTime  @default(now())
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @default(now()) @updatedAt
+  issuedAt         DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
 
   invoice Invoice @relation(fields: [invoiceId], references: [id])
 
@@ -1883,9 +1921,9 @@ model FinanceHandover {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
 
-  lead           Lead           @relation(fields: [leadId], references: [id])
-  invoice        Invoice?       @relation(fields: [invoiceId], references: [id])
-  payment        Payment?       @relation(fields: [paymentId], references: [id])
+  lead           Lead            @relation(fields: [leadId], references: [id])
+  invoice        Invoice?        @relation(fields: [invoiceId], references: [id])
+  payment        Payment?        @relation(fields: [paymentId], references: [id])
   processingCase ProcessingCase?
 
   @@index([leadId])
@@ -1898,11 +1936,11 @@ model FinanceHandover {
 
 enum ExpenseCategory {
   GOVERNMENT_FEE // visa / immigration / application fees paid to a government
-  EMBASSY        // embassy / consulate charges
-  MEDICAL        // medicals, biometrics
-  TRANSLATION    // document translation / attestation
-  COURIER        // shipping / courier of documents
-  THIRD_PARTY    // any other paid vendor on the client's behalf
+  EMBASSY // embassy / consulate charges
+  MEDICAL // medicals, biometrics
+  TRANSLATION // document translation / attestation
+  COURIER // shipping / courier of documents
+  THIRD_PARTY // any other paid vendor on the client's behalf
   OTHER
 
   @@schema("finance")
@@ -1959,23 +1997,23 @@ model Expense {
 // =============================================================================
 
 enum AgreementStatus {
-  DRAFT                // Sales drafting
-  SUBMITTED            // Sent to Finance for review
-  FINANCE_REVIEW       // Finance is reviewing
-  CHANGES_REQUESTED    // Finance bounced it back to Sales
-  APPROVED             // Finance approved
+  DRAFT // Sales drafting
+  SUBMITTED // Sent to Finance for review
+  FINANCE_REVIEW // Finance is reviewing
+  CHANGES_REQUESTED // Finance bounced it back to Sales
+  APPROVED // Finance approved
   EDITED_PENDING_SALES // Finance edited payment terms; Sales must confirm
-  SENT                 // Sent to the client
-  SIGNED               // Client signed / accepted
+  SENT // Sent to the client
+  SIGNED // Client signed / accepted
   CANCELLED
 
   @@schema("finance")
 }
 
 enum PaymentPlanType {
-  FULL          // single full payment
-  INSTALLMENT   // fixed installments
-  MILESTONE     // milestone/stage-triggered payments
+  FULL // single full payment
+  INSTALLMENT // fixed installments
+  MILESTONE // milestone/stage-triggered payments
 
   @@schema("finance")
 }
@@ -1986,11 +2024,11 @@ enum PaymentPlanType {
 /// id (no FK relation) to keep it decoupled.
 model AgreementTemplate {
   id            String   @id @default(uuid())
-  categoryKey   String   @unique          // 'C11', 'C10', 'EB2_NIW', 'E2', ...
-  name          String                    // "C11 Business Permit – Canada"
-  programTitle  String                    // "C11 BUSINESS PERMIT FEDERAL PROGRAM – CANADA"
-  bodyHtml      String                    // clauses HTML w/ {{bio}} + {{PAYMENT_PLAN}}
-  defaultStages Json?                     // default stage labels for the payment plan
+  categoryKey   String   @unique // 'C11', 'C10', 'EB2_NIW', 'E2', ...
+  name          String // "C11 Business Permit – Canada"
+  programTitle  String // "C11 BUSINESS PERMIT FEDERAL PROGRAM – CANADA"
+  bodyHtml      String // clauses HTML w/ {{bio}} + {{PAYMENT_PLAN}}
+  defaultStages Json? // default stage labels for the payment plan
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())
@@ -2006,40 +2044,40 @@ model AgreementTemplate {
 /// invoice / payment / lead-to-client pipeline takes over downstream).
 /// leadId/clientId/templateId are id references (no FK) to stay decoupled.
 model Agreement {
-  id                      String          @id @default(uuid())
-  agreementNumber         String          @unique
-  leadId                  String
-  clientId                String?
-  templateId              String
-  categoryKey             String
-  status                  AgreementStatus @default(DRAFT)
-  currency                String          @default("CAD")
+  id                        String           @id @default(uuid())
+  agreementNumber           String           @unique
+  leadId                    String
+  clientId                  String?
+  templateId                String
+  categoryKey               String
+  status                    AgreementStatus  @default(DRAFT)
+  currency                  String           @default("CAD")
   /// Net payable (gross − discount). The single headline amount owed.
-  totalAmount             Decimal         @default(0) @db.Decimal(12, 2)
-  grossAmount             Decimal         @default(0) @db.Decimal(12, 2)
-  discountAmount          Decimal         @default(0) @db.Decimal(12, 2)
-  paymentPlanType         PaymentPlanType?
-  bioData                 Json            // { applicantName, cnic, address, email, phone, fileNumber, date }
-  paymentPlan             Json            // { planType, currency, grossAmount, discountAmount, netPayable, installments[], ... }
-  contentHtml             String          // edited agreement body (template + data, then edited)
-  generatedPdfKey         String?
-  generatedPdfAt          DateTime?
-  serviceContractId       String?
-  salesNotes              String?
-  financeNotes            String?
-  createdByUserId         String
-  financeReviewedByUserId String?
+  totalAmount               Decimal          @default(0) @db.Decimal(12, 2)
+  grossAmount               Decimal          @default(0) @db.Decimal(12, 2)
+  discountAmount            Decimal          @default(0) @db.Decimal(12, 2)
+  paymentPlanType           PaymentPlanType?
+  bioData                   Json // { applicantName, cnic, address, email, phone, fileNumber, date }
+  paymentPlan               Json // { planType, currency, grossAmount, discountAmount, netPayable, installments[], ... }
+  contentHtml               String // edited agreement body (template + data, then edited)
+  generatedPdfKey           String?
+  generatedPdfAt            DateTime?
+  serviceContractId         String?
+  salesNotes                String?
+  financeNotes              String?
+  createdByUserId           String
+  financeReviewedByUserId   String?
   /// Set when Finance approves: the plan is locked. Any later change reverts
   /// status to Finance review and is recorded in agreement_events.
-  paymentPlanLockedAt        DateTime?
-  paymentPlanLockedByUserId  String?
-  submittedAt             DateTime?
-  reviewedAt              DateTime?
-  sentAt                  DateTime?
-  signedAt                DateTime?
-  createdAt               DateTime        @default(now())
-  updatedAt               DateTime        @updatedAt
-  deletedAt               DateTime?
+  paymentPlanLockedAt       DateTime?
+  paymentPlanLockedByUserId String?
+  submittedAt               DateTime?
+  reviewedAt                DateTime?
+  sentAt                    DateTime?
+  signedAt                  DateTime?
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
+  deletedAt                 DateTime?
 
   @@index([leadId])
   @@index([clientId])
@@ -2056,7 +2094,7 @@ model AgreementEvent {
   id          String   @id @default(uuid())
   agreementId String
   actorUserId String?
-  type        String   // CREATED | UPDATED | SUBMITTED | APPROVED | CHANGES_REQUESTED | PLAN_RELOCKED | ...
+  type        String // CREATED | UPDATED | SUBMITTED | APPROVED | CHANGES_REQUESTED | PLAN_RELOCKED | ...
   summary     String
   dataBefore  Json?
   dataAfter   Json?
@@ -2073,17 +2111,17 @@ model AgreementEvent {
 // =============================================================================
 
 model AuditLog {
-  id           String      @id @default(uuid())
-  actorUserId  String?
-  action       AuditAction
-  entityType   String
-  entityId     String?
-  oldValues    Json?
-  newValues    Json?
-  ipAddress    String?
-  userAgent    String?
-  metadata     Json?
-  createdAt    DateTime    @default(now())
+  id          String      @id @default(uuid())
+  actorUserId String?
+  action      AuditAction
+  entityType  String
+  entityId    String?
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime    @default(now())
 
   actor UserAccount? @relation("AuditActor", fields: [actorUserId], references: [id])
 
@@ -2132,22 +2170,22 @@ model ActivityTimeline {
 // =============================================================================
 
 model IncomingEmail {
-  id           String    @id @default(uuid())
+  id          String   @id @default(uuid())
   /// IMAP Message-ID header — used for deduplication
-  messageId    String    @unique
-  fromAddress  String
-  fromName     String?
-  toAddress    String
-  subject      String?
-  bodyText     String?
-  bodyHtml     String?
-  receivedAt   DateTime
-  processedAt  DateTime  @default(now())
+  messageId   String   @unique
+  fromAddress String
+  fromName    String?
+  toAddress   String
+  subject     String?
+  bodyText    String?
+  bodyHtml    String?
+  receivedAt  DateTime
+  processedAt DateTime @default(now())
 
-  leadId       String?
-  clientId     String?
+  leadId   String?
+  clientId String?
 
-  lead   Lead?   @relation("LeadIncomingEmails",   fields: [leadId],   references: [id], onDelete: SetNull)
+  lead   Lead?   @relation("LeadIncomingEmails", fields: [leadId], references: [id], onDelete: SetNull)
   client Client? @relation("ClientIncomingEmails", fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([fromAddress])
@@ -2196,39 +2234,39 @@ model AiJob {
 // =============================================================================
 
 model AttendanceRecord {
-  id          String           @id @default(uuid())
-  employeeId  String
-  date        DateTime         @db.Date
-  checkInAt   DateTime?
-  checkOutAt  DateTime?
-  status      AttendanceStatus @default(PRESENT)
-  notes       String?
-  isOverride  Boolean          @default(false)
+  id                 String           @id @default(uuid())
+  employeeId         String
+  date               DateTime         @db.Date
+  checkInAt          DateTime?
+  checkOutAt         DateTime?
+  status             AttendanceStatus @default(PRESENT)
+  notes              String?
+  isOverride         Boolean          @default(false)
   overriddenByUserId String?
 
   // ── Computed layer (camera /daily computed minutes + policy applied) ──
-  dayType            AttendanceDayType @default(WORKING)
-  grossPresenceMin   Int      @default(0)   // minutes physically present (camera)
-  breakMin           Int      @default(0)   // lunch/break minutes (camera)
-  personalMin        Int      @default(0)   // personal-out minutes (camera)
-  personalOverMin    Int      @default(0)   // break/personal over the allowance
-  unscheduledExits   Int      @default(0)
-  lateMin            Int      @default(0)
-  earlyLeaveMin      Int      @default(0)
-  overtimeMin        Int      @default(0)   // captured after work-end (not auto-paid)
+  dayType          AttendanceDayType @default(WORKING)
+  grossPresenceMin Int               @default(0) // minutes physically present (camera)
+  breakMin         Int               @default(0) // lunch/break minutes (camera)
+  personalMin      Int               @default(0) // personal-out minutes (camera)
+  personalOverMin  Int               @default(0) // break/personal over the allowance
+  unscheduledExits Int               @default(0)
+  lateMin          Int               @default(0)
+  earlyLeaveMin    Int               @default(0)
+  overtimeMin      Int               @default(0) // captured after work-end (not auto-paid)
 
   // ── Approved layer (admin overlay — payroll reads these) ──
-  officialDutyMin       Int   @default(0)   // approved official-duty minutes credited
-  approvedExtraBreakMin Int   @default(0)   // extra break the admin approved (not deducted)
-  netPayableMin         Int   @default(0)   // final payable minutes after approvals
-  reviewStatus       AttendanceReviewStatus @default(COMPUTED)
-  approvedByUserId   String?
-  approvedAt         DateTime?
-  source             String   @default("CAMERA") // CAMERA | MANUAL | MIXED
-  lockedPayrollPeriodId String?              // set when a payroll period locks this day
+  officialDutyMin       Int                    @default(0) // approved official-duty minutes credited
+  approvedExtraBreakMin Int                    @default(0) // extra break the admin approved (not deducted)
+  netPayableMin         Int                    @default(0) // final payable minutes after approvals
+  reviewStatus          AttendanceReviewStatus @default(COMPUTED)
+  approvedByUserId      String?
+  approvedAt            DateTime?
+  source                String                 @default("CAMERA") // CAMERA | MANUAL | MIXED
+  lockedPayrollPeriodId String? // set when a payroll period locks this day
 
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([employeeId, date])
   @@index([employeeId])
@@ -2259,6 +2297,7 @@ enum ProcessingCaseStage {
   APPEAL_IN_PROGRESS
   COMPLETED
   CANCELLED
+
   @@schema("processing")
 }
 
@@ -2267,6 +2306,7 @@ enum ProcessingCasePriority {
   NORMAL
   URGENT
   CRITICAL
+
   @@schema("processing")
 }
 
@@ -2276,6 +2316,7 @@ enum ProcessingSlaStatus {
   BREACHED
   EXTENDED
   COMPLETED
+
   @@schema("processing")
 }
 
@@ -2284,6 +2325,7 @@ enum AuthorityDecision {
   APPROVED
   REJECTED
   WITHDRAWN
+
   @@schema("processing")
 }
 
@@ -2293,6 +2335,7 @@ enum DocumentCriticality {
   CONDITIONAL
   SUPPORTING
   OPTIONAL
+
   @@schema("processing")
 }
 
@@ -2306,6 +2349,7 @@ enum DocumentItemStatus {
   EXPIRING_SOON
   WAIVED
   NOT_APPLICABLE
+
   @@schema("processing")
 }
 
@@ -2313,6 +2357,7 @@ enum DocumentValidityRule {
   NONE
   MUST_NOT_EXPIRE
   MUST_BE_VALID_FOR_N_MONTHS
+
   @@schema("processing")
 }
 
@@ -2320,12 +2365,14 @@ enum VirusScanStatus {
   PENDING
   CLEAN
   INFECTED
+
   @@schema("processing")
 }
 
 enum DocReviewDecisionType {
   ACCEPTED
   REJECTED
+
   @@schema("processing")
 }
 
@@ -2335,6 +2382,7 @@ enum DocReviewDecisionType {
 enum DocumentKind {
   TEXT_DOCUMENT
   PHOTO
+
   @@schema("processing")
 }
 
@@ -2344,6 +2392,7 @@ enum DocumentStageGroup {
   PROVIDE_FIRST
   NEXT
   LATER
+
   @@schema("processing")
 }
 
@@ -2356,6 +2405,7 @@ enum ApplicantRole {
   DEPENDENT
   EMPLOYER
   OTHER
+
   @@schema("processing")
 }
 
@@ -2366,6 +2416,7 @@ enum DocumentAttestationStatus {
   REQUIRED_PENDING
   DONE
   WAIVED
+
   @@schema("processing")
 }
 
@@ -2376,6 +2427,7 @@ enum AiSuggestedDecision {
   APPROVE
   REJECT
   NEEDS_REVIEW
+
   @@schema("processing")
 }
 
@@ -2385,6 +2437,7 @@ enum InboundDocumentSource {
   EMAIL
   PORTAL
   MANUAL
+
   @@schema("processing")
 }
 
@@ -2392,18 +2445,21 @@ enum InboundDocumentStatus {
   PENDING
   FILED
   DISCARDED
+
   @@schema("processing")
 }
 
 enum DocAccessType {
   VIEW
   DOWNLOAD
+
   @@schema("processing")
 }
 
 enum CorrectionType {
   DOCUMENT
   INFORMATION
+
   @@schema("processing")
 }
 
@@ -2412,6 +2468,7 @@ enum CorrectionRequiredAction {
   CONFIRM
   CORRECT
   CALL_BACK
+
   @@schema("processing")
 }
 
@@ -2420,6 +2477,7 @@ enum CorrectionStatus {
   IN_PROGRESS
   RESOLVED
   ESCALATED
+
   @@schema("processing")
 }
 
@@ -2427,6 +2485,7 @@ enum CommunicationDirection {
   OFFICER_TO_CLIENT
   CLIENT_TO_OFFICER
   SYSTEM_TO_CLIENT
+
   @@schema("processing")
 }
 
@@ -2441,6 +2500,7 @@ enum CommunicationMessageType {
   DECISION_NOTICE
   APPOINTMENT_REQUEST
   REMINDER
+
   @@schema("processing")
 }
 
@@ -2451,6 +2511,7 @@ enum ProcessingNoteType {
   CLIENT_INSIGHT
   AUTHORITY_NOTE
   MANAGER_ONLY
+
   @@schema("processing")
 }
 
@@ -2459,6 +2520,7 @@ enum ProcessingTaskPriority {
   NORMAL
   HIGH
   URGENT
+
   @@schema("processing")
 }
 
@@ -2468,6 +2530,7 @@ enum ProcessingTaskStatus {
   BLOCKED
   DONE
   CANCELLED
+
   @@schema("processing")
 }
 
@@ -2477,6 +2540,7 @@ enum AuthoritySubmissionStatus {
   UNDER_REVIEW
   RESPONDED
   WITHDRAWN
+
   @@schema("processing")
 }
 
@@ -2486,6 +2550,7 @@ enum AuthorityResponseType {
   INFO_REQUEST
   BIOMETRICS_REQUEST
   OTHER
+
   @@schema("processing")
 }
 
@@ -2501,7 +2566,8 @@ enum ReminderType {
   STAGE_UPDATE
   SUBMISSION_CONFIRMED
   DECISION_RECEIVED
-  ATTESTATION_REMINDER   // P5-nudges: remind client to arrange attestation
+  ATTESTATION_REMINDER // P5-nudges: remind client to arrange attestation
+
   @@schema("crm")
 }
 
@@ -2510,6 +2576,7 @@ enum ReminderChannel {
   WHATSAPP
   EMAIL
   SMS
+
   @@schema("crm")
 }
 
@@ -2518,6 +2585,7 @@ enum ReminderDeliveryStatus {
   SENT
   DELIVERED
   FAILED
+
   @@schema("crm")
 }
 
@@ -2526,45 +2594,45 @@ enum ReminderDeliveryStatus {
 // =============================================================================
 
 model DocumentRequirementTemplate {
-  id                 String               @id @default(uuid())
-  service            String
-  targetCountry      String
-  documentName       String
-  description        String?
-  instructions       String?
-  criticality        DocumentCriticality  @default(REQUIRED)
-  conditionRule      Json?
-  expectedFormats    String[]             @default(["PDF"])
-  maxFileSizeMb      Int                  @default(10)
-  validityRule       DocumentValidityRule @default(NONE)
-  validityMonths     Int?
-  validityBufferDays Int                  @default(30)
+  id                     String               @id @default(uuid())
+  service                String
+  targetCountry          String
+  documentName           String
+  description            String?
+  instructions           String?
+  criticality            DocumentCriticality  @default(REQUIRED)
+  conditionRule          Json?
+  expectedFormats        String[]             @default(["PDF"])
+  maxFileSizeMb          Int                  @default(10)
+  validityRule           DocumentValidityRule @default(NONE)
+  validityMonths         Int?
+  validityBufferDays     Int                  @default(30)
   // Phase D: canonical doc-type tag (PASSPORT, BANK_STATEMENT, PHOTOGRAPH…)
   // the parser validates against. NULL => parser auto-detects.
-  docType            String?
-  documentKind       DocumentKind         @default(TEXT_DOCUMENT)
+  docType                String?
+  documentKind           DocumentKind         @default(TEXT_DOCUMENT)
   // For documentKind=PHOTO: { background, sizeMm, faceRequired, maxBlur }.
-  photoSpec          Json?
-  guidanceUrl        String?
+  photoSpec              Json?
+  guidanceUrl            String?
   // Phase F — program-aware requirement sets + attestation + staging.
   // programCode (C11/ICT/LMIA/VISIT…) layered over the broad `service` bucket;
   // NULL => applies to the whole service. applicantRole supports dependents.
   // prerequisiteTemplateId is a soft reference (no FK) resolved at build time.
   programCode            String?
-  applicantRole          ApplicantRole       @default(PRIMARY)
-  stageGroup             DocumentStageGroup  @default(NEXT)
-  attestationRequired    Boolean             @default(false)
+  applicantRole          ApplicantRole        @default(PRIMARY)
+  stageGroup             DocumentStageGroup   @default(NEXT)
+  attestationRequired    Boolean              @default(false)
   attestationChain       String?
-  translationRequired    Boolean             @default(false)
+  translationRequired    Boolean              @default(false)
   prerequisiteTemplateId String?
   whyText                String?
   exampleGoodUrl         String?
   exampleBadUrl          String?
-  sortOrder          Int                  @default(0)
-  isActive           Boolean              @default(true)
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  createdByUserId    String?
+  sortOrder              Int                  @default(0)
+  isActive               Boolean              @default(true)
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  createdByUserId        String?
 
   createdBy         UserAccount?       @relation("DocTemplateCreatedBy", fields: [createdByUserId], references: [id])
   caseDocumentItems CaseDocumentItem[]
@@ -2599,62 +2667,62 @@ model ProgramRequirementSet {
 }
 
 model ProcessingCase {
-  id                      String                 @id @default(uuid())
+  id                           String                 @id @default(uuid())
   // Nullable: finance-originated cases carry their handover; cases created
   // manually by a Processing Manager have none. @unique still holds — Postgres
   // permits multiple NULLs under a unique index, so one-case-per-handover is
   // preserved for the finance path.
-  financeHandoverId       String?                @unique
-  leadId                  String
+  financeHandoverId            String?                @unique
+  leadId                       String
   // Per the platform rule "No ProcessingCase without Client" — every case is
   // owned by a Client. Lead→Client conversion happens automatically when
   // Finance sends the case to Processing; see ProcessingService.createFromHandover.
-  clientId                String
-  branchId                String?
-  assignedOfficerId       String?
-  priority                ProcessingCasePriority @default(NORMAL)
-  stage                   ProcessingCaseStage    @default(INTAKE_PENDING)
-  slaStatus               ProcessingSlaStatus    @default(ACTIVE)
-  slaDueAt                DateTime?
-  service                 String
-  targetCountry           String
-  financeHandoverNote     String?
-  processingNote          String?
-  estimatedSubmissionDate DateTime?              @db.Date
-  actualSubmissionDate    DateTime?              @db.Date
-  authorityTrackingRef    String?
-  authorityDecision       AuthorityDecision      @default(PENDING)
-  authorityDecisionDate   DateTime?              @db.Date
-  completedAt             DateTime?
-  cancelledAt             DateTime?
-  cancellationReason      String?
+  clientId                     String
+  branchId                     String?
+  assignedOfficerId            String?
+  priority                     ProcessingCasePriority @default(NORMAL)
+  stage                        ProcessingCaseStage    @default(INTAKE_PENDING)
+  slaStatus                    ProcessingSlaStatus    @default(ACTIVE)
+  slaDueAt                     DateTime?
+  service                      String
+  targetCountry                String
+  financeHandoverNote          String?
+  processingNote               String?
+  estimatedSubmissionDate      DateTime?              @db.Date
+  actualSubmissionDate         DateTime?              @db.Date
+  authorityTrackingRef         String?
+  authorityDecision            AuthorityDecision      @default(PENDING)
+  authorityDecisionDate        DateTime?              @db.Date
+  completedAt                  DateTime?
+  cancelledAt                  DateTime?
+  cancellationReason           String?
   // P4e — auto-assembled submission package
-  submissionPackageKey        String?    // storage key of the assembled PDF
-  submissionPackageAssembledAt DateTime?  // when it was last assembled
-  submissionPackageDocCount   Int?       // how many docs were included
-  createdAt               DateTime               @default(now())
-  updatedAt               DateTime               @updatedAt
-  createdByUserId         String
-  updatedByUserId         String?
+  submissionPackageKey         String? // storage key of the assembled PDF
+  submissionPackageAssembledAt DateTime? // when it was last assembled
+  submissionPackageDocCount    Int? // how many docs were included
+  createdAt                    DateTime               @default(now())
+  updatedAt                    DateTime               @updatedAt
+  createdByUserId              String
+  updatedByUserId              String?
 
-  financeHandover  FinanceHandover?               @relation(fields: [financeHandoverId], references: [id])
-  lead             Lead                           @relation(fields: [leadId], references: [id])
-  client           Client                         @relation(fields: [clientId], references: [id])
-  branch           Branch?                        @relation(fields: [branchId], references: [id])
-  assignedOfficer  UserAccount?                   @relation("ProcessingCaseOfficer", fields: [assignedOfficerId], references: [id])
-  createdBy        UserAccount                    @relation("ProcessingCaseCreatedBy", fields: [createdByUserId], references: [id])
-  updatedBy        UserAccount?                   @relation("ProcessingCaseUpdatedBy", fields: [updatedByUserId], references: [id])
-  stageHistory        ProcessingCaseStageHistory[]
-  documentItems       CaseDocumentItem[]
-  correctionRequests  CorrectionRequest[]
-  communications      CaseCommunication[]
-  reminders           ClientReminder[]
-  notes               ProcessingNote[]
-  tasks               ProcessingTask[]
-  submissions         AuthoritySubmission[]
-  auditLogs           ProcessingAuditLog[]
-  milestones          CaseMilestone[]
-  inboundDocuments    InboundDocument[]
+  financeHandover    FinanceHandover?             @relation(fields: [financeHandoverId], references: [id])
+  lead               Lead                         @relation(fields: [leadId], references: [id])
+  client             Client                       @relation(fields: [clientId], references: [id])
+  branch             Branch?                      @relation(fields: [branchId], references: [id])
+  assignedOfficer    UserAccount?                 @relation("ProcessingCaseOfficer", fields: [assignedOfficerId], references: [id])
+  createdBy          UserAccount                  @relation("ProcessingCaseCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy          UserAccount?                 @relation("ProcessingCaseUpdatedBy", fields: [updatedByUserId], references: [id])
+  stageHistory       ProcessingCaseStageHistory[]
+  documentItems      CaseDocumentItem[]
+  correctionRequests CorrectionRequest[]
+  communications     CaseCommunication[]
+  reminders          ClientReminder[]
+  notes              ProcessingNote[]
+  tasks              ProcessingTask[]
+  submissions        AuthoritySubmission[]
+  auditLogs          ProcessingAuditLog[]
+  milestones         CaseMilestone[]
+  inboundDocuments   InboundDocument[]
 
   @@index([assignedOfficerId])
   @@index([stage])
@@ -2685,21 +2753,21 @@ model ProcessingCaseStageHistory {
 }
 
 model CaseDocumentItem {
-  id                 String               @id @default(uuid())
+  id                 String                    @id @default(uuid())
   caseId             String
   templateId         String?
   documentName       String
   description        String?
-  criticality        DocumentCriticality  @default(REQUIRED)
-  expectedFormats    String[]             @default(["PDF"])
-  maxFileSizeMb      Int                  @default(10)
-  validityRule       DocumentValidityRule @default(NONE)
+  criticality        DocumentCriticality       @default(REQUIRED)
+  expectedFormats    String[]                  @default(["PDF"])
+  maxFileSizeMb      Int                       @default(10)
+  validityRule       DocumentValidityRule      @default(NONE)
   validityMonths     Int?
-  validityBufferDays Int                  @default(30)
+  validityBufferDays Int                       @default(30)
   // Phase D — copied from the template at acknowledge time so each case
   // carries its own (possibly customised) doc-type + photo requirement.
   docType            String?
-  documentKind       DocumentKind         @default(TEXT_DOCUMENT)
+  documentKind       DocumentKind              @default(TEXT_DOCUMENT)
   photoSpec          Json?
   // Phase F — copied from the template at acknowledge time (like docType/photoSpec).
   applicantRole      ApplicantRole             @default(PRIMARY)
@@ -2711,28 +2779,28 @@ model CaseDocumentItem {
   whyText            String?
   exampleGoodUrl     String?
   exampleBadUrl      String?
-  status             DocumentItemStatus   @default(NOT_SUBMITTED)
-  latestVersionId    String?              @unique
-  validityExpiryDate DateTime?            @db.Date
+  status             DocumentItemStatus        @default(NOT_SUBMITTED)
+  latestVersionId    String?                   @unique
+  validityExpiryDate DateTime?                 @db.Date
   expiryAlertSentAt  DateTime?
   lastRequestedAt    DateTime?
-  requestDeadline    DateTime?            @db.Date
+  requestDeadline    DateTime?                 @db.Date
   waivedByUserId     String?
   waiveReason        String?
-  sortOrder          Int                  @default(0)
-  isAddedManually    Boolean              @default(false)
+  sortOrder          Int                       @default(0)
+  isAddedManually    Boolean                   @default(false)
   // Client- or officer-uploaded extra document that isn't part of the template
   // checklist ("Additional Documents"). Optional by nature; AI classifies it
   // and the team confirms / files it into a real slot.
-  isAdditional       Boolean              @default(false)
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  isAdditional       Boolean                   @default(false)
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
 
-  case               ProcessingCase                  @relation(fields: [caseId], references: [id])
-  template           DocumentRequirementTemplate?    @relation(fields: [templateId], references: [id])
-  waivedBy           UserAccount?                    @relation("DocItemWaivedBy", fields: [waivedByUserId], references: [id])
-  latestVersion      ClientDocumentVersion?          @relation("LatestDocVersion", fields: [latestVersionId], references: [id])
-  versions           ClientDocumentVersion[]         @relation("DocItemVersions")
+  case               ProcessingCase               @relation(fields: [caseId], references: [id])
+  template           DocumentRequirementTemplate? @relation(fields: [templateId], references: [id])
+  waivedBy           UserAccount?                 @relation("DocItemWaivedBy", fields: [waivedByUserId], references: [id])
+  latestVersion      ClientDocumentVersion?       @relation("LatestDocVersion", fields: [latestVersionId], references: [id])
+  versions           ClientDocumentVersion[]      @relation("DocItemVersions")
   reviewDecisions    DocumentReviewDecision[]
   aiAssessments      DocumentAiAssessment[]
   correctionRequests CorrectionRequest[]
@@ -2760,9 +2828,9 @@ model ClientDocumentVersion {
   virusScanAt      DateTime?
   isCurrent        Boolean         @default(true)
 
-  documentItem    CaseDocumentItem              @relation("DocItemVersions", fields: [documentItemId], references: [id])
-  isLatestFor     CaseDocumentItem?             @relation("LatestDocVersion")
-  uploadedBy      UserAccount?                  @relation("DocVersionUploadedBy", fields: [uploadedByUserId], references: [id])
+  documentItem    CaseDocumentItem         @relation("DocItemVersions", fields: [documentItemId], references: [id])
+  isLatestFor     CaseDocumentItem?        @relation("LatestDocVersion")
+  uploadedBy      UserAccount?             @relation("DocVersionUploadedBy", fields: [uploadedByUserId], references: [id])
   reviewDecisions DocumentReviewDecision[]
   aiAssessments   DocumentAiAssessment[]
   accessLogs      DocumentAccessLog[]
@@ -2788,10 +2856,10 @@ model DocumentReviewDecision {
   aiAssessmentId       String?               @unique
   createdAt            DateTime              @default(now())
 
-  documentItem CaseDocumentItem       @relation(fields: [documentItemId], references: [id])
-  version      ClientDocumentVersion  @relation(fields: [versionId], references: [id])
-  reviewedBy   UserAccount?           @relation("DocReviewedBy", fields: [reviewedByUserId], references: [id])
-  aiAssessment DocumentAiAssessment?  @relation(fields: [aiAssessmentId], references: [id])
+  documentItem CaseDocumentItem      @relation(fields: [documentItemId], references: [id])
+  version      ClientDocumentVersion @relation(fields: [versionId], references: [id])
+  reviewedBy   UserAccount?          @relation("DocReviewedBy", fields: [reviewedByUserId], references: [id])
+  aiAssessment DocumentAiAssessment? @relation(fields: [aiAssessmentId], references: [id])
 
   @@index([documentItemId])
   @@map("document_review_decisions")
@@ -2804,30 +2872,30 @@ model DocumentReviewDecision {
 // an automated ACCEPTED (auto-approve) when confidence is high and every
 // check passes. Never overwrites the human DocumentReviewDecision record.
 model DocumentAiAssessment {
-  id                String              @id @default(uuid())
-  documentItemId    String
-  versionId         String
-  caseId            String
-  detectedDocType   String?
-  expectedDocType   String?
-  confidence        Float?
-  extracted         Json?
-  checks            Json?
-  suggestedDecision AiSuggestedDecision @default(NEEDS_REVIEW)
-  reasonCodes       String[]            @default([])
+  id                  String              @id @default(uuid())
+  documentItemId      String
+  versionId           String
+  caseId              String
+  detectedDocType     String?
+  expectedDocType     String?
+  confidence          Float?
+  extracted           Json?
+  checks              Json?
+  suggestedDecision   AiSuggestedDecision @default(NEEDS_REVIEW)
+  reasonCodes         String[]            @default([])
   // P4c-2: attestation authorities whose stamp keywords the parser found in
   // the OCR text (e.g. ["MOFA","HEC"]). Suggestion only — surfaced as a hint
   // next to the manual "Mark attested" control; never auto-marks attestation.
-  detectedAuthorities String[]          @default([])
+  detectedAuthorities String[]            @default([])
   // P4f: dominant non-Latin script in OCR text — translation-needed hint.
-  detectedLanguage  String?
-  ocrTier           String?
-  costCents         Float               @default(0)
-  cacheHit          Boolean             @default(false)
-  autoApproved      Boolean             @default(false)
-  modelVersion      String?
-  errorMessage      String?
-  createdAt         DateTime            @default(now())
+  detectedLanguage    String?
+  ocrTier             String?
+  costCents           Float               @default(0)
+  cacheHit            Boolean             @default(false)
+  autoApproved        Boolean             @default(false)
+  modelVersion        String?
+  errorMessage        String?
+  createdAt           DateTime            @default(now())
 
   documentItem   CaseDocumentItem        @relation(fields: [documentItemId], references: [id])
   version        ClientDocumentVersion   @relation(fields: [versionId], references: [id])
@@ -3019,15 +3087,15 @@ model ProcessingNote {
 // gated stage machine — managers control stage transitions; associates tick
 // milestones as they complete the work.
 model CaseMilestone {
-  id                  String    @id @default(uuid())
-  caseId              String
-  title               String    @db.VarChar(200)
-  description         String?
-  sortOrder           Int       @default(0)
-  completedAt         DateTime?
-  completedByUserId   String?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  caseId            String
+  title             String    @db.VarChar(200)
+  description       String?
+  sortOrder         Int       @default(0)
+  completedAt       DateTime?
+  completedByUserId String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   case        ProcessingCase @relation(fields: [caseId], references: [id])
   completedBy UserAccount?   @relation("CaseMilestoneCompletedBy", fields: [completedByUserId], references: [id])
@@ -3038,19 +3106,19 @@ model CaseMilestone {
 }
 
 model ProcessingTask {
-  id                String               @id @default(uuid())
+  id                String                 @id @default(uuid())
   caseId            String
-  title             String               @db.VarChar(120)
+  title             String                 @db.VarChar(120)
   description       String?
   assignedToUserId  String?
   createdByUserId   String
-  dueDate           DateTime?            @db.Date
+  dueDate           DateTime?              @db.Date
   priority          ProcessingTaskPriority @default(NORMAL)
-  status            ProcessingTaskStatus @default(OPEN)
+  status            ProcessingTaskStatus   @default(OPEN)
   completedAt       DateTime?
   completedByUserId String?
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 
   case        ProcessingCase @relation(fields: [caseId], references: [id])
   assignedTo  UserAccount?   @relation("TaskAssignedTo", fields: [assignedToUserId], references: [id])
@@ -3122,6 +3190,7 @@ enum WhatsAppChannelTier {
   TIER_10K
   TIER_100K
   TIER_UNLIMITED
+
   @@schema("whatsapp")
 }
 
@@ -3129,12 +3198,14 @@ enum WhatsAppChannelStatus {
   ACTIVE
   PAUSED
   REVOKED
+
   @@schema("whatsapp")
 }
 
 enum WhatsAppMessageDirection {
   INBOUND
   OUTBOUND
+
   @@schema("whatsapp")
 }
 
@@ -3152,6 +3223,7 @@ enum WhatsAppMessageType {
   REACTION
   SYSTEM
   UNSUPPORTED
+
   @@schema("whatsapp")
 }
 
@@ -3163,6 +3235,7 @@ enum WhatsAppMessageStatus {
   READ
   FAILED
   RECEIVED
+
   @@schema("whatsapp")
 }
 
@@ -3171,6 +3244,7 @@ enum WhatsAppThreadStatus {
   PENDING
   RESOLVED
   ARCHIVED
+
   @@schema("whatsapp")
 }
 
@@ -3182,6 +3256,7 @@ enum WhatsAppAssignmentReason {
   TAKEOVER
   UNASSIGN
   AUTO_RESOLVE
+
   @@schema("whatsapp")
 }
 
@@ -3189,6 +3264,7 @@ enum WhatsAppTemplateCategory {
   MARKETING
   UTILITY
   AUTHENTICATION
+
   @@schema("whatsapp")
 }
 
@@ -3198,6 +3274,7 @@ enum WhatsAppTemplateStatus {
   REJECTED
   PAUSED
   DISABLED
+
   @@schema("whatsapp")
 }
 
@@ -3209,26 +3286,27 @@ enum WhatsAppCampaignStatus {
   PAUSED
   CANCELLED
   FAILED
+
   @@schema("whatsapp")
 }
 
 // One row per WABA phone number. Tashfeen runs a single channel today; the
 // schema supports more (per-branch, per-product).
 model WhatsAppChannel {
-  id              String                @id @default(uuid())
-  label           String
-  wabaId          String
-  phoneNumberId   String                @unique
-  displayNumber   String
+  id                 String                @id @default(uuid())
+  label              String
+  wabaId             String
+  phoneNumberId      String                @unique
+  displayNumber      String
   // AES-256-GCM ciphertext of the access token. Format: iv:ciphertext:tag (base64).
-  accessTokenEnc  String
+  accessTokenEnc     String
   // Optional per-channel webhook verify token (overrides org default).
   webhookVerifyToken String?
-  tier            WhatsAppChannelTier   @default(TIER_1K)
-  status          WhatsAppChannelStatus @default(ACTIVE)
-  lastSyncAt      DateTime?
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
+  tier               WhatsAppChannelTier   @default(TIER_1K)
+  status             WhatsAppChannelStatus @default(ACTIVE)
+  lastSyncAt         DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
 
   threads   WhatsAppThread[]
   messages  WhatsAppMessage[]
@@ -3244,38 +3322,38 @@ model WhatsAppChannel {
 /// DB-level foreign keys are added in the migration, so no Prisma back-relations
 /// are needed on Thread/Channel/Lead/Client/Employee.
 model WhatsAppCall {
-  id                 String    @id @default(uuid())
-  threadId           String?
-  channelId          String
-  leadId             String?
-  clientId           String?
-  assignedEmployeeId String?
-  waCallId           String    @unique
-  direction          String    @default("INBOUND")
+  id                   String    @id @default(uuid())
+  threadId             String?
+  channelId            String
+  leadId               String?
+  clientId             String?
+  assignedEmployeeId   String?
+  waCallId             String    @unique
+  direction            String    @default("INBOUND")
   // RINGING | ANSWERED | ENDED | MISSED | FAILED — plain string for flexibility.
-  status             String    @default("RINGING")
+  status               String    @default("RINGING")
   // Last Meta call event seen: connect | ringing | terminate.
-  event              String?
+  event                String?
   // WebRTC signaling (Phase 1): SDP offer from Meta's connect webhook + the
   // answer produced by the rep's browser, and who actually answered.
-  sdpOffer           String?
-  sdpAnswer          String?
+  sdpOffer             String?
+  sdpAnswer            String?
   answeredByEmployeeId String?
   // When the ring times out and we cascade/terminate (Phase 1b).
-  ringExpiresAt      DateTime?
-  startedAt          DateTime?
-  endedAt            DateTime?
-  durationSeconds    Int?
+  ringExpiresAt        DateTime?
+  startedAt            DateTime?
+  endedAt              DateTime?
+  durationSeconds      Int?
   // --- Recording + transcription (internal QA / AI-training corpus) --------
   // Both sides are captured in the rep's browser and uploaded on hang-up;
   // recordingKey is the object-storage key (same bucket as WhatsApp media).
   // transcript is the Whisper output; transcriptStatus ∈ PENDING|DONE|FAILED.
-  recordingKey       String?
-  recordingMimeType  String?
-  transcript         String?
-  transcriptStatus   String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  recordingKey         String?
+  recordingMimeType    String?
+  transcript           String?
+  transcriptStatus     String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   @@index([assignedEmployeeId, createdAt(sort: Desc)])
   @@index([leadId])
@@ -3288,11 +3366,11 @@ model WhatsAppCall {
 // One thread per (channel, contact) tuple. Lead-rooted while in sales pipeline;
 // re-rooted onto Client after `POST /leads/:id/convert` runs.
 model WhatsAppThread {
-  id                String   @id @default(uuid())
+  id                String               @id @default(uuid())
   channelId         String
   // The thread belongs to a Lead until conversion, then a Client. Always one
   // of these two is non-null; both may be set during conversion.
-  leadId            String?  @unique
+  leadId            String?              @unique
   clientId          String?
   // WhatsApp's wa_id (E.164 without leading +). Indexed for fast inbound lookup.
   waContactId       String
@@ -3304,25 +3382,25 @@ model WhatsAppThread {
   firstInboundAt    DateTime?
   firstAgentReplyAt DateTime?
   slaDeadlineAt     DateTime?
-  slaBreached       Boolean  @default(false)
+  slaBreached       Boolean              @default(false)
 
   // --- Rolling Response-SLA (pause-on-customer) ---
   // responseDeadlineAt is set whenever it becomes the agent's turn (a customer
   // message arrives with no pending reply) and cleared when the agent replies.
   // NULL = it's the customer's turn / resolved → no clock runs against the agent.
-  responseDeadlineAt  DateTime?
+  responseDeadlineAt   DateTime?
   // When the current unanswered customer message arrived (the inbound that
   // started this clock). Used for "waiting Xm" displays.
-  responseDueSince    DateTime?
+  responseDueSince     DateTime?
   // Sweeper bookkeeping for the CURRENT pending window so we don't double-fire:
-  responseWarned      Boolean  @default(false) // approaching-breach warning sent
-  responseBreached    Boolean  @default(false) // breach already counted
+  responseWarned       Boolean                   @default(false) // approaching-breach warning sent
+  responseBreached     Boolean                   @default(false) // breach already counted
   // Auto-acknowledgement: stamped once so we never double-send the greeting.
-  autoAckSentAt       DateTime?
+  autoAckSentAt        DateTime?
   // --- Denormalized for inbox list ordering ---
-  lastMessageAt     DateTime?
-  lastMessagePreview String?
-  unreadCount       Int      @default(0)
+  lastMessageAt        DateTime?
+  lastMessagePreview   String?
+  unreadCount          Int                       @default(0)
   // Why the current assignment was made (sticky / round-robin / manual).
   lastAssignmentReason WhatsAppAssignmentReason?
 
@@ -3339,7 +3417,7 @@ model WhatsAppThread {
   // SLA clock could. (responseDeadlineAt is kept separately for the SLA timer.)
   lastCustomerMessageAt DateTime?
   lastHumanReplyAt      DateTime?
-  awaitingReply         Boolean  @default(false)
+  awaitingReply         Boolean   @default(false)
   // Most recent REAL conversation activity — the latest of an inbound customer
   // message OR a manual human (rep) reply. Bot/auto/template/campaign sends
   // (sentByEmployeeId IS NULL) never touch this. The inbox sorts by it so the
@@ -3357,24 +3435,24 @@ model WhatsAppThread {
   // surfaced in the inbox UI even on subsequent replies. If the same
   // contact clicks a different ad later we overwrite — adReferralAt is
   // always "the most recent ad they engaged via".
-  adReferral         Json?
-  adReferralAt       DateTime?
+  adReferral   Json?
+  adReferralAt DateTime?
 
   // --- AI bot per-chat state -----------------------------------------------
   // Whether the AI assistant is allowed to compose replies on this thread.
   // Hard off — a human can flip this from the chat panel to permanently
   // disable AI on a chat ("I'll take this one"). Default ON.
-  aiEnabled         Boolean  @default(true)
+  aiEnabled    Boolean   @default(true)
   // Stamped whenever ANY human agent sends an outbound message. The AI
   // orchestrator silences itself for 4 hours from this timestamp so the bot
   // can't talk over a live sales conversation. Auto-rolls forward on each
   // new human send. NULL = AI is free to fire.
-  aiDisabledAt      DateTime?
+  aiDisabledAt DateTime?
   // Conversation phase tracker so the bot's appointment funnel persists
   // across messages. INITIAL → Q_AND_A → APPOINTMENT_PROPOSED →
   // APPOINTMENT_AVAILABILITY → HANDED_OFF. Updated by the orchestrator on
   // each turn so the next turn knows where we are in the funnel.
-  aiState           String   @default("INITIAL")
+  aiState      String    @default("INITIAL")
 
   // --- Outbound call permission (Meta business-initiated calls) ------------
   // A business-initiated call requires the user to have granted call permission
@@ -3384,16 +3462,16 @@ model WhatsAppThread {
   //   PENDING   → we sent a call_permission_request, awaiting their tap
   //   GRANTED   → they allowed; valid until callPermissionExpiresAt (~7 days)
   //   REJECTED  → they declined
-  callPermissionStatus     String?
-  callPermissionUpdatedAt  DateTime?
-  callPermissionExpiresAt  DateTime?
+  callPermissionStatus    String?
+  callPermissionUpdatedAt DateTime?
+  callPermissionExpiresAt DateTime?
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  channel  WhatsAppChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  lead     Lead?              @relation("LeadWhatsAppThread", fields: [leadId], references: [id], onDelete: SetNull)
-  client   Client?            @relation("ClientWhatsAppThreads", fields: [clientId], references: [id], onDelete: SetNull)
+  channel  WhatsAppChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  lead     Lead?             @relation("LeadWhatsAppThread", fields: [leadId], references: [id], onDelete: SetNull)
+  client   Client?           @relation("ClientWhatsAppThreads", fields: [clientId], references: [id], onDelete: SetNull)
   messages WhatsAppMessage[]
 
   @@unique([channelId, waContactId])
@@ -3421,45 +3499,45 @@ model WhatsAppThread {
 
 // Every inbound + outbound message.
 model WhatsAppMessage {
-  id                 String   @id @default(uuid())
-  threadId           String
-  channelId          String
+  id             String  @id @default(uuid())
+  threadId       String
+  channelId      String
   // Denormalized lead/client foreign keys for fast filtering without joining
   // through thread. Kept in sync by the worker.
-  leadId             String?
-  clientId           String?
+  leadId         String?
+  clientId       String?
   // Meta's wa_message_id (wamid.xxx). Unique per channel. NULL until accepted.
-  waMessageId        String?  @unique
+  waMessageId    String? @unique
   // Idempotency key generated on outbound enqueue. Prevents double-send.
-  idempotencyKey     String?  @unique
+  idempotencyKey String? @unique
 
-  direction          WhatsAppMessageDirection
-  type               WhatsAppMessageType
-  status             WhatsAppMessageStatus @default(QUEUED)
+  direction WhatsAppMessageDirection
+  type      WhatsAppMessageType
+  status    WhatsAppMessageStatus    @default(QUEUED)
 
-  body               String?
-  payload            Json?
-  mediaUrl           String?
-  mediaMimeType      String?
-  mediaSizeBytes     Int?
-  mediaSha256        String?
+  body           String?
+  payload        Json?
+  mediaUrl       String?
+  mediaMimeType  String?
+  mediaSizeBytes Int?
+  mediaSha256    String?
 
-  templateName       String?
-  templateLanguage   String?
+  templateName     String?
+  templateLanguage String?
 
   // Employee who hit send (NULL for system/campaign/inbound).
-  sentByEmployeeId   String?
-  campaignId         String?
-  pricingCategory    String?
+  sentByEmployeeId String?
+  campaignId       String?
+  pricingCategory  String?
 
-  errorCode          String?
-  errorTitle         String?
-  errorDetails       Json?
+  errorCode    String?
+  errorTitle   String?
+  errorDetails Json?
 
-  sentAt             DateTime?
-  deliveredAt        DateTime?
-  readAt             DateTime?
-  failedAt           DateTime?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
 
   // For inbound replies that quote another message.
   repliedToWaMessageId String?
@@ -3469,10 +3547,10 @@ model WhatsAppMessage {
   // over its lifetime; the thread row carries the LATEST one for header
   // display, this column lets us look up which exact reply was triggered
   // by which ad. JSON shape matches Meta's `referral` object verbatim.
-  adReferral         Json?
+  adReferral Json?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   thread         WhatsAppThread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
   channel        WhatsAppChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
@@ -3502,20 +3580,20 @@ enum WhatsAppTemplateDepartment {
 }
 
 model WhatsAppTemplate {
-  id              String                  @id @default(uuid())
-  channelId       String
-  name            String
-  language        String
-  category        WhatsAppTemplateCategory
-  status          WhatsAppTemplateStatus
-  components      Json
-  qualityRating   String?
-  rejectedReason  String?
+  id             String                       @id @default(uuid())
+  channelId      String
+  name           String
+  language       String
+  category       WhatsAppTemplateCategory
+  status         WhatsAppTemplateStatus
+  components     Json
+  qualityRating  String?
+  rejectedReason String?
   /// Departments allowed to pick this template. Empty = shared (everyone sees it).
-  departments     WhatsAppTemplateDepartment[] @default([])
-  lastSyncAt      DateTime
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  departments    WhatsAppTemplateDepartment[] @default([])
+  lastSyncAt     DateTime
+  createdAt      DateTime                     @default(now())
+  updatedAt      DateTime                     @updatedAt
 
   channel   WhatsAppChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
   campaigns WhatsAppCampaign[]
@@ -3528,28 +3606,28 @@ model WhatsAppTemplate {
 
 // Template broadcast to a list of contacts (Phase 4 feature).
 model WhatsAppCampaign {
-  id              String                 @id @default(uuid())
+  id              String @id @default(uuid())
   channelId       String
   templateId      String
   createdByUserId String
 
-  name            String
-  description     String?
-  variableMap     Json                   @default("{}")
-  scheduledFor    DateTime?
-  status          WhatsAppCampaignStatus @default(DRAFT)
+  name         String
+  description  String?
+  variableMap  Json                   @default("{}")
+  scheduledFor DateTime?
+  status       WhatsAppCampaignStatus @default(DRAFT)
 
-  totalAudience   Int                    @default(0)
-  totalQueued     Int                    @default(0)
-  totalSent       Int                    @default(0)
-  totalDelivered  Int                    @default(0)
-  totalRead       Int                    @default(0)
-  totalFailed     Int                    @default(0)
+  totalAudience  Int @default(0)
+  totalQueued    Int @default(0)
+  totalSent      Int @default(0)
+  totalDelivered Int @default(0)
+  totalRead      Int @default(0)
+  totalFailed    Int @default(0)
 
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   channel  WhatsAppChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
   template WhatsAppTemplate  @relation(fields: [templateId], references: [id])
@@ -3575,14 +3653,14 @@ model WhatsAppOptOut {
 // Raw webhook payload log. Kept for forensics + replay. Older entries are
 // pruned by a scheduled cleanup job.
 model WhatsAppWebhookEvent {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   signature       String
   signatureValid  Boolean
   objectType      String?
   rawPayload      Json
   processedAt     DateTime?
   processingError String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   @@index([createdAt(sort: Desc)])
   @@index([processedAt])
@@ -3600,18 +3678,18 @@ model WhatsAppWebhookEvent {
 /// vector types natively so we declare it `Unsupported` and access it via
 /// raw queries (see ai-knowledge.repository.ts).
 model AiKnowledge {
-  id          String                       @id @default(uuid())
-  type        String                       // 'qa' | 'brochure_chunk' | 'company_profile'
-  programKey  String?
-  queryEn     String?
-  queryUr     String?
-  answerEn    String
-  answerUr    String?
-  sourceFile  String
-  chunkIndex  Int?
-  embedding   Unsupported("vector(1536)")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String                      @id @default(uuid())
+  type       String // 'qa' | 'brochure_chunk' | 'company_profile'
+  programKey String?
+  queryEn    String?
+  queryUr    String?
+  answerEn   String
+  answerUr   String?
+  sourceFile String
+  chunkIndex Int?
+  embedding  Unsupported("vector(1536)")
+  createdAt  DateTime                    @default(now())
+  updatedAt  DateTime                    @updatedAt
 
   @@index([type])
   @@index([programKey])
@@ -3623,23 +3701,23 @@ model AiKnowledge {
 /// hits "Use this", we transition to USED and dispatch via the existing send
 /// pipeline. EDITED + REJECTED are training signal.
 model AiSuggestion {
-  id                  String   @id @default(uuid())
-  threadId            String
-  inboundMessageId    String
-  suggestedReply      String
-  language            String                                // 'en' | 'ur_roman' | 'ur' | 'other'
-  topMatchType        String?
-  topMatchSourceFile  String?
-  topMatchSimilarity  Float?
-  retrievedDocIds     String[]
-  status              String   @default("PENDING")          // PENDING | USED | EDITED | REJECTED | EXPIRED
-  usedByUserId        String?
-  usedAt              DateTime?
-  model               String
-  inputTokens         Int?
-  outputTokens        Int?
-  latencyMs           Int?
-  createdAt           DateTime @default(now())
+  id                 String    @id @default(uuid())
+  threadId           String
+  inboundMessageId   String
+  suggestedReply     String
+  language           String // 'en' | 'ur_roman' | 'ur' | 'other'
+  topMatchType       String?
+  topMatchSourceFile String?
+  topMatchSimilarity Float?
+  retrievedDocIds    String[]
+  status             String    @default("PENDING") // PENDING | USED | EDITED | REJECTED | EXPIRED
+  usedByUserId       String?
+  usedAt             DateTime?
+  model              String
+  inputTokens        Int?
+  outputTokens       Int?
+  latencyMs          Int?
+  createdAt          DateTime  @default(now())
 
   @@index([threadId, createdAt(sort: Desc)])
   @@index([status])
@@ -3651,21 +3729,21 @@ model AiSuggestion {
 /// + audit trail + "why didn't it reply?" forensics. Mode tells you whether
 /// we sent automatically, queued a suggestion, or skipped (with reason).
 model AiRun {
-  id                  String   @id @default(uuid())
-  threadId            String
-  inboundMessageId    String   @unique
-  mode                String                                // AUTO | SHADOW | SKIPPED
-  skipReason          String?
-  language            String?
-  model               String?
-  inputTokens         Int?
-  outputTokens        Int?
-  totalLatencyMs      Int?
-  topMatchSimilarity  Float?
-  outboundMessageId   String?
-  suggestionId        String?
-  error               String?
-  createdAt           DateTime @default(now())
+  id                 String   @id @default(uuid())
+  threadId           String
+  inboundMessageId   String   @unique
+  mode               String // AUTO | SHADOW | SKIPPED
+  skipReason         String?
+  language           String?
+  model              String?
+  inputTokens        Int?
+  outputTokens       Int?
+  totalLatencyMs     Int?
+  topMatchSimilarity Float?
+  outboundMessageId  String?
+  suggestionId       String?
+  error              String?
+  createdAt          DateTime @default(now())
 
   @@index([threadId, createdAt(sort: Desc)])
   @@index([mode, createdAt(sort: Desc)])
@@ -3687,29 +3765,29 @@ model AiRun {
 ///  - The bot can rewrite its own intent row across turns (the customer
 ///    sometimes negotiates the time), without churning real Appointment rows.
 model AppointmentRequest {
-  id                String   @id @default(uuid())
-  leadId            String
-  threadId          String?
+  id                     String    @id @default(uuid())
+  leadId                 String
+  threadId               String?
   /// The WhatsApp message we extracted the intent from — for forensics +
   /// "scroll to this message" UX on the chat panel.
   extractedFromMessageId String?
   /// Free-text customer wording — kept verbatim so sales sees exactly what
   /// they said even if our parser missed nuance.
-  rawText           String
+  rawText                String
   /// Parsed day-of-week (Monday / Tuesday / …) OR a date string (2026-06-03)
   /// OR null when unspecified.
-  preferredDay      String?
+  preferredDay           String?
   /// Parsed time slot (morning / afternoon / evening) OR a specific time
   /// (15:00) OR null when unspecified.
-  preferredTime     String?
+  preferredTime          String?
   /// Bot-detected modality.
-  modality          String?  // CALL | VIDEO | IN_PERSON | UNKNOWN
-  status            String   @default("PENDING") // PENDING | CONFIRMED | REJECTED | EXPIRED
-  linkedAppointmentId String?  // set when sales books a real Appointment from this
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  closedAt          DateTime?
-  closedByUserId    String?
+  modality               String? // CALL | VIDEO | IN_PERSON | UNKNOWN
+  status                 String    @default("PENDING") // PENDING | CONFIRMED | REJECTED | EXPIRED
+  linkedAppointmentId    String? // set when sales books a real Appointment from this
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  closedAt               DateTime?
+  closedByUserId         String?
 
   @@index([leadId, status, createdAt(sort: Desc)])
   @@index([threadId, status])
@@ -3724,18 +3802,18 @@ model AppointmentRequest {
 /// program identifier the bot pattern-matches on when a customer asks
 /// "send me the brochure".
 model BotBrochure {
-  id            String   @id @default(uuid())
+  id           String   @id @default(uuid())
   /// Stable key matching the AiKnowledge.programKey values + the special
   /// 'COMPANY_PROFILE' for the about-us doc.
-  programKey    String   @unique
+  programKey   String   @unique
   /// Human-readable title used as the WhatsApp filename when sending,
   /// e.g. "Canada C11 Work Permit — Tashfeen Immigration Solutions.pdf".
-  displayTitle  String
-  s3Key         String   /// storage key inside our bucket
-  mimeType      String   @default("application/pdf")
-  sizeBytes     Int
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  displayTitle String
+  s3Key        String /// storage key inside our bucket
+  mimeType     String   @default("application/pdf")
+  sizeBytes    Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([programKey])
   @@map("brochures")
@@ -3752,19 +3830,19 @@ model BotBrochure {
 /// scale) so we don't bother with an SQS-style fan-out; just direct
 /// Prisma inserts from the producing service.
 model Notification {
-  id          String   @id @default(uuid())
-  userId      String   // recipient
+  id        String    @id @default(uuid())
+  userId    String // recipient
   /// Stable category for filtering / icon selection on the frontend.
   /// Today: APPOINTMENT_BOOKED. Add more as more producers come online.
-  type        String
-  title       String   // shown in the dropdown as the headline
-  body        String?  // optional second line
+  type      String
+  title     String // shown in the dropdown as the headline
+  body      String? // optional second line
   /// Path to navigate to when the notification is clicked (e.g.
   /// "/sales/appointments?focusId=…"). Relative to the app root.
-  link        String?
-  read        Boolean  @default(false)
-  readAt      DateTime?
-  createdAt   DateTime @default(now())
+  link      String?
+  read      Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
 
   user UserAccount @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
 
@@ -3778,6 +3856,7 @@ enum DevicePlatform {
   ANDROID
   IOS
   WEB
+
   @@schema("core")
 }
 
@@ -3816,31 +3895,31 @@ model DeviceToken {
 /// admins edit these knobs in the Policy Settings screen. A bump to `version`
 /// + the JSON snapshot stored on each Payslip keeps locked payroll reproducible.
 model AttendancePolicy {
-  id                  String   @id @default(uuid())
-  orgId               String
-  version             Int      @default(1)
-  isActive            Boolean  @default(true)
-  workStart           String   @default("09:00")
-  workEnd             String   @default("18:00")
-  breakStart          String   @default("12:30")
-  breakEnd            String   @default("14:00")
-  allowedBreakMin     Int      @default(90)   // 1.5h
-  graceMin            Int      @default(15)
-  fullDayMinMin       Int      @default(480)  // >= 8h net = full day
-  halfDayMinMin       Int      @default(240)  // >= 4h net = half day
-  workingDays         Int[]    @default([1, 2, 3, 4, 5]) // 0=Sun .. 6=Sat
-  saturdayPolicy      SaturdayPolicy @default(OPTIONAL_WFH)
-  overtimeRequiresApproval Boolean @default(true)
-  overtimeStartAfter  String   @default("18:00")
-  overtimeMinBlockMin Int      @default(30)
-  salaryBasis         SalaryBasis @default(THIRTY_DAYS)
-  roundingMin         Int      @default(0)    // round late/OT to nearest N min (0 = off)
-  annualLeaveQuota    Int      @default(14)
-  sickLeaveQuota      Int      @default(8)
-  casualLeaveQuota    Int      @default(10)
-  updatedByUserId     String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                       String         @id @default(uuid())
+  orgId                    String
+  version                  Int            @default(1)
+  isActive                 Boolean        @default(true)
+  workStart                String         @default("09:00")
+  workEnd                  String         @default("18:00")
+  breakStart               String         @default("12:30")
+  breakEnd                 String         @default("14:00")
+  allowedBreakMin          Int            @default(90) // 1.5h
+  graceMin                 Int            @default(15)
+  fullDayMinMin            Int            @default(480) // >= 8h net = full day
+  halfDayMinMin            Int            @default(240) // >= 4h net = half day
+  workingDays              Int[]          @default([1, 2, 3, 4, 5]) // 0=Sun .. 6=Sat
+  saturdayPolicy           SaturdayPolicy @default(OPTIONAL_WFH)
+  overtimeRequiresApproval Boolean        @default(true)
+  overtimeStartAfter       String         @default("18:00")
+  overtimeMinBlockMin      Int            @default(30)
+  salaryBasis              SalaryBasis    @default(THIRTY_DAYS)
+  roundingMin              Int            @default(0) // round late/OT to nearest N min (0 = off)
+  annualLeaveQuota         Int            @default(14)
+  sickLeaveQuota           Int            @default(8)
+  casualLeaveQuota         Int            @default(10)
+  updatedByUserId          String?
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
 
   @@index([orgId, isActive])
   @@map("attendance_policies")
@@ -3885,19 +3964,19 @@ model EmployeeCompensation {
 /// date, type) so a recompute upserts the computed `minutes`/`description`
 /// WITHOUT wiping an already-reviewed status/resolution.
 model AttendanceException {
-  id                 String   @id @default(uuid())
+  id                 String                  @id @default(uuid())
   employeeId         String
-  date               DateTime @db.Date
+  date               DateTime                @db.Date
   type               AttendanceExceptionType
-  status             ExceptionStatus @default(PENDING)
-  minutes            Int      @default(0)
+  status             ExceptionStatus         @default(PENDING)
+  minutes            Int                     @default(0)
   description        String?
   overtimeResolution OvertimeResolution?
   reviewedByUserId   String?
   reviewedAt         DateTime?
   remark             String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
 
   @@unique([employeeId, date, type])
   @@index([status])
@@ -3909,12 +3988,12 @@ model AttendanceException {
 /// Official-duty slip. When APPROVED, its minutes credit back into the day's
 /// payable time so the employee isn't penalised for off-site official work.
 model OfficialDutySlip {
-  id               String   @id @default(uuid())
+  id               String             @id @default(uuid())
   employeeId       String
-  date             DateTime @db.Date
-  fromTime         String   // HH:MM
-  toTime           String   // HH:MM
-  minutes          Int      @default(0)
+  date             DateTime           @db.Date
+  fromTime         String // HH:MM
+  toTime           String // HH:MM
+  minutes          Int                @default(0)
   reason           String
   location         String?
   status           OfficialDutyStatus @default(PENDING)
@@ -3923,8 +4002,8 @@ model OfficialDutySlip {
   approvedByUserId String?
   approvedAt       DateTime?
   remarks          String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   @@index([employeeId, date])
   @@index([status])
@@ -3938,7 +4017,7 @@ model AttendanceAdjustment {
   id          String   @id @default(uuid())
   employeeId  String
   date        DateTime @db.Date
-  action      String   // e.g. APPROVE_EXTRA_BREAK, CORRECT_PUNCH, ADD_OFFICIAL_DUTY
+  action      String // e.g. APPROVE_EXTRA_BREAK, CORRECT_PUNCH, ADD_OFFICIAL_DUTY
   oldValue    Json?
   newValue    Json?
   reason      String?
@@ -3953,21 +4032,21 @@ model AttendanceAdjustment {
 /// Leave requests. Approved PAID leave does not deduct; UNPAID deducts
 /// dailyRate * days. Balances = policy quota - approved days in the year.
 model LeaveRequest {
-  id               String   @id @default(uuid())
+  id               String      @id @default(uuid())
   employeeId       String
   kind             LeaveKind
-  fromDate         DateTime @db.Date
-  toDate           DateTime @db.Date
-  days             Int      @default(1)
-  paid             Boolean  @default(true)
+  fromDate         DateTime    @db.Date
+  toDate           DateTime    @db.Date
+  days             Int         @default(1)
+  paid             Boolean     @default(true)
   reason           String?
   status           LeaveStatus @default(PENDING)
   reviewedByUserId String?
   reviewedAt       DateTime?
   remarks          String?
   createdByUserId  String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   @@index([employeeId, status])
   @@index([fromDate, toDate])
@@ -3978,19 +4057,19 @@ model LeaveRequest {
 /// A calendar-month payroll run. Once LOCKED, the month's attendance days are
 /// stamped lockedPayrollPeriodId and nothing silently changes the payslips.
 model PayrollPeriod {
-  id              String   @id @default(uuid())
+  id              String              @id @default(uuid())
   orgId           String
   year            Int
-  month           Int      // 1-12
-  startDate       DateTime @db.Date
-  endDate         DateTime @db.Date
+  month           Int // 1-12
+  startDate       DateTime            @db.Date
+  endDate         DateTime            @db.Date
   status          PayrollPeriodStatus @default(DRAFT)
   generatedAt     DateTime?
   lockedByUserId  String?
   lockedAt        DateTime?
   createdByUserId String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   @@unique([orgId, year, month])
   @@map("payroll_periods")
@@ -4032,4 +4111,23 @@ model Payslip {
   @@index([employeeId])
   @@map("payslips")
   @@schema("core")
+}
+
+/// Saved chat snippets ("quick replies") for the WhatsApp composer — ordinary
+/// session text inserted into the typing box, NOT Meta templates (those are
+/// the separate pre-approved forms used outside the 24h window). ownerUserId
+/// NULL = team-wide (managed by whatsapp.manage_templates holders); set =
+/// personal to that user. Body may contain {{name}} which clients substitute
+/// with the customer's first name on insert.
+model QuickReply {
+  id          String   @id @default(uuid())
+  title       String
+  body        String
+  ownerUserId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerUserId])
+  @@map("quick_replies")
+  @@schema("crm")
 }

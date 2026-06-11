@@ -19,6 +19,7 @@ import '../data/whatsapp_repository.dart';
 import '../domain/wa_message.dart';
 import '../domain/wa_thread.dart';
 import 'media_preview_screen.dart';
+import 'quick_reply_sheet.dart';
 import 'template_picker_sheet.dart';
 
 class ThreadScreen extends ConsumerStatefulWidget {
@@ -291,6 +292,19 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     if (start == null) return '0:00';
     final s = DateTime.now().difference(start).inSeconds;
     return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// Pick a saved snippet and insert it into the composer ({{name}} filled
+  /// with the customer's first name). Nothing auto-sends.
+  Future<void> _insertQuickReply() async {
+    final body = await showQuickReplySheet(context);
+    if (body == null || body.isEmpty) return;
+    final firstName = _thread.displayName.trim().split(RegExp(r'\s+')).first;
+    final filled = body.replaceAll('{{name}}', firstName);
+    final existing = _composer.text;
+    _composer.text = existing.trim().isEmpty ? filled : '$existing $filled';
+    _composer.selection =
+        TextSelection.collapsed(offset: _composer.text.length);
   }
 
   void _openLead() {
@@ -586,6 +600,12 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                         ),
                       ),
                     ),
+                  ),
+                  // Quick replies — saved snippets inserted into the box
+                  IconButton(
+                    tooltip: 'Quick reply',
+                    icon: const Icon(Icons.bolt_outlined, size: 22),
+                    onPressed: _sending ? null : _insertQuickReply,
                   ),
                   // Voice note (inside window)
                   IconButton(

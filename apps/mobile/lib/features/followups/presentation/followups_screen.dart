@@ -11,6 +11,7 @@ import '../../../core/widgets/premium_ui.dart';
 import '../data/followups_providers.dart';
 import '../data/followups_repository.dart';
 import '../domain/follow_up.dart';
+import 'followup_form_sheet.dart';
 
 class FollowUpsScreen extends ConsumerStatefulWidget {
   const FollowUpsScreen({super.key});
@@ -26,7 +27,21 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(followUpsListProvider(_bucket));
-    return Column(
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'fab-new-followup',
+        onPressed: () async {
+          final created = await showFollowUpFormWithLeadPicker(context);
+          if (created == true && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Follow-up created')));
+          }
+        },
+        icon: const Icon(Icons.add_task),
+        label: const Text('Follow-up'),
+      ),
+      body: Column(
       children: [
         // ── bucket tab bar ────────────────────────────────────────────────
         Padding(
@@ -77,6 +92,7 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen> {
           ),
         ),
       ],
+      ),
     );
   }
 

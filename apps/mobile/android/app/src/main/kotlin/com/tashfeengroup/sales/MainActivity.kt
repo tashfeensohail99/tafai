@@ -1,7 +1,10 @@
 package com.tashfeengroup.sales
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.PowerManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -20,6 +23,21 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // Channel for server-sent message notifications (heads-up + sound).
+        // Created up-front so it always exists when an FCM notification
+        // arrives with channel_id=tashfeen_messages — even app-killed.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.createNotificationChannel(
+                    NotificationChannel(
+                        "tashfeen_messages",
+                        "Messages",
+                        NotificationManager.IMPORTANCE_HIGH,
+                    ).apply { description = "New WhatsApp messages from customers" },
+                )
+            } catch (_: Exception) {}
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "call_locks")
             .setMethodCallHandler { call, result ->
                 when (call.method) {

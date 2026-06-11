@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -9,6 +10,10 @@ import '../../features/auth/presentation/screens/change_password_screen.dart';
 import '../../features/shared/presentation/splash_screen.dart';
 import '../../features/shell/presentation/app_shell.dart';
 import '../../features/leads/presentation/lead_detail_screen.dart';
+
+/// Root navigator — lets non-widget code (e.g. a notification-tap handler)
+/// push screens without a BuildContext.
+final rootNavigatorKey = GlobalKey<NavigatorState>();
 
 /// Route paths — use these constants instead of raw strings.
 abstract class AppRoutes {
@@ -36,6 +41,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   ref.onDispose(refresh.dispose);
 
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: AppRoutes.splash,
     debugLogDiagnostics: kDebugMode,
     refreshListenable: refresh,

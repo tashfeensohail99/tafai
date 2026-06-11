@@ -3,7 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/auth/auth_controller.dart';
 import '../../../core/auth/token_storage.dart';
+import '../../../core/router/app_router.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../whatsapp/data/whatsapp_repository.dart';
+import '../../whatsapp/presentation/thread_screen.dart';
 import '../application/call_controller.dart';
 import '../data/call_api.dart';
 import '../data/push_service.dart';
@@ -41,6 +44,7 @@ class _CallHostState extends ConsumerState<CallHost>
       final push = CallPushService.instance;
       push.replayPendingAccept();
       push.checkColdStartAccept();
+      push.replayPendingThreadOpen();
     });
   }
 
@@ -100,6 +104,19 @@ class _CallHostState extends ConsumerState<CallHost>
     // CallKit "Decline" / ended / timeout → reject on the backend.
     push.onDecline = (callId) {
       ref.read(callControllerProvider.notifier).rejectById(callId);
+    };
+    // "New WhatsApp message" notification tapped → open that chat directly.
+    push.onOpenThread = (threadId) async {
+      try {
+        final t =
+            await ref.read(whatsappRepositoryProvider).getThread(threadId);
+        rootNavigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => ThreadScreen(thread: t)),
+        );
+      } catch (_) {
+        // Thread fetch failed (offline / signed out) — the app still opens
+        // on the inbox, which is an acceptable fallback.
+      }
     };
     // NOTE: the cold-start accept replay (replayPendingAccept /
     // checkColdStartAccept) is deliberately NOT here — _wirePush runs in

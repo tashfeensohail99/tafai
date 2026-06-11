@@ -306,7 +306,16 @@ export class MetaCloudClient {
       const form = new FormData();
       form.append('messaging_product', 'whatsapp');
       form.append('type', baseMime);
-      form.append('file', file, { filename, contentType: mimeType });
+      // BARE mime on the file part too (not the parameterised "audio/ogg;
+      // codecs=opus"): Meta's media processor can't match a parameterised
+      // content-type and stores the object as application/octet-stream,
+      // which then fails delivery with 131053. knownLength lets form-data
+      // report an accurate part size.
+      form.append('file', file, {
+        filename,
+        contentType: baseMime,
+        knownLength: file.length,
+      });
 
       // Use a fresh `axios` call (not `this.http`) so we don't inherit
       // the shared instance's `Content-Type: application/json` default
@@ -314,12 +323,19 @@ export class MetaCloudClient {
       // boundary that form.getHeaders() supplies. Auth + base URL are
       // pulled from instance fields — not from axios defaults, whose
       // shape isn't stable across axios v1 minors.
+      // Compute an explicit Content-Length. Without it axios streams the
+      // multipart with Transfer-Encoding: chunked, and Meta's media
+      // endpoint can mis-store a chunked body as application/octet-stream
+      // (→ 131053 on send). getLengthSync is exact here: every part is a
+      // Buffer or string with a known length.
+      const contentLength = form.getLengthSync();
       const res = await axios.post<{ id: string }>(
         `${this.baseURL}/${this.phoneNumberId}/media`,
         form,
         {
           headers: {
             ...form.getHeaders(),
+            'Content-Length': contentLength,
             Authorization: `Bearer ${this.accessToken}`,
           },
           timeout: 60_000,

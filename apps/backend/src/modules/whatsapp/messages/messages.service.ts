@@ -471,7 +471,16 @@ export class WhatsAppMessagesService {
           : ` — ${(e as Error).message}`;
         throw new Error(`ffmpeg transcode failed${tail}`);
       }
-      return await readFile(tmpOut);
+      const out = await readFile(tmpOut);
+      // Sanity-check the container: a real Ogg stream starts with the "OggS"
+      // capture pattern. If it doesn't, Meta will store the upload as
+      // application/octet-stream and fail delivery with 131053 — so reject
+      // here with a clear reason instead of shipping bad bytes.
+      const magic = out.subarray(0, 4).toString('latin1');
+      if (magic !== 'OggS') {
+        throw new Error(`ffmpeg output is not Ogg (magic="${magic}", ${out.length} bytes)`);
+      }
+      return out;
     } finally {
       await unlink(tmpIn).catch(() => {});
       await unlink(tmpOut).catch(() => {});

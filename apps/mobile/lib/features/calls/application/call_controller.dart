@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
 
 import '../data/call_api.dart';
 import '../data/push_service.dart';
@@ -33,7 +34,7 @@ class CallController extends StateNotifier<CallState> {
   Timer? _disconnectGrace; // transient media drop — give ICE time to recover
 
   // Recording (best-effort; never breaks the call).
-  MediaRecorder? _recorder;
+  AudioRecorder? _recorder;
   String? _recordingPath;
   String? _recordingCallId;
 
@@ -490,33 +491,39 @@ class CallController extends StateNotifier<CallState> {
   }
 
   // ── Recording (best-effort) ──────────────────────────────────────────────────
+  //
+  // flutter_webrtc's MediaRecorder cannot do audio-only on Android ("not
+  // implemented" — proven live), so calls produced no recordings. We record
+  // through the platform recorder instead, with the VOICE_COMMUNICATION
+  // source: on most devices that taps the call audio path (both sides on
+  // many OEMs, at minimum the rep side everywhere). Whisper transcription on
+  // the backend works the same on the resulting m4a.
 
   Future<void> _beginRecording() async {
     if (_recorder != null) return;
     final callId = state.callId;
-    final stream = _remoteStream ?? _localStream;
-    if (callId == null || stream == null) return;
+    if (callId == null) return;
     try {
       final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/call-$callId.mp4';
-      final recorder = MediaRecorder();
-      final audioTrack = stream.getAudioTracks().isNotEmpty
-          ? stream.getAudioTracks().first
-          : null;
+      final path = '${dir.path}/call-$callId.m4a';
+      final recorder = AudioRecorder();
       await recorder.start(
-        path,
-        audioChannel: RecorderAudioChannel.OUTPUT,
-        // Some platforms require a track handle; pass the remote audio track.
-        // videoTrack is intentionally null (audio-only).
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          numChannels: 1,
+          androidConfig: AndroidRecordConfig(
+            audioSource: AndroidAudioSource.voiceCommunication,
+          ),
+        ),
+        path: path,
       );
       _recorder = recorder;
       _recordingPath = path;
       _recordingCallId = callId;
-      // Keep a reference so the analyzer doesn't flag it unused.
-      audioTrack?.enabled;
+      _log('recording started');
     } catch (err) {
       // Recording is optional — never let it break the call.
-      if (kDebugMode) debugPrint('[call] recording unsupported: $err');
+      _log('recording unavailable: $err');
       _recorder = null;
     }
   }
@@ -531,16 +538,18 @@ class CallController extends StateNotifier<CallState> {
     if (recorder == null || path == null || callId == null) return;
     try {
       await recorder.stop();
+      recorder.dispose();
       final file = File(path);
       if (await file.exists() && await file.length() > 2000) {
         await _api.uploadRecording(
           callId: callId,
           filePath: path,
-          fileName: 'call-$callId.mp4',
+          fileName: 'call-$callId.m4a',
         );
+        _log('recording uploaded (${await file.length()} bytes)');
       }
     } catch (err) {
-      if (kDebugMode) debugPrint('[call] recording upload failed: $err');
+      _log('recording upload failed: $err');
     } finally {
       try {
         final f = File(path);

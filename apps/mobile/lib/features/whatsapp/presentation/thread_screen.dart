@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 import '../../../core/errors/app_error.dart';
 import '../../../core/theme/tokens.dart';
@@ -33,6 +38,11 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   bool _busyAi = false;
   bool _initialScrollDone = false;
 
+  // Voice note recording (WhatsApp-style).
+  AudioRecorder? _voiceRec;
+  DateTime? _voiceStart;
+  Timer? _voiceTick;
+
   String get _threadId => widget.thread.id;
 
   @override
@@ -60,6 +70,11 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
 
   @override
   void dispose() {
+    _voiceTick?.cancel();
+    final rec = _voiceRec;
+    if (rec != null) {
+      rec.stop().then((_) => rec.dispose()).catchError((_) {});
+    }
     _composer.dispose();
     _scroll.dispose();
     super.dispose();
@@ -185,6 +200,97 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  // ── Voice notes ────────────────────────────────────────────────────────────
+
+  Future<void> _startVoiceNote() async {
+    if (_sending || _voiceRec != null) return;
+    try {
+      final rec = AudioRecorder();
+      if (!await rec.hasPermission()) {
+        rec.dispose();
+        _toast('Microphone permission is needed for voice notes.');
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/voice-${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await rec.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, numChannels: 1),
+        path: path,
+      );
+      setState(() {
+        _voiceRec = rec;
+        _voiceStart = DateTime.now();
+      });
+      _voiceTick = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    } catch (e) {
+      _toast('Could not start recording.');
+      _voiceRec = null;
+    }
+  }
+
+  Future<void> _cancelVoiceNote() async {
+    _voiceTick?.cancel();
+    final rec = _voiceRec;
+    setState(() {
+      _voiceRec = null;
+      _voiceStart = null;
+    });
+    if (rec == null) return;
+    try {
+      final path = await rec.stop();
+      rec.dispose();
+      if (path != null) {
+        final f = File(path);
+        if (await f.exists()) await f.delete();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _sendVoiceNote() async {
+    _voiceTick?.cancel();
+    final rec = _voiceRec;
+    setState(() {
+      _voiceRec = null;
+      _voiceStart = null;
+    });
+    if (rec == null) return;
+    String? path;
+    try {
+      path = await rec.stop();
+      rec.dispose();
+    } catch (_) {}
+    if (path == null || !mounted) return;
+
+    setState(() => _sending = true);
+    try {
+      final msg = await ref.read(whatsappRepositoryProvider).sendMedia(
+            _threadId,
+            filePath: path,
+            fileName: 'voice-note.m4a',
+          );
+      ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
+      _jumpToBottom(animate: true);
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } finally {
+      try {
+        final f = File(path);
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  String get _voiceLabel {
+    final start = _voiceStart;
+    if (start == null) return '0:00';
+    final s = DateTime.now().difference(start).inSeconds;
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
   }
 
   void _openLead() {
@@ -435,7 +541,29 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
         padding: const EdgeInsets.fromLTRB(
             AppTokens.space2, AppTokens.space2, AppTokens.space2, AppTokens.space2),
         child: windowOpen
-            ? Row(
+            ? (_voiceRec != null
+                ? Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Discard',
+                        icon: const Icon(Icons.delete_outline,
+                            color: AppTokens.statusDanger),
+                        onPressed: _cancelVoiceNote,
+                      ),
+                      const Icon(Icons.fiber_manual_record,
+                          size: 14, color: AppTokens.statusDanger),
+                      const SizedBox(width: AppTokens.space2),
+                      Text('Recording $_voiceLabel',
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      const Spacer(),
+                      IconButton.filled(
+                        tooltip: 'Send voice note',
+                        onPressed: _sendVoiceNote,
+                        icon: const Icon(Icons.send),
+                      ),
+                    ],
+                  )
+                : Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   // Media attach (only inside window)
@@ -459,6 +587,12 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                       ),
                     ),
                   ),
+                  // Voice note (inside window)
+                  IconButton(
+                    tooltip: 'Voice note',
+                    icon: const Icon(Icons.mic_none, size: 22),
+                    onPressed: _sending ? null : _startVoiceNote,
+                  ),
                   // Template button (always available)
                   IconButton(
                     tooltip: 'Send template',
@@ -479,7 +613,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                           icon: const Icon(Icons.send),
                         ),
                 ],
-              )
+              ))
             : Row(
                 children: [
                   const Icon(Icons.lock_clock,

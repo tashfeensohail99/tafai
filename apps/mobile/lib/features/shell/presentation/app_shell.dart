@@ -93,38 +93,33 @@ class _AppShellState extends ConsumerState<AppShell> {
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         systemOverlayStyle: SystemUiOverlayStyle.light,
-        title: Text(
-          _tabs[index].label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-            fontSize: 18,
-            letterSpacing: -0.3,
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Notifications',
-            icon: Badge.count(
-              count: unread,
-              isLabelVisible: unread > 0,
-              child: const Icon(Icons.notifications_outlined, color: Colors.white),
-            ),
-            onPressed: _openNotifications,
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Account',
-            icon: CircleAvatar(
-              radius: 14,
-              backgroundColor: AppTokens.brandNavyLight,
-              child: Text(
-                user?.initials ?? '?',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: AppTokens.brandSilverText,
-                ),
+        // Unmistakable hamburger menu on the LEFT — a shadowed, raised
+        // button so it clearly reads as "tap me for the menu" (it used to be
+        // a plain initials circle on the right that looked identical to the
+        // dashboard's profile avatar, so nobody could tell it opened a menu).
+        leadingWidth: 60,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 10),
+          child: PopupMenuButton<String>(
+            tooltip: 'Menu',
+            position: PopupMenuPosition.under,
+            offset: const Offset(0, 6),
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: AppTokens.brandNavyLight,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.30),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
+              alignment: Alignment.center,
+              child: const Icon(Icons.menu, color: Colors.white, size: 24),
             ),
             onSelected: (value) async {
               switch (value) {
@@ -147,7 +142,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        user?.displayName ?? '',
+                        '👋  ${user?.displayName ?? 'Welcome'}',
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       if (user != null)
@@ -174,14 +169,46 @@ class _AppShellState extends ConsumerState<AppShell> {
                 ),
                 const PopupMenuItem<String>(
                   value: 'change-password',
-                  child: Text('Change password'),
+                  child: Row(
+                    children: [
+                      Icon(Icons.lock_outline, size: 18),
+                      SizedBox(width: 10),
+                      Text('Change password'),
+                    ],
+                  ),
                 ),
                 const PopupMenuItem<String>(
                   value: 'logout',
-                  child: Text('Sign out'),
+                  child: Row(
+                    children: [
+                      Icon(Icons.logout, size: 18),
+                      SizedBox(width: 10),
+                      Text('Sign out'),
+                    ],
+                  ),
                 ),
               ];
             },
+          ),
+        ),
+        title: Text(
+          _tabs[index].label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+            letterSpacing: -0.3,
+          ),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Notifications',
+            icon: Badge.count(
+              count: unread,
+              isLabelVisible: unread > 0,
+              child: const Icon(Icons.notifications_outlined, color: Colors.white),
+            ),
+            onPressed: _openNotifications,
           ),
           const SizedBox(width: AppTokens.space2),
         ],

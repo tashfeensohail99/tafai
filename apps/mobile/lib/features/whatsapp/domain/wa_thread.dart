@@ -33,6 +33,10 @@ class WhatsappThread {
   final String id;
   final String status; // OPEN | PENDING | RESOLVED | ARCHIVED
   final String waContactId;
+  /// The WhatsApp channel (business number) this conversation belongs to.
+  /// Templates are per-channel, so the composer must fetch templates for THIS
+  /// channel — not just whichever channel happens to be listed first.
+  final String? channelId;
   final DateTime? windowExpiresAt;
   final bool awaitingReply;
   final DateTime? lastHumanReplyAt;
@@ -47,6 +51,7 @@ class WhatsappThread {
     required this.id,
     required this.status,
     required this.waContactId,
+    this.channelId,
     this.windowExpiresAt,
     this.awaitingReply = false,
     this.lastHumanReplyAt,
@@ -78,6 +83,10 @@ class WhatsappThread {
         id: j['id'] as String,
         status: j['status'] as String? ?? 'OPEN',
         waContactId: j['waContactId'] as String? ?? '',
+        channelId: (j['channel'] is Map<String, dynamic>
+                ? (j['channel'] as Map<String, dynamic>)['id'] as String?
+                : null) ??
+            j['channelId'] as String?,
         windowExpiresAt: parseApiDateOrNull(j['windowExpiresAt']),
         awaitingReply: j['awaitingReply'] as bool? ?? false,
         lastHumanReplyAt: parseApiDateOrNull(j['lastHumanReplyAt']),

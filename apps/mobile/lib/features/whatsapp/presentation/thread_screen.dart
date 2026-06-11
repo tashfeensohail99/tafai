@@ -149,7 +149,8 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   }
 
   Future<void> _sendTemplate() async {
-    final params = await showTemplatePicker(context, ref);
+    final params =
+        await showTemplatePicker(context, ref, channelId: _thread.channelId);
     if (params == null || !mounted) return;
     setState(() => _sending = true);
     try {

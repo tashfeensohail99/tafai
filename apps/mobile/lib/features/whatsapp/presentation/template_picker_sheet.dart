@@ -22,19 +22,24 @@ class TemplateSendParams {
 /// its `{{N}}` variables. Returns [TemplateSendParams] on success or null on
 /// cancel.
 Future<TemplateSendParams?> showTemplatePicker(
-    BuildContext context, WidgetRef ref) {
+    BuildContext context, WidgetRef ref,
+    {String? channelId}) {
   return showModalBottomSheet<TemplateSendParams>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => const _TemplatePickerSheet(),
+    builder: (_) => _TemplatePickerSheet(channelId: channelId),
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TemplatePickerSheet extends ConsumerStatefulWidget {
-  const _TemplatePickerSheet();
+  const _TemplatePickerSheet({this.channelId});
+
+  /// The conversation's channel — templates are fetched for it. Falls back to
+  /// the first channel only when the thread didn't carry one.
+  final String? channelId;
 
   @override
   ConsumerState<_TemplatePickerSheet> createState() =>
@@ -60,17 +65,23 @@ class _TemplatePickerSheetState extends ConsumerState<_TemplatePickerSheet> {
     });
     try {
       final repo = ref.read(whatsappRepositoryProvider);
-      final channels = await repo.listChannels();
-      if (channels.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _loading = false;
-            _error = 'No WhatsApp channel configured.';
-          });
+      // Prefer the conversation's own channel; only look up the channel list
+      // when the thread didn't supply one.
+      var channelId = widget.channelId;
+      if (channelId == null) {
+        final channels = await repo.listChannels();
+        if (channels.isEmpty) {
+          if (mounted) {
+            setState(() {
+              _loading = false;
+              _error = 'No WhatsApp channel configured.';
+            });
+          }
+          return;
         }
-        return;
+        channelId = channels.first.id;
       }
-      _channelId = channels.first.id;
+      _channelId = channelId;
       final templates = await repo.listTemplates(_channelId!);
       if (mounted) {
         setState(() {

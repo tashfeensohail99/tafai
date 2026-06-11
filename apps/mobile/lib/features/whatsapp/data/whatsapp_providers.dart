@@ -206,6 +206,31 @@ class MessagesController extends StateNotifier<MessagesState> {
   }
 
   Future<void> refresh() => load();
+
+  /// Quietly reconcile the latest messages (status ticks sent→delivered→read
+  /// and any new inbound) WITHOUT flashing a loader or dropping scroll
+  /// position. Safe to call on a foreground timer while the thread is open.
+  Future<void> syncTail() async {
+    if (state.loading || state.loadingOlder || state.items.isEmpty) return;
+    try {
+      final latest = await _repo.messages(_threadId); // newest page, ascending
+      if (latest.isEmpty) return;
+      // Overlay by id: updates existing rows' status, adds brand-new ones.
+      final byId = {for (final m in state.items) m.id: m};
+      for (final m in latest) {
+        byId[m.id] = m;
+      }
+      final merged = byId.values.toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      state = MessagesState(
+        items: merged,
+        loading: false,
+        hasOlder: state.hasOlder,
+      );
+    } catch (_) {
+      // Transient failure — keep what we have, try again next tick.
+    }
+  }
 }
 
 final messagesControllerProvider = StateNotifierProvider.autoDispose

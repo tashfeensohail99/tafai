@@ -44,6 +44,10 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   DateTime? _voiceStart;
   Timer? _voiceTick;
 
+  // Live status ticks (sent → delivered → read) + new inbound, while the
+  // thread is open. The thread has no socket, so we quietly poll the tail.
+  Timer? _statusPoll;
+
   String get _threadId => widget.thread.id;
 
   @override
@@ -67,10 +71,17 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
         }
       } catch (_) {}
     });
+    // Poll the tail every 5s so outgoing ticks advance and new inbound
+    // messages appear without a manual pull-to-refresh.
+    _statusPoll = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted || _sending) return;
+      ref.read(messagesControllerProvider(_threadId).notifier).syncTail();
+    });
   }
 
   @override
   void dispose() {
+    _statusPoll?.cancel();
     _voiceTick?.cancel();
     final rec = _voiceRec;
     if (rec != null) {

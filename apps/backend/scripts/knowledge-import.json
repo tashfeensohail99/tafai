@@ -1,0 +1,554 @@
+[
+ {
+  "queryEn": "Canada Visit Visa Requirments",
+  "answerEn": "Valid Passport – Your passport should be valid for the duration of your stay.\nVisitor Visa (Temporary Resident Visa - TRV) – Required for many nationalities, including Pakistani citizens.\nCompleted Visa Application Form.\nRecent Passport-Sized Photographs.\nProof of Financial Support – Bank statements, salary slips, or other evidence showing you can cover your expenses.\nTravel Itinerary – Flight reservations and travel plans (if available).\nPurpose of Visit – Invitation letter (if visiting family/friends) or details of tourism plans.\nProof of Ties to Home Country – Job letter, business documents, property documents, family ties, etc., showing you will return home.\nBiometrics – Fingerprints and photograph at an approved visa application center.\nVisa Fee and Biometrics Fee.",
+  "answerUr": "Visit Visa (TRV) – Pakistani citizens ko visit visa ki zaroorat hoti hai.\nVisa Application Form mukammal tarah fill ki hui.\nRecent Passport Size Photos.\nFinancial Proof – Bank statement, salary slips ya doosre saboot ke aap apne kharchay utha sakte hain.\nTravel Plan – Flight booking ya travel itinerary (agar mojood ho).\nVisit ka Maqsad – Family/friends ki invitation letter ya tourism plan.\nPakistan se Strong Ties ka Proof – Job letter, business documents, property papers, family responsibilities waghera.\nBiometrics – Fingerprints aur photo deni hoti hai.\nVisa aur Biometrics Fees jama karani hoti hain.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Do you offer done Base work ?",
+  "answerEn": "No we are not offering done base work",
+  "answerUr": "Nahi hum done base per kaam ni krty",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Do you have charges of your consultation ?",
+  "answerEn": "No we are offering free consultation for clients",
+  "answerUr": "Hum clients ko muft consultation farham krty hain",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Do you apply canada visit or work permit without clients",
+  "answerEn": "No, a Canada visit visa or work permit application cannot normally be submitted without the applicant's required documentation.",
+  "answerUr": "Nahi, Canada visit visa ya work permit ki application aam tor par applicant ke zaroori documents ke baghair submit nahi ki ja sakti. Applicant ko passport, application forms, financial proof, employment ya travel documents, aur case ke mutabiq doosre supporting documents dena zaroori hota hai. Agar documents mukammal na hon to application mein delay ho sakta hai, application return ho sakti hai, ya visa/work permit reject ho sakta hai.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "docementation?",
+  "answerEn": "The applicant must provide documents such as a passport, application forms, financial proof, employment or travel documents,\nand any other supporting documents required for their specific case. Missing documents can lead to delays, refusal, or the application being returned.",
+  "answerUr": null,
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Does your company have license number in canada ?",
+  "answerEn": "Yes, our company is licensed and registered. Our license number is [License Number]. We can provide verification details upon request.",
+  "answerUr": "Ji haan, hamari company licensed aur registered hai. Hamara license number [License Number] hai. Zaroorat par hum verification details bhi provide kar sakte hain.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Do you have option if i pay your charges after visa approval?",
+  "answerEn": "Our payment policy depends on the service package. In some cases, we may offer flexible payment plans, but visa approval can never be guaranteed.\nPlease contact us to discuss available payment options and terms.\"",
+  "answerUr": "Hamari payment policy service package par depend karti hai. Kuch cases mein hum flexible payment plans offer kar sakte hain, lekin visa approval ki guarantee kabhi nahi di ja sakti. Payment options aur terms ke liye barah-e-karam hum se rabta karein.\"",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Do you offer refund policy ?",
+  "answerEn": "Yes, we have a refund policy. Refund eligibility depends on the terms and conditions of the service agreement. Please review our refund policy or contact\nus for specific details regarding your case",
+  "answerUr": "Ji haan, hamari refund policy mojood hai. Refund ki ahliyat service agreement ki terms aur conditions par munhasir hoti hai. Bara-e-karam hamari refund policy review karein ya apne case ki tafseelat ke liye hum se rabta karein.\"",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Can I meet directly to Sir tasheen ?",
+  "answerEn": "Yes, you may request a meeting with the company owner or director. Meeting availability depends on their schedule, and an appointment may be required in advance",
+  "answerUr": "Ji haan, aap company ke owner ya director se mulaqat ki darkhwast kar sakte hain. Mulaqat unki availability par depend karti hai, aur pehle se appointment lena zaroori ho sakta",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Where is your office located?",
+  "answerEn": "Office In Worrld trade center office no 3029A 3rd floor giga mall rawalpindi",
+  "answerUr": null,
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Do you offer Austrialia immigration?",
+  "answerEn": "We are just offering Canada IMMIGRATION",
+  "answerUr": "Hum sirf canada immigration ko deal krty hain",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "What is the C11 Work Permit?",
+  "answerEn": "The C11 Work Permit allows entrepreneurs and business owners to come to Canada if their business will provide significant economic, social, or cultural benefits to Canada.",
+  "answerUr": "C11 Work Permit entrepreneurs aur business owners ko Canada aane ki ijazat deta hai agar unka business Canada ko aham maashi, samaji, ya saqafati faida pohanchaye.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Do I need an LMIA for the C11 Program?",
+  "answerEn": "No, the C11 Work Permit is generally LMIA-exempt.",
+  "answerUr": "Nahi, C11 Work Permit aam tor par LMIA se mustasna (exempt) hota hai.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "What is Judicial Review (JR)?",
+  "answerEn": "Judicial Review is a legal process where a Canadian court reviews an immigration decision to determine whether it was made fairly and according to the law.",
+  "answerUr": "Judicial Review (JR) aik qanooni amal hai jahan Canadian court immigration decision ka jaiza leti hai ke woh qanoon aur insaf ke mutabiq kiya gaya tha ya nahi.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Does Judicial Review guarantee visa approval?",
+  "answerEn": "No, Judicial Review does not guarantee visa approval. It only reviews whether the decision was legally and procedurally fair.",
+  "answerUr": "Nahi, Judicial Review visa approval ki guarantee nahi deta. Yeh sirf yeh dekhta hai ke decision qanooni aur procedural tor par durust tha ya nahi.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Can a refused immigration application be submitted again?",
+  "answerEn": "Yes, a new application can often be submitted if you address the reasons for the previous refusal and provide stronger supporting documents.",
+  "answerUr": "Ji haan, agar aap pehli refusal ke asbab door kar dein aur mazboot supporting documents dein to nayi application aksar dobara submit ki ja sakti hai.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Can I convert a visitor visa into a work permit in Canada?",
+  "answerEn": "In certain situations, it may be possible, but eligibility depends on your circumstances and current immigration policies.",
+  "answerUr": "Kuch suraton mein yeh mumkin ho sakta hai, lekin eligibility aap ki situation aur mojooda immigration policies par depend karti hai.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "How much money do I need for a Canada visit visa?",
+  "answerEn": "There is no fixed amount, but you must show sufficient funds to cover your travel, accommodation, and living expenses.",
+  "answerUr": "Koi muqarrar rakam nahi hai, lekin aap ko yeh sabit karna hota hai ke aap ke paas safar, rehne aur rozmarra kharchon ke liye kafi paisa hai.",
+  "source": "AI question.xlsx"
+ },
+ {
+  "queryEn": "Is your CEO available for an office meeting at any time?",
+  "answerEn": "To meet with our CEO, you must first contact our staff and book an appointment. Meetings are arranged based on his availability.",
+  "answerUr": "CEO se milne ke liye pehle hamari staff se contact karna hoga aur appointment book karni hogi. Meeting unki availability ke mutabiq arrange ki jati hai.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "What is your success ratio?",
+  "answerEn": "Our success ratio depends on the strength of your profile. With over 10 years of experience in Canadian immigration and registered lawyers on our team, we have a strong track record of successful cases.",
+  "answerUr": "Hamari success ratio aapki profile ki strength par depend karti hai. Hamari team ko Canadian immigration mein 10 saal se zyada ka experience hai aur hamare sath registered lawyers bhi maujood hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Why are your fees so high?",
+  "answerEn": "Our fees reflect the quality of our services and expertise. We have experienced professionals and registered lawyers handling cases. However, our fees are negotiable depending on the complexity of your case.",
+  "answerUr": "Hamari fees hamari expertise aur service quality ko reflect karti hain. Hamare experienced professionals aur registered lawyers cases handle karte hain. Fees case ki nature ke mutabiq negotiable bhi ho sakti hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Do you offer group tours?",
+  "answerEn": "No, we do not offer group tours. We process applications individually to ensure each client receives personalized attention and the best possible chance of success.",
+  "answerUr": "Nahi, hum group tours offer nahi karte. Hum har client ka case individually process karte hain taake unko personalized attention mil sake.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "I want a job work visa.",
+  "answerEn": "We do not provide job-based work permits. However, we can assist you in obtaining a work permit through business immigration programs.",
+  "answerUr": "Nahi, hum job-based work permits provide nahi karte. Lekin business immigration ke zariye work permit hasil karne mein madad kar sakte hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "How long will it take to get Permanent Residency (PR) after I arrive in Canada?",
+  "answerEn": "The timeline depends on various factors. Canada is an immigration-friendly country, and many individuals become eligible for PR through programs such as Express Entry or Provincial Nominee Programs (PNPs).",
+  "answerUr": "Ye mukhtalif factors par depend karta hai. Canada immigration-friendly country hai aur bohat se log different immigration programs ke zariye PR ke liye qualify kar jate hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Do you provide a 100% refund if the visa is refused?",
+  "answerEn": "Certain payments may be refundable; however, government fees, processing charges, and other related expenses are generally non-refundable. Refund eligibility depends on the terms of your agreement.",
+  "answerUr": "Kuch payments refundable ho sakti hain, lekin government fees, processing charges aur dusre expenses aam tor par non-refundable hote hain. Refund policy agreement ke mutabiq hoti hai.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "What is the easiest way to get PR in Canada?",
+  "answerEn": "The most suitable pathway depends on your profile. Business immigration is one option, but there are several other programs available that may lead to Permanent Residency.",
+  "answerUr": "Sab se munasib pathway aapki profile par depend karta hai. Business immigration ek option hai, lekin iske ilawa bhi kai programs available hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Can you provide a bank statement if I do not have one?",
+  "answerEn": "No, we cannot provide a bank statement. All financial documentation must be provided by the applicant.",
+  "answerUr": "Nahi, hum bank statement provide nahi kar sakte. Tamam financial documents applicant ko khud provide karne hote hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Do I need IELTS for Canadian immigration?",
+  "answerEn": "It depends on the immigration program you choose. Many programs require a language test, while some business immigration pathways may have different requirements.",
+  "answerUr": "Ye aapke immigration program par depend karta hai. Kai programs mein language test zaroori hota hai jabke kuch business immigration pathways mein requirements mukhtalif ho sakti hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "How much bank balance is required for Canada immigration?",
+  "answerEn": "The required funds depend on the immigration category, family size, and program requirements. We can provide an estimate after reviewing your profile.",
+  "answerUr": "Required funds program, family size aur immigration category par depend karte hain. Profile review ke baad hum estimate provide kar sakte hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Can I include my spouse and children in my application?",
+  "answerEn": "Yes, most immigration programs allow you to include your spouse and dependent children in the same application.",
+  "answerUr": "Ji han, aksar immigration programs mein aap apni spouse aur dependent children ko application mein shamil kar sakte hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "What are the chances of approval for my case?",
+  "answerEn": "Approval chances depend on your profile, qualifications, experience, financial strength, and the immigration program selected.",
+  "answerUr": "Approval chances aapki profile, qualifications, experience, financial strength aur selected immigration program par depend karte hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Can I apply if I have a previous visa refusal?",
+  "answerEn": "Yes, a previous refusal does not automatically make you ineligible. We will review the refusal reasons and advise you on the best course of action.",
+  "answerUr": "Ji han, pehle visa refusal hone se aap automatically ineligible nahi hote. Hum refusal reasons review karke aapko behtareen option suggest karte hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Can I start a business in Canada as a foreign national?",
+  "answerEn": "Yes, Canada offers several business immigration pathways that allow eligible individuals to establish or acquire a business.",
+  "answerUr": "Ji han, Canada mein kai business immigration pathways hain jinke zariye eligible applicants business establish ya acquire kar sakte hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "What happens if my C11 business does not perform as expected?",
+  "answerEn": "Immigration authorities understand that business results can vary. However, you must show genuine efforts to operate and develop the business according to the business plan submitted with your application.",
+  "answerUr": "Immigration authorities samajhti hain ke business results vary kar sakte hain. Lekin aapko dikhana hota hai ke aap business ko genuinely operate aur develop kar rahe hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Can Judicial Review be filed after multiple visa refusals?",
+  "answerEn": "Yes, if there are valid legal grounds, a Judicial Review may be considered regardless of the number of previous refusals.",
+  "answerUr": "Ji han, agar valid legal grounds maujood hon to multiple refusals ke bawajood Judicial Review consider kiya ja sakta hai.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Can I get a free profile assessment before starting the process?",
+  "answerEn": "Yes, we offer an initial profile assessment to determine the most suitable immigration pathway based on your qualifications and objectives.",
+  "answerUr": "Ji han, hum free profile assessment provide karte hain taake aapki qualifications aur goals ke mutabiq behtareen immigration pathway suggest ki ja sake.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "What if my application is refused after I have paid your professional fee?",
+  "answerEn": "A refusal does not necessarily mean the end of your immigration journey. We carefully review the refusal reasons and advise you on the most appropriate next steps, which may include reapplication, reconsideration, or legal remedies where applicable.",
+  "answerUr": "Refusal immigration journey ka end nahi hota. Hum refusal reasons ko detail mein review karke reapplication, reconsideration ya legal options ke bare mein guide karte hain.",
+  "source": "QA for AI.xlsx"
+ },
+ {
+  "queryEn": "Is there any interview for Canada ?",
+  "answerEn": "Canada Immigration or visas processes are documentation based , there is no interview in canada\nCanada ka immigration aur visa process srf docement based hoty han inme koi interview nai hota ..",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "What are the requirements for a Canada Visit Visa?",
+  "answerEn": "Generally, you need a valid passport, financial documents, proof of ties to your home country, travel history (if available), and a clear purpose of visit.\nAam tor par valid passport, financial documents, home country se strong ties, travel history agar hai aur visit ka clear purpose zaroori hota hai.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "I wanna apply UK, USA, and Europe Visit Visa?",
+  "answerEn": "Yes. We provide professional assistance for UK Visit Visas, US Visitor Visas, and Schengen/Europe Visit Visas, including documentation review and application guidance.\nJi haan. Hum UK Visit Visa, USA Visitor Visa aur Europe/Schengen Visit Visa applications mein documentation aur application guidance provide karte hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Am I eligible for immigration to Canada?",
+  "answerEn": "Eligibility depends on your age, education, work experience, language ability, and immigration category.\nEligibility aap ki age, education, work experience, language ability aur immigration category par depend karti hai.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "What happens if my visa application is refused?",
+  "answerEn": "Depending on the refusal reason, you may reapply, submit stronger documentation, or can challenge your refusal , We assist you in Judicial Review .\nRefusal ki wajah ke mutabiq aap dobara apply kar sakte hain, mazboot documents submit kar sakte hain ya ham Judicial Review kar sakte hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Can you review my refusal letter?",
+  "answerEn": "Yes, our team can review the refusal letter and advise on the best available options.\nJee haan, hamari team refusal letter review karke behtareen options suggest kar sakty hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "How much bank balance is required for a visitor visa?",
+  "answerEn": "There is a different requirement for different countries ; applicants must demonstrate sufficient funds for their travel and stay.\nhar country ki apni apni requirement hai ; applicant ko apne travel aur stay ke liye kafi funds show karne hote hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "How much Bank statment required for Canada Visa ?",
+  "answerEn": "There is minimum requirement of 10,000 CAD for canada visa\nCanada k lye minimum requirement 10,000 CAD ki hai .",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Is travel history important for visa ?",
+  "answerEn": "Travel history is not a mandatory requirement for visa application , but it strengthen your visa application.\nTravel history zroori requirement nahi hai lekin is sy apki application strong ho sakti hai.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "How long is a Canada Visitor Visa valid for?",
+  "answerEn": "The validity depends on the decision made by the visa officer and the passport validity.\nValidity visa officer ke decision aur passport ki validity par depend karti hai.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Can I work in Canada on a Visitor Visa?",
+  "answerEn": "A visitor visa does not authorize employment in Canada but you have different settlement options on visit visa .\nvisitor visa Canada mein kaam karne ki ijazat nahi hoti , lekin ap kay pas mukhtalif options hoty han visit visa pay .",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Can I convert my Visitor Visa into a Work Permit?",
+  "answerEn": "Certain pathways may allow eligible individuals to apply for a work permit while in Canada.\nKuch pathways ke tehat eligible afrad Canada mein rehte hue work permit ke liye apply kar sakte hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "How can I start a business in Canada as a foreign national?",
+  "answerEn": "Programs such as the C-11 Entrepreneur Work Permit may provide opportunities to establish or purchase a business in Canada\nC-11 Entrepreneur Work Permit jaise programs Canada mein business establish ya purchase karne ka mauqa dete hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "How much investment is required for the C-11 Program?",
+  "answerEn": "Investment requirements vary depending on the business model, industry, and location. Minimum 25,000 CAD to 50,000 CAD.\nInvestment business model, industry aur location ke mutabiq mukhtalif ho sakti hai. kam sy kam 25,000 CAD sy 50,000 CAD tak",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "What is the difference between C-10 and C-11 Work Permits?",
+  "answerEn": "Both lies under IMP Category ! C-10 focuses on significant benefit through an individual's expertise, while C-11 is primarily for entrepreneurs want to operate a business in Canada.\nDono IMP Category me fall karty han ! C-10 individual ki expertise ke zariye significant benefit par focus karta hai, jabke C-11 Canada mein business operate karne wale entrepreneurs ke liye hai.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Can I apply for a UK Visitor Visa ?",
+  "answerEn": "Yes, we assist clients with UK visitor visa applications and documentation.\nJee haan, hum UK visitor visa applications aur documentation mein clients ki madad karte hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "How long does a visa application process take?",
+  "answerEn": "Processing times vary depending on the country, visa category, and government processing workload. We provide the latest available timelines during consultation.\nProcessing time country, visa category aur government workload par depend karta hai. Hum consultation ke dauran latest available timelines share karte hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Judicial Review?",
+  "answerEn": "Judicial Review is a legal process where a court reviews whether an immigration decision was made fairly and according to law.\nJudicial Review aik legal process hai jahan court yeh dekhti hai ke immigration decision qanoon aur insaf ke mutabiq liya gaya tha ya nahi.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Can I apply for another visa after a refusal?",
+  "answerEn": "You can apply after refusal , but if your refusal is unreasonable Judicial Review is the best option.\nAap apply kar skty han , Lekin agar refusal unfair aya ha to apko Judicial Review apply karna chaye.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": "Can your firm help if I have multiple refusals?",
+  "answerEn": "Yes, we regularly assist clients who have experienced multiple refusals by assessing their case history and available options.\nJee haan, hum multiple refusals walay clients ki case history review karke un ke liye munasib options identify karte hain.",
+  "answerUr": null,
+  "source": "Questions and Answers.xlsx"
+ },
+ {
+  "queryEn": ". What is the Canada C11 Work Permit?",
+  "answerEn": "The C11 Work Permit is an LMIA-exempt temporary work permit under the International Mobility Program. It allows foreign entrepreneurs and self-employed individuals to enter Canada to establish, purchase, or operate a business that provides significant economic, cultural, or social benefits to Canada.",
+  "answerUr": "C11 Work Permit ek temporary work permit hai jisme LMIA ki zaroorat nahi hoti. Yeh un foreign business owners aur self-employed logon ke liye hai jo Canada ja kar apna business shuru karna, khareedna ya chalana chahte hain, aur unka business Canada ki economy ko faida pohnchaye.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "Is there a minimum investment required for a C11 visa?",
+  "answerEn": "Officially, there is no legally mandated minimum investment amount set by IRCC. However, practically, applicants usually need to demonstrate an investment of at least $500,00 to $200,000 CAD (depending on the business type) to prove the business is viable and can support itself.",
+  "answerUr": "Officially Canada ki taraf se koi fix minimum investment limit nahi hai. Lekin practically, aapke paas kam se kam $50000 se $200,000 CAD hone chahiye taake aap yeh sabit kar sakein ke aapka business kamyabi se chal sakta hai.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "What is the ownership requirement for the C11 program?",
+  "answerEn": "The applicant must own a controlling interest in the Canadian business. Under the updated immigration rules, you must hold at least 51% or more ownership of the business and play an active management role, not a passive one.",
+  "answerUr": "Canada ke naye rules ke mutabiq, aapke paas Canadian business ki kam se kam 51% ya us se zayada ownership (hissa) honi chahiye. Aapko business khud actively chalana hoga, aap sirf paise laga kar khamosh nahi baith sakte.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "What are the key requirements for a Canada Visitor Visa?",
+  "answerEn": "The main requirements include a valid passport, proof of sufficient funds to cover your stay, a detailed travel itinerary, a letter explaining the purpose of your visit, and strong ties to your home country (like a job, business, or family) to prove you will return.",
+  "answerUr": "Visit visa ke liye ahem cheezein hain: ek valid passport, safar ke kharche ke liye bank balance (proof of funds), travel plan, Canada jaane ka maqsad batane wala letter, aur apne mulk ke sath mazboot ties (jaise job, business ya family) taake lagay ke aap wapis aayenge.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "How much bank balance is recommended for a Canada Visit Visa?",
+  "answerEn": "There is no fixed official amount, but you should have enough money to cover your flights, accommodation, and daily expenses. Generally, it is safe to show at least $10,000 to $15,000 CAD  supported by a clean 4-6 months bank statement showing stable income.",
+  "answerUr": "Koi fix official balance zaroori nahi hai, lekin aapke paas flight, hotel aur roz ke kharche ke paise hone chahiye. Aam tor par har bande ke liye par week $10,000 se $15,000 CAD hona accha samjha jata hai, aur sath mein 4-6 mahine ki aisi bank statement ho jisme regular aamdani dikhe.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "Can I convert a Canada Visit Visa into a Work Permit?",
+  "answerEn": "Yes, under certain public policies,  (usually  an LMIA-exempt pathway), you can apply for a work permit from within Canada",
+  "answerUr": "Haan,  (jo ka LMIA-exempt ho), toh aap Canada ke andar se hi work permit ke liye apply kar sakte hain.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "Do you deal with job offers or work permits based on employment for Canada or any other country?",
+  "answerEn": "No, we do not deal with jobs, employment-based work permits, or job offers for Canada or any other country. We are not a recruitment agency. We strictly specialize in Business Immigration, Visit Visas, and Legal/Judicial Review matters.",
+  "answerUr": "Nahi, hum kisi bhi mulk ya Canada ke liye job offers, naukriyon (employment) ya job-based work permits ka kam nahi karte. Hum recruitment agency nahi hain. Hum sirf Business Immigration, Visit Visas, aur Legal/Judicial Review ke mamlat deal karte hain.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "Do you deal with Judicial Review for Canada if a visa or work permit gets refused?",
+  "answerEn": "Yes, we handle Judicial Review for Canada. If your visit visa, business work permit, or any other application is unfairly refused, we assist in taking the case to the Federal Court of Canada to challenge the immigration officer's decision.",
+  "answerUr": "Haan, hum Canada ke Judicial Review ke mamlat deal karte hain. Agar aapka visit visa, business work permit, ya koi aur application bina kisi thos wajah ke refuse ho jaye, toh hum Federal Court of Canada mein us decision ko challenge karne ke liye legal madad dete hain.",
+  "source": "Day 1 QA.xlsx"
+ },
+ {
+  "queryEn": "Do you work on a done-base (payment after visa approval) basis?",
+  "answerEn": "No. That is not legal. We are a law firm and handle cases through legal and professional procedures.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "What guarantee do I have that I will get a visa?",
+  "answerEn": "We are registered in both Pakistan and Canada and work with licensed lawyers. Our expertise and professional services set us apart from agents and consultants.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Can I speak to or meet Mr. Tashfeen?",
+  "answerEn": "Yes, absolutely. However, you will need to book an appointment first.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Can you send me Mr. Shahrukh's Canadian phone number?",
+  "answerEn": "We cannot share his personal contact number. However, we can arrange a paid consultation.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Which immigration program is best for moving with my family?",
+  "answerEn": "The C11 program is one of the best business immigration options for families.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "What is the visa approval ratio for the C11 program?",
+  "answerEn": "Since it is a business immigration program, the approval ratio is very high when all requirements are properly met.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "What are your office hours?",
+  "answerEn": "Our office is open Monday to Friday from 6:00 PM to 9:00 PM.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "I do not trust immigration companies because there is a lot of fraud nowadays.",
+  "answerEn": "You can check our social media presence, verify our credentials and licenses, or visit our office personally.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Can you arrange an invitation letter for me?",
+  "answerEn": "No. Applicants must arrange their own supporting documents. We do not provide or attach documents on behalf of clients.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Where is your office in Canada?",
+  "answerEn": "5770 Hurontario St, Unit 312, Mississauga, ON, L5R 3G5, Canada.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "How long do I have to file a Judicial Review after a refusal?",
+  "answerEn": "A Judicial Review can be filed within 60 days after receiving a refusal decision.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "What are the charges for the C11 program?",
+  "answerEn": "Our professional fee for the C11 program is CAD 20,000.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "What are your charges for a Visit Visa application?",
+  "answerEn": "PKR 200,000. PKR 100,000 in advance and PKR 100,000 after approval.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Do you have an office in Lahore?",
+  "answerEn": "Not at the moment, but we are planning to open one very soon.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Who pays the embassy fee for a Visit Visa application?",
+  "answerEn": "The applicant must pay the embassy fee personally using their own card.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Can you arrange a meeting with Mr. Tashfeen?",
+  "answerEn": "Yes. Send your CNIC and email address. We will check availability and schedule an appointment.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Can I apply through your office while living in another country?",
+  "answerEn": "Yes. All required documents can be submitted in PDF format.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Can I pay after approval and pay double later?",
+  "answerEn": "Sorry, that is against our firm's policy.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Can a Visit Visa status be changed?",
+  "answerEn": "No. A Visit Visa status cannot be changed.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "Do you handle Labour Visas or Company Visas?",
+  "answerEn": "No. We do not deal with Labour Visa or Company Visa applications.",
+  "answerUr": null,
+  "source": "Canada_Immigration_FAQs.xlsx"
+ },
+ {
+  "queryEn": "What is Judicial Review (JR) for a Canada visa?",
+  "answerEn": "JR is a legal process where the Federal Court of Canada reviews a visa refusal to check if the visa officer made a legal or factual error.",
+  "answerUr": "JR kya hota hai?\nJR ek qanooni tareeqa hai jisme Canada ki Federal Court visa refuse hone ke faisle ko check karti hai ke officer ne koi galti to nahi ki.",
+  "source": "Canada_Visa_Refusal_JR.xlsx"
+ },
+ {
+  "queryEn": "Can I apply for JR myself or do I need a lawyer?",
+  "answerEn": "Only a licensed Canadian lawyer (Authorized Legal Counsel) can represent you and file a JR case in the Federal Court.",
+  "answerUr": "Kya mai khud JR apply kar sakta hu?\nSirf ek licensed Canadian lawyer hi Federal Court mein aapka case file kar sakta hai aur aapki numaindagi kar sakta hai.",
+  "source": "Canada_Visa_Refusal_JR.xlsx"
+ },
+ {
+  "queryEn": "What is the deadline to file a JR?",
+  "answerEn": "If you applied from outside Canada, you must file for JR within 60 days from the date you received your refusal letter.",
+  "answerUr": "JR file karne ki deadline kya hai?\nAgar aapne Canada se bahar se apply kiya tha, toh refusal letter milne ke 60 days ke andar JR file karna hota hai.",
+  "source": "Canada_Visa_Refusal_JR.xlsx"
+ },
+ {
+  "queryEn": "What are the stages of a JR process?",
+  "answerEn": "It has two main stages: 1. Leave Stage (Court checks if case has merit) and 2. Hearing Stage (Actual arguments in front of a judge).",
+  "answerUr": "JR process ke kitne stages hote hain?\nIske do bade stages hote hain: 1. Leave Stage (Court dekhti hai ke dum hai ya nahi) aur 2. Hearing Stage (Behas).",
+  "source": "Canada_Visa_Refusal_JR.xlsx"
+ },
+ {
+  "queryEn": "Does JR mean I will definitely get the visa?",
+  "answerEn": "No. If you win, the court sends your application to a different visa officer for a fair re-evaluation. It does not guarantee a visa.",
+  "answerUr": "Kya JR jeetne se visa pakka mil jata hai?\nNahi. Agar aap JR jeet jate hain, toh court aapki file ek naye officer ko bhejti hai taake wo dubara faisla kare.",
+  "source": "Canada_Visa_Refusal_JR.xlsx"
+ },
+ {
+  "queryEn": "How long does the JR process take?",
+  "answerEn": "The entire process usually takes about 4 to 8 months, depending on the court's schedule and whether Leave is granted.",
+  "answerUr": "JR process mein kitna waqt lagta hai?\nIs pure process mein aam tor par 4 se 8 mahine lagte hain, jo court ke schedule par depend karta hai.",
+  "source": "Canada_Visa_Refusal_JR.xlsx"
+ },
+ {
+  "queryEn": "Should I reapply or go for JR?",
+  "answerEn": "If refusal was due to weak documents, reapply. If your documents were perfect but the decision was unfair, JR is a strong option.",
+  "answerUr": "Mujhe dobara apply karna chahiye ya JR?\nAgar documents weak the toh reapply karein. Agar documents perfect the aur faisla galat tha, toh JR behtar hai.",
+  "source": "Canada_Visa_Refusal_JR.xlsx"
+ }
+]

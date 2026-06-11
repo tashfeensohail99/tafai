@@ -473,16 +473,28 @@ export class WhatsAppMessagesService {
       // No input format hint — ffmpeg sniffs the container from the bytes,
       // so this handles WebM, MP4, Ogg, etc. transparently. Output is
       // mono Opus-in-Ogg, the format WhatsApp voice notes require.
+      //
+      // Recipe notes (hard-won): the mobile app records AAC/m4a. Re-encoding
+      // AAC → Opus at a FORCED 16 kHz in VoIP mode produced a stream Meta's
+      // media processor refused to decode — it stored the upload as
+      // application/octet-stream and failed delivery with 131053, while
+      // web-recorded Opus (a near-passthrough re-encode) delivered fine.
+      // Encoding at Opus's native 48 kHz in general "audio" mode, taking
+      // only the first audio stream (-map 0:a:0, -vn drops any cover art),
+      // produces a clean Ogg/Opus that Meta accepts from every source.
       try {
         await execFileAsync(FFMPEG_BIN, [
           '-hide_banner',
           '-y',           // overwrite output
           '-i', tmpIn,
+          '-vn',          // never carry a video/cover-art stream into Ogg
+          '-map', '0:a:0', // first audio stream only
           '-c:a', 'libopus',
           '-ac', '1',     // mono (Meta voice-note requirement)
-          '-ar', '16000', // 16 kHz — standard for speech
-          '-application', 'voip',
+          '-ar', '48000', // Opus-native rate — forced 16k broke Meta decoding
           '-b:a', '32k',
+          '-application', 'audio',
+          '-f', 'ogg',    // explicit container
           tmpOut,
         ]);
       } catch (e) {

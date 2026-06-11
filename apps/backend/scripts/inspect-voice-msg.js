@@ -38,15 +38,17 @@ async function main() {
       take: 8,
       select: {
         id: true, type: true, status: true, createdAt: true,
-        mediaMimeType: true, waMessageId: true,
+        mediaMimeType: true, mediaUrl: true, waMessageId: true,
+        sentByEmployeeId: true,
         errorCode: true, errorTitle: true, errorDetails: true,
       },
     });
     console.log(`\n=== OUTBOUND for ${t.waContactId} (${name}) ===`);
     for (const m of msgs) {
+      const ref = (m.mediaUrl ?? '').slice(0, 28);
       console.log(
-        `${m.createdAt.toISOString()} | ${m.type} | ${m.status} | mime=${m.mediaMimeType ?? '-'}` +
-        (m.errorCode ? `\n    META ERROR ${m.errorCode}: ${m.errorTitle ?? ''} — ${JSON.stringify(m.errorDetails)}` : ''),
+        `${m.createdAt.toISOString()} | ${m.type} | ${m.status} | mime=${m.mediaMimeType ?? '-'} | ref=${ref} | by=${m.sentByEmployeeId ? 'emp' : 'none'}` +
+        (m.errorCode ? `\n    META ${m.errorCode}: ${JSON.stringify(m.errorDetails)}` : ''),
       );
     }
     console.log(`window: ${t.windowExpiresAt ? t.windowExpiresAt.toISOString() : 'CLOSED/none'} (now ${new Date().toISOString()})`);

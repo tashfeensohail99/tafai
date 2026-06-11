@@ -219,6 +219,7 @@ export class AgreementsService {
         email: true,
         nationality: true,
         referenceCode: true,
+        targetCountry: true,
         serviceFeeAmount: true,
         serviceFeeCurrency: true,
       },
@@ -248,6 +249,9 @@ export class AgreementsService {
       email: lead.email ?? undefined,
       fileNumber: lead.referenceCode ?? undefined,
       agreementDate: '',
+      // Destination defaults from the lead's country of interest; Sales can
+      // change it in the editor. Drives the Canada→country rewrite.
+      country: lead.targetCountry ?? undefined,
     };
 
     const currency = this.normalizeCurrency(lead.serviceFeeCurrency);
@@ -518,7 +522,11 @@ export class AgreementsService {
               plan,
               a.agreementNumber,
             );
-      const buffer = await this.render.renderStoredPdf(template.programTitle, inner);
+      const buffer = await this.render.renderStoredPdf(
+        template.programTitle,
+        inner,
+        ((a.bioData as AgreementBioData) ?? {}).country,
+      );
       const up = await this.storage.upload(
         buffer,
         'application/pdf',
@@ -905,7 +913,11 @@ export class AgreementsService {
             (agreement.paymentPlan as AgreementPlanData) ?? {},
             agreement.agreementNumber,
           );
-    return this.render.renderStoredPdf(template.programTitle, inner);
+    return this.render.renderStoredPdf(
+      template.programTitle,
+      inner,
+      ((agreement.bioData as AgreementBioData) ?? {}).country,
+    );
   }
 
   /** Re-derive the document from template + current bio + plan (discards

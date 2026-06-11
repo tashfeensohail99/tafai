@@ -29,10 +29,19 @@ export const FIRM_EMAIL = 'info@tashfeenimmigrationsolutions.com';
 export const FIRM_ADDRESS =
   'Office no. 3029A, 3029B, 3031, 3032, 3rd Floor, World Trade Center, Giga Mall DHA-2 Islamabad';
 
-/** Branded running header (logo banner) repeated on every PDF page. */
+/**
+ * Branded running header (logo banner) repeated on every PDF page.
+ *
+ * Chromium lays the header/footer templates out at 72dpi (1px ≈ 1pt), so px
+ * here occupy ~33% more paper than the same px in the page body. The old
+ * 82px banner therefore rendered ~30mm tall — past the 24mm top margin — and
+ * swallowed the first lines of every page after the first. Sizes below are
+ * the pt-equivalents of the original design (82px CSS ≈ 62pt), and the page
+ * margins in brandedPdfOptions() clear them with room to spare.
+ */
 export const HEADER_TEMPLATE = `<div style="width:100%;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-  <div style="background:#0b1f3a;height:82px;box-sizing:border-box;display:flex;align-items:center;padding:0 42px;"><img src="${LOGO_DATA_URI}" style="height:64px;display:block;"/></div>
-  <div style="height:3px;background:#d6a84f;"></div>
+  <div style="background:#0b1f3a;height:62px;box-sizing:border-box;display:flex;align-items:center;padding:0 32px;"><img src="${LOGO_DATA_URI}" style="height:48px;display:block;"/></div>
+  <div style="height:2px;background:#d6a84f;"></div>
 </div>`;
 
 /** Branded running footer (contact + address + page numbers) on every page. */
@@ -57,6 +66,8 @@ export function brandedPdfOptions(): PDFOptions {
     displayHeaderFooter: true,
     headerTemplate: HEADER_TEMPLATE,
     footerTemplate: FOOTER_TEMPLATE,
-    margin: { top: '24mm', right: '0', bottom: '20mm', left: '0' },
+    // Top must exceed the banner's RENDERED height (64px-as-pt ≈ 22.6mm) or
+    // the header overlaps body text on pages 2+. 28mm leaves ~5mm of air.
+    margin: { top: '28mm', right: '0', bottom: '20mm', left: '0' },
   };
 }

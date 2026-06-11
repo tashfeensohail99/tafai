@@ -164,6 +164,8 @@ export class BioDataDto {
   @IsOptional() @IsString() @MaxLength(160) email?: string;
   @IsOptional() @IsString() @MaxLength(80) fileNumber?: string;
   @IsOptional() @IsString() @MaxLength(60) agreementDate?: string;
+  /** Destination country — rewrites the template's Canada wording everywhere. */
+  @IsOptional() @IsString() @MaxLength(120) country?: string;
 }
 
 /** One row of the payment schedule (Annexure A). */

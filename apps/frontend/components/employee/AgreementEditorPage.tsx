@@ -382,6 +382,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
               <FormInput label="CNIC" value={bio.cnic ?? ''} disabled={!editable} onChange={(e) => setBioField('cnic', e.target.value)} />
               <FormInput label="Passport" value={bio.passport ?? ''} disabled={!editable} onChange={(e) => setBioField('passport', e.target.value)} />
               <FormInput label="Nationality" value={bio.nationality ?? ''} disabled={!editable} onChange={(e) => setBioField('nationality', e.target.value)} />
+              <FormInput label="Destination country" value={bio.country ?? ''} placeholder="Canada" disabled={!editable} onChange={(e) => setBioField('country', e.target.value)} />
             </div>
             <div style={{ marginTop: 10 }}>
               <FormInput label="Address" value={bio.address ?? ''} disabled={!editable} onChange={(e) => setBioField('address', e.target.value)} />

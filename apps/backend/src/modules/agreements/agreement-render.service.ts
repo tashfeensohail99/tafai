@@ -3,6 +3,35 @@ import type { PDFOptions } from 'puppeteer-core';
 import { PdfRenderService } from '../pdf/pdf.service';
 import { brandedPdfOptions } from '../pdf/branding';
 
+/**
+ * Demonym/adjective forms for the destination-country rewrite ("Canadian
+ * immigration authorities" → "Australian immigration authorities"). Keys are
+ * lowercase country names; anything unmapped falls back to the country name
+ * used attributively ("Portugal immigration authorities").
+ */
+const COUNTRY_ADJECTIVES: Record<string, string> = {
+  canada: 'Canadian',
+  australia: 'Australian',
+  'united kingdom': 'UK',
+  uk: 'UK',
+  'united states': 'US',
+  usa: 'US',
+  'new zealand': 'New Zealand',
+  portugal: 'Portuguese',
+  germany: 'German',
+  italy: 'Italian',
+  spain: 'Spanish',
+  greece: 'Greek',
+  malta: 'Maltese',
+  hungary: 'Hungarian',
+  poland: 'Polish',
+  romania: 'Romanian',
+  turkey: 'Turkish',
+  ireland: 'Irish',
+  france: 'French',
+  netherlands: 'Dutch',
+};
+
 /** A payment-plan row used when composing the Annexure-A table. */
 export interface PaymentStage {
   label: string;
@@ -28,6 +57,7 @@ export interface AgreementVars {
   FILE_NUMBER?: string;
   TOTAL_AMOUNT?: string;
   CURRENCY?: string;
+  COUNTRY?: string;
 }
 
 /** Applicant bio stored on an agreement (decoupled from the DTO layer). */
@@ -43,6 +73,9 @@ export interface AgreementBioData {
   email?: string;
   fileNumber?: string;
   agreementDate?: string;
+  /** Destination country of interest — drives {{COUNTRY}} and the
+   *  Canada/Canadian rewrite across the whole document. */
+  country?: string;
 }
 
 /** Structured payment plan stored on an agreement. */
@@ -101,6 +134,7 @@ export class AgreementRenderService {
     'FILE_NUMBER',
     'TOTAL_AMOUNT',
     'CURRENCY',
+    'COUNTRY',
     'PAYMENT_PLAN',
   ];
 
@@ -113,14 +147,54 @@ export class AgreementRenderService {
     stages: PaymentStage[],
     currency: string,
   ): string {
-    const planHtml = this.renderPaymentPlan(stages, currency);
-    let out = bodyHtml.replace(/\{\{\s*PAYMENT_PLAN\s*\}\}/g, planHtml);
+    // The country rewrite runs on AUTHORED text only (template prose +
+    // plan-stage labels), before token substitution — applicant-entered
+    // values (a Canadian nationality, an address in Canada) never change.
+    const planHtml = this.applyCountry(
+      this.renderPaymentPlan(stages, currency),
+      vars.COUNTRY,
+    );
+    let out = this.applyCountry(bodyHtml, vars.COUNTRY).replace(
+      /\{\{\s*PAYMENT_PLAN\s*\}\}/g,
+      planHtml,
+    );
     out = out.replace(/\{\{\s*([A-Z0-9_]+)\s*\}\}/g, (_match, key: string) => {
       const value = (vars as Record<string, string | undefined>)[key];
       if (value != null && value !== '') return this.escapeHtml(value);
       return `<span class="token-missing">[${key}]</span>`;
     });
     return out;
+  }
+
+  /** Name + adjective for a non-Canada destination; null = no rewrite. */
+  private countryTerms(
+    country?: string,
+  ): { name: string; adjective: string } | null {
+    const c = country?.trim();
+    if (!c || c.toLowerCase() === 'canada') return null;
+    return { name: c, adjective: COUNTRY_ADJECTIVES[c.toLowerCase()] ?? c };
+  }
+
+  /**
+   * Make the selected destination country appear EVERYWHERE: templates were
+   * authored for Canada, so for any other destination the literal mentions
+   * are rewritten ("Canada" → country, "Canadian" → its adjective).
+   */
+  private applyCountry(html: string, country?: string): string {
+    const t = this.countryTerms(country);
+    if (!t) return html;
+    return html
+      .replace(/\bCanadian\b/g, this.escapeHtml(t.adjective))
+      .replace(/\bCanada\b/g, this.escapeHtml(t.name));
+  }
+
+  /** Plain-text variant of the rewrite — for document titles / token values. */
+  applyCountryText(text: string, country?: string): string {
+    const t = this.countryTerms(country);
+    if (!t) return text;
+    return text
+      .replace(/\bCanadian\b/g, t.adjective)
+      .replace(/\bCanada\b/g, t.name);
   }
 
   /** Wrap composed body in the branded full HTML document. */
@@ -207,7 +281,7 @@ export class AgreementRenderService {
               month: 'long',
               year: 'numeric',
             }),
-      PROGRAM_TITLE: programTitle,
+      PROGRAM_TITLE: this.applyCountryText(programTitle, bio.country),
       APPLICANT_NAME: bio.applicantName ?? '',
       FATHER_NAME: bio.fatherName ?? '',
       CNIC: bio.cnic ?? '',
@@ -220,6 +294,7 @@ export class AgreementRenderService {
       FILE_NUMBER: bio.fileNumber ?? '',
       TOTAL_AMOUNT: `${currency} ${this.formatMoney(net)}`,
       CURRENCY: currency,
+      COUNTRY: bio.country?.trim() || 'Canada',
     };
   }
 
@@ -264,7 +339,7 @@ export class AgreementRenderService {
       agreementNumber,
     );
     return this.pdf.renderHtml(
-      this.wrapDocument(programTitle, inner),
+      this.wrapDocument(this.applyCountryText(programTitle, bio.country), inner),
       this.agreementPdfOptions(),
     );
   }
@@ -272,11 +347,16 @@ export class AgreementRenderService {
   /**
    * Render an already-composed inner body — used when Sales has edited the
    * agreement document directly (the stored contentHtml is the source of
-   * truth, not the template).
+   * truth, not the template). The destination country still rewrites the
+   * document title, which comes from the (Canada-authored) template.
    */
-  async renderStoredPdf(programTitle: string, innerHtml: string): Promise<Buffer> {
+  async renderStoredPdf(
+    programTitle: string,
+    innerHtml: string,
+    country?: string,
+  ): Promise<Buffer> {
     return this.pdf.renderHtml(
-      this.wrapDocument(programTitle, innerHtml),
+      this.wrapDocument(this.applyCountryText(programTitle, country), innerHtml),
       this.agreementPdfOptions(),
     );
   }
@@ -333,6 +413,7 @@ export class AgreementRenderService {
       FILE_NUMBER: 'TIS-0001',
       TOTAL_AMOUNT: 'CAD 10,500',
       CURRENCY: 'CAD',
+      COUNTRY: 'Canada',
     };
   }
 

@@ -148,6 +148,8 @@ export interface BioDataInput {
   email?: string;
   fileNumber?: string;
   agreementDate?: string;
+  /** Destination country — rewrites the template's Canada wording everywhere. */
+  country?: string;
 }
 
 export interface TemplateOption {
@@ -348,6 +350,44 @@ function renderPlanTableHtml(
   return `<table class="payplan"><thead><tr><th>#</th><th>Stage</th><th>Amount</th><th>Trigger / Due</th></tr></thead><tbody>${rows}<tr class="total"><td colspan="2">Total</td><td>${currency} ${fmtMoney(total)}</td><td></td></tr></tbody></table>`;
 }
 
+/** Demonyms for the destination-country rewrite — mirror of the server map. */
+const COUNTRY_ADJECTIVES: Record<string, string> = {
+  canada: 'Canadian',
+  australia: 'Australian',
+  'united kingdom': 'UK',
+  uk: 'UK',
+  'united states': 'US',
+  usa: 'US',
+  'new zealand': 'New Zealand',
+  portugal: 'Portuguese',
+  germany: 'German',
+  italy: 'Italian',
+  spain: 'Spanish',
+  greece: 'Greek',
+  malta: 'Maltese',
+  hungary: 'Hungarian',
+  poland: 'Polish',
+  romania: 'Romanian',
+  turkey: 'Turkish',
+  ireland: 'Irish',
+  france: 'French',
+  netherlands: 'Dutch',
+};
+
+/**
+ * Rewrite the template's hardcoded Canada wording for another destination
+ * ("Canada" → country, "Canadian" → its adjective) — same rules as the
+ * server, so the live preview matches the PDF. No-op for Canada/empty.
+ */
+function applyCountry(html: string, country?: string): string {
+  const c = (country || '').trim();
+  if (!c || c.toLowerCase() === 'canada') return html;
+  const adjective = COUNTRY_ADJECTIVES[c.toLowerCase()] ?? c;
+  return html
+    .replace(/\bCanadian\b/g, escapeHtml(adjective))
+    .replace(/\bCanada\b/g, escapeHtml(c));
+}
+
 /** Substitute bio + plan into a template body — same rules as the server. */
 export function composeAgreementDocument(
   bodyHtml: string,
@@ -362,7 +402,7 @@ export function composeAgreementDocument(
       bio.agreementDate && bio.agreementDate.trim()
         ? bio.agreementDate
         : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
-    PROGRAM_TITLE: meta.programTitle || '',
+    PROGRAM_TITLE: applyCountry(meta.programTitle || '', bio.country),
     APPLICANT_NAME: bio.applicantName || '',
     FATHER_NAME: bio.fatherName || '',
     CNIC: bio.cnic || '',
@@ -375,8 +415,14 @@ export function composeAgreementDocument(
     FILE_NUMBER: bio.fileNumber || '',
     TOTAL_AMOUNT: `${currency} ${fmtMoney(plan.netPayable)}`,
     CURRENCY: currency,
+    COUNTRY: (bio.country || '').trim() || 'Canada',
   };
-  let out = bodyHtml.replace(/\{\{\s*PAYMENT_PLAN\s*\}\}/g, renderPlanTableHtml(plan.installments, currency));
+  // Country rewrite covers authored text only (template prose + plan table) —
+  // applicant-entered values pass through token substitution untouched.
+  let out = applyCountry(bodyHtml, bio.country).replace(
+    /\{\{\s*PAYMENT_PLAN\s*\}\}/g,
+    applyCountry(renderPlanTableHtml(plan.installments, currency), bio.country),
+  );
   out = out.replace(/\{\{\s*([A-Z0-9_]+)\s*\}\}/g, (_m, k: string) => {
     const v = vars[k];
     if (v != null && v !== '') return escapeHtml(v);

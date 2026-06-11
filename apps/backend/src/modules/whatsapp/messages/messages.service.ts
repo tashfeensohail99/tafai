@@ -31,6 +31,7 @@ import {
   WhatsAppMessageType,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { StorageService } from '../../storage/storage.service';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../queues/queue-contracts';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { MetaApiError } from '../meta/cloud-client';
@@ -102,6 +103,7 @@ export class WhatsAppMessagesService {
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundQueue: Queue<OutboundMessageJob>,
     private readonly metaFactory: WhatsAppMetaClientFactory,
+    private readonly storage: StorageService,
   ) {}
 
   async listForThread(
@@ -352,35 +354,56 @@ export class WhatsAppMessagesService {
       }
     }
 
-    let metaMediaId: string;
-    try {
-      metaMediaId = await metaClient.uploadMedia(
+    // How the outbound worker will reference the media:
+    //   • `meta:<id>`        — we uploaded the bytes to Meta (default path).
+    //   • a durable storage key — the worker signs a fresh link and Meta
+    //     FETCHES it. Used for voice notes because Meta's media *upload*
+    //     endpoint mis-stores our Opus as application/octet-stream and fails
+    //     delivery with 131053; fetching a link we host (served with the
+    //     right Content-Type) delivers reliably.
+    let mediaRef: string;
+    if (isVoiceNote) {
+      const up = await this.storage.upload(
         uploadBuffer,
-        uploadMimeType,
-        uploadFilename,
+        uploadMimeType, // audio/ogg
+        'whatsapp/outbound',
+        uploadFilename, // voice-note.ogg
       );
-    } catch (err) {
-      if (err instanceof MetaApiError) {
-        const detail = err.detail;
-        const message = detail.title
-          ? `Meta rejected media upload: ${detail.title} — ${detail.message}`
-          : `Meta rejected media upload: ${detail.message}`;
-        this.logger.error(
-          `uploadMedia failed for thread=${thread.id} mime=${input.mimeType} bytes=${input.file.length}: code=${detail.code} message=${detail.message}`,
+      mediaRef = up.key;
+      this.logger.debug(
+        `Voice note hosted for link delivery: thread=${thread.id} key=${up.key} bytes=${uploadBuffer.length}`,
+      );
+    } else {
+      try {
+        const metaMediaId = await metaClient.uploadMedia(
+          uploadBuffer,
+          uploadMimeType,
+          uploadFilename,
         );
-        throw new BadGatewayException({
-          message,
-          metaCode: detail.code,
-          metaTitle: detail.title,
-          metaMessage: detail.message,
-          fbtraceId: detail.fbtrace_id,
-        });
+        mediaRef = `meta:${metaMediaId}`;
+      } catch (err) {
+        if (err instanceof MetaApiError) {
+          const detail = err.detail;
+          const message = detail.title
+            ? `Meta rejected media upload: ${detail.title} — ${detail.message}`
+            : `Meta rejected media upload: ${detail.message}`;
+          this.logger.error(
+            `uploadMedia failed for thread=${thread.id} mime=${input.mimeType} bytes=${input.file.length}: code=${detail.code} message=${detail.message}`,
+          );
+          throw new BadGatewayException({
+            message,
+            metaCode: detail.code,
+            metaTitle: detail.title,
+            metaMessage: detail.message,
+            fbtraceId: detail.fbtrace_id,
+          });
+        }
+        const reason = err instanceof Error ? err.message : 'Unknown upload error';
+        this.logger.error(
+          `uploadMedia threw non-Meta error for thread=${thread.id} mime=${input.mimeType}: ${reason}`,
+        );
+        throw new BadGatewayException(`Media upload failed: ${reason}`);
       }
-      const reason = err instanceof Error ? err.message : 'Unknown upload error';
-      this.logger.error(
-        `uploadMedia threw non-Meta error for thread=${thread.id} mime=${input.mimeType}: ${reason}`,
-      );
-      throw new BadGatewayException(`Media upload failed: ${reason}`);
     }
 
     // Map MIME type → WhatsApp message type enum
@@ -402,7 +425,7 @@ export class WhatsAppMessagesService {
         direction: WhatsAppMessageDirection.OUTBOUND,
         type: messageType,
         status: WhatsAppMessageStatus.QUEUED,
-        mediaUrl: `meta:${metaMediaId}`,
+        mediaUrl: mediaRef,
         // Store the normalised mime type so streamMedia serves the correct
         // Content-Type and the processor knows the actual uploaded format.
         mediaMimeType: uploadMimeType,

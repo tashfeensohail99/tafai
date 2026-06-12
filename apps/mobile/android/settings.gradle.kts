@@ -23,6 +23,9 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
     // Firebase Google Services (FCM push). Applied in app/build.gradle.kts.
     id("com.google.gms.google-services") version "4.4.2" apply false
+    // Firebase Crashlytics — uploads native symbols + tags builds so crash
+    // reports are deobfuscated. Applied in app/build.gradle.kts.
+    id("com.google.firebase.crashlytics") version "3.0.2" apply false
 }
 
 include(":app")

@@ -9,6 +9,7 @@ import '../../../core/auth/auth_controller.dart';
 import '../../../core/navigation/shell_index.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
+import '../../../core/update/update_banner.dart';
 import '../../appointments/presentation/appointments_screen.dart';
 import '../../calls/data/call_permissions.dart';
 import '../../calls/presentation/call_setup_screen.dart';
@@ -62,11 +63,6 @@ class _AppShellState extends ConsumerState<AppShell> {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const CallSetupScreen(onboarding: true)),
     );
-  }
-
-  void _openCallSetup() {
-    Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const CallSetupScreen()));
   }
 
   @override
@@ -123,11 +119,8 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
             onSelected: (value) async {
               switch (value) {
-                case 'call-setup':
-                  _openCallSetup();
-                  break;
-                case 'change-password':
-                  context.push(AppRoutes.changePassword);
+                case 'settings':
+                  context.push(AppRoutes.settings);
                   break;
                 case 'logout':
                   await ref.read(authControllerProvider.notifier).logout();
@@ -158,22 +151,12 @@ class _AppShellState extends ConsumerState<AppShell> {
                 ),
                 const PopupMenuDivider(),
                 const PopupMenuItem<String>(
-                  value: 'call-setup',
+                  value: 'settings',
                   child: Row(
                     children: [
-                      Icon(Icons.call_outlined, size: 18),
+                      Icon(Icons.settings_outlined, size: 18),
                       SizedBox(width: 10),
-                      Text('Call setup'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'change-password',
-                  child: Row(
-                    children: [
-                      Icon(Icons.lock_outline, size: 18),
-                      SizedBox(width: 10),
-                      Text('Change password'),
+                      Text('Settings'),
                     ],
                   ),
                 ),
@@ -213,14 +196,23 @@ class _AppShellState extends ConsumerState<AppShell> {
           const SizedBox(width: AppTokens.space2),
         ],
       ),
-      body: IndexedStack(
-        index: index,
-        children: const [
-          DashboardScreen(),
-          LeadsListScreen(),
-          FollowUpsScreen(),
-          AppointmentsScreen(),
-          InboxScreen(),
+      body: Column(
+        children: [
+          // Non-intrusive "new version available" strip (renders nothing when
+          // up to date / offline / dismissed).
+          const UpdateBanner(),
+          Expanded(
+            child: IndexedStack(
+              index: index,
+              children: const [
+                DashboardScreen(),
+                LeadsListScreen(),
+                FollowUpsScreen(),
+                AppointmentsScreen(),
+                InboxScreen(),
+              ],
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: NavigationBarTheme(
@@ -252,8 +244,10 @@ class _AppShellState extends ConsumerState<AppShell> {
         ),
         child: NavigationBar(
           selectedIndex: index,
-          onDestinationSelected: (i) =>
-              ref.read(shellIndexProvider.notifier).state = i,
+          onDestinationSelected: (i) {
+            HapticFeedback.selectionClick();
+            ref.read(shellIndexProvider.notifier).state = i;
+          },
           destinations: [
             for (final t in _tabs)
               NavigationDestination(

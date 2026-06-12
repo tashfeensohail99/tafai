@@ -130,7 +130,7 @@ class _AppointmentRequestsScreenState
     return Scaffold(
       appBar: AppBar(title: const Text('Booking requests')),
       body: async.when(
-        loading: () => const LoadingView(),
+        loading: () => const SkeletonList(),
         error: (e, _) => ErrorView(
           error: e,
           onRetry: () => ref.invalidate(pendingAppointmentRequestsProvider),

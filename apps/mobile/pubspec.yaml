@@ -1,7 +1,7 @@
 name: tafsheen_mobile
 description: Tafsheen Immigration Solutions — Mobile App
 publish_to: 'none'
-version: 1.0.6+7
+version: 1.0.7+8
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -54,6 +54,21 @@ dependencies:
   # Temp dir for best-effort call recording before upload.
   path_provider: ^2.1.4
   record: ^7.1.0
+
+  # ── Reliability & polish ────────────────────────────────────────────────────
+  # Crash & error reporting — every uncaught Dart/Flutter error is sent to
+  # Firebase Crashlytics (same Firebase project as FCM), so crashes on testers'
+  # devices surface to us without waiting for a manual report.
+  firebase_crashlytics: ^4.1.3
+  # Biometric / device-credential app lock — the CRM holds client passport and
+  # payment data, so it can sit behind Face ID / fingerprint.
+  local_auth: ^2.3.0
+  # App version + build number, for the Settings screen and the in-app update
+  # check (compares against the published /public/app/info build).
+  package_info_plus: ^8.1.0
+  # Shimmer skeleton placeholders shown while lists load (premium feel vs a
+  # bare spinner).
+  shimmer: ^3.0.0
 
 dev_dependencies:
   flutter_test:

@@ -9,6 +9,7 @@ import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 import '../../features/auth/presentation/screens/change_password_screen.dart';
 import '../../features/shared/presentation/splash_screen.dart';
 import '../../features/shell/presentation/app_shell.dart';
+import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/leads/presentation/lead_detail_screen.dart';
 
 /// Root navigator — lets non-widget code (e.g. a notification-tap handler)
@@ -27,6 +28,7 @@ abstract class AppRoutes {
   static const appointments = '/appointments';
   static const chat = '/chat';
   static const notifications = '/notifications';
+  static const settings = '/settings';
 
   static String leadDetail(String id) => '/leads/$id';
 }
@@ -92,6 +94,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.home,
         builder: (context, state) => const AppShell(),
+      ),
+      GoRoute(
+        path: AppRoutes.settings,
+        builder: (context, state) => const SettingsScreen(),
       ),
       GoRoute(
         path: '/leads/:id',

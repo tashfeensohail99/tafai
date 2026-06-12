@@ -133,7 +133,7 @@ class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen> {
 
           Expanded(
             child: async.when(
-              loading: () => const LoadingView(),
+              loading: () => const SkeletonList(),
               error: (e, _) => ErrorView(error: e, onRetry: _refreshLists),
               data: (items) => items.isEmpty
                   ? EmptyView(

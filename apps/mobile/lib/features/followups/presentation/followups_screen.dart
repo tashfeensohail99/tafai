@@ -57,7 +57,7 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen> {
         const SizedBox(height: AppTokens.space3),
         Expanded(
           child: async.when(
-            loading: () => const LoadingView(),
+            loading: () => const SkeletonList(),
             error: (e, _) => ErrorView(
               error: e,
               onRetry: () => ref.invalidate(followUpsListProvider(_bucket)),

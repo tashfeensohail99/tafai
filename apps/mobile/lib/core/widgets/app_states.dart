@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../errors/app_error.dart';
 import '../theme/tokens.dart';
@@ -159,6 +160,99 @@ class ButtonSpinner extends StatelessWidget {
         height: 20,
         width: 20,
         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+      );
+}
+
+/// A shimmering placeholder list shown while data loads — calmer and more
+/// premium than a bare spinner, and it hints at the shape of what's coming.
+class SkeletonList extends StatelessWidget {
+  final int items;
+  final EdgeInsetsGeometry padding;
+  const SkeletonList({
+    super.key,
+    this.items = 7,
+    this.padding = const EdgeInsets.all(AppTokens.space4),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor: const Color(0xFFE6EAF0),
+      highlightColor: const Color(0xFFF6F8FB),
+      child: ListView.separated(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: padding,
+        itemCount: items,
+        separatorBuilder: (_, __) => const SizedBox(height: AppTokens.space4),
+        itemBuilder: (_, __) => const _SkeletonRow(),
+      ),
+    );
+  }
+}
+
+class _SkeletonRow extends StatelessWidget {
+  const _SkeletonRow();
+
+  @override
+  Widget build(BuildContext context) {
+    // Opaque shapes on transparent gaps — the shimmer gradient sweeps the
+    // shapes; the gaps stay clear so each row reads distinctly.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: const [
+        _SkeletonBox(width: 44, height: 44, radius: 22),
+        SizedBox(width: AppTokens.space3),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SkeletonBar(widthFactor: 0.55, height: 13),
+              SizedBox(height: 9),
+              _SkeletonBar(widthFactor: 0.85, height: 11),
+              SizedBox(height: 7),
+              _SkeletonBar(widthFactor: 0.4, height: 11),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SkeletonBox extends StatelessWidget {
+  final double width;
+  final double height;
+  final double radius;
+  const _SkeletonBox(
+      {required this.width, required this.height, this.radius = 8});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      );
+}
+
+class _SkeletonBar extends StatelessWidget {
+  final double widthFactor;
+  final double height;
+  const _SkeletonBar({required this.widthFactor, required this.height});
+
+  @override
+  Widget build(BuildContext context) => FractionallySizedBox(
+        alignment: Alignment.centerLeft,
+        widthFactor: widthFactor,
+        child: Container(
+          height: height,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
       );
 }
 

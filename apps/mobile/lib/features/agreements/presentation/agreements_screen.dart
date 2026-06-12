@@ -21,7 +21,7 @@ class AgreementsScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Agreements')),
       body: async.when(
-        loading: () => const LoadingView(),
+        loading: () => const SkeletonList(),
         error: (e, _) => ErrorView(
           error: e,
           onRetry: () => ref.invalidate(leadAgreementsProvider(leadId)),

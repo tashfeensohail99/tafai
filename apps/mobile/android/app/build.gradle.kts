@@ -4,6 +4,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
     // Firebase: processes google-services.json (FCM push for incoming calls).
     id("com.google.gms.google-services")
+    // Crashlytics Gradle plugin — tags each build for crash deobfuscation.
+    id("com.google.firebase.crashlytics")
 }
 
 android {

@@ -84,7 +84,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         ],
       ),
       body: async.when(
-        loading: () => const LoadingView(),
+        loading: () => const SkeletonList(),
         error: (e, _) => ErrorView(
           error: e,
           onRetry: () => ref.invalidate(notificationsListProvider),

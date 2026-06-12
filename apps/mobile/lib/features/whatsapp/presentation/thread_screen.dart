@@ -108,6 +108,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _sending) return;
+    HapticFeedback.lightImpact();
     setState(() => _sending = true);
     try {
       final msg = await ref.read(whatsappRepositoryProvider).sendText(_threadId, text);

@@ -81,7 +81,7 @@ class _LeadsListScreenState extends ConsumerState<LeadsListScreen> {
           const SizedBox(height: AppTokens.space2),
           Expanded(
             child: async.when(
-              loading: () => const LoadingView(),
+              loading: () => const SkeletonList(),
               error: (e, _) => ErrorView(
                 error: e,
                 onRetry: () => ref.invalidate(leadsListProvider),

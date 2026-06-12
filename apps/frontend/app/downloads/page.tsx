@@ -52,12 +52,20 @@ export default function DownloadsPage() {
             No build has been published yet — check back soon.
           </p>
         ) : (
-          <a
-            href={`${apiBase}/public/app/android`}
-            className="mt-6 inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-6 py-3.5 text-base font-semibold text-white transition hover:bg-slate-700"
-          >
-            ⬇&nbsp; Download for Android
-          </a>
+          <>
+            <a
+              href={`${apiBase}/public/app/android`}
+              className="mt-6 inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-6 py-3.5 text-base font-semibold text-white transition hover:bg-slate-700"
+            >
+              ⬇&nbsp; Download for Android
+            </a>
+            <a
+              href={`${apiBase}/public/app/android/v7a`}
+              className="mt-3 inline-block text-xs font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline"
+            >
+              Older or 32-bit phone? Get the compatible version
+            </a>
+          </>
         )}
 
         <div className="mt-7 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-left">

@@ -2,8 +2,17 @@ import { Controller, Get, NotFoundException, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { StorageService } from '../storage/storage.service';
 
-/** Stable storage keys written by scripts/upload-app-release.ts. */
+/**
+ * Stable storage keys written by scripts/upload-app-release.ts.
+ *
+ * We publish two architecture-specific builds instead of one universal APK:
+ * the storage provider caps single uploads (~50 MB) and a universal APK
+ * (~86 MB) is over that, plus split builds are smaller per-download with no
+ * runtime cost. arm64-v8a is the primary (every modern phone); armeabi-v7a is
+ * the fallback for older 32-bit devices.
+ */
 export const APP_APK_KEY = 'app/tafai-arm64-v8a.apk';
+export const APP_APK_V7A_KEY = 'app/tafai-armeabi-v7a.apk';
 export const APP_INFO_KEY = 'app/latest.json';
 
 /**
@@ -27,13 +36,30 @@ export class PublicDownloadsController {
     }
   }
 
-  /** Redirect to a fresh signed URL for the latest Android APK. */
+  /** Redirect to a fresh signed URL for the primary (arm64-v8a) Android APK. */
   @Get('android')
   async android(@Res() res: Response): Promise<void> {
-    if (!(await this.storage.exists(APP_APK_KEY))) {
+    await this.redirectToApk(res, APP_APK_KEY);
+  }
+
+  /**
+   * Redirect to the 32-bit (armeabi-v7a) build, for older phones on which the
+   * arm64 build won't install. Falls back to the primary key if a v7a build
+   * was never published, so the link is never dead.
+   */
+  @Get('android/v7a')
+  async androidV7a(@Res() res: Response): Promise<void> {
+    const key = (await this.storage.exists(APP_APK_V7A_KEY))
+      ? APP_APK_V7A_KEY
+      : APP_APK_KEY;
+    await this.redirectToApk(res, key);
+  }
+
+  private async redirectToApk(res: Response, key: string): Promise<void> {
+    if (!(await this.storage.exists(key))) {
       throw new NotFoundException('No app build has been published yet');
     }
-    let url = await this.storage.getSignedUrl(APP_APK_KEY);
+    let url = await this.storage.getSignedUrl(key);
     // Supabase signed URLs accept ?download=<name> to force a sensible
     // save-as filename instead of the storage key.
     if (url.includes('/storage/v1/object/sign/')) {

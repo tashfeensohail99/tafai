@@ -1,0 +1,63 @@
+name: Mobile CI
+
+# Analyze, test, and build the Flutter app on every push / PR that touches it,
+# so a broken build or a failing test is caught automatically in the cloud —
+# not discovered at APK-install time on a tester's phone.
+on:
+  push:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile-ci.yml'
+
+# A newer push to the same branch cancels an in-flight run (saves CI minutes).
+concurrency:
+  group: mobile-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-test:
+    name: Analyze & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Errors-only for now: the app carries some pre-existing info/warning lint
+      # debt (mostly prefer_const_constructors). Tighten to --no-fatal-infos,
+      # then full strict, as that baseline gets cleaned up.
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter test
+
+  build:
+    name: Build debug APK
+    needs: analyze-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Debug build — proves the whole app compiles end to end. (Debug skips the
+      # Crashlytics mapping upload, so it needs no Firebase credentials in CI.)
+      - run: flutter build apk --debug

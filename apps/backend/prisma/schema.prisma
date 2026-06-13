@@ -907,6 +907,9 @@ model UserAccount {
   mustChangePassword  Boolean    @default(false)
   twoFactorEnabled    Boolean    @default(false)
   twoFactorSecret     String?
+  /// Per-user email signature (HTML/plain) appended to emails this user sends
+  /// from the processing case composer. Null = no signature configured yet.
+  emailSignature      String?
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
@@ -3018,6 +3021,13 @@ model CaseCommunication {
   subject           String?
   content           String
   channelsSent      String[]
+  // Email composer (feedback #7–11): the actual recipients the officer sent to
+  // (To may be edited away from the client's on-file address; CC/BCC optional)
+  // and attachment metadata, so the case keeps a faithful record of each email.
+  toEmail           String?
+  ccEmails          String[]                 @default([])
+  bccEmails         String[]                 @default([])
+  attachmentsMeta   Json?
   sentByUserId      String?
   readByClientAt    DateTime?
   whatsappMessageId String?

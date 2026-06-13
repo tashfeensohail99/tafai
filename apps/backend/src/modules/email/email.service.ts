@@ -5,6 +5,8 @@ import type { Transporter } from 'nodemailer';
 
 export interface SendMailOptions {
   to: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
   subject: string;
   html: string;
   replyTo?: string;
@@ -56,9 +58,15 @@ export class EmailService {
       return false;
     }
     try {
+      const joinList = (v?: string | string[]) =>
+        Array.isArray(v) ? v.filter(Boolean).join(', ') : v;
+      const cc = joinList(opts.cc);
+      const bcc = joinList(opts.bcc);
       const info = await this.transporter.sendMail({
         from:    this.from,
         to:      Array.isArray(opts.to) ? opts.to.join(', ') : opts.to,
+        ...(cc ? { cc } : {}),
+        ...(bcc ? { bcc } : {}),
         subject: opts.subject,
         html:    opts.html,
         replyTo: opts.replyTo,
@@ -413,23 +421,36 @@ export class EmailService {
    */
   async sendCaseMessageToClient(opts: {
     to: string;
+    cc?: string[];
+    bcc?: string[];
     clientName: string;
     subject: string;
     bodyText: string;
+    /** Sender's saved signature (plain text — rendered with line breaks). */
+    signatureText?: string;
+    attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
   }): Promise<boolean> {
     const safeBody = escHtml(opts.bodyText).replace(/\n/g, '<br/>');
+    const sig = opts.signatureText?.trim();
+    const signatureBlock = sig
+      ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid #e2e8f0;font-size:13px;color:#475569;line-height:1.6;">${escHtml(sig).replace(/\n/g, '<br/>')}</div>`
+      : '';
     const content = `
       <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">${escHtml(opts.subject)}</h2>
       <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Dear ${escHtml(opts.clientName)},</p>
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:18px;margin-bottom:20px;">
         <p style="margin:0;font-size:14px;color:#0f172a;line-height:1.7;">${safeBody}</p>
       </div>
+      ${signatureBlock}
       <p style="font-size:13px;color:#64748b;">You can upload documents and track your application anytime in your client portal. If you have any questions, just reply to this email or contact us at <a href="mailto:admin@tashfeengroup.com" style="color:#7c3aed;">admin@tashfeengroup.com</a>.</p>`;
     return this.sendMail({
       to: opts.to,
+      ...(opts.cc?.length ? { cc: opts.cc } : {}),
+      ...(opts.bcc?.length ? { bcc: opts.bcc } : {}),
       subject: opts.subject,
       html: baseTemplate(opts.subject, content),
       replyTo: 'admin@tashfeengroup.com',
+      ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
     });
   }
 }

@@ -58,6 +58,7 @@ import {
   FileInboundDocumentDto,
   SendCaseWhatsAppDto,
   SendCommunicationDto,
+  UpdateEmailSignatureDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
   UpdateDocumentTemplateDto,
@@ -739,6 +740,32 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.sendCommunication(caseId, dto, user);
+  }
+
+  // Sent-email history for a case (feedback #11) — every EMAIL communication.
+  @Get('cases/:caseId/emails')
+  @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
+  listCaseEmails(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.listCaseEmails(caseId, user);
+  }
+
+  // Per-user email signature for the composer (feedback #9).
+  @Get('me/email-signature')
+  @RequirePermissions('processing.communication.send')
+  getMyEmailSignature(@CurrentUser() user: RequestUser) {
+    return this.processingService.getMyEmailSignature(user);
+  }
+
+  @Patch('me/email-signature')
+  @RequirePermissions('processing.communication.send')
+  setMyEmailSignature(
+    @Body() dto: UpdateEmailSignatureDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.setMyEmailSignature(user, dto);
   }
 
   // -------------------------------------------------------------------------

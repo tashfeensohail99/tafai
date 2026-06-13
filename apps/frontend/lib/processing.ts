@@ -1399,12 +1399,51 @@ export function fetchCaseCommunications(caseId: string): Promise<ApiCaseCommunic
 
 export function sendCaseCommunication(
   caseId: string,
-  body: { subject: string; content: string; channelsSent: string[] },
+  body: {
+    subject: string;
+    content: string;
+    channelsSent: string[];
+    // Email composer (feedback #7-11) — all optional.
+    toEmail?: string;
+    cc?: string[];
+    bcc?: string[];
+  },
 ): Promise<SendCaseCommunicationResponse> {
   return apiFetch<SendCaseCommunicationResponse>(`/processing/cases/${caseId}/communications`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+// ── Email composer: sent-email history + per-user signature ──────────────────
+
+/** One row in a case's sent-email history (newest first). */
+export interface ApiCaseEmail {
+  id: string;
+  subject: string | null;
+  content: string;
+  toEmail: string | null;
+  ccEmails: string[];
+  bccEmails: string[];
+  createdAt: string;
+  sentByEmail: string | null;
+}
+
+export function fetchCaseEmails(caseId: string): Promise<ApiCaseEmail[]> {
+  return apiFetch<ApiCaseEmail[]>(`/processing/cases/${caseId}/emails`, { cache: 'no-store' });
+}
+
+export function getMyEmailSignature(): Promise<{ signature: string | null }> {
+  return apiFetch<{ signature: string | null }>('/processing/me/email-signature', { cache: 'no-store' });
+}
+
+export function saveMyEmailSignature(signature: string): Promise<{ signature: string | null }> {
+  return apiFetch<{ signature: string | null }>('/processing/me/email-signature', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signature }),
     cache: 'no-store',
   });
 }

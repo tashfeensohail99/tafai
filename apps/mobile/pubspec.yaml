@@ -37,6 +37,10 @@ dependencies:
   # File picking (media send, lead file upload)
   file_picker: ^8.1.0
 
+  # In-app PDF viewer — renders agreement PDFs natively (pinch-zoom, page
+  # swipe) instead of bouncing the user out to an external browser.
+  flutter_pdfview: ^1.3.2
+
   # ── In-app voice calling (WhatsApp Business Calling softphone) ──────────────
   # WebRTC engine — mic capture, peer connection, remote audio playback.
   flutter_webrtc: ^0.12.5

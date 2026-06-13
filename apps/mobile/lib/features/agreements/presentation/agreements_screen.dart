@@ -3,12 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
-import '../../../core/util/launchers.dart';
 import '../../../core/widgets/app_states.dart';
 import '../../../core/widgets/badges.dart';
 import '../data/agreements_providers.dart';
 import '../data/agreements_repository.dart';
 import '../domain/agreement.dart';
+import 'pdf_viewer_screen.dart';
 
 /// Read-only list of agreements for a lead, with tap-to-view-detail.
 class AgreementsScreen extends ConsumerWidget {
@@ -77,12 +77,12 @@ class _AgreementCardState extends ConsumerState<_AgreementCard> {
       final url = await ref
           .read(agreementsRepositoryProvider)
           .pdfUrl(widget.agreement.id);
-      final ok = await openExternalUrl(url);
-      if (!ok && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No browser app available.')),
-        );
-      }
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PdfViewerScreen(url: url, title: 'Agreement'),
+        ),
+      );
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

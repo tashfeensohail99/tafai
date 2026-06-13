@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/widgets/app_states.dart';
+import '../../../core/widgets/country_picker.dart';
 import '../data/leads_repository.dart';
 import '../domain/lead.dart';
+import '../domain/lead_options.dart';
 
 /// Opens the create/edit lead form. Pass [existing] to edit; omit to create.
 /// Returns the saved [Lead] (the new lead on create, or the original object on
@@ -32,10 +34,10 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
   late final TextEditingController _last;
   late final TextEditingController _phone;
   late final TextEditingController _email;
-  late final TextEditingController _country;
-  late final TextEditingController _service;
   late final TextEditingController _source;
   late final TextEditingController _notes;
+  String? _serviceCode; // canonical service-type code (or null)
+  String? _country; // target-country name (or null)
   String? _priority;
   bool _busy = false;
   String? _error;
@@ -50,10 +52,15 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
     _last = TextEditingController(text: e?.lastName ?? '');
     _phone = TextEditingController(text: e?.phone ?? '');
     _email = TextEditingController(text: e?.email ?? '');
-    _country = TextEditingController(text: e?.targetCountry ?? '');
-    _service = TextEditingController(text: e?.serviceInterest ?? '');
     _source = TextEditingController(text: e?.sourceChannel ?? '');
     _notes = TextEditingController(text: e?.notes ?? '');
+    // Service is stored as a canonical code; preselect only when the existing
+    // value is one (legacy free-text leads start blank, classified on save).
+    _serviceCode =
+        isCanonicalServiceCode(e?.serviceInterest) ? e?.serviceInterest : null;
+    _country = (e?.targetCountry?.trim().isNotEmpty ?? false)
+        ? e!.targetCountry
+        : null;
     _priority = e?.priority;
   }
 
@@ -64,8 +71,6 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
       _last,
       _phone,
       _email,
-      _country,
-      _service,
       _source,
       _notes,
     ]) {
@@ -95,8 +100,8 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
           lastName: last,
           phone: phone,
           email: _email.text.trim(),
-          serviceInterest: _service.text.trim(),
-          targetCountry: _country.text.trim(),
+          serviceInterest: _serviceCode,
+          targetCountry: _country,
           priority: _priority,
           notes: _notes.text.trim(),
         );
@@ -107,8 +112,8 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
           lastName: last,
           phone: phone,
           email: _email.text.trim(),
-          targetCountry: _country.text.trim(),
-          serviceInterest: _service.text.trim(),
+          targetCountry: _country,
+          serviceInterest: _serviceCode,
           sourceChannel: _source.text.trim(),
           priority: _priority,
           notes: _notes.text.trim(),
@@ -159,11 +164,44 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
                 const SizedBox(height: AppTokens.space3),
                 _field(_email, 'Email', keyboard: TextInputType.emailAddress),
                 const SizedBox(height: AppTokens.space3),
-                _field(_service, 'Service interest',
-                    cap: TextCapitalization.sentences),
+                DropdownButtonFormField<String>(
+                  value: _serviceCode,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                      labelText: 'Service interest', isDense: true),
+                  items: [
+                    for (final s in kServiceTypes)
+                      DropdownMenuItem(value: s.code, child: Text(s.label)),
+                  ],
+                  onChanged: (v) => setState(() => _serviceCode = v),
+                ),
                 const SizedBox(height: AppTokens.space3),
-                _field(_country, 'Target country',
-                    cap: TextCapitalization.words),
+                InkWell(
+                  onTap: () async {
+                    final picked =
+                        await showCountryPicker(context, current: _country);
+                    if (picked != null) setState(() => _country = picked);
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                        labelText: 'Target country', isDense: true),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            (_country?.isNotEmpty ?? false)
+                                ? _country!
+                                : 'Select country',
+                            style: (_country?.isNotEmpty ?? false)
+                                ? null
+                                : TextStyle(color: Theme.of(context).hintColor),
+                          ),
+                        ),
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
+                  ),
+                ),
                 if (!_isEdit) ...[
                   const SizedBox(height: AppTokens.space3),
                   _field(_source, 'Source channel'),

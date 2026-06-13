@@ -1,7 +1,7 @@
 name: tafsheen_mobile
 description: Tafsheen Immigration Solutions — Mobile App
 publish_to: 'none'
-version: 1.0.9+11
+version: 1.0.10+12
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -74,6 +74,18 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # Generates Android launcher icons (all densities + adaptive) from a PNG.
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
+
+# Launcher icon — run `dart run flutter_launcher_icons` after changing the
+# source PNGs (produced by tool/gen_icon.py from the in-app brand mark).
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/tashfeen_icon.png"
+  adaptive_icon_background: "#0D1B3A"
+  adaptive_icon_foreground: "assets/icon/tashfeen_fg.png"
+  min_sdk_android: 23

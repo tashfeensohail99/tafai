@@ -76,6 +76,7 @@ import {
   RequestDocumentDto,
   ResolveCorrectionRequestDto,
   ReviewDocumentDto,
+  EmailAttachmentInputDto,
   SendCommunicationDto,
   UpdateAttestationDto,
   UpdateEmailSignatureDto,
@@ -3335,6 +3336,21 @@ export class ProcessingService {
           where: { id: user.id },
           select: { emailSignature: true },
         });
+        // Resolve attachments (uploads + picked case documents) to buffers,
+        // record their metadata on the row, and surface unreadable ones as
+        // delivery warnings rather than failing the whole send.
+        let attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
+        if (dto.attachments?.length) {
+          const resolved = await this.resolveEmailAttachments(caseId, dto.attachments);
+          attachments = resolved.attachments;
+          deliveryWarnings.push(...resolved.warnings);
+          if (resolved.meta.length > 0) {
+            comm = await this.prisma.caseCommunication.update({
+              where: { id: comm.id },
+              data: { attachmentsMeta: resolved.meta },
+            });
+          }
+        }
         const result = await this.sendCaseEmailToClient(
           caseId,
           dto.subject,
@@ -3344,6 +3360,7 @@ export class ProcessingService {
             cc: dto.cc,
             bcc: dto.bcc,
             signatureText: sender?.emailSignature ?? undefined,
+            attachments,
           },
         );
         if (!result.ok) {
@@ -3778,6 +3795,8 @@ export class ProcessingService {
       bcc?: string[];
       /** Sender's saved signature, appended to the email body. */
       signatureText?: string;
+      /** Resolved attachment buffers (Phase 2). */
+      attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
     },
   ): Promise<{ ok: boolean; reason?: string }> {
     const text = (body ?? '').trim();
@@ -3796,8 +3815,86 @@ export class ProcessingService {
       subject: subject?.trim() || 'Update on your application',
       bodyText: text,
       signatureText: opts?.signatureText,
+      attachments: opts?.attachments,
     });
     return ok ? { ok: true } : { ok: false, reason: 'email delivery failed' };
+  }
+
+  /**
+   * Resolve email-attachment inputs (Phase 2) to nodemailer-ready buffers.
+   * Each input is either an uploaded file (uploadKey from the upload endpoint)
+   * or an existing case document (caseDocumentItemId). Best-effort: a file that
+   * can't be read is skipped with a warning rather than failing the whole send.
+   */
+  private async resolveEmailAttachments(
+    caseId: string,
+    inputs: EmailAttachmentInputDto[],
+  ): Promise<{
+    attachments: Array<{ filename: string; content: Buffer; contentType?: string }>;
+    meta: Array<{ filename: string; sizeBytes: number; source: 'upload' | 'case_document' }>;
+    warnings: string[];
+  }> {
+    const attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
+    const meta: Array<{ filename: string; sizeBytes: number; source: 'upload' | 'case_document' }> = [];
+    const warnings: string[] = [];
+
+    for (const input of inputs) {
+      try {
+        if (input.caseDocumentItemId) {
+          const item = await this.prisma.caseDocumentItem.findFirst({
+            where: { id: input.caseDocumentItemId, caseId },
+            include: { latestVersion: true },
+          });
+          if (!item?.latestVersion) {
+            warnings.push(`Attachment skipped: "${input.filename}" has no uploaded file`);
+            continue;
+          }
+          const { bytes, mimeType } = await this.storage.download(item.latestVersion.storageKey);
+          const filename = input.filename || item.latestVersion.fileName || 'document';
+          attachments.push({ filename, content: bytes, contentType: mimeType ?? undefined });
+          meta.push({ filename, sizeBytes: bytes.length, source: 'case_document' });
+        } else if (input.uploadKey) {
+          // Only honour keys our own upload endpoint produced — never let a
+          // caller pull an arbitrary stored object (e.g. another client's docs).
+          if (!input.uploadKey.startsWith('email-attachments/')) {
+            warnings.push(`Attachment skipped: "${input.filename}" (invalid reference)`);
+            continue;
+          }
+          const { bytes, mimeType } = await this.storage.download(input.uploadKey);
+          attachments.push({ filename: input.filename, content: bytes, contentType: mimeType ?? undefined });
+          meta.push({ filename: input.filename, sizeBytes: bytes.length, source: 'upload' });
+        }
+      } catch {
+        warnings.push(`Attachment skipped: "${input.filename}" could not be read`);
+      }
+    }
+    return { attachments, meta, warnings };
+  }
+
+  /**
+   * Store an uploaded email attachment and return a reference key the composer
+   * passes back to the send endpoint. Kept under the `email-attachments/`
+   * prefix so the send path can validate the key's origin.
+   */
+  async uploadEmailAttachment(
+    caseId: string,
+    file: Express.Multer.File,
+    user: RequestUser,
+  ): Promise<{ key: string; filename: string; contentType: string; sizeBytes: number }> {
+    await this.assertCaseAccessById(caseId, user);
+    if (!file) throw new BadRequestException('No file provided');
+    const result = await this.storage.upload(
+      file.buffer,
+      file.mimetype,
+      'email-attachments',
+      file.originalname,
+    );
+    return {
+      key: result.key,
+      filename: file.originalname,
+      contentType: file.mimetype,
+      sizeBytes: file.size,
+    };
   }
 
   /** The current user's saved email signature (processing composer). */

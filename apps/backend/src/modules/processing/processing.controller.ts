@@ -768,6 +768,24 @@ export class ProcessingController {
     return this.processingService.setMyEmailSignature(user, dto);
   }
 
+  // Phase 2 — upload a file to attach to a case email; returns a reference key
+  // the composer passes back in the send request's `attachments`.
+  @Post('cases/:caseId/email-attachments')
+  @RequirePermissions('processing.communication.send')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024 },
+    }),
+  )
+  uploadEmailAttachment(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.uploadEmailAttachment(caseId, file, user);
+  }
+
   // -------------------------------------------------------------------------
   // AUTHORITY SUBMISSIONS
   // -------------------------------------------------------------------------

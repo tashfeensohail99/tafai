@@ -683,6 +683,27 @@ export class UpdateProcessingTaskDto {
 // Communications
 // ---------------------------------------------------------------------------
 
+/**
+ * One email attachment (Phase 2). Exactly one source per entry:
+ *  - `uploadKey`: a file uploaded via POST cases/:id/email-attachments, OR
+ *  - `caseDocumentItemId`: an existing document on the case.
+ */
+export class EmailAttachmentInputDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  uploadKey?: string;
+
+  @IsOptional()
+  @IsUUID()
+  caseDocumentItemId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  filename!: string;
+}
+
 export class SendCommunicationDto {
   @IsString()
   @IsNotEmpty()
@@ -715,6 +736,12 @@ export class SendCommunicationDto {
   @IsEmail({}, { each: true })
   @MaxLength(254, { each: true })
   bcc?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EmailAttachmentInputDto)
+  attachments?: EmailAttachmentInputDto[];
 }
 
 /** Save/clear the current user's email signature (processing composer). */

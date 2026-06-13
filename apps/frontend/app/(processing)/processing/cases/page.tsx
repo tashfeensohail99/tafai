@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import type { Route } from 'next';
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Loader2,
   Search,
@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Paperclip,
   Send,
   Check,
   StickyNote,
@@ -48,9 +49,12 @@ import {
   fetchCaseEmails,
   getMyEmailSignature,
   saveMyEmailSignature,
+  uploadEmailAttachment,
+  fetchCaseDocuments,
   casePersonName,
   type ApiProcessingCaseListItem,
   type ApiProcessingOfficer,
+  type ApiCaseDocumentItem,
   type ApiCaseEmail,
   type ProcessingStage,
   type ProcessingPriority,
@@ -136,6 +140,10 @@ const SLA_COLORS: Record<SlaTone, { bg: string; fg: string }> = {
   muted: { bg: 'var(--sos-surface-2)', fg: 'var(--sos-text-muted)' },
 };
 
+/** A staged email attachment — either an uploaded file (uploadKey) or a picked
+ *  case document (caseDocumentItemId). */
+type EmailAttachment = { filename: string; uploadKey?: string; caseDocumentItemId?: string; sizeBytes?: number };
+
 // ---------------------------------------------------------------------------
 // Inline email composer — sends a logged email through the case (no need to
 // open the case). Reuses POST /processing/cases/:id/communications (EMAIL).
@@ -167,6 +175,13 @@ function EmailComposeModal({
   const [emails, setEmails] = useState<ApiCaseEmail[]>([]);
   const [histOpen, setHistOpen] = useState(false);
 
+  // Attachments (Phase 2): uploaded files + picked case documents.
+  const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const [docPickerOpen, setDocPickerOpen] = useState(false);
+  const [caseDocs, setCaseDocs] = useState<ApiCaseDocumentItem[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<{ warnings: string[] } | null>(null);
@@ -194,7 +209,11 @@ function EmailComposeModal({
   const bccList = parseList(bcc);
   const recipientsValid = emailOk(to.trim()) && ccList.every(emailOk) && bccList.every(emailOk);
   const canSend =
-    subject.trim().length > 0 && content.trim().length > 0 && recipientsValid && !sending;
+    subject.trim().length > 0 &&
+    content.trim().length > 0 &&
+    recipientsValid &&
+    uploadingCount === 0 &&
+    !sending;
 
   async function send() {
     if (!canSend) return;
@@ -208,6 +227,11 @@ function EmailComposeModal({
         toEmail: to.trim(),
         cc: ccList,
         bcc: bccList,
+        attachments: attachments.map((a) => ({
+          uploadKey: a.uploadKey,
+          caseDocumentItemId: a.caseDocumentItemId,
+          filename: a.filename,
+        })),
       });
       setDone({ warnings: res.deliveryWarnings ?? [] });
       fetchCaseEmails(caseItem.id).then(setEmails).catch(() => {});
@@ -229,6 +253,54 @@ function EmailComposeModal({
     } finally {
       setSavingSig(false);
     }
+  }
+
+  async function onFilesPicked(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setErr(null);
+    for (const file of Array.from(files)) {
+      setUploadingCount((n) => n + 1);
+      try {
+        const r = await uploadEmailAttachment(caseItem.id, file);
+        setAttachments((prev) => [
+          ...prev,
+          { filename: r.filename, uploadKey: r.key, sizeBytes: r.sizeBytes },
+        ]);
+      } catch (e: unknown) {
+        setErr(e instanceof Error ? e.message : `Couldn’t upload ${file.name}`);
+      } finally {
+        setUploadingCount((n) => n - 1);
+      }
+    }
+  }
+
+  function toggleDocPicker() {
+    setDocPickerOpen((open) => {
+      const next = !open;
+      if (next && caseDocs.length === 0) {
+        fetchCaseDocuments(caseItem.id).then(setCaseDocs).catch(() => {});
+      }
+      return next;
+    });
+  }
+
+  function addCaseDoc(doc: ApiCaseDocumentItem) {
+    setAttachments((prev) =>
+      prev.some((a) => a.caseDocumentItemId === doc.id)
+        ? prev
+        : [
+            ...prev,
+            {
+              filename: doc.latestVersion?.fileName || doc.documentName,
+              caseDocumentItemId: doc.id,
+              sizeBytes: doc.latestVersion?.fileSizeBytes ?? undefined,
+            },
+          ],
+    );
+  }
+
+  function removeAttachment(idx: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx));
   }
 
   return (
@@ -335,6 +407,92 @@ function EmailComposeModal({
                 placeholder="Write your message to the client…"
                 rows={6}
               />
+            </div>
+
+            {/* Attachments — upload files and/or pick from the case's documents */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', border: '1px solid var(--sos-border-subtle)', borderRadius: 8, background: 'transparent', color: 'var(--sos-text-secondary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <Paperclip size={13} /> Attach files
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleDocPicker}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', border: '1px solid var(--sos-border-subtle)', borderRadius: 8, background: docPickerOpen ? 'var(--sos-brand-primary-soft)' : 'transparent', color: docPickerOpen ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <FileText size={13} /> From case documents
+                </button>
+                {uploadingCount > 0 ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--sos-text-muted)' }}>
+                    <Loader2 size={12} className="sos-spin" /> Uploading…
+                  </span>
+                ) : null}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    onFilesPicked(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+              </div>
+
+              {docPickerOpen ? (
+                <div style={{ marginTop: 8, border: '1px solid var(--sos-border-subtle)', borderRadius: 'var(--sos-radius-md)', maxHeight: 180, overflowY: 'auto' }}>
+                  {caseDocs.filter((d) => d.latestVersion).length === 0 ? (
+                    <div style={{ padding: 10, fontSize: 12, color: 'var(--sos-text-muted)' }}>No uploaded documents on this case yet.</div>
+                  ) : (
+                    caseDocs
+                      .filter((d) => d.latestVersion)
+                      .map((d) => {
+                        const added = attachments.some((a) => a.caseDocumentItemId === d.id);
+                        return (
+                          <button
+                            key={d.id}
+                            type="button"
+                            onClick={() => addCaseDoc(d)}
+                            disabled={added}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--sos-border-subtle)', cursor: added ? 'default' : 'pointer', textAlign: 'left' }}
+                          >
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                              <FileText size={14} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+                              <span style={{ fontSize: 12.5, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.documentName}</span>
+                            </span>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: added ? 'var(--sos-status-success)' : 'var(--sos-brand-primary-strong)', flexShrink: 0 }}>{added ? 'Added' : 'Add'}</span>
+                          </button>
+                        );
+                      })
+                  )}
+                </div>
+              ) : null}
+
+              {attachments.length > 0 ? (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {attachments.map((a, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '6px 10px', background: 'var(--sos-surface-hover)', borderRadius: 'var(--sos-radius-md)' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                        <Paperclip size={12} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.filename}</span>
+                        {a.caseDocumentItemId ? (
+                          <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--sos-brand-primary-strong)', background: 'var(--sos-brand-primary-soft)', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>DOC</span>
+                        ) : null}
+                        {typeof a.sizeBytes === 'number' ? (
+                          <span style={{ fontSize: 10.5, color: 'var(--sos-text-muted)', flexShrink: 0 }}>{(a.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
+                        ) : null}
+                      </span>
+                      <button type="button" onClick={() => removeAttachment(i)} title="Remove" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--sos-text-muted)', flexShrink: 0 }}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {/* Signature — auto-appended to the email; editable inline */}

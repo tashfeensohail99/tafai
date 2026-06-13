@@ -1407,6 +1407,8 @@ export function sendCaseCommunication(
     toEmail?: string;
     cc?: string[];
     bcc?: string[];
+    // Phase 2 attachments: uploaded files (uploadKey) and/or case docs.
+    attachments?: Array<{ uploadKey?: string; caseDocumentItemId?: string; filename: string }>;
   },
 ): Promise<SendCaseCommunicationResponse> {
   return apiFetch<SendCaseCommunicationResponse>(`/processing/cases/${caseId}/communications`, {
@@ -1446,6 +1448,33 @@ export function saveMyEmailSignature(signature: string): Promise<{ signature: st
     body: JSON.stringify({ signature }),
     cache: 'no-store',
   });
+}
+
+/** Upload a file to attach to a case email (Phase 2). Returns the reference
+ *  key + metadata to pass back in sendCaseCommunication's `attachments`. */
+export async function uploadEmailAttachment(
+  caseId: string,
+  file: File,
+): Promise<{ key: string; filename: string; contentType: string; sizeBytes: number }> {
+  const { getAccessToken } = await import('./auth-client');
+  const token = getAccessToken();
+  const form = new FormData();
+  form.append('file', file);
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const res = await fetch(`${base}/processing/cases/${caseId}/email-attachments`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form,
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const msg =
+      errBody && typeof errBody === 'object' && 'message' in errBody
+        ? String((errBody as { message?: unknown }).message)
+        : `Upload failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------

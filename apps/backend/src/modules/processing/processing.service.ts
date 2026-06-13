@@ -1020,11 +1020,21 @@ export class ProcessingService {
           ? { stage: query.stage }
           : undefined;
 
+    // Officer scoping: associates are hard-scoped to their own caseload; only
+    // managers (view_all) may filter by another officer. The previous code
+    // spread query.assignedOfficerId AFTER the user.id scope, so a non-manager
+    // passing an officer id could override their own scope — collapse both into
+    // one explicit constraint so the scope can never be widened by a filter.
+    const officerConstraint: Prisma.ProcessingCaseWhereInput = canViewAll
+      ? query.assignedOfficerId
+        ? { assignedOfficerId: query.assignedOfficerId }
+        : {}
+      : { assignedOfficerId: user.id };
+
     const whereClause: Prisma.ProcessingCaseWhereInput = {
-      ...(canViewAll ? {} : { assignedOfficerId: user.id }),
+      ...officerConstraint,
       ...(stageFilter ?? {}),
       ...(query.priority ? { priority: query.priority } : {}),
-      ...(query.assignedOfficerId ? { assignedOfficerId: query.assignedOfficerId } : {}),
       ...(query.clientId ? { clientId: query.clientId } : {}),
       ...(query.service ? { service: query.service } : {}),
       ...(query.targetCountry ? { targetCountry: query.targetCountry } : {}),

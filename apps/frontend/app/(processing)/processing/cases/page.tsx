@@ -43,14 +43,17 @@ import { stageTone, priorityTone } from '@/components/processing/ProcessingDashb
 import { StatusBadge, GlassCard, PrimaryButton, SecondaryButton } from '@/components/sales-v2/ui';
 import {
   fetchProcessingCases,
+  fetchProcessingOfficers,
   sendCaseCommunication,
   casePersonName,
   type ApiProcessingCaseListItem,
+  type ApiProcessingOfficer,
   type ProcessingStage,
   type ProcessingPriority,
   type ListCasesQuery,
 } from '@/lib/processing';
 import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
+import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 /**
  * Active processing cases — all stages except COMPLETED and CANCELLED.
@@ -442,12 +445,20 @@ export default function CasesPage() {
   const [error, setError] = useState<string | null>(null);
   const [emailFor, setEmailFor] = useState<ApiProcessingCaseListItem | null>(null);
 
+  // Only managers (view_all) see the whole roster, so only they get the
+  // "Processing officer" filter — associates are already scoped to their own
+  // cases server-side, and the /officers roster endpoint is manager-only.
+  const { user } = useProcessingSession();
+  const isManager = user.permissions.includes('processing.case.view_all');
+  const [officers, setOfficers] = useState<ApiProcessingOfficer[]>([]);
+
   // Filter state
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [stage, setStage] = useState<ProcessingStage | ''>('');
   const [priority, setPriority] = useState<ProcessingPriority | ''>('');
   const [service, setService] = useState('');
+  const [officer, setOfficer] = useState('');
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
   const [updatedFrom, setUpdatedFrom] = useState('');
@@ -461,6 +472,18 @@ export default function CasesPage() {
     return () => clearTimeout(id);
   }, [search]);
 
+  // Load the officer roster once for managers — drives the officer filter.
+  useEffect(() => {
+    if (!isManager) return;
+    let cancelled = false;
+    fetchProcessingOfficers()
+      .then((list) => !cancelled && setOfficers(list))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isManager]);
+
   const query: ListCasesQuery = useMemo(
     () => ({
       limit: 200,
@@ -468,12 +491,13 @@ export default function CasesPage() {
       ...(stage ? { stage } : {}),
       ...(priority ? { priority } : {}),
       ...(service ? { service } : {}),
+      ...(officer ? { assignedOfficerId: officer } : {}),
       ...(createdFrom ? { createdFrom } : {}),
       ...(createdTo ? { createdTo } : {}),
       ...(updatedFrom ? { updatedFrom } : {}),
       ...(updatedTo ? { updatedTo } : {}),
     }),
-    [debouncedSearch, stage, priority, service, createdFrom, createdTo, updatedFrom, updatedTo],
+    [debouncedSearch, stage, priority, service, officer, createdFrom, createdTo, updatedFrom, updatedTo],
   );
 
   useEffect(() => {
@@ -493,7 +517,7 @@ export default function CasesPage() {
     };
   }, [query]);
 
-  const hasActiveFilters = !!(stage || priority || service || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
+  const hasActiveFilters = !!(stage || priority || service || officer || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
   const dateFilterActive = !!(createdFrom || createdTo || updatedFrom || updatedTo);
 
   function clearAll() {
@@ -501,6 +525,7 @@ export default function CasesPage() {
     setStage('');
     setPriority('');
     setService('');
+    setOfficer('');
     setCreatedFrom('');
     setCreatedTo('');
     setUpdatedFrom('');
@@ -552,6 +577,14 @@ export default function CasesPage() {
                 <option key={s.code} value={s.code}>{s.label}</option>
               ))}
             </select>
+            {isManager ? (
+              <select className="sos-input" value={officer} onChange={(e) => setOfficer(e.target.value)} aria-label="Processing officer">
+                <option value="">All officers</option>
+                {officers.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name || o.email}</option>
+                ))}
+              </select>
+            ) : null}
           </div>
 
           {/* Date filters live behind a disclosure — collapsed by default so the

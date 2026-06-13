@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/auth/auth_controller.dart';
@@ -14,6 +15,15 @@ import '../../security/data/app_lock_controller.dart';
 /// Whether this device can do biometric / device-credential auth.
 final _deviceSupportsLockProvider =
     FutureProvider<bool>((ref) => deviceSupportsLock());
+
+/// Whether OS-level push notifications are currently granted for the app.
+final _notificationsEnabledProvider = FutureProvider<bool>((ref) async {
+  try {
+    return await Permission.notification.isGranted;
+  } catch (_) {
+    return true;
+  }
+});
 
 /// Account + security + about screen, reachable from the home hamburger menu.
 class SettingsScreen extends ConsumerWidget {
@@ -129,6 +139,12 @@ class SettingsScreen extends ConsumerWidget {
 
           const SizedBox(height: AppTokens.space4),
 
+          // ── Notifications ───────────────────────────────────────────────
+          const _SectionHeader('Notifications'),
+          const _NotificationsTile(),
+
+          const SizedBox(height: AppTokens.space4),
+
           // ── Account ─────────────────────────────────────────────────────
           const _SectionHeader('Account'),
           ListTile(
@@ -226,6 +242,37 @@ class _AppLockTile extends ConsumerWidget {
                 await ref.read(appLockEnabledProvider.notifier).set(false);
               }
             },
+    );
+  }
+}
+
+/// Shows whether OS push notifications are on for the app, and opens the
+/// system settings to change it — the reliable, per-channel control on Android,
+/// rather than a duplicate in-app switch that the OS would override anyway.
+class _NotificationsTile extends ConsumerWidget {
+  const _NotificationsTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final enabled =
+        ref.watch(_notificationsEnabledProvider).valueOrNull ?? true;
+    return ListTile(
+      leading: const Icon(Icons.notifications_outlined),
+      title: const Text('Push notifications'),
+      subtitle: Text(
+        enabled
+            ? 'On — tap to manage in system settings'
+            : 'Off — tap to turn on in system settings',
+      ),
+      // Use a SwitchListTile-style trailing indicator that reflects OS state.
+      trailing: Icon(
+        enabled ? Icons.check_circle : Icons.cancel_outlined,
+        color: enabled ? AppTokens.statusSuccess : AppTokens.textMutedLight,
+      ),
+      onTap: () async {
+        await openAppSettings();
+        ref.invalidate(_notificationsEnabledProvider);
+      },
     );
   }
 }

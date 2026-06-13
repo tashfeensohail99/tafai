@@ -11,6 +11,8 @@ import {
   Phone,
   ArrowUpRight,
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   Send,
   Check,
   StickyNote,
@@ -41,14 +43,17 @@ import { stageTone, priorityTone } from '@/components/processing/ProcessingDashb
 import { StatusBadge, GlassCard, PrimaryButton, SecondaryButton } from '@/components/sales-v2/ui';
 import {
   fetchProcessingCases,
+  fetchProcessingOfficers,
   sendCaseCommunication,
   casePersonName,
   type ApiProcessingCaseListItem,
+  type ApiProcessingOfficer,
   type ProcessingStage,
   type ProcessingPriority,
   type ListCasesQuery,
 } from '@/lib/processing';
 import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
+import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 /**
  * Active processing cases — all stages except COMPLETED and CANCELLED.
@@ -58,20 +63,34 @@ import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
  * full case. Filters (duration, case type, officer, last activity) are kept.
  */
 
-const STAGES: ProcessingStage[] = [
-  'INTAKE_PENDING',
-  'DOCUMENTS_COLLECTION',
-  'DOCUMENTS_UNDER_REVIEW',
-  'DOCUMENTS_INCOMPLETE',
-  'DOCUMENTS_COMPLETE',
-  'READY_FOR_SUBMISSION',
-  'SUBMITTED',
-  'UNDER_AUTHORITY_REVIEW',
-  'ADDITIONAL_INFO_REQUESTED',
-  'DECISION_RECEIVED',
-  'APPROVED',
-  'REJECTED',
-  'APPEAL_IN_PROGRESS',
+// Business-status filter (feedback #4): a short, plain-language layer over the
+// detailed pipeline stages. The team found 13 stage options overwhelming and
+// asked for a handful of business statuses. Each status maps to the stages it
+// covers and is sent as a multi-stage filter (`stages[]`, already supported
+// server-side). The granular stage still shows on every row + the workspace.
+// ("Hold" from the team's wish-list has no matching stage today — it needs a
+// real stage added, deferred per the agreed no-data-change scope.)
+const STATUS_GROUPS: { key: string; label: string; stages: ProcessingStage[] }[] = [
+  {
+    key: 'UNDER_PROCESS',
+    label: 'Under process',
+    stages: [
+      'INTAKE_PENDING',
+      'DOCUMENTS_COLLECTION',
+      'DOCUMENTS_UNDER_REVIEW',
+      'DOCUMENTS_INCOMPLETE',
+      'DOCUMENTS_COMPLETE',
+      'READY_FOR_SUBMISSION',
+    ],
+  },
+  {
+    key: 'SUBMITTED',
+    label: 'Submitted',
+    stages: ['SUBMITTED', 'UNDER_AUTHORITY_REVIEW', 'ADDITIONAL_INFO_REQUESTED', 'DECISION_RECEIVED'],
+  },
+  { key: 'APPEAL', label: 'Appeal', stages: ['APPEAL_IN_PROGRESS'] },
+  { key: 'APPROVED', label: 'Approved', stages: ['APPROVED'] },
+  { key: 'REFUSED', label: 'Refused', stages: ['REJECTED'] },
 ];
 
 const PRIORITIES: ProcessingPriority[] = ['CRITICAL', 'URGENT', 'NORMAL', 'LOW'];
@@ -440,36 +459,62 @@ export default function CasesPage() {
   const [error, setError] = useState<string | null>(null);
   const [emailFor, setEmailFor] = useState<ApiProcessingCaseListItem | null>(null);
 
+  // Only managers (view_all) see the whole roster, so only they get the
+  // "Processing officer" filter — associates are already scoped to their own
+  // cases server-side, and the /officers roster endpoint is manager-only.
+  const { user } = useProcessingSession();
+  const isManager = user.permissions.includes('processing.case.view_all');
+  const [officers, setOfficers] = useState<ApiProcessingOfficer[]>([]);
+
   // Filter state
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [stage, setStage] = useState<ProcessingStage | ''>('');
+  const [statusGroup, setStatusGroup] = useState('');
   const [priority, setPriority] = useState<ProcessingPriority | ''>('');
   const [service, setService] = useState('');
+  const [officer, setOfficer] = useState('');
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
   const [updatedFrom, setUpdatedFrom] = useState('');
   const [updatedTo, setUpdatedTo] = useState('');
+  // Date filters sit behind a disclosure so the main bar stays uncluttered —
+  // the team found the always-on date pickers confusing and hard to clear.
+  const [showDateFilters, setShowDateFilters] = useState(false);
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(id);
   }, [search]);
 
-  const query: ListCasesQuery = useMemo(
-    () => ({
+  // Load the officer roster once for managers — drives the officer filter.
+  useEffect(() => {
+    if (!isManager) return;
+    let cancelled = false;
+    fetchProcessingOfficers()
+      .then((list) => !cancelled && setOfficers(list))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isManager]);
+
+  const query: ListCasesQuery = useMemo(() => {
+    const statusStages = statusGroup
+      ? STATUS_GROUPS.find((g) => g.key === statusGroup)?.stages ?? []
+      : [];
+    return {
       limit: 200,
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
-      ...(stage ? { stage } : {}),
+      ...(statusStages.length ? { stages: statusStages } : {}),
       ...(priority ? { priority } : {}),
       ...(service ? { service } : {}),
+      ...(officer ? { assignedOfficerId: officer } : {}),
       ...(createdFrom ? { createdFrom } : {}),
       ...(createdTo ? { createdTo } : {}),
       ...(updatedFrom ? { updatedFrom } : {}),
       ...(updatedTo ? { updatedTo } : {}),
-    }),
-    [debouncedSearch, stage, priority, service, createdFrom, createdTo, updatedFrom, updatedTo],
-  );
+    };
+  }, [debouncedSearch, statusGroup, priority, service, officer, createdFrom, createdTo, updatedFrom, updatedTo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -488,13 +533,15 @@ export default function CasesPage() {
     };
   }, [query]);
 
-  const hasActiveFilters = !!(stage || priority || service || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
+  const hasActiveFilters = !!(statusGroup || priority || service || officer || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
+  const dateFilterActive = !!(createdFrom || createdTo || updatedFrom || updatedTo);
 
   function clearAll() {
     setSearch('');
-    setStage('');
+    setStatusGroup('');
     setPriority('');
     setService('');
+    setOfficer('');
     setCreatedFrom('');
     setCreatedTo('');
     setUpdatedFrom('');
@@ -519,18 +566,19 @@ export default function CasesPage() {
               <button
                 type="button"
                 onClick={clearAll}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid var(--sos-border-subtle)', borderRadius: 6, background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 11.5, cursor: 'pointer' }}
+                title="Reset every filter"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', border: '1px solid var(--sos-brand-primary)', borderRadius: 6, background: 'var(--sos-brand-primary-soft)', color: 'var(--sos-brand-primary-strong)', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}
               >
-                <X size={11} /> Clear filters
+                <X size={12} /> Clear all filters
               </button>
             ) : null}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
-            <select className="sos-input" value={stage} onChange={(e) => setStage(e.target.value as ProcessingStage | '')}>
-              <option value="">All stages</option>
-              {STAGES.map((s) => (
-                <option key={s} value={s}>{STAGE_LABEL[s]}</option>
+            <select className="sos-input" value={statusGroup} onChange={(e) => setStatusGroup(e.target.value)} aria-label="Status">
+              <option value="">All statuses</option>
+              {STATUS_GROUPS.map((g) => (
+                <option key={g.key} value={g.key}>{g.label}</option>
               ))}
             </select>
             <select className="sos-input" value={priority} onChange={(e) => setPriority(e.target.value as ProcessingPriority | '')}>
@@ -545,24 +593,60 @@ export default function CasesPage() {
                 <option key={s.code} value={s.code}>{s.label}</option>
               ))}
             </select>
+            {isManager ? (
+              <select className="sos-input" value={officer} onChange={(e) => setOfficer(e.target.value)} aria-label="Processing officer">
+                <option value="">All officers</option>
+                {officers.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name || o.email}</option>
+                ))}
+              </select>
+            ) : null}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-            <div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Intake date</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="sos-input" type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} />
-                <input className="sos-input" type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} />
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Last activity</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="sos-input" type="date" value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} />
-                <input className="sos-input" type="date" value={updatedTo} onChange={(e) => setUpdatedTo(e.target.value)} />
-              </div>
-            </div>
+          {/* Date filters live behind a disclosure — collapsed by default so the
+              main bar stays clean. A dot marks when a date filter is active even
+              while collapsed, and "Clear dates" removes just the date range. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setShowDateFilters((v) => !v)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', border: '1px solid var(--sos-border-subtle)', borderRadius: 8, background: dateFilterActive ? 'var(--sos-brand-primary-soft)' : 'transparent', color: dateFilterActive ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            >
+              {showDateFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              Date filters
+              {dateFilterActive ? (
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--sos-brand-primary)' }} title="A date filter is active" />
+              ) : null}
+            </button>
+            {dateFilterActive ? (
+              <button
+                type="button"
+                onClick={() => { setCreatedFrom(''); setCreatedTo(''); setUpdatedFrom(''); setUpdatedTo(''); }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', border: '1px solid var(--sos-border-subtle)', borderRadius: 8, background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 11.5, cursor: 'pointer' }}
+              >
+                <X size={12} /> Clear dates
+              </button>
+            ) : null}
           </div>
+
+          {showDateFilters ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Intake date</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input className="sos-input" type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} />
+                  <input className="sos-input" type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Last activity</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input className="sos-input" type="date" value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} />
+                  <input className="sos-input" type="date" value={updatedTo} onChange={(e) => setUpdatedTo(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </GlassCard>
 

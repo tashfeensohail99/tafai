@@ -166,7 +166,7 @@ class _InboxTabs extends StatelessWidget {
             selected: selected, onSelect: onSelect,
           )),
           Expanded(child: _InboxTabItem(
-            label: 'New', count: uncontacted, tab: WaTab.uncontacted,
+            label: 'Uncontacted', count: uncontacted, tab: WaTab.uncontacted,
             selected: selected, onSelect: onSelect,
           )),
         ],

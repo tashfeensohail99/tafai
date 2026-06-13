@@ -43,7 +43,9 @@ class SettingsScreen extends ConsumerWidget {
         systemOverlayStyle: SystemUiOverlayStyle.light,
       ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: AppTokens.space4),
+        // Bottom-pad past the system nav bar so the last row clears it.
+        padding: EdgeInsets.fromLTRB(0, AppTokens.space4, 0,
+            AppTokens.space4 + MediaQuery.of(context).padding.bottom),
         children: [
           // ── Profile header ──────────────────────────────────────────────
           Padding(

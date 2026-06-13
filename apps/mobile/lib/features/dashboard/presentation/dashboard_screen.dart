@@ -79,12 +79,13 @@ class DashboardScreen extends ConsumerWidget {
 
 // ── Greeting banner ──────────────────────────────────────────────────────────
 
-class _GreetingBanner extends StatelessWidget {
+class _GreetingBanner extends ConsumerWidget {
   final AuthUser? user;
   const _GreetingBanner({required this.user});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final slaScore = ref.watch(mySalesStatsProvider).valueOrNull?.slaScore;
     final hour = DateTime.now().hour;
     final greeting = hour < 12
         ? 'Good morning'
@@ -136,32 +137,68 @@ class _GreetingBanner extends StatelessWidget {
           ),
         ),
         const SizedBox(width: AppTokens.space3),
-        Container(
+        _SlaGauge(score: slaScore),
+      ],
+    );
+  }
+}
+
+/// Compact circular SLA gauge — the mobile analogue of the web dashboard's
+/// "SLA Watch" ring. Green ≥90, amber ≥70, else red; score in the centre.
+class _SlaGauge extends StatelessWidget {
+  final int? score;
+  const _SlaGauge({required this.score});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = score;
+    final color = s == null
+        ? AppTokens.statusNeutral
+        : s >= 90
+            ? AppTokens.statusSuccess
+            : s >= 70
+                ? AppTokens.statusWarning
+                : AppTokens.statusDanger;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
           width: 46,
           height: 46,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [AppTokens.brandNavy, AppTokens.brandNavyLight],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: AppTokens.brandNavy.withValues(alpha: 0.30),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                width: 46,
+                height: 46,
+                child: CircularProgressIndicator(
+                  value: ((s ?? 0).clamp(0, 100)) / 100,
+                  strokeWidth: 4,
+                  backgroundColor: color.withValues(alpha: 0.15),
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                  strokeCap: StrokeCap.round,
+                ),
+              ),
+              Text(
+                s == null ? '—' : '$s',
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  letterSpacing: -0.3,
+                ),
               ),
             ],
           ),
-          alignment: Alignment.center,
-          child: Text(
-            user?.initials ?? '?',
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-            ),
+        ),
+        const SizedBox(height: 3),
+        const Text(
+          'SLA',
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.6,
+            color: AppTokens.textMutedLight,
           ),
         ),
       ],

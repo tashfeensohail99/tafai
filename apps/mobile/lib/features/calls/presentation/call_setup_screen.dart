@@ -95,7 +95,14 @@ class _CallSetupScreenState extends ConsumerState<CallSetupScreen>
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(AppTokens.space4),
+              // Pad the bottom past the system navigation bar so the last item
+              // ("Enable all") clears it instead of hiding underneath.
+              padding: EdgeInsets.fromLTRB(
+                AppTokens.space4,
+                AppTokens.space4,
+                AppTokens.space4,
+                AppTokens.space4 + MediaQuery.of(context).padding.bottom,
+              ),
               children: [
                 _Header(allGranted: _state.allGranted),
                 const SizedBox(height: AppTokens.space4),

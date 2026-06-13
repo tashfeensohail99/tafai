@@ -40,6 +40,7 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
   String? _country; // target-country name (or null)
   String? _priority;
   bool _busy = false;
+  bool _verifying = false;
   String? _error;
 
   bool get _isEdit => widget.existing != null;
@@ -127,6 +128,39 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
     }
   }
 
+  /// Send the email-verification link to the lead (edit mode only — needs a
+  /// saved lead id). The backend sends to the lead's saved email, so if the
+  /// field was edited but not saved we ask the user to save first.
+  Future<void> _verifyEmail() async {
+    final e = widget.existing;
+    if (e == null) return;
+    if (_email.text.trim() != (e.email ?? '')) {
+      setState(() => _error = 'Save your email change first, then tap Verify.');
+      return;
+    }
+    setState(() {
+      _verifying = true;
+      _error = null;
+    });
+    try {
+      final sent =
+          await ref.read(leadsRepositoryProvider).sendEmailVerification(e.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(sent
+                ? 'Verification email sent to ${e.email}. Ask them to tap the link.'
+                : 'Could not send — check the email address.'),
+          ),
+        );
+      }
+    } on AppError catch (err) {
+      if (mounted) setState(() => _error = messageForError(err));
+    } finally {
+      if (mounted) setState(() => _verifying = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
@@ -163,6 +197,37 @@ class _LeadFormSheetState extends ConsumerState<_LeadFormSheet> {
                 _field(_phone, 'Phone *', keyboard: TextInputType.phone),
                 const SizedBox(height: AppTokens.space3),
                 _field(_email, 'Email', keyboard: TextInputType.emailAddress),
+                if (_isEdit && (widget.existing!.email?.isNotEmpty ?? false)) ...[
+                  const SizedBox(height: AppTokens.space2),
+                  widget.existing!.emailVerified
+                      ? const Row(
+                          children: [
+                            Icon(Icons.verified_outlined,
+                                size: 16, color: AppTokens.statusSuccess),
+                            SizedBox(width: 6),
+                            Text('Email verified',
+                                style: TextStyle(
+                                    color: AppTokens.statusSuccess,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        )
+                      : Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton.icon(
+                            onPressed: _verifying ? null : _verifyEmail,
+                            icon: _verifying
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(Icons.mark_email_read_outlined,
+                                    size: 16),
+                            label: Text(_verifying ? 'Sending…' : 'Verify email'),
+                          ),
+                        ),
+                ],
                 const SizedBox(height: AppTokens.space3),
                 DropdownButtonFormField<String>(
                   value: _serviceCode,

@@ -63,20 +63,34 @@ import { useProcessingSession } from '@/components/layout/ProcessingShell';
  * full case. Filters (duration, case type, officer, last activity) are kept.
  */
 
-const STAGES: ProcessingStage[] = [
-  'INTAKE_PENDING',
-  'DOCUMENTS_COLLECTION',
-  'DOCUMENTS_UNDER_REVIEW',
-  'DOCUMENTS_INCOMPLETE',
-  'DOCUMENTS_COMPLETE',
-  'READY_FOR_SUBMISSION',
-  'SUBMITTED',
-  'UNDER_AUTHORITY_REVIEW',
-  'ADDITIONAL_INFO_REQUESTED',
-  'DECISION_RECEIVED',
-  'APPROVED',
-  'REJECTED',
-  'APPEAL_IN_PROGRESS',
+// Business-status filter (feedback #4): a short, plain-language layer over the
+// detailed pipeline stages. The team found 13 stage options overwhelming and
+// asked for a handful of business statuses. Each status maps to the stages it
+// covers and is sent as a multi-stage filter (`stages[]`, already supported
+// server-side). The granular stage still shows on every row + the workspace.
+// ("Hold" from the team's wish-list has no matching stage today — it needs a
+// real stage added, deferred per the agreed no-data-change scope.)
+const STATUS_GROUPS: { key: string; label: string; stages: ProcessingStage[] }[] = [
+  {
+    key: 'UNDER_PROCESS',
+    label: 'Under process',
+    stages: [
+      'INTAKE_PENDING',
+      'DOCUMENTS_COLLECTION',
+      'DOCUMENTS_UNDER_REVIEW',
+      'DOCUMENTS_INCOMPLETE',
+      'DOCUMENTS_COMPLETE',
+      'READY_FOR_SUBMISSION',
+    ],
+  },
+  {
+    key: 'SUBMITTED',
+    label: 'Submitted',
+    stages: ['SUBMITTED', 'UNDER_AUTHORITY_REVIEW', 'ADDITIONAL_INFO_REQUESTED', 'DECISION_RECEIVED'],
+  },
+  { key: 'APPEAL', label: 'Appeal', stages: ['APPEAL_IN_PROGRESS'] },
+  { key: 'APPROVED', label: 'Approved', stages: ['APPROVED'] },
+  { key: 'REFUSED', label: 'Refused', stages: ['REJECTED'] },
 ];
 
 const PRIORITIES: ProcessingPriority[] = ['CRITICAL', 'URGENT', 'NORMAL', 'LOW'];
@@ -455,7 +469,7 @@ export default function CasesPage() {
   // Filter state
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [stage, setStage] = useState<ProcessingStage | ''>('');
+  const [statusGroup, setStatusGroup] = useState('');
   const [priority, setPriority] = useState<ProcessingPriority | ''>('');
   const [service, setService] = useState('');
   const [officer, setOfficer] = useState('');
@@ -484,11 +498,14 @@ export default function CasesPage() {
     };
   }, [isManager]);
 
-  const query: ListCasesQuery = useMemo(
-    () => ({
+  const query: ListCasesQuery = useMemo(() => {
+    const statusStages = statusGroup
+      ? STATUS_GROUPS.find((g) => g.key === statusGroup)?.stages ?? []
+      : [];
+    return {
       limit: 200,
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
-      ...(stage ? { stage } : {}),
+      ...(statusStages.length ? { stages: statusStages } : {}),
       ...(priority ? { priority } : {}),
       ...(service ? { service } : {}),
       ...(officer ? { assignedOfficerId: officer } : {}),
@@ -496,9 +513,8 @@ export default function CasesPage() {
       ...(createdTo ? { createdTo } : {}),
       ...(updatedFrom ? { updatedFrom } : {}),
       ...(updatedTo ? { updatedTo } : {}),
-    }),
-    [debouncedSearch, stage, priority, service, officer, createdFrom, createdTo, updatedFrom, updatedTo],
-  );
+    };
+  }, [debouncedSearch, statusGroup, priority, service, officer, createdFrom, createdTo, updatedFrom, updatedTo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -517,12 +533,12 @@ export default function CasesPage() {
     };
   }, [query]);
 
-  const hasActiveFilters = !!(stage || priority || service || officer || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
+  const hasActiveFilters = !!(statusGroup || priority || service || officer || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
   const dateFilterActive = !!(createdFrom || createdTo || updatedFrom || updatedTo);
 
   function clearAll() {
     setSearch('');
-    setStage('');
+    setStatusGroup('');
     setPriority('');
     setService('');
     setOfficer('');
@@ -559,10 +575,10 @@ export default function CasesPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
-            <select className="sos-input" value={stage} onChange={(e) => setStage(e.target.value as ProcessingStage | '')}>
-              <option value="">All stages</option>
-              {STAGES.map((s) => (
-                <option key={s} value={s}>{STAGE_LABEL[s]}</option>
+            <select className="sos-input" value={statusGroup} onChange={(e) => setStatusGroup(e.target.value)} aria-label="Status">
+              <option value="">All statuses</option>
+              {STATUS_GROUPS.map((g) => (
+                <option key={g.key} value={g.key}>{g.label}</option>
               ))}
             </select>
             <select className="sos-input" value={priority} onChange={(e) => setPriority(e.target.value as ProcessingPriority | '')}>

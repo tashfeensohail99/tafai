@@ -986,18 +986,29 @@ export class ProcessingService {
     // Date-range filters. Workflow doc asks for "filters: duration, last
     // activity" — `createdAt` covers intake-date / duration since intake,
     // `updatedAt` covers last-activity (any field change bumps it).
+    //
+    // The date inputs send calendar days (yyyy-mm-dd) in the user's local
+    // (Pakistan, UTC+5, no DST) timezone. Parsing them with bare `new Date()`
+    // anchors to UTC midnight, which shifts the boundary back 5 hours: the
+    // "to" day is excluded entirely and cases created in the early PKT hours
+    // land on the previous day — the "added on the 10th, shows as the 9th"
+    // discrepancy the processing team reported. Anchor to PKT day bounds.
+    const dayStart = (d: string) =>
+      new Date(d.includes('T') ? d : `${d}T00:00:00.000+05:00`);
+    const dayEnd = (d: string) =>
+      new Date(d.includes('T') ? d : `${d}T23:59:59.999+05:00`);
     const createdAtFilter: Prisma.DateTimeFilter | undefined =
       query.createdFrom || query.createdTo
         ? {
-            ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
-            ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+            ...(query.createdFrom ? { gte: dayStart(query.createdFrom) } : {}),
+            ...(query.createdTo ? { lte: dayEnd(query.createdTo) } : {}),
           }
         : undefined;
     const updatedAtFilter: Prisma.DateTimeFilter | undefined =
       query.updatedFrom || query.updatedTo
         ? {
-            ...(query.updatedFrom ? { gte: new Date(query.updatedFrom) } : {}),
-            ...(query.updatedTo ? { lte: new Date(query.updatedTo) } : {}),
+            ...(query.updatedFrom ? { gte: dayStart(query.updatedFrom) } : {}),
+            ...(query.updatedTo ? { lte: dayEnd(query.updatedTo) } : {}),
           }
         : undefined;
     // Multi-stage wins over single stage when both are passed — keeps the

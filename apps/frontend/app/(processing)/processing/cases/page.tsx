@@ -11,6 +11,8 @@ import {
   Phone,
   ArrowUpRight,
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   Send,
   Check,
   StickyNote,
@@ -450,6 +452,9 @@ export default function CasesPage() {
   const [createdTo, setCreatedTo] = useState('');
   const [updatedFrom, setUpdatedFrom] = useState('');
   const [updatedTo, setUpdatedTo] = useState('');
+  // Date filters sit behind a disclosure so the main bar stays uncluttered —
+  // the team found the always-on date pickers confusing and hard to clear.
+  const [showDateFilters, setShowDateFilters] = useState(false);
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 300);
@@ -489,6 +494,7 @@ export default function CasesPage() {
   }, [query]);
 
   const hasActiveFilters = !!(stage || priority || service || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
+  const dateFilterActive = !!(createdFrom || createdTo || updatedFrom || updatedTo);
 
   function clearAll() {
     setSearch('');
@@ -519,9 +525,10 @@ export default function CasesPage() {
               <button
                 type="button"
                 onClick={clearAll}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid var(--sos-border-subtle)', borderRadius: 6, background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 11.5, cursor: 'pointer' }}
+                title="Reset every filter"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', border: '1px solid var(--sos-brand-primary)', borderRadius: 6, background: 'var(--sos-brand-primary-soft)', color: 'var(--sos-brand-primary-strong)', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer' }}
               >
-                <X size={11} /> Clear filters
+                <X size={12} /> Clear all filters
               </button>
             ) : null}
           </div>
@@ -547,22 +554,50 @@ export default function CasesPage() {
             </select>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-            <div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Intake date</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="sos-input" type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} />
-                <input className="sos-input" type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} />
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Last activity</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="sos-input" type="date" value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} />
-                <input className="sos-input" type="date" value={updatedTo} onChange={(e) => setUpdatedTo(e.target.value)} />
-              </div>
-            </div>
+          {/* Date filters live behind a disclosure — collapsed by default so the
+              main bar stays clean. A dot marks when a date filter is active even
+              while collapsed, and "Clear dates" removes just the date range. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setShowDateFilters((v) => !v)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', border: '1px solid var(--sos-border-subtle)', borderRadius: 8, background: dateFilterActive ? 'var(--sos-brand-primary-soft)' : 'transparent', color: dateFilterActive ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-secondary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            >
+              {showDateFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              Date filters
+              {dateFilterActive ? (
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--sos-brand-primary)' }} title="A date filter is active" />
+              ) : null}
+            </button>
+            {dateFilterActive ? (
+              <button
+                type="button"
+                onClick={() => { setCreatedFrom(''); setCreatedTo(''); setUpdatedFrom(''); setUpdatedTo(''); }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', border: '1px solid var(--sos-border-subtle)', borderRadius: 8, background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 11.5, cursor: 'pointer' }}
+              >
+                <X size={12} /> Clear dates
+              </button>
+            ) : null}
           </div>
+
+          {showDateFilters ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Intake date</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input className="sos-input" type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} />
+                  <input className="sos-input" type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>Last activity</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input className="sos-input" type="date" value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} />
+                  <input className="sos-input" type="date" value={updatedTo} onChange={(e) => setUpdatedTo(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </GlassCard>
 

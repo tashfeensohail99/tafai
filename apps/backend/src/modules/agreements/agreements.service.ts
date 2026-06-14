@@ -844,9 +844,36 @@ export class AgreementsService {
 
   async list(query: ListAgreementsQueryDto, userId: string, canViewAll: boolean) {
     const where: Prisma.AgreementWhereInput = { deletedAt: null };
-    if (!canViewAll || query.mine) where.createdByUserId = userId;
+
+    // Visibility: by default a non-view-all user only sees agreements they
+    // created. BUT when the query is scoped to a single lead and the user can
+    // access that lead (its creator/assignee, or has view-all), show ALL of
+    // that lead's agreements — a sales rep was otherwise missing agreements
+    // that Finance (or another rep) drafted for their own lead.
+    let leadScopedAccess = false;
+    if (query.leadId) {
+      where.leadId = query.leadId;
+      if (canViewAll) {
+        leadScopedAccess = true;
+      } else {
+        const lead = await this.prisma.lead.findFirst({
+          where: { id: query.leadId, deletedAt: null },
+          select: {
+            createdByUserId: true,
+            assignedEmployee: { select: { userId: true } },
+          },
+        });
+        leadScopedAccess =
+          !!lead &&
+          (lead.createdByUserId === userId ||
+            lead.assignedEmployee?.userId === userId);
+      }
+    }
+
+    if ((!canViewAll && !leadScopedAccess) || query.mine) {
+      where.createdByUserId = userId;
+    }
     if (query.status && this.isStatus(query.status)) where.status = query.status;
-    if (query.leadId) where.leadId = query.leadId;
     if (query.clientId) where.clientId = query.clientId;
     if (query.search) {
       where.agreementNumber = { contains: query.search.trim(), mode: 'insensitive' };

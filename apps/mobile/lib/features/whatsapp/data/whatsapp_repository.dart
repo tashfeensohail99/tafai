@@ -117,6 +117,21 @@ class WhatsappRepository {
     }
   }
 
+  /// GET /whatsapp/threads/:threadId/messages/:messageId/media-url → { url }.
+  /// Short-lived signed URL for an attachment's bytes — used to show inbound
+  /// images inline and to open videos / documents in the browser (our bearer
+  /// token must never be sent to storage or handed to the browser).
+  Future<String> mediaSignedUrl(String threadId, String messageId) async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/messages/$messageId/media-url',
+      );
+      return res.data!['url'] as String;
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   /// POST /whatsapp/threads/:id/messages/text — only inside the 24h window
   /// (else 400 → use a template).
   Future<ChatMessage> sendText(String threadId, String body) async {

@@ -510,6 +510,96 @@ export class WhatsAppThreadsController {
   }
 
   /**
+   * Return a short-lived signed URL for a media attachment, instead of
+   * streaming the bytes through the backend. The mobile app uses this to
+   * render inbound images inline (Image.network) and to open videos /
+   * documents in the device browser — neither can send our bearer token, so
+   * a self-authorizing signed URL is required. Same key-resolution as
+   * `streamMedia`; for not-yet-cached media we fetch from Meta, cache to S3,
+   * and persist the key so subsequent loads are instant.
+   */
+  @Get(':threadId/messages/:messageId/media-url')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  @AuditDocumentAccess('WhatsAppMedia', 'messageId')
+  async getMediaUrl(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+  ): Promise<{ url: string; mimeType: string | null }> {
+    const caller = await this.buildCallerContext(user);
+    await this.threads.getOrFail(caller, threadId);
+
+    const message = await this.prisma.whatsAppMessage.findUnique({
+      where: { id: messageId },
+      include: { channel: true },
+    });
+    if (!message || message.threadId !== threadId) {
+      throw new HttpException('Message not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Prefer the cached S3 key the media-download worker stored on inbound.
+    let key =
+      message.mediaUrl &&
+      !message.mediaUrl.startsWith('meta:') &&
+      !message.mediaUrl.startsWith('http')
+        ? message.mediaUrl
+        : null;
+
+    // Brochure repair: historical brochure docs carry a permanent program key.
+    if (!key) {
+      const brochureProgramKey = (
+        message.payload as { brochureProgramKey?: string } | null
+      )?.brochureProgramKey;
+      if (brochureProgramKey) {
+        const brochure = await this.prisma.botBrochure.findUnique({
+          where: { programKey: brochureProgramKey },
+          select: { s3Key: true },
+        });
+        if (brochure) key = brochure.s3Key;
+      }
+    }
+
+    // Not cached — fetch from Meta, cache to S3, and persist for next time.
+    if (!key) {
+      type MediaPayload = { id?: string };
+      const p = message.payload as Record<string, MediaPayload> | null;
+      const typeKey = message.type.toLowerCase();
+      const metaMediaId =
+        p?.[typeKey]?.id ??
+        (message.mediaUrl?.startsWith('meta:')
+          ? message.mediaUrl.slice(5)
+          : null);
+      if (!metaMediaId) {
+        throw new HttpException(
+          'No media for this message',
+          HttpStatus.UNPROCESSABLE_ENTITY,
+        );
+      }
+      const client = this.metaFactory.forChannel(message.channel);
+      const { url: cdnUrl, mime_type } = await client.getMediaUrl(metaMediaId);
+      const bytes = await client.downloadMedia(cdnUrl);
+      const mime =
+        message.mediaMimeType ?? mime_type ?? 'application/octet-stream';
+      const up = await this.storage.upload(
+        bytes,
+        mime,
+        'whatsapp-media',
+        `${typeKey}.${mime.split('/')[1] ?? 'bin'}`,
+      );
+      key = up.key;
+      await this.prisma.whatsAppMessage.update({
+        where: { id: message.id },
+        data: { mediaUrl: key },
+      });
+    }
+
+    return {
+      url: await this.storage.getSignedUrl(key),
+      mimeType: message.mediaMimeType,
+    };
+  }
+
+  /**
    * Re-trigger the media-download worker for a single message. Useful when
    * the original download failed (worker crash, transient Meta error,
    * temporary S3 outage) and the bytes are still fetchable from Meta — for

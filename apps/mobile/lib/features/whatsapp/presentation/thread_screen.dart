@@ -11,6 +11,7 @@ import 'package:record/record.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
+import '../../../core/util/launchers.dart';
 import '../../../core/widgets/app_states.dart';
 import '../../calls/application/call_controller.dart';
 import '../../leads/presentation/lead_detail_screen.dart';
@@ -553,7 +554,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
           );
         }
         final msg = state.items[hasHeader ? i - 1 : i];
-        return _Bubble(message: msg);
+        return _Bubble(message: msg, threadId: _threadId);
       },
     );
   }
@@ -728,7 +729,8 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
 
 class _Bubble extends StatelessWidget {
   final ChatMessage message;
-  const _Bubble({required this.message});
+  final String threadId;
+  const _Bubble({required this.message, required this.threadId});
 
   @override
   Widget build(BuildContext context) {
@@ -802,34 +804,7 @@ class _Bubble extends StatelessWidget {
 
   Widget _content(Color fg) {
     if (message.isMedia) {
-      final icon = switch (message.type) {
-        'IMAGE' => Icons.photo_outlined,
-        'VIDEO' => Icons.videocam_outlined,
-        'AUDIO' => Icons.mic_outlined,
-        'DOCUMENT' => Icons.description_outlined,
-        _ => Icons.attachment,
-      };
-      final label = switch (message.type) {
-        'IMAGE' => 'Photo',
-        'VIDEO' => 'Video',
-        'AUDIO' => 'Voice message',
-        'DOCUMENT' => 'Document',
-        _ => 'Attachment',
-      };
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 16, color: fg),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              message.body?.isNotEmpty == true ? message.body! : label,
-              style: TextStyle(color: fg, fontSize: AppTokens.fontSizeSm, height: 1.35),
-            ),
-          ),
-        ],
-      );
+      return _MediaContent(threadId: threadId, message: message, fg: fg);
     }
     final text = message.body?.isNotEmpty == true
         ? message.body!
@@ -848,4 +823,153 @@ class _Bubble extends StatelessWidget {
     };
     return Icon(icon, size: 13, color: color);
   }
+}
+
+/// Renders a message attachment. Inbound images show inline (tap → full view in
+/// the browser); video / document / audio show a tappable chip that opens the
+/// file in the browser. The bytes live behind a short-lived signed URL fetched
+/// from the backend — the app's bearer token can't be sent to storage or the
+/// browser, so a self-authorizing URL is required.
+class _MediaContent extends ConsumerStatefulWidget {
+  final String threadId;
+  final ChatMessage message;
+  final Color fg;
+  const _MediaContent({
+    required this.threadId,
+    required this.message,
+    required this.fg,
+  });
+
+  @override
+  ConsumerState<_MediaContent> createState() => _MediaContentState();
+}
+
+class _MediaContentState extends ConsumerState<_MediaContent> {
+  String? _url;
+  bool _loading = false;
+
+  bool get _isImage =>
+      widget.message.type == 'IMAGE' || widget.message.type == 'STICKER';
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isImage) _fetchUrl();
+  }
+
+  Future<String?> _fetchUrl() async {
+    if (_url != null) return _url;
+    if (mounted) setState(() => _loading = true);
+    try {
+      final url = await ref
+          .read(whatsappRepositoryProvider)
+          .mediaSignedUrl(widget.threadId, widget.message.id);
+      if (mounted) setState(() => _url = url);
+      return url;
+    } catch (_) {
+      return null;
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _open() async {
+    final url = _url ?? await _fetchUrl();
+    if (url != null) {
+      await openExternalUrl(url);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load the attachment.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.message;
+    final caption = (m.body?.isNotEmpty ?? false) ? m.body : null;
+
+    if (_isImage) {
+      return GestureDetector(
+        onTap: _open,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: _url != null
+                  ? Image.network(
+                      _url!,
+                      width: 230,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _box(
+                          Icons.broken_image_outlined, 'Photo unavailable'),
+                      loadingBuilder: (ctx, child, p) => p == null
+                          ? child
+                          : _box(Icons.photo_outlined, 'Loading…'),
+                    )
+                  : _box(Icons.photo_outlined, _loading ? 'Loading…' : 'Photo'),
+            ),
+            if (caption != null) ...[
+              const SizedBox(height: 4),
+              Text(caption,
+                  style: TextStyle(
+                      color: widget.fg,
+                      fontSize: AppTokens.fontSizeSm,
+                      height: 1.35)),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final (icon, label) = switch (m.type) {
+      'VIDEO' => (Icons.play_circle_outline, 'Video'),
+      'AUDIO' => (Icons.mic_outlined, 'Voice message'),
+      'DOCUMENT' => (Icons.description_outlined, 'Document'),
+      _ => (Icons.attachment, 'Attachment'),
+    };
+    return InkWell(
+      onTap: _open,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _loading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : Icon(icon, size: 18, color: widget.fg),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              caption ?? label,
+              style: TextStyle(
+                  color: widget.fg,
+                  fontSize: AppTokens.fontSizeSm,
+                  height: 1.35),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(Icons.open_in_new, size: 13, color: widget.fg),
+        ],
+      ),
+    );
+  }
+
+  Widget _box(IconData icon, String label) => Container(
+        width: 230,
+        height: 150,
+        color: Colors.black.withValues(alpha: 0.08),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: widget.fg),
+            const SizedBox(height: 4),
+            Text(label, style: TextStyle(color: widget.fg, fontSize: 11)),
+          ],
+        ),
+      );
 }

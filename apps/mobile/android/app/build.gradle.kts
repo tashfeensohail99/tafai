@@ -37,7 +37,17 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // flutter_webrtc requires API 23+; CallKit full-screen ring wants 23+ too.
         minSdk = maxOf(23, flutter.minSdkVersion)
-        targetSdk = flutter.targetSdkVersion
+        // Pinned to 33 (Android 13) — do NOT change back to flutter.targetSdkVersion
+        // (currently 36). On API 34+ Android stopped auto-granting
+        // USE_FULL_SCREEN_INTENT to non-dialer apps, so the incoming-call screen
+        // rings but never shows the accept/reject dialer until the user manually
+        // turns on "Full screen notifications" (and MIUI also blocks the overlay).
+        // Targeting 33 grants the full-screen intent at install, so the ringing
+        // call UI works on every phone with zero per-device toggling. Safe because
+        // the app is sideloaded (no Play Store targetSdk floor) and the calling /
+        // foreground-service features run fine at 33. Raising this re-breaks the
+        // call dialer — see memory tafai-mobile-call-fsi.
+        targetSdk = 33
         multiDexEnabled = true
         versionCode = flutter.versionCode
         versionName = flutter.versionName

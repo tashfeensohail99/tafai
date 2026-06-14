@@ -1,7 +1,7 @@
 name: tafsheen_mobile
 description: Tafsheen Immigration Solutions — Mobile App
 publish_to: 'none'
-version: 1.0.13+15
+version: 1.0.14+16
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -37,9 +37,12 @@ dependencies:
   # File picking (media send, lead file upload)
   file_picker: ^8.1.0
 
-  # In-app PDF viewer — renders agreement PDFs natively (pinch-zoom, page
-  # swipe) instead of bouncing the user out to an external browser.
-  flutter_pdfview: ^1.3.2
+  # In-app PDF viewer — renders agreement PDFs via pdfx (native PdfRenderer →
+  # Flutter texture, pinch-zoom + scroll). We use pdfx, NOT flutter_pdfview:
+  # the latter paints into a SurfaceView that some Android skins (Xiaomi /
+  # HyperOS on Android 15) composite as hidden, so the page count loaded but
+  # the page itself never rendered.
+  pdfx: ^2.0.0
 
   # ── In-app voice calling (WhatsApp Business Calling softphone) ──────────────
   # WebRTC engine — mic capture, peer connection, remote audio playback.

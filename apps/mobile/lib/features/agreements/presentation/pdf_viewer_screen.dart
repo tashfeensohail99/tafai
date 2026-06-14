@@ -1,17 +1,19 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_pdfview/flutter_pdfview.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:pdfx/pdfx.dart';
 
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/launchers.dart';
 
 /// In-app PDF viewer for agreement documents. The PDF lives behind a short-lived
-/// signed URL, so we download the bytes to a temp file and render them natively
-/// (pinch-zoom, page swipe) rather than launching an external browser. Falls
-/// back to "Open in browser" if the download or render fails.
+/// signed URL, so we download the bytes and render them with **pdfx** — which
+/// rasterises pages through Android's native PdfRenderer into a Flutter texture
+/// (pinch-zoom + scroll). We deliberately do NOT use flutter_pdfview: it paints
+/// into a SurfaceView that some Android skins (Xiaomi / HyperOS on Android 15)
+/// composite as hidden, so the page count loaded but the page never appeared.
+/// Falls back to "Open in browser" if the download or render fails.
 class PdfViewerScreen extends StatefulWidget {
   final String url;
   final String title;
@@ -22,22 +24,27 @@ class PdfViewerScreen extends StatefulWidget {
 }
 
 class _PdfViewerScreenState extends State<PdfViewerScreen> {
-  String? _path;
+  PdfControllerPinch? _controller;
   String? _error;
   int _pages = 0;
-  int _current = 0;
+  int _current = 1;
 
   @override
   void initState() {
     super.initState();
-    _download();
+    _load();
   }
 
-  Future<void> _download() async {
+  Future<void> _load() async {
+    // Tear down any previous controller (e.g. on Retry) before refetching.
+    final previous = _controller;
     setState(() {
       _error = null;
-      _path = null;
+      _controller = null;
+      _pages = 0;
+      _current = 1;
     });
+    previous?.dispose();
     try {
       // Plain Dio — no app interceptors/auth. The signed URL carries its own
       // authorization, and our bearer token must never be sent to storage.
@@ -45,19 +52,29 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         widget.url,
         options: Options(responseType: ResponseType.bytes),
       );
-      final dir = await getTemporaryDirectory();
-      final file = File(
-        '${dir.path}/agreement_${DateTime.now().millisecondsSinceEpoch}.pdf',
+      final bytes = Uint8List.fromList(res.data ?? const <int>[]);
+      final controller = PdfControllerPinch(
+        document: PdfDocument.openData(bytes),
       );
-      await file.writeAsBytes(res.data ?? const <int>[]);
-      if (mounted) setState(() => _path = file.path);
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+      setState(() => _controller = controller);
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not load the PDF.');
     }
   }
 
   @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = _controller;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title, overflow: TextOverflow.ellipsis),
@@ -73,31 +90,33 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         ],
       ),
       body: _error != null
-          ? _ErrorView(onRetry: _download, onOpenExternal: () => openExternalUrl(widget.url))
-          : _path == null
+          ? _ErrorView(
+              onRetry: _load,
+              onOpenExternal: () => openExternalUrl(widget.url),
+            )
+          : controller == null
               ? const Center(child: CircularProgressIndicator())
-              : PDFView(
-                  filePath: _path!,
-                  swipeHorizontal: false,
-                  onError: (_) {
+              : PdfViewPinch(
+                  controller: controller,
+                  onDocumentLoaded: (doc) {
+                    if (mounted) setState(() => _pages = doc.pagesCount);
+                  },
+                  onDocumentError: (_) {
                     if (mounted) {
                       setState(() => _error = 'Could not display the PDF.');
                     }
                   },
-                  onRender: (pages) {
-                    if (mounted) setState(() => _pages = pages ?? 0);
-                  },
-                  onPageChanged: (page, total) {
-                    if (mounted) setState(() => _current = page ?? 0);
+                  onPageChanged: (page) {
+                    if (mounted) setState(() => _current = page);
                   },
                 ),
-      bottomNavigationBar: (_error == null && _path != null && _pages > 0)
+      bottomNavigationBar: (_error == null && controller != null && _pages > 0)
           ? SafeArea(
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: AppTokens.space2),
                 child: Center(
                   child: Text(
-                    'Page ${_current + 1} of $_pages',
+                    'Page $_current of $_pages',
                     style: const TextStyle(
                         fontSize: 12, color: AppTokens.textMutedLight),
                   ),

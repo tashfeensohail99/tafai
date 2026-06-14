@@ -1,7 +1,7 @@
 name: tafsheen_mobile
 description: Tafsheen Immigration Solutions — Mobile App
 publish_to: 'none'
-version: 1.0.16+18
+version: 1.0.17+19
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -42,6 +42,15 @@ dependencies:
   # (texture) failed to paint on Xiaomi/HyperOS Android 15 — the page count
   # loaded but the page never rendered — so we open externally where it's
   # reliable, and deliberately bundle no in-app PDF dependency.
+
+  # Chat media. cached_network_image caches inbound photos to disk (keyed by
+  # message id, since the signed URL changes per fetch) so they don't
+  # re-download on every scroll. video_player (ExoPlayer → Flutter texture —
+  # reliable where the PDF SurfaceView wasn't) + chewie give in-app video
+  # playback with play / seek / fullscreen controls, like WhatsApp.
+  cached_network_image: ^3.3.0
+  video_player: ^2.8.0
+  chewie: ^1.7.0
 
   # ── In-app voice calling (WhatsApp Business Calling softphone) ──────────────
   # WebRTC engine — mic capture, peer connection, remote audio playback.

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,6 +22,7 @@ import '../domain/wa_message.dart';
 import '../domain/wa_thread.dart';
 import 'media_preview_screen.dart';
 import 'quick_reply_sheet.dart';
+import 'video_player_screen.dart';
 import 'template_picker_sheet.dart';
 
 class ThreadScreen extends ConsumerStatefulWidget {
@@ -844,6 +846,11 @@ class _MediaContent extends ConsumerStatefulWidget {
   ConsumerState<_MediaContent> createState() => _MediaContentState();
 }
 
+/// Session cache of signed media URLs by message id, so scrolling the thread
+/// doesn't refetch a fresh URL for every image each time it scrolls back in.
+/// (The image bytes are also disk-cached by CachedNetworkImage via cacheKey.)
+final Map<String, String> _mediaUrlCache = {};
+
 class _MediaContentState extends ConsumerState<_MediaContent> {
   String? _url;
   bool _loading = false;
@@ -859,11 +866,17 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
 
   Future<String?> _fetchUrl() async {
     if (_url != null) return _url;
+    final cached = _mediaUrlCache[widget.message.id];
+    if (cached != null) {
+      if (mounted) setState(() => _url = cached);
+      return cached;
+    }
     if (mounted) setState(() => _loading = true);
     try {
       final url = await ref
           .read(whatsappRepositoryProvider)
           .mediaSignedUrl(widget.threadId, widget.message.id);
+      _mediaUrlCache[widget.message.id] = url;
       if (mounted) setState(() => _url = url);
       return url;
     } catch (_) {
@@ -875,12 +888,22 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
 
   Future<void> _open() async {
     final url = _url ?? await _fetchUrl();
-    if (url != null) {
-      await openExternalUrl(url);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not load the attachment.')),
+    if (url == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not load the attachment.')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    // Videos play in-app (WhatsApp-style); everything else opens in the browser.
+    if (widget.message.type == 'VIDEO') {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => VideoPlayerScreen(url: url)),
       );
+    } else {
+      await openExternalUrl(url);
     }
   }
 
@@ -898,15 +921,15 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: _url != null
-                  ? Image.network(
-                      _url!,
+                  ? CachedNetworkImage(
+                      imageUrl: _url!,
+                      cacheKey: m.id,
                       width: 230,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _box(
+                      errorWidget: (_, __, ___) => _box(
                           Icons.broken_image_outlined, 'Photo unavailable'),
-                      loadingBuilder: (ctx, child, p) => p == null
-                          ? child
-                          : _box(Icons.photo_outlined, 'Loading…'),
+                      placeholder: (_, __) =>
+                          _box(Icons.photo_outlined, 'Loading…'),
                     )
                   : _box(Icons.photo_outlined, _loading ? 'Loading…' : 'Photo'),
             ),
@@ -923,8 +946,42 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
       );
     }
 
+    if (m.type == 'VIDEO') {
+      return GestureDetector(
+        onTap: _open,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 230,
+                height: 150,
+                color: Colors.black.withValues(alpha: 0.12),
+                alignment: Alignment.center,
+                child: _loading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.play_circle_fill,
+                        size: 54, color: Colors.white),
+              ),
+            ),
+            if (caption != null) ...[
+              const SizedBox(height: 4),
+              Text(caption,
+                  style: TextStyle(
+                      color: widget.fg,
+                      fontSize: AppTokens.fontSizeSm,
+                      height: 1.35)),
+            ],
+          ],
+        ),
+      );
+    }
+
     final (icon, label) = switch (m.type) {
-      'VIDEO' => (Icons.play_circle_outline, 'Video'),
       'AUDIO' => (Icons.mic_outlined, 'Voice message'),
       'DOCUMENT' => (Icons.description_outlined, 'Document'),
       _ => (Icons.attachment, 'Attachment'),

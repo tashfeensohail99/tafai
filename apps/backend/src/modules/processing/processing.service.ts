@@ -78,6 +78,7 @@ import {
   ReviewDocumentDto,
   SendCommunicationDto,
   UpdateAttestationDto,
+  UpdateEmailSignatureDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
   UpdateDocumentTemplateDto,
@@ -3273,6 +3274,10 @@ export class ProcessingService {
         content: dto.content,
         channelsSent: dto.channelsSent,
         sentByUserId: user.id,
+        // Record the exact email recipients for the case's sent-email history.
+        toEmail: dto.toEmail ?? null,
+        ccEmails: dto.cc ?? [],
+        bccEmails: dto.bcc ?? [],
       },
     });
 
@@ -3326,10 +3331,20 @@ export class ProcessingService {
     // request still succeeds and the CaseCommunication row is preserved.
     if (channelsUpper.includes('EMAIL')) {
       try {
+        const sender = await this.prisma.userAccount.findUnique({
+          where: { id: user.id },
+          select: { emailSignature: true },
+        });
         const result = await this.sendCaseEmailToClient(
           caseId,
           dto.subject,
           dto.content,
+          {
+            toEmail: dto.toEmail,
+            cc: dto.cc,
+            bcc: dto.bcc,
+            signatureText: sender?.emailSignature ?? undefined,
+          },
         );
         if (!result.ok) {
           deliveryWarnings.push(`Email send skipped: ${result.reason}`);
@@ -3756,21 +3771,90 @@ export class ProcessingService {
     caseId: string,
     subject: string,
     body: string,
+    opts?: {
+      /** Override the To address (defaults to the client's on-file email). */
+      toEmail?: string;
+      cc?: string[];
+      bcc?: string[];
+      /** Sender's saved signature, appended to the email body. */
+      signatureText?: string;
+    },
   ): Promise<{ ok: boolean; reason?: string }> {
     const text = (body ?? '').trim();
     if (!text) return { ok: false, reason: 'empty body' };
     const contact = await this.resolveCaseClientContact(caseId);
     if (!contact) return { ok: false, reason: 'case not found' };
-    if (!contact.email) {
+    const to = (opts?.toEmail ?? contact.email ?? '').trim();
+    if (!to) {
       return { ok: false, reason: 'client has no email on file' };
     }
     const ok = await this.email.sendCaseMessageToClient({
-      to: contact.email,
+      to,
+      cc: opts?.cc,
+      bcc: opts?.bcc,
       clientName: contact.name,
       subject: subject?.trim() || 'Update on your application',
       bodyText: text,
+      signatureText: opts?.signatureText,
     });
     return ok ? { ok: true } : { ok: false, reason: 'email delivery failed' };
+  }
+
+  /** The current user's saved email signature (processing composer). */
+  async getMyEmailSignature(
+    user: RequestUser,
+  ): Promise<{ signature: string | null }> {
+    const u = await this.prisma.userAccount.findUnique({
+      where: { id: user.id },
+      select: { emailSignature: true },
+    });
+    return { signature: u?.emailSignature ?? null };
+  }
+
+  /** Save (or clear, when blank) the current user's email signature. */
+  async setMyEmailSignature(
+    user: RequestUser,
+    dto: UpdateEmailSignatureDto,
+  ): Promise<{ signature: string | null }> {
+    const sig = dto.signature?.trim() ? dto.signature.trim() : null;
+    await this.prisma.userAccount.update({
+      where: { id: user.id },
+      data: { emailSignature: sig },
+    });
+    return { signature: sig };
+  }
+
+  /**
+   * Sent-email history for a case — every EMAIL communication, newest first.
+   * Backs the composer's "Previously sent" record (feedback #11).
+   */
+  async listCaseEmails(caseId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const rows = await this.prisma.caseCommunication.findMany({
+      where: { caseId, channelsSent: { has: 'EMAIL' } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        subject: true,
+        content: true,
+        toEmail: true,
+        ccEmails: true,
+        bccEmails: true,
+        createdAt: true,
+        sentBy: { select: { email: true } },
+      },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      subject: r.subject,
+      content: r.content,
+      toEmail: r.toEmail,
+      ccEmails: r.ccEmails,
+      bccEmails: r.bccEmails,
+      createdAt: r.createdAt,
+      sentByEmail: r.sentBy?.email ?? null,
+    }));
   }
 
   async sendCaseWhatsApp(caseId: string, body: string, user: RequestUser) {

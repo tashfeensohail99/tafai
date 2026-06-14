@@ -45,9 +45,13 @@ import {
   fetchProcessingCases,
   fetchProcessingOfficers,
   sendCaseCommunication,
+  fetchCaseEmails,
+  getMyEmailSignature,
+  saveMyEmailSignature,
   casePersonName,
   type ApiProcessingCaseListItem,
   type ApiProcessingOfficer,
+  type ApiCaseEmail,
   type ProcessingStage,
   type ProcessingPriority,
   type ListCasesQuery,
@@ -144,14 +148,53 @@ function EmailComposeModal({
   onClose: () => void;
 }) {
   const name = casePersonName(caseItem);
-  const email = caseItem.client.email ?? caseItem.lead.email ?? '';
+  const defaultEmail = caseItem.client.email ?? caseItem.lead.email ?? '';
+
+  const [to, setTo] = useState(defaultEmail);
+  const [cc, setCc] = useState('');
+  const [bcc, setBcc] = useState('');
+  const [showCcBcc, setShowCcBcc] = useState(false);
   const [subject, setSubject] = useState('');
   const [content, setContent] = useState('');
+
+  // Per-user signature: loaded once, appended server-side; editable inline.
+  const [signature, setSignature] = useState<string | null>(null);
+  const [sigOpen, setSigOpen] = useState(false);
+  const [sigDraft, setSigDraft] = useState('');
+  const [savingSig, setSavingSig] = useState(false);
+
+  // Sent-email history for this case (feedback #11).
+  const [emails, setEmails] = useState<ApiCaseEmail[]>([]);
+  const [histOpen, setHistOpen] = useState(false);
+
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<{ warnings: string[] } | null>(null);
 
-  const canSend = subject.trim().length > 0 && content.trim().length > 0 && !sending;
+  useEffect(() => {
+    let cancelled = false;
+    getMyEmailSignature()
+      .then((r) => {
+        if (cancelled) return;
+        setSignature(r.signature);
+        setSigDraft(r.signature ?? '');
+      })
+      .catch(() => {});
+    fetchCaseEmails(caseItem.id)
+      .then((r) => !cancelled && setEmails(r))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [caseItem.id]);
+
+  const parseList = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+  const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  const ccList = parseList(cc);
+  const bccList = parseList(bcc);
+  const recipientsValid = emailOk(to.trim()) && ccList.every(emailOk) && bccList.every(emailOk);
+  const canSend =
+    subject.trim().length > 0 && content.trim().length > 0 && recipientsValid && !sending;
 
   async function send() {
     if (!canSend) return;
@@ -162,12 +205,29 @@ function EmailComposeModal({
         subject: subject.trim(),
         content: content.trim(),
         channelsSent: ['EMAIL'],
+        toEmail: to.trim(),
+        cc: ccList,
+        bcc: bccList,
       });
       setDone({ warnings: res.deliveryWarnings ?? [] });
+      fetchCaseEmails(caseItem.id).then(setEmails).catch(() => {});
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Failed to send email');
     } finally {
       setSending(false);
+    }
+  }
+
+  async function saveSignature() {
+    setSavingSig(true);
+    try {
+      const r = await saveMyEmailSignature(sigDraft);
+      setSignature(r.signature);
+      setSigOpen(false);
+    } catch {
+      // leave the editor open so the draft isn't lost on a transient failure
+    } finally {
+      setSavingSig(false);
     }
   }
 
@@ -204,7 +264,7 @@ function EmailComposeModal({
             </div>
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Email {name}</div>
-              <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>{email || 'No email on file'}</div>
+              <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>Sent from Tashfeen · logged on the case</div>
             </div>
           </div>
           <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--sos-text-muted)' }}>
@@ -217,7 +277,7 @@ function EmailComposeModal({
             <Check size={36} style={{ color: 'var(--sos-status-success)', marginBottom: 8 }} />
             <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Email sent</div>
             <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', marginTop: 4 }}>
-              Sent to <strong>{email}</strong> and logged on the case.
+              Sent to <strong>{to}</strong>{ccList.length ? ` (+${ccList.length} cc)` : ''} and logged on the case.
             </div>
             {done.warnings.length > 0 ? (
               <div className="sos-banner sos-banner--warning" style={{ marginTop: 12, textAlign: 'left' }}>
@@ -230,6 +290,32 @@ function EmailComposeModal({
           </div>
         ) : (
           <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* To + Cc/Bcc */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label className="sos-label">To</label>
+                <button type="button" onClick={() => setShowCcBcc((v) => !v)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--sos-brand-primary-strong)', fontSize: 11.5, fontWeight: 600 }}>
+                  {showCcBcc ? 'Hide Cc/Bcc' : 'Add Cc/Bcc'}
+                </button>
+              </div>
+              <input className="sos-input" value={to} onChange={(e) => setTo(e.target.value)} placeholder="client@email.com" />
+              {to.trim() && !emailOk(to.trim()) ? (
+                <div style={{ fontSize: 11, color: 'var(--sos-status-danger)', marginTop: 3 }}>Enter a valid email address.</div>
+              ) : null}
+            </div>
+            {showCcBcc ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div>
+                  <label className="sos-label">Cc</label>
+                  <input className="sos-input" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="comma-separated" />
+                </div>
+                <div>
+                  <label className="sos-label">Bcc</label>
+                  <input className="sos-input" value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="comma-separated" />
+                </div>
+              </div>
+            ) : null}
+
             <div>
               <label className="sos-label">Subject</label>
               <input
@@ -250,15 +336,57 @@ function EmailComposeModal({
                 rows={6}
               />
             </div>
+
+            {/* Signature — auto-appended to the email; editable inline */}
+            <div style={{ border: '1px solid var(--sos-border-subtle)', borderRadius: 'var(--sos-radius-md)', padding: '8px 12px' }}>
+              <button type="button" onClick={() => setSigOpen((v) => !v)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--sos-text-secondary)', fontSize: 12.5, fontWeight: 600 }}>
+                <span>Signature {signature ? '· auto-appended' : '· none set'}</span>
+                {sigOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {sigOpen ? (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <textarea className="sos-textarea" value={sigDraft} onChange={(e) => setSigDraft(e.target.value)} placeholder={'e.g.\nAhmed Khan\nProcessing Officer\nTashfeen Immigration · +92 …'} rows={4} />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <SecondaryButton onClick={() => { setSigDraft(signature ?? ''); setSigOpen(false); }} disabled={savingSig}>Cancel</SecondaryButton>
+                    <PrimaryButton onClick={saveSignature} disabled={savingSig} iconLeft={savingSig ? <Loader2 size={14} className="sos-spin" /> : undefined}>
+                      {savingSig ? 'Saving…' : 'Save signature'}
+                    </PrimaryButton>
+                  </div>
+                </div>
+              ) : signature ? (
+                <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sos-text-muted)', whiteSpace: 'pre-wrap' }}>{signature}</div>
+              ) : null}
+            </div>
+
             {err ? <div className="sos-banner sos-banner--danger">{err}</div> : null}
-            {!email ? (
-              <div className="sos-banner sos-banner--warning">This client has no email on file.</div>
+
+            {/* Sent-email history for this case */}
+            {emails.length > 0 ? (
+              <div style={{ border: '1px solid var(--sos-border-subtle)', borderRadius: 'var(--sos-radius-md)', padding: '8px 12px' }}>
+                <button type="button" onClick={() => setHistOpen((v) => !v)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--sos-text-secondary)', fontSize: 12.5, fontWeight: 600 }}>
+                  <span>Previously sent ({emails.length})</span>
+                  {histOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                {histOpen ? (
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 200, overflowY: 'auto' }}>
+                    {emails.map((e) => (
+                      <div key={e.id} style={{ borderTop: '1px solid var(--sos-border-subtle)', paddingTop: 6 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{e.subject || '(no subject)'}</div>
+                        <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+                          To {e.toEmail || '—'}{e.ccEmails.length ? ` · cc ${e.ccEmails.length}` : ''} · {fmtRelative(e.createdAt)}{e.sentByEmail ? ` · ${e.sentByEmail}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
+
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <SecondaryButton onClick={onClose} disabled={sending}>Cancel</SecondaryButton>
               <PrimaryButton
                 onClick={send}
-                disabled={!canSend || !email}
+                disabled={!canSend}
                 iconLeft={sending ? <Loader2 size={14} className="sos-spin" /> : <Send size={14} />}
               >
                 {sending ? 'Sending…' : 'Send email'}

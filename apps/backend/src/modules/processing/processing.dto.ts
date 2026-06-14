@@ -696,6 +696,33 @@ export class SendCommunicationDto {
 
   @IsString({ each: true })
   channelsSent!: string[]; // ['PORTAL', 'WHATSAPP', 'EMAIL']
+
+  // Email composer (feedback #7-11). All optional — when omitted the email
+  // goes to the client's on-file address with no CC/BCC, as before.
+  /** Override the To address (e.g. a different contact for this client). */
+  @IsOptional()
+  @IsEmail()
+  toEmail?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsEmail({}, { each: true })
+  @MaxLength(254, { each: true })
+  cc?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsEmail({}, { each: true })
+  @MaxLength(254, { each: true })
+  bcc?: string[];
+}
+
+/** Save/clear the current user's email signature (processing composer). */
+export class UpdateEmailSignatureDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  signature?: string;
 }
 
 // ---------------------------------------------------------------------------

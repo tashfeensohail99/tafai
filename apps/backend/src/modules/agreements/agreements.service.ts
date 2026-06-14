@@ -738,17 +738,30 @@ export class AgreementsService {
     return updated;
   }
 
-  /** Signed URL for the generated final PDF (Finance / Sales download). */
+  /**
+   * Signed URL for an agreement PDF.
+   *
+   * Approved agreements serve their official, locked PDF (generated at approve
+   * time). Not-yet-approved ones (DRAFT / SUBMITTED / REJECTED) have no stored
+   * PDF, so we render the current document on the fly — this mirrors the web's
+   * preview endpoint and lets Sales view a draft in the app. The preview is
+   * written to a stable per-agreement key (overwritten each view, so orphan
+   * files never pile up) and is deliberately NOT recorded as generatedPdfKey —
+   * it must never be mistaken for the locked, approved document.
+   */
   async getPdfUrl(id: string): Promise<{ url: string }> {
     const a = await this.prisma.agreement.findFirst({
       where: { id, deletedAt: null },
       select: { generatedPdfKey: true },
     });
     if (!a) throw new NotFoundException('Agreement not found');
-    if (!a.generatedPdfKey) {
-      throw new BadRequestException('No generated PDF yet — approve the agreement first.');
+    if (a.generatedPdfKey) {
+      return { url: await this.storage.getSignedUrl(a.generatedPdfKey) };
     }
-    return { url: await this.storage.getSignedUrl(a.generatedPdfKey) };
+    const buffer = await this.previewPdf(id);
+    const key = `agreements/preview/${id}.pdf`;
+    await this.storage.uploadAt(key, buffer, 'application/pdf');
+    return { url: await this.storage.getSignedUrl(key) };
   }
 
   /**

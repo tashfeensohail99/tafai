@@ -8,8 +8,8 @@ import '../../../core/widgets/badges.dart';
 import '../data/agreements_providers.dart';
 import '../data/agreements_repository.dart';
 import '../domain/agreement.dart';
+import '../../../core/util/launchers.dart';
 import 'agreement_detail_screen.dart';
-import 'pdf_viewer_screen.dart';
 
 /// Read-only list of agreements for a lead, with tap-to-view-detail.
 class AgreementsScreen extends ConsumerWidget {
@@ -79,11 +79,12 @@ class _AgreementCardState extends ConsumerState<_AgreementCard> {
           .read(agreementsRepositoryProvider)
           .pdfUrl(widget.agreement.id);
       if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PdfViewerScreen(url: url, title: 'Agreement'),
-        ),
-      );
+      final ok = await openExternalUrl(url);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the PDF.')),
+        );
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

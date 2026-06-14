@@ -8,7 +8,7 @@ import '../../../core/widgets/badges.dart';
 import '../data/agreements_providers.dart';
 import '../data/agreements_repository.dart';
 import '../domain/agreement.dart';
-import 'pdf_viewer_screen.dart';
+import '../../../core/util/launchers.dart';
 
 Color _statusColor(String status) => switch (status) {
       'DRAFT' => AppTokens.statusNeutral,
@@ -58,12 +58,12 @@ class _AgreementDetailScreenState extends ConsumerState<AgreementDetailScreen> {
       final url =
           await ref.read(agreementsRepositoryProvider).pdfUrl(widget.summary.id);
       if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) =>
-              PdfViewerScreen(url: url, title: widget.summary.title),
-        ),
-      );
+      final ok = await openExternalUrl(url);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the PDF.')),
+        );
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

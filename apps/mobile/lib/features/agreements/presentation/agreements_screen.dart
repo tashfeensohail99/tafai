@@ -8,6 +8,7 @@ import '../../../core/widgets/badges.dart';
 import '../data/agreements_providers.dart';
 import '../data/agreements_repository.dart';
 import '../domain/agreement.dart';
+import 'agreement_detail_screen.dart';
 import 'pdf_viewer_screen.dart';
 
 /// Read-only list of agreements for a lead, with tap-to-view-detail.
@@ -100,7 +101,14 @@ class _AgreementCardState extends ConsumerState<_AgreementCard> {
     final a = widget.agreement;
     return Card(
       margin: EdgeInsets.zero,
-      child: Padding(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => AgreementDetailScreen(summary: a),
+          ),
+        ),
+        child: Padding(
         padding: const EdgeInsets.all(AppTokens.space4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -172,6 +180,7 @@ class _AgreementCardState extends ConsumerState<_AgreementCard> {
                     ),
             ),
           ],
+        ),
         ),
       ),
     );

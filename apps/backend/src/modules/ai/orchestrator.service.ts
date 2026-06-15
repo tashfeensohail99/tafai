@@ -1001,7 +1001,6 @@ export class OrchestratorService {
       confident,
       strictGate,
       leadFirstName,
-      agentFirstName,
       isFirstBotReply,
       isBareGreeting,
     } = opts;
@@ -1010,10 +1009,12 @@ export class OrchestratorService {
     // House welcome template — used on the very first bot reply to a thread.
     // Names the human agent so the customer feels they're talking to a real
     // person on a real team, not a bare-bones bot.
-    const agent = (agentFirstName ?? '').trim();
-    const welcomeLead = agent
-      ? `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}! I'm ${agent}, Immigration Solutions Associate."`
-      : `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}!"`;
+    // Neutral identity — the bot does NOT introduce itself as a specific human.
+    // Naming the assigned agent caused "wrong rep" complaints: the name is the
+    // assignee at first-contact, but when a lead is reassigned afterward the
+    // already-sent welcome stays frozen naming the OLD agent (~4% of welcomes).
+    // The real assigned rep takes over the human conversation later anyway.
+    const welcomeLead = `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}! I'm the Tashfeen Immigration Solutions assistant, here to help."`;
     // Bare-greeting follow-up. Locked to house-approved phrasing so the bot
     // doesn't free-style something stilted. Pakistani business chat: an open
     // invitation reads warmer than a transactional "how can I help?".

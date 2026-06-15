@@ -72,19 +72,20 @@ export class LeadsService {
       where.id = { in: await this.adLeadIds(query.adSourceId) };
     }
 
-    // Default 250 rows, capped at 1000. Returning all 1000+ leads in one
-    // shot was a real prod perf issue: 1MB payload + 3s DB query made
-    // /sales/leads sluggish. The UI filters/searches/counts client-side, so an
-    // agent must load their FULL assigned queue or the KPI cards + tab counts
-    // (Auto CRM, SLA Active, Overdue…) top out at the page size instead of the
-    // real total. A single agent's queue is bounded (a few hundred — well under
-    // the 1000 hard cap), so default agents to 1000 → they get every assigned
-    // lead and honest totals. Admins with `leads.view_all` see the whole org
-    // (thousands), so they keep the lean 250 default to avoid the 1MB/3s
-    // payload; they can still pass `?limit=1000` or use the per-agent roster.
-    const defaultLimit = canViewAll ? 250 : 1000;
+    // Admins default to 250 rows; agents default to 10000. The UI
+    // filters/searches/counts client-side, so an agent must load their FULL
+    // assigned queue or the KPI cards + tab counts (Auto CRM, SLA Active,
+    // Overdue…) top out at the page size instead of the real total. Agents
+    // therefore default to 10000 → they get every assigned lead and honest
+    // totals no matter how large their book (raised from 1000 so high-volume
+    // reps are never silently truncated). Admins with `leads.view_all` see the
+    // whole org (thousands), so they keep the lean 250 default to avoid a heavy
+    // payload; they can pass `?limit=` (clamped at 10000) or use the per-agent
+    // roster. The clamp still stops a curious agent from pulling the entire org
+    // with `?limit=999999`.
+    const defaultLimit = canViewAll ? 250 : 10000;
     const rawLimit = query.limit ? parseInt(query.limit, 10) : defaultLimit;
-    const take = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : defaultLimit, 1), 1000);
+    const take = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : defaultLimit, 1), 10000);
 
     return this.prisma.lead.findMany({
       where,

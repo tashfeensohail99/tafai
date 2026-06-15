@@ -95,10 +95,9 @@ export class ListLeadsQueryDto {
   adSourceId?: string;
 
   /**
-   * Maximum rows to return. Defaults applied in the service (250). Capped at
-   * 1000 so a curious agent can't kill the backend with `?limit=999999`.
-   * Returning all 1000+ leads in one shot was a real prod perf issue —
-   * payload hit 1MB and the page felt sluggish.
+   * Maximum rows to return. Defaults applied in the service (250 for admins,
+   * 10000 for agents so a rep loads their full assigned book). Capped at 10000
+   * so a curious agent can't kill the backend with `?limit=999999`.
    */
   @IsOptional()
   @IsNumberString()

@@ -39,7 +39,11 @@ class _AppShellState extends ConsumerState<AppShell> {
     _TabDef('Home', Icons.home_outlined, Icons.home),
     _TabDef('Leads', Icons.people_alt_outlined, Icons.people_alt),
     _TabDef('Follow-ups', Icons.checklist_outlined, Icons.checklist),
-    _TabDef('Appointments', Icons.event_outlined, Icons.event),
+    // Bottom-nav shows the singular "Appointment" so it fits on ONE line — the
+    // plural was wide enough to wrap onto a second line on narrower phones,
+    // knocking this tab out of vertical alignment with the others. The AppBar
+    // title still uses the natural plural `label`.
+    _TabDef('Appointments', Icons.event_outlined, Icons.event, navLabel: 'Appointment'),
     _TabDef('Chat', Icons.chat_bubble_outline, Icons.chat_bubble),
   ];
 
@@ -253,7 +257,7 @@ class _AppShellState extends ConsumerState<AppShell> {
               NavigationDestination(
                 icon: Icon(t.icon),
                 selectedIcon: Icon(t.selectedIcon),
-                label: t.label,
+                label: t.navLabel ?? t.label,
               ),
           ],
         ),
@@ -264,7 +268,11 @@ class _AppShellState extends ConsumerState<AppShell> {
 
 class _TabDef {
   final String label;
+
+  /// Optional shorter label for the bottom nav (where horizontal space is
+  /// tight). Falls back to [label] when null.
+  final String? navLabel;
   final IconData icon;
   final IconData selectedIcon;
-  const _TabDef(this.label, this.icon, this.selectedIcon);
+  const _TabDef(this.label, this.icon, this.selectedIcon, {this.navLabel});
 }

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { LeadStatus, Prisma } from '@prisma/client';
+import { AuditAction, LeadStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
@@ -178,6 +178,31 @@ export class MetaLeadsService {
           campaignName: submission.campaignName,
           adId: submission.adId,
           platform: submission.platform,
+        },
+      });
+
+      // Formal AuditLog entry so auto-intake leads appear in the who/what/when
+      // audit trail alongside manually-created/reassigned ones (the
+      // ActivityTimeline above is the sales-facing feed; this is the audit log
+      // our reports query). actorUserId omitted = system (Meta webhook, no
+      // human). Records the round-robin assignee at creation.
+      await this.prisma.auditLog.create({
+        data: {
+          action: AuditAction.LEAD_CREATED,
+          entityType: 'Lead',
+          entityId: lead.id,
+          newValues: {
+            assignedEmployeeId: assigneeId ?? null,
+            sourceChannel: 'meta-lead-form',
+            status: LeadStatus.NEW,
+          },
+          metadata: {
+            autoAssigned: !!assigneeId,
+            channel: 'meta-lead-form',
+            assignment: 'round-robin',
+            assigneeName,
+            leadgenId: entry.leadgenId,
+          },
         },
       });
 

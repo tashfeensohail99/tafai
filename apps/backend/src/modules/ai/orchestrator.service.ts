@@ -395,17 +395,21 @@ export class OrchestratorService {
       nextAiState !== 'HANDED_OFF' &&
       nextAiState !== 'APPOINTMENT_AVAILABILITY';
 
+    // Resolved once here so the welcome can be prepended DETERMINISTICALLY below
+    // (the LLM must not author the rep's name — it drifted to other reps).
+    // Sanitize: empty / placeholder / digit-only first names get dropped so the
+    // bot doesn't greet "Hi Customer 1234" or "Hi +92345…". Imports sometimes
+    // leave junk in firstName until sales cleans it up.
+    const leadFirstName = this.sanitizedFirstName(thread.lead?.firstName);
+    const agentFirstName = thread.lead?.assignedEmployee?.firstName ?? null;
     const systemPrompt = this.systemPrompt({
       language,
       currentState: thread.aiState,
       nextState: nextAiState,
       confident,
       strictGate,
-      // Sanitize: empty / placeholder / digit-only first names get dropped so
-      // the bot doesn't greet "Hi Customer 1234" or "Hi +92345…". Imports
-      // sometimes leave junk in firstName until sales cleans it up.
-      leadFirstName: this.sanitizedFirstName(thread.lead?.firstName),
-      agentFirstName: thread.lead?.assignedEmployee?.firstName ?? null,
+      leadFirstName,
+      agentFirstName,
       isFirstBotReply,
       isBareGreeting,
     });
@@ -456,6 +460,19 @@ export class OrchestratorService {
     if (lastBotOutbound?.body && this.tooSimilar(lastBotOutbound.body, reply)) {
       this.log.warn(`Duplicate-reply skip: "${reply.slice(0, 60)}…" vs last "${lastBotOutbound.body.slice(0, 60)}…"`);
       return { mode: 'SKIPPED', skipReason: 'duplicate-reply' };
+    }
+
+    // Prepend the house welcome DETERMINISTICALLY on the first bot reply, with
+    // the lead's ACTUAL assigned rep — never an LLM-written name (which drifted
+    // to other reps ~4% of the time). agentFirstName is the live-read assignee;
+    // if the lead is unassigned we greet without a name rather than guess.
+    if (isFirstBotReply) {
+      const greetName = leadFirstName ? `, ${leadFirstName}` : '';
+      const intro = agentFirstName
+        ? ` I'm ${agentFirstName}, Immigration Solutions Associate.`
+        : '';
+      reply =
+        `Welcome to Tashfeen Immigration Solutions${greetName}!${intro}\n\n${reply}`.trim();
     }
 
     // Brochure intent: if the customer asked for a brochure / PDF / details,
@@ -1006,24 +1023,21 @@ export class OrchestratorService {
     } = opts;
     const name = leadFirstName ? `, ${leadFirstName}` : '';
     const isUrdu = language === 'ur_roman';
-    // House welcome template — used on the very first bot reply to a thread.
-    // Names the human agent so the customer feels they're talking to a real
-    // person on a real team, not a bare-bones bot.
-    // Neutral identity — the bot does NOT introduce itself as a specific human.
-    // Naming the assigned agent caused "wrong rep" complaints: the name is the
-    // assignee at first-contact, but when a lead is reassigned afterward the
-    // already-sent welcome stays frozen naming the OLD agent (~4% of welcomes).
-    // The real assigned rep takes over the human conversation later anyway.
-    const welcomeLead = `OPEN WITH EXACTLY THIS TEMPLATE (then proceed to the rest of the goal):\n  "Welcome to Tashfeen Immigration Solutions${name}! I'm the Tashfeen Immigration Solutions assistant, here to help."`;
+    // The house welcome line — INCLUDING the assigned rep's name — is prepended
+    // to the reply DETERMINISTICALLY in code (see orchestrate()). The LLM must
+    // NOT write it: when the model authored "I'm <rep>" it occasionally drifted
+    // to a DIFFERENT real rep's name (~4% of welcomes). So we tell it to skip the
+    // greeting entirely and write only the body.
+    const welcomeLead = `A welcome line is added to the START of your reply automatically — so do NOT greet, do NOT write "Welcome", and do NOT introduce yourself or state any name. Write ONLY the text that comes after the greeting:`;
     // Bare-greeting follow-up. Locked to house-approved phrasing so the bot
     // doesn't free-style something stilted. Pakistani business chat: an open
     // invitation reads warmer than a transactional "how can I help?".
     const bareGreetingFollow = isUrdu
-      ? `Since the customer just said hi/salam (no real question), append this LINE VERBATIM after the welcome:\n  "Immigration sa related koi b question ha to ap discuss ker saktay hain."\nDo NOT pitch anything yet. Do NOT rephrase.`
-      : `Since the customer just said hi/hello (no real question), append this LINE VERBATIM after the welcome:\n  "If you have any immigration-related questions, feel free to discuss."\nDo NOT pitch anything yet. Do NOT rephrase.`;
+      ? `Since the customer just said hi/salam (no real question), your reply is ONLY this line, VERBATIM (no greeting — the welcome is already prepended):\n  "Immigration sa related koi b question ha to ap discuss ker saktay hain."\nDo NOT pitch anything yet. Do NOT rephrase.`
+      : `Since the customer just said hi/hello (no real question), your reply is ONLY this line, VERBATIM (no greeting — the welcome is already prepended):\n  "If you have any immigration-related questions, feel free to discuss."\nDo NOT pitch anything yet. Do NOT rephrase.`;
     const followUp = isBareGreeting
       ? bareGreetingFollow
-      : `Then answer their question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;
+      : `Answer their question briefly from CONTEXT (no greeting — the welcome is already prepended). End with ONE soft question that surfaces their goal (which country/program they're interested in).`;
 
     const initialGoal = `Greet warmly${name}. Answer the question briefly from CONTEXT. End with ONE soft question that surfaces their goal (which country/program they're interested in).`;
 

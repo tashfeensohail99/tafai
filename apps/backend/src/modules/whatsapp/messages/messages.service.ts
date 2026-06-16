@@ -191,6 +191,14 @@ export class WhatsAppMessagesService {
   async sendTemplate(caller: CallerContext, input: SendTemplateInput) {
     const thread = await this.thread(caller, input.threadId);
     const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
+    // Repair empty template BODY parameters before the message reaches Meta.
+    // The web picker pre-fills {{1}} with the contact name and blocks empty
+    // sends; the mobile picker (≤ v1.0.18) does neither, so an agent who taps
+    // Send without typing the name submits an empty {{1}} — which Meta rejects
+    // with 131008 ("Required parameter is missing") and the bubble shows "Not
+    // delivered". Filling it here fixes every client with no app update needed.
+    const components = await this.fillEmptyTemplateParams(thread, input.components);
+
     // Render the template's body with the supplied parameters so the chat
     // bubble + inbox preview show what the customer actually receives, instead
     // of a bare "Template: <name>" placeholder. Does NOT affect what's sent to
@@ -198,7 +206,7 @@ export class WhatsAppMessagesService {
     const renderedBody = await this.renderTemplateBody(
       thread.channelId,
       input.templateName,
-      input.components,
+      components,
     );
     const message = await this.prisma.whatsAppMessage.create({
       data: {
@@ -212,7 +220,7 @@ export class WhatsAppMessagesService {
         templateName: input.templateName,
         templateLanguage: input.language,
         body: renderedBody,
-        payload: { components: input.components ?? [] } as unknown as Prisma.InputJsonValue,
+        payload: { components } as unknown as Prisma.InputJsonValue,
         sentByEmployeeId: senderEmployeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
@@ -233,6 +241,70 @@ export class WhatsAppMessagesService {
       });
     }
     return message;
+  }
+
+  /**
+   * Fill empty template BODY parameters before sending. {{1}} is the greeting
+   * name in our templates; when it arrives empty (older mobile clients don't
+   * pre-fill it) we substitute the contact's first name so Meta doesn't reject
+   * the send with 131008, falling back to a neutral "there" when no name is on
+   * file. A non-first empty parameter is a genuine caller mistake we can't
+   * guess, so we reject it loudly rather than let Meta silently drop the send.
+   */
+  private async fillEmptyTemplateParams(
+    thread: { leadId: string | null; clientId: string | null },
+    components: Array<Record<string, unknown>> | undefined,
+  ): Promise<Array<Record<string, unknown>>> {
+    const list = components ?? [];
+    const isBody = (c: Record<string, unknown>) =>
+      String((c as { type?: string }).type ?? '').toLowerCase() === 'body';
+    const paramText = (p: Record<string, unknown>) =>
+      String((p as { text?: string }).text ?? '');
+    const hasEmpty = list.some(
+      (c) =>
+        isBody(c) &&
+        ((c as { parameters?: Array<Record<string, unknown>> }).parameters ?? []).some(
+          (p) => paramText(p).trim().length === 0,
+        ),
+    );
+    if (!hasEmpty) return list;
+
+    const name = (await this.resolveContactFirstName(thread))?.trim() || 'there';
+    return list.map((c) => {
+      if (!isBody(c)) return c;
+      const params = (
+        (c as { parameters?: Array<Record<string, unknown>> }).parameters ?? []
+      ).map((p, i) => {
+        if (paramText(p).trim().length > 0) return p;
+        if (i === 0) return { ...p, type: 'text', text: name };
+        throw new BadRequestException(
+          `Template parameter {{${i + 1}}} is required — please fill it in before sending.`,
+        );
+      });
+      return { ...c, parameters: params };
+    });
+  }
+
+  /** First name of the thread's contact (lead, else client); null if none. */
+  private async resolveContactFirstName(thread: {
+    leadId: string | null;
+    clientId: string | null;
+  }): Promise<string | null> {
+    if (thread.leadId) {
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: thread.leadId },
+        select: { firstName: true },
+      });
+      return lead?.firstName ?? null;
+    }
+    if (thread.clientId) {
+      const client = await this.prisma.client.findUnique({
+        where: { id: thread.clientId },
+        select: { firstName: true },
+      });
+      return client?.firstName ?? null;
+    }
+    return null;
   }
 
   /**

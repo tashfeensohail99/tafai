@@ -173,7 +173,7 @@ export function AttendanceLogPage() {
     <div className="space-y-5">
       <PageHeader
         title="Attendance"
-        description="Daily attendance for every employee — pulled from the camera, with manual marking when needed."
+        description="Daily attendance for every employee — auto-synced from the camera every 15 minutes. Hit Sync for the latest now, or mark manually anytime."
         actions={
           <PrimaryButton onClick={() => void doSync()} disabled={syncing}>
             {syncing ? <Loader2 size={15} className="sos-spin" /> : <RefreshCw size={15} />}

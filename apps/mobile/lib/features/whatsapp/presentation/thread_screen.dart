@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../../core/errors/app_error.dart';
 import '../../../core/theme/tokens.dart';
@@ -855,8 +856,19 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
   String? _url;
   bool _loading = false;
 
+  // Inline voice/audio playback via video_player (ExoPlayer) — reliable on the
+  // phones where the device browser mangled / wouldn't play Opus-Ogg voice
+  // notes. Lazy: the controller is built on the first play tap, and works for
+  // inbound voice AND the rep's own outbound voice (both resolve a signed URL).
+  VideoPlayerController? _audio;
+  bool _audioReady = false;
+  bool _audioLoading = false;
+
   bool get _isImage =>
       widget.message.type == 'IMAGE' || widget.message.type == 'STICKER';
+
+  bool get _isAudio =>
+      widget.message.type == 'AUDIO' || widget.message.type == 'VOICE';
 
   @override
   void initState() {
@@ -981,6 +993,110 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
       );
     }
 
+    // Voice / audio: inline player (play/pause + seek bar + duration), like
+    // WhatsApp — instead of bouncing to the browser (which couldn't reliably
+    // play Opus-Ogg on these phones). Works for inbound AND the rep's own sent
+    // voice notes.
+    if (_isAudio) {
+      final c = _audio;
+      final dur = c?.value.duration ?? Duration.zero;
+      final pos = c?.value.position ?? Duration.zero;
+      final playing = c?.value.isPlaying ?? false;
+      final maxMs = dur.inMilliseconds > 0 ? dur.inMilliseconds.toDouble() : 1.0;
+      final posMs = dur.inMilliseconds > 0
+          ? pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble()
+          : 0.0;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 234,
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: _toggleAudio,
+                  child: _audioLoading
+                      ? const SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: Padding(
+                            padding: EdgeInsets.all(8),
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: widget.fg.withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(playing ? Icons.pause : Icons.play_arrow,
+                              color: widget.fg, size: 22),
+                        ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 20,
+                        child: SliderTheme(
+                          data: SliderThemeData(
+                            trackHeight: 2.5,
+                            thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 6),
+                            overlayShape: const RoundSliderOverlayShape(
+                                overlayRadius: 12),
+                            activeTrackColor: widget.fg,
+                            inactiveTrackColor: widget.fg.withValues(alpha: 0.3),
+                            thumbColor: widget.fg,
+                          ),
+                          child: Slider(
+                            value: _audioReady ? posMs : 0,
+                            max: _audioReady ? maxMs : 1,
+                            onChanged: _audioReady
+                                ? (v) =>
+                                    c?.seekTo(Duration(milliseconds: v.round()))
+                                : null,
+                          ),
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Icon(Icons.mic,
+                              size: 13, color: widget.fg.withValues(alpha: 0.7)),
+                          Text(
+                            _audioReady
+                                ? '${_fmtDur(pos)} / ${_fmtDur(dur)}'
+                                : 'Voice message',
+                            style: TextStyle(
+                                color: widget.fg.withValues(alpha: 0.75),
+                                fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (caption != null) ...[
+            const SizedBox(height: 4),
+            Text(caption,
+                style: TextStyle(
+                    color: widget.fg,
+                    fontSize: AppTokens.fontSizeSm,
+                    height: 1.35)),
+          ],
+        ],
+      );
+    }
+
     final (icon, label) = switch (m.type) {
       'AUDIO' => (Icons.mic_outlined, 'Voice message'),
       'DOCUMENT' => (Icons.description_outlined, 'Document'),
@@ -1013,6 +1129,68 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
         ],
       ),
     );
+  }
+
+  /// Lazily load + play/pause the voice note. Builds the ExoPlayer controller
+  /// on first tap (works for inbound and the rep's own outbound voice).
+  Future<void> _toggleAudio() async {
+    var c = _audio;
+    if (c == null) {
+      if (_audioLoading) return;
+      if (mounted) setState(() => _audioLoading = true);
+      final url = await _fetchUrl();
+      if (url == null) {
+        if (mounted) setState(() => _audioLoading = false);
+        return;
+      }
+      c = VideoPlayerController.networkUrl(Uri.parse(url));
+      try {
+        await c.initialize();
+      } catch (_) {
+        await c.dispose();
+        if (mounted) {
+          setState(() => _audioLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not play this voice message.')),
+          );
+        }
+        return;
+      }
+      c.addListener(_onAudioTick);
+      if (!mounted) {
+        await c.dispose();
+        return;
+      }
+      setState(() {
+        _audio = c;
+        _audioReady = true;
+        _audioLoading = false;
+      });
+    }
+    if (c.value.isPlaying) {
+      await c.pause();
+    } else {
+      if (c.value.duration > Duration.zero &&
+          c.value.position >= c.value.duration) {
+        await c.seekTo(Duration.zero);
+      }
+      await c.play();
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _onAudioTick() {
+    if (mounted) setState(() {});
+  }
+
+  String _fmtDur(Duration d) =>
+      '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+
+  @override
+  void dispose() {
+    _audio?.removeListener(_onAudioTick);
+    _audio?.dispose();
+    super.dispose();
   }
 
   Widget _box(IconData icon, String label) => Container(

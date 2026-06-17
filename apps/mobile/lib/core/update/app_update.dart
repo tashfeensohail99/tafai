@@ -1,3 +1,4 @@
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -6,6 +7,27 @@ import '../config/api_config.dart';
 
 /// Public website page testers download new builds from.
 const String downloadsPageUrl = 'https://tashfeengroup.com/downloads';
+
+/// Direct APK download endpoints (302 → fresh signed URL). arm64 is the primary
+/// 64-bit build; v7a is the 32-bit build for older phones.
+String get apkArm64Url => '$apiBaseUrl/public/app/android';
+String get apkV7aUrl => '$apiBaseUrl/public/app/android/v7a';
+
+/// Picks the correct APK for THIS device's CPU so the forced update installs on
+/// both 64-bit and 32-bit phones. 64-bit devices report arm64-v8a (alongside
+/// the 32-bit ABI for compat), so we check for a 64-bit ABI first; only
+/// 32-bit-only phones fall through to the v7a build. Defaults to arm64 (covers
+/// virtually every modern phone) if detection fails.
+Future<String> apkUrlForDevice() async {
+  try {
+    final info = await DeviceInfoPlugin().androidInfo;
+    final is64 = info.supportedAbis
+        .any((a) => a.contains('arm64') || a.contains('x86_64'));
+    return is64 ? apkArm64Url : apkV7aUrl;
+  } catch (_) {
+    return apkArm64Url;
+  }
+}
 
 /// Result of comparing the running build against the latest published one.
 class AppUpdateStatus {

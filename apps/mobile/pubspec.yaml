@@ -1,7 +1,7 @@
 name: tafsheen_mobile
 description: Tafsheen Immigration Solutions — Mobile App
 publish_to: 'none'
-version: 1.0.19+21
+version: 1.0.20+22
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -81,6 +81,9 @@ dependencies:
   # App version + build number, for the Settings screen and the in-app update
   # check (compares against the published /public/app/info build).
   package_info_plus: ^8.1.0
+  # Device CPU ABI detection — so the forced-update download serves the right
+  # APK: arm64-v8a for 64-bit phones, armeabi-v7a for older 32-bit phones.
+  device_info_plus: ^10.1.0
   # Shimmer skeleton placeholders shown while lists load (premium feel vs a
   # bare spinner).
   shimmer: ^3.0.0

@@ -9,7 +9,8 @@ import '../../../core/auth/auth_controller.dart';
 import '../../../core/navigation/shell_index.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
-import '../../../core/update/update_banner.dart';
+import '../../../core/update/app_update.dart';
+import '../../../core/update/forced_update_screen.dart';
 import '../../appointments/presentation/appointments_screen.dart';
 import '../../calls/data/call_permissions.dart';
 import '../../calls/presentation/call_setup_screen.dart';
@@ -86,6 +87,15 @@ class _AppShellState extends ConsumerState<AppShell> {
     final user = ref.watch(currentUserProvider);
     final index = ref.watch(shellIndexProvider);
     final unread = ref.watch(unreadCountProvider).valueOrNull ?? 0;
+
+    // Compulsory update gate — once a newer build is published, the app is
+    // blocked until the agent installs it, so the whole team stays current.
+    // Fails open: renders nothing until the check resolves, and a flaky check
+    // resolves to "no update", so app launch is never blocked by the network.
+    final update = ref.watch(appUpdateProvider).valueOrNull;
+    if (update != null && update.updateAvailable) {
+      return ForcedUpdateScreen(latestVersion: update.latestVersion);
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -202,9 +212,6 @@ class _AppShellState extends ConsumerState<AppShell> {
       ),
       body: Column(
         children: [
-          // Non-intrusive "new version available" strip (renders nothing when
-          // up to date / offline / dismissed).
-          const UpdateBanner(),
           Expanded(
             child: IndexedStack(
               index: index,

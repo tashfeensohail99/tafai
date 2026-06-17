@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AttendanceStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AttendanceClient } from './attendance.client';
-import { AttendanceDaily } from './attendance.contracts';
+import { AttendanceDaily, AttendanceEvent } from './attendance.contracts';
 import { MarkAttendanceDto, SyncAttendanceDto } from './attendance.dto';
 
 const PKT_OFFSET = '+05:00'; // Asia/Karachi, no DST
@@ -55,6 +55,36 @@ export class AttendanceService {
     return out;
   }
 
+  /** Resolve a single date / from-to range / default-today into a date list. */
+  private resolveRange(dto: SyncAttendanceDto): { from: string; to: string; dates: string[] } {
+    let from: string, to: string;
+    if (dto.date) {
+      from = to = dto.date;
+    } else if (dto.from && dto.to) {
+      from = dto.from;
+      to = dto.to;
+    } else {
+      from = to = this.todayPkt();
+    }
+    const dates = this.eachDate(from, to);
+    if (dates.length === 0) throw new BadRequestException('Invalid date range.');
+    return { from, to, dates };
+  }
+
+  /**
+   * Work-start 09:00 PKT + 20-min grace → PRESENT/LATE plus minutes-late, from a
+   * check-in instant. Used by the events bridge (the /daily rollup computes this
+   * itself, but the bridge bypasses it). Matches the camera's policy on file.
+   */
+  private statusFromCheckIn(checkIn: Date): { status: AttendanceStatus; lateMin: number } {
+    const pkt = new Date(checkIn.getTime() + 5 * 3600 * 1000);
+    const minutes = pkt.getUTCHours() * 60 + pkt.getUTCMinutes();
+    const workStart = 9 * 60; // 09:00 PKT
+    const grace = 20;
+    const lateMin = Math.max(0, minutes - workStart);
+    return { status: lateMin > grace ? AttendanceStatus.LATE : AttendanceStatus.PRESENT, lateMin };
+  }
+
   /** Camera status string → our enum. null = not a trackable day (weekend/holiday/off). */
   private mapStatus(camStatus: string, lateMin: number): AttendanceStatus | null {
     const s = String(camStatus || '').toLowerCase();
@@ -81,17 +111,7 @@ export class AttendanceService {
     if (!this.client.configured) {
       throw new BadRequestException('Attendance API is not configured.');
     }
-    let from: string, to: string;
-    if (dto.date) {
-      from = to = dto.date;
-    } else if (dto.from && dto.to) {
-      from = dto.from;
-      to = dto.to;
-    } else {
-      from = to = this.todayPkt();
-    }
-    const dates = this.eachDate(from, to);
-    if (dates.length === 0) throw new BadRequestException('Invalid date range.');
+    const { from, to, dates } = this.resolveRange(dto);
 
     // Which emp_codes map to our employees (camera echoes our Employee.id).
     const ours = await this.prisma.employee.findMany({ where: { deletedAt: null }, select: { id: true } });
@@ -147,6 +167,95 @@ export class AttendanceService {
     }
     this.log.log(`sync ${from}..${to}: imported=${imported} skipped=${skipped} unmatched=${unmatched}`);
     return { from, to, days: dates.length, imported, skipped, unmatched };
+  }
+
+  // ── events bridge (raw detections → CRM) ─────────────────────────────────────
+
+  /**
+   * Build attendance from the camera's RAW detection events instead of its
+   * computed /daily. The camera's daily rollup discards low-confidence face
+   * matches (~0.4–0.6 on the sub-stream), marking everyone absent even though
+   * people were clearly seen. This bridge reads /events directly, accepts
+   * sightings down to a configurable similarity floor (default 0 = accept all,
+   * provisional), and records first-seen → check-in, last-seen → check-out.
+   *
+   * Honest by design: people NOT seen are left as "no data" (we don't assert
+   * ABSENT off a possibly-missed detection), and manual overrides are never
+   * clobbered. Tune the floor with ATTENDANCE_EVENTS_MIN_SIMILARITY.
+   */
+  async syncFromEvents(dto: SyncAttendanceDto, actorUserId: string) {
+    void actorUserId; // reserved for future audit; parity with sync()
+    if (!this.client.configured) {
+      throw new BadRequestException('Attendance API is not configured.');
+    }
+    const { from, to, dates } = this.resolveRange(dto);
+
+    const parsedFloor = parseFloat(process.env.ATTENDANCE_EVENTS_MIN_SIMILARITY ?? '0');
+    const minSim = Number.isFinite(parsedFloor) ? parsedFloor : 0;
+
+    const ours = await this.prisma.employee.findMany({ where: { deletedAt: null }, select: { id: true } });
+    const ourIds = new Set(ours.map((e) => e.id));
+
+    let imported = 0;
+    let skipped = 0;
+    let seen = 0;
+    for (const date of dates) {
+      let events: AttendanceEvent[];
+      try {
+        events = await this.client.getEvents(date);
+      } catch (e) {
+        this.log.warn(`events-sync ${date} failed: ${(e as Error).message}`);
+        continue;
+      }
+
+      // Group this date's events per employee → first/last sighting.
+      const byEmp = new Map<string, { first: Date; last: Date; count: number; maxSim: number }>();
+      for (const ev of events || []) {
+        const empId = String(ev.emp_code);
+        if (!ourIds.has(empId)) continue; // numeric/test codes — not one of ours
+        if (typeof ev.similarity === 'number' && ev.similarity < minSim) continue;
+        const t = new Date(ev.ts);
+        if (isNaN(t.getTime())) continue;
+        // The feed can bleed across days at a high limit — keep PKT-`date` only.
+        if (new Date(t.getTime() + 5 * 3600 * 1000).toISOString().slice(0, 10) !== date) continue;
+        const sim = typeof ev.similarity === 'number' ? ev.similarity : 0;
+        const a = byEmp.get(empId);
+        if (!a) {
+          byEmp.set(empId, { first: t, last: t, count: 1, maxSim: sim });
+        } else {
+          if (t < a.first) a.first = t;
+          if (t > a.last) a.last = t;
+          a.count++;
+          if (sim > a.maxSim) a.maxSim = sim;
+        }
+      }
+
+      for (const [empId, a] of byEmp) {
+        seen++;
+        const existing = await this.prisma.attendanceRecord.findUnique({
+          where: { employeeId_date: { employeeId: empId, date: this.dateOnly(date) } },
+          select: { isOverride: true },
+        });
+        if (existing?.isOverride) { skipped++; continue; } // never clobber a manual fix
+
+        const checkIn = a.first;
+        const checkOut = a.last.getTime() > a.first.getTime() ? a.last : null;
+        const { status, lateMin } = this.statusFromCheckIn(checkIn);
+        const grossPresenceMin = checkOut
+          ? Math.max(0, Math.round((checkOut.getTime() - checkIn.getTime()) / 60000))
+          : 0;
+        const notes = `From camera detections (${a.count} sighting${a.count === 1 ? '' : 's'}, confidence ${Math.round(a.maxSim * 100)}%)`;
+
+        await this.prisma.attendanceRecord.upsert({
+          where: { employeeId_date: { employeeId: empId, date: this.dateOnly(date) } },
+          create: { employeeId: empId, date: this.dateOnly(date), checkInAt: checkIn, checkOutAt: checkOut, status, notes, isOverride: false, lateMin, grossPresenceMin },
+          update: { checkInAt: checkIn, checkOutAt: checkOut, status, notes, isOverride: false, lateMin, grossPresenceMin },
+        });
+        imported++;
+      }
+    }
+    this.log.log(`events-sync ${from}..${to}: seen=${seen} imported=${imported} skipped=${skipped} minSim=${minSim}`);
+    return { from, to, days: dates.length, imported, skipped, seen, source: 'events' as const };
   }
 
   // ── read ────────────────────────────────────────────────────────────────────

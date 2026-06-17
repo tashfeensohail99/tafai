@@ -20,7 +20,7 @@ import {
   fetchAttendanceDaily,
   fetchAttendancePing,
   markAttendance,
-  syncAttendance,
+  syncAttendanceFromEvents,
   ATTENDANCE_STATUSES,
   type AttendanceDailyRow,
   type AttendanceStatus,
@@ -106,8 +106,12 @@ export function AttendanceLogPage() {
     setBanner(null);
     setError(null);
     try {
-      const r = await syncAttendance({ date });
-      setBanner(`Synced ${date}: ${r.imported} record(s) pulled from the camera.`);
+      const r = await syncAttendanceFromEvents({ date });
+      setBanner(
+        `Synced ${date}: ${r.seen} staff detected by camera, ${r.imported} marked present` +
+          (r.skipped ? `, ${r.skipped} kept as manual` : '') +
+          `. Provisional — from live camera detections; use “Mark” to correct any.`,
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed');

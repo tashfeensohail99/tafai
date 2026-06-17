@@ -143,6 +143,22 @@ export function syncAttendance(
   });
 }
 
+/**
+ * Build attendance from the camera's raw face-detection events (bridge) rather
+ * than its computed /daily — used while the camera's daily rollup discards
+ * low-confidence matches and reports everyone absent. Records are provisional
+ * (note-flagged) and never overwrite a manual mark. `seen` = people detected.
+ */
+export function syncAttendanceFromEvents(
+  body: { date?: string; from?: string; to?: string },
+): Promise<{ from: string; to: string; days: number; imported: number; skipped: number; seen: number; source: string }> {
+  return apiFetch('/attendance/sync-events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export function markAttendance(body: {
   employeeId: string;
   date: string;

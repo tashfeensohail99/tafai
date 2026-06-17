@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   AttendanceDaily,
   AttendanceEmployee,
+  AttendanceEvent,
   AttendanceLoginResponse,
   AttendancePolicy,
 } from './attendance.contracts';
@@ -42,6 +43,17 @@ export class AttendanceClient {
   /** Daily computed attendance for a single date (YYYY-MM-DD). */
   async getDaily(date: string): Promise<AttendanceDaily[]> {
     return this.get<AttendanceDaily[]>(`/daily?date=${encodeURIComponent(date)}`);
+  }
+
+  /**
+   * Raw face-detection events for a single date. We pass a high limit because a
+   * busy day can produce thousands of crossings; the camera returns the newest
+   * `limit` events, so this covers a full working day comfortably.
+   */
+  async getEvents(date: string, limit = 10000): Promise<AttendanceEvent[]> {
+    return this.get<AttendanceEvent[]>(
+      `/events?date=${encodeURIComponent(date)}&limit=${limit}`,
+    );
   }
 
   /** Bulk export for a date range. `format` defaults to json. */

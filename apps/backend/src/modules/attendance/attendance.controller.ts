@@ -60,6 +60,18 @@ export class AttendanceController {
     return this.attendance.sync(dto, user.id);
   }
 
+  /**
+   * Build attendance from the camera's RAW detection events instead of its
+   * computed /daily — used while the camera's daily rollup is discarding
+   * low-confidence matches and marking everyone absent. Records are provisional
+   * (flagged in notes) and never overwrite a manual mark.
+   */
+  @Post('sync-events')
+  @RequirePermissions('employees.view_all')
+  async syncEvents(@Body() dto: SyncAttendanceDto, @CurrentUser() user: RequestUser) {
+    return this.attendance.syncFromEvents(dto, user.id);
+  }
+
   /** Manually set / correct one employee's attendance for a day (override). */
   @Post('mark')
   @RequirePermissions('employees.view_all')

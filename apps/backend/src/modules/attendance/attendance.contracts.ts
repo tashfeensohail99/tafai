@@ -38,6 +38,24 @@ export interface AttendanceDaily {
   status: string; // 'present' | 'absent' | ...
 }
 
+/**
+ * A raw face-detection event from the camera (GET /events). Each crossing the
+ * camera registers one event. `emp_code` is our Employee.id (UUID) when the
+ * person was enrolled correctly; `similarity` is the face-match confidence
+ * (0..1) — often low (~0.4–0.6) on the sub-stream, which is why the camera's
+ * own /daily rollup discards them. The events bridge reads these directly.
+ */
+export interface AttendanceEvent {
+  id: number;
+  ts: string; // UTC ISO timestamp
+  emp_code: string;
+  name: string;
+  office?: number;
+  direction?: string; // 'in' | 'out'
+  similarity?: number; // 0..1 face-match confidence
+  has_photo?: boolean;
+}
+
 /** The camera system's attendance policy (GET /policy). */
 export interface AttendancePolicy {
   work_start: string;

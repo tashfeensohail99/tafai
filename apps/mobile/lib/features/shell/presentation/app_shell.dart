@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/auth/auth_controller.dart';
 import '../../../core/navigation/shell_index.dart';
@@ -23,6 +24,12 @@ import '../../whatsapp/presentation/inbox_screen.dart';
 
 /// Show the first-run call-permission onboarding at most once per app launch.
 bool _callSetupAutoShown = false;
+
+/// Persisted flag: once the rep has seen the call-setup screen we never
+/// auto-open it again (they can reopen it from the menu). Without this it
+/// reappeared on every launch whenever a special-access permission wasn't
+/// granted — which some OEM phones can't grant at all.
+const String _callSetupSeenKey = 'call_setup_seen_v1';
 
 /// The authenticated home: a bottom-nav scaffold whose tabs hold the main
 /// work surfaces. Record-detail screens are pushed as separate routes over it.
@@ -63,11 +70,19 @@ class _AppShellState extends ConsumerState<AppShell> {
   Future<void> _maybeShowCallSetup() async {
     if (_callSetupAutoShown || !mounted) return;
     _callSetupAutoShown = true;
+    // Once the rep has seen this screen we never auto-open it again — they can
+    // reopen "Call setup" from the menu. Previously it had no memory and
+    // re-appeared on EVERY launch whenever a special-access permission (e.g.
+    // "Display over other apps") wasn't granted, which some OEM phones can't
+    // grant at all — so it nagged endlessly with no reliable way to dismiss it.
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_callSetupSeenKey) ?? false) return;
     final status = await ref.read(callPermissionsProvider).check();
     if (!mounted || status.essentialGranted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const CallSetupScreen(onboarding: true)),
     );
+    await prefs.setBool(_callSetupSeenKey, true);
   }
 
   @override

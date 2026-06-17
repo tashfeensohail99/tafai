@@ -94,16 +94,12 @@ class _CallSetupScreenState extends ConsumerState<CallSetupScreen>
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              // Pad the bottom past the system navigation bar so the last item
-              // ("Enable all") clears it instead of hiding underneath.
-              padding: EdgeInsets.fromLTRB(
-                AppTokens.space4,
-                AppTokens.space4,
-                AppTokens.space4,
-                AppTokens.space4 + MediaQuery.of(context).padding.bottom,
-              ),
+          : Column(
               children: [
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.all(AppTokens.space4),
+                    children: [
                 _Header(allGranted: _state.allGranted),
                 const SizedBox(height: AppTokens.space4),
                 _PermTile(
@@ -159,36 +155,71 @@ class _CallSetupScreenState extends ConsumerState<CallSetupScreen>
                   allowLabel: 'Open settings',
                   onAllow: () => _run(_perms.openSettings),
                 ),
-                const SizedBox(height: AppTokens.space4),
-                SizedBox(
-                  height: 50,
-                  child: FilledButton.icon(
-                    onPressed: _busy ? null : _enableAll,
-                    icon: _busy
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.check_circle_outline),
-                    label: const Text('Enable all'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppTokens.brandNavy,
-                      textStyle: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700),
-                    ),
+                    ],
                   ),
                 ),
-                if (widget.onboarding && _state.essentialGranted) ...[
-                  const SizedBox(height: AppTokens.space2),
-                  SizedBox(
-                    height: 48,
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      child: const Text("Done — I'm set up"),
+                // Pinned action bar — always on screen so the rep can finish
+                // without scrolling. The buttons used to live at the end of a
+                // long scroll list, and the "Done" button only appeared once
+                // every special-access permission was granted, so on a tall
+                // list there was effectively no reachable way to leave.
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border(
+                      top: BorderSide(
+                          color: Colors.black.withValues(alpha: 0.08)),
                     ),
                   ),
-                ],
+                  padding: EdgeInsets.fromLTRB(
+                    AppTokens.space4,
+                    AppTokens.space3,
+                    AppTokens.space4,
+                    AppTokens.space3 + MediaQuery.of(context).padding.bottom,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: FilledButton.icon(
+                          onPressed: _busy ? null : _enableAll,
+                          icon: _busy
+                              ? const SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white))
+                              : const Icon(Icons.check_circle_outline),
+                          label: const Text('Enable all'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppTokens.brandNavy,
+                            textStyle: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                      if (widget.onboarding) ...[
+                        const SizedBox(height: AppTokens.space2),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 46,
+                          child: TextButton(
+                            onPressed: _busy
+                                ? null
+                                : () => Navigator.of(context).maybePop(),
+                            child: Text(
+                              _state.essentialGranted
+                                  ? "Done — I'm set up"
+                                  : 'Continue to app',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ],
             ),
     );
@@ -229,7 +260,7 @@ class _Header extends StatelessWidget {
             child: Text(
               allGranted
                   ? "You're all set — calls will ring like a normal phone call."
-                  : 'Allow these so calls ring properly, even when your phone is locked.',
+                  : 'Microphone and notifications are required for calls. The rest are optional — they help calls ring over the lock screen.',
               style: const TextStyle(
                 fontSize: 13.5,
                 height: 1.4,

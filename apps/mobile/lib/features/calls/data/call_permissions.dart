@@ -25,14 +25,18 @@ class CallPermissionState {
         battery = false,
         fullScreenIntent = false;
 
-  /// Everything needed to ring like a real call — incl. the Android 14+
-  /// full-screen notification permission, without which a locked phone shows
-  /// only a small silent notification instead of the ringing call screen.
-  bool get essentialGranted =>
-      microphone && notification && overlay && fullScreenIntent;
+  /// The permissions calls genuinely cannot work without: the microphone (to
+  /// talk) and notifications (to surface an incoming call). The overlay /
+  /// full-screen / battery permissions only *improve* lock-screen ringing — and
+  /// on some OEM phones they can't be granted at all — so they are recommended,
+  /// NOT required. Keeping them out of "essential" stops the setup screen from
+  /// treating setup as incomplete and re-opening on every single launch.
+  bool get essentialGranted => microphone && notification;
 
-  /// Everything, incl. the recommended battery exemption.
-  bool get allGranted => essentialGranted && battery;
+  /// True only when everything — including the lock-screen-ring extras — is
+  /// granted; drives the "you're all set" header.
+  bool get allGranted =>
+      microphone && notification && overlay && battery && fullScreenIntent;
 }
 
 /// Wraps the runtime + special-access permission requests the call feature

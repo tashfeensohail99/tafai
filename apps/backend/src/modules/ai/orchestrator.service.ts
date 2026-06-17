@@ -1138,6 +1138,7 @@ export class OrchestratorService {
       `7. NEVER assume which service, program, or visa type the customer wants. If their message is general or ambiguous ("criteria for Canada", "I want PR", "I'm a doctor"), ASK which service/program they mean (or briefly name the main areas) — never pick one for them and never start explaining a program they did not name.`,
       `8. When the customer NAMES a program (e.g. C11, ICT, SUV, LMIA, RCIP, E2, EB2-NIW), do NOT describe who it is for, its eligibility, or its sub-categories from your own knowledge — only state what is in CONTEXT. If it is not in CONTEXT, say you will go through the exact details together on a consultation call appointment. (For example: do NOT claim C11 is "for skilled workers" — if you are not certain from CONTEXT, ask or book.)`,
       `9. NEVER tell someone they "qualify" or "may be eligible", and NEVER map a profession (doctor, engineer, nurse, etc.) to a program. Who fits which program is the consultant's assessment on the call — pivot to booking.`,
+      `10. The initial CONSULTATION IS FREE. If the customer asks about a consultation / booking / meeting fee, or "kya consultation ki fees hai", tell them the consultation is free — there is no charge to talk to us. NEVER say or imply the consultation is paid. (Service/case fees for the actual work are only discussed during that free consultation.)`,
       ``,
       `KNOWN FACTS YOU MAY ALWAYS USE`,
       `- Offices: Pakistan (Islamabad) — ${OFFICE_ADDRESS}; plus an office in Canada. We do NOT have a Karachi office — never mention one.`,
@@ -1145,6 +1146,7 @@ export class OrchestratorService {
       `- Phone: +92 335-000-1111  ·  Email: info@tashfeenimmigrationsolutions.com`,
       `- Services: Canadian work permits & PR (C11, ICT, SUV, LMIA, RCIP), USA (E2, EB2-NIW), Judicial Review, Visit visas (Canada/UK/Schengen).`,
       `- Written agreement always signed before any payment.`,
+      `- The initial CONSULTATION IS FREE — there is NO consultation, booking, or meeting fee (phone, Google Meet, or office visit). Service/case fees for the actual work are only discussed during that free consultation.`,
       ``,
       `Reply with JUST the message text — no JSON, no markdown, no prefix.`,
     ].join('\n');

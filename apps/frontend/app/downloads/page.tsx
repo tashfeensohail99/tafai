@@ -35,8 +35,35 @@ function TMark({ className = '' }: { className?: string }) {
   );
 }
 
+/** Android robot mark — the universally-recognised "this is the Android app" cue. */
+function AndroidIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
+      <path d="M17.6 9.48l1.84-3.18a.4.4 0 10-.69-.4l-1.86 3.23a11.43 11.43 0 00-9.78 0L5.25 5.9a.4.4 0 10-.69.4l1.84 3.18A10.78 10.78 0 001 18h22a10.78 10.78 0 00-5.4-8.52zM7 15.25a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zm10 0a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5z" />
+    </svg>
+  );
+}
+
+/** Down-into-tray download glyph. */
+function DownloadArrow({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" />
+    </svg>
+  );
+}
+
 const STEPS = [
-  'Tap “Download for Android” above.',
+  'Tap the Download button for your phone — 64-bit suits almost all phones.',
   'If the browser warns about the file type, choose “Download anyway”.',
   'Open the downloaded file; if asked, allow installing from this source.',
   'Open Tashfeen CRM and sign in with your staff account.',
@@ -93,30 +120,48 @@ export default function DownloadsPage() {
             </p>
           ) : (
             <>
-              <a
-                href={`${apiBase}/public/app/android`}
-                className="flex w-full items-center justify-center gap-2.5 rounded-2xl bg-white px-6 py-4 text-base font-bold text-[#0D1B3A] shadow-lg transition hover:bg-slate-100 active:scale-[0.99]"
-              >
-                <svg
-                  className="h-5 w-5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+              <div className="space-y-3">
+                {/* 64-bit — recommended, for the vast majority of phones */}
+                <a
+                  href={`${apiBase}/public/app/android`}
+                  className="flex items-center gap-3.5 rounded-2xl bg-white px-5 py-4 shadow-lg transition hover:bg-slate-100 active:scale-[0.99]"
                 >
-                  <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" />
-                </svg>
-                Download for Android
-              </a>
-              <a
-                href={`${apiBase}/public/app/android/v7a`}
-                className="mt-3 block text-center text-xs font-medium text-slate-400 underline-offset-2 transition hover:text-slate-200 hover:underline"
-              >
-                Older or 32-bit phone? Get the compatible version
-              </a>
+                  <AndroidIcon className="h-8 w-8 flex-none text-[#3DDC84]" />
+                  <span className="flex-1 text-left">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-base font-bold text-[#0D1B3A]">Download · 64-bit</span>
+                      <span className="rounded-full bg-[#3DDC84]/20 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-[#1c7a48]">
+                        Recommended
+                      </span>
+                    </span>
+                    <span className="mt-0.5 block text-xs font-medium text-slate-500">
+                      Latest phones (most people){info ? ` · ${fmtSize(info.sizeBytes)}` : ''}
+                    </span>
+                  </span>
+                  <DownloadArrow className="h-5 w-5 flex-none text-[#0D1B3A]" />
+                </a>
+
+                {/* 32-bit — older / low-end phones */}
+                <a
+                  href={`${apiBase}/public/app/android/v7a`}
+                  className="flex items-center gap-3.5 rounded-2xl border border-white/25 bg-white/[0.04] px-5 py-4 transition hover:bg-white/10 active:scale-[0.99]"
+                >
+                  <AndroidIcon className="h-8 w-8 flex-none text-[#3DDC84]" />
+                  <span className="flex-1 text-left">
+                    <span className="block text-base font-bold text-white">Download · 32-bit</span>
+                    <span className="mt-0.5 block text-xs font-medium text-slate-400">
+                      Older phones{info?.v7aSizeBytes ? ` · ${fmtSize(info.v7aSizeBytes)}` : ''}
+                    </span>
+                  </span>
+                  <DownloadArrow className="h-5 w-5 flex-none text-white" />
+                </a>
+              </div>
+
+              <p className="mt-4 rounded-xl bg-white/[0.04] px-3.5 py-2.5 text-center text-[11.5px] leading-5 text-slate-400">
+                Not sure which one? Pick <span className="font-semibold text-slate-200">64-bit</span> — it works on
+                almost every phone. Only if it says <span className="text-slate-200">“App not installed”</span> use
+                32-bit instead.
+              </p>
 
               <div className="my-6 h-px bg-white/10" />
 

@@ -443,6 +443,18 @@ export class OrchestratorService {
       reply = this.groundingFallback(language);
     }
 
+    // Consultation-fee backstop (ALWAYS on, not just gated turns). The initial
+    // consultation is FREE, but the model has repeatedly invented a
+    // "consultation fee" when asked — especially after a booking (54 such
+    // messages to 42 leads before this guard). If a reply ties a fee/charge to
+    // the consultation and doesn't say it's free, deterministically replace it
+    // with the correct free-consultation line. Negation-aware: a correct
+    // "no consultation fee / it's free" reply is never clobbered.
+    if (this.impliesPaidConsultation(reply)) {
+      this.log.warn(`Consultation-fee backstop tripped: "${reply.slice(0, 80)}…"`);
+      reply = this.consultationFreeReply(language);
+    }
+
     // Dedup guard: don't repeat ourselves verbatim if the bot just sent a
     // near-identical message on this thread. Catches the loop failure mode
     // where retrieval returns the same top-1 + the LLM riffs almost the
@@ -1353,6 +1365,33 @@ export class OrchestratorService {
     if (/\b(eligible|eligibility|qualif(?:y|ies|ied))\b/.test(t)) return true;
     if (/(?:cad|usd|pkr|rs\.?|\$)\s?\d/.test(t)) return true;
     return false;
+  }
+
+  /**
+   * True if the reply implies the CONSULTATION ITSELF is paid — and does NOT
+   * also say it's free. Tight phrasing match (a fee/charge tied to the word
+   * "consultation") so a legitimate "service/case fees discussed during the
+   * consultation" line is NOT caught. Negation-aware so "no consultation fee /
+   * it's free / muft" passes through untouched.
+   */
+  private impliesPaidConsultation(text: string): boolean {
+    const t = text.toLowerCase();
+    const tiesFeeToConsult =
+      /(consultation|consult)\s*(fee|fees|charge|charges)/.test(t) ||
+      /fees?\s+for\s+(the\s+|a\s+)?consultation/.test(t) ||
+      /consultation\s+ki\s+fees?/.test(t) ||
+      /charge\s+(a\s+)?fee\s+for\s+(the\s+)?consultation/.test(t);
+    if (!tiesFeeToConsult) return false;
+    const saysFree =
+      /\bfree\b|\bmuft\b|don'?t charge|do not charge|no (consultation )?(fee|charge)|koi (fee|charge)\s*nahi|fee\s*nahi/.test(t);
+    return !saysFree;
+  }
+
+  /** Correct line: the initial consultation is free. Language-aware. */
+  private consultationFreeReply(language: string): string {
+    return language === 'ur_roman'
+      ? `Achi baat ye hai ke initial consultation bilkul FREE hai — koi consultation fee nahi. Call par aap kya discuss karna chahenge?`
+      : `Good news — the initial consultation is completely free; there's no consultation fee at all. What would you like to cover on the call?`;
   }
 
   /** Safe pivot used when the strict gate / backstop blocks an answer. */

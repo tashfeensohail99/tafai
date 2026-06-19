@@ -65,7 +65,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       tab = 4;
     }
     if (tab != null) {
-      ref.read(shellIndexProvider.notifier).state = tab;
+      ref.read(shellIndexProvider('sales').notifier).state = tab;
       Navigator.of(context).pop();
     }
   }

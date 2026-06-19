@@ -100,7 +100,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider);
-    final index = ref.watch(shellIndexProvider);
+    final index = ref.watch(shellIndexProvider('sales'));
     final unread = ref.watch(unreadCountProvider).valueOrNull ?? 0;
 
     // Compulsory update gate — once a newer build is published, the app is
@@ -272,7 +272,7 @@ class _AppShellState extends ConsumerState<AppShell> {
           selectedIndex: index,
           onDestinationSelected: (i) {
             HapticFeedback.selectionClick();
-            ref.read(shellIndexProvider.notifier).state = i;
+            ref.read(shellIndexProvider('sales').notifier).state = i;
           },
           destinations: [
             for (final t in _tabs)

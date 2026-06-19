@@ -4,11 +4,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../auth/auth_controller.dart';
+import '../auth/role_home.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 import '../../features/auth/presentation/screens/change_password_screen.dart';
 import '../../features/shared/presentation/splash_screen.dart';
 import '../../features/shell/presentation/app_shell.dart';
+import '../../features/shell/presentation/finance_shell.dart';
+import '../../features/shell/presentation/client_shell.dart';
+import '../../features/shell/presentation/processing_shell.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/leads/presentation/lead_detail_screen.dart';
 
@@ -22,7 +26,10 @@ abstract class AppRoutes {
   static const login = '/login';
   static const forgotPassword = '/forgot-password';
   static const changePassword = '/change-password';
-  static const home = '/';
+  static const home = '/'; // Sales shell — also the default/fallback portal.
+  static const financeHome = '/finance';
+  static const clientHome = '/portal';
+  static const processingHome = '/processing';
   static const leads = '/leads';
   static const followUps = '/follow-ups';
   static const appointments = '/appointments';
@@ -68,9 +75,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         return AppRoutes.changePassword;
       }
 
-      // Signed in but sitting on splash/login → go home.
+      // Signed in but sitting on splash/login → route to the portal that
+      // matches the user's role(s). Sales/admin/etc. resolve to '/' (AppShell).
       if (loc == AppRoutes.splash || onAuthPage) {
-        return AppRoutes.home;
+        return homeRouteForRoles(auth.user?.roles ?? const []);
       }
       return null;
     },
@@ -94,6 +102,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.home,
         builder: (context, state) => const AppShell(),
+      ),
+      GoRoute(
+        path: AppRoutes.financeHome,
+        builder: (context, state) => const FinanceShell(),
+      ),
+      GoRoute(
+        path: AppRoutes.clientHome,
+        builder: (context, state) => const ClientShell(),
+      ),
+      GoRoute(
+        path: AppRoutes.processingHome,
+        builder: (context, state) => const ProcessingShell(),
       ),
       GoRoute(
         path: AppRoutes.settings,

@@ -1,15 +1,28 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from 'react';
-import { Inbox as InboxIcon, MessageSquare, Search } from 'lucide-react';
 import {
+  Archive,
+  ArchiveRestore,
+  Ban,
+  Inbox as InboxIcon,
+  MessageSquare,
+  Search,
+  ShieldOff,
+} from 'lucide-react';
+import {
+  archiveThread,
+  blockContact,
   getThreadStats,
   listThreads,
   threadMatchesSearch,
+  unarchiveThread,
+  unblockContact,
   type ThreadListItem,
   type ThreadStats,
   type WhatsAppThreadStatus,
 } from '@/lib/whatsapp';
+import { useSession } from '@/lib/session';
 import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
@@ -30,18 +43,23 @@ function useIsMobile(threshold = 1024): boolean {
 
 // 'UNCONTACTED' is a virtual filter (not a thread status): chats awaiting a
 // human reply where NO human has ever replied — the bot greeting doesn't count.
-type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED';
+// 'BLOCKED' is an exclusive view; the default tabs exclude archived + blocked.
+type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED' | 'BLOCKED';
 
-// Three non-overlapping tabs:
-//   All         — every chat (newest first)
+// Non-overlapping tabs:
+//   All         — every ACTIVE chat (newest first; archived + blocked hidden)
 //   Open        — a human HAS replied (the active, being-handled pile)
 //   Uncontacted — NO human has ever replied yet (the to-do list)
-// Open + Uncontacted partition All exactly. When a rep first replies, the chat
-// moves from Uncontacted → Open automatically (lastHumanReplyAt gets stamped).
+//   Archived    — threads you archived
+//   Blocked     — contacts you blocked
+// All + Open + Uncontacted operate on the active set. When a rep first replies,
+// the chat moves Uncontacted → Open automatically (lastHumanReplyAt stamped).
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
   { key: 'UNCONTACTED', label: 'Uncontacted' },
+  { key: 'ARCHIVED', label: 'Archived' },
+  { key: 'BLOCKED', label: 'Blocked' },
 ];
 
 /**
@@ -69,6 +87,21 @@ export default function SalesInboxPage() {
   const pagesRef = useRef(1);
   const { socket } = useWhatsAppSocket();
   const isMobile = useIsMobile();
+  const session = useSession();
+  const canBlock =
+    session.status === 'authed' && session.user.permissions.includes('whatsapp.block');
+  // Sales reps can archive their own threads (same perm the backend archive
+  // endpoint requires).
+  const canArchive =
+    session.status === 'authed' && session.user.permissions.includes('whatsapp.send_message');
+  // Per-row pending id + transient banner for archive/block actions.
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Block confirm dialog target (mirrors the admin Block dialog, lightweight).
+  const [blockTarget, setBlockTarget] = useState<ThreadListItem | null>(null);
+  const [blockReason, setBlockReason] = useState('');
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [blockError, setBlockError] = useState<string | null>(null);
   // Debounce: only fetch after typing pauses for 300ms. Without this, every
   // keystroke fires a backend round-trip — typing "Awais" used to send 5
   // requests, each ~600-900ms.
@@ -101,7 +134,11 @@ export default function SalesInboxPage() {
           ? { uncontacted: true as const }
           : filter === 'OPEN'
             ? { contacted: true as const }
-            : {};
+            : filter === 'ARCHIVED'
+              ? { archived: true as const }
+              : filter === 'BLOCKED'
+                ? { blocked: true as const }
+                : {};
       return followUpDueOnly ? { ...base, followUpDue: true as const } : base;
     },
     [filter, followUpDueOnly],
@@ -208,16 +245,25 @@ export default function SalesInboxPage() {
     socket,
     setItems,
     matches: (row) => {
-      if (filter === 'UNCONTACTED') {
-        // No human has ever replied. The moment a rep replies, lastHumanReplyAt
-        // is stamped → this returns false → the chat drops out of Uncontacted.
-        if (row.lastHumanReplyAt != null) return false;
-      } else if (filter === 'OPEN') {
-        // Open = a human has replied. A freshly-replied chat now matches here →
-        // it appears in Open (the "moved to Open" half of the transition).
-        if (row.lastHumanReplyAt == null) return false;
+      if (filter === 'ARCHIVED') {
+        if (row.status !== 'ARCHIVED') return false;
+      } else if (filter === 'BLOCKED') {
+        // Blocked membership isn't derivable from a list-item; let the 30s/focus
+        // reconcile (a full server-filtered refetch) own this tab.
+        return false;
+      } else {
+        // Active tabs (All / Open / Uncontacted) exclude archived threads.
+        if (row.status === 'ARCHIVED') return false;
+        if (filter === 'UNCONTACTED') {
+          // No human has ever replied. The moment a rep replies, lastHumanReplyAt
+          // is stamped → this returns false → the chat drops out of Uncontacted.
+          if (row.lastHumanReplyAt != null) return false;
+        } else if (filter === 'OPEN') {
+          // Open = a human has replied. A freshly-replied chat now matches here →
+          // it appears in Open (the "moved to Open" half of the transition).
+          if (row.lastHumanReplyAt == null) return false;
+        }
       }
-      // ALL: no status filter
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
     },
     reconcile: () => void reload({ background: true }),
@@ -232,6 +278,76 @@ export default function SalesInboxPage() {
   // the list updates — only the rows whose `active` flag flips re-render.
   const handleSelect = useCallback((id: string) => setActiveId(id), []);
 
+  // Archive / unarchive one of the rep's own threads, then refresh so the row
+  // leaves/enters the active list per the current tab.
+  const handleArchive = useCallback(
+    async (t: ThreadListItem) => {
+      setRowBusyId(t.id);
+      try {
+        if (t.status === 'ARCHIVED') {
+          await unarchiveThread(t.id);
+          setNotice('Conversation unarchived.');
+        } else {
+          await archiveThread(t.id);
+          setNotice('Conversation archived.');
+        }
+        await reload({ background: true });
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'Archive failed');
+      } finally {
+        setRowBusyId(null);
+      }
+    },
+    [reload],
+  );
+
+  // Unblock straight from a row (the safe direction — no confirm needed).
+  const handleUnblock = useCallback(
+    async (t: ThreadListItem) => {
+      setRowBusyId(t.id);
+      try {
+        await unblockContact(t.id);
+        setNotice('Contact unblocked.');
+        await reload({ background: true });
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'Unblock failed');
+      } finally {
+        setRowBusyId(null);
+      }
+    },
+    [reload],
+  );
+
+  const openBlock = useCallback((t: ThreadListItem) => {
+    setBlockTarget(t);
+    setBlockReason('');
+    setBlockError(null);
+  }, []);
+
+  async function handleBlock() {
+    if (!blockTarget) return;
+    setBlockBusy(true);
+    setBlockError(null);
+    try {
+      await blockContact(blockTarget.id, blockReason.trim() || undefined);
+      setNotice('Contact blocked and conversation archived.');
+      setBlockTarget(null);
+      setBlockReason('');
+      void reload({ background: true });
+    } catch (err) {
+      setBlockError(err instanceof Error ? err.message : 'Block failed');
+    } finally {
+      setBlockBusy(false);
+    }
+  }
+
+  // Auto-clear the transient action notice.
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(id);
+  }, [notice]);
+
   const totalUnread = useMemo(() => items.reduce((acc, t) => acc + t.unreadCount, 0), [items]);
 
   // Defensive render guard: only show rows that actually match the ACTIVE tab's
@@ -242,9 +358,13 @@ export default function SalesInboxPage() {
   // under "Uncontacted", regardless of any cache/refresh timing. Mirrors
   // scopeQuery() and the realtime matches() predicate exactly.
   const visibleItems = useMemo(() => {
-    if (filter === 'UNCONTACTED') return items.filter((t) => t.lastHumanReplyAt == null);
-    if (filter === 'OPEN') return items.filter((t) => t.lastHumanReplyAt != null);
-    return items; // ALL
+    if (filter === 'ARCHIVED') return items.filter((t) => t.status === 'ARCHIVED');
+    // BLOCKED rows arrive pre-filtered from the server; trust the loaded page.
+    if (filter === 'BLOCKED') return items;
+    const active = items.filter((t) => t.status !== 'ARCHIVED');
+    if (filter === 'UNCONTACTED') return active.filter((t) => t.lastHumanReplyAt == null);
+    if (filter === 'OPEN') return active.filter((t) => t.lastHumanReplyAt != null);
+    return active; // ALL
   }, [items, filter]);
 
   // Real DB total for the active tab (from stats) — drives the "showing N of M"
@@ -259,6 +379,8 @@ export default function SalesInboxPage() {
       case 'ALL': return stats.total;
       case 'OPEN': return stats.total - stats.uncontacted;
       case 'UNCONTACTED': return stats.uncontacted;
+      case 'ARCHIVED': return stats.archived;
+      case 'BLOCKED': return stats.blocked;
       default: return null;
     }
   }, [stats, filter, followUpDueOnly]);
@@ -405,13 +527,21 @@ export default function SalesInboxPage() {
                   ? stats.total - stats.uncontacted
                   : f.key === 'UNCONTACTED'
                     ? stats.uncontacted
-                    : 0
+                    : f.key === 'ARCHIVED'
+                      ? stats.archived
+                      : f.key === 'BLOCKED'
+                        ? stats.blocked
+                        : 0
               : // Stats not yet loaded — fall back to page-based count while fetching.
                 f.key === 'ALL'
                 ? items.length
                 : f.key === 'OPEN'
                   ? items.filter((t) => t.lastHumanReplyAt != null).length
-                  : items.filter((t) => t.lastHumanReplyAt == null).length;
+                  : f.key === 'UNCONTACTED'
+                    ? items.filter((t) => t.lastHumanReplyAt == null).length
+                    : f.key === 'ARCHIVED'
+                      ? items.filter((t) => t.status === 'ARCHIVED').length
+                      : 0;
             return (
               <button
                 key={f.key}
@@ -460,9 +590,11 @@ export default function SalesInboxPage() {
               width={300}
               title="What these tabs mean"
               items={[
-                { term: 'All', desc: 'Every chat, newest first.' },
+                { term: 'All', desc: 'Every active chat, newest first (archived + blocked are hidden).' },
                 { term: 'Open', desc: 'A human has replied at least once — the active, being-handled conversations.' },
                 { term: 'Uncontacted', desc: "No human has ever replied — only the AI bot greeted them. Your to-do list. The moment you reply, the chat moves to Open." },
+                { term: 'Archived', desc: 'Chats you archived to clear them from the active list. Unarchive to bring one back.' },
+                { term: 'Blocked', desc: 'Contacts you blocked. Their conversations stay out of the active list until you unblock them.' },
               ]}
             />
           </div>
@@ -549,7 +681,14 @@ export default function SalesInboxPage() {
                   key={t.id}
                   item={t}
                   active={activeId === t.id}
+                  canBlock={canBlock}
+                  canArchive={canArchive}
+                  blockedView={filter === 'BLOCKED'}
+                  busy={rowBusyId === t.id}
                   onSelect={handleSelect}
+                  onBlock={openBlock}
+                  onUnblock={handleUnblock}
+                  onArchive={handleArchive}
                 />
               ))}
               {nextCursor ? (
@@ -630,6 +769,118 @@ export default function SalesInboxPage() {
         </div>
       )
       ) : null}
+
+      {/* Transient action notice (archive / block / unblock). Fixed so it floats
+          above the split-pane without shifting layout. */}
+      {notice ? (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 20,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1100,
+            background: 'var(--sos-surface-2)',
+            color: 'var(--sos-text-primary)',
+            border: '1px solid var(--sos-border-subtle)',
+            borderRadius: 999,
+            padding: '8px 16px',
+            fontSize: 13,
+            boxShadow: 'var(--sos-shadow-md, 0 6px 24px rgba(0,0,0,0.18))',
+          }}
+        >
+          {notice}
+        </div>
+      ) : null}
+
+      {/* Block confirm dialog */}
+      {blockTarget ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setBlockTarget(null);
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'var(--sos-bg-overlay)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            padding: '6vh 16px',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            className="sos-glass sos-glass--strong"
+            style={{ width: '100%', maxWidth: 460, padding: 0, borderRadius: 'var(--sos-radius-panel)' }}
+          >
+            <header style={{ padding: '14px 18px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+              <div className="sos-title" style={{ fontSize: 'var(--sos-text-md)' }}>
+                Block contact
+              </div>
+              <div className="sos-text-muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+                {blockTarget.lead
+                  ? `${blockTarget.lead.firstName} ${blockTarget.lead.lastName} · ${blockTarget.lead.phone}`
+                  : blockTarget.client
+                    ? `${blockTarget.client.firstName} ${blockTarget.client.lastName} · ${blockTarget.client.phone}`
+                    : blockTarget.waContactId}
+              </div>
+            </header>
+            <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: 'var(--sos-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  Reason (optional)
+                </span>
+                <textarea
+                  className="sos-input"
+                  value={blockReason}
+                  onChange={(e) => setBlockReason(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. spam / abusive / wrong number"
+                  style={{ resize: 'vertical' }}
+                />
+              </label>
+              <div
+                style={{
+                  fontSize: 12,
+                  padding: '8px 10px',
+                  background: 'var(--sos-status-danger-soft)',
+                  border: '1px solid var(--sos-status-danger-border)',
+                  borderRadius: 'var(--sos-radius-sm)',
+                  color: 'var(--sos-status-danger-strong)',
+                }}
+              >
+                Blocking marks this contact as blocked and archives the conversation. It
+                won't appear in your active inbox until you unblock it.
+              </div>
+              {blockError ? <div className="sos-banner sos-banner--danger">{blockError}</div> : null}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button type="button" className="sos-btn sos-btn--ghost" onClick={() => setBlockTarget(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="sos-btn sos-btn--danger"
+                  disabled={blockBusy}
+                  onClick={() => void handleBlock()}
+                >
+                  {blockBusy ? 'Blocking…' : 'Block contact'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -637,11 +888,26 @@ export default function SalesInboxPage() {
 const ThreadRow = memo(function ThreadRow({
   item,
   active,
+  canBlock,
+  canArchive,
+  blockedView,
+  busy,
   onSelect,
+  onBlock,
+  onUnblock,
+  onArchive,
 }: {
   item: ThreadListItem;
   active: boolean;
+  canBlock: boolean;
+  canArchive: boolean;
+  /** True under the BLOCKED tab — the row offers Unblock, not Block. */
+  blockedView: boolean;
+  busy: boolean;
   onSelect: (id: string) => void;
+  onBlock: (item: ThreadListItem) => void;
+  onUnblock: (item: ThreadListItem) => void;
+  onArchive: (item: ThreadListItem) => void;
 }) {
   const displayName =
     item.client?.firstName || item.client?.lastName
@@ -649,6 +915,8 @@ const ThreadRow = memo(function ThreadRow({
       : item.lead
         ? `${item.lead.firstName} ${item.lead.lastName}`.trim()
         : item.waContactId;
+
+  const isArchived = item.status === 'ARCHIVED';
 
   // "Action required": the lead messaged and no human has answered yet, in a
   // chat a human HAS handled before (lastHumanReplyAt set). The sort pins these
@@ -661,15 +929,17 @@ const ThreadRow = memo(function ThreadRow({
   const ts = item.lastHumanActivityAt ?? item.lastMessageAt;
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(item.id)}
-      style={{
-        all: 'unset',
-        cursor: 'pointer',
-        display: 'block',
-        width: '100%',
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(item.id);
+        }
       }}
+      style={{ cursor: 'pointer', display: 'block', width: '100%' }}
     >
       <div
         style={{
@@ -836,10 +1106,87 @@ const ThreadRow = memo(function ThreadRow({
             </div>
           </div>
         </div>
+
+        {/* Per-row actions — Archive/Unarchive and Block/Unblock. stopPropagation
+            so tapping an action doesn't also open the chat. */}
+        {canArchive || canBlock ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+            {canArchive ? (
+              <RowActionButton
+                label={isArchived ? 'Unarchive conversation' : 'Archive conversation'}
+                disabled={busy}
+                onClick={() => onArchive(item)}
+                icon={isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+              />
+            ) : null}
+            {canBlock ? (
+              blockedView ? (
+                <RowActionButton
+                  label="Unblock contact"
+                  disabled={busy}
+                  onClick={() => onUnblock(item)}
+                  icon={<ShieldOff size={15} />}
+                />
+              ) : (
+                <RowActionButton
+                  label="Block contact"
+                  danger
+                  disabled={busy}
+                  onClick={() => onBlock(item)}
+                  icon={<Ban size={15} />}
+                />
+              )
+            ) : null}
+          </div>
+        ) : null}
       </div>
-    </button>
+    </div>
   );
 });
+
+/** Compact icon-only action button used on each thread row. */
+function RowActionButton({
+  label,
+  icon,
+  onClick,
+  disabled,
+  danger,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  const baseColor = danger ? 'var(--sos-status-danger-strong)' : 'var(--sos-text-muted)';
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onClick();
+      }}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        color: baseColor,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        padding: 6,
+        borderRadius: 6,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}
+    >
+      {icon}
+    </button>
+  );
+}
 
 function tone(s: ThreadListItem['status']) {
   switch (s) {

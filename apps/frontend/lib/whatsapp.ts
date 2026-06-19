@@ -205,6 +205,11 @@ export function listThreads(opts: {
   contacted?: boolean;
   /** "Due (N)" chip — only chats whose lead has an OPEN follow-up due/overdue now. */
   followUpDue?: boolean;
+  /** "Archived" tab — show ONLY archived threads (status=ARCHIVED). When this
+   *  and `blocked` are both unset, the default list EXCLUDES archived/blocked. */
+  archived?: boolean;
+  /** "Blocked" tab — show ONLY threads whose contact (Lead/Client) is blocked. */
+  blocked?: boolean;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;
   search?: string;
@@ -294,6 +299,10 @@ export interface ThreadStats {
   uncontacted: number;
   /** "Due (N)" — chats whose lead has an OPEN follow-up due/overdue right now. */
   followUpDue: number;
+  /** "Archived" — threads whose status is ARCHIVED. */
+  archived: number;
+  /** "Blocked" — threads whose contact (Lead/Client) is blocked. */
+  blocked: number;
   /** Within the warn window (about to breach), not yet overdue. */
   approaching: number;
   /** Response-SLA deadline already passed, still unanswered. */
@@ -333,6 +342,72 @@ export function reassignThread(
     method: 'POST',
     body: JSON.stringify({ employeeId }),
   });
+}
+
+// ---- Block + Archive ----------------------------------------------------
+
+/**
+ * Block the thread's contact (Lead + Client) AND archive the thread in one
+ * shot. Stamps blockedAt/blockedReason/blockedByUserId on BOTH the Lead and
+ * Client behind the thread (whichever exist) and flips the thread to ARCHIVED.
+ * Permission: whatsapp.block. Sales can block their OWN leads; admin any.
+ */
+export function blockContact(
+  threadId: string,
+  reason?: string,
+): Promise<{ threadId: string; leadId: string | null; clientId: string | null; blocked: true }> {
+  return apiFetch(`/whatsapp/threads/${threadId}/block`, {
+    method: 'POST',
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+}
+
+/**
+ * Unblock the thread's contact — clears blockedAt/blockedReason/blockedByUserId
+ * on the Lead + Client. Does NOT auto-unarchive the thread (use unarchiveThread
+ * for that). Permission: whatsapp.block.
+ */
+export function unblockContact(
+  threadId: string,
+): Promise<{ threadId: string; blocked: false }> {
+  return apiFetch(`/whatsapp/threads/${threadId}/unblock`, { method: 'POST' });
+}
+
+/** Archive a single thread (status=ARCHIVED). Permission: whatsapp.send_message. */
+export function archiveThread(
+  threadId: string,
+): Promise<{ threadId: string; status: 'ARCHIVED' }> {
+  return apiFetch(`/whatsapp/threads/${threadId}/archive`, { method: 'POST' });
+}
+
+/** Unarchive a thread back to OPEN. Permission: whatsapp.send_message. */
+export function unarchiveThread(
+  threadId: string,
+): Promise<{ threadId: string; status: 'OPEN' }> {
+  return apiFetch(`/whatsapp/threads/${threadId}/unarchive`, { method: 'POST' });
+}
+
+export interface BlockedNumber {
+  contactType: 'lead' | 'client';
+  contactId: string;
+  name: string;
+  phone: string;
+  blockedAt: string;
+  blockedReason: string | null;
+  blockedByName: string | null;
+  /** The thread that backs this contact, so the admin screen can call
+   *  unblockContact(threadId). Present when a thread exists for the number. */
+  threadId?: string | null;
+}
+
+/**
+ * Admin: list every currently-blocked contact (Lead + Client). Backs the
+ * "Blocked numbers" admin screen. Permission: whatsapp.view_all_inboxes.
+ */
+export function listBlockedNumbers(): Promise<BlockedNumber[]> {
+  // no-store: the list must reflect live block/unblock actions immediately,
+  // not a cached snapshot from a prior visit.
+  return apiFetch<BlockedNumber[]>('/whatsapp/blocked-numbers', { cache: 'no-store' });
 }
 
 export function getThread(threadId: string): Promise<ThreadDetail> {

@@ -459,21 +459,31 @@ export class WebhookIngestProcessor extends WorkerHost {
     // Resolve customer: client > lead > new lead (same identity rule as
     // messages), serialized per-phone so a simultaneous first message + call
     // can't both create a lead.
-    const { leadId, clientId } = await this.withPhoneLock(phone, async () => {
+    const { leadId, clientId, blocked } = await this.withPhoneLock(phone, async () => {
       const existingClient = await this.prisma.client.findFirst({
         where: { phone, deletedAt: null },
-        select: { id: true },
+        // blockedAt folded in so a blocked contact's call is dropped BEFORE any
+        // thread upsert / call-row create / ring / push.
+        select: { id: true, blockedAt: true },
       });
       if (existingClient) {
-        return { leadId: null as string | null, clientId: existingClient.id as string | null };
+        return {
+          leadId: null as string | null,
+          clientId: existingClient.id as string | null,
+          blocked: !!existingClient.blockedAt,
+        };
       }
       const existingLead = await this.prisma.lead.findFirst({
         where: { phone, deletedAt: null },
         orderBy: { createdAt: 'desc' },
-        select: { id: true },
+        select: { id: true, blockedAt: true },
       });
       if (existingLead) {
-        return { leadId: existingLead.id as string | null, clientId: null as string | null };
+        return {
+          leadId: existingLead.id as string | null,
+          clientId: null as string | null,
+          blocked: !!existingLead.blockedAt,
+        };
       }
       const branch = await this.prisma.branch.findFirst({
         orderBy: { createdAt: 'asc' },
@@ -493,8 +503,16 @@ export class WebhookIngestProcessor extends WorkerHost {
         },
         select: { id: true },
       });
-      return { leadId: newLead.id as string | null, clientId: null as string | null };
+      // A freshly created lead is never blocked.
+      return { leadId: newLead.id as string | null, clientId: null as string | null, blocked: false };
     });
+
+    // Block enforcement: a blocked contact's call is silently dropped — NO ring,
+    // NO notification, NO call row, NO thread upsert. Logged once for audit.
+    if (blocked) {
+      this.log.log(`inbound call dropped — contact blocked (phone ${phone})`);
+      return;
+    }
 
     // Upsert the contact's thread so the call shares the inbox conversation and
     // we can reuse the assignment engine.
@@ -641,23 +659,29 @@ export class WebhookIngestProcessor extends WorkerHost {
     // pass the "no existing lead" check and both create a lead (the duplicate
     // orphan-lead race). The second job waits, then finds the lead the first
     // one just created. Different phones lock on different keys and don't wait.
-    const { leadId, clientId, createdLead } = await this.withPhoneLock(phone, async () => {
+    const { leadId, clientId, createdLead, blocked } = await this.withPhoneLock(phone, async () => {
       const existingClient = await this.prisma.client.findFirst({
         where: { phone, deletedAt: null },
-        select: { id: true },
+        // blockedAt folded into the phone-lock select so we can drop a blocked
+        // contact's inbound BEFORE creating any thread/message/AI job.
+        select: { id: true, blockedAt: true },
       });
       let leadId: string | null = null;
       const clientId: string | null = existingClient?.id ?? null;
       let createdLead = false;
+      // A blocked contact (lead OR client) drops the inbound. A freshly created
+      // lead (below) is never blocked, so we only read block state off existing rows.
+      let blocked = !!existingClient?.blockedAt;
 
       if (!clientId) {
         const existingLead = await this.prisma.lead.findFirst({
           where: { phone, deletedAt: null },
           orderBy: { createdAt: 'desc' },
-          select: { id: true },
+          select: { id: true, blockedAt: true },
         });
         if (existingLead) {
           leadId = existingLead.id;
+          blocked = !!existingLead.blockedAt;
         } else {
           // Create a new Lead from the WhatsApp profile. Required fields:
           // firstName, lastName, phone. branchId optional but we pick the
@@ -687,8 +711,16 @@ export class WebhookIngestProcessor extends WorkerHost {
           createdLead = true;
         }
       }
-      return { leadId, clientId, createdLead };
+      return { leadId, clientId, createdLead, blocked };
     });
+
+    // Block enforcement: if the resolved contact is blocked, drop the inbound
+    // entirely — NO thread upsert, NO message row, NO AI enqueue, no realtime
+    // fanout. Logged once for audit. (A freshly created lead is never blocked.)
+    if (blocked) {
+      this.log.log(`inbound message dropped — contact blocked (phone ${phone})`);
+      return;
+    }
 
     // Click-to-WhatsApp ad referral. Meta only sends this on the first
     // message after a customer clicks the ad — store it on both the

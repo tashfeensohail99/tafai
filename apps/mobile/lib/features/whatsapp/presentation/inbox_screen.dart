@@ -46,6 +46,15 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       .read(inboxFilterProvider.notifier)
       .update((f) => f.copyWith(followUpDue: !f.followUpDue));
 
+  /// Archived/Blocked are "show ONLY these" views. Tapping the chip selects
+  /// that tab; tapping it again returns to All. They also clear the Due chip,
+  /// which only applies to the live lists.
+  void _toggleView(WaTab view) =>
+      ref.read(inboxFilterProvider.notifier).update((f) => f.copyWith(
+            tab: f.tab == view ? WaTab.all : view,
+            followUpDue: false,
+          ));
+
   Future<void> _refreshAll(WaFilter filter) async {
     ref.invalidate(threadStatsProvider);
     await ref.read(threadsControllerProvider(filter).notifier).refresh();
@@ -92,23 +101,42 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
           ),
         ),
 
-        // ── due follow-up chip ────────────────────────────────────────────
-        if (stats.followUpDue > 0 || filter.followUpDue)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-                AppTokens.space4, AppTokens.space2, AppTokens.space4, 0),
+        // ── filter chips: Due / Archived / Blocked ────────────────────────
+        Padding(
+          padding: const EdgeInsets.only(top: AppTokens.space2),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppTokens.space4),
             child: Row(
               children: [
+                if (stats.followUpDue > 0 || filter.followUpDue)
+                  CrmFilterChip(
+                    label: 'Due follow-ups',
+                    count: stats.followUpDue,
+                    selected: filter.followUpDue,
+                    onTap: _toggleDue,
+                    selectedColor: AppTokens.statusWarning,
+                  ),
+                if (stats.followUpDue > 0 || filter.followUpDue)
+                  const SizedBox(width: AppTokens.space2),
                 CrmFilterChip(
-                  label: 'Due follow-ups',
-                  count: stats.followUpDue,
-                  selected: filter.followUpDue,
-                  onTap: _toggleDue,
-                  selectedColor: AppTokens.statusWarning,
+                  label: 'Archived',
+                  count: stats.archived,
+                  selected: filter.tab == WaTab.archived,
+                  onTap: () => _toggleView(WaTab.archived),
+                ),
+                const SizedBox(width: AppTokens.space2),
+                CrmFilterChip(
+                  label: 'Blocked',
+                  count: stats.blocked,
+                  selected: filter.tab == WaTab.blocked,
+                  onTap: () => _toggleView(WaTab.blocked),
+                  selectedColor: AppTokens.statusDanger,
                 ),
               ],
             ),
           ),
+        ),
         const SizedBox(height: AppTokens.space2),
         const Divider(height: 1),
 
@@ -116,6 +144,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
         Expanded(
           child: _ThreadsList(
             state: threads,
+            tab: filter.tab,
             onRefresh: () => _refreshAll(filter),
             onLoadMore: () =>
                 ref.read(threadsControllerProvider(filter).notifier).loadMore(),
@@ -238,6 +267,7 @@ class _InboxTabItem extends StatelessWidget {
 
 class _ThreadsList extends StatelessWidget {
   final ThreadsState state;
+  final WaTab tab;
   final Future<void> Function() onRefresh;
   final VoidCallback onLoadMore;
   final VoidCallback onRetry;
@@ -245,6 +275,7 @@ class _ThreadsList extends StatelessWidget {
 
   const _ThreadsList({
     required this.state,
+    required this.tab,
     required this.onRefresh,
     required this.onLoadMore,
     required this.onRetry,
@@ -258,11 +289,24 @@ class _ThreadsList extends StatelessWidget {
       return ErrorView(error: state.error!, onRetry: onRetry);
     }
     if (state.items.isEmpty) {
-      return const EmptyView(
-        icon: Icons.forum_outlined,
-        title: 'No conversations',
-        message: 'Chats assigned to you will appear here.',
-      );
+      final (icon, title, message) = switch (tab) {
+        WaTab.archived => (
+            Icons.archive_outlined,
+            'No archived chats',
+            'Chats you archive will appear here.',
+          ),
+        WaTab.blocked => (
+            Icons.block,
+            'No blocked contacts',
+            'Contacts you block will appear here.',
+          ),
+        _ => (
+            Icons.forum_outlined,
+            'No conversations',
+            'Chats assigned to you will appear here.',
+          ),
+      };
+      return EmptyView(icon: icon, title: title, message: message);
     }
     return RefreshIndicator(
       color: AppTokens.brandNavy,

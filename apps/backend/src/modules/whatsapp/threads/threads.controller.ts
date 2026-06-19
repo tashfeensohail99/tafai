@@ -113,6 +113,26 @@ class ListThreadsDto {
   @Transform(({ value }) => value === 'true' || value === true)
   followUpDue?: boolean;
 
+  /**
+   * "Archived" view: show ONLY archived threads (status=ARCHIVED). When NEITHER
+   * archived nor blocked is set the default list EXCLUDES both. Validated as a
+   * real boolean (see the @Transform note above — runs before validation).
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  archived?: boolean;
+
+  /**
+   * "Blocked" view: show ONLY threads whose contact (lead OR client) is blocked.
+   * When NEITHER archived nor blocked is set the default list EXCLUDES both.
+   * Validated as a real boolean (see the @Transform note above).
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  blocked?: boolean;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
 
@@ -145,6 +165,13 @@ class ReassignThreadDto {
   /** The employee to route this thread's lead to. Must be an active WhatsApp inbox member. */
   @IsUUID()
   employeeId!: string;
+}
+
+class BlockThreadDto {
+  /** Optional free-text reason recorded on the contact + in the audit timeline. */
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 @Controller('whatsapp/threads')
@@ -403,6 +430,64 @@ export class WhatsAppThreadsController {
   ) {
     const caller = await this.buildCallerContext(user);
     return this.threads.reassign(caller, id, dto.employeeId);
+  }
+
+  /**
+   * Block the thread's CONTACT (Lead + Client) and archive the thread. Inbound
+   * messages and calls from a blocked contact are dropped at ingest and the bot
+   * stays silent. Scoped via getOrFail (sales = own leads, admin = any).
+   * Permission: whatsapp.block.
+   */
+  @Post(':id/block')
+  @RequirePermissions('whatsapp.block')
+  async block(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: BlockThreadDto,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.block(caller, id, dto.reason);
+  }
+
+  /**
+   * Unblock the thread's contact — clears the block stamp on Lead + Client.
+   * Does not un-archive the thread. Permission: whatsapp.block.
+   */
+  @Post(':id/unblock')
+  @RequirePermissions('whatsapp.block')
+  async unblock(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.unblock(caller, id);
+  }
+
+  /**
+   * Archive the thread (status=ARCHIVED) — parks it out of the working inbox
+   * without blocking the contact. Permission: whatsapp.send_message.
+   */
+  @Post(':id/archive')
+  @RequirePermissions('whatsapp.send_message')
+  async archive(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.archive(caller, id);
+  }
+
+  /**
+   * Un-archive the thread (status back to OPEN). Permission: whatsapp.send_message.
+   */
+  @Post(':id/unarchive')
+  @RequirePermissions('whatsapp.send_message')
+  async unarchive(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.unarchive(caller, id);
   }
 
   /**
@@ -696,5 +781,23 @@ export class WhatsAppThreadsController {
       canViewFinanceScope,
       canViewProcessingScope,
     };
+  }
+}
+
+/**
+ * Org-wide blocked-numbers register. Lives at /whatsapp/blocked-numbers (not
+ * under /whatsapp/threads) per the API contract, so it gets its own thin
+ * controller reusing WhatsAppThreadsService. Gated by whatsapp.view_all_inboxes
+ * — this is an admin/manager audit view, not scoped per agent.
+ */
+@Controller('whatsapp/blocked-numbers')
+@UseGuards(JwtAuthGuard, PermissionGuard)
+export class WhatsAppBlockedNumbersController {
+  constructor(private readonly threads: WhatsAppThreadsService) {}
+
+  @Get()
+  @RequirePermissions('whatsapp.view_all_inboxes')
+  async list() {
+    return this.threads.blockedNumbers();
   }
 }

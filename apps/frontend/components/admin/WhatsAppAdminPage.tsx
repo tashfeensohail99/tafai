@@ -25,23 +25,32 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  Ban,
   CheckCircle2,
   Inbox as InboxIcon,
   MessageSquare,
   RefreshCw,
   Search,
+  ShieldOff,
   TimerReset,
   UserCog,
 } from 'lucide-react';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { useAdminSession } from '../layout/AdminShell';
 import {
+  archiveThread,
+  blockContact,
   getThreadStats,
   listThreads,
   reassignThread,
   threadMatchesSearch,
+  unarchiveThread,
+  unblockContact,
   type ThreadListItem,
   type ThreadStats,
   type WhatsAppThreadStatus,
@@ -69,14 +78,20 @@ function useIsMobile(threshold = 1024): boolean {
 
 // 'UNCONTACTED' is a virtual filter: pending chats where no human has ever
 // replied (the bot greeting doesn't count) — leads awaiting a first sales reply.
-type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED';
+// 'ARCHIVED' / 'BLOCKED' are exclusive views: the default tabs (All/Open/
+// Uncontacted) EXCLUDE archived + blocked threads, so they live behind their
+// own tabs to be seen at all.
+type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED' | 'BLOCKED';
 
-// Three non-overlapping tabs: All (everything), Open (a human has replied), and
-// Uncontacted (no human has ever replied). Open + Uncontacted partition All.
+// Non-overlapping tabs: All (active), Open (a human has replied), Uncontacted
+// (no human has ever replied), Archived, Blocked. Open + Uncontacted partition
+// the ACTIVE (non-archived, non-blocked) set; Archived/Blocked are separate.
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'OPEN', label: 'Open' },
   { key: 'UNCONTACTED', label: 'Uncontacted' },
+  { key: 'ARCHIVED', label: 'Archived' },
+  { key: 'BLOCKED', label: 'Blocked' },
 ];
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -87,6 +102,10 @@ export function WhatsAppAdminPage() {
   const { user } = useAdminSession();
   const canViewAll = user.permissions.includes('whatsapp.view_all_inboxes');
   const canReassign = user.permissions.includes('whatsapp.reassign');
+  const canBlock = user.permissions.includes('whatsapp.block');
+  // Archive piggybacks on send_message (same perm the backend archive endpoint
+  // requires); admins who can view all inboxes can usually send too.
+  const canArchive = user.permissions.includes('whatsapp.send_message');
 
   const [filter, setFilter] = useState<Filter>('ALL');
   const [unassignedOnly, setUnassignedOnly] = useState(false);
@@ -120,6 +139,15 @@ export function WhatsAppAdminPage() {
   const [reassignError, setReassignError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
 
+  // Block confirm dialog state (mirrors the reassign modal).
+  const [blockTarget, setBlockTarget] = useState<ThreadListItem | null>(null);
+  const [blockReason, setBlockReason] = useState('');
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [blockError, setBlockError] = useState<string | null>(null);
+  // Per-row "busy" id so the archive/unblock buttons can show a pending state
+  // without a global spinner.
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+
   // Debounce the search box — see debouncedSearch above.
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 300);
@@ -136,7 +164,11 @@ export function WhatsAppAdminPage() {
         ? { uncontacted: true as const }
         : filter === 'OPEN'
           ? { contacted: true as const } // "Open" = a human has replied
-          : {}),
+          : filter === 'ARCHIVED'
+            ? { archived: true as const } // ONLY archived threads
+            : filter === 'BLOCKED'
+              ? { blocked: true as const } // ONLY blocked contacts
+              : {}),
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
       ...(unassignedOnly ? { unassigned: true } : {}),
       ...(agentFilter ? { employeeId: agentFilter } : {}),
@@ -199,6 +231,51 @@ export function WhatsAppAdminPage() {
     setReassignEmployee('');
     setReassignError(null);
   }, []);
+  const openBlock = useCallback((t: ThreadListItem) => {
+    setBlockTarget(t);
+    setBlockReason('');
+    setBlockError(null);
+  }, []);
+
+  // Archive / unarchive a single thread. Optimistic-ish: refetch on success so
+  // the row leaves/enters the active list per the current tab.
+  const handleArchive = useCallback(
+    async (t: ThreadListItem) => {
+      setRowBusyId(t.id);
+      try {
+        if (t.status === 'ARCHIVED') {
+          await unarchiveThread(t.id);
+          setConfirmation('Conversation unarchived.');
+        } else {
+          await archiveThread(t.id);
+          setConfirmation('Conversation archived.');
+        }
+        await refreshThreads();
+      } catch (err) {
+        setConfirmation(err instanceof Error ? err.message : 'Archive failed');
+      } finally {
+        setRowBusyId(null);
+      }
+    },
+    [refreshThreads],
+  );
+
+  // Unblock straight from a row (no confirm — unblocking is the safe direction).
+  const handleUnblock = useCallback(
+    async (t: ThreadListItem) => {
+      setRowBusyId(t.id);
+      try {
+        await unblockContact(t.id);
+        setConfirmation('Contact unblocked.');
+        await refreshThreads();
+      } catch (err) {
+        setConfirmation(err instanceof Error ? err.message : 'Unblock failed');
+      } finally {
+        setRowBusyId(null);
+      }
+    },
+    [refreshThreads],
+  );
 
   // Append the next page when the user scrolls near the bottom of the list.
   // Guarded so we never fire two in-flight loads or load past the end.
@@ -245,12 +322,27 @@ export function WhatsAppAdminPage() {
     matches: (row) => {
       if (unassignedOnly && row.lead?.assignedEmployeeId) return false;
       if (agentFilter && row.lead?.assignedEmployeeId !== agentFilter) return false;
-      if (filter === 'UNCONTACTED') {
-        // No human has ever replied. A first reply stamps lastHumanReplyAt → drops out.
-        if (row.lastHumanReplyAt != null) return false;
-      } else if (filter === 'OPEN') {
-        // Open = a human has replied. A freshly-replied chat appears here.
-        if (row.lastHumanReplyAt == null) return false;
+      // Archived / Blocked are exclusive views; the default tabs exclude
+      // archived threads. We can identify archived rows by status; blocked
+      // rows aren't distinguishable from a list-item alone, so the periodic
+      // reconcile (a full server-filtered refetch) is what keeps the BLOCKED
+      // tab honest — here we only gate the archived case deterministically.
+      if (filter === 'ARCHIVED') {
+        if (row.status !== 'ARCHIVED') return false;
+      } else if (filter === 'BLOCKED') {
+        // Let the reconcile own membership; never let a non-archived active
+        // row mistakenly patch into the Blocked view via a message event.
+        return false;
+      } else {
+        // Default tabs (All / Open / Uncontacted) exclude archived threads.
+        if (row.status === 'ARCHIVED') return false;
+        if (filter === 'UNCONTACTED') {
+          // No human has ever replied. A first reply stamps lastHumanReplyAt → drops out.
+          if (row.lastHumanReplyAt != null) return false;
+        } else if (filter === 'OPEN') {
+          // Open = a human has replied. A freshly-replied chat appears here.
+          if (row.lastHumanReplyAt == null) return false;
+        }
       }
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
     },
@@ -292,9 +384,15 @@ export function WhatsAppAdminPage() {
   // stale row (e.g. a chat that got a human reply after it was loaded into the
   // Uncontacted list) can never render under the wrong tab. Mirrors scopeQuery.
   const visibleItems = useMemo(() => {
-    if (filter === 'UNCONTACTED') return items.filter((t) => t.lastHumanReplyAt == null);
-    if (filter === 'OPEN') return items.filter((t) => t.lastHumanReplyAt != null);
-    return items; // ALL
+    if (filter === 'ARCHIVED') return items.filter((t) => t.status === 'ARCHIVED');
+    // BLOCKED rows come pre-filtered from the server; no client predicate
+    // distinguishes them, so trust the loaded page.
+    if (filter === 'BLOCKED') return items;
+    // Active tabs hide archived threads.
+    const active = items.filter((t) => t.status !== 'ARCHIVED');
+    if (filter === 'UNCONTACTED') return active.filter((t) => t.lastHumanReplyAt == null);
+    if (filter === 'OPEN') return active.filter((t) => t.lastHumanReplyAt != null);
+    return active; // ALL
   }, [items, filter]);
 
   const eligibleTeam = useMemo(
@@ -316,6 +414,23 @@ export function WhatsAppAdminPage() {
       setReassignError(err instanceof Error ? err.message : 'Reassign failed');
     } finally {
       setReassignBusy(false);
+    }
+  }
+
+  async function handleBlock() {
+    if (!blockTarget) return;
+    setBlockBusy(true);
+    setBlockError(null);
+    try {
+      await blockContact(blockTarget.id, blockReason.trim() || undefined);
+      setConfirmation('Contact blocked and conversation archived.');
+      setBlockTarget(null);
+      setBlockReason('');
+      void reload();
+    } catch (err) {
+      setBlockError(err instanceof Error ? err.message : 'Block failed');
+    } finally {
+      setBlockBusy(false);
     }
   }
 
@@ -385,6 +500,17 @@ export function WhatsAppAdminPage() {
             }
             icon={<CheckCircle2 size={12} />}
           />
+          {canViewAll ? (
+            <Link
+              href="/admin/whatsapp/blocked"
+              className="sos-btn sos-btn--ghost"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12.5 }}
+              title="View and manage blocked numbers"
+            >
+              <Ban size={13} />
+              Blocked numbers
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={() => void reload()}
@@ -538,12 +664,20 @@ export function WhatsAppAdminPage() {
                       ? stats.total - stats.uncontacted // contacted = a human replied
                       : f.key === 'UNCONTACTED'
                         ? stats.uncontacted
-                        : 0
+                        : f.key === 'ARCHIVED'
+                          ? stats.archived
+                          : f.key === 'BLOCKED'
+                            ? stats.blocked
+                            : 0
                   : f.key === 'ALL'
                     ? items.length
                     : f.key === 'OPEN'
                       ? items.filter((t) => t.lastHumanReplyAt != null).length
-                      : items.filter((t) => t.lastHumanReplyAt == null).length;
+                      : f.key === 'UNCONTACTED'
+                        ? items.filter((t) => t.lastHumanReplyAt == null).length
+                        : f.key === 'ARCHIVED'
+                          ? items.filter((t) => t.status === 'ARCHIVED').length
+                          : 0;
                 return (
                   <button
                     key={f.key}
@@ -724,8 +858,15 @@ export function WhatsAppAdminPage() {
                     item={t}
                     active={activeId === t.id}
                     canReassign={canReassign}
+                    canBlock={canBlock}
+                    canArchive={canArchive}
+                    blockedView={filter === 'BLOCKED'}
+                    busy={rowBusyId === t.id}
                     onSelect={handleSelect}
                     onReassign={openReassign}
+                    onBlock={openBlock}
+                    onUnblock={handleUnblock}
+                    onArchive={handleArchive}
                   />
                 ))
               )}
@@ -919,6 +1060,111 @@ export function WhatsAppAdminPage() {
           </div>
         </div>
       ) : null}
+
+      {/* ── Block confirm dialog (mirrors the reassign modal) ── */}
+      {blockTarget ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setBlockTarget(null);
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'var(--sos-bg-overlay)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            padding: '6vh 16px',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            className="sos-glass sos-glass--strong"
+            style={{
+              width: '100%',
+              maxWidth: 480,
+              padding: 0,
+              borderRadius: 'var(--sos-radius-panel)',
+            }}
+          >
+            <header
+              style={{
+                padding: '14px 18px',
+                borderBottom: '1px solid var(--sos-border-subtle)',
+              }}
+            >
+              <div className="sos-title" style={{ fontSize: 'var(--sos-text-md)' }}>
+                Block contact
+              </div>
+              <div className="sos-text-muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+                {blockTarget.lead
+                  ? `${blockTarget.lead.firstName} ${blockTarget.lead.lastName} · ${blockTarget.lead.phone}`
+                  : blockTarget.client
+                    ? `${blockTarget.client.firstName} ${blockTarget.client.lastName} · ${blockTarget.client.phone}`
+                    : blockTarget.waContactId}
+              </div>
+            </header>
+            <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: 'var(--sos-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  Reason (optional)
+                </span>
+                <textarea
+                  className="sos-input"
+                  value={blockReason}
+                  onChange={(e) => setBlockReason(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. spam / abusive / wrong number"
+                  style={{ resize: 'vertical' }}
+                />
+              </label>
+              <div
+                style={{
+                  fontSize: 12,
+                  padding: '8px 10px',
+                  background: 'var(--sos-status-danger-soft)',
+                  border: '1px solid var(--sos-status-danger-border)',
+                  borderRadius: 'var(--sos-radius-sm)',
+                  color: 'var(--sos-status-danger-strong)',
+                }}
+              >
+                Blocking marks the contact (lead + client) as blocked and archives this
+                conversation. They will not appear in the active inbox until unblocked.
+              </div>
+              {blockError ? (
+                <div className="sos-banner sos-banner--danger">{blockError}</div>
+              ) : null}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  type="button"
+                  className="sos-btn sos-btn--ghost"
+                  onClick={() => setBlockTarget(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="sos-btn sos-btn--danger"
+                  disabled={blockBusy}
+                  onClick={() => void handleBlock()}
+                >
+                  {blockBusy ? 'Blocking…' : 'Block contact'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -991,15 +1237,31 @@ const ThreadRow = memo(function ThreadRow({
   item,
   active,
   canReassign,
+  canBlock,
+  canArchive,
+  blockedView,
+  busy,
   onSelect,
   onReassign,
+  onBlock,
+  onUnblock,
+  onArchive,
 }: {
   item: ThreadListItem;
   active: boolean;
   canReassign: boolean;
+  canBlock: boolean;
+  canArchive: boolean;
+  /** True when rendered under the BLOCKED tab — the row offers Unblock, not Block. */
+  blockedView: boolean;
+  busy: boolean;
   onSelect: (id: string) => void;
   onReassign: (item: ThreadListItem) => void;
+  onBlock: (item: ThreadListItem) => void;
+  onUnblock: (item: ThreadListItem) => void;
+  onArchive: (item: ThreadListItem) => void;
 }) {
+  const isArchived = item.status === 'ARCHIVED';
   const displayName =
     item.client?.firstName || item.client?.lastName
       ? `${item.client.firstName} ${item.client.lastName}`.trim()
@@ -1208,42 +1470,103 @@ const ThreadRow = memo(function ThreadRow({
         </div>
       </div>
 
-      {canReassign ? (
-        <button
-          type="button"
-          aria-label="Reassign thread"
-          title="Reassign thread"
-          onClick={(e) => {
-            e.stopPropagation();
-            onReassign(item);
-          }}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--sos-text-muted)',
-            cursor: 'pointer',
-            padding: 6,
-            borderRadius: 6,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = 'var(--sos-surface-2)';
-            (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-primary)';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-            (e.currentTarget as HTMLButtonElement).style.color = 'var(--sos-text-muted)';
-          }}
-        >
-          <UserCog size={15} />
-        </button>
-      ) : null}
+      {/* Per-row actions — compact icon buttons. Reassign (existing) + the new
+          Archive/Unarchive and Block/Unblock controls. stopPropagation so a
+          click on an action doesn't also open the thread. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+        {canReassign ? (
+          <RowActionButton
+            label="Reassign thread"
+            disabled={busy}
+            onClick={() => onReassign(item)}
+            icon={<UserCog size={15} />}
+          />
+        ) : null}
+        {canArchive ? (
+          <RowActionButton
+            label={isArchived ? 'Unarchive conversation' : 'Archive conversation'}
+            disabled={busy}
+            onClick={() => onArchive(item)}
+            icon={isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+          />
+        ) : null}
+        {canBlock ? (
+          blockedView ? (
+            <RowActionButton
+              label="Unblock contact"
+              disabled={busy}
+              onClick={() => onUnblock(item)}
+              icon={<ShieldOff size={15} />}
+            />
+          ) : (
+            <RowActionButton
+              label="Block contact"
+              danger
+              disabled={busy}
+              onClick={() => onBlock(item)}
+              icon={<Ban size={15} />}
+            />
+          )
+        ) : null}
+      </div>
     </div>
   );
 });
+
+/** Compact icon-only action button used on each thread row. */
+function RowActionButton({
+  label,
+  icon,
+  onClick,
+  disabled,
+  danger,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  const baseColor = danger ? 'var(--sos-status-danger-strong)' : 'var(--sos-text-muted)';
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onClick();
+      }}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        color: baseColor,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        padding: 6,
+        borderRadius: 6,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        (e.currentTarget as HTMLButtonElement).style.background = 'var(--sos-surface-2)';
+        (e.currentTarget as HTMLButtonElement).style.color = danger
+          ? 'var(--sos-status-danger-strong)'
+          : 'var(--sos-text-primary)';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+        (e.currentTarget as HTMLButtonElement).style.color = baseColor;
+      }}
+    >
+      {icon}
+    </button>
+  );
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Visual helpers

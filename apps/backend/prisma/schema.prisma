@@ -1186,6 +1186,16 @@ model Lead {
   // they're available; otherwise round-robin fallback.
   preferredEmployeeId String?
 
+  // --- Spam / block (WhatsApp) ----------------------------------------------
+  // When blockedAt is set the contact is BLOCKED: inbound WhatsApp messages are
+  // dropped (no thread/message created, bot stays silent) and inbound WhatsApp
+  // calls are ignored (no ring, no notification). Toggled from the inbox by the
+  // lead's owner (sales) or any admin. blockedByUserId records the actor for
+  // audit (no FK — id reference only). Outbound is NOT blocked.
+  blockedAt       DateTime?
+  blockedReason   String?
+  blockedByUserId String?
+
   branch            Branch?              @relation(fields: [branchId], references: [id])
   assignedEmployee  Employee?            @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
   preferredEmployee Employee?            @relation("LeadPreferredEmployee", fields: [preferredEmployeeId], references: [id])
@@ -1217,6 +1227,7 @@ model Lead {
   @@index([branchId])
   @@index([referralPartnerId])
   @@index([preferredEmployeeId])
+  @@index([blockedAt])
   /// Matches `WHERE deletedAt IS NULL ORDER BY createdAt DESC` — the
   /// dominant list query. Cuts the 3s full-scan-and-sort down to ~50ms.
   @@index([deletedAt, createdAt(sort: Desc)])
@@ -1455,6 +1466,12 @@ model Client {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  // --- Spam / block (WhatsApp): see Lead.blockedAt. A phone number can resolve
+  // to a converted Client, so block state lives on both models.
+  blockedAt       DateTime?
+  blockedReason   String?
+  blockedByUserId String?
+
   branch           Branch?            @relation(fields: [branchId], references: [id])
   createdBy        UserAccount?       @relation("ClientCreatedBy", fields: [createdByUserId], references: [id])
   sourceLead       Lead?              @relation("ClientSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
@@ -1479,6 +1496,7 @@ model Client {
   @@index([branchId])
   @@index([sourceLeadId])
   @@index([assignedEmployeeId])
+  @@index([blockedAt])
   @@map("clients")
   @@schema("crm")
 }

@@ -34,6 +34,17 @@ interface ThreadListOptions {
   followUpDue?: boolean;
   /** Admin filter: only threads whose lead is assigned to this employee. */
   employeeId?: string;
+  /**
+   * "Archived" filter — show ONLY archived threads (status=ARCHIVED). When set
+   * the default exclusion of archived threads is lifted for this list.
+   */
+  archived?: boolean;
+  /**
+   * "Blocked" filter — show ONLY threads whose contact (lead OR client) is
+   * blocked (blockedAt set). When set the default exclusion of blocked threads
+   * is lifted for this list.
+   */
+  blocked?: boolean;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -217,6 +228,32 @@ export class WhatsAppThreadsService {
       // due or overdue right now. Live relation query — always accurate, no
       // denormalized field to keep in sync.
       and.push({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: new Date() } } } } } });
+    }
+
+    // Archived / blocked are OPT-IN views. The DEFAULT list (neither flag set)
+    // MUST exclude both — an archived or blocked conversation should never
+    // resurface in the working inbox. When a flag is set we show ONLY that set.
+    if (opts.archived) {
+      // Show ONLY archived threads.
+      and.push({ status: 'ARCHIVED' });
+    } else if (opts.blocked) {
+      // Show ONLY blocked threads — block lives on the CONTACT, so match a
+      // thread whose lead OR client has blockedAt set.
+      and.push({
+        OR: [
+          { lead: { is: { blockedAt: { not: null } } } },
+          { client: { is: { blockedAt: { not: null } } } },
+        ],
+      });
+    } else {
+      // Default working inbox: hide archived threads AND blocked contacts.
+      // Block lives on the CONTACT, and a thread may have only a lead, only a
+      // client, or (rarely) both — so for EACH relation we keep the thread when
+      // the relation is either absent OR present-and-not-blocked. Same nullable-
+      // relation pattern as the soft-delete guard above.
+      and.push({ status: { not: 'ARCHIVED' } });
+      and.push({ OR: [{ lead: { is: { blockedAt: null } } }, { lead: null }] });
+      and.push({ OR: [{ client: { is: { blockedAt: null } } }, { client: null }] });
     }
 
     if (opts.search) {
@@ -420,6 +457,10 @@ export class WhatsAppThreadsService {
     uncontacted: number;
     /** Chats whose lead has an OPEN follow-up due/overdue now — powers "Due (N)". */
     followUpDue: number;
+    /** Threads parked as ARCHIVED — powers the "Archived" chip. */
+    archived: number;
+    /** Threads whose contact (lead OR client) is blocked — powers the "Blocked" chip. */
+    blocked: number;
     approaching: number;
     overdue: number;
     slaScore: number | null;
@@ -427,7 +468,8 @@ export class WhatsAppThreadsService {
   }> {
     const empty = {
       total: 0, active: 0, resolved: 0, unassigned: 0, slaBreached: 0, unread: 0,
-      awaitingReply: 0, uncontacted: 0, followUpDue: 0, approaching: 0, overdue: 0,
+      awaitingReply: 0, uncontacted: 0, followUpDue: 0, archived: 0, blocked: 0,
+      approaching: 0, overdue: 0,
       slaScore: null as number | null, slaScoreScope: null as 'self' | 'org' | null,
     };
     // Base visibility filter mirrors list(): drop soft-deleted leads, and
@@ -450,6 +492,19 @@ export class WhatsAppThreadsService {
 
     const and = (extra: Prisma.WhatsAppThreadWhereInput): Prisma.WhatsAppThreadWhereInput => ({
       AND: [base, extra],
+    });
+    // Working-inbox exclusion (mirrors list()'s default branch): no ARCHIVED
+    // threads and no BLOCKED contacts. Used by the counts that back the default
+    // tabs so the badges match the rows the default list actually renders.
+    const notArchivedBlocked: Prisma.WhatsAppThreadWhereInput = {
+      status: { not: 'ARCHIVED' },
+      AND: [
+        { OR: [{ lead: { is: { blockedAt: null } } }, { lead: null }] },
+        { OR: [{ client: { is: { blockedAt: null } } }, { client: null }] },
+      ],
+    };
+    const andLive = (extra: Prisma.WhatsAppThreadWhereInput): Prisma.WhatsAppThreadWhereInput => ({
+      AND: [base, notArchivedBlocked, extra],
     });
 
     const now = new Date();
@@ -476,18 +531,18 @@ export class WhatsAppThreadsService {
     if (financeScoped) {
       [total, active, slaBreached, unread, unassigned, awaitingReply, uncontacted, overdue, approaching, resolved] =
         await Promise.all([
-          this.prisma.whatsAppThread.count({ where: base }),
-          this.prisma.whatsAppThread.count({ where: and({ status: 'OPEN' }) }),
-          this.prisma.whatsAppThread.count({ where: and({ slaBreached: true }) }),
-          this.prisma.whatsAppThread.count({ where: and({ unreadCount: { gt: 0 } }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({}) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ status: 'OPEN' }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ slaBreached: true }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ unreadCount: { gt: 0 } }) }),
           Promise.resolve(0), // finance never sees the "unassigned" chip
           // Pending = follow-ups (awaiting + a human replied before).
-          this.prisma.whatsAppThread.count({ where: and({ awaitingReply: true, lastHumanReplyAt: { not: null } }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ awaitingReply: true, lastHumanReplyAt: { not: null } }) }),
           // Uncontacted = NO human has ever replied (over all chats, bot ignored).
-          this.prisma.whatsAppThread.count({ where: and({ lastHumanReplyAt: null }) }),
-          this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { not: null, lte: now } }) }),
-          this.prisma.whatsAppThread.count({ where: and({ responseDeadlineAt: { gt: now, lte: warnCutoff } }) }),
-          this.prisma.whatsAppThread.count({ where: and({ status: 'RESOLVED' }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ lastHumanReplyAt: null }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ responseDeadlineAt: { not: null, lte: now } }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ responseDeadlineAt: { gt: now, lte: warnCutoff } }) }),
+          this.prisma.whatsAppThread.count({ where: andLive({ status: 'RESOLVED' }) }),
         ]);
     } else {
       // Mirrors the `base`/`and` filter above: exclude soft-deleted leads
@@ -499,6 +554,9 @@ export class WhatsAppThreadsService {
         params.push(caller.employeeId);
         scope += ` AND l."assignedEmployeeId" = $${params.length}`;
       }
+      // Mirror list()'s default working inbox: exclude ARCHIVED threads and
+      // BLOCKED contacts so the All/Open/Uncontacted badge counts match the rows.
+      scope += ` AND t.status::text <> 'ARCHIVED' AND l."blockedAt" IS NULL AND (t."clientId" IS NULL OR c."blockedAt" IS NULL)`;
       const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, number | bigint | null>>>(
         `SELECT
            count(*)::int AS total,
@@ -513,6 +571,7 @@ export class WhatsAppThreadsService {
            count(*) FILTER (WHERE t.status::text = 'RESOLVED')::int AS resolved
          FROM whatsapp.threads t
          LEFT JOIN crm.leads l ON l.id = t."leadId"
+         LEFT JOIN crm.clients c ON c.id = t."clientId"
          WHERE ${scope}`,
         ...params,
       );
@@ -559,13 +618,28 @@ export class WhatsAppThreadsService {
     // "Due (N)" chip: chats whose lead has an OPEN CRM follow-up due/overdue now.
     // A separate live relation count (cheap — follow_ups is indexed on dueAt and
     // status) so it's always accurate without a denormalized field to maintain.
-    const followUpDue = await this.prisma.whatsAppThread.count({
-      where: and({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
-    });
+    // Archived/blocked chips ride alongside — both are cheap indexed counts
+    // (whatsapp.threads.status; crm.{leads,clients}.blockedAt) scoped to the
+    // caller via the same `base` filter the other counts use.
+    const [followUpDue, archived, blocked] = await Promise.all([
+      this.prisma.whatsAppThread.count({
+        where: and({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
+      }),
+      this.prisma.whatsAppThread.count({ where: and({ status: 'ARCHIVED' }) }),
+      this.prisma.whatsAppThread.count({
+        where: and({
+          OR: [
+            { lead: { is: { blockedAt: { not: null } } } },
+            { client: { is: { blockedAt: { not: null } } } },
+          ],
+        }),
+      }),
+    ]);
 
     return {
       total, active, resolved, unassigned, slaBreached, unread,
-      awaitingReply, uncontacted, followUpDue, approaching, overdue, slaScore, slaScoreScope,
+      awaitingReply, uncontacted, followUpDue, archived, blocked,
+      approaching, overdue, slaScore, slaScoreScope,
     };
   }
 
@@ -584,6 +658,7 @@ export class WhatsAppThreadsService {
             nationality: true,
             targetCountry: true,
             status: true,
+            blockedAt: true,
             assignedEmployeeId: true,
             preferredEmployeeId: true,
             convertedClientId: true,
@@ -609,6 +684,7 @@ export class WhatsAppThreadsService {
             email: true,
             nationality: true,
             status: true,
+            blockedAt: true,
           },
         },
       },
@@ -729,5 +805,291 @@ export class WhatsAppThreadsService {
       assignedEmployeeName: `${target.firstName} ${target.lastName}`.trim(),
       previousAssignee,
     };
+  }
+
+  /**
+   * Block the thread's contact. Block lives on the CONTACT (Lead + Client),
+   * so we stamp blockedAt/blockedReason/blockedByUserId on BOTH the thread's
+   * Lead AND Client (whichever exist) and ARCHIVE the thread in the same
+   * transaction. Once blocked, the webhook ingest drops inbound messages and
+   * calls (no thread/message/ring) and the bot stays silent.
+   *
+   * Scoped through getOrFail — sales may only block their OWN assigned leads;
+   * admin (canViewAll) may block any. Caller must have whatsapp.block
+   * (PermissionGuard already enforces).
+   */
+  async block(caller: CallerContext, threadId: string, reason?: string) {
+    // getOrFail applies the same ownership scoping as a read (sales = own
+    // leads only, admin = any) and 404s a thread the caller can't see.
+    const t = await this.getOrFail(caller, threadId);
+    const now = new Date();
+    const leadId = t.lead?.id ?? null;
+    const clientId = t.client?.id ?? null;
+    if (!leadId && !clientId) {
+      throw new BadRequestException('This conversation has no linked contact to block.');
+    }
+
+    const blockData = {
+      blockedAt: now,
+      blockedReason: reason ?? null,
+      blockedByUserId: caller.userId,
+    };
+
+    // Stamp the block on whichever contact rows exist, archive the thread, and
+    // write the audit timeline — all atomically (mirror reassign's $transaction).
+    const ops: Prisma.PrismaPromise<unknown>[] = [];
+    if (leadId) {
+      ops.push(this.prisma.lead.update({ where: { id: leadId }, data: blockData }));
+    }
+    if (clientId) {
+      ops.push(this.prisma.client.update({ where: { id: clientId }, data: blockData }));
+    }
+    ops.push(
+      this.prisma.whatsAppThread.update({
+        where: { id: threadId },
+        data: { status: 'ARCHIVED' },
+      }),
+    );
+    // Timeline entry on the contact (Client-rooted if converted, else Lead).
+    ops.push(
+      this.prisma.activityTimeline.create({
+        data: {
+          entityType: clientId ? 'Client' : 'Lead',
+          entityId: (clientId ?? leadId)!,
+          leadId: leadId ?? undefined,
+          clientId: clientId ?? undefined,
+          // No dedicated block enum value (would need a migration); reuse the
+          // WhatsApp opt-out event + disambiguate via metadata.action — same
+          // pattern reassign uses with WHATSAPP_ASSIGNED + metadata.via.
+          eventType: 'WHATSAPP_OPTED_OUT',
+          description: reason
+            ? `WhatsApp contact blocked: ${reason}`
+            : 'WhatsApp contact blocked',
+          actorUserId: caller.userId,
+          metadata: { threadId, action: 'block', reason: reason ?? null },
+        },
+      }),
+    );
+    await this.prisma.$transaction(ops);
+
+    return { threadId, leadId, clientId, blocked: true };
+  }
+
+  /**
+   * Unblock the thread's contact — clears blockedAt/blockedReason/
+   * blockedByUserId on the Lead + Client (whichever exist). Does NOT
+   * un-archive the thread (archive is an independent thread-level state).
+   * Same getOrFail scoping + whatsapp.block permission as block().
+   */
+  async unblock(caller: CallerContext, threadId: string) {
+    const t = await this.getOrFail(caller, threadId);
+    const leadId = t.lead?.id ?? null;
+    const clientId = t.client?.id ?? null;
+    if (!leadId && !clientId) {
+      throw new BadRequestException('This conversation has no linked contact to unblock.');
+    }
+
+    const clearData = {
+      blockedAt: null,
+      blockedReason: null,
+      blockedByUserId: null,
+    };
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [];
+    if (leadId) {
+      ops.push(this.prisma.lead.update({ where: { id: leadId }, data: clearData }));
+    }
+    if (clientId) {
+      ops.push(this.prisma.client.update({ where: { id: clientId }, data: clearData }));
+    }
+    ops.push(
+      this.prisma.activityTimeline.create({
+        data: {
+          entityType: clientId ? 'Client' : 'Lead',
+          entityId: (clientId ?? leadId)!,
+          leadId: leadId ?? undefined,
+          clientId: clientId ?? undefined,
+          eventType: 'WHATSAPP_OPTED_OUT',
+          description: 'WhatsApp contact unblocked',
+          actorUserId: caller.userId,
+          metadata: { threadId, action: 'unblock' },
+        },
+      }),
+    );
+    await this.prisma.$transaction(ops);
+
+    return { threadId, blocked: false };
+  }
+
+  /**
+   * Archive the thread (status=ARCHIVED) — parks it out of the working inbox
+   * without blocking the contact. Thread-level only; no contact change.
+   * Scoped through getOrFail; caller must have whatsapp.send_message.
+   */
+  async archive(caller: CallerContext, threadId: string) {
+    const t = await this.getOrFail(caller, threadId);
+    const leadId = t.lead?.id ?? null;
+    const clientId = t.client?.id ?? null;
+    if (!leadId && !clientId) {
+      throw new BadRequestException('This conversation has no linked contact to act on.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.whatsAppThread.update({
+        where: { id: threadId },
+        data: { status: 'ARCHIVED' },
+      }),
+      this.prisma.activityTimeline.create({
+        data: {
+          entityType: clientId ? 'Client' : 'Lead',
+          entityId: (clientId ?? leadId)!,
+          leadId: leadId ?? undefined,
+          clientId: clientId ?? undefined,
+          // Reuse the conversation-resolved event (archiving parks the chat);
+          // metadata.action distinguishes archive from a true resolve.
+          eventType: 'WHATSAPP_CONVERSATION_RESOLVED',
+          description: 'WhatsApp thread archived',
+          actorUserId: caller.userId,
+          metadata: { threadId, action: 'archive' },
+        },
+      }),
+    ]);
+
+    return { threadId, status: 'ARCHIVED' as const };
+  }
+
+  /**
+   * Un-archive the thread (status back to OPEN). Scoped through getOrFail;
+   * caller must have whatsapp.send_message.
+   */
+  async unarchive(caller: CallerContext, threadId: string) {
+    const t = await this.getOrFail(caller, threadId);
+    const leadId = t.lead?.id ?? null;
+    const clientId = t.client?.id ?? null;
+    if (!leadId && !clientId) {
+      throw new BadRequestException('This conversation has no linked contact to act on.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.whatsAppThread.update({
+        where: { id: threadId },
+        data: { status: 'OPEN' },
+      }),
+      this.prisma.activityTimeline.create({
+        data: {
+          entityType: clientId ? 'Client' : 'Lead',
+          entityId: (clientId ?? leadId)!,
+          leadId: leadId ?? undefined,
+          clientId: clientId ?? undefined,
+          eventType: 'WHATSAPP_CONVERSATION_RESOLVED',
+          description: 'WhatsApp thread unarchived',
+          actorUserId: caller.userId,
+          metadata: { threadId, action: 'unarchive' },
+        },
+      }),
+    ]);
+
+    return { threadId, status: 'OPEN' as const };
+  }
+
+  /**
+   * Every currently-blocked contact (Lead + Client) for the blocked-numbers
+   * admin view. Returns a flat list of { contactType, contactId, name, phone,
+   * blockedAt, blockedReason, blockedByName }. Caller must have
+   * whatsapp.view_all_inboxes (PermissionGuard enforces) — this is an org-wide
+   * audit view, not scoped per agent.
+   */
+  async blockedNumbers(): Promise<
+    Array<{
+      contactType: 'lead' | 'client';
+      contactId: string;
+      name: string;
+      phone: string;
+      blockedAt: Date;
+      blockedReason: string | null;
+      blockedByName: string | null;
+      threadId: string | null;
+    }>
+  > {
+    const [leads, clients] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: { blockedAt: { not: null }, deletedAt: null },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          blockedAt: true,
+          blockedReason: true,
+          blockedByUserId: true,
+          whatsappThread: { select: { id: true } },
+        },
+        orderBy: { blockedAt: 'desc' },
+      }),
+      this.prisma.client.findMany({
+        where: { blockedAt: { not: null }, deletedAt: null },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          blockedAt: true,
+          blockedReason: true,
+          blockedByUserId: true,
+          whatsappThreads: { select: { id: true }, orderBy: { lastMessageAt: 'desc' }, take: 1 },
+        },
+        orderBy: { blockedAt: 'desc' },
+      }),
+    ]);
+
+    // Resolve the actor names in one batch (blockedByUserId has no FK relation
+    // — it's an id reference only, same convention as the schema note).
+    const actorIds = Array.from(
+      new Set(
+        [...leads, ...clients]
+          .map((r) => r.blockedByUserId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const actors = actorIds.length
+      ? await this.prisma.userAccount.findMany({
+          where: { id: { in: actorIds } },
+          // The display name lives on the linked Employee, not the UserAccount
+          // (which only carries email/phone). blockedByUserId is a UserAccount id.
+          select: { id: true, employee: { select: { firstName: true, lastName: true } } },
+        })
+      : [];
+    const actorName = new Map(
+      actors.map((a) => [
+        a.id,
+        a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() || null : null,
+      ]),
+    );
+
+    const rows = [
+      ...leads.map((l) => ({
+        contactType: 'lead' as const,
+        contactId: l.id,
+        name: `${l.firstName} ${l.lastName}`.trim(),
+        phone: l.phone,
+        blockedAt: l.blockedAt!,
+        blockedReason: l.blockedReason,
+        blockedByName: l.blockedByUserId ? actorName.get(l.blockedByUserId) ?? null : null,
+        threadId: l.whatsappThread?.id ?? null,
+      })),
+      ...clients.map((c) => ({
+        contactType: 'client' as const,
+        contactId: c.id,
+        name: `${c.firstName} ${c.lastName}`.trim(),
+        phone: c.phone,
+        blockedAt: c.blockedAt!,
+        blockedReason: c.blockedReason,
+        blockedByName: c.blockedByUserId ? actorName.get(c.blockedByUserId) ?? null : null,
+        threadId: c.whatsappThreads[0]?.id ?? null,
+      })),
+    ];
+    // Newest block first across both contact types.
+    rows.sort((a, b) => b.blockedAt.getTime() - a.blockedAt.getTime());
+    return rows;
   }
 }

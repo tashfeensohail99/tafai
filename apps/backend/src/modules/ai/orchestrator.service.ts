@@ -223,6 +223,10 @@ export class OrchestratorService {
             firstName: true,
             lastName: true,
             convertedClientId: true,
+            // Block state — defense-in-depth. Ingest already drops a blocked
+            // contact's inbound, but if a job is mid-flight when the block
+            // lands, the bot must not reply.
+            blockedAt: true,
             // Assigned agent's first name — used in the bot's welcome line
             // so the customer sees a real human's name behind the bot:
             // "Welcome to Tashfeen Immigration Solutions. I'm Iffat,
@@ -232,10 +236,18 @@ export class OrchestratorService {
             },
           },
         },
+        // Client block state — a thread can be rooted on a converted client.
+        client: { select: { blockedAt: true } },
       },
     });
     if (!thread) return { mode: 'SKIPPED', skipReason: 'thread-not-found' };
     if (!thread.aiEnabled) return { mode: 'SKIPPED', skipReason: 'ai-disabled-on-thread' };
+
+    // Block guard (defense-in-depth): never reply to a blocked contact, even
+    // if a queued job slipped past the ingest-level drop.
+    if (thread.lead?.blockedAt || thread.client?.blockedAt) {
+      return { mode: 'SKIPPED', skipReason: 'contact-blocked' };
+    }
 
     // Per-inbound human-reply check: did a real agent already respond to
     // (or after) the message we're about to answer? If yes, sales has it

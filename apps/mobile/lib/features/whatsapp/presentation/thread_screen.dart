@@ -153,6 +153,118 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     }
   }
 
+  // ── Archive / Block ──────────────────────────────────────────────────────────
+
+  Future<void> _archive() async {
+    setState(() => _busyAi = true);
+    try {
+      await ref.read(whatsappRepositoryProvider).archiveThread(_threadId);
+      if (!mounted) return;
+      _toast('Conversation archived');
+      Navigator.of(context).pop(); // back to inbox (it refreshes on return)
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+      if (mounted) setState(() => _busyAi = false);
+    }
+  }
+
+  Future<void> _unarchive() async {
+    setState(() => _busyAi = true);
+    try {
+      await ref.read(whatsappRepositoryProvider).unarchiveThread(_threadId);
+      if (!mounted) return;
+      setState(() => _thread = _thread.copyWith(status: 'OPEN'));
+      _toast('Conversation unarchived');
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } finally {
+      if (mounted) setState(() => _busyAi = false);
+    }
+  }
+
+  Future<void> _block() async {
+    final reason = await _confirmBlock();
+    if (reason == null || !mounted) return; // cancelled
+    setState(() => _busyAi = true);
+    try {
+      await ref
+          .read(whatsappRepositoryProvider)
+          .blockContact(_threadId, reason: reason.isEmpty ? null : reason);
+      if (!mounted) return;
+      // Block also archives the thread server-side; leave the chat.
+      _toast('Contact blocked');
+      Navigator.of(context).pop();
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+      if (mounted) setState(() => _busyAi = false);
+    }
+  }
+
+  Future<void> _unblock() async {
+    setState(() => _busyAi = true);
+    try {
+      await ref.read(whatsappRepositoryProvider).unblockContact(_threadId);
+      if (!mounted) return;
+      // Reflect locally: clear blockedAt on whichever party exists.
+      setState(() => _thread = _thread.copyWith(
+            lead: _thread.lead?.unblocked(),
+            client: _thread.client?.unblocked(),
+          ));
+      _toast('Contact unblocked');
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } finally {
+      if (mounted) setState(() => _busyAi = false);
+    }
+  }
+
+  /// Confirm dialog with an optional reason. Returns the reason string (may be
+  /// empty) on confirm, or null on cancel.
+  Future<String?> _confirmBlock() async {
+    final reasonCtrl = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Block contact?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Block ${_thread.displayName}? This archives the conversation and '
+              'flags the contact across the CRM.',
+            ),
+            const SizedBox(height: AppTokens.space3),
+            TextField(
+              controller: reasonCtrl,
+              autofocus: true,
+              maxLines: 2,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                hintText: 'e.g. spam, abusive',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: AppTokens.statusDanger),
+            onPressed: () => Navigator.of(ctx).pop(reasonCtrl.text.trim()),
+            child: const Text('Block'),
+          ),
+        ],
+      ),
+    );
+    reasonCtrl.dispose();
+    return result;
+  }
+
   Future<void> _sendTemplate() async {
     final params =
         await showTemplatePicker(context, ref, channelId: _thread.channelId);
@@ -459,6 +571,10 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                   case 'ai': _toggleAi(); break;
                   case 'takeover': _takeOver(); break;
                   case 'lead': _openLead(); break;
+                  case 'archive': _archive(); break;
+                  case 'unarchive': _unarchive(); break;
+                  case 'block': _block(); break;
+                  case 'unblock': _unblock(); break;
                 }
               },
               itemBuilder: (_) => [
@@ -485,6 +601,47 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                       Icon(Icons.person_outline, size: 20),
                       SizedBox(width: AppTokens.space3),
                       Text('Open lead'),
+                    ]),
+                  ),
+                const PopupMenuDivider(),
+                if (_thread.isArchived)
+                  const PopupMenuItem(
+                    value: 'unarchive',
+                    child: Row(children: [
+                      Icon(Icons.unarchive_outlined, size: 20),
+                      SizedBox(width: AppTokens.space3),
+                      Text('Unarchive'),
+                    ]),
+                  )
+                else
+                  const PopupMenuItem(
+                    value: 'archive',
+                    child: Row(children: [
+                      Icon(Icons.archive_outlined, size: 20),
+                      SizedBox(width: AppTokens.space3),
+                      Text('Archive'),
+                    ]),
+                  ),
+                if (_thread.isBlocked)
+                  const PopupMenuItem(
+                    value: 'unblock',
+                    child: Row(children: [
+                      Icon(Icons.lock_open_outlined,
+                          size: 20, color: AppTokens.statusDanger),
+                      SizedBox(width: AppTokens.space3),
+                      Text('Unblock contact',
+                          style: TextStyle(color: AppTokens.statusDanger)),
+                    ]),
+                  )
+                else
+                  const PopupMenuItem(
+                    value: 'block',
+                    child: Row(children: [
+                      Icon(Icons.block,
+                          size: 20, color: AppTokens.statusDanger),
+                      SizedBox(width: AppTokens.space3),
+                      Text('Block contact',
+                          style: TextStyle(color: AppTokens.statusDanger)),
                     ]),
                   ),
               ],

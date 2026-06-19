@@ -23,11 +23,17 @@ class WhatsappRepository {
 
   /// GET /whatsapp/threads — inbox list (scoped). The tab maps to one of
   /// contacted/uncontacted; followUpDue is the "Due" chip.
+  ///
+  /// `archived` / `blocked` are mutually-exclusive "show ONLY these" views.
+  /// When NEITHER is passed the backend excludes archived AND blocked threads
+  /// from the default list, so we simply don't send the flags for the inbox.
   Future<ThreadsPage> listThreads({
     bool? contacted,
     bool? uncontacted,
     bool? needsReply,
     bool? followUpDue,
+    bool? archived,
+    bool? blocked,
     String? search,
     String? cursor,
     int limit = 30,
@@ -40,6 +46,8 @@ class WhatsappRepository {
           if (uncontacted == true) 'uncontacted': true,
           if (needsReply == true) 'needsReply': true,
           if (followUpDue == true) 'followUpDue': true,
+          if (archived == true) 'archived': true,
+          if (blocked == true) 'blocked': true,
           if (search != null && search.isNotEmpty) 'search': search,
           if (cursor != null) 'cursor': cursor,
           'limit': limit,
@@ -175,6 +183,59 @@ class WhatsappRepository {
         '/whatsapp/threads/$threadId/take-over',
       );
       return res.data?['aiEnabled'] as bool? ?? false;
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  // ── Block / archive (thread + contact moderation) ────────────────────────────
+
+  /// POST /whatsapp/threads/:threadId/block — blocks the contact (Lead+Client)
+  /// AND archives the thread. perm: whatsapp.block.
+  Future<void> blockContact(String threadId, {String? reason}) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/block',
+        data: {
+          if (reason != null && reason.isNotEmpty) 'reason': reason,
+        },
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /whatsapp/threads/:threadId/unblock — clears the block on the
+  /// contact (Lead+Client). perm: whatsapp.block.
+  Future<void> unblockContact(String threadId) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/unblock',
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /whatsapp/threads/:threadId/archive — thread.status = ARCHIVED.
+  /// perm: whatsapp.send_message.
+  Future<void> archiveThread(String threadId) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/archive',
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /whatsapp/threads/:threadId/unarchive — thread.status = OPEN.
+  /// perm: whatsapp.send_message.
+  Future<void> unarchiveThread(String threadId) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/unarchive',
+      );
     } on DioException catch (e) {
       throw mapDioError(e);
     }

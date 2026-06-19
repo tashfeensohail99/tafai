@@ -5,8 +5,11 @@ import '../domain/wa_stats.dart';
 import '../domain/wa_thread.dart';
 import 'whatsapp_repository.dart';
 
-/// The three inbox tabs — matching the web exactly.
-enum WaTab { all, open, uncontacted }
+/// The inbox tabs — matching the web exactly. `archived` and `blocked` are
+/// "show ONLY these" views (each maps to a single backend flag); the other
+/// tabs show the default list, which the backend already excludes archived +
+/// blocked threads from.
+enum WaTab { all, open, uncontacted, archived, blocked }
 
 class WaFilter {
   final WaTab tab;
@@ -64,11 +67,26 @@ class ThreadsController extends StateNotifier<ThreadsState> {
     load();
   }
 
-  ({bool? contacted, bool? uncontacted}) get _tabFlags => switch (_filter.tab) {
-        WaTab.open => (contacted: true, uncontacted: null),
-        WaTab.uncontacted => (contacted: null, uncontacted: true),
-        WaTab.all => (contacted: null, uncontacted: null),
-      };
+  ({bool? contacted, bool? uncontacted, bool? archived, bool? blocked})
+      get _tabFlags => switch (_filter.tab) {
+            WaTab.open =>
+              (contacted: true, uncontacted: null, archived: null, blocked: null),
+            WaTab.uncontacted =>
+              (contacted: null, uncontacted: true, archived: null, blocked: null),
+            WaTab.archived =>
+              (contacted: null, uncontacted: null, archived: true, blocked: null),
+            WaTab.blocked =>
+              (contacted: null, uncontacted: null, archived: null, blocked: true),
+            WaTab.all =>
+              (contacted: null, uncontacted: null, archived: null, blocked: null),
+          };
+
+  /// The Due chip only makes sense on the live (non-archived/non-blocked) lists.
+  bool? get _dueFlag => (_filter.followUpDue &&
+          _filter.tab != WaTab.archived &&
+          _filter.tab != WaTab.blocked)
+      ? true
+      : null;
 
   Future<void> load() async {
     state = const ThreadsState(loading: true);
@@ -77,7 +95,9 @@ class ThreadsController extends StateNotifier<ThreadsState> {
       final page = await _repo.listThreads(
         contacted: f.contacted,
         uncontacted: f.uncontacted,
-        followUpDue: _filter.followUpDue ? true : null,
+        archived: f.archived,
+        blocked: f.blocked,
+        followUpDue: _dueFlag,
         search: _filter.search,
       );
       state = ThreadsState(
@@ -103,7 +123,9 @@ class ThreadsController extends StateNotifier<ThreadsState> {
       final page = await _repo.listThreads(
         contacted: f.contacted,
         uncontacted: f.uncontacted,
-        followUpDue: _filter.followUpDue ? true : null,
+        archived: f.archived,
+        blocked: f.blocked,
+        followUpDue: _dueFlag,
         search: _filter.search,
         cursor: state.nextCursor,
       );

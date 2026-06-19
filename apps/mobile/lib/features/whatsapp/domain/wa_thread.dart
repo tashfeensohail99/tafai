@@ -7,6 +7,9 @@ class WaParty {
   final String lastName;
   final String phone;
   final String? status;
+  /// Block lives on the CONTACT (Lead/Client). Non-null = this contact is
+  /// currently blocked. May be absent on list payloads; present on detail.
+  final DateTime? blockedAt;
 
   const WaParty({
     required this.id,
@@ -14,9 +17,19 @@ class WaParty {
     required this.lastName,
     required this.phone,
     this.status,
+    this.blockedAt,
   });
 
   String get fullName => '$firstName $lastName'.trim();
+
+  /// A copy with the block cleared (used to reflect unblock locally).
+  WaParty unblocked() => WaParty(
+        id: id,
+        firstName: firstName,
+        lastName: lastName,
+        phone: phone,
+        status: status,
+      );
 
   factory WaParty.fromJson(Map<String, dynamic> j) => WaParty(
         id: j['id'] as String? ?? '',
@@ -24,6 +37,7 @@ class WaParty {
         lastName: j['lastName'] as String? ?? '',
         phone: j['phone'] as String? ?? '',
         status: asStringOrNull(j['status']),
+        blockedAt: parseApiDateOrNull(j['blockedAt']),
       );
 }
 
@@ -63,6 +77,27 @@ class WhatsappThread {
     this.client,
   });
 
+  WhatsappThread copyWith({
+    String? status,
+    WaParty? lead,
+    WaParty? client,
+  }) =>
+      WhatsappThread(
+        id: id,
+        status: status ?? this.status,
+        waContactId: waContactId,
+        channelId: channelId,
+        windowExpiresAt: windowExpiresAt,
+        awaitingReply: awaitingReply,
+        lastHumanReplyAt: lastHumanReplyAt,
+        lastMessageAt: lastMessageAt,
+        lastMessagePreview: lastMessagePreview,
+        unreadCount: unreadCount,
+        aiEnabled: aiEnabled,
+        lead: lead ?? this.lead,
+        client: client ?? this.client,
+      );
+
   WaParty? get party => lead ?? client;
   String get displayName {
     final n = party?.fullName ?? '';
@@ -71,6 +106,13 @@ class WhatsappThread {
 
   String get phone => party?.phone.isNotEmpty == true ? party!.phone : waContactId;
   String? get leadId => lead?.id;
+
+  /// Thread has been archived (status flips to ARCHIVED on archive/block).
+  bool get isArchived => status == 'ARCHIVED';
+
+  /// The contact (Lead or Client) is currently blocked.
+  bool get isBlocked =>
+      lead?.blockedAt != null || client?.blockedAt != null;
 
   /// No human has ever replied — bot greeting only ("Uncontacted").
   bool get isUncontacted => lastHumanReplyAt == null;

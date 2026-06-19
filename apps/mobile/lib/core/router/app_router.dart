@@ -15,6 +15,8 @@ import '../../features/shell/presentation/client_shell.dart';
 import '../../features/shell/presentation/processing_shell.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/leads/presentation/lead_detail_screen.dart';
+import '../../features/finance/presentation/finance_customer_profile_screen.dart';
+import '../../features/finance/presentation/finance_agreement_detail_screen.dart';
 
 /// Root navigator — lets non-widget code (e.g. a notification-tap handler)
 /// push screens without a BuildContext.
@@ -38,6 +40,10 @@ abstract class AppRoutes {
   static const settings = '/settings';
 
   static String leadDetail(String id) => '/leads/$id';
+
+  // Finance detail routes — flat siblings pushed over the FinanceShell.
+  static String financeCustomer(String leadId) => '/finance/customer/$leadId';
+  static String financeAgreement(String id) => '/finance/agreements/$id';
 }
 
 /// The app router. Plain Riverpod `Provider` (no code generation). It watches
@@ -123,6 +129,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/leads/:id',
         builder: (context, state) =>
             LeadDetailScreen(leadId: state.pathParameters['id']!),
+      ),
+      // Finance detail screens — flat siblings pushed over the FinanceShell.
+      GoRoute(
+        path: '/finance/customer/:leadId',
+        builder: (context, state) => FinanceCustomerProfileScreen(
+            leadId: state.pathParameters['leadId']!),
+      ),
+      GoRoute(
+        path: '/finance/agreements/:id',
+        builder: (context, state) => FinanceAgreementDetailScreen(
+            agreementId: state.pathParameters['id']!),
       ),
     ],
   );

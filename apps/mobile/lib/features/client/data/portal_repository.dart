@@ -44,6 +44,22 @@ class PortalRepository {
     }
   }
 
+  /// GET /portal/cases/:caseId/timeline — the client-safe activity feed
+  /// (stage changes, document decisions, officer/system messages). Ascending
+  /// by createdAt; the tab reverses for newest-first.
+  Future<List<PortalTimelineEvent>> timeline(String caseId) async {
+    try {
+      final res =
+          await _client.get<List<dynamic>>('/portal/cases/$caseId/timeline');
+      return (res.data ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(PortalTimelineEvent.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // ── Documents ───────────────────────────────────────────────────────────
 
   /// GET /portal/cases/:caseId/documents — the filtered checklist.

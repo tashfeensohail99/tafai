@@ -32,6 +32,12 @@ final portalDocumentsProvider = FutureProvider.autoDispose
   return ref.watch(portalRepositoryProvider).documents(caseId);
 });
 
+/// Client-safe activity timeline, keyed by caseId.
+final portalTimelineProvider = FutureProvider.autoDispose
+    .family<List<PortalTimelineEvent>, String>((ref, caseId) {
+  return ref.watch(portalRepositoryProvider).timeline(caseId);
+});
+
 /// Message thread, keyed by caseId. Fetching also marks officer messages read
 /// server-side, so invalidating the unread badge after a read is appropriate.
 final portalMessagesProvider = FutureProvider.autoDispose

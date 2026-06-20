@@ -285,6 +285,48 @@ class PortalMessage {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// TIMELINE
+// ───────────────────────────────────────────────────────────────────────────
+
+/// One event of GET /portal/cases/:caseId/timeline — a client-safe activity
+/// feed merging stage changes, document review decisions, and officer/system
+/// communications (internal notes, tasks and officer rejection notes are
+/// filtered out server-side). The backend returns events ascending by
+/// createdAt; the tab renders them newest-first.
+class PortalTimelineEvent {
+  final String id;
+  final String type; // STAGE_CHANGE | DOCUMENT_REVIEW | COMMUNICATION
+  final DateTime? createdAt;
+  final String description;
+  final String? actor;
+  final String? decision; // ACCEPTED | REJECTED — DOCUMENT_REVIEW only
+
+  const PortalTimelineEvent({
+    required this.id,
+    required this.type,
+    this.createdAt,
+    required this.description,
+    this.actor,
+    this.decision,
+  });
+
+  bool get isStageChange => type == 'STAGE_CHANGE';
+  bool get isDocumentReview => type == 'DOCUMENT_REVIEW';
+  bool get isCommunication => type == 'COMMUNICATION';
+  bool get isRejection => decision == 'REJECTED';
+
+  factory PortalTimelineEvent.fromJson(Map<String, dynamic> j) =>
+      PortalTimelineEvent(
+        id: j['id'] as String? ?? '',
+        type: j['type'] as String? ?? 'STAGE_CHANGE',
+        createdAt: _parseDate(j['createdAt']),
+        description: j['description'] as String? ?? '',
+        actor: j['actor'] as String?,
+        decision: j['decision'] as String?,
+      );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // NOTIFICATIONS
 // ───────────────────────────────────────────────────────────────────────────
 

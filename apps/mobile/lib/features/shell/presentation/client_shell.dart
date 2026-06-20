@@ -16,6 +16,7 @@ import '../../client/presentation/client_case_tab.dart';
 import '../../client/presentation/client_documents_tab.dart';
 import '../../client/presentation/client_messages_tab.dart';
 import '../../client/presentation/client_notifications_screen.dart';
+import '../../client/presentation/client_timeline_tab.dart';
 
 /// Client portal shell — the tabbed home for an external customer.
 ///
@@ -45,6 +46,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     _TabDef('Messages', Icons.chat_bubble_outline, Icons.chat_bubble),
     _TabDef('Appointments', Icons.event_outlined, Icons.event,
         navLabel: 'Appts'),
+    _TabDef('Timeline', Icons.timeline_outlined, Icons.timeline),
   ];
 
   Future<void> _openNotifications() async {
@@ -242,6 +244,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
           ClientDocumentsTab(caseId: activeCaseId),
           ClientMessagesTab(caseId: activeCaseId),
           const ClientAppointmentsTab(),
+          ClientTimelineTab(caseId: activeCaseId),
         ],
       ),
     );

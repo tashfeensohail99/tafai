@@ -51,6 +51,12 @@ final portalNotificationsProvider =
   return ref.watch(portalRepositoryProvider).notifications();
 });
 
+/// The client's own read-only profile (GET /portal/profile).
+final portalProfileProvider =
+    FutureProvider.autoDispose<PortalProfile>((ref) {
+  return ref.watch(portalRepositoryProvider).profile();
+});
+
 /// All of the client's appointments (past + upcoming).
 final portalAppointmentsProvider =
     FutureProvider.autoDispose<List<PortalAppointment>>((ref) {

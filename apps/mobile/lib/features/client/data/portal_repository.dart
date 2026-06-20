@@ -172,6 +172,38 @@ class PortalRepository {
     }
   }
 
+  // ── Profile ───────────────────────────────────────────────────────────────
+
+  /// GET /portal/profile — the client's read-only profile (ids masked server-side).
+  Future<PortalProfile> profile() async {
+    try {
+      final res = await _client.get<Map<String, dynamic>>('/portal/profile');
+      return PortalProfile.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /portal/profile/update-request — sends the requested change to the
+  /// officer as a CLIENT_TO_OFFICER message on the active case (Phase-1 flow).
+  Future<void> requestProfileUpdate({
+    required String content,
+    String? subject,
+  }) async {
+    try {
+      await _client.post<Map<String, dynamic>>(
+        '/portal/profile/update-request',
+        data: <String, dynamic>{
+          'content': content,
+          if (subject != null && subject.trim().isNotEmpty)
+            'subject': subject.trim(),
+        },
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // ── Notifications ─────────────────────────────────────────────────────────
 
   /// GET /portal/notifications — the aggregated, computed feed.

@@ -327,6 +327,68 @@ class PortalTimelineEvent {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// PROFILE
+// ───────────────────────────────────────────────────────────────────────────
+
+/// GET /portal/profile — the client's own read-only profile. Sensitive ids
+/// (passport / CNIC) arrive already masked from the backend (e.g. "••••1234").
+class PortalProfile {
+  final String id;
+  final String firstName;
+  final String lastName;
+  final String? email;
+  final String? phone;
+  final String? alternatePhone;
+  final String? nationality;
+  final DateTime? dateOfBirth;
+  final String? passportNumberMasked;
+  final String? cnicMasked;
+  final String? address;
+  final String? status;
+  final String? serviceType;
+  final String? targetCountry;
+  final String? assignedSalesPersonName;
+
+  const PortalProfile({
+    required this.id,
+    required this.firstName,
+    required this.lastName,
+    this.email,
+    this.phone,
+    this.alternatePhone,
+    this.nationality,
+    this.dateOfBirth,
+    this.passportNumberMasked,
+    this.cnicMasked,
+    this.address,
+    this.status,
+    this.serviceType,
+    this.targetCountry,
+    this.assignedSalesPersonName,
+  });
+
+  String get fullName => '$firstName $lastName'.trim();
+
+  factory PortalProfile.fromJson(Map<String, dynamic> j) => PortalProfile(
+        id: j['id'] as String? ?? '',
+        firstName: j['firstName'] as String? ?? '',
+        lastName: j['lastName'] as String? ?? '',
+        email: j['email'] as String?,
+        phone: j['phone'] as String?,
+        alternatePhone: j['alternatePhone'] as String?,
+        nationality: j['nationality'] as String?,
+        dateOfBirth: _parseDate(j['dateOfBirth']),
+        passportNumberMasked: j['passportNumberMasked'] as String?,
+        cnicMasked: j['cnicMasked'] as String?,
+        address: j['address'] as String?,
+        status: j['status'] as String?,
+        serviceType: j['serviceType'] as String?,
+        targetCountry: j['targetCountry'] as String?,
+        assignedSalesPersonName: j['assignedSalesPersonName'] as String?,
+      );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // NOTIFICATIONS
 // ───────────────────────────────────────────────────────────────────────────
 

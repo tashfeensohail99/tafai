@@ -16,6 +16,7 @@ import '../../client/presentation/client_case_tab.dart';
 import '../../client/presentation/client_documents_tab.dart';
 import '../../client/presentation/client_messages_tab.dart';
 import '../../client/presentation/client_notifications_screen.dart';
+import '../../client/presentation/client_profile_screen.dart';
 import '../../client/presentation/client_timeline_tab.dart';
 
 /// Client portal shell — the tabbed home for an external customer.
@@ -107,6 +108,13 @@ class _ClientShellState extends ConsumerState<ClientShell> {
             ),
             onSelected: (value) async {
               switch (value) {
+                case 'profile':
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const ClientProfileScreen(),
+                    ),
+                  );
+                  break;
                 case 'settings':
                   context.push(AppRoutes.settings);
                   break;
@@ -138,6 +146,16 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                   ),
                 ),
                 const PopupMenuDivider(),
+                const PopupMenuItem<String>(
+                  value: 'profile',
+                  child: Row(
+                    children: [
+                      Icon(Icons.person_outline, size: 18),
+                      SizedBox(width: 10),
+                      Text('My profile'),
+                    ],
+                  ),
+                ),
                 const PopupMenuItem<String>(
                   value: 'settings',
                   child: Row(

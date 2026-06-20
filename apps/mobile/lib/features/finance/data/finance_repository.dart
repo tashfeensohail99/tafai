@@ -199,6 +199,30 @@ class FinanceRepository {
     }
   }
 
+  /// POST /processing/intake — Finance hands a paid customer's file to the
+  /// Processing team. Opens a ProcessingCase, converts the lead → client (if
+  /// needed) and marks the handover SENT_TO_PROCESSING. Needs the verified
+  /// handover's id (from profile.sendToProcessing.handoverId).
+  Future<void> sendToProcessing({
+    required String financeHandoverId,
+    String? priority,
+    String? note,
+  }) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/processing/intake',
+        data: <String, dynamic>{
+          'financeHandoverId': financeHandoverId,
+          if (priority != null && priority.isNotEmpty) 'priority': priority,
+          if (note != null && note.trim().isNotEmpty)
+            'financeHandoverNote': note.trim(),
+        },
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // ── Agreements ─────────────────────────────────────────────────────────
 
   /// POST /agreements/:id/approve — locks the plan, creates the contract +

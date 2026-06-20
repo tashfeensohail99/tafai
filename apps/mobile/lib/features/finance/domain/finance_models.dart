@@ -458,6 +458,7 @@ class FinanceCustomerProfile {
   final List<FinanceHandoverRow> handovers;
   final List<FinanceExpense> expenses;
   final FinanceProcessingCase? processingCase;
+  final FinanceSendToProcessing sendToProcessing;
   final FinanceTotals totals;
 
   const FinanceCustomerProfile({
@@ -471,6 +472,7 @@ class FinanceCustomerProfile {
     this.handovers = const [],
     this.expenses = const [],
     this.processingCase,
+    this.sendToProcessing = const FinanceSendToProcessing(),
     this.totals = const FinanceTotals(),
   });
 
@@ -505,10 +507,40 @@ class FinanceCustomerProfile {
       processingCase: pcMap is Map<String, dynamic>
           ? FinanceProcessingCase.fromJson(pcMap)
           : null,
+      sendToProcessing: j['sendToProcessing'] is Map<String, dynamic>
+          ? FinanceSendToProcessing.fromJson(
+              j['sendToProcessing'] as Map<String, dynamic>)
+          : const FinanceSendToProcessing(),
       totals: FinanceTotals.fromJson(
           j['totals'] is Map<String, dynamic> ? j['totals'] as Map<String, dynamic> : null),
     );
   }
+}
+
+/// Whether Finance can hand this file to Processing (GET /finance/customer/:id
+/// → `sendToProcessing`). `ready` flips true once a payment is verified and the
+/// file hasn't been handed off; `alreadySent` means a ProcessingCase is open;
+/// `reason` is the disabled-state explanation.
+class FinanceSendToProcessing {
+  final bool ready;
+  final String? handoverId;
+  final bool alreadySent;
+  final String? reason;
+
+  const FinanceSendToProcessing({
+    this.ready = false,
+    this.handoverId,
+    this.alreadySent = false,
+    this.reason,
+  });
+
+  factory FinanceSendToProcessing.fromJson(Map<String, dynamic> j) =>
+      FinanceSendToProcessing(
+        ready: j['ready'] == true,
+        handoverId: asStringOrNull(j['handoverId']),
+        alreadySent: j['alreadySent'] == true,
+        reason: asStringOrNull(j['reason']),
+      );
 }
 
 // ─── Dashboard handover (GET /finance/handovers) ────────────────────────────

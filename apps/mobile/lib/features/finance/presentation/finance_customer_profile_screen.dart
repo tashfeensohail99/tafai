@@ -160,6 +160,47 @@ class _FinanceCustomerProfileScreenState
     }
   }
 
+  // ── Send the file to Processing (opens a case; confirm first) ─────────────
+  Future<void> _sendToProcessing(FinanceCustomerProfile p) async {
+    final handoverId = p.sendToProcessing.handoverId;
+    if (handoverId == null || handoverId.isEmpty) {
+      _snack('No verified payment to hand over yet.', error: true);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Send to processing?'),
+        content: const Text(
+            'This opens a processing case for the client and hands the file '
+            'to the processing team. Continue?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: AppTokens.primary600),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Send')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _busy = 'send-to-processing');
+    try {
+      await ref
+          .read(financeRepositoryProvider)
+          .sendToProcessing(financeHandoverId: handoverId);
+      _snack('Sent to processing — a case has been opened.');
+      _reload();
+    } catch (e) {
+      _snack(messageForError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
   // ── Record a payment (creates a handover → enters the verification queue) ──
   Future<void> _recordPayment(FinanceCustomerProfile p) async {
     final input = await showModalBottomSheet<_NewPaymentInput>(
@@ -259,7 +300,11 @@ class _FinanceCustomerProfileScreenState
 
   Widget _tabBody(FinanceCustomerProfile p) {
     return switch (_tab) {
-      _ProfileTab.overview => _OverviewTab(profile: p),
+      _ProfileTab.overview => _OverviewTab(
+          profile: p,
+          busy: _busy,
+          onSendToProcessing: () => _sendToProcessing(p),
+        ),
       _ProfileTab.payments => _PaymentsTab(
           profile: p,
           busy: _busy,
@@ -444,7 +489,13 @@ class _TabBar extends StatelessWidget {
 
 class _OverviewTab extends StatelessWidget {
   final FinanceCustomerProfile profile;
-  const _OverviewTab({required this.profile});
+  final String? busy;
+  final VoidCallback onSendToProcessing;
+  const _OverviewTab({
+    required this.profile,
+    required this.busy,
+    required this.onSendToProcessing,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -466,6 +517,60 @@ class _OverviewTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(AppTokens.space4),
       children: [
+        if (!profile.sendToProcessing.alreadySent &&
+            profile.processingCase == null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppTokens.space3),
+            child: PremiumCard(
+              padding: const EdgeInsets.all(AppTokens.space4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.send_outlined,
+                          size: 18, color: AppTokens.primary600),
+                      SizedBox(width: 8),
+                      Text('Send to processing',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: AppTokens.textPrimaryLight)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    profile.sendToProcessing.ready
+                        ? 'Payment verified — hand this file to the processing '
+                            'team to open a case.'
+                        : (profile.sendToProcessing.reason ??
+                            'Verify a payment first to enable handover.'),
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        height: 1.35,
+                        color: AppTokens.textMutedLight),
+                  ),
+                  const SizedBox(height: AppTokens.space3),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                          backgroundColor: AppTokens.primary600),
+                      onPressed:
+                          (profile.sendToProcessing.ready && busy == null)
+                              ? onSendToProcessing
+                              : null,
+                      icon: const Icon(Icons.send_outlined, size: 18),
+                      label: Text(busy == 'send-to-processing'
+                          ? 'Sending…'
+                          : 'Send to processing'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (profile.processingCase != null)
           Padding(
             padding: const EdgeInsets.only(bottom: AppTokens.space3),

@@ -10,6 +10,7 @@ import 'case_action_sheets.dart';
 import 'processing_ui.dart';
 import 'submission_package_panel.dart';
 import 'tabs/communications_tab.dart';
+import 'tabs/corrections_tab.dart';
 import 'tabs/documents_tab.dart';
 import 'tabs/history_tab.dart';
 import 'tabs/notes_tab.dart';
@@ -66,6 +67,7 @@ class _Workspace extends ConsumerWidget {
 
   static const _tabs = <({String label, IconData icon})>[
     (label: 'Documents', icon: Icons.fact_check_outlined),
+    (label: 'Corrections', icon: Icons.edit_note_outlined),
     (label: 'Notes', icon: Icons.sticky_note_2_outlined),
     (label: 'Tasks', icon: Icons.checklist_outlined),
     (label: 'WhatsApp', icon: Icons.chat_bubble_outline),
@@ -219,6 +221,10 @@ class _Workspace extends ConsumerWidget {
                     caseId: c.id,
                     caseStage: c.stage,
                   ),
+                ),
+                CaseCorrectionsTab(
+                  caseId: c.id,
+                  onMutated: () => _afterMutation(ref),
                 ),
                 CaseNotesTab(caseId: c.id),
                 CaseTasksTab(caseId: c.id),

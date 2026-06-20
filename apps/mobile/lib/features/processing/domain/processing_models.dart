@@ -1349,6 +1349,116 @@ class AdminOverview {
       );
 }
 
+// ---------------------------------------------------------------------------
+// Correction requests (case-level Corrections tab)
+// ---------------------------------------------------------------------------
+
+/// Correction-request status → label (mirrors web CorrectionsTab STATUS_LABEL).
+const Map<String, String> kCorrectionStatusLabel = {
+  'SENT': 'Sent',
+  'IN_PROGRESS': 'In progress',
+  'RESOLVED': 'Resolved',
+  'ESCALATED': 'Escalated',
+};
+
+/// Required-action codes the request sheet offers (mirrors web ACTION_LABEL).
+const List<MapEntry<String, String>> kCorrectionRequiredActions = [
+  MapEntry('REUPLOAD', 'Re-upload document'),
+  MapEntry('CONFIRM', 'Confirm information'),
+  MapEntry('CORRECT', 'Correct information'),
+  MapEntry('CALL_BACK', 'Call back office'),
+];
+
+String correctionRequiredActionLabel(String code) {
+  for (final e in kCorrectionRequiredActions) {
+    if (e.key == code) return e.value;
+  }
+  return code.replaceAll('_', ' ');
+}
+
+/// Reason codes the correction sheet offers (mirrors web REASON_OPTIONS).
+const List<MapEntry<String, String>> kCorrectionReasonCodes = [
+  MapEntry('ILLEGIBLE', 'Document is blurry or unreadable'),
+  MapEntry('WRONG_DOCUMENT', 'Incorrect document type uploaded'),
+  MapEntry('EXPIRED', 'Document has passed its expiry date'),
+  MapEntry('DETAILS_MISMATCH', 'Name, date, or ID number does not match'),
+  MapEntry('INCOMPLETE', 'Document appears to be missing pages'),
+  MapEntry('POOR_SCAN_QUALITY', 'Scan quality too low for official use'),
+  MapEntry('SIGNATURE_MISSING', 'Required signature is absent'),
+  MapEntry('TRANSLATION_REQUIRED', 'Document is in a non-accepted language'),
+  MapEntry('CERTIFIED_COPY_REQUIRED', 'Original certified copy required'),
+  MapEntry('FORMAT_NOT_ACCEPTED', 'File format not accepted by authority'),
+  MapEntry('WRONG_DATE_RANGE', 'Document validity does not cover required period'),
+  MapEntry('DATA_INCORRECT', 'Application data needs correction'),
+  MapEntry('DATA_MISSING', 'Required information is missing'),
+  MapEntry('CONFIRM_DETAILS', 'Client must confirm details'),
+  MapEntry('OTHER', 'Other — described in message to client'),
+];
+
+class CaseCorrection {
+  final String id;
+  final String caseId;
+  final String? documentItemId;
+  final String correctionType; // DOCUMENT | INFORMATION
+  final String status; // SENT | IN_PROGRESS | RESOLVED | ESCALATED
+  final String subject;
+  final List<String> reasonCodes;
+  final String? officerNote;
+  final String clientMessage;
+  final String requiredAction;
+  final int? slaHours;
+  final String? resolutionNote;
+  final String? escalationReason;
+  final DateTime? resolvedAt;
+  final DateTime createdAt;
+  final CaseOfficer? raisedBy;
+
+  const CaseCorrection({
+    required this.id,
+    required this.caseId,
+    this.documentItemId,
+    required this.correctionType,
+    required this.status,
+    required this.subject,
+    this.reasonCodes = const [],
+    this.officerNote,
+    required this.clientMessage,
+    required this.requiredAction,
+    this.slaHours,
+    this.resolutionNote,
+    this.escalationReason,
+    this.resolvedAt,
+    required this.createdAt,
+    this.raisedBy,
+  });
+
+  bool get isOpen => status == 'SENT' || status == 'IN_PROGRESS';
+  bool get canEscalate => status != 'RESOLVED' && status != 'ESCALATED';
+
+  factory CaseCorrection.fromJson(Map<String, dynamic> j) => CaseCorrection(
+        id: j['id'] as String? ?? '',
+        caseId: j['caseId'] as String? ?? '',
+        documentItemId: asStringOrNull(j['documentItemId']),
+        correctionType: j['correctionType'] as String? ?? 'INFORMATION',
+        status: j['status'] as String? ?? 'SENT',
+        subject: j['subject'] as String? ?? '',
+        reasonCodes: (j['reasonCodes'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        officerNote: asStringOrNull(j['officerNote']),
+        clientMessage: j['clientMessage'] as String? ?? '',
+        requiredAction: j['requiredAction'] as String? ?? 'REUPLOAD',
+        slaHours: j['slaHours'] == null ? null : asInt(j['slaHours']),
+        resolutionNote: asStringOrNull(j['resolutionNote']),
+        escalationReason: asStringOrNull(j['escalationReason']),
+        resolvedAt: parseApiDateOrNull(j['resolvedAt']),
+        createdAt: parseApiDate(j['createdAt']),
+        raisedBy: j['raisedBy'] is Map<String, dynamic>
+            ? CaseOfficer.fromJson(j['raisedBy'] as Map<String, dynamic>)
+            : null,
+      );
+}
+
 /// Resolved case WhatsApp thread pointer (the case endpoint returns threadId +
 /// messages; the mobile WhatsApp tab only needs the threadId to reuse the
 /// existing ThreadScreen via getThread()).

@@ -572,6 +572,96 @@ class ProcessingRepository {
       throw mapDioError(e);
     }
   }
+
+  // --- Corrections ---------------------------------------------------------
+
+  /// GET /processing/cases/:id/corrections — list correction requests.
+  Future<List<CaseCorrection>> caseCorrections(String caseId) async {
+    try {
+      final res =
+          await _c.get<List<dynamic>>('/processing/cases/$caseId/corrections');
+      return (res.data ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(CaseCorrection.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /processing/cases/:id/corrections — raise a correction. Mirrors
+  /// CreateCorrectionRequestDto (DOCUMENT type requires documentItemId).
+  Future<CaseCorrection> createCorrection(
+    String caseId, {
+    required String correctionType, // 'DOCUMENT' | 'INFORMATION'
+    String? documentItemId,
+    required String subject,
+    required List<String> reasonCodes,
+    String? officerNote,
+    required String clientMessage,
+    required String requiredAction,
+    int? slaHours,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/processing/cases/$caseId/corrections',
+        data: <String, dynamic>{
+          'correctionType': correctionType,
+          if (correctionType == 'DOCUMENT' &&
+              documentItemId != null &&
+              documentItemId.isNotEmpty)
+            'documentItemId': documentItemId,
+          'subject': subject,
+          'reasonCodes': reasonCodes,
+          if (officerNote != null && officerNote.isNotEmpty)
+            'officerNote': officerNote,
+          'clientMessage': clientMessage,
+          'requiredAction': requiredAction,
+          if (slaHours != null) 'slaHours': slaHours,
+        },
+      );
+      return CaseCorrection.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// PATCH /processing/cases/:id/corrections/:correctionId/resolve
+  Future<CaseCorrection> resolveCorrection(
+    String caseId,
+    String correctionId, {
+    String? note,
+  }) async {
+    try {
+      final res = await _c.patch<Map<String, dynamic>>(
+        '/processing/cases/$caseId/corrections/$correctionId/resolve',
+        data: <String, dynamic>{
+          if (note != null && note.isNotEmpty) 'resolutionNote': note,
+        },
+      );
+      return CaseCorrection.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// PATCH /processing/cases/:id/corrections/:correctionId/escalate —
+  /// escalationReason is required.
+  Future<CaseCorrection> escalateCorrection(
+    String caseId,
+    String correctionId, {
+    required String escalationReason,
+  }) async {
+    try {
+      final res = await _c.patch<Map<String, dynamic>>(
+        '/processing/cases/$caseId/corrections/$correctionId/escalate',
+        data: {'escalationReason': escalationReason},
+      );
+      return CaseCorrection.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
 }
 
 final processingRepositoryProvider = Provider<ProcessingRepository>((ref) {

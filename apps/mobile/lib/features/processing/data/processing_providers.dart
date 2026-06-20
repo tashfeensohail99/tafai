@@ -156,3 +156,8 @@ final submissionPackageProvider = FutureProvider.autoDispose
     .family<SubmissionPackage, String>((ref, caseId) {
   return ref.watch(processingRepositoryProvider).submissionPackage(caseId);
 });
+
+final caseCorrectionsProvider = FutureProvider.autoDispose
+    .family<List<CaseCorrection>, String>((ref, caseId) {
+  return ref.watch(processingRepositoryProvider).caseCorrections(caseId);
+});

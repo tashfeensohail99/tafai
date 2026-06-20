@@ -8,6 +8,7 @@ import '../../data/processing_providers.dart';
 import '../../domain/processing_models.dart';
 import '../case_workspace_screen.dart';
 import '../processing_ui.dart';
+import '../refund_lane_screen.dart';
 
 /// Manager Dashboard — admin overview: team workload, stage breakdown, SLA
 /// breaches, recent intake. Manager-only (gated in the shell).
@@ -34,6 +35,8 @@ class ManagerDashboardTab extends ConsumerWidget {
         data: (d) => ListView(
           padding: const EdgeInsets.all(AppTokens.space4),
           children: [
+            _managerTools(context),
+            const SizedBox(height: AppTokens.space5),
             _kpiGrid(d.totals),
             const SizedBox(height: AppTokens.space5),
             if (d.casesByType.isNotEmpty) ...[
@@ -92,6 +95,24 @@ class ManagerDashboardTab extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _managerTools(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionLabel('Manager tools'),
+        const SizedBox(height: AppTokens.space2),
+        _ToolTile(
+          icon: Icons.assignment_return_outlined,
+          title: 'Refund / Escalation',
+          subtitle: 'Rejected cases needing refund or appeal',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const RefundLaneScreen()),
+          ),
+        ),
+      ],
     );
   }
 
@@ -276,6 +297,68 @@ class ManagerDashboardTab extends ConsumerWidget {
             ),
             priorityPill(r.priority),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A tappable manager-tool row (icon + title + subtitle + chevron). Used for
+/// the entry points into the refund lane, reports, new-client and template
+/// admin surfaces.
+class _ToolTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  const _ToolTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppTokens.space2),
+      child: InkWell(
+        borderRadius: const BorderRadius.all(AppTokens.radiusCard),
+        onTap: onTap,
+        child: SectionCard(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppTokens.space4, vertical: AppTokens.space3),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: const BoxDecoration(
+                  color: AppTokens.primary100,
+                  borderRadius: BorderRadius.all(AppTokens.radiusMd),
+                ),
+                alignment: Alignment.center,
+                child: Icon(icon, size: 18, color: AppTokens.primary700),
+              ),
+              const SizedBox(width: AppTokens.space3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 13.5, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 1),
+                    Text(subtitle,
+                        style: const TextStyle(
+                            fontSize: 11.5, color: AppTokens.textMutedLight)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right,
+                  size: 20, color: AppTokens.textMutedLight),
+            ],
+          ),
         ),
       ),
     );

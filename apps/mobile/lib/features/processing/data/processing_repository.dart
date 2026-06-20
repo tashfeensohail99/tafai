@@ -573,6 +573,34 @@ class ProcessingRepository {
     }
   }
 
+  // --- Refund / escalation lane --------------------------------------------
+
+  /// GET /processing/refunds — REJECTED cases needing refund or escalation.
+  Future<List<RefundCaseItem>> refundsQueue() async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>('/processing/refunds');
+      return ((res.data ?? const {})['cases'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(RefundCaseItem.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /processing/cases/:id/refund — flag a REJECTED case as refunded.
+  /// The case stays REJECTED while Finance processes the refund out-of-band.
+  Future<void> recordRefund(String caseId, {required String reason}) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/processing/cases/$caseId/refund',
+        data: {'reason': reason},
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // --- Corrections ---------------------------------------------------------
 
   /// GET /processing/cases/:id/corrections — list correction requests.

@@ -161,3 +161,10 @@ final caseCorrectionsProvider = FutureProvider.autoDispose
     .family<List<CaseCorrection>, String>((ref, caseId) {
   return ref.watch(processingRepositoryProvider).caseCorrections(caseId);
 });
+
+// --- Refund / escalation lane (shell-level) -------------------------------
+
+final refundsQueueProvider =
+    FutureProvider.autoDispose<List<RefundCaseItem>>((ref) {
+  return ref.watch(processingRepositoryProvider).refundsQueue();
+});

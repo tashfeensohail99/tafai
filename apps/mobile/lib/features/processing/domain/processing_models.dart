@@ -1350,6 +1350,27 @@ class AdminOverview {
 }
 
 // ---------------------------------------------------------------------------
+// Refund / escalation lane (shell-level)
+// ---------------------------------------------------------------------------
+
+/// A REJECTED case in the refund / escalation lane. Wraps the standard case
+/// list shape and adds the refund-initiated marker so the UI can badge cases
+/// that already had a refund recorded.
+class RefundCaseItem {
+  final ProcessingCaseListItem base;
+  final DateTime? refundInitiatedAt;
+
+  const RefundCaseItem({required this.base, this.refundInitiatedAt});
+
+  bool get refundInitiated => refundInitiatedAt != null;
+
+  factory RefundCaseItem.fromJson(Map<String, dynamic> j) => RefundCaseItem(
+        base: ProcessingCaseListItem.fromJson(j),
+        refundInitiatedAt: parseApiDateOrNull(j['refundInitiatedAt']),
+      );
+}
+
+// ---------------------------------------------------------------------------
 // Correction requests (case-level Corrections tab)
 // ---------------------------------------------------------------------------
 

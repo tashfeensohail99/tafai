@@ -111,12 +111,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'SALES CRM',
+                        'IMMIGRATION SOLUTIONS',
                         style: TextStyle(
                           color: AppTokens.brandSilverText,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w600,
-                          letterSpacing: 3,
+                          letterSpacing: 2,
                         ),
                       ),
                     ],

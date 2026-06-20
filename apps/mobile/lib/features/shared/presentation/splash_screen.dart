@@ -44,12 +44,12 @@ class SplashScreen extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'SALES CRM',
+                'IMMIGRATION SOLUTIONS',
                 style: TextStyle(
                   color: AppTokens.brandSilverText,
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
-                  letterSpacing: 3,
+                  letterSpacing: 2,
                 ),
               ),
               const SizedBox(height: 48),

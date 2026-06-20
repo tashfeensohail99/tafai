@@ -293,83 +293,107 @@ class _DocCardState extends ConsumerState<_DocCard> {
         color: AppTokens.surfaceLight,
         borderRadius: const BorderRadius.all(AppTokens.radiusCard),
         boxShadow: AppTokens.cardShadowSm,
-        border: Border(
-          left: BorderSide(color: accent, width: 3),
-          top: const BorderSide(color: AppTokens.borderLight),
-          right: const BorderSide(color: AppTokens.borderLight),
-          bottom: const BorderSide(color: AppTokens.borderLight),
-        ),
+        // Uniform border ONLY. A borderRadius alongside a NON-uniform Border
+        // (the old 3px accent-left edge) is illegal in Flutter: it throws at
+        // paint time in debug — blanking the ENTIRE card — and silently drops
+        // the rounded corners in release. The status accent is now a clipped,
+        // full-height left rail (below) instead of a border side.
+        border: Border.all(color: AppTokens.borderLight),
       ),
-      padding: const EdgeInsets.all(AppTokens.space4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(_statusIcon(), size: 18, color: tone.fg),
-              const SizedBox(width: AppTokens.space2),
-              Expanded(
-                child: Text(
-                  d.documentName,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
+          // Full-height status accent rail. Positioned top+bottom gives it a
+          // BOUNDED height (the Stack sizes to the padded content), so it never
+          // trips the "unbounded height" error that CrossAxisAlignment.stretch
+          // hits for a fixed-width child inside a vertical list.
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: 3,
+            child: ColoredBox(color: accent),
           ),
-          const SizedBox(height: AppTokens.space2),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              StatusPill(label: d.criticality, tone: criticalityTone(d.criticality)),
-              StatusPill(label: docStatusLabel(d.status), tone: tone),
-              ..._expiryBadge(),
-            ],
-          ),
-          if (d.description != null && d.description!.isNotEmpty) ...[
-            const SizedBox(height: AppTokens.space2),
-            Text(d.description!,
-                style: const TextStyle(
-                    fontSize: 12.5, color: AppTokens.textSecondaryLight)),
-          ],
-          if (ai != null) ...[
-            const SizedBox(height: AppTokens.space2),
-            _aiRow(ai),
-          ],
-          const SizedBox(height: AppTokens.space2),
-          Text(
-            '${d.latestVersion != null ? 'v${d.latestVersion!.versionNumber} · ' : ''}Updated ${relativeTime(d.updatedAt)}',
-            style: const TextStyle(fontSize: 11, color: AppTokens.textMutedLight),
-          ),
-          const SizedBox(height: AppTokens.space3),
-          if (_busy)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: AppTokens.space2),
-              child: SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2)),
-            )
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppTokens.space4 + 3,
+                AppTokens.space4, AppTokens.space4, AppTokens.space4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (d.hasFile)
-                  _action(Icons.open_in_new, 'View', _viewFile),
-                if (d.canReview)
-                  _action(Icons.fact_check_outlined, 'Review', _review,
-                      primary: true),
-                if (d.canUpload)
-                  _action(Icons.upload_file_outlined,
-                      d.hasFile ? 'Replace' : 'Upload', _upload),
-                if (d.canRequest)
-                  _action(Icons.mark_email_unread_outlined, 'Request', _request),
-                if (d.canWaive)
-                  _action(Icons.shield_outlined, 'Waive', _waive),
-              ],
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(_statusIcon(), size: 18, color: tone.fg),
+                      const SizedBox(width: AppTokens.space2),
+                      Expanded(
+                        child: Text(
+                          d.documentName,
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppTokens.space2),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      StatusPill(
+                          label: d.criticality,
+                          tone: criticalityTone(d.criticality)),
+                      StatusPill(label: docStatusLabel(d.status), tone: tone),
+                      ..._expiryBadge(),
+                    ],
+                  ),
+                  if (d.description != null && d.description!.isNotEmpty) ...[
+                    const SizedBox(height: AppTokens.space2),
+                    Text(d.description!,
+                        style: const TextStyle(
+                            fontSize: 12.5,
+                            color: AppTokens.textSecondaryLight)),
+                  ],
+                  if (ai != null) ...[
+                    const SizedBox(height: AppTokens.space2),
+                    _aiRow(ai),
+                  ],
+                  const SizedBox(height: AppTokens.space2),
+                  Text(
+                    '${d.latestVersion != null ? 'v${d.latestVersion!.versionNumber} · ' : ''}Updated ${relativeTime(d.updatedAt)}',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppTokens.textMutedLight),
+                  ),
+                  const SizedBox(height: AppTokens.space3),
+                  if (_busy)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppTokens.space2),
+                      child: SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (d.hasFile)
+                          _action(Icons.open_in_new, 'View', _viewFile),
+                        if (d.canReview)
+                          _action(Icons.fact_check_outlined, 'Review', _review,
+                              primary: true),
+                        if (d.canUpload)
+                          _action(Icons.upload_file_outlined,
+                              d.hasFile ? 'Replace' : 'Upload', _upload),
+                        if (d.canRequest)
+                          _action(Icons.mark_email_unread_outlined, 'Request',
+                              _request),
+                        if (d.canWaive)
+                          _action(Icons.shield_outlined, 'Waive', _waive),
+                      ],
+                    ),
+                ],
+              ),
             ),
         ],
       ),

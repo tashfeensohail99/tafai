@@ -24,73 +24,77 @@ class ProcessingDashboardTab extends ConsumerWidget {
         ref.watch(processingCasesProvider(const CasesQuery()));
     final greeting = user?.displayName.split(' ').first ?? 'there';
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        ref.invalidate(processingDashboardProvider);
-        ref.invalidate(processingCasesProvider(const CasesQuery()));
-        await ref.read(processingDashboardProvider.future);
-      },
-      child: ListView(
-        padding: const EdgeInsets.all(AppTokens.space4),
-        children: [
-          Text('Hi $greeting',
+    // Gate the whole body on the primary (metrics) provider — exactly like the
+    // Finance dashboard. The loading→data transition swaps SkeletonList for the
+    // scrollable, which forces the first paint. A persistent ListView whose
+    // children merely change on data-arrival can stay blank until scrolled on
+    // some Android (Impeller) configurations, so the swap is load-bearing.
+    return metricsAsync.when(
+      loading: () => const SkeletonList(),
+      error: (e, _) => ErrorView(
+        error: e,
+        onRetry: () => ref.invalidate(processingDashboardProvider),
+      ),
+      data: (m) => RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(processingDashboardProvider);
+          ref.invalidate(processingCasesProvider(const CasesQuery()));
+          await ref.read(processingDashboardProvider.future);
+        },
+        child: ListView(
+          padding: const EdgeInsets.all(AppTokens.space4),
+          children: [
+            Text('Hi $greeting',
+                style: const TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w700)),
+            Text(
+              isManager ? 'Processing — Manager' : 'Processing — Associate',
               style: const TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.w700)),
-          Text(
-            isManager ? 'Processing — Manager' : 'Processing — Associate',
-            style: const TextStyle(
-                fontSize: 13, color: AppTokens.textMutedLight),
-          ),
-          const SizedBox(height: AppTokens.space4),
-          metricsAsync.when(
-            loading: () => const SizedBox(
-                height: 200, child: Center(child: CircularProgressIndicator())),
-            error: (e, _) => ErrorView(
-              error: e,
-              onRetry: () => ref.invalidate(processingDashboardProvider),
+                  fontSize: 13, color: AppTokens.textMutedLight),
             ),
-            data: (m) => _kpiGrid(m, isManager),
-          ),
-          const SizedBox(height: AppTokens.space5),
-          Row(
-            children: [
-              Text(isManager ? 'Recent active cases' : 'My active cases',
-                  style: const TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w700)),
-            ],
-          ),
-          const SizedBox(height: AppTokens.space3),
-          casesAsync.when(
-            loading: () => const SkeletonList(items: 4),
-            error: (e, _) => ErrorView(
-              error: e,
-              onRetry: () =>
-                  ref.invalidate(processingCasesProvider(const CasesQuery())),
+            const SizedBox(height: AppTokens.space4),
+            _kpiGrid(m, isManager),
+            const SizedBox(height: AppTokens.space5),
+            Row(
+              children: [
+                Text(isManager ? 'Recent active cases' : 'My active cases',
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700)),
+              ],
             ),
-            data: (res) {
-              final active =
-                  res.cases.where((c) => !c.isTerminal).take(8).toList();
-              if (active.isEmpty) {
-                return const SectionCard(
-                  child: EmptyView(
-                    icon: Icons.folder_open_outlined,
-                    title: 'No active cases',
-                    message: 'Assigned work will appear here.',
-                  ),
+            const SizedBox(height: AppTokens.space3),
+            casesAsync.when(
+              loading: () => const SkeletonList(items: 4),
+              error: (e, _) => ErrorView(
+                error: e,
+                onRetry: () =>
+                    ref.invalidate(processingCasesProvider(const CasesQuery())),
+              ),
+              data: (res) {
+                final active =
+                    res.cases.where((c) => !c.isTerminal).take(8).toList();
+                if (active.isEmpty) {
+                  return const SectionCard(
+                    child: EmptyView(
+                      icon: Icons.folder_open_outlined,
+                      title: 'No active cases',
+                      message: 'Assigned work will appear here.',
+                    ),
+                  );
+                }
+                return Column(
+                  children: active
+                      .map((c) => Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: AppTokens.space3),
+                            child: CaseListCard(caseItem: c),
+                          ))
+                      .toList(),
                 );
-              }
-              return Column(
-                children: active
-                    .map((c) => Padding(
-                          padding:
-                              const EdgeInsets.only(bottom: AppTokens.space3),
-                          child: CaseListCard(caseItem: c),
-                        ))
-                    .toList(),
-              );
-            },
-          ),
-        ],
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -199,6 +199,42 @@ class ProcessingRepository {
     }
   }
 
+  /// POST /processing/clients — manager-only manual client on-ramp. Creates a
+  /// Lead → Client (with provisioned portal login) → an INTAKE_PENDING case,
+  /// optionally with a finance snapshot. Mirrors CreateManualClientCaseDto.
+  Future<CreatedClientResult> createClient({
+    required String firstName,
+    required String lastName,
+    required String email,
+    String? phone,
+    required String service,
+    required String targetCountry,
+    String? nationality,
+    String? priority,
+    ManualClientFinanceInput? finance,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/processing/clients',
+        data: <String, dynamic>{
+          'firstName': firstName,
+          'lastName': lastName,
+          'email': email,
+          if (phone != null && phone.isNotEmpty) 'phone': phone,
+          'service': service,
+          'targetCountry': targetCountry,
+          if (nationality != null && nationality.isNotEmpty)
+            'nationality': nationality,
+          if (priority != null) 'priority': priority,
+          if (finance != null) 'finance': finance.toJson(),
+        },
+      );
+      return CreatedClientResult.fromJson(res.data ?? const {});
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // --- Cross-case queues ---------------------------------------------------
 
   /// GET /processing/documents — cross-case document review queue.

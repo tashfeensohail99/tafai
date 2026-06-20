@@ -7,6 +7,7 @@ import '../../../../core/widgets/app_states.dart';
 import '../../data/processing_providers.dart';
 import '../../domain/processing_models.dart';
 import '../case_workspace_screen.dart';
+import '../new_client_screen.dart';
 import '../processing_ui.dart';
 import '../refund_lane_screen.dart';
 
@@ -104,6 +105,14 @@ class ManagerDashboardTab extends ConsumerWidget {
       children: [
         const SectionLabel('Manager tools'),
         const SizedBox(height: AppTokens.space2),
+        _ToolTile(
+          icon: Icons.person_add_alt_1_outlined,
+          title: 'New client',
+          subtitle: 'Create a client + case directly (no Finance handover)',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const NewClientScreen()),
+          ),
+        ),
         _ToolTile(
           icon: Icons.assignment_return_outlined,
           title: 'Refund / Escalation',

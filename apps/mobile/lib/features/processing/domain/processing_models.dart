@@ -546,6 +546,164 @@ class IntakeCaseItem {
 }
 
 // ---------------------------------------------------------------------------
+// Manual client creation (manager on-ramp — POST /processing/clients)
+// ---------------------------------------------------------------------------
+
+/// Currencies the new-client finance section offers (mirrors web).
+const List<String> kManualClientCurrencies = [
+  'PKR',
+  'CAD',
+  'USD',
+  'GBP',
+  'AED',
+  'EUR',
+  'SAR',
+];
+
+/// Payment methods the new-client finance section offers (mirrors web).
+const List<String> kManualClientPaymentMethods = [
+  'Cash',
+  'Bank transfer',
+  'Card',
+  'Cheque',
+  'Online',
+  'Other',
+];
+
+/// Processing priorities the new-client form offers.
+const List<String> kProcessingPriorities = [
+  'LOW',
+  'NORMAL',
+  'URGENT',
+  'CRITICAL',
+];
+
+/// Optional finance snapshot for a manually-created client. Amounts are sent as
+/// numeric strings (mirrors ManualClientFinanceDto's @IsNumberString fields).
+class ManualClientFinanceInput {
+  final String totalFee;
+  final String currency;
+  final String? amountReceived;
+  final String? paymentMethod;
+  final String? paidAt; // ISO date yyyy-mm-dd
+  final String? transactionRef;
+
+  const ManualClientFinanceInput({
+    required this.totalFee,
+    required this.currency,
+    this.amountReceived,
+    this.paymentMethod,
+    this.paidAt,
+    this.transactionRef,
+  });
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'totalFee': totalFee,
+        'currency': currency,
+        if (amountReceived != null && amountReceived!.isNotEmpty)
+          'amountReceived': amountReceived,
+        if (paymentMethod != null && paymentMethod!.isNotEmpty)
+          'paymentMethod': paymentMethod,
+        if (paidAt != null && paidAt!.isNotEmpty) 'paidAt': paidAt,
+        if (transactionRef != null && transactionRef!.isNotEmpty)
+          'transactionRef': transactionRef,
+      };
+}
+
+/// Portal-login outcome echoed back from a manual client create.
+class CreatedClientPortalLogin {
+  final bool provisioned;
+  final bool alreadyHadLogin;
+  final String? email;
+
+  const CreatedClientPortalLogin({
+    this.provisioned = false,
+    this.alreadyHadLogin = false,
+    this.email,
+  });
+
+  factory CreatedClientPortalLogin.fromJson(Map<String, dynamic> j) =>
+      CreatedClientPortalLogin(
+        provisioned: j['provisioned'] as bool? ?? false,
+        alreadyHadLogin: j['alreadyHadLogin'] as bool? ?? false,
+        email: asStringOrNull(j['email']),
+      );
+}
+
+/// Finance-snapshot outcome echoed back from a manual client create.
+class CreatedClientFinance {
+  final bool recorded;
+  final String? currency;
+  final num? feeAmount;
+  final num? receivedAmount;
+  final String? invoiceNumber;
+  final String? receiptNumber;
+
+  const CreatedClientFinance({
+    this.recorded = false,
+    this.currency,
+    this.feeAmount,
+    this.receivedAmount,
+    this.invoiceNumber,
+    this.receiptNumber,
+  });
+
+  factory CreatedClientFinance.fromJson(Map<String, dynamic> j) =>
+      CreatedClientFinance(
+        recorded: j['recorded'] as bool? ?? false,
+        currency: asStringOrNull(j['currency']),
+        feeAmount: j['feeAmount'] == null ? null : asDouble(j['feeAmount']),
+        receivedAmount:
+            j['receivedAmount'] == null ? null : asDouble(j['receivedAmount']),
+        invoiceNumber: asStringOrNull(j['invoiceNumber']),
+        receiptNumber: asStringOrNull(j['receiptNumber']),
+      );
+}
+
+/// Result of POST /processing/clients — the created case (+ its lead/client)
+/// plus the portal-login and finance side-effect outcomes.
+class CreatedClientResult {
+  final String caseId;
+  final String? referenceCode;
+  final String personName;
+  final CreatedClientPortalLogin portalLogin;
+  final CreatedClientFinance? finance;
+
+  const CreatedClientResult({
+    required this.caseId,
+    this.referenceCode,
+    required this.personName,
+    required this.portalLogin,
+    this.finance,
+  });
+
+  factory CreatedClientResult.fromJson(Map<String, dynamic> j) {
+    final client = j['client'] is Map<String, dynamic>
+        ? CasePerson.fromJson(j['client'] as Map<String, dynamic>)
+        : null;
+    final lead = j['lead'] is Map<String, dynamic>
+        ? CasePerson.fromJson(j['lead'] as Map<String, dynamic>)
+        : null;
+    final name = (client?.fullName.isNotEmpty == true)
+        ? client!.fullName
+        : (lead?.fullName.isNotEmpty == true ? lead!.fullName : 'Client');
+    return CreatedClientResult(
+      caseId: j['id'] as String? ?? '',
+      referenceCode: asStringOrNull(
+          (lead != null ? (j['lead'] as Map<String, dynamic>)['referenceCode'] : null)),
+      personName: name,
+      portalLogin: j['portalLogin'] is Map<String, dynamic>
+          ? CreatedClientPortalLogin.fromJson(
+              j['portalLogin'] as Map<String, dynamic>)
+          : const CreatedClientPortalLogin(),
+      finance: j['finance'] is Map<String, dynamic>
+          ? CreatedClientFinance.fromJson(j['finance'] as Map<String, dynamic>)
+          : null,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------
 

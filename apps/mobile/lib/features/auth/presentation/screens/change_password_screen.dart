@@ -47,8 +47,8 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
       // makes the router send the user home. If we opened this from the
       // profile menu, pop back and confirm.
       if (!mounted) return;
-      final stillForced = ref.read(authControllerProvider).mustChangePassword;
-      if (!stillForced && context.canPop()) context.pop();
+      // Always voluntary now (opened from Settings) — pop back after success.
+      if (context.canPop()) context.pop();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Password changed.')),
       );
@@ -69,12 +69,10 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final forced = ref.watch(authControllerProvider).mustChangePassword;
     final t = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Change password'),
-        automaticallyImplyLeading: !forced,
       ),
       body: SafeArea(
         child: Center(
@@ -87,27 +85,6 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (forced) ...[
-                      Container(
-                        padding: const EdgeInsets.all(AppTokens.space4),
-                        decoration: BoxDecoration(
-                          color: AppTokens.statusWarningBg,
-                          borderRadius:
-                              const BorderRadius.all(AppTokens.radiusMd),
-                          border: Border.all(
-                              color: AppTokens.statusWarning.withValues(alpha: 0.4)),
-                        ),
-                        child: const Text(
-                          'For security, you must set a new password before '
-                          'continuing.',
-                          style: TextStyle(
-                            color: AppTokens.statusWarning,
-                            fontSize: AppTokens.fontSizeSm,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: AppTokens.space4),
-                    ],
                     if (_error != null) ...[
                       ErrorBanner(_error!),
                       const SizedBox(height: AppTokens.space4),

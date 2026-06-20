@@ -76,10 +76,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         return onAuthPage ? null : AppRoutes.login;
       }
 
-      // Signed in but a password change is required → force it.
-      if (auth.mustChangePassword && loc != AppRoutes.changePassword) {
-        return AppRoutes.changePassword;
-      }
+      // NOTE: we intentionally do NOT force a password change on mobile. The
+      // web app never enforced `mustChangePassword`, and most existing accounts
+      // carry the flag from admin-provisioning/temp passwords — gating on it
+      // here would force the whole team to change their password on first
+      // mobile login. Voluntary change stays available in Settings → Change
+      // password. (Re-introduce a forced gate only with a deliberate, web-
+      // aligned rollout.)
 
       // Signed in but sitting on splash/login → route to the portal that
       // matches the user's role(s). Sales/admin/etc. resolve to '/' (AppShell).

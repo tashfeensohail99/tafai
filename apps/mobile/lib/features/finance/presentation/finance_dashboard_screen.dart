@@ -64,13 +64,18 @@ class FinanceDashboardScreen extends ConsumerWidget {
                 AppTokens.space4, AppTokens.space4, AppTokens.space16),
             children: [
               // ── KPI grid (2 columns) ──────────────────────────────────────
-              GridView.count(
-                crossAxisCount: 2,
+              GridView(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                crossAxisSpacing: AppTokens.space3,
-                mainAxisSpacing: AppTokens.space3,
-                childAspectRatio: 1.5,
+                // Fixed cell HEIGHT (not a width ratio) so the icon + value +
+                // 2-line label always fit — a ratio overflowed by ~6px on
+                // this screen and would re-break at other widths.
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: AppTokens.space3,
+                  mainAxisSpacing: AppTokens.space3,
+                  mainAxisExtent: 152,
+                ),
                 children: [
                   MetricCard(
                     icon: Icons.description_outlined,

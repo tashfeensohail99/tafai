@@ -573,6 +573,81 @@ class ProcessingRepository {
     }
   }
 
+  // --- Authority submissions (per case) ------------------------------------
+
+  /// GET /processing/cases/:id/submissions — authority-submissions log.
+  Future<List<CaseSubmission>> caseSubmissions(String caseId) async {
+    try {
+      final res =
+          await _c.get<List<dynamic>>('/processing/cases/$caseId/submissions');
+      return (res.data ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(CaseSubmission.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /processing/cases/:id/submissions — record a new authority submission.
+  /// [submissionDate] is an ISO date string. Mirrors CreateAuthoritySubmissionDto.
+  Future<CaseSubmission> createSubmission(
+    String caseId, {
+    required String authority,
+    required String submissionDate,
+    String? submissionReference,
+    String? trackingNumber,
+    List<String>? documentsIncluded,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/processing/cases/$caseId/submissions',
+        data: <String, dynamic>{
+          'authority': authority,
+          'submissionDate': submissionDate,
+          if (submissionReference != null && submissionReference.isNotEmpty)
+            'submissionReference': submissionReference,
+          if (trackingNumber != null && trackingNumber.isNotEmpty)
+            'trackingNumber': trackingNumber,
+          if (documentsIncluded != null && documentsIncluded.isNotEmpty)
+            'documentsIncluded': documentsIncluded,
+        },
+      );
+      return CaseSubmission.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// PATCH /processing/cases/:id/submissions/:submissionId — update status /
+  /// tracking / response. Mirrors UpdateAuthoritySubmissionDto.
+  Future<CaseSubmission> updateSubmission(
+    String caseId,
+    String submissionId, {
+    String? status,
+    String? trackingNumber,
+    String? responseNotes,
+    String? nextAction,
+  }) async {
+    try {
+      final res = await _c.patch<Map<String, dynamic>>(
+        '/processing/cases/$caseId/submissions/$submissionId',
+        data: <String, dynamic>{
+          if (status != null) 'status': status,
+          if (trackingNumber != null && trackingNumber.isNotEmpty)
+            'trackingNumber': trackingNumber,
+          if (responseNotes != null && responseNotes.isNotEmpty)
+            'responseNotes': responseNotes,
+          if (nextAction != null && nextAction.isNotEmpty)
+            'nextAction': nextAction,
+        },
+      );
+      return CaseSubmission.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // --- Refund / escalation lane --------------------------------------------
 
   /// GET /processing/refunds — REJECTED cases needing refund or escalation.

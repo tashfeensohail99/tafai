@@ -1350,6 +1350,85 @@ class AdminOverview {
 }
 
 // ---------------------------------------------------------------------------
+// Authority submissions log (case-level Submissions tab)
+// ---------------------------------------------------------------------------
+
+/// AuthoritySubmissionStatus → label (mirrors web AuthoritySubmissionStatus).
+const Map<String, String> kSubmissionStatusLabel = {
+  'SUBMITTED': 'Submitted',
+  'ACKNOWLEDGED_BY_AUTHORITY': 'Acknowledged',
+  'UNDER_REVIEW': 'Under review',
+  'INFO_REQUESTED': 'Info requested',
+  'DECISION_PENDING': 'Decision pending',
+  'APPROVED': 'Approved',
+  'REJECTED': 'Rejected',
+};
+
+/// Selectable submission statuses for the create + update sheets.
+const List<String> kSubmissionStatuses = [
+  'SUBMITTED',
+  'ACKNOWLEDGED_BY_AUTHORITY',
+  'UNDER_REVIEW',
+  'INFO_REQUESTED',
+  'DECISION_PENDING',
+  'APPROVED',
+  'REJECTED',
+];
+
+class CaseSubmission {
+  final String id;
+  final String caseId;
+  final int submissionNumber;
+  final String authority;
+  final DateTime? submissionDate;
+  final String? submissionReference;
+  final List<String> documentsIncluded;
+  final String? trackingNumber;
+  final String status;
+  final String? responseType;
+  final String? responseNotes;
+  final DateTime? responseReceivedAt;
+  final String? nextAction;
+  final DateTime createdAt;
+
+  const CaseSubmission({
+    required this.id,
+    required this.caseId,
+    required this.submissionNumber,
+    required this.authority,
+    this.submissionDate,
+    this.submissionReference,
+    this.documentsIncluded = const [],
+    this.trackingNumber,
+    required this.status,
+    this.responseType,
+    this.responseNotes,
+    this.responseReceivedAt,
+    this.nextAction,
+    required this.createdAt,
+  });
+
+  factory CaseSubmission.fromJson(Map<String, dynamic> j) => CaseSubmission(
+        id: j['id'] as String? ?? '',
+        caseId: j['caseId'] as String? ?? '',
+        submissionNumber: asInt(j['submissionNumber'], 1),
+        authority: j['authority'] as String? ?? '',
+        submissionDate: parseApiDateOrNull(j['submissionDate']),
+        submissionReference: asStringOrNull(j['submissionReference']),
+        documentsIncluded: (j['documentsIncluded'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        trackingNumber: asStringOrNull(j['trackingNumber']),
+        status: j['status'] as String? ?? 'SUBMITTED',
+        responseType: asStringOrNull(j['responseType']),
+        responseNotes: asStringOrNull(j['responseNotes']),
+        responseReceivedAt: parseApiDateOrNull(j['responseReceivedAt']),
+        nextAction: asStringOrNull(j['nextAction']),
+        createdAt: parseApiDate(j['createdAt']),
+      );
+}
+
+// ---------------------------------------------------------------------------
 // Refund / escalation lane (shell-level)
 // ---------------------------------------------------------------------------
 

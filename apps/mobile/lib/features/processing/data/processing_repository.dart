@@ -801,6 +801,80 @@ class ProcessingRepository {
       throw mapDioError(e);
     }
   }
+
+  // --- Reports (manager, read-only) ----------------------------------------
+
+  Map<String, dynamic> _reportQuery(ReportFilter f) => <String, dynamic>{
+        if (f.dateFrom != null && f.dateFrom!.isNotEmpty) 'dateFrom': f.dateFrom,
+        if (f.dateTo != null && f.dateTo!.isNotEmpty) 'dateTo': f.dateTo,
+        if (f.officerId != null && f.officerId!.isNotEmpty)
+          'officerId': f.officerId,
+      };
+
+  /// GET /processing/reports/workload — per-officer case counts + stage mix.
+  Future<WorkloadReport> workloadReport(ReportFilter f) async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/processing/reports/workload',
+        queryParameters: _reportQuery(f),
+      );
+      return WorkloadReport.fromJson(res.data ?? const {});
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// GET /processing/reports/throughput — cases closed per ISO-week.
+  Future<ThroughputReport> throughputReport(ReportFilter f) async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/processing/reports/throughput',
+        queryParameters: _reportQuery(f),
+      );
+      return ThroughputReport.fromJson(res.data ?? const {});
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// GET /processing/reports/doc-quality — rejection rates per document.
+  Future<DocQualityReport> docQualityReport(ReportFilter f) async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/processing/reports/doc-quality',
+        queryParameters: _reportQuery(f),
+      );
+      return DocQualityReport.fromJson(res.data ?? const {});
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// GET /processing/reports/sla — overdue corrections + aging cases.
+  Future<SlaReport> slaReport(ReportFilter f) async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/processing/reports/sla',
+        queryParameters: _reportQuery(f),
+      );
+      return SlaReport.fromJson(res.data ?? const {});
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// GET /processing/reports/expiry-risk — document items expiring ≤ 90 days.
+  Future<ExpiryRiskReport> expiryRiskReport(ReportFilter f) async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/processing/reports/expiry-risk',
+        queryParameters: _reportQuery(f),
+      );
+      return ExpiryRiskReport.fromJson(res.data ?? const {});
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
 }
 
 final processingRepositoryProvider = Provider<ProcessingRepository>((ref) {

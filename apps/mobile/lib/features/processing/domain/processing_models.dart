@@ -1731,3 +1731,375 @@ class CaseWhatsAppRef {
         windowOpen: j['windowOpen'] as bool? ?? false,
       );
 }
+
+// ---------------------------------------------------------------------------
+// Reports (manager, read-only — GET /processing/reports/*)
+// ---------------------------------------------------------------------------
+
+/// Shared filter for all five report endpoints (ReportDateRangeQueryDto).
+class ReportFilter {
+  final String? dateFrom; // ISO yyyy-mm-dd
+  final String? dateTo; // ISO yyyy-mm-dd
+  final String? officerId;
+
+  const ReportFilter({this.dateFrom, this.dateTo, this.officerId});
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReportFilter &&
+      other.dateFrom == dateFrom &&
+      other.dateTo == dateTo &&
+      other.officerId == officerId;
+
+  @override
+  int get hashCode => Object.hash(dateFrom, dateTo, officerId);
+}
+
+// --- Workload --------------------------------------------------------------
+
+class WorkloadRow {
+  final String? officerId;
+  final String officerName;
+  final int caseCount;
+  final int avgDaysOpen;
+  final Map<String, int> stageCounts;
+
+  const WorkloadRow({
+    this.officerId,
+    required this.officerName,
+    required this.caseCount,
+    required this.avgDaysOpen,
+    this.stageCounts = const {},
+  });
+
+  factory WorkloadRow.fromJson(Map<String, dynamic> j) => WorkloadRow(
+        officerId: asStringOrNull(j['officerId']),
+        officerName: j['officerName'] as String? ?? 'Unassigned',
+        caseCount: asInt(j['caseCount']),
+        avgDaysOpen: asInt(j['avgDaysOpen']),
+        stageCounts: (j['stageCounts'] as Map<String, dynamic>? ?? const {})
+            .map((k, v) => MapEntry(k, asInt(v))),
+      );
+}
+
+class WorkloadReport {
+  final DateTime? from;
+  final DateTime? to;
+  final List<WorkloadRow> rows;
+
+  const WorkloadReport({this.from, this.to, this.rows = const []});
+
+  factory WorkloadReport.fromJson(Map<String, dynamic> j) => WorkloadReport(
+        from: parseApiDateOrNull(j['from']),
+        to: parseApiDateOrNull(j['to']),
+        rows: (j['rows'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(WorkloadRow.fromJson)
+            .toList(),
+      );
+}
+
+// --- Throughput ------------------------------------------------------------
+
+class ThroughputWeek {
+  final String week;
+  final int completed;
+  final int cancelled;
+  final int rejected;
+  final int total;
+
+  const ThroughputWeek({
+    required this.week,
+    required this.completed,
+    required this.cancelled,
+    required this.rejected,
+    required this.total,
+  });
+
+  factory ThroughputWeek.fromJson(Map<String, dynamic> j) => ThroughputWeek(
+        week: j['week'] as String? ?? '',
+        completed: asInt(j['completed']),
+        cancelled: asInt(j['cancelled']),
+        rejected: asInt(j['rejected']),
+        total: asInt(j['total']),
+      );
+}
+
+class ThroughputReport {
+  final DateTime? from;
+  final DateTime? to;
+  final int totalClosed;
+  final List<ThroughputWeek> weeks;
+
+  const ThroughputReport({
+    this.from,
+    this.to,
+    this.totalClosed = 0,
+    this.weeks = const [],
+  });
+
+  factory ThroughputReport.fromJson(Map<String, dynamic> j) => ThroughputReport(
+        from: parseApiDateOrNull(j['from']),
+        to: parseApiDateOrNull(j['to']),
+        totalClosed: asInt(j['totalClosed']),
+        weeks: (j['weeks'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ThroughputWeek.fromJson)
+            .toList(),
+      );
+}
+
+// --- Document quality ------------------------------------------------------
+
+class ReasonCodeCount {
+  final String code;
+  final int count;
+
+  const ReasonCodeCount({required this.code, required this.count});
+
+  factory ReasonCodeCount.fromJson(Map<String, dynamic> j) => ReasonCodeCount(
+        code: j['code'] as String? ?? '',
+        count: asInt(j['count']),
+      );
+}
+
+class DocQualityRow {
+  final String documentName;
+  final int accepted;
+  final int rejected;
+  final int total;
+  final int rejectionRate;
+  final List<ReasonCodeCount> topReasonCodes;
+
+  const DocQualityRow({
+    required this.documentName,
+    required this.accepted,
+    required this.rejected,
+    required this.total,
+    required this.rejectionRate,
+    this.topReasonCodes = const [],
+  });
+
+  factory DocQualityRow.fromJson(Map<String, dynamic> j) => DocQualityRow(
+        documentName: j['documentName'] as String? ?? 'Document',
+        accepted: asInt(j['accepted']),
+        rejected: asInt(j['rejected']),
+        total: asInt(j['total']),
+        rejectionRate: asInt(j['rejectionRate']),
+        topReasonCodes: (j['topReasonCodes'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ReasonCodeCount.fromJson)
+            .toList(),
+      );
+}
+
+class DocQualityReport {
+  final DateTime? from;
+  final DateTime? to;
+  final List<DocQualityRow> documents;
+  final List<ReasonCodeCount> topReasonCodes;
+
+  const DocQualityReport({
+    this.from,
+    this.to,
+    this.documents = const [],
+    this.topReasonCodes = const [],
+  });
+
+  factory DocQualityReport.fromJson(Map<String, dynamic> j) => DocQualityReport(
+        from: parseApiDateOrNull(j['from']),
+        to: parseApiDateOrNull(j['to']),
+        documents: (j['documents'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(DocQualityRow.fromJson)
+            .toList(),
+        topReasonCodes: (j['topReasonCodes'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ReasonCodeCount.fromJson)
+            .toList(),
+      );
+}
+
+// --- SLA -------------------------------------------------------------------
+
+class SlaOverdueCorrection {
+  final String correctionId;
+  final String caseId;
+  final String subject;
+  final String status;
+  final DateTime? slaDueAt;
+  final int? hoursOverdue;
+  final String raisedByName;
+
+  const SlaOverdueCorrection({
+    required this.correctionId,
+    required this.caseId,
+    required this.subject,
+    required this.status,
+    this.slaDueAt,
+    this.hoursOverdue,
+    required this.raisedByName,
+  });
+
+  factory SlaOverdueCorrection.fromJson(Map<String, dynamic> j) =>
+      SlaOverdueCorrection(
+        correctionId: j['correctionId'] as String? ?? '',
+        caseId: j['caseId'] as String? ?? '',
+        subject: j['subject'] as String? ?? '',
+        status: j['status'] as String? ?? 'SENT',
+        slaDueAt: parseApiDateOrNull(j['slaDueAt']),
+        hoursOverdue:
+            j['hoursOverdue'] == null ? null : asInt(j['hoursOverdue']),
+        raisedByName: j['raisedByName'] as String? ?? '',
+      );
+}
+
+class SlaAgingCase {
+  final String caseId;
+  final String service;
+  final String targetCountry;
+  final String stage;
+  final String priority;
+  final int daysOpen;
+  final String bucket; // 30-60 | 60-90 | 90+
+  final String officerName;
+
+  const SlaAgingCase({
+    required this.caseId,
+    required this.service,
+    required this.targetCountry,
+    required this.stage,
+    required this.priority,
+    required this.daysOpen,
+    required this.bucket,
+    required this.officerName,
+  });
+
+  factory SlaAgingCase.fromJson(Map<String, dynamic> j) => SlaAgingCase(
+        caseId: j['caseId'] as String? ?? '',
+        service: j['service'] as String? ?? '',
+        targetCountry: j['targetCountry'] as String? ?? '',
+        stage: j['stage'] as String? ?? '',
+        priority: j['priority'] as String? ?? 'NORMAL',
+        daysOpen: asInt(j['daysOpen']),
+        bucket: j['bucket'] as String? ?? '30-60',
+        officerName: j['officerName'] as String? ?? 'Unassigned',
+      );
+}
+
+class SlaReport {
+  final List<SlaOverdueCorrection> overdueCorrections;
+  final List<SlaAgingCase> agingCases;
+  final int overdueCount;
+  final int aging30to60;
+  final int aging60to90;
+  final int aging90plus;
+
+  const SlaReport({
+    this.overdueCorrections = const [],
+    this.agingCases = const [],
+    this.overdueCount = 0,
+    this.aging30to60 = 0,
+    this.aging60to90 = 0,
+    this.aging90plus = 0,
+  });
+
+  factory SlaReport.fromJson(Map<String, dynamic> j) {
+    final s = (j['summary'] as Map<String, dynamic>?) ?? const {};
+    return SlaReport(
+      overdueCorrections: (j['overdueCorrections'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(SlaOverdueCorrection.fromJson)
+          .toList(),
+      agingCases: (j['agingCases'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(SlaAgingCase.fromJson)
+          .toList(),
+      overdueCount: asInt(s['overdueCount']),
+      aging30to60: asInt(s['aging30to60']),
+      aging60to90: asInt(s['aging60to90']),
+      aging90plus: asInt(s['aging90plus']),
+    );
+  }
+}
+
+// --- Expiry risk -----------------------------------------------------------
+
+class ExpiryRiskRow {
+  final String documentItemId;
+  final String documentName;
+  final String criticality;
+  final String status;
+  final DateTime? validityExpiryDate;
+  final int? daysUntilExpiry;
+  final String bucket; // expired | 0-30 | 31-60 | 61-90 | unknown
+  final String caseId;
+  final String service;
+  final String targetCountry;
+  final String casePriority;
+  final String officerName;
+
+  const ExpiryRiskRow({
+    required this.documentItemId,
+    required this.documentName,
+    required this.criticality,
+    required this.status,
+    this.validityExpiryDate,
+    this.daysUntilExpiry,
+    required this.bucket,
+    required this.caseId,
+    required this.service,
+    required this.targetCountry,
+    required this.casePriority,
+    required this.officerName,
+  });
+
+  factory ExpiryRiskRow.fromJson(Map<String, dynamic> j) => ExpiryRiskRow(
+        documentItemId: j['documentItemId'] as String? ?? '',
+        documentName: j['documentName'] as String? ?? 'Document',
+        criticality: j['criticality'] as String? ?? 'REQUIRED',
+        status: j['status'] as String? ?? 'NOT_SUBMITTED',
+        validityExpiryDate: parseApiDateOrNull(j['validityExpiryDate']),
+        daysUntilExpiry:
+            j['daysUntilExpiry'] == null ? null : asInt(j['daysUntilExpiry']),
+        bucket: j['bucket'] as String? ?? 'unknown',
+        caseId: j['caseId'] as String? ?? '',
+        service: j['service'] as String? ?? '',
+        targetCountry: j['targetCountry'] as String? ?? '',
+        casePriority: j['casePriority'] as String? ?? 'NORMAL',
+        officerName: j['officerName'] as String? ?? 'Unassigned',
+      );
+}
+
+class ExpiryRiskReport {
+  final DateTime? generatedAt;
+  final int expired;
+  final int within30;
+  final int within60;
+  final int within90;
+  final List<ExpiryRiskRow> rows;
+
+  const ExpiryRiskReport({
+    this.generatedAt,
+    this.expired = 0,
+    this.within30 = 0,
+    this.within60 = 0,
+    this.within90 = 0,
+    this.rows = const [],
+  });
+
+  factory ExpiryRiskReport.fromJson(Map<String, dynamic> j) {
+    final s = (j['summary'] as Map<String, dynamic>?) ?? const {};
+    return ExpiryRiskReport(
+      generatedAt: parseApiDateOrNull(j['generatedAt']),
+      expired: asInt(s['expired']),
+      within30: asInt(s['within30']),
+      within60: asInt(s['within60']),
+      within90: asInt(s['within90']),
+      rows: (j['rows'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ExpiryRiskRow.fromJson)
+          .toList(),
+    );
+  }
+}

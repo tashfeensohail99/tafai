@@ -173,3 +173,30 @@ final refundsQueueProvider =
     FutureProvider.autoDispose<List<RefundCaseItem>>((ref) {
   return ref.watch(processingRepositoryProvider).refundsQueue();
 });
+
+// --- Reports (manager, read-only) — keyed on the shared date-range filter ---
+
+final workloadReportProvider = FutureProvider.autoDispose
+    .family<WorkloadReport, ReportFilter>((ref, f) {
+  return ref.watch(processingRepositoryProvider).workloadReport(f);
+});
+
+final throughputReportProvider = FutureProvider.autoDispose
+    .family<ThroughputReport, ReportFilter>((ref, f) {
+  return ref.watch(processingRepositoryProvider).throughputReport(f);
+});
+
+final docQualityReportProvider = FutureProvider.autoDispose
+    .family<DocQualityReport, ReportFilter>((ref, f) {
+  return ref.watch(processingRepositoryProvider).docQualityReport(f);
+});
+
+final slaReportProvider =
+    FutureProvider.autoDispose.family<SlaReport, ReportFilter>((ref, f) {
+  return ref.watch(processingRepositoryProvider).slaReport(f);
+});
+
+final expiryRiskReportProvider = FutureProvider.autoDispose
+    .family<ExpiryRiskReport, ReportFilter>((ref, f) {
+  return ref.watch(processingRepositoryProvider).expiryRiskReport(f);
+});

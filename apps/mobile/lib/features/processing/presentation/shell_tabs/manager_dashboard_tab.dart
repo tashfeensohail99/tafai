@@ -10,6 +10,7 @@ import '../case_workspace_screen.dart';
 import '../new_client_screen.dart';
 import '../processing_ui.dart';
 import '../refund_lane_screen.dart';
+import '../reports_screen.dart';
 
 /// Manager Dashboard — admin overview: team workload, stage breakdown, SLA
 /// breaches, recent intake. Manager-only (gated in the shell).
@@ -119,6 +120,14 @@ class ManagerDashboardTab extends ConsumerWidget {
           subtitle: 'Rejected cases needing refund or appeal',
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const RefundLaneScreen()),
+          ),
+        ),
+        _ToolTile(
+          icon: Icons.bar_chart_outlined,
+          title: 'Reports',
+          subtitle: 'Workload, throughput, doc quality, SLA, expiry',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ReportsScreen()),
           ),
         ),
       ],

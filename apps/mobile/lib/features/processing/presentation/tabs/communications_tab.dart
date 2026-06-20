@@ -87,9 +87,11 @@ class CaseCommunicationsTab extends ConsumerWidget {
             channelsSent: result.channels,
           );
       ref.invalidate(caseCommunicationsProvider(caseId));
-      if (context.mounted && res.deliveryWarnings.isNotEmpty) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Saved — ${res.deliveryWarnings.join('; ')}'),
+          content: Text(res.deliveryWarnings.isEmpty
+              ? 'Message sent.'
+              : 'Saved — ${res.deliveryWarnings.join('; ')}'),
         ));
       }
     } on AppError catch (e) {

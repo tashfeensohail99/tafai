@@ -608,6 +608,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
                 TextField(
                   controller: _note,
                   maxLines: 3,
+                  onChanged: (_) => setState(() {}),
                   textCapitalization: TextCapitalization.sentences,
                   decoration: const InputDecoration(
                     labelText: 'Note to client (optional)',

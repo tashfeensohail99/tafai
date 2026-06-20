@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -158,6 +160,37 @@ class _FinanceCustomerProfileScreenState
     }
   }
 
+  // ── Record a payment (creates a handover → enters the verification queue) ──
+  Future<void> _recordPayment(FinanceCustomerProfile p) async {
+    final input = await showModalBottomSheet<_NewPaymentInput>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _RecordPaymentSheet(defaultCurrency: p.totals.currency),
+    );
+    if (input == null) return;
+    setState(() => _busy = 'record-payment');
+    try {
+      await ref.read(financeRepositoryProvider).createHandover(
+            leadId: _leadId,
+            submittedAmount: input.amount,
+            currency: input.currency,
+            paymentMethod: input.method,
+            transactionRef: input.transactionRef,
+            notes: input.notes,
+            receiptFileName: input.receiptFileName,
+            receiptContentBase64: input.receiptBase64,
+            receiptMimeType: input.receiptMimeType,
+          );
+      _snack('Payment recorded — now in the verification queue.');
+      _reload();
+    } catch (e) {
+      _snack(messageForError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
   // ── Record an expense (a disbursement spent on the client's behalf) ───────
   Future<void> _addExpense(FinanceCustomerProfile p) async {
     final input = await showModalBottomSheet<_NewExpenseInput>(
@@ -230,6 +263,7 @@ class _FinanceCustomerProfileScreenState
       _ProfileTab.payments => _PaymentsTab(
           profile: p,
           busy: _busy,
+          onRecordPayment: () => _recordPayment(p),
           onVerify: _verify,
           onReject: _reject,
         ),
@@ -476,11 +510,13 @@ class _OverviewTab extends StatelessWidget {
 class _PaymentsTab extends StatelessWidget {
   final FinanceCustomerProfile profile;
   final String? busy;
+  final VoidCallback onRecordPayment;
   final void Function(FinanceHandoverRow, String? note) onVerify;
   final void Function(FinanceHandoverRow, String? note) onReject;
   const _PaymentsTab({
     required this.profile,
     required this.busy,
+    required this.onRecordPayment,
     required this.onVerify,
     required this.onReject,
   });
@@ -510,6 +546,19 @@ class _PaymentsTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(AppTokens.space4),
       children: [
+        SizedBox(
+          width: double.infinity,
+          height: 46,
+          child: FilledButton.icon(
+            style:
+                FilledButton.styleFrom(backgroundColor: AppTokens.primary600),
+            onPressed: busy != null ? null : onRecordPayment,
+            icon: const Icon(Icons.add_card_outlined, size: 20),
+            label: Text(
+                busy == 'record-payment' ? 'Saving…' : 'Record a payment'),
+          ),
+        ),
+        const SizedBox(height: AppTokens.space4),
         const SectionLabel('Payment submissions'),
         const SizedBox(height: AppTokens.space2),
         if (profile.handovers.isEmpty)
@@ -1173,6 +1222,263 @@ class _AddExpenseSheetState extends State<_AddExpenseSheet> {
                   ),
                   onPressed: _canSave ? _submit : null,
                   child: const Text('Save expense'),
+                ),
+              ),
+              const SizedBox(height: AppTokens.space2),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Record-payment sheet ──────────────────────────────────────────────────
+
+/// What [_RecordPaymentSheet] returns to the profile screen, which performs
+/// the POST /finance/handovers.
+class _NewPaymentInput {
+  final String amount;
+  final String currency;
+  final String method;
+  final String transactionRef;
+  final String notes;
+  final String receiptFileName;
+  final String receiptBase64;
+  final String? receiptMimeType;
+  const _NewPaymentInput({
+    required this.amount,
+    required this.currency,
+    required this.method,
+    required this.transactionRef,
+    required this.notes,
+    required this.receiptFileName,
+    required this.receiptBase64,
+    this.receiptMimeType,
+  });
+}
+
+class _RecordPaymentSheet extends StatefulWidget {
+  final String defaultCurrency;
+  const _RecordPaymentSheet({required this.defaultCurrency});
+
+  @override
+  State<_RecordPaymentSheet> createState() => _RecordPaymentSheetState();
+}
+
+class _RecordPaymentSheetState extends State<_RecordPaymentSheet> {
+  static const _methods = <String>[
+    'Bank transfer',
+    'Cash',
+    'Card',
+    'Cheque',
+    'Online',
+    'Other',
+  ];
+
+  late final TextEditingController _amount;
+  late final TextEditingController _currency;
+  late final TextEditingController _ref;
+  late final TextEditingController _notes;
+  String _method = 'Bank transfer';
+
+  String? _receiptName;
+  String? _receiptBase64;
+  String? _receiptMime;
+  bool _picking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _amount = TextEditingController();
+    _currency = TextEditingController(text: widget.defaultCurrency);
+    _ref = TextEditingController();
+    _notes = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _currency.dispose();
+    _ref.dispose();
+    _notes.dispose();
+    super.dispose();
+  }
+
+  String? _mimeFor(String? ext) {
+    switch ((ext ?? '').toLowerCase()) {
+      case 'pdf':
+        return 'application/pdf';
+      case 'png':
+        return 'image/png';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'webp':
+        return 'image/webp';
+      default:
+        return null;
+    }
+  }
+
+  Future<void> _pickReceipt() async {
+    setState(() => _picking = true);
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['pdf', 'png', 'jpg', 'jpeg', 'webp'],
+        withData: true,
+      );
+      final file = picked?.files.single;
+      final bytes = file?.bytes;
+      if (file == null || bytes == null) return;
+      setState(() {
+        _receiptName = file.name;
+        _receiptBase64 = base64Encode(bytes);
+        _receiptMime = _mimeFor(file.extension);
+      });
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  bool get _canSave {
+    final amt = double.tryParse(_amount.text.trim());
+    return amt != null && amt > 0 && _receiptBase64 != null;
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_NewPaymentInput(
+      amount: _amount.text.trim(),
+      currency: _currency.text.trim(),
+      method: _method,
+      transactionRef: _ref.text.trim(),
+      notes: _notes.text.trim(),
+      receiptFileName: _receiptName ?? 'receipt',
+      receiptBase64: _receiptBase64!,
+      receiptMimeType: _receiptMime,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: AppTokens.surfaceLight,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(AppTokens.space5),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppTokens.borderStrongLight,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppTokens.space4),
+              Text('Record a payment',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 2),
+              const Text(
+                'Logs a payment with its proof. It enters the verification '
+                'queue — a different officer verifies large payments.',
+                style:
+                    TextStyle(fontSize: 13, color: AppTokens.textMutedLight),
+              ),
+              const SizedBox(height: AppTokens.space4),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _amount,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppTokens.space3),
+                  Expanded(
+                    child: TextField(
+                      controller: _currency,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(
+                        labelText: 'Currency',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppTokens.space3),
+              DropdownButtonFormField<String>(
+                initialValue: _method,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Method',
+                  border: OutlineInputBorder(),
+                ),
+                items: _methods
+                    .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                    .toList(),
+                onChanged: (v) =>
+                    setState(() => _method = v ?? 'Bank transfer'),
+              ),
+              const SizedBox(height: AppTokens.space3),
+              TextField(
+                controller: _ref,
+                decoration: const InputDecoration(
+                  labelText: 'Transaction reference (optional)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: AppTokens.space3),
+              TextField(
+                controller: _notes,
+                maxLines: 2,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Notes (optional)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: AppTokens.space3),
+              OutlinedButton.icon(
+                onPressed: _picking ? null : _pickReceipt,
+                icon: const Icon(Icons.attach_file, size: 18),
+                label: Text(
+                  _picking
+                      ? 'Selecting…'
+                      : (_receiptName ?? 'Attach payment proof (required)'),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(height: AppTokens.space4),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTokens.primary600,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: _canSave ? _submit : null,
+                  child: const Text('Save payment'),
                 ),
               ),
               const SizedBox(height: AppTokens.space2),

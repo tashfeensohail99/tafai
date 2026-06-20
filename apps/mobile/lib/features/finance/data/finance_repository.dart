@@ -157,6 +157,48 @@ class FinanceRepository {
     }
   }
 
+  /// POST /finance/handovers — record a payment straight from a customer
+  /// profile (`finance.record_payment`). A proof-of-payment receipt (base64)
+  /// is required. The handover lands in the verification queue; maker-checker
+  /// is enforced later at the verify step (a different officer must verify a
+  /// large payment than the one who recorded it).
+  Future<void> createHandover({
+    required String leadId,
+    required String submittedAmount,
+    required String receiptFileName,
+    required String receiptContentBase64,
+    String? currency,
+    String? paymentMethod,
+    String? transactionRef,
+    String? notes,
+    String? invoiceId,
+    String? receiptMimeType,
+  }) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/finance/handovers',
+        data: <String, dynamic>{
+          'leadId': leadId,
+          'submittedAmount': submittedAmount,
+          'receiptFileName': receiptFileName,
+          'receiptContentBase64': receiptContentBase64,
+          if (currency != null && currency.trim().isNotEmpty)
+            'currency': currency.trim(),
+          if (paymentMethod != null && paymentMethod.trim().isNotEmpty)
+            'paymentMethod': paymentMethod.trim(),
+          if (transactionRef != null && transactionRef.trim().isNotEmpty)
+            'transactionRef': transactionRef.trim(),
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          if (invoiceId != null && invoiceId.isNotEmpty) 'invoiceId': invoiceId,
+          if (receiptMimeType != null && receiptMimeType.isNotEmpty)
+            'receiptMimeType': receiptMimeType,
+        },
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // ── Agreements ─────────────────────────────────────────────────────────
 
   /// POST /agreements/:id/approve — locks the plan, creates the contract +

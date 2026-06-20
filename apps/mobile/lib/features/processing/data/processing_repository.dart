@@ -875,6 +875,134 @@ class ProcessingRepository {
       throw mapDioError(e);
     }
   }
+
+  // --- Checklist templates (manager CRUD) ----------------------------------
+
+  /// GET /processing/checklist-templates — active templates, optionally
+  /// filtered by service / target country. Returns a flat array.
+  Future<List<ChecklistTemplate>> checklistTemplates({
+    String? service,
+    String? targetCountry,
+  }) async {
+    try {
+      final res = await _c.get<List<dynamic>>(
+        '/processing/checklist-templates',
+        queryParameters: <String, dynamic>{
+          if (service != null && service.isNotEmpty) 'service': service,
+          if (targetCountry != null && targetCountry.isNotEmpty)
+            'targetCountry': targetCountry,
+        },
+      );
+      return (res.data ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ChecklistTemplate.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /processing/checklist-templates — create. Mirrors
+  /// CreateDocumentTemplateDto (service + targetCountry + criticality +
+  /// validityRule required; validityMonths only meaningful for the N-months
+  /// rule).
+  Future<ChecklistTemplate> createChecklistTemplate({
+    required String service,
+    required String targetCountry,
+    required String documentName,
+    String? description,
+    String? instructions,
+    required String criticality,
+    List<String>? expectedFormats,
+    int? maxFileSizeMb,
+    required String validityRule,
+    int? validityMonths,
+    int? validityBufferDays,
+    String? guidanceUrl,
+    int? sortOrder,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/processing/checklist-templates',
+        data: <String, dynamic>{
+          'service': service,
+          'targetCountry': targetCountry,
+          'documentName': documentName,
+          if (description != null && description.isNotEmpty)
+            'description': description,
+          if (instructions != null && instructions.isNotEmpty)
+            'instructions': instructions,
+          'criticality': criticality,
+          if (expectedFormats != null && expectedFormats.isNotEmpty)
+            'expectedFormats': expectedFormats,
+          if (maxFileSizeMb != null) 'maxFileSizeMb': maxFileSizeMb,
+          'validityRule': validityRule,
+          if (validityMonths != null) 'validityMonths': validityMonths,
+          if (validityBufferDays != null)
+            'validityBufferDays': validityBufferDays,
+          if (guidanceUrl != null && guidanceUrl.isNotEmpty)
+            'guidanceUrl': guidanceUrl,
+          if (sortOrder != null) 'sortOrder': sortOrder,
+        },
+      );
+      return ChecklistTemplate.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// PATCH /processing/checklist-templates/:id — edit. Service + targetCountry
+  /// are immutable server-side (not in UpdateDocumentTemplateDto), so they're
+  /// not sent. Passing a null leaves a field untouched.
+  Future<ChecklistTemplate> updateChecklistTemplate(
+    String id, {
+    String? documentName,
+    String? description,
+    String? instructions,
+    String? criticality,
+    List<String>? expectedFormats,
+    int? maxFileSizeMb,
+    String? validityRule,
+    int? validityMonths,
+    int? validityBufferDays,
+    String? guidanceUrl,
+    int? sortOrder,
+  }) async {
+    try {
+      final res = await _c.patch<Map<String, dynamic>>(
+        '/processing/checklist-templates/$id',
+        data: <String, dynamic>{
+          if (documentName != null) 'documentName': documentName,
+          if (description != null) 'description': description,
+          if (instructions != null) 'instructions': instructions,
+          if (criticality != null) 'criticality': criticality,
+          if (expectedFormats != null) 'expectedFormats': expectedFormats,
+          if (maxFileSizeMb != null) 'maxFileSizeMb': maxFileSizeMb,
+          if (validityRule != null) 'validityRule': validityRule,
+          if (validityMonths != null) 'validityMonths': validityMonths,
+          if (validityBufferDays != null)
+            'validityBufferDays': validityBufferDays,
+          if (guidanceUrl != null) 'guidanceUrl': guidanceUrl,
+          if (sortOrder != null) 'sortOrder': sortOrder,
+        },
+      );
+      return ChecklistTemplate.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// DELETE /processing/checklist-templates/:id — soft-deactivate (the server
+  /// sets isActive=false; existing cases keep their copy).
+  Future<void> deactivateChecklistTemplate(String id) async {
+    try {
+      await _c.delete<Map<String, dynamic>>(
+        '/processing/checklist-templates/$id',
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
 }
 
 final processingRepositoryProvider = Provider<ProcessingRepository>((ref) {

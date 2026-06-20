@@ -200,3 +200,13 @@ final expiryRiskReportProvider = FutureProvider.autoDispose
     .family<ExpiryRiskReport, ReportFilter>((ref, f) {
   return ref.watch(processingRepositoryProvider).expiryRiskReport(f);
 });
+
+// --- Checklist templates admin (manager) ----------------------------------
+
+/// All active templates. The admin list screen fetches the full set and
+/// filters by service / country client-side (mirrors the web admin page, whose
+/// filter dropdowns populate from the loaded templates).
+final checklistTemplatesProvider =
+    FutureProvider.autoDispose<List<ChecklistTemplate>>((ref) {
+  return ref.watch(processingRepositoryProvider).checklistTemplates();
+});

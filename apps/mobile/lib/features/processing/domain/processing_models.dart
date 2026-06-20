@@ -2103,3 +2103,101 @@ class ExpiryRiskReport {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Checklist templates admin (manager — GET/POST/PATCH/DELETE
+// /processing/checklist-templates)
+// ---------------------------------------------------------------------------
+
+/// DocumentCriticality enum → label (mirrors web TemplateFormModal options).
+const List<MapEntry<String, String>> kCriticalityOptions = [
+  MapEntry('CRITICAL', 'Critical'),
+  MapEntry('REQUIRED', 'Required'),
+  MapEntry('CONDITIONAL', 'Conditional'),
+  MapEntry('SUPPORTING', 'Supporting'),
+  MapEntry('OPTIONAL', 'Optional'),
+];
+
+String criticalityLabel(String code) {
+  for (final e in kCriticalityOptions) {
+    if (e.key == code) return e.value;
+  }
+  return code;
+}
+
+/// DocumentValidityRule enum → full label (form dropdown).
+const List<MapEntry<String, String>> kValidityRuleOptions = [
+  MapEntry('NONE', 'No expiry rule'),
+  MapEntry('MUST_NOT_EXPIRE', 'Must not be expired'),
+  MapEntry('MUST_BE_VALID_FOR_N_MONTHS', 'Valid for N months from submission'),
+];
+
+/// Short validity-rule label for the list view.
+const Map<String, String> kValidityRuleShort = {
+  'NONE': 'None',
+  'MUST_NOT_EXPIRE': 'Must not expire',
+  'MUST_BE_VALID_FOR_N_MONTHS': 'Valid N months',
+};
+
+/// Accepted-format options the template form offers (mirrors web).
+const List<String> kTemplateFormats = ['PDF', 'JPG', 'PNG', 'DOCX', 'XLSX', 'ZIP'];
+
+class ChecklistTemplate {
+  final String id;
+  final String service;
+  final String targetCountry;
+  final String documentName;
+  final String? description;
+  final String? instructions;
+  final String criticality;
+  final List<String> expectedFormats;
+  final int? maxFileSizeMb;
+  final String validityRule;
+  final int? validityMonths;
+  final int? validityBufferDays;
+  final String? guidanceUrl;
+  final int sortOrder;
+  final bool isActive;
+
+  const ChecklistTemplate({
+    required this.id,
+    required this.service,
+    required this.targetCountry,
+    required this.documentName,
+    this.description,
+    this.instructions,
+    required this.criticality,
+    this.expectedFormats = const [],
+    this.maxFileSizeMb,
+    required this.validityRule,
+    this.validityMonths,
+    this.validityBufferDays,
+    this.guidanceUrl,
+    this.sortOrder = 0,
+    this.isActive = true,
+  });
+
+  factory ChecklistTemplate.fromJson(Map<String, dynamic> j) => ChecklistTemplate(
+        id: j['id'] as String? ?? '',
+        service: j['service'] as String? ?? '',
+        targetCountry: j['targetCountry'] as String? ?? '',
+        documentName: j['documentName'] as String? ?? 'Document',
+        description: asStringOrNull(j['description']),
+        instructions: asStringOrNull(j['instructions']),
+        criticality: j['criticality'] as String? ?? 'REQUIRED',
+        expectedFormats: (j['expectedFormats'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        maxFileSizeMb:
+            j['maxFileSizeMb'] == null ? null : asInt(j['maxFileSizeMb']),
+        validityRule: j['validityRule'] as String? ?? 'NONE',
+        validityMonths:
+            j['validityMonths'] == null ? null : asInt(j['validityMonths']),
+        validityBufferDays: j['validityBufferDays'] == null
+            ? null
+            : asInt(j['validityBufferDays']),
+        guidanceUrl: asStringOrNull(j['guidanceUrl']),
+        sortOrder: asInt(j['sortOrder']),
+        isActive: j['isActive'] as bool? ?? true,
+      );
+}

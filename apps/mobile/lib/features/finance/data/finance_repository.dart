@@ -232,6 +232,44 @@ class FinanceRepository {
 
   // ── Expenses ───────────────────────────────────────────────────────────
 
+  /// POST /finance/expenses — record a disbursement spent on the client's
+  /// behalf (cost side of the ledger). [leadId], [description] and [amount]
+  /// (a numeric string, e.g. "1500.00") are required; the rest are optional.
+  /// [category] is an ExpenseCategory enum name, [incurredAt] an ISO-8601 date.
+  Future<void> createExpense({
+    required String leadId,
+    required String description,
+    required String amount,
+    String? caseId,
+    String? category,
+    String? taxAmount,
+    String? currency,
+    String? incurredAt,
+    bool? billable,
+  }) async {
+    try {
+      await _c.post<Map<String, dynamic>>(
+        '/finance/expenses',
+        data: <String, dynamic>{
+          'leadId': leadId,
+          'description': description.trim(),
+          'amount': amount,
+          if (caseId != null && caseId.isNotEmpty) 'caseId': caseId,
+          if (category != null && category.isNotEmpty) 'category': category,
+          if (taxAmount != null && taxAmount.trim().isNotEmpty)
+            'taxAmount': taxAmount.trim(),
+          if (currency != null && currency.trim().isNotEmpty)
+            'currency': currency.trim(),
+          if (incurredAt != null && incurredAt.isNotEmpty)
+            'incurredAt': incurredAt,
+          if (billable != null) 'billable': billable,
+        },
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   /// GET /finance/expenses/:id/receipt-url → { url, fileName } — signed URL to
   /// the expense's attached receipt. Opened in the device browser.
   Future<String> expenseReceiptUrl(String expenseId) async {

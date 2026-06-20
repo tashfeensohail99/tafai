@@ -158,6 +158,34 @@ class _FinanceCustomerProfileScreenState
     }
   }
 
+  // ── Record an expense (a disbursement spent on the client's behalf) ───────
+  Future<void> _addExpense(FinanceCustomerProfile p) async {
+    final input = await showModalBottomSheet<_NewExpenseInput>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddExpenseSheet(defaultCurrency: p.totals.currency),
+    );
+    if (input == null) return;
+    setState(() => _busy = 'add-expense');
+    try {
+      await ref.read(financeRepositoryProvider).createExpense(
+            leadId: _leadId,
+            description: input.description,
+            amount: input.amount,
+            category: input.category,
+            currency: input.currency,
+            billable: input.billable,
+          );
+      _snack('Expense recorded.');
+      _reload();
+    } catch (e) {
+      _snack(messageForError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(financeCustomerProfileProvider(_leadId));
@@ -223,6 +251,7 @@ class _FinanceCustomerProfileScreenState
       _ProfileTab.expenses => _ExpensesTab(
           profile: p,
           busy: _busy,
+          onAddExpense: () => _addExpense(p),
           onOpenReceipt: (id) => _openUrl(
               () => ref
                   .read(financeRepositoryProvider)
@@ -842,10 +871,12 @@ class _AgreementTab extends StatelessWidget {
 class _ExpensesTab extends StatelessWidget {
   final FinanceCustomerProfile profile;
   final String? busy;
+  final VoidCallback onAddExpense;
   final void Function(String expenseId) onOpenReceipt;
   const _ExpensesTab({
     required this.profile,
     required this.busy,
+    required this.onAddExpense,
     required this.onOpenReceipt,
   });
 
@@ -865,22 +896,30 @@ class _ExpensesTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (profile.expenses.isEmpty) {
-      return ListView(
-        padding: const EdgeInsets.all(AppTokens.space4),
-        children: const [
-          _EmptyNote('No expenses recorded for this client yet.')
-        ],
-      );
-    }
     final t = profile.totals;
+    final adding = busy == 'add-expense';
     return ListView(
       padding: const EdgeInsets.all(AppTokens.space4),
       children: [
-        SectionLabel(
-            'Expense ledger · ${_money(t.expenses, t.currency)} total'),
-        const SizedBox(height: AppTokens.space2),
-        ...profile.expenses.map((e) => Padding(
+        SizedBox(
+          width: double.infinity,
+          height: 46,
+          child: FilledButton.icon(
+            style:
+                FilledButton.styleFrom(backgroundColor: AppTokens.primary600),
+            onPressed: busy != null ? null : onAddExpense,
+            icon: const Icon(Icons.add, size: 20),
+            label: Text(adding ? 'Saving…' : 'Add expense'),
+          ),
+        ),
+        const SizedBox(height: AppTokens.space4),
+        if (profile.expenses.isEmpty)
+          const _EmptyNote('No expenses recorded for this client yet.')
+        else ...[
+          SectionLabel(
+              'Expense ledger · ${_money(t.expenses, t.currency)} total'),
+          const SizedBox(height: AppTokens.space2),
+          ...profile.expenses.map((e) => Padding(
               padding: const EdgeInsets.only(bottom: AppTokens.space2),
               child: PremiumCard(
                 padding: const EdgeInsets.all(AppTokens.space3),
@@ -940,7 +979,207 @@ class _ExpensesTab extends StatelessWidget {
                 ),
               ),
             )),
+        ],
       ],
+    );
+  }
+}
+
+// ─── Add-expense sheet ────────────────────────────────────────────────────
+
+/// What [_AddExpenseSheet] returns to the profile screen, which performs the
+/// POST /finance/expenses.
+class _NewExpenseInput {
+  final String amount;
+  final String currency;
+  final String category;
+  final String description;
+  final bool billable;
+  const _NewExpenseInput({
+    required this.amount,
+    required this.currency,
+    required this.category,
+    required this.description,
+    required this.billable,
+  });
+}
+
+class _AddExpenseSheet extends StatefulWidget {
+  final String defaultCurrency;
+  const _AddExpenseSheet({required this.defaultCurrency});
+
+  @override
+  State<_AddExpenseSheet> createState() => _AddExpenseSheetState();
+}
+
+class _AddExpenseSheetState extends State<_AddExpenseSheet> {
+  static const _categories = <(String, String)>[
+    ('GOVERNMENT_FEE', 'Government fee'),
+    ('EMBASSY', 'Embassy / consulate'),
+    ('MEDICAL', 'Medical / biometrics'),
+    ('TRANSLATION', 'Translation / attestation'),
+    ('COURIER', 'Courier / shipping'),
+    ('THIRD_PARTY', 'Third-party vendor'),
+    ('OTHER', 'Other'),
+  ];
+
+  late final TextEditingController _amount;
+  late final TextEditingController _currency;
+  late final TextEditingController _description;
+  String _category = 'OTHER';
+  bool _billable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _amount = TextEditingController();
+    _currency = TextEditingController(text: widget.defaultCurrency);
+    _description = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _currency.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  bool get _canSave {
+    final amt = double.tryParse(_amount.text.trim());
+    return amt != null && amt > 0 && _description.text.trim().isNotEmpty;
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_NewExpenseInput(
+      amount: _amount.text.trim(),
+      currency: _currency.text.trim(),
+      category: _category,
+      description: _description.text.trim(),
+      billable: _billable,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: AppTokens.surfaceLight,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(AppTokens.space5),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppTokens.borderStrongLight,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppTokens.space4),
+              Text('Record an expense',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 2),
+              const Text(
+                'A cost paid on the client’s behalf (government fee, medical, '
+                'courier, etc.).',
+                style:
+                    TextStyle(fontSize: 13, color: AppTokens.textMutedLight),
+              ),
+              const SizedBox(height: AppTokens.space4),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _amount,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppTokens.space3),
+                  Expanded(
+                    child: TextField(
+                      controller: _currency,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(
+                        labelText: 'Currency',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppTokens.space3),
+              DropdownButtonFormField<String>(
+                initialValue: _category,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Category',
+                  border: OutlineInputBorder(),
+                ),
+                items: _categories
+                    .map((c) =>
+                        DropdownMenuItem(value: c.$1, child: Text(c.$2)))
+                    .toList(),
+                onChanged: (v) => setState(() => _category = v ?? 'OTHER'),
+              ),
+              const SizedBox(height: AppTokens.space3),
+              TextField(
+                controller: _description,
+                maxLines: 2,
+                onChanged: (_) => setState(() {}),
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Description',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: AppTokens.space2),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Rebillable to the client',
+                    style: TextStyle(fontSize: 14)),
+                subtitle: const Text('Off = absorbed firm cost',
+                    style: TextStyle(
+                        fontSize: 12, color: AppTokens.textMutedLight)),
+                value: _billable,
+                activeThumbColor: AppTokens.primary600,
+                onChanged: (v) => setState(() => _billable = v),
+              ),
+              const SizedBox(height: AppTokens.space3),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTokens.primary600,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: _canSave ? _submit : null,
+                  child: const Text('Save expense'),
+                ),
+              ),
+              const SizedBox(height: AppTokens.space2),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

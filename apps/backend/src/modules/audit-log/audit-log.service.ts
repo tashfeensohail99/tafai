@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { AuditAction, Prisma } from '@prisma/client';
+import { AuditAction, AuditCategory, AuditSeverity, Prisma } from '@prisma/client';
 import { ListAuditLogsQueryDto } from './audit-log.dto';
 
 export interface CreateAuditLogInput {
@@ -16,6 +16,15 @@ export interface CreateAuditLogInput {
   userAgent?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
+  // Structured classification (set by the global AuditInterceptor; optional so
+  // existing hand-written .log() call sites keep compiling unchanged).
+  severity?: AuditSeverity;
+  category?: AuditCategory;
+  method?: string;
+  route?: string;
+  outcome?: string;
+  statusCode?: number;
+  durationMs?: number;
 }
 
 @Injectable()
@@ -70,6 +79,13 @@ export class AuditLogService {
         ipAddress: input.ipAddress,
         userAgent: input.userAgent,
         metadata: input.metadata as Prisma.InputJsonValue | undefined,
+        severity: input.severity,
+        category: input.category,
+        method: input.method,
+        route: input.route,
+        outcome: input.outcome,
+        statusCode: input.statusCode,
+        durationMs: input.durationMs,
       },
     });
   }

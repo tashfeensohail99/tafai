@@ -351,6 +351,40 @@ enum AuditAction {
   LEAD_FILE_UPLOADED
   LEAD_FILE_DELETED
   AGREEMENT_STATUS_CHANGED
+  // Generic actions auto-derived by the global AuditInterceptor when a route
+  // is not hand-tagged with a specific action. The category/severity/route
+  // columns carry the precise classification, so no per-endpoint enum churn.
+  RECORD_CREATED
+  RECORD_UPDATED
+  RECORD_DELETED
+  DATA_EXPORTED
+  SENSITIVE_READ
+  ACCESS_DENIED
+
+  @@schema("audit")
+}
+
+/// How important an audit event is, for filtering + alerting. Set by the
+/// classification policy (route metadata) or derived from category + method.
+enum AuditSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+
+  @@schema("audit")
+}
+
+/// What kind of operation the audited request was.
+enum AuditCategory {
+  MUTATION
+  READ
+  AUTH
+  EXPORT
+  FILE_ACCESS
+  WEBHOOK
+  CRON
+  CONFIG
 
   @@schema("audit")
 }
@@ -2142,6 +2176,15 @@ model AuditLog {
   ipAddress   String?
   userAgent   String?
   metadata    Json?
+  // Structured classification (populated by the global AuditInterceptor).
+  // All nullable so the column add is backward-compatible with existing rows.
+  severity    AuditSeverity?
+  category    AuditCategory?
+  method      String? // HTTP verb, e.g. POST
+  route       String? // matched route, e.g. POST /finance/payments/:id/verify
+  outcome     String? // SUCCESS | DENIED | FAILED
+  statusCode  Int?
+  durationMs  Int?
   createdAt   DateTime    @default(now())
 
   actor UserAccount? @relation("AuditActor", fields: [actorUserId], references: [id])
@@ -2150,6 +2193,8 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([action])
   @@index([createdAt])
+  @@index([severity, createdAt])
+  @@index([category, createdAt])
   @@map("audit_logs")
   @@schema("audit")
 }

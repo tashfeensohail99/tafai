@@ -9,12 +9,25 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, AuditCategory, AuditSeverity } from '@prisma/client';
 
 export class ListAuditLogsQueryDto {
   @IsOptional()
   @IsEnum(AuditAction)
   action?: AuditAction;
+
+  @IsOptional()
+  @IsEnum(AuditSeverity)
+  severity?: AuditSeverity;
+
+  @IsOptional()
+  @IsEnum(AuditCategory)
+  category?: AuditCategory;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  outcome?: string;
 
   @IsOptional()
   @IsString()

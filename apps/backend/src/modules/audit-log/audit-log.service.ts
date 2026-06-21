@@ -35,6 +35,9 @@ export class AuditLogService {
     return this.prisma.auditLog.findMany({
       where: {
         ...(query.action ? { action: query.action } : {}),
+        ...(query.severity ? { severity: query.severity } : {}),
+        ...(query.category ? { category: query.category } : {}),
+        ...(query.outcome ? { outcome: query.outcome } : {}),
         ...(query.entityType ? { entityType: query.entityType } : {}),
         ...(query.actorUserId ? { actorUserId: query.actorUserId } : {}),
         ...(query.search

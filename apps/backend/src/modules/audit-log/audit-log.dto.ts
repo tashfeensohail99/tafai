@@ -10,6 +10,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { AuditAction, AuditCategory, AuditSeverity } from '@prisma/client';
 
 // Which audit trail(s) the viewer should pull from. CENTRAL is the historical
@@ -62,7 +63,16 @@ export class ListAuditLogsQueryDto {
   @IsDateString()
   createdTo?: string;
 
+  // 1-based page index for server-side pagination. Defaults to 1 in the service.
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  // Page size. Capped at 250 to bound the payload; defaults to 50 in the service.
+  @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(250)

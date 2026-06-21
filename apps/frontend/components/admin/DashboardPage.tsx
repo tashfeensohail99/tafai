@@ -132,10 +132,11 @@ export function DashboardPage() {
     try {
       const [summaryResponse, auditResponse] = await Promise.all([
         apiFetch<DashboardSummary>('/reports/dashboard'),
-        apiFetch<AuditLogRow[]>('/audit-log?limit=8'),
+        // /audit-log now returns a paginated envelope { rows, total, page, pageSize }.
+        apiFetch<{ rows: AuditLogRow[] }>('/audit-log?limit=8'),
       ]);
       setSummary(summaryResponse);
-      setRecentAuditLogs(auditResponse);
+      setRecentAuditLogs(auditResponse.rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load dashboard');
     } finally {

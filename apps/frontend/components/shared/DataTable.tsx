@@ -9,11 +9,25 @@ export interface DataTableColumn<T> {
   className?: string;
 }
 
+export interface DataTablePagination {
+  /** 1-based current page. */
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}
+
 interface DataTableProps<T> {
   columns: DataTableColumn<T>[];
   data: T[];
   rowKey: (row: T) => string;
   emptyMessage?: string;
+  /**
+   * Optional server-side pagination. When provided, a glass footer bar renders
+   * inside the panel with a "Showing X–Y of Z" range and Prev/Next controls.
+   * When omitted, no footer renders — existing callers are unaffected.
+   */
+  pagination?: DataTablePagination;
 }
 
 /**
@@ -27,7 +41,18 @@ export function DataTable<T>({
   data,
   rowKey,
   emptyMessage = 'No records found.',
+  pagination,
 }: DataTableProps<T>) {
+  const pageCount = pagination
+    ? Math.max(1, Math.ceil(pagination.total / Math.max(1, pagination.pageSize)))
+    : 1;
+  const currentPage = pagination ? Math.min(Math.max(1, pagination.page), pageCount) : 1;
+  const rangeStart =
+    pagination && pagination.total > 0 ? (currentPage - 1) * pagination.pageSize + 1 : 0;
+  const rangeEnd = pagination
+    ? Math.min(currentPage * pagination.pageSize, pagination.total)
+    : 0;
+
   return (
     <div
       className="sos-glass sos-glass--panel"
@@ -106,6 +131,67 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
+      {pagination ? (
+        <div
+          className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+          style={{
+            padding: '12px 18px',
+            borderTop: '1px solid var(--sos-border-subtle)',
+            background: 'var(--sos-surface-1)',
+          }}
+        >
+          <span style={{ color: 'var(--sos-text-muted)', fontSize: 'var(--sos-text-xs)' }}>
+            {pagination.total > 0 ? (
+              <>
+                Showing{' '}
+                <strong style={{ color: 'var(--sos-text-secondary)' }}>
+                  {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}
+                </strong>{' '}
+                of <strong style={{ color: 'var(--sos-text-secondary)' }}>{pagination.total.toLocaleString()}</strong>
+              </>
+            ) : (
+              'No results'
+            )}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => pagination.onPageChange(currentPage - 1)}
+              disabled={currentPage <= 1}
+              className="rounded-md px-3 py-1.5 font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                border: '1px solid var(--sos-border-subtle)',
+                background: 'var(--sos-surface-2)',
+                color: 'var(--sos-text-secondary)',
+                fontSize: 'var(--sos-text-xs)',
+              }}
+            >
+              Prev
+            </button>
+            <span
+              className="whitespace-nowrap"
+              style={{ color: 'var(--sos-text-muted)', fontSize: 'var(--sos-text-xs)' }}
+            >
+              Page <strong style={{ color: 'var(--sos-text-secondary)' }}>{currentPage}</strong> of{' '}
+              <strong style={{ color: 'var(--sos-text-secondary)' }}>{pageCount}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => pagination.onPageChange(currentPage + 1)}
+              disabled={currentPage >= pageCount}
+              className="rounded-md px-3 py-1.5 font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                border: '1px solid var(--sos-border-subtle)',
+                background: 'var(--sos-surface-2)',
+                color: 'var(--sos-text-secondary)',
+                fontSize: 'var(--sos-text-xs)',
+              }}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div
         className="sm:hidden"
         style={{

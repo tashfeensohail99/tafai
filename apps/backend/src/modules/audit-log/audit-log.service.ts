@@ -38,6 +38,16 @@ export interface NormalizedAuditRow {
   durationMs?: number | null;
 }
 
+// Paginated envelope returned by findAll. `rows` is the current page window;
+// `total` is the full count matching the same filters (across the included
+// source(s)); `page` is 1-based; `pageSize` is the page window size.
+export interface AuditLogPage {
+  rows: NormalizedAuditRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface CreateAuditLogInput {
   actorUserId?: string;
   action: AuditAction;
@@ -78,75 +88,98 @@ export class AuditLogService {
     private readonly email: EmailService,
   ) {}
 
-  async findAll(query: ListAuditLogsQueryDto) {
+  async findAll(query: ListAuditLogsQueryDto): Promise<AuditLogPage> {
     const source = query.source ?? 'CENTRAL';
+    const page = Math.max(query.page ?? 1, 1);
+    const pageSize = Math.min(query.limit ?? 50, 250);
 
     // Default / CENTRAL: unchanged historical behavior — central AuditLog only.
     // (Preserved exactly so existing callers and rows are unaffected; rows just
-    // gain a `source: 'CENTRAL'` label.)
+    // gain a `source: 'CENTRAL'` label.) Now windowed with skip/take + count.
     if (source === 'CENTRAL') {
-      return this.findCentral(query);
+      const { rows, total } = await this.findCentral(query, page, pageSize);
+      return { rows, total, page, pageSize };
     }
 
     if (source === 'PROCESSING') {
-      return this.findProcessing(query);
+      const { rows, total } = await this.findProcessing(query, page, pageSize);
+      return { rows, total, page, pageSize };
     }
 
     if (source === 'AGREEMENT') {
-      return this.findAgreement(query);
+      const { rows, total } = await this.findAgreement(query, page, pageSize);
+      return { rows, total, page, pageSize };
     }
 
-    // ALL: fetch from all three trails, merge, sort by createdAt desc, cap.
-    const limit = Math.min(query.limit ?? 100, 250);
+    // ALL: merge all three trails into one timeline. These are lower-volume
+    // domain trails, so we over-fetch the first `page*pageSize` rows from each
+    // source, merge + sort by createdAt desc, then slice the requested window.
+    // `total` is the exact sum of the per-source filtered counts.
+    const overFetch = page * pageSize;
+    const windowQuery: ListAuditLogsQueryDto = { ...query, page: 1, limit: overFetch };
     const [central, processing, agreement] = await Promise.all([
-      this.findCentral(query),
-      this.findProcessing(query),
-      this.findAgreement(query),
+      this.findCentral(windowQuery, 1, overFetch),
+      this.findProcessing(windowQuery, 1, overFetch),
+      this.findAgreement(windowQuery, 1, overFetch),
     ]);
-    return [...central, ...processing, ...agreement]
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, limit);
+    const total = central.total + processing.total + agreement.total;
+    const merged = [...central.rows, ...processing.rows, ...agreement.rows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
+    const rows = merged.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+    return { rows, total, page, pageSize };
   }
 
   // ── Central AuditLog (historical default behavior) ─────────────────────────
-  private async findCentral(query: ListAuditLogsQueryDto): Promise<NormalizedAuditRow[]> {
-    const rows = await this.prisma.auditLog.findMany({
-      where: {
-        ...(query.action ? { action: query.action } : {}),
-        ...(query.severity ? { severity: query.severity } : {}),
-        ...(query.category ? { category: query.category } : {}),
-        ...(query.outcome ? { outcome: query.outcome } : {}),
-        ...(query.entityType ? { entityType: query.entityType } : {}),
-        ...(query.actorUserId ? { actorUserId: query.actorUserId } : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { entityType: { contains: query.search, mode: 'insensitive' } },
-                { entityId: { contains: query.search, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-        ...(query.createdFrom || query.createdTo
-          ? {
-              createdAt: {
-                ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
-                ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
-              },
-            }
-          : {}),
-      },
-      include: {
-        actor: {
-          select: {
-            id: true,
-            email: true,
+  private async findCentral(
+    query: ListAuditLogsQueryDto,
+    page: number,
+    pageSize: number,
+  ): Promise<{ rows: NormalizedAuditRow[]; total: number }> {
+    const where: Prisma.AuditLogWhereInput = {
+      ...(query.action ? { action: query.action } : {}),
+      ...(query.severity ? { severity: query.severity } : {}),
+      ...(query.category ? { category: query.category } : {}),
+      ...(query.outcome ? { outcome: query.outcome } : {}),
+      ...(query.entityType ? { entityType: query.entityType } : {}),
+      ...(query.actorUserId ? { actorUserId: query.actorUserId } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { entityType: { contains: query.search, mode: 'insensitive' } },
+              { entityId: { contains: query.search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+      ...(query.createdFrom || query.createdTo
+        ? {
+            createdAt: {
+              ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+              ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+            },
+          }
+        : {}),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        include: {
+          actor: {
+            select: {
+              id: true,
+              email: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: Math.min(query.limit ?? 100, 250),
-    });
-    return rows.map((r) => ({
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+    return {
+      total,
+      rows: rows.map((r) => ({
       id: r.id,
       source: 'CENTRAL' as const,
       action: r.action,
@@ -166,29 +199,41 @@ export class AuditLogService {
       outcome: r.outcome,
       statusCode: r.statusCode,
       durationMs: r.durationMs,
-    }));
+      })),
+    };
   }
 
   // ── ProcessingAuditLog trail ───────────────────────────────────────────────
-  private async findProcessing(query: ListAuditLogsQueryDto): Promise<NormalizedAuditRow[]> {
-    const rows = await this.prisma.processingAuditLog.findMany({
-      where: {
-        ...(query.createdFrom || query.createdTo
-          ? {
-              createdAt: {
-                ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
-                ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
-              },
-            }
-          : {}),
-      },
-      include: {
-        actor: { select: { id: true, email: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: Math.min(query.limit ?? 100, 250),
-    });
-    return rows.map((r) => ({
+  private async findProcessing(
+    query: ListAuditLogsQueryDto,
+    page: number,
+    pageSize: number,
+  ): Promise<{ rows: NormalizedAuditRow[]; total: number }> {
+    const where: Prisma.ProcessingAuditLogWhereInput = {
+      ...(query.createdFrom || query.createdTo
+        ? {
+            createdAt: {
+              ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+              ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+            },
+          }
+        : {}),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.processingAuditLog.findMany({
+        where,
+        include: {
+          actor: { select: { id: true, email: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.processingAuditLog.count({ where }),
+    ]);
+    return {
+      total,
+      rows: rows.map((r) => ({
       id: r.id,
       source: 'PROCESSING' as const,
       action: r.action,
@@ -208,31 +253,43 @@ export class AuditLogService {
       outcome: null,
       statusCode: null,
       durationMs: null,
-    }));
+      })),
+    };
   }
 
   // ── AgreementEvent trail ───────────────────────────────────────────────────
-  private async findAgreement(query: ListAuditLogsQueryDto): Promise<NormalizedAuditRow[]> {
-    const rows = await this.prisma.agreementEvent.findMany({
-      where: {
-        ...(query.createdFrom || query.createdTo
-          ? {
-              createdAt: {
-                ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
-                ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
-              },
-            }
-          : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: Math.min(query.limit ?? 100, 250),
-    });
+  private async findAgreement(
+    query: ListAuditLogsQueryDto,
+    page: number,
+    pageSize: number,
+  ): Promise<{ rows: NormalizedAuditRow[]; total: number }> {
+    const where: Prisma.AgreementEventWhereInput = {
+      ...(query.createdFrom || query.createdTo
+        ? {
+            createdAt: {
+              ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+              ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+            },
+          }
+        : {}),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.agreementEvent.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.agreementEvent.count({ where }),
+    ]);
 
     // AgreementEvent has no relation to UserAccount — resolve actor emails with
     // a single batched lookup over the distinct actorUserIds in this page.
     const actorMap = await this.resolveActors(rows.map((r) => r.actorUserId));
 
-    return rows.map((r) => ({
+    return {
+      total,
+      rows: rows.map((r) => ({
       id: r.id,
       source: 'AGREEMENT' as const,
       action: r.type,
@@ -252,7 +309,8 @@ export class AuditLogService {
       outcome: null,
       statusCode: null,
       durationMs: null,
-    }));
+      })),
+    };
   }
 
   /** Batch-resolve actorUserId → { id, email } in one query (skips nulls). */

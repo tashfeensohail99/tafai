@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import axios from 'axios';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditAction, AuditCategory, AuditSeverity, Prisma } from '@prisma/client';
 import { ListAuditLogsQueryDto } from './audit-log.dto';
+import { EmailService } from '../email/email.service';
 
 export interface CreateAuditLogInput {
   actorUserId?: string;
@@ -31,7 +33,17 @@ export interface CreateAuditLogInput {
 export class AuditLogService {
   private readonly logger = new Logger(AuditLogService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  // In-memory throttle: last time we dispatched an out-of-band alert per action.
+  // Bounds alert storms — the DB row + logger.warn still always happen, only the
+  // email/Slack dispatch is rate-limited. Reset on process restart (acceptable
+  // for a best-effort alert; the greppable log line remains the source of truth).
+  private readonly lastAlertAt = new Map<string, number>();
+  private static readonly ALERT_THROTTLE_MS = 60_000;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+  ) {}
 
   async findAll(query: ListAuditLogsQueryDto) {
     return this.prisma.auditLog.findMany({
@@ -96,14 +108,77 @@ export class AuditLogService {
 
     // Real-time signal for CRITICAL events (api-key/channel changes, deletes,
     // bulk PII exports, permission changes). A structured, greppable line so a
-    // Railway log-alert can fire on it; wiring it to email/Slack is a small
-    // follow-up. Never throws.
+    // Railway log-alert can fire on it. Never throws.
     if (input.severity === AuditSeverity.CRITICAL) {
       this.logger.warn(
         `[AUDIT-CRITICAL] ${input.action} ${input.route ?? input.entityType} ` +
           `actor=${input.actorUserId ?? 'system'} entity=${input.entityId ?? '-'} ` +
           `outcome=${input.outcome ?? '-'}`,
       );
+      // Out-of-band alert (email/Slack). Fire-and-forget — never blocks or
+      // throws in log(); the DB row + logger.warn above are the source of truth.
+      void this.dispatchCriticalAlert(input).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Best-effort out-of-band alert for CRITICAL audit events. Env-gated (a no-op
+   * unless AUDIT_ALERT_EMAIL and/or AUDIT_ALERT_SLACK_WEBHOOK are set) and
+   * throttled per-action to avoid alert storms. Swallows all errors so it can
+   * never affect the audit write path.
+   */
+  private async dispatchCriticalAlert(input: CreateAuditLogInput): Promise<void> {
+    const alertEmail = process.env.AUDIT_ALERT_EMAIL;
+    const slackWebhook = process.env.AUDIT_ALERT_SLACK_WEBHOOK;
+    if (!alertEmail && !slackWebhook) return; // not configured — no-op
+
+    // Throttle: skip dispatch if we already alerted for this action recently.
+    const now = Date.now();
+    const last = this.lastAlertAt.get(input.action);
+    if (last !== undefined && now - last < AuditLogService.ALERT_THROTTLE_MS) {
+      return;
+    }
+    this.lastAlertAt.set(input.action, now);
+
+    const actor = input.actorUserId ?? 'system';
+    const when = new Date().toISOString();
+    const lines = [
+      `Action:     ${input.action}`,
+      `Entity:     ${input.entityType}${input.entityId ? ` (${input.entityId})` : ''}`,
+      `Route:      ${input.route ?? '-'}`,
+      `Outcome:    ${input.outcome ?? '-'}`,
+      `Actor:      ${actor}`,
+      `Time:       ${when}`,
+    ];
+
+    if (alertEmail) {
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:560px;color:#1f2937">
+          <h2 style="color:#b91c1c;margin-bottom:8px">[CRITICAL audit] ${input.action} ${input.entityType}</h2>
+          <table style="border-collapse:collapse;font-size:13px">
+            <tr><td style="padding:4px 12px 4px 0;font-weight:600">Action</td><td>${input.action}</td></tr>
+            <tr><td style="padding:4px 12px 4px 0;font-weight:600">Entity type</td><td>${input.entityType}</td></tr>
+            <tr><td style="padding:4px 12px 4px 0;font-weight:600">Entity ID</td><td>${input.entityId ?? '-'}</td></tr>
+            <tr><td style="padding:4px 12px 4px 0;font-weight:600">Route</td><td>${input.route ?? '-'}</td></tr>
+            <tr><td style="padding:4px 12px 4px 0;font-weight:600">Outcome</td><td>${input.outcome ?? '-'}</td></tr>
+            <tr><td style="padding:4px 12px 4px 0;font-weight:600">Actor</td><td>${actor}</td></tr>
+            <tr><td style="padding:4px 12px 4px 0;font-weight:600">Created at</td><td>${when}</td></tr>
+          </table>
+        </div>`;
+      void this.email
+        .sendMail({
+          to: alertEmail,
+          subject: `[CRITICAL audit] ${input.action} ${input.entityType}`,
+          html,
+        })
+        .catch(() => undefined);
+    }
+
+    if (slackWebhook) {
+      const text =
+        `:rotating_light: *[CRITICAL audit]* ${input.action} ${input.entityType}\n` +
+        lines.join('\n');
+      void axios.post(slackWebhook, { text }).catch(() => undefined);
     }
   }
 }

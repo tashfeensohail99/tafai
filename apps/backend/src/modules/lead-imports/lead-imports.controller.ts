@@ -25,6 +25,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { LeadImportsService } from './lead-imports.service';
+import { Audit } from '../../common/decorators/audit.decorator';
 import { ListBatchesQueryDto, StartImportDto } from './lead-imports.dto';
 
 @Controller('admin/lead-imports')
@@ -59,6 +60,7 @@ export class LeadImportsController {
    * enqueues the worker, and returns the batch immediately. UI polls
    * GET /:id every 2s for progress.
    */
+  @Audit({ entityType: 'LeadImport', category: 'MUTATION', severity: 'HIGH' })
   @Post()
   @RequirePermissions('leads.create')
   @UseInterceptors(
@@ -95,6 +97,7 @@ export class LeadImportsController {
    * row that ended up INVALID or FAILED with the original cell values +
    * the error message — admin fixes the source file and re-uploads.
    */
+  @Audit({ entityType: 'LeadImport', category: 'EXPORT', severity: 'HIGH', idParam: 'id', action: 'DATA_EXPORTED' })
   @Get(':id/errors.csv')
   @RequirePermissions('leads.create')
   async errorsCsv(

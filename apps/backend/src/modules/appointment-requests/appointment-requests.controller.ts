@@ -6,6 +6,7 @@ import { RequireAnyPermissions } from '../../common/decorators/require-permissio
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 class ListQueryDto {
   @IsOptional()
@@ -92,6 +93,7 @@ export class AppointmentRequestsController {
   }
 
   /** Mark a PENDING request as REJECTED — sales decided not to book. */
+  @Audit({ entityType: 'AppointmentRequest', category: 'MUTATION', severity: 'MEDIUM', idParam: 'id' })
   @Patch(':id/reject')
   @RequireAnyPermissions('appointments.view_all', 'appointments.view_assigned')
   async reject(

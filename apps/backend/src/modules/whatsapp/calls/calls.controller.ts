@@ -17,6 +17,7 @@ import { RequireAnyPermissions } from '../../../common/decorators/require-permis
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import type { RequestUser } from '../../../common/types/auth.types';
 import { WhatsAppCallsService } from './calls.service';
+import { Audit } from '../../../common/decorators/audit.decorator';
 
 /**
  * Phase 1 softphone signaling endpoints. Auth = any logged-in employee; the
@@ -63,11 +64,13 @@ export class WhatsAppCallsController {
   // ── Outbound (business-initiated) calling ────────────────────────────────
   // Any authenticated employee may request permission / place a call for a
   // conversation (same auth as the inbound answer/reject/hangup actions).
+  @Audit({ entityType: 'Call', category: 'MUTATION', severity: 'HIGH' })
   @Post('permission')
   requestPermission(@Body() body: { threadId: string }, @CurrentUser() user: RequestUser) {
     return this.calls.requestCallPermission(body?.threadId, user.id);
   }
 
+  @Audit({ entityType: 'Call', category: 'MUTATION', severity: 'HIGH' })
   @Post('outbound')
   outbound(
     @Body() body: { threadId: string; sdpOffer: string },
@@ -102,6 +105,7 @@ export class WhatsAppCallsController {
 
   // Recording upload (rep's browser, on hang-up). Any authenticated employee —
   // they're uploading their own call. 64MB cap (opus audio is tiny).
+  @Audit({ entityType: 'Call', category: 'MUTATION', severity: 'HIGH', idParam: 'id' })
   @Post(':id/recording')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 64 * 1024 * 1024 } }))
   recording(@Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File) {
@@ -110,6 +114,7 @@ export class WhatsAppCallsController {
   }
 
   // Signed URL to play/download the recording — admin/manager only.
+  @Audit({ entityType: 'Call', category: 'FILE_ACCESS', severity: 'HIGH', idParam: 'id', action: 'SENSITIVE_READ' })
   @Get(':id/recording')
   @UseGuards(PermissionGuard)
   @RequireAnyPermissions('whatsapp.view_all_inboxes')

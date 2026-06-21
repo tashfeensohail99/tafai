@@ -23,6 +23,7 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppMessagesService } from './messages.service';
+import { Audit } from '../../../common/decorators/audit.decorator';
 
 class SendTextDto {
   @IsString() @MinLength(1) body!: string;
@@ -88,6 +89,7 @@ export class WhatsAppMessagesController {
     });
   }
 
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
   @Post('text')
   @RequirePermissions('whatsapp.send_message')
   async sendText(
@@ -99,6 +101,7 @@ export class WhatsAppMessagesController {
     return this.messages.sendText(caller, { threadId, ...dto });
   }
 
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
   @Post('template')
   @RequirePermissions('whatsapp.send_message')
   async sendTemplate(
@@ -124,6 +127,7 @@ export class WhatsAppMessagesController {
    * image/jpeg, image/png, image/webp, video/mp4, video/3gp, and common
    * document types (application/pdf, etc.).
    */
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
   @Post('media')
   @RequirePermissions('whatsapp.send_message')
   @UseInterceptors(

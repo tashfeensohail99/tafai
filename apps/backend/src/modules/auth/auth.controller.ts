@@ -21,6 +21,7 @@ import {
   CompletePasswordResetDto,
   ChangePasswordDto,
 } from './auth.dto';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -37,6 +38,7 @@ export class AuthController {
     );
   }
 
+  @Audit({ entityType: 'Auth', category: 'AUTH', severity: 'HIGH' })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Body() dto: RefreshTokenDto) {

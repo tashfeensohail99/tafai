@@ -21,6 +21,7 @@ import { RequirePermissions } from '../../../common/decorators/require-permissio
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { WhatsAppChannelsService } from './channels.service';
+import { Audit } from '../../../common/decorators/audit.decorator';
 import { WHATSAPP_QUEUE, type TemplateSyncJob } from '../queues/queue-contracts';
 
 class UpsertChannelDto {
@@ -93,6 +94,7 @@ export class WhatsAppChannelsController {
     };
   }
 
+  @Audit({ entityType: 'WhatsAppChannel', category: 'CONFIG', severity: 'CRITICAL', action: 'SETTING_CHANGED' })
   @Post()
   @RequirePermissions('whatsapp.manage_channels')
   async upsert(@CurrentUser() user: RequestUser, @Body() dto: UpsertChannelDto) {
@@ -113,6 +115,7 @@ export class WhatsAppChannelsController {
     return this.channels.verify(id);
   }
 
+  @Audit({ entityType: 'WhatsAppChannel', category: 'CONFIG', severity: 'HIGH', idParam: 'id', action: 'SETTING_CHANGED' })
   @Patch(':id/status')
   @RequirePermissions('whatsapp.manage_channels')
   async setStatus(

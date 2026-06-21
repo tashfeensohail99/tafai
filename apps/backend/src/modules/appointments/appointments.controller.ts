@@ -29,6 +29,7 @@ import {
   UpdateAppointmentDto,
 } from './appointments.dto';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 @Controller('appointments')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -51,6 +52,7 @@ export class AppointmentsController {
     return this.appointmentsService.reshiftOutOfHours(false, user);
   }
 
+  @Audit({ entityType: 'Appointment', category: 'MUTATION', severity: 'HIGH' })
   @Post('admin/reshift-office-hours')
   @RequirePermissions('appointments.update')
   reshiftOfficeHours(@CurrentUser() user: RequestUser) {
@@ -63,6 +65,7 @@ export class AppointmentsController {
     return this.appointmentsService.getAdminOverview();
   }
 
+  @Audit({ entityType: 'Appointment', category: 'EXPORT', severity: 'HIGH', action: 'DATA_EXPORTED' })
   @Get('export.csv')
   @RequirePermissions('reports.export')
   async exportCsv(

@@ -34,6 +34,7 @@ import {
   UpdateLeadDto,
 } from './leads.dto';
 import { LeadsService } from './leads.service';
+import { Audit } from '../../common/decorators/audit.decorator';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 
 @Controller('leads')
@@ -91,6 +92,7 @@ export class LeadsController {
    * Stream a CSV of every lead the caller can see. Uses the same filtering as
    * GET / so admins get everything and agents get their own book.
    */
+  @Audit({ entityType: 'Lead', category: 'EXPORT', severity: 'CRITICAL', action: 'DATA_EXPORTED' })
   @Get('export.csv')
   @RequirePermissions('reports.export')
   async exportCsv(
@@ -197,6 +199,7 @@ export class LeadsController {
    * /leads/bulk-delete to this handler rather than trying to parse
    * "bulk-delete" as a UUID and 400ing.
    */
+  @Audit({ entityType: 'Lead', category: 'MUTATION', severity: 'CRITICAL', action: 'RECORD_DELETED' })
   @Post('bulk-delete')
   @RequirePermissions('leads.delete')
   async removeBulk(
@@ -213,6 +216,7 @@ export class LeadsController {
    * filter `deletedAt: null`). Permission gated to `leads.delete` so only
    * admin / super-admin roles can fire it.
    */
+  @Audit({ entityType: 'Lead', category: 'MUTATION', severity: 'CRITICAL', idParam: 'id', action: 'RECORD_DELETED' })
   @Delete(':id')
   @RequirePermissions('leads.delete')
   async remove(
@@ -280,6 +284,7 @@ export class LeadsController {
   // Email verification (send)
   // ---------------------------------------------------------------------------
 
+  @Audit({ entityType: 'Lead', category: 'MUTATION', severity: 'MEDIUM', idParam: 'id', action: 'EMAIL_SENT' })
   @Post(':id/send-email-verification')
   @RequireAnyPermissions('leads.update', 'leads.view_assigned', 'leads.view_all')
   sendEmailVerification(

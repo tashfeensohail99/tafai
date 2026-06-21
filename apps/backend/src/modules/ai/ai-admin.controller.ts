@@ -5,6 +5,7 @@ import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { Audit } from '../../common/decorators/audit.decorator';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { KnowledgeService } from './knowledge.service';
 import { OrchestratorService } from './orchestrator.service';
@@ -89,6 +90,7 @@ export class AiAdminController {
   }
 
   /** Update botEnabledAt + botMode from the admin UI. */
+  @Audit({ entityType: 'AiConfig', category: 'CONFIG', severity: 'HIGH', action: 'SETTING_CHANGED' })
   @Post('config')
   async setConfig(@Body() dto: SetBotConfigDto) {
     const org = await this.prisma.organization.findFirst({
@@ -227,6 +229,7 @@ export class AiAdminController {
    * Jobs are staggered with a small per-message delay so we don't burst N
    * OpenAI calls into the rate limiter all at once.
    */
+  @Audit({ entityType: 'AiBackfill', category: 'MUTATION', severity: 'HIGH' })
   @Post('backfill-open-window')
   async backfillOpenWindow() {
     const now = new Date();

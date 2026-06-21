@@ -31,6 +31,7 @@ import { StorageService } from '../../storage/storage.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WHATSAPP_QUEUE, type MediaDownloadJob, type OutboundMessageJob } from '../queues/queue-contracts';
 import { WhatsAppThreadsService } from './threads.service';
+import { Audit } from '../../../common/decorators/audit.decorator';
 
 class ListThreadsDto {
   @IsOptional()
@@ -238,6 +239,7 @@ export class WhatsAppThreadsController {
    *     month-old message after a long outage
    *   - hard cap of 500 per call so a runaway batch can't choke the queue
    */
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH' })
   @HttpCode(200)
   @Post('requeue-orphans')
   @RequirePermissions('whatsapp.view_all_inboxes')

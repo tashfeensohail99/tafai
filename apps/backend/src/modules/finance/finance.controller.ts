@@ -21,6 +21,7 @@ import { AuditDocumentAccess } from '../../common/decorators/audit-document-acce
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { FinanceService } from './finance.service';
+import { Audit } from '../../common/decorators/audit.decorator';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
 import {
   AdminDeleteHandoverDto,
@@ -56,6 +57,7 @@ export class FinanceController {
    * GET /finance/invoices. Useful for the admin Finance page and for
    * monthly book closings.
    */
+  @Audit({ entityType: 'Invoice', category: 'EXPORT', severity: 'HIGH', action: 'DATA_EXPORTED' })
   @Get('invoices/export.csv')
   @RequirePermissions('reports.export')
   async exportInvoicesCsv(

@@ -22,6 +22,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { AuditDocumentAccess } from '../../common/decorators/audit-document-access.decorator';
+import { Audit, NoAudit } from '../../common/decorators/audit.decorator';
 import {
   RequireAnyPermissions,
   RequirePermissions,
@@ -502,6 +503,7 @@ export class ProcessingController {
     return this.processingService.discardInboundDocument(caseId, inboundId, user);
   }
 
+  @Audit({ entityType: 'ProcessingCase', category: 'MUTATION', severity: 'HIGH', idParam: 'caseId' })
   @Post('cases/:caseId/request-missing-documents')
   @RequirePermissions('processing.document.request')
   requestMissingDocuments(
@@ -525,6 +527,7 @@ export class ProcessingController {
     return this.processingService.getCaseWhatsApp(caseId, user, before);
   }
 
+  @Audit({ entityType: 'ProcessingCase', category: 'MUTATION', severity: 'HIGH', idParam: 'caseId', action: 'WHATSAPP_MESSAGE_SENT' })
   @Post('cases/:caseId/whatsapp')
   @RequirePermissions('processing.communication.send')
   sendCaseWhatsApp(
@@ -548,6 +551,7 @@ export class ProcessingController {
     return this.processingService.getCaseTabActivity(caseId, user);
   }
 
+  @NoAudit()
   @Post('cases/:caseId/tab-seen')
   @RequireAnyPermissions('processing.case.view_assigned', 'processing.case.view_all')
   markCaseTabSeen(
@@ -955,6 +959,7 @@ export class ProcessingController {
     return this.processingService.getExpiryRiskReport(query);
   }
 
+  @Audit({ entityType: 'ProcessingReport', category: 'EXPORT', severity: 'HIGH', action: 'DATA_EXPORTED' })
   @Get('reports/export')
   @RequirePermissions('processing.report.export')
   async exportReport(

@@ -16,6 +16,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { ExpensesService } from './expenses.service';
 import { CreateExpenseDto } from './expenses.dto';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /** Finance writes; reuses the finance permission set Finance already holds. */
 const WRITE = ['finance.record_payment', 'finance.create_invoice', 'settings.manage'] as const;
@@ -25,6 +26,7 @@ const WRITE = ['finance.record_payment', 'finance.create_invoice', 'settings.man
 export class ExpensesController {
   constructor(private readonly expenses: ExpensesService) {}
 
+  @Audit({ entityType: 'Expense', category: 'MUTATION', severity: 'CRITICAL', action: 'RECORD_CREATED' })
   @Post()
   @RequireAnyPermissions(...WRITE)
   create(@Body() dto: CreateExpenseDto, @CurrentUser() user: RequestUser) {
@@ -38,6 +40,7 @@ export class ExpensesController {
     return this.expenses.getReceiptUrl(id);
   }
 
+  @Audit({ entityType: 'Expense', category: 'MUTATION', severity: 'CRITICAL', idParam: 'id', action: 'RECORD_DELETED' })
   @Delete(':id')
   @RequireAnyPermissions(...WRITE)
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {

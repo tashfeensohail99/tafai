@@ -95,10 +95,18 @@ export class AuditRetentionService implements OnModuleInit, OnModuleDestroy {
         take: AuditRetentionService.BATCH,
       });
       if (rows.length === 0) break;
-      const res = await this.prisma.auditLog.deleteMany({
-        where: { id: { in: rows.map((r) => r.id) } },
+      const ids = rows.map((r) => r.id);
+      // Delete inside a tx that opts in to the append-only trigger's purge
+      // gate (SET LOCAL is transaction-scoped). This retention job is the ONLY
+      // sanctioned delete path; every other UPDATE/DELETE on audit_logs is
+      // blocked at the DB level (see migration audit_logs_append_only). The SET
+      // is a harmless no-op if the trigger isn't present yet.
+      const count = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL audit.allow_purge = 'on'");
+        const res = await tx.auditLog.deleteMany({ where: { id: { in: ids } } });
+        return res.count;
       });
-      total += res.count;
+      total += count;
       if (rows.length < AuditRetentionService.BATCH) break;
     }
     return total;

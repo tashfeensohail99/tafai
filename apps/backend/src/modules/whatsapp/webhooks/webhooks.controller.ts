@@ -13,6 +13,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { NoAudit } from '../../../common/decorators/audit.decorator';
 import { WhatsAppWebhookSignatureService } from '../meta/webhook-signature.service';
 import { WHATSAPP_QUEUE, type WebhookIngestJob } from '../queues/queue-contracts';
 
@@ -87,6 +88,11 @@ export class WhatsAppWebhooksController {
     return res.status(403).send('Forbidden');
   }
 
+  // High-volume Meta event firehose — every event is already persisted to the
+  // forensic whatsAppWebhookEvent table, so a coarse audit row per webhook is
+  // pure noise. The meaningful downstream writes (lead creation, message
+  // processing) happen in the ingest worker and are audited there.
+  @NoAudit()
   @HttpCode(200)
   @Post()
   async receive(@Req() req: Request, @Res() res: Response): Promise<Response> {

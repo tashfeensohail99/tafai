@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditLogService } from './audit-log.service';
 import { AuditLogController } from './audit-log.controller';
+import { AuditRetentionService } from './audit-retention.service';
 import { DocumentAccessAuditInterceptor } from '../../common/interceptors/document-access-audit.interceptor';
 import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
 
@@ -9,6 +10,8 @@ import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
   controllers: [AuditLogController],
   providers: [
     AuditLogService,
+    // Daily severity-tiered retention of audit_logs (bounds the table).
+    AuditRetentionService,
     // Global interceptors (registered here so they can inject AuditLogService;
     // AuditLogModule is imported by AppModule, so they apply app-wide).
     //

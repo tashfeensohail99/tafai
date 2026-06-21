@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditAction, AuditCategory, AuditSeverity, Prisma } from '@prisma/client';
 import { ListAuditLogsQueryDto } from './audit-log.dto';
@@ -29,6 +29,8 @@ export interface CreateAuditLogInput {
 
 @Injectable()
 export class AuditLogService {
+  private readonly logger = new Logger(AuditLogService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(query: ListAuditLogsQueryDto) {
@@ -91,5 +93,17 @@ export class AuditLogService {
         durationMs: input.durationMs,
       },
     });
+
+    // Real-time signal for CRITICAL events (api-key/channel changes, deletes,
+    // bulk PII exports, permission changes). A structured, greppable line so a
+    // Railway log-alert can fire on it; wiring it to email/Slack is a small
+    // follow-up. Never throws.
+    if (input.severity === AuditSeverity.CRITICAL) {
+      this.logger.warn(
+        `[AUDIT-CRITICAL] ${input.action} ${input.route ?? input.entityType} ` +
+          `actor=${input.actorUserId ?? 'system'} entity=${input.entityId ?? '-'} ` +
+          `outcome=${input.outcome ?? '-'}`,
+      );
+    }
   }
 }

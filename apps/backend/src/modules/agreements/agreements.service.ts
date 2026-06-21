@@ -409,22 +409,26 @@ export class AgreementsService {
     }
     this.assertPlanBalances(existing.paymentPlan as unknown as PaymentPlanDto);
 
-    // Sales → Finance data-quality gate. Block submission until the underlying
-    // lead is complete: first + last name on file (so Finance + downstream PDFs
-    // render properly) AND a verified email address (so receipts / agreement
-    // links don't bounce or land in the wrong inbox). Without this guard the
-    // first time anyone notices the data is missing is when Finance is already
-    // trying to issue a receipt — too late.
+    // Sales → Finance data-quality gate. Block submission only on the fields
+    // downstream steps genuinely can't run without: first + last name (so
+    // Finance + the generated PDFs render properly) and a coded service type
+    // (for processing-checklist routing).
+    //
+    // Email is intentionally NOT a hard blocker here. Requiring a *verified*
+    // email up front stalled deals whenever the client hadn't yet clicked the
+    // verification link (it expires after 48h, and not every client checks
+    // email promptly). Instead the email's status — missing, or present but
+    // unverified — is surfaced as a flag on the Finance review screen (see
+    // get()), so Finance can chase it before issuing receipts / emailing the
+    // signed agreement, without holding up the handover.
     const lead = await this.prisma.lead.findUnique({
       where: { id: existing.leadId },
-      select: { firstName: true, lastName: true, email: true, emailVerified: true, serviceInterest: true },
+      select: { firstName: true, lastName: true, serviceInterest: true },
     });
     if (!lead) throw new BadRequestException('Lead not found for this agreement');
     const missing: string[] = [];
     if (!lead.firstName?.trim()) missing.push('first name');
     if (!lead.lastName?.trim()) missing.push('last name');
-    if (!lead.email?.trim()) missing.push('email address');
-    else if (!lead.emailVerified) missing.push('email verification');
     // Coded service type — required for downstream processing-checklist
     // routing. Legacy free-text values don't count: sales must reclassify
     // to one of the canonical codes before this case can move to Finance.
@@ -434,7 +438,7 @@ export class AgreementsService {
     if (missing.length > 0) {
       throw new BadRequestException(
         `Cannot submit to Finance — the lead profile is incomplete (${missing.join(', ')}). ` +
-        `Open the lead profile, fill in any missing fields, and use the Verification tab to confirm the email before re-submitting.`,
+        `Open the lead profile, fill in any missing fields, and re-submit.`,
       );
     }
 
@@ -842,6 +846,11 @@ export class AgreementsService {
           lastName: true,
           phone: true,
           email: true,
+          // Surfaced so the Finance review screen can flag a missing /
+          // unverified email — it's no longer a submit blocker (see
+          // submitToFinance), but Finance still needs to chase it before
+          // emailing receipts / the signed agreement.
+          emailVerified: true,
           referenceCode: true,
         },
       }),

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AuditAction, LeadStatus, Prisma } from '@prisma/client';
+import { AuditAction, AuditCategory, AuditSeverity, LeadStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
@@ -191,6 +191,9 @@ export class MetaLeadsService {
           action: AuditAction.LEAD_CREATED,
           entityType: 'Lead',
           entityId: lead.id,
+          // Webhook-driven system write (Meta Lead Ads), HIGH = record creation.
+          category: AuditCategory.WEBHOOK,
+          severity: AuditSeverity.HIGH,
           newValues: {
             assignedEmployeeId: assigneeId ?? null,
             sourceChannel: 'meta-lead-form',

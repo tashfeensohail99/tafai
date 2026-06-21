@@ -3,6 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { Readable } from 'node:stream';
 import {
+  AuditAction,
+  AuditCategory,
+  AuditSeverity,
   InboundDocumentSource,
   InboundDocumentStatus,
   Prisma,
@@ -10,6 +13,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
+import { AuditLogService } from '../../audit-log/audit-log.service';
 import { DocumentParserClient } from './document-parser.client';
 import { ApiKeysService } from '../../api-keys/api-keys.service';
 import type { ParserRequest, SplitParserDocument } from './document-ai.contracts';
@@ -37,6 +41,10 @@ export class DocumentIntakeService {
     private readonly parser: DocumentParserClient,
     private readonly config: ConfigService,
     private readonly apiKeys: ApiKeysService,
+    // Central audit: inbound documents are created off the doc-intake queue
+    // (driven by a client's WhatsApp media), bypassing HTTP and the global
+    // AuditInterceptor.
+    private readonly audit: AuditLogService,
   ) {}
 
   /** The admin-managed OpenAI key (single source of truth). Null if none set. */
@@ -185,7 +193,7 @@ export class DocumentIntakeService {
       }
     }
 
-    await this.prisma.inboundDocument.create({
+    const inboundDoc = await this.prisma.inboundDocument.create({
       data: {
         caseId: activeCase.id,
         source: InboundDocumentSource.WHATSAPP,
@@ -199,7 +207,9 @@ export class DocumentIntakeService {
         suggestedItemId,
         status: InboundDocumentStatus.PENDING,
       },
+      select: { id: true },
     });
+    this.auditInboundDocCreated(inboundDoc.id, activeCase.id, detectedDocType);
     this.log.log(
       `intake: InboundDocument created for case ${activeCase.id} (detected=${detectedDocType ?? 'n/a'})`,
     );
@@ -297,7 +307,7 @@ export class DocumentIntakeService {
           segName,
         );
         const suggestedItemId = await this.matchItem(caseId, seg.doc_type);
-        await this.prisma.inboundDocument.create({
+        const seg_doc = await this.prisma.inboundDocument.create({
           data: {
             caseId,
             source,
@@ -311,13 +321,41 @@ export class DocumentIntakeService {
             suggestedItemId,
             status: InboundDocumentStatus.PENDING,
           },
+          select: { id: true },
         });
+        // Only WhatsApp-sourced bundles are inbound/webhook-driven; the
+        // portal/officer split path is already audited at its HTTP route.
+        if (source === InboundDocumentSource.WHATSAPP) {
+          this.auditInboundDocCreated(seg_doc.id, caseId, seg.doc_type);
+        }
         created++;
       } catch (e) {
         this.log.warn(`intake: segment file failed (${seg.doc_type}) for ${label}: ${String(e)}`);
       }
     }
     return created;
+  }
+
+  /**
+   * Central-audit a freshly created inbound document from a client's WhatsApp
+   * media. One row per created InboundDocument. actorUserId omitted = system
+   * (webhook-driven, no human). Fire-and-forget — never break intake.
+   */
+  private auditInboundDocCreated(
+    inboundDocId: string,
+    caseId: string,
+    classifiedType: string | null,
+  ): void {
+    void this.audit
+      .log({
+        action: AuditAction.DOCUMENT_UPLOADED,
+        entityType: 'InboundDocument',
+        entityId: inboundDocId,
+        category: AuditCategory.WEBHOOK,
+        severity: AuditSeverity.MEDIUM,
+        metadata: { caseId, classifiedType: classifiedType ?? null },
+      })
+      .catch(() => undefined);
   }
 
   private stripExt(name: string): string {

@@ -3,6 +3,9 @@ import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import {
   AiSuggestedDecision,
+  AuditAction,
+  AuditCategory,
+  AuditSeverity,
   DocReviewDecisionType,
   DocumentCriticality,
   DocumentItemStatus,
@@ -12,6 +15,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
+import { AuditLogService } from '../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../activity-timeline/activity-timeline.service';
 import { DocumentParserClient } from './document-parser.client';
 import { ApiKeysService } from '../../api-keys/api-keys.service';
@@ -52,6 +56,9 @@ export class DocumentAiService {
     private readonly timeline: ActivityTimelineService,
     private readonly parser: DocumentParserClient,
     private readonly apiKeys: ApiKeysService,
+    // Central audit: AI auto-approve is an unattended state-change off the
+    // queue (no HTTP request), so the global AuditInterceptor never sees it.
+    private readonly audit: AuditLogService,
     @InjectQueue(DOC_AI_QUEUE) private readonly queue: Queue<DocAiJob>,
   ) {
     this.pipelineEnabled =
@@ -367,6 +374,26 @@ export class DocumentAiService {
       .catch(() => {
         /* non-fatal */
       });
+
+    // Central audit: surface the unattended AI auto-approve decision in the
+    // who/what/when audit trail (the ProcessingAuditLog row above is the
+    // processing-module feed; this is the central log our reports query).
+    // actorUserId omitted = system. Fire-and-forget — never break the job.
+    void this.audit
+      .log({
+        action: AuditAction.DOCUMENT_VERIFIED,
+        entityType: 'CaseDocumentItem',
+        entityId: version.documentItemId,
+        category: AuditCategory.MUTATION,
+        severity: AuditSeverity.HIGH,
+        metadata: {
+          caseId: version.caseId,
+          autoApprovedBy: 'ai',
+          verdict: resp.suggestedDecision,
+          confidence: resp.confidence,
+        },
+      })
+      .catch(() => undefined);
 
     this.log.log(`Auto-approved document item ${version.documentItemId} (case ${version.caseId})`);
   }

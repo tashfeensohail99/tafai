@@ -2,6 +2,9 @@ import { Logger } from '@nestjs/common';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job, Queue } from 'bullmq';
 import {
+  AuditAction,
+  AuditCategory,
+  AuditSeverity,
   FollowUpPriority,
   LeadStatus,
   WhatsAppMessageDirection,
@@ -11,6 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
+import { AuditLogService } from '../../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../../../notifications/notifications.service';
 import { PushService } from '../../../push/push.service';
@@ -159,6 +163,10 @@ export class WebhookIngestProcessor extends WorkerHost {
     private readonly notifications: NotificationsService,
     private readonly assignment: WhatsAppAssignmentService,
     private readonly publisher: WhatsAppRealtimePublisher,
+    // Central audit log — a brand-new lead auto-created on first WhatsApp
+    // contact bypasses HTTP, so the global AuditInterceptor never sees it.
+    // Log it explicitly so inbound-created leads appear in the audit trail.
+    private readonly audit: AuditLogService,
     // High-priority FCM data push so a backgrounded / locked mobile device
     // rings for the call (the open-tab socket emit above only reaches the web
     // CallDock and foregrounded apps).
@@ -459,7 +467,7 @@ export class WebhookIngestProcessor extends WorkerHost {
     // Resolve customer: client > lead > new lead (same identity rule as
     // messages), serialized per-phone so a simultaneous first message + call
     // can't both create a lead.
-    const { leadId, clientId, blocked } = await this.withPhoneLock(phone, async () => {
+    const { leadId, clientId, blocked, createdLead } = await this.withPhoneLock(phone, async () => {
       const existingClient = await this.prisma.client.findFirst({
         where: { phone, deletedAt: null },
         // blockedAt folded in so a blocked contact's call is dropped BEFORE any
@@ -471,6 +479,7 @@ export class WebhookIngestProcessor extends WorkerHost {
           leadId: null as string | null,
           clientId: existingClient.id as string | null,
           blocked: !!existingClient.blockedAt,
+          createdLead: false,
         };
       }
       const existingLead = await this.prisma.lead.findFirst({
@@ -483,6 +492,7 @@ export class WebhookIngestProcessor extends WorkerHost {
           leadId: existingLead.id as string | null,
           clientId: null as string | null,
           blocked: !!existingLead.blockedAt,
+          createdLead: false,
         };
       }
       const branch = await this.prisma.branch.findFirst({
@@ -504,7 +514,12 @@ export class WebhookIngestProcessor extends WorkerHost {
         select: { id: true },
       });
       // A freshly created lead is never blocked.
-      return { leadId: newLead.id as string | null, clientId: null as string | null, blocked: false };
+      return {
+        leadId: newLead.id as string | null,
+        clientId: null as string | null,
+        blocked: false,
+        createdLead: true,
+      };
     });
 
     // Block enforcement: a blocked contact's call is silently dropped — NO ring,
@@ -512,6 +527,24 @@ export class WebhookIngestProcessor extends WorkerHost {
     if (blocked) {
       this.log.log(`inbound call dropped — contact blocked (phone ${phone})`);
       return;
+    }
+
+    // Central audit: a brand-new lead auto-created from a first inbound WhatsApp
+    // CALL (same identity rule as messages). Logged once on creation only.
+    if (createdLead && leadId) {
+      void this.audit
+        .log({
+          action: AuditAction.LEAD_CREATED,
+          entityType: 'Lead',
+          entityId: leadId,
+          category: AuditCategory.WEBHOOK,
+          severity: AuditSeverity.HIGH,
+          metadata: {
+            source: 'whatsapp_inbound_call',
+            phoneLast4: phone.replace(/[^0-9]/g, '').slice(-4),
+          },
+        })
+        .catch(() => undefined);
     }
 
     // Upsert the contact's thread so the call shares the inbox conversation and
@@ -720,6 +753,27 @@ export class WebhookIngestProcessor extends WorkerHost {
     if (blocked) {
       this.log.log(`inbound message dropped — contact blocked (phone ${phone})`);
       return;
+    }
+
+    // Central audit: a brand-new lead was just auto-created from first inbound
+    // WhatsApp contact (round-robin / generateLeadReferenceCode path). Logged
+    // ONCE on creation only — never when an existing lead/client/thread matched.
+    // Fire-and-forget: the audit write must never break inbound ingest.
+    if (createdLead && leadId) {
+      void this.audit
+        .log({
+          action: AuditAction.LEAD_CREATED,
+          entityType: 'Lead',
+          entityId: leadId,
+          category: AuditCategory.WEBHOOK,
+          severity: AuditSeverity.HIGH,
+          metadata: {
+            source: 'whatsapp_inbound',
+            // Last-4 only — never store the full phone (PII).
+            phoneLast4: phone.replace(/[^0-9]/g, '').slice(-4),
+          },
+        })
+        .catch(() => undefined);
     }
 
     // Click-to-WhatsApp ad referral. Meta only sends this on the first

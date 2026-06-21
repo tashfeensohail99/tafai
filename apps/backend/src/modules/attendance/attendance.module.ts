@@ -10,6 +10,7 @@ import { AttendanceEnrollmentController } from './attendance-enrollment.controll
 import { AttendanceEnrollmentAdminController } from './attendance-enrollment-admin.controller';
 import { UsersModule } from '../users/users.module';
 import { EmployeesModule } from '../employees/employees.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 /**
  * Camera-attendance integration.
@@ -24,7 +25,7 @@ import { EmployeesModule } from '../employees/employees.module';
  *                                  services; gated by an org master on/off switch.
  */
 @Module({
-  imports: [UsersModule, EmployeesModule],
+  imports: [UsersModule, EmployeesModule, AuditLogModule],
   controllers: [
     AttendanceController,
     AttendanceDirectoryController,

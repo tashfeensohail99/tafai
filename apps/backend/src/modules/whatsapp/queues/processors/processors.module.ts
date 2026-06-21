@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ActivityTimelineModule } from '../../../activity-timeline/activity-timeline.module';
+import { AuditLogModule } from '../../../audit-log/audit-log.module';
 import { StorageModule } from '../../../storage/storage.module';
 import { WebhookIngestProcessor } from './webhook-ingest.processor';
 import { OutboundMessageProcessor } from './outbound-message.processor';
@@ -13,7 +14,7 @@ import { OutboundOrphanDrainerService } from './outbound-orphan-drainer.service'
 // this import the container fails to resolve StorageService at boot —
 // observed live in 7ed3017's crash loop.
 @Module({
-  imports: [ActivityTimelineModule, StorageModule],
+  imports: [ActivityTimelineModule, AuditLogModule, StorageModule],
   providers: [
     WebhookIngestProcessor,
     OutboundMessageProcessor,

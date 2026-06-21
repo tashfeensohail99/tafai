@@ -4,8 +4,10 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
+import { AuditAction, AuditCategory, AuditSeverity } from '@prisma/client';
 import { AttendanceClient } from './attendance.client';
 import { AttendanceService } from './attendance.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 /**
  * Auto-sync attendance from the camera's raw detections on a schedule, so the
@@ -31,6 +33,9 @@ export class AttendanceSyncSweeperService implements OnModuleInit, OnModuleDestr
   constructor(
     private readonly attendance: AttendanceService,
     private readonly client: AttendanceClient,
+    // Central audit: this 15-min sweep runs as 'system' off a setInterval (no
+    // HTTP request), so the global AuditInterceptor never sees its writes.
+    private readonly audit: AuditLogService,
   ) {}
 
   onModuleInit(): void {
@@ -61,6 +66,27 @@ export class AttendanceSyncSweeperService implements OnModuleInit, OnModuleDestr
       const r = await this.attendance.syncFromEvents({ from: yesterday, to: today }, 'system');
       if (r.imported > 0) {
         this.log.log(`attendance auto-sync: ${r.imported} record(s) from ${r.seen} detected (${yesterday}..${today})`);
+      }
+      // One summary audit row PER SWEEP RUN (not per attendance record). Only
+      // when the sweep actually upserted something, to avoid logging every
+      // 15-min no-op tick. Fire-and-forget — must never break the sweep.
+      if (r.imported > 0) {
+        void this.audit
+          .log({
+            action: AuditAction.ATTENDANCE_ADJUSTED,
+            entityType: 'AttendanceRecord',
+            category: AuditCategory.CRON,
+            severity: AuditSeverity.LOW,
+            metadata: {
+              from: r.from,
+              to: r.to,
+              recordsUpserted: r.imported,
+              detected: r.seen,
+              skippedOverrides: r.skipped,
+              trigger: 'auto-sync',
+            },
+          })
+          .catch(() => undefined);
       }
     } finally {
       this.running = false;

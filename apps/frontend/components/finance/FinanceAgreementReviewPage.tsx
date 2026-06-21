@@ -134,6 +134,18 @@ export function FinanceAgreementReviewPage({ agreementId }: { agreementId: strin
   const plan = (data.paymentPlan ?? {}) as Partial<PaymentPlanInput>;
   const actionable = ACTIONABLE.includes(data.status);
   const hasPdf = ['APPROVED', 'SENT', 'SIGNED'].includes(data.status);
+  // Email is no longer required to submit an agreement to Finance (the Sales
+  // gate was relaxed), so flag here when the lead's email is missing or
+  // unverified — Finance should confirm a working address before emailing
+  // receipts or the signed agreement.
+  const leadEmail = data.lead?.email?.trim() || null;
+  const emailIssue: 'missing' | 'unverified' | null = !data.lead
+    ? null
+    : !leadEmail
+      ? 'missing'
+      : !data.lead.emailVerified
+        ? 'unverified'
+        : null;
   const money = (n: number | undefined) =>
     (n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
@@ -182,6 +194,29 @@ export function FinanceAgreementReviewPage({ agreementId }: { agreementId: strin
         {notice && !error ? <div className="sos-banner sos-banner--success" style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}><CheckCircle2 size={16} /> {notice}</div> : null}
         {data.financeNotes ? <div className="sos-banner sos-banner--warning" style={{ marginTop: 12 }}>Finance note: {data.financeNotes}</div> : null}
       </GlassCard>
+
+      {/* Email data-quality flag — Sales can submit without a verified email,
+          so Finance is reminded to confirm one before anything is emailed. */}
+      {emailIssue ? (
+        <div className="sos-banner sos-banner--warning" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontSize: 13 }}>
+            {emailIssue === 'missing' ? (
+              <>
+                <strong>No email address on file</strong> for this lead. Receipts and the signed
+                agreement can’t be emailed until a working address is added and verified — confirm
+                one with the client before sending anything.
+              </>
+            ) : (
+              <>
+                The lead’s email (<strong>{leadEmail}</strong>) <strong>has not been verified</strong>,
+                so it may be mistyped or land in the wrong inbox. Confirm it before emailing receipts
+                or the signed agreement.
+              </>
+            )}
+          </span>
+        </div>
+      ) : null}
 
       {/* Applicant */}
       <GlassCard variant="default">

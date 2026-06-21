@@ -204,6 +204,7 @@ export interface AgreementDetail extends AgreementSummary {
     lastName: string;
     phone: string;
     email: string | null;
+    emailVerified: boolean;
     referenceCode: string;
   } | null;
   events: AgreementEvent[];

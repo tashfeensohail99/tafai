@@ -1,6 +1,7 @@
 import {
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -11,7 +12,17 @@ import {
 } from 'class-validator';
 import { AuditAction, AuditCategory, AuditSeverity } from '@prisma/client';
 
+// Which audit trail(s) the viewer should pull from. CENTRAL is the historical
+// default (the central AuditLog table); PROCESSING / AGREEMENT bridge in the
+// rich domain trails; ALL merges all three into one timeline.
+export const AUDIT_SOURCES = ['CENTRAL', 'PROCESSING', 'AGREEMENT', 'ALL'] as const;
+export type AuditSource = (typeof AUDIT_SOURCES)[number];
+
 export class ListAuditLogsQueryDto {
+  @IsOptional()
+  @IsIn(AUDIT_SOURCES)
+  source?: AuditSource;
+
   @IsOptional()
   @IsEnum(AuditAction)
   action?: AuditAction;

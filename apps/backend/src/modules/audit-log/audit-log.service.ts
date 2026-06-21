@@ -5,6 +5,39 @@ import { AuditAction, AuditCategory, AuditSeverity, Prisma } from '@prisma/clien
 import { ListAuditLogsQueryDto } from './audit-log.dto';
 import { EmailService } from '../email/email.service';
 
+// Where an audit row came from. The frontend uses this to label rows; CENTRAL
+// is the historical AuditLog table, PROCESSING/AGREEMENT are the bridged trails.
+type AuditSourceLabel = 'CENTRAL' | 'PROCESSING' | 'AGREEMENT';
+
+// The normalized shape every returned row conforms to, regardless of source —
+// this matches what AuditLogPage.tsx already consumes (action, entityType,
+// entityId, actor {id,email}, createdAt, + the optional classification fields)
+// plus a `source` label and a free-form `description` for the domain trails.
+export interface NormalizedAuditRow {
+  id: string;
+  source: AuditSourceLabel;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  actorUserId: string | null;
+  actor: { id: string; email: string } | null;
+  createdAt: Date;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  oldValues?: Record<string, any> | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  newValues?: Record<string, any> | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  metadata?: Record<string, any> | null;
+  description?: string | null;
+  severity?: string | null;
+  category?: string | null;
+  method?: string | null;
+  route?: string | null;
+  outcome?: string | null;
+  statusCode?: number | null;
+  durationMs?: number | null;
+}
+
 export interface CreateAuditLogInput {
   actorUserId?: string;
   action: AuditAction;
@@ -46,7 +79,38 @@ export class AuditLogService {
   ) {}
 
   async findAll(query: ListAuditLogsQueryDto) {
-    return this.prisma.auditLog.findMany({
+    const source = query.source ?? 'CENTRAL';
+
+    // Default / CENTRAL: unchanged historical behavior — central AuditLog only.
+    // (Preserved exactly so existing callers and rows are unaffected; rows just
+    // gain a `source: 'CENTRAL'` label.)
+    if (source === 'CENTRAL') {
+      return this.findCentral(query);
+    }
+
+    if (source === 'PROCESSING') {
+      return this.findProcessing(query);
+    }
+
+    if (source === 'AGREEMENT') {
+      return this.findAgreement(query);
+    }
+
+    // ALL: fetch from all three trails, merge, sort by createdAt desc, cap.
+    const limit = Math.min(query.limit ?? 100, 250);
+    const [central, processing, agreement] = await Promise.all([
+      this.findCentral(query),
+      this.findProcessing(query),
+      this.findAgreement(query),
+    ]);
+    return [...central, ...processing, ...agreement]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit);
+  }
+
+  // ── Central AuditLog (historical default behavior) ─────────────────────────
+  private async findCentral(query: ListAuditLogsQueryDto): Promise<NormalizedAuditRow[]> {
+    const rows = await this.prisma.auditLog.findMany({
       where: {
         ...(query.action ? { action: query.action } : {}),
         ...(query.severity ? { severity: query.severity } : {}),
@@ -82,6 +146,126 @@ export class AuditLogService {
       orderBy: { createdAt: 'desc' },
       take: Math.min(query.limit ?? 100, 250),
     });
+    return rows.map((r) => ({
+      id: r.id,
+      source: 'CENTRAL' as const,
+      action: r.action,
+      entityType: r.entityType,
+      entityId: r.entityId,
+      actorUserId: r.actorUserId,
+      actor: r.actor,
+      createdAt: r.createdAt,
+      oldValues: r.oldValues as NormalizedAuditRow['oldValues'],
+      newValues: r.newValues as NormalizedAuditRow['newValues'],
+      metadata: r.metadata as NormalizedAuditRow['metadata'],
+      description: null,
+      severity: r.severity,
+      category: r.category,
+      method: r.method,
+      route: r.route,
+      outcome: r.outcome,
+      statusCode: r.statusCode,
+      durationMs: r.durationMs,
+    }));
+  }
+
+  // ── ProcessingAuditLog trail ───────────────────────────────────────────────
+  private async findProcessing(query: ListAuditLogsQueryDto): Promise<NormalizedAuditRow[]> {
+    const rows = await this.prisma.processingAuditLog.findMany({
+      where: {
+        ...(query.createdFrom || query.createdTo
+          ? {
+              createdAt: {
+                ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+                ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+              },
+            }
+          : {}),
+      },
+      include: {
+        actor: { select: { id: true, email: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(query.limit ?? 100, 250),
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      source: 'PROCESSING' as const,
+      action: r.action,
+      entityType: 'ProcessingCase',
+      entityId: r.caseId,
+      actorUserId: r.actorUserId,
+      actor: r.actor,
+      createdAt: r.createdAt,
+      oldValues: r.oldValues as NormalizedAuditRow['oldValues'],
+      newValues: r.newValues as NormalizedAuditRow['newValues'],
+      metadata: { processingEntityType: r.entityType, processingEntityId: r.entityId },
+      description: r.entityId ? `${r.entityType} ${r.entityId}` : r.entityType,
+      severity: null,
+      category: null,
+      method: null,
+      route: null,
+      outcome: null,
+      statusCode: null,
+      durationMs: null,
+    }));
+  }
+
+  // ── AgreementEvent trail ───────────────────────────────────────────────────
+  private async findAgreement(query: ListAuditLogsQueryDto): Promise<NormalizedAuditRow[]> {
+    const rows = await this.prisma.agreementEvent.findMany({
+      where: {
+        ...(query.createdFrom || query.createdTo
+          ? {
+              createdAt: {
+                ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+                ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+              },
+            }
+          : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(query.limit ?? 100, 250),
+    });
+
+    // AgreementEvent has no relation to UserAccount — resolve actor emails with
+    // a single batched lookup over the distinct actorUserIds in this page.
+    const actorMap = await this.resolveActors(rows.map((r) => r.actorUserId));
+
+    return rows.map((r) => ({
+      id: r.id,
+      source: 'AGREEMENT' as const,
+      action: r.type,
+      entityType: 'Agreement',
+      entityId: r.agreementId,
+      actorUserId: r.actorUserId,
+      actor: r.actorUserId ? (actorMap.get(r.actorUserId) ?? null) : null,
+      createdAt: r.createdAt,
+      oldValues: r.dataBefore as NormalizedAuditRow['oldValues'],
+      newValues: r.dataAfter as NormalizedAuditRow['newValues'],
+      metadata: { summary: r.summary },
+      description: r.summary,
+      severity: null,
+      category: null,
+      method: null,
+      route: null,
+      outcome: null,
+      statusCode: null,
+      durationMs: null,
+    }));
+  }
+
+  /** Batch-resolve actorUserId → { id, email } in one query (skips nulls). */
+  private async resolveActors(
+    ids: Array<string | null>,
+  ): Promise<Map<string, { id: string; email: string }>> {
+    const distinct = [...new Set(ids.filter((id): id is string => Boolean(id)))];
+    if (distinct.length === 0) return new Map();
+    const users = await this.prisma.userAccount.findMany({
+      where: { id: { in: distinct } },
+      select: { id: true, email: true },
+    });
+    return new Map(users.map((u) => [u.id, u]));
   }
 
   async log(input: CreateAuditLogInput): Promise<void> {

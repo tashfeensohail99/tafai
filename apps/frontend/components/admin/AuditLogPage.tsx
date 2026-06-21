@@ -18,8 +18,14 @@ interface AuditLogRecord {
   entityId?: string | null;
   createdAt: string;
   actor?: { email?: string | null } | null;
+  // Which trail the row came from. CENTRAL = central AuditLog table;
+  // PROCESSING / AGREEMENT are the bridged domain trails.
+  source?: string | null;
+  // Free-form one-line summary for the bridged domain trails (the central
+  // table leaves this null and relies on the structured columns instead).
+  description?: string | null;
   // Structured classification added by Phase 0 interceptor (all optional —
-  // legacy rows predate these columns).
+  // legacy rows predate these columns; bridged rows leave them null).
   severity?: string | null;
   category?: string | null;
   method?: string | null;
@@ -27,6 +33,28 @@ interface AuditLogRecord {
   outcome?: string | null;
   statusCode?: number | null;
   durationMs?: number | null;
+}
+
+// Source label tones: keep them visually distinct but quiet.
+const SOURCE_TONE: Record<string, BadgeTone> = {
+  CENTRAL: 'neutral',
+  PROCESSING: 'info',
+  AGREEMENT: 'success',
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  CENTRAL: 'Central',
+  PROCESSING: 'Processing',
+  AGREEMENT: 'Agreement',
+};
+
+function renderSource(row: AuditLogRecord) {
+  if (!row.source) return '—';
+  return (
+    <StatusBadge tone={SOURCE_TONE[row.source] ?? 'neutral'} dot={false}>
+      {SOURCE_LABEL[row.source] ?? row.source}
+    </StatusBadge>
+  );
 }
 
 // CRITICAL=red, HIGH=amber, MEDIUM=blue, LOW=grey (per spec).
@@ -65,6 +93,7 @@ function renderRoute(row: AuditLogRecord) {
 }
 
 const columns: DataTableColumn<AuditLogRecord>[] = [
+  { key: 'source', header: 'Source', render: renderSource },
   { key: 'severity', header: 'Severity', render: renderSeverity },
   { key: 'category', header: 'Category', render: (row) => row.category ?? '—' },
   { key: 'action', header: 'Action', render: (row) => row.action.replace(/_/g, ' ') },
@@ -85,6 +114,9 @@ export function AuditLogPage() {
   const [severity, setSeverity] = useState('');
   const [category, setCategory] = useState('');
   const [outcome, setOutcome] = useState('');
+  // Which audit trail(s) to show. Defaults to CENTRAL (the historical view);
+  // PROCESSING / AGREEMENT bridge in the domain trails, ALL merges all three.
+  const [source, setSource] = useState('CENTRAL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,7 +124,7 @@ export function AuditLogPage() {
     setLoading(true);
     setError(null);
     try {
-      const query = buildQuery({ search, action, entityType, severity, category, outcome, limit: 100 });
+      const query = buildQuery({ search, action, entityType, severity, category, outcome, source, limit: 100 });
       const response = await apiFetch<AuditLogRecord[]>(`/audit-log${query}`);
       setAuditLogs(response);
     } catch (err) {
@@ -105,7 +137,7 @@ export function AuditLogPage() {
   useEffect(() => {
     if (!user.permissions.includes('audit.view')) return;
     void loadAuditLogs();
-  }, [search, action, entityType, severity, category, outcome]);
+  }, [search, action, entityType, severity, category, outcome, source]);
 
   if (!user.permissions.includes('audit.view')) {
     return <PermissionDeniedState />;
@@ -147,6 +179,18 @@ export function AuditLogPage() {
         onSearchChange={setSearch}
         searchPlaceholder="Search entity type or entity id..."
         filters={[
+          {
+            key: 'source',
+            label: 'Source',
+            value: source,
+            onChange: setSource,
+            options: [
+              { label: 'Central', value: 'CENTRAL' },
+              { label: 'Processing', value: 'PROCESSING' },
+              { label: 'Agreements', value: 'AGREEMENT' },
+              { label: 'All sources', value: 'ALL' },
+            ],
+          },
           {
             key: 'severity',
             label: 'Severity',
@@ -241,6 +285,7 @@ export function AuditLogPage() {
           setSeverity('');
           setCategory('');
           setOutcome('');
+          setSource('CENTRAL');
         }}
       />
 

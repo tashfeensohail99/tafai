@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  Clock,
   FileSearch,
   FolderKanban,
   Inbox,
@@ -210,6 +211,15 @@ export function ProcessingDashboardPage() {
         />
       </section>
 
+      {/* Quick links — shortcuts to the most-used sections, placed right under
+          the KPI strip so they're handy without crowding the bottom. */}
+      <section style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+        <QuickLink href="/processing/tasks" label="Today's tasks" icon={<Clock size={14} />} count={null} />
+        <QuickLink href="/processing/documents" label="Document queue" icon={<FileSearch size={14} />} count={metrics?.myPendingDocs ?? null} />
+        <QuickLink href="/processing/refunds" label="Refunds & appeals" icon={<XCircle size={14} />} count={null} />
+        <QuickLink href="/processing/history" label="Case history" icon={<CheckCircle2 size={14} />} count={null} />
+      </section>
+
       {/* Urgent intake alert — manager-only */}
       {isManager && urgentIntake.length > 0 ? (
         <GlassCard variant="strong" padded="md" style={{ borderLeft: '3px solid var(--sos-status-warning)' }}>
@@ -309,5 +319,19 @@ export function ProcessingDashboardPage() {
         )}
       </GlassCard>
     </div>
+  );
+}
+
+function QuickLink({ href, label, icon, count }: { href: string; label: string; icon: React.ReactNode; count: number | null }) {
+  return (
+    <Link
+      href={href as Route}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)', textDecoration: 'none' }}
+    >
+      <span style={{ color: 'var(--sos-brand-primary-strong)' }}>{icon}</span>
+      <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--sos-text-primary)' }}>{label}</span>
+      {count != null ? <StatusBadge tone="neutral" size="sm">{count}</StatusBadge> : null}
+      <ArrowRight size={12} style={{ color: 'var(--sos-text-muted)' }} />
+    </Link>
   );
 }

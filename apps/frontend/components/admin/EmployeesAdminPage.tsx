@@ -61,6 +61,7 @@ interface EmployeeRow {
   lastName: string;
   whatsappInboxMember?: boolean;
   skills?: string[];
+  pbxExtension?: string | null;
   /** Last authenticated activity — drives the live online/away/offline dot. */
   lastActivityAt?: string | null;
   department?: { name?: string | null } | null;
@@ -82,6 +83,7 @@ interface EmployeeDetail {
   branchId?: string | null;
   whatsappInboxMember?: boolean;
   skills?: string[];
+  pbxExtension?: string | null;
   user: {
     email: string;
     phone?: string | null;
@@ -101,6 +103,7 @@ interface EmployeeFormState {
   branchId: string;
   whatsappInboxMember: boolean;
   skills: string[];
+  pbxExtension: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +121,7 @@ const initialForm: EmployeeFormState = {
   branchId: '',
   whatsappInboxMember: false,
   skills: [],
+  pbxExtension: '',
 };
 
 const SKILL_OPTIONS: string[] = [
@@ -362,6 +366,7 @@ export function EmployeesAdminPage() {
         branchId: detail.branchId ?? '',
         whatsappInboxMember: detail.whatsappInboxMember ?? false,
         skills: detail.skills ?? [],
+        pbxExtension: detail.pbxExtension ?? '',
       });
       setFormOpen(true);
       setShowPw(false);
@@ -478,6 +483,9 @@ export function EmployeesAdminPage() {
             branchId: form.branchId || undefined,
             whatsappInboxMember: form.whatsappInboxMember,
             skills: form.skills,
+            // null clears the extension; a trimmed value sets it (backend
+            // validates 2–6 digits).
+            pbxExtension: form.pbxExtension.trim() || null,
           }),
         });
         setSuccess(`${form.firstName} ${form.lastName} updated successfully.`);
@@ -712,6 +720,14 @@ export function EmployeesAdminPage() {
                   <option value="">Unassigned</option>
                   {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </SelectWrap>
+              </Field>
+              <Field label="Smart Office extension" hint="2–6 digits — Telenor call routing rings this">
+                <FormInput
+                  placeholder="e.g. 101"
+                  inputMode="numeric"
+                  value={form.pbxExtension}
+                  onChange={(e) => setField('pbxExtension', e.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
               </Field>
             </div>
 

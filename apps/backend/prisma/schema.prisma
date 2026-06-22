@@ -1054,6 +1054,10 @@ model Employee {
   nationality     String?
   joiningDate     DateTime?
   profilePhotoKey String?
+  // 2–6 digit Telenor Smart Office PBX extension assigned to this rep (set once
+  // Telenor activates the account). The call-routing Customer API returns this
+  // so Smart Office knows which extension to ring for this salesperson.
+  pbxExtension    String?   @db.VarChar(10)
   isActive        Boolean   @default(true)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -1266,6 +1270,43 @@ model Lead {
   /// dominant list query. Cuts the 3s full-scan-and-sort down to ~50ms.
   @@index([deletedAt, createdAt(sort: Desc)])
   @@map("leads")
+  @@schema("crm")
+}
+
+/// One row per inbound call Telenor Smart Office asked us to resolve
+/// (caller -> owning salesperson -> extension). Telenor does NOT expose CDRs or
+/// recordings via API, so this is OUR lightweight call-attempt log: who called,
+/// which rep we routed them to (or why not), and when. No audio is stored.
+///
+/// leadId / clientId / agentEmployeeId are deliberately SCALAR (no Prisma FK
+/// relations) — this is an append-only, point-in-time log, so rows stay even
+/// after the referenced lead/client/employee is soft-deleted, and agentName is
+/// denormalised so the record reads correctly even if the rep is later renamed
+/// (same pattern as WhatsAppCall + PresenceDailyReport).
+model SmartOfficeCallLog {
+  id              String   @id @default(uuid())
+  /// Caller (A-party) normalised to E.164, when parseable.
+  callerE164      String?
+  /// Raw A-party string exactly as Smart Office sent it (debug / format drift).
+  callerRaw       String?
+  /// Master number (B-party) the customer dialled, as sent.
+  masterNumber    String?
+  /// Smart Office call reference, echoed back in our response when present.
+  callId          String?
+  /// True when we returned a usable extension to route the call.
+  matched         Boolean  @default(false)
+  /// Why no extension was returned (no lead, no owner, no extension, blocked…).
+  reason          String?
+  leadId          String?
+  clientId        String?
+  agentEmployeeId String?
+  agentExtension  String?
+  agentName       String?
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([agentEmployeeId])
+  @@map("smart_office_call_logs")
   @@schema("crm")
 }
 

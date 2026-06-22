@@ -8,7 +8,9 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Gender } from '@prisma/client';
 
@@ -109,4 +111,15 @@ export class UpdateEmployeeDto {
   @IsString({ each: true })
   @ArrayMaxSize(20)
   skills?: string[];
+
+  // --- Telenor Smart Office PBX extension ---------------------------------
+  // 2–6 digit extension Telenor assigns this rep (after account activation).
+  // The call-routing Customer API returns it so Smart Office rings this rep.
+  // Send `null` to clear it; omit to leave unchanged.
+  // Three states: omitted (no change), null (clear), or 2–6 digits (set).
+  // @ValidateIf skips the regex on an explicit null so the field can be cleared.
+  @IsOptional()
+  @ValidateIf((o) => o.pbxExtension !== null)
+  @Matches(/^\d{2,6}$/, { message: 'PBX extension must be 2–6 digits' })
+  pbxExtension?: string | null;
 }

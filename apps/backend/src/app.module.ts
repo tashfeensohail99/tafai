@@ -51,6 +51,7 @@ import { PushModule } from './modules/push/push.module';
 import { DevicesModule } from './modules/devices/devices.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
+import { TelephonyModule } from './modules/telephony/telephony.module';
 
 @Module({
   imports: [
@@ -112,6 +113,7 @@ import { PayrollModule } from './modules/payroll/payroll.module';
     DevicesModule,
     AttendanceModule,
     PayrollModule,
+    TelephonyModule,
   ],
   providers: [
     // Global: keep Employee.lastActivityAt fresh on every authenticated request

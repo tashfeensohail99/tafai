@@ -12,6 +12,8 @@ class ChatMessage {
   final String? templateName;
   final String? errorCode;
   final String? errorTitle;
+  final String? waMessageId; // Meta's id — the key a reply quotes
+  final String? repliedToWaMessageId; // set when this message quotes another
   final DateTime createdAt;
   final DateTime? sentAt;
   final DateTime? deliveredAt;
@@ -29,6 +31,8 @@ class ChatMessage {
     this.templateName,
     this.errorCode,
     this.errorTitle,
+    this.waMessageId,
+    this.repliedToWaMessageId,
     required this.createdAt,
     this.sentAt,
     this.deliveredAt,
@@ -57,6 +61,8 @@ class ChatMessage {
         templateName: asStringOrNull(j['templateName']),
         errorCode: asStringOrNull(j['errorCode']),
         errorTitle: asStringOrNull(j['errorTitle']),
+        waMessageId: asStringOrNull(j['waMessageId']),
+        repliedToWaMessageId: asStringOrNull(j['repliedToWaMessageId']),
         createdAt: parseApiDate(j['createdAt']),
         sentAt: parseApiDateOrNull(j['sentAt']),
         deliveredAt: parseApiDateOrNull(j['deliveredAt']),

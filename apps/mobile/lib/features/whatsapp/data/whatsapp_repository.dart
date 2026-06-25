@@ -142,11 +142,16 @@ class WhatsappRepository {
 
   /// POST /whatsapp/threads/:id/messages/text — only inside the 24h window
   /// (else 400 → use a template).
-  Future<ChatMessage> sendText(String threadId, String body) async {
+  Future<ChatMessage> sendText(String threadId, String body,
+      {String? contextWaMessageId}) async {
     try {
       final res = await _c.post<Map<String, dynamic>>(
         '/whatsapp/threads/$threadId/messages/text',
-        data: {'body': body},
+        data: {
+          'body': body,
+          if (contextWaMessageId != null)
+            'contextWaMessageId': contextWaMessageId,
+        },
       );
       return ChatMessage.fromJson(res.data!);
     } on DioException catch (e) {

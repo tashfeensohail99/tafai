@@ -109,21 +109,83 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     });
   }
 
+  /// The message currently being replied to (swipe a bubble to set it). When
+  /// set, a quote bar shows above the composer and the next send links to it.
+  ChatMessage? _replyingTo;
+
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _sending) return;
     HapticFeedback.lightImpact();
+    final replyTo = _replyingTo;
     setState(() => _sending = true);
     try {
-      final msg = await ref.read(whatsappRepositoryProvider).sendText(_threadId, text);
+      final msg = await ref.read(whatsappRepositoryProvider).sendText(
+            _threadId,
+            text,
+            contextWaMessageId: replyTo?.waMessageId,
+          );
       ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
       _composer.clear();
+      if (mounted) setState(() => _replyingTo = null);
       _jumpToBottom(animate: true);
     } on AppError catch (e) {
       _toast(messageForError(e));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  /// "Replying to …" bar shown above the composer when a reply target is set.
+  Widget _replyPreviewBar(bool isDark) {
+    final r = _replyingTo;
+    if (r == null) return const SizedBox.shrink();
+    final who = r.isOutbound ? 'You' : _thread.displayName;
+    final preview = (r.body?.trim().isNotEmpty ?? false)
+        ? r.body!.trim()
+        : (r.isMedia ? '[media]' : '[message]');
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          AppTokens.space2, 0, AppTokens.space2, AppTokens.space2),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppTokens.space3, vertical: AppTokens.space2),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A3942) : const Color(0xFFEFF2F5),
+        borderRadius: const BorderRadius.all(Radius.circular(8)),
+        border: const Border(
+          left: BorderSide(color: AppTokens.brandNavy, width: 3),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.reply, size: 16, color: AppTokens.brandNavy),
+          const SizedBox(width: AppTokens.space2),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(who,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppTokens.brandNavy)),
+                Text(preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5)),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Cancel reply',
+            icon: const Icon(Icons.close, size: 18),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(() => _replyingTo = null),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _toggleAi() async {
@@ -736,7 +798,36 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
           );
         }
         final msg = state.items[hasHeader ? i - 1 : i];
-        return _Bubble(message: msg, threadId: _threadId);
+        // Resolve the quoted message (if this is a reply) from the loaded list.
+        ChatMessage? quoted;
+        if (msg.repliedToWaMessageId != null) {
+          for (final m in state.items) {
+            if (m.waMessageId != null &&
+                m.waMessageId == msg.repliedToWaMessageId) {
+              quoted = m;
+              break;
+            }
+          }
+        }
+        // Swipe a bubble left→right to reply to it (bounces back, like WhatsApp).
+        return Dismissible(
+          key: ValueKey('swipe-${msg.id}'),
+          direction: DismissDirection.startToEnd,
+          dismissThresholds: const {DismissDirection.startToEnd: 0.28},
+          confirmDismiss: (_) async {
+            HapticFeedback.lightImpact();
+            setState(() => _replyingTo = msg);
+            return false;
+          },
+          background: const Padding(
+            padding: EdgeInsets.only(left: 28),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Icon(Icons.reply, color: AppTokens.brandNavy),
+            ),
+          ),
+          child: _Bubble(message: msg, threadId: _threadId, quoted: quoted),
+        );
       },
     );
   }
@@ -758,7 +849,11 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
         ),
         padding: const EdgeInsets.fromLTRB(
             AppTokens.space2, AppTokens.space2, AppTokens.space2, AppTokens.space2),
-        child: windowOpen
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_replyingTo != null) _replyPreviewBar(isDark),
+            windowOpen
             ? (_voiceRec != null
                 ? Row(
                     children: [
@@ -904,6 +999,8 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                         ),
                 ],
               ),
+          ],
+        ),
       ),
     );
   }
@@ -912,7 +1009,8 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
 class _Bubble extends StatelessWidget {
   final ChatMessage message;
   final String threadId;
-  const _Bubble({required this.message, required this.threadId});
+  final ChatMessage? quoted;
+  const _Bubble({required this.message, required this.threadId, this.quoted});
 
   @override
   Widget build(BuildContext context) {
@@ -956,6 +1054,7 @@ class _Bubble extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (quoted != null) _quotedBlock(quoted!, out, fg),
             _content(fg),
             const SizedBox(height: 2),
             Row(
@@ -980,6 +1079,40 @@ class _Bubble extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// The small quoted-message block rendered above a reply's body.
+  Widget _quotedBlock(ChatMessage q, bool out, Color fg) {
+    final who = q.isOutbound ? 'You' : 'Them';
+    final preview = (q.body?.trim().isNotEmpty ?? false)
+        ? q.body!.trim()
+        : (q.isMedia ? '[media]' : '[message]');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: out ? 0.06 : 0.04),
+        borderRadius: const BorderRadius.all(Radius.circular(6)),
+        border: const Border(
+          left: BorderSide(color: AppTokens.brandNavy, width: 3),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(who,
+              style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppTokens.brandNavy)),
+          Text(preview,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: fg.withValues(alpha: 0.85))),
+        ],
       ),
     );
   }

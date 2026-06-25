@@ -29,6 +29,7 @@ import {
   WhatsAppMessageDirection,
   WhatsAppMessageStatus,
   WhatsAppMessageType,
+  WhatsAppThreadStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
@@ -241,6 +242,194 @@ export class WhatsAppMessagesService {
       });
     }
     return message;
+  }
+
+  /**
+   * Report the re-engagement backlog for a given template: how many dormant
+   * threads are still eligible (never replied-to by a human, 24h window closed,
+   * contact not blocked, and NOT already sent this template), and how many have
+   * already received it. Used by the admin batch sender to show progress.
+   */
+  async reengageStats(templateName: string): Promise<{
+    templateName: string;
+    alreadySent: number;
+    eligibleRemaining: number;
+  }> {
+    const now = new Date();
+    const sentThreadIds = await this.reengageSentThreadIds(templateName);
+    const eligibleRemaining = await this.prisma.whatsAppThread.count({
+      where: this.reengageEligibleWhere(now, sentThreadIds),
+    });
+    return { templateName, alreadySent: sentThreadIds.size, eligibleRemaining };
+  }
+
+  /**
+   * Send the approved re-engagement TEMPLATE to the next batch of dormant leads.
+   *
+   * Audience: threads with NO human reply ever (lastHumanReplyAt null), status
+   * OPEN/PENDING, 24h window CLOSED, contact not blocked, and that have NOT
+   * already received this template (idempotent — safe to re-run; a thread is
+   * never messaged twice). Ordered most-recent-first (higher reply rate).
+   *
+   * Each message is a system/campaign send (sentByEmployeeId = null) so it does
+   * NOT clear the "uncontacted" flag or disable the AI — a rep still has to reply
+   * when the customer responds. {{1}} is auto-filled with the contact's first
+   * name. Goes through the normal outbound queue + WhatsAppMessage row, so every
+   * send is logged, retried, and delivery-tracked exactly like a manual send.
+   *
+   * Jobs are staggered (small per-job delay) so a batch trickles out over a few
+   * minutes instead of bursting — protects the sender quality rating.
+   */
+  async reengageDormantBatch(input: {
+    templateName: string;
+    language: string;
+    limit: number;
+    dryRun?: boolean;
+    staggerMs?: number;
+  }): Promise<{
+    dryRun: boolean;
+    templateName: string;
+    eligibleRemainingBefore: number;
+    selected: number;
+    queued: number;
+    sampleNames: string[];
+    eligibleRemainingAfter: number;
+  }> {
+    const now = new Date();
+    const dryRun = input.dryRun ?? false;
+    const limit = Math.min(Math.max(Math.trunc(input.limit ?? 0), 0), 500); // hard cap 500/run
+    const staggerMs = Math.min(Math.max(Math.trunc(input.staggerMs ?? 1500), 0), 10_000);
+
+    const sentThreadIds = await this.reengageSentThreadIds(input.templateName);
+    const where = this.reengageEligibleWhere(now, sentThreadIds);
+    const eligibleRemainingBefore = await this.prisma.whatsAppThread.count({ where });
+
+    // Pull a small buffer beyond `limit` so dropping blocked contacts in memory
+    // still leaves a full batch.
+    const candidates = await this.prisma.whatsAppThread.findMany({
+      where,
+      orderBy: { lastMessageAt: 'desc' },
+      take: limit + 50,
+      select: {
+        id: true,
+        channelId: true,
+        leadId: true,
+        clientId: true,
+        lead: { select: { firstName: true, blockedAt: true } },
+        client: { select: { firstName: true, blockedAt: true } },
+      },
+    });
+    const selectable = candidates
+      .filter((t) => !t.lead?.blockedAt && !t.client?.blockedAt)
+      .slice(0, limit);
+
+    const sampleNames = selectable
+      .slice(0, 8)
+      .map((t) => (t.lead?.firstName ?? t.client?.firstName ?? 'there').trim() || 'there');
+
+    if (dryRun) {
+      return {
+        dryRun: true,
+        templateName: input.templateName,
+        eligibleRemainingBefore,
+        selected: selectable.length,
+        queued: 0,
+        sampleNames,
+        eligibleRemainingAfter: eligibleRemainingBefore,
+      };
+    }
+
+    // Resolve the template BODY once per channel for the stored (display) text.
+    const bodyByChannel = new Map<string, string | null>();
+    let queued = 0;
+    let i = 0;
+    for (const t of selectable) {
+      const firstName = (t.lead?.firstName ?? t.client?.firstName ?? '').trim() || 'there';
+      const components: Array<Record<string, unknown>> = [
+        { type: 'body', parameters: [{ type: 'text', text: firstName }] },
+      ];
+      if (!bodyByChannel.has(t.channelId)) {
+        bodyByChannel.set(
+          t.channelId,
+          await this.renderTemplateBody(t.channelId, input.templateName, components),
+        );
+      }
+      const tpl = bodyByChannel.get(t.channelId) ?? null;
+      const renderedBody = tpl
+        ? tpl.replace(/\{\{(\d+)\}\}/g, (_, n: string) => (n === '1' ? firstName : `{{${n}}}`))
+        : null;
+
+      try {
+        const message = await this.prisma.whatsAppMessage.create({
+          data: {
+            threadId: t.id,
+            channelId: t.channelId,
+            leadId: t.leadId,
+            clientId: t.clientId,
+            direction: WhatsAppMessageDirection.OUTBOUND,
+            type: WhatsAppMessageType.TEMPLATE,
+            status: WhatsAppMessageStatus.QUEUED,
+            templateName: input.templateName,
+            templateLanguage: input.language,
+            body: renderedBody,
+            payload: {
+              components,
+              source: 'reengagement_backlog',
+            } as unknown as Prisma.InputJsonValue,
+            sentByEmployeeId: null, // campaign send — must NOT count as a human reply
+            idempotencyKey: randomUUID(),
+          },
+          select: { id: true },
+        });
+        await this.outboundQueue.add(
+          'send',
+          { messageId: message.id },
+          { jobId: message.id, delay: i * staggerMs },
+        );
+        queued += 1;
+        i += 1;
+      } catch (e) {
+        this.logger.warn(
+          `reengage: failed to queue thread ${t.id}: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    return {
+      dryRun: false,
+      templateName: input.templateName,
+      eligibleRemainingBefore,
+      selected: selectable.length,
+      queued,
+      sampleNames,
+      eligibleRemainingAfter: Math.max(eligibleRemainingBefore - queued, 0),
+    };
+  }
+
+  /** Distinct thread IDs that have already received the given template (any
+   *  status) — the idempotency guard so we never double-message a thread. */
+  private async reengageSentThreadIds(templateName: string): Promise<Set<string>> {
+    const rows = await this.prisma.whatsAppMessage.findMany({
+      where: { templateName },
+      select: { threadId: true },
+      distinct: ['threadId'],
+    });
+    return new Set(rows.map((r) => r.threadId).filter((id): id is string => !!id));
+  }
+
+  /** Prisma `where` for re-engagement-eligible threads: uncontacted (no human
+   *  reply ever), live, 24h window closed, excluding ones already sent. Blocked
+   *  contacts are dropped in memory (relation-OR is awkward in a single where). */
+  private reengageEligibleWhere(
+    now: Date,
+    sentThreadIds: Set<string>,
+  ): Prisma.WhatsAppThreadWhereInput {
+    return {
+      lastHumanReplyAt: null,
+      status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
+      windowExpiresAt: { lt: now },
+      ...(sentThreadIds.size ? { id: { notIn: [...sentThreadIds] } } : {}),
+    };
   }
 
   /**

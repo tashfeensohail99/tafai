@@ -451,6 +451,19 @@ export function sendText(threadId: string, body: string, opts?: {
   });
 }
 
+/**
+ * Proactively ask the customer to allow WhatsApp calls (Meta's call-permission
+ * opt-in). Requires the 24-hour window to be open. On success the thread's
+ * callPermissionStatus becomes PENDING and updates live via the
+ * `whatsapp.call.permission` realtime event when the customer responds.
+ */
+export function requestCallPermission(threadId: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/whatsapp/calls/permission`, {
+    method: 'POST',
+    body: JSON.stringify({ threadId }),
+  });
+}
+
 export function sendTemplate(threadId: string, input: {
   templateName: string;
   language: string;

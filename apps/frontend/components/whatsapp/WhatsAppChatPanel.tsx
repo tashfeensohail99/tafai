@@ -64,6 +64,7 @@ import { useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { getAccessToken } from '@/lib/auth-client';
 import {
   getThread,
+  requestCallPermission,
   listMessages,
   markThreadRead,
   sendMediaMessage,
@@ -731,6 +732,26 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               thread.callPermissionStatus,
               thread.callPermissionExpiresAt,
             )}
+            withinWindow={withinWindow}
+            onRequestPermission={() => {
+              void (async () => {
+                try {
+                  await requestCallPermission(thread.id);
+                  setThread((p) =>
+                    p
+                      ? { ...p, callPermissionStatus: 'PENDING', callPermissionExpiresAt: null }
+                      : p,
+                  );
+                  setError(null);
+                } catch (e) {
+                  setError(
+                    e instanceof Error
+                      ? e.message
+                      : 'Could not send the call-permission request',
+                  );
+                }
+              })();
+            }}
           />
         ) : null}
         {/* Click-to-WhatsApp ad attribution banner — shows when the thread's
@@ -1921,7 +1942,7 @@ function ChatHeader(props: {
 function callPermissionChip(
   status: string | null | undefined,
   expiresAt: string | null | undefined,
-): { label: string; color: string; bg: string; title: string } {
+): { label: string; color: string; bg: string; title: string; action: 'request' | null } {
   const exp = expiresAt ? new Date(expiresAt) : null;
   const expired = !!exp && exp.getTime() < Date.now();
   if (status === 'GRANTED' && !expired) {
@@ -1931,6 +1952,7 @@ function callPermissionChip(
       color: 'var(--sos-status-success)',
       bg: 'var(--sos-status-success-soft)',
       title: 'The customer has allowed WhatsApp calls — you can call them now.',
+      action: null,
     };
   }
   if (status === 'GRANTED' && expired) {
@@ -1939,6 +1961,7 @@ function callPermissionChip(
       color: 'var(--sos-status-warning)',
       bg: 'var(--sos-status-warning-soft)',
       title: 'Permission has expired — request it again before calling.',
+      action: 'request',
     };
   }
   if (status === 'PENDING') {
@@ -1947,6 +1970,7 @@ function callPermissionChip(
       color: 'var(--sos-status-warning)',
       bg: 'var(--sos-status-warning-soft)',
       title: 'Waiting for the customer to tap “Allow” on the call-permission request.',
+      action: null,
     };
   }
   if (status === 'REJECTED') {
@@ -1954,7 +1978,8 @@ function callPermissionChip(
       label: 'Calls declined',
       color: 'var(--sos-status-danger)',
       bg: 'var(--sos-status-danger-soft)',
-      title: 'The customer declined call permission. You can request it again.',
+      title: 'The customer declined call permission. You can ask again.',
+      action: 'request',
     };
   }
   return {
@@ -1962,7 +1987,8 @@ function callPermissionChip(
     color: 'var(--sos-text-secondary)',
     bg: 'var(--sos-surface-2)',
     title:
-      'Meta requires the customer to allow WhatsApp calls first. Click Call — if it’s blocked you can send a permission request.',
+      'Meta requires the customer to allow WhatsApp calls first. Tap “Request call permission” to send them the opt-in.',
+    action: 'request',
   };
 }
 
@@ -1974,6 +2000,8 @@ function QuickActionsBar({
   onBook,
   onCall,
   callPermission,
+  withinWindow,
+  onRequestPermission,
 }: {
   canConvertToLead: boolean;
   canEditLead: boolean;
@@ -1981,7 +2009,9 @@ function QuickActionsBar({
   onEditLead: () => void;
   onBook: () => void;
   onCall: () => void;
-  callPermission: { label: string; color: string; bg: string; title: string };
+  callPermission: { label: string; color: string; bg: string; title: string; action: 'request' | null };
+  withinWindow: boolean;
+  onRequestPermission: () => void;
 }) {
   return (
     <div
@@ -2070,25 +2100,73 @@ function QuickActionsBar({
         <Phone size={13} />
         Call
       </button>
-      {/* Call-permission status — tells the rep whether an outbound WhatsApp
-          call is currently allowed (Meta requires the customer to opt in). */}
-      <span
-        title={callPermission.title}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          alignSelf: 'center',
-          padding: '5px 10px',
-          borderRadius: 999,
-          fontSize: 11,
-          fontWeight: 600,
-          background: callPermission.bg,
-          color: callPermission.color,
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {callPermission.label}
-      </span>
+      {/* Call-permission control — when permission is needed, this is a BUTTON
+          that proactively sends the customer the opt-in request (so they can
+          Allow up-front, instead of us calling first and getting blocked). Once
+          granted/pending it's an informational chip. */}
+      {callPermission.action === 'request' ? (
+        withinWindow ? (
+          <button
+            type="button"
+            onClick={onRequestPermission}
+            title="Send the customer a WhatsApp call-permission request. Once they tap “Allow”, you can call them — no need to call first."
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              alignSelf: 'center',
+              gap: 5,
+              padding: '7px 12px',
+              borderRadius: 999,
+              border: '1px solid var(--sos-border-strong)',
+              background: 'var(--sos-surface-1)',
+              color: 'var(--sos-text-primary)',
+              fontSize: 11.5,
+              fontWeight: 700,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <Phone size={13} />
+            Request call permission
+          </button>
+        ) : (
+          <span
+            title="Send the customer a message first — the call-permission request can only go out inside the 24-hour window."
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              alignSelf: 'center',
+              padding: '5px 10px',
+              borderRadius: 999,
+              fontSize: 11,
+              fontWeight: 600,
+              background: callPermission.bg,
+              color: callPermission.color,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {callPermission.label}
+          </span>
+        )
+      ) : (
+        <span
+          title={callPermission.title}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            alignSelf: 'center',
+            padding: '5px 10px',
+            borderRadius: 999,
+            fontSize: 11,
+            fontWeight: 600,
+            background: callPermission.bg,
+            color: callPermission.color,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {callPermission.label}
+        </span>
+      )}
       {/* Edit lead — only shown once the contact is a tracked Lead.
           Opens the same EditLeadModal used on the lead profile page,
           prefilled with the lead's current details. Lets sales correct

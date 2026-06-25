@@ -126,7 +126,10 @@ export class AuthService {
     );
 
     const refreshToken = randomUUID();
-    const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Permanent session: the user stays logged in until they explicitly log out
+    // (which revokes the session) or an admin deactivates / resets them. So the
+    // session is created with a far-future expiry instead of a 7-day TTL.
+    const refreshExpiresAt = new Date('2999-12-31T23:59:59Z');
 
     await this.prisma.$transaction([
       this.prisma.userAccount.update({
@@ -182,14 +185,16 @@ export class AuthService {
       },
     });
 
+    // Permanent session: a session ends ONLY when it is explicitly revoked
+    // (user logout, admin deactivate / password reset). Time-based expiry is
+    // intentionally NOT a rejection reason, so users stay logged in indefinitely.
     if (
       !session ||
       session.revokedAt ||
-      session.expiresAt < new Date() ||
       session.user.status !== 'ACTIVE' ||
       session.user.deletedAt
     ) {
-      throw new UnauthorizedException('Invalid or expired refresh token');
+      throw new UnauthorizedException('Invalid or revoked refresh token');
     }
 
     const { roles, permissions } = extractRolesAndPermissions(session.user);
@@ -204,26 +209,17 @@ export class AuthService {
       { expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN ?? '15m') as StringValue },
     );
 
-    const newRefreshToken = randomUUID();
-    const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Do NOT rotate or revoke the refresh token — reissue a fresh access token
+    // against the SAME long-lived session. This removes the rotation race that
+    // was forcing repeated logouts (and stops the session table growing per
+    // refresh). Pin expiresAt far-future so any pre-existing 7-day session also
+    // becomes permanent on its next refresh — no transition logout, no backfill.
+    await this.prisma.loginSession.update({
+      where: { id: session.id },
+      data: { expiresAt: new Date('2999-12-31T23:59:59Z') },
+    });
 
-    await this.prisma.$transaction([
-      this.prisma.loginSession.update({
-        where: { id: session.id },
-        data: { revokedAt: new Date() },
-      }),
-      this.prisma.loginSession.create({
-        data: {
-          userId: session.userId,
-          refreshToken: newRefreshToken,
-          ipAddress: session.ipAddress,
-          userAgent: session.userAgent,
-          expiresAt: newExpiresAt,
-        },
-      }),
-    ]);
-
-    return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+    return { accessToken: newAccessToken, refreshToken: session.refreshToken };
   }
 
   async logout(refreshToken: string, actorUserId: string): Promise<void> {

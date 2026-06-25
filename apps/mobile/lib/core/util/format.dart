@@ -33,6 +33,23 @@ String relativeTime(DateTime d) {
   return formatDate(d);
 }
 
+/// WhatsApp-style conversation-list timestamp: today → time ("3:45 PM"),
+/// yesterday → "Yesterday", within the last week → weekday ("Monday"), older →
+/// date ("21 Jun", or "21 Jun 2025" for a prior year). Rendered in local time.
+/// Clearer than relativeTime ("2d ago") for the inbox list, matching WhatsApp.
+String chatTimestamp(DateTime d) {
+  final local = d.toLocal();
+  final now = DateTime.now();
+  final startToday = DateTime(now.year, now.month, now.day);
+  final startThat = DateTime(local.year, local.month, local.day);
+  final dayDiff = startToday.difference(startThat).inDays;
+  if (dayDiff <= 0) return DateFormat('h:mm a').format(local); // today (or future)
+  if (dayDiff == 1) return 'Yesterday';
+  if (dayDiff < 7) return DateFormat('EEEE').format(local); // Monday…
+  if (local.year == now.year) return DateFormat('d MMM').format(local); // 21 Jun
+  return DateFormat('d MMM yyyy').format(local);
+}
+
 // --- Pakistan Standard Time (UTC+5, no DST) --------------------------------
 // Appointment office-hours, availability slots and business-day logic are all
 // PKT on the backend. These render an instant in PKT wall-clock regardless of

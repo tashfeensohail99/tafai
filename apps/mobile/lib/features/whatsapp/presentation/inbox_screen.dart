@@ -532,10 +532,14 @@ class _ThreadTile extends StatelessWidget {
                         if (when != null) ...[
                           const SizedBox(width: 6),
                           Text(
-                            relativeTime(when),
-                            style: const TextStyle(
-                              color: AppTokens.textMutedLight,
-                              fontSize: 11,
+                            chatTimestamp(when),
+                            style: TextStyle(
+                              color: awaiting
+                                  ? AppTokens.statusWarning
+                                  : AppTokens.textMutedLight,
+                              fontSize: 11.5,
+                              fontWeight:
+                                  hasUnread ? FontWeight.w700 : FontWeight.w500,
                             ),
                           ),
                         ],

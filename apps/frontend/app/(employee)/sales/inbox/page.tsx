@@ -7,6 +7,7 @@ import {
   Ban,
   Inbox as InboxIcon,
   MessageSquare,
+  MoreVertical,
   Search,
   ShieldOff,
 } from 'lucide-react';
@@ -1107,83 +1108,179 @@ const ThreadRow = memo(function ThreadRow({
           </div>
         </div>
 
-        {/* Per-row actions — Archive/Unarchive and Block/Unblock. stopPropagation
-            so tapping an action doesn't also open the chat. */}
+        {/* Per-row actions tucked behind a three-dot menu — keeps the row clean
+            (the open Archive/Block icons were noisy). The menu stops propagation
+            so opening it / picking an action doesn't also open the chat. */}
         {canArchive || canBlock ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-            {canArchive ? (
-              <RowActionButton
-                label={isArchived ? 'Unarchive conversation' : 'Archive conversation'}
-                disabled={busy}
-                onClick={() => onArchive(item)}
-                icon={isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-              />
-            ) : null}
-            {canBlock ? (
-              blockedView ? (
-                <RowActionButton
-                  label="Unblock contact"
-                  disabled={busy}
-                  onClick={() => onUnblock(item)}
-                  icon={<ShieldOff size={15} />}
-                />
-              ) : (
-                <RowActionButton
-                  label="Block contact"
-                  danger
-                  disabled={busy}
-                  onClick={() => onBlock(item)}
-                  icon={<Ban size={15} />}
-                />
-              )
-            ) : null}
-          </div>
+          <RowActionsMenu
+            item={item}
+            isArchived={isArchived}
+            blockedView={blockedView}
+            canArchive={canArchive}
+            canBlock={canBlock}
+            busy={busy}
+            onArchive={onArchive}
+            onBlock={onBlock}
+            onUnblock={onUnblock}
+          />
         ) : null}
       </div>
     </div>
   );
 });
 
-/** Compact icon-only action button used on each thread row. */
-function RowActionButton({
-  label,
+/** Three-dot row menu → Archive/Unarchive + Mark-as-Junk(block)/Unblock. Keeps
+ *  the inbox row clean instead of showing the action icons openly. */
+function RowActionsMenu({
+  item,
+  isArchived,
+  blockedView,
+  canArchive,
+  canBlock,
+  busy,
+  onArchive,
+  onBlock,
+  onUnblock,
+}: {
+  item: ThreadListItem;
+  isArchived: boolean;
+  blockedView: boolean;
+  canArchive: boolean;
+  canBlock: boolean;
+  busy: boolean;
+  onArchive: (item: ThreadListItem) => void;
+  onBlock: (item: ThreadListItem) => void;
+  onUnblock: (item: ThreadListItem) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const run = (fn: () => void) => {
+    setOpen(false);
+    fn();
+  };
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        type="button"
+        aria-label="Conversation actions"
+        title="More"
+        disabled={busy}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!busy) setOpen((o) => !o);
+        }}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--sos-text-muted)',
+          cursor: busy ? 'default' : 'pointer',
+          opacity: busy ? 0.5 : 1,
+          padding: 6,
+          borderRadius: 6,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="sos-glass sos-glass--strong"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 'calc(100% + 4px)',
+            minWidth: 184,
+            borderRadius: 10,
+            zIndex: 60,
+            overflow: 'hidden',
+            padding: 4,
+          }}
+        >
+          {canArchive ? (
+            <RowMenuItem
+              icon={isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+              label={isArchived ? 'Unarchive' : 'Archive'}
+              onClick={() => run(() => onArchive(item))}
+            />
+          ) : null}
+          {canBlock ? (
+            blockedView ? (
+              <RowMenuItem
+                icon={<ShieldOff size={15} />}
+                label="Unblock contact"
+                onClick={() => run(() => onUnblock(item))}
+              />
+            ) : (
+              <RowMenuItem
+                icon={<Ban size={15} />}
+                label="Mark as Junk"
+                danger
+                onClick={() => run(() => onBlock(item))}
+              />
+            )
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** A single action row inside RowActionsMenu. */
+function RowMenuItem({
   icon,
+  label,
   onClick,
-  disabled,
   danger,
 }: {
-  label: string;
   icon: React.ReactNode;
+  label: string;
   onClick: () => void;
-  disabled?: boolean;
   danger?: boolean;
 }) {
-  const baseColor = danger ? 'var(--sos-status-danger-strong)' : 'var(--sos-text-muted)';
   return (
     <button
       type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
-        if (!disabled) onClick();
+        onClick();
       }}
       style={{
-        background: 'transparent',
-        border: 'none',
-        color: baseColor,
-        cursor: disabled ? 'default' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
-        padding: 6,
-        borderRadius: 6,
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
+        gap: 8,
+        width: '100%',
+        textAlign: 'left',
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        padding: '8px 10px',
+        borderRadius: 6,
+        fontSize: 13,
+        fontWeight: 500,
+        color: danger ? 'var(--sos-status-danger-strong)' : 'var(--sos-text-primary)',
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.background = 'var(--sos-surface-2)';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.background = 'transparent';
       }}
     >
       {icon}
+      {label}
     </button>
   );
 }

@@ -8,6 +8,7 @@ import '../../../core/util/format.dart';
 import '../../../core/widgets/app_states.dart';
 import '../../../core/widgets/premium_ui.dart';
 import '../data/whatsapp_providers.dart';
+import '../data/whatsapp_repository.dart';
 import '../domain/wa_stats.dart';
 import '../domain/wa_thread.dart';
 import 'thread_screen.dart';
@@ -67,6 +68,101 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
     final filter = ref.read(inboxFilterProvider);
     ref.read(threadsControllerProvider(filter).notifier).refresh();
     ref.invalidate(threadStatsProvider);
+  }
+
+  /// Long-press a chat → quick-actions sheet (Archive / Mark as Junk), like
+  /// modern chat apps. Keeps each row clean instead of showing action buttons.
+  Future<void> _showThreadActions(WhatsappThread t) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) {
+        final isArchived = t.isArchived;
+        final isBlocked = t.isBlocked;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppTokens.space4, AppTokens.space3, AppTokens.space4, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    t.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: Icon(isArchived
+                    ? Icons.unarchive_outlined
+                    : Icons.archive_outlined),
+                title: Text(isArchived ? 'Unarchive' : 'Archive'),
+                onTap: () =>
+                    Navigator.pop(sheetCtx, isArchived ? 'unarchive' : 'archive'),
+              ),
+              if (isBlocked)
+                ListTile(
+                  leading: const Icon(Icons.lock_open_outlined),
+                  title: const Text('Unblock contact'),
+                  onTap: () => Navigator.pop(sheetCtx, 'unblock'),
+                )
+              else
+                ListTile(
+                  leading: const Icon(Icons.block, color: AppTokens.statusDanger),
+                  title: const Text('Mark as Junk',
+                      style: TextStyle(color: AppTokens.statusDanger)),
+                  subtitle: const Text('Blocks the contact & archives the chat'),
+                  onTap: () => Navigator.pop(sheetCtx, 'junk'),
+                ),
+              const SizedBox(height: AppTokens.space2),
+            ],
+          ),
+        );
+      },
+    );
+    if (action == null || !mounted) return;
+    final repo = ref.read(whatsappRepositoryProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      switch (action) {
+        case 'archive':
+          await repo.archiveThread(t.id);
+          messenger.showSnackBar(
+              const SnackBar(content: Text('Conversation archived')));
+          break;
+        case 'unarchive':
+          await repo.unarchiveThread(t.id);
+          messenger.showSnackBar(
+              const SnackBar(content: Text('Conversation unarchived')));
+          break;
+        case 'junk':
+          await repo.blockContact(t.id);
+          messenger.showSnackBar(const SnackBar(
+              content: Text('Marked as junk — contact blocked & archived')));
+          break;
+        case 'unblock':
+          await repo.unblockContact(t.id);
+          messenger.showSnackBar(
+              const SnackBar(content: Text('Contact unblocked')));
+          break;
+      }
+      if (!mounted) return;
+      final filter = ref.read(inboxFilterProvider);
+      await ref.read(threadsControllerProvider(filter).notifier).refresh();
+      ref.invalidate(threadStatsProvider);
+    } catch (_) {
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Action failed. Please try again.')));
+    }
   }
 
   @override
@@ -151,6 +247,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
             onRetry: () =>
                 ref.read(threadsControllerProvider(filter).notifier).refresh(),
             onOpen: _openThread,
+            onActions: _showThreadActions,
           ),
         ),
       ],
@@ -272,6 +369,7 @@ class _ThreadsList extends StatelessWidget {
   final VoidCallback onLoadMore;
   final VoidCallback onRetry;
   final void Function(WhatsappThread) onOpen;
+  final void Function(WhatsappThread) onActions;
 
   const _ThreadsList({
     required this.state,
@@ -280,6 +378,7 @@ class _ThreadsList extends StatelessWidget {
     required this.onLoadMore,
     required this.onRetry,
     required this.onOpen,
+    required this.onActions,
   });
 
   @override
@@ -332,7 +431,8 @@ class _ThreadsList extends StatelessWidget {
           }
           return _ThreadTile(
               thread: state.items[i],
-              onTap: () => onOpen(state.items[i]));
+              onTap: () => onOpen(state.items[i]),
+              onLongPress: () => onActions(state.items[i]));
         },
       ),
     );
@@ -344,7 +444,9 @@ class _ThreadsList extends StatelessWidget {
 class _ThreadTile extends StatelessWidget {
   final WhatsappThread thread;
   final VoidCallback onTap;
-  const _ThreadTile({required this.thread, required this.onTap});
+  final VoidCallback? onLongPress;
+  const _ThreadTile(
+      {required this.thread, required this.onTap, this.onLongPress});
 
   String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));

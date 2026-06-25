@@ -40,7 +40,6 @@ import {
   Mic,
   Camera,
   Phone,
-  PhoneCall,
   Plus,
   Reply,
   RotateCcw,
@@ -702,7 +701,6 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             sidebar with the same actions, so we skip the duplicate there. */}
         {hideSidePanel ? (
           <QuickActionsBar
-            isLead={!thread.client && !!thread.lead}
             canConvertToLead={!thread.leadId && !thread.clientId}
             canEditLead={!!thread.lead && !thread.client}
             onConvertToLead={() => {
@@ -718,7 +716,6 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             }}
             onEditLead={() => setEditLeadOpen(true)}
             onBook={() => setBookOpen(true)}
-            onFollowUp={() => setFollowUpOpen(true)}
             onCall={() =>
               window.dispatchEvent(
                 new CustomEvent('wa:outbound-call', {
@@ -1970,23 +1967,19 @@ function callPermissionChip(
 }
 
 function QuickActionsBar({
-  isLead,
   canConvertToLead,
   canEditLead,
   onConvertToLead,
   onEditLead,
   onBook,
-  onFollowUp,
   onCall,
   callPermission,
 }: {
-  isLead: boolean;
   canConvertToLead: boolean;
   canEditLead: boolean;
   onConvertToLead: () => void;
   onEditLead: () => void;
   onBook: () => void;
-  onFollowUp: () => void;
   onCall: () => void;
   callPermission: { label: string; color: string; bg: string; title: string };
 }) {
@@ -2096,29 +2089,6 @@ function QuickActionsBar({
       >
         {callPermission.label}
       </span>
-      {isLead ? (
-        <button
-          type="button"
-          onClick={onFollowUp}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '7px 14px',
-            borderRadius: 999,
-            border: '1px solid var(--sos-border-strong)',
-            background: 'var(--sos-surface-1)',
-            color: 'var(--sos-text-primary)',
-            fontSize: 12.5,
-            fontWeight: 600,
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <PhoneCall size={13} />
-          Add follow-up
-        </button>
-      ) : null}
       {/* Edit lead — only shown once the contact is a tracked Lead.
           Opens the same EditLeadModal used on the lead profile page,
           prefilled with the lead's current details. Lets sales correct

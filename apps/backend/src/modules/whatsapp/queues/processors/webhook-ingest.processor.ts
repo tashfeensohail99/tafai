@@ -281,12 +281,157 @@ export class WebhookIngestProcessor extends WorkerHost {
     }
 
     for (const msg of value.messages ?? []) {
+      // A reply to our call-permission request (the customer tapped Allow /
+      // Decline) arrives as an inbound INTERACTIVE message. Record the verdict
+      // + ping the rep instead of dropping a raw "[interactive]" bubble.
+      if (this.isCallPermissionReply(msg)) {
+        await this.handleCallPermissionReply(channel.id, msg);
+        continue;
+      }
       const profileName = value.contacts?.find((c) => c.wa_id === msg.from)?.profile?.name;
       await this.ingestInboundMessage(channel.id, msg, profileName ?? null);
     }
     for (const st of value.statuses ?? []) {
       await this.ingestStatus(st);
     }
+  }
+
+  /** True when an inbound message is the user's reply to a `call_permission_request`. */
+  private isCallPermissionReply(msg: MetaMessage): boolean {
+    if (msg.type !== 'interactive') return false;
+    const it = msg.interactive as { type?: string } | undefined;
+    return it?.type === 'call_permission_reply';
+  }
+
+  /**
+   * The customer answered our `call_permission_request` (tapped Allow / Decline).
+   * Meta delivers it as an inbound INTERACTIVE message of type
+   * `call_permission_reply`. Without this handler the CRM never learned the
+   * outcome — `callPermissionStatus` only ever read PENDING (on request) or was
+   * set optimistically after a successful call, so reps had no signal that a
+   * customer had opted in.
+   *
+   * Call permission is what authorises a BUSINESS-INITIATED call independent of
+   * the 24h messaging window, so granting it is exactly the green light a rep is
+   * waiting for. We stamp the verdict on the thread, drop a friendly line into
+   * the chat, fire the (previously-declared-but-never-emitted) CALL_PERMISSION
+   * realtime event, and bell-notify the assigned rep. The full raw payload is
+   * already persisted on whatsAppWebhookEvent, so nothing is lost if Meta tweaks
+   * the shape.
+   */
+  private async handleCallPermissionReply(channelId: string, msg: MetaMessage): Promise<void> {
+    // Idempotent: each webhook event processes once (processedAt), but Meta can
+    // REDELIVER the same reply in a fresh event — dedupe on the unique waMessageId.
+    const already = await this.prisma.whatsAppMessage.findUnique({
+      where: { waMessageId: msg.id },
+      select: { id: true },
+    });
+    if (already) return;
+
+    const it = msg.interactive as
+      | { call_permission_reply?: { response?: string; expiration_timestamp?: number | string } }
+      | undefined;
+    const reply = it?.call_permission_reply;
+    const granted = String(reply?.response ?? '').toLowerCase() === 'accept';
+    const now = new Date();
+
+    // expiration_timestamp is seconds in Meta's raw payload (some BSPs send ms).
+    // Normalise; default to Meta's 7-day grant if absent on an accept.
+    let expiresAt: Date | null = null;
+    if (granted) {
+      const rawTs = reply?.expiration_timestamp;
+      const n = typeof rawTs === 'string' ? Number(rawTs) : rawTs;
+      expiresAt =
+        n && Number.isFinite(n)
+          ? new Date(n > 1e12 ? n : n * 1000)
+          : new Date(now.getTime() + 7 * 24 * 3600 * 1000);
+    }
+
+    // We only send permission requests on existing threads, so one must exist.
+    const thread = await this.prisma.whatsAppThread.findFirst({
+      where: { channelId, waContactId: msg.from },
+      select: {
+        id: true,
+        leadId: true,
+        clientId: true,
+        lead: { select: { firstName: true, phone: true, assignedEmployeeId: true } },
+      },
+    });
+    if (!thread) {
+      this.log.warn(
+        `call-permission reply with no thread (channel ${channelId}, contact ${msg.from})`,
+      );
+      return;
+    }
+
+    await this.prisma.whatsAppThread.update({
+      where: { id: thread.id },
+      data: {
+        callPermissionStatus: granted ? 'GRANTED' : 'REJECTED',
+        callPermissionUpdatedAt: now,
+        callPermissionExpiresAt: expiresAt, // null on decline — clears any prior grant
+        lastMessageAt: now,
+        lastMessagePreview: granted ? '✅ Allowed WhatsApp calls' : '✋ Declined WhatsApp calls',
+      },
+    });
+
+    const expiryNote = expiresAt ? ` (until ${expiresAt.toISOString().slice(0, 10)})` : '';
+    await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        waMessageId: msg.id,
+        direction: WhatsAppMessageDirection.INBOUND,
+        type: WhatsAppMessageType.TEXT,
+        status: WhatsAppMessageStatus.RECEIVED,
+        body: granted
+          ? `🔔 Customer ALLOWED WhatsApp calls${expiryNote}. You can call them now.`
+          : '🔔 Customer DECLINED WhatsApp calls.',
+        createdAt: msg.timestamp ? new Date(Number(msg.timestamp) * 1000) : now,
+      },
+    });
+
+    // Realtime hint for any open inbox / CallDock (the event was declared in
+    // the WS contract but, until now, never actually emitted).
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (org) {
+      await this.publisher.publishToOrg(org.id, WHATSAPP_WS_EVENTS.CALL_PERMISSION, {
+        threadId: thread.id,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        status: granted ? 'GRANTED' : 'REJECTED',
+        expiresAt: expiresAt?.toISOString() ?? null,
+      });
+    }
+
+    // Bell-notify the assigned rep — this is the green light they were missing.
+    const assignedEmployeeId = thread.lead?.assignedEmployeeId ?? null;
+    if (assignedEmployeeId) {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: assignedEmployeeId },
+        select: { user: { select: { id: true } } },
+      });
+      const userId = emp?.user?.id;
+      if (userId) {
+        const who = (thread.lead?.firstName ?? thread.lead?.phone ?? 'Customer').trim();
+        await this.notifications.create({
+          userId,
+          type: 'WHATSAPP_CALL',
+          title: granted ? `📞 ${who} allowed WhatsApp calls` : `${who} declined WhatsApp calls`,
+          body: granted ? 'You can place a WhatsApp call now.' : 'Call permission was not granted.',
+          link: thread.leadId ? `/sales/leads/${thread.leadId}` : '/sales/inbox',
+        });
+      }
+    }
+
+    this.log.log(
+      `call-permission reply for thread ${thread.id}: ${granted ? 'GRANTED' : 'REJECTED'}${expiryNote}`,
+    );
   }
 
   /**

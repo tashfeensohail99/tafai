@@ -137,6 +137,46 @@ export class WhatsAppAppointmentNotifierService {
     return { sent: true, messageId: message.id, threadId: thread.id };
   }
 
+  /**
+   * Send a plain bot text message on a thread (bot-attributed —
+   * sentByEmployeeId null, so it never trips the human-takeover guard). Used by
+   * the orchestrator for proactive follow-ups like the post-booking email
+   * request. Best-effort: respects the 24h window, never throws.
+   */
+  async sendBotText(threadId: string, body: string): Promise<{ sent: boolean }> {
+    const thread = await this.prisma.whatsAppThread.findUnique({
+      where: { id: threadId },
+      select: {
+        id: true,
+        channelId: true,
+        leadId: true,
+        clientId: true,
+        windowExpiresAt: true,
+      },
+    });
+    if (!thread) return { sent: false };
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= Date.now()) {
+      return { sent: false };
+    }
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.TEXT,
+        status: WhatsAppMessageStatus.QUEUED,
+        body,
+        sentByEmployeeId: null,
+        idempotencyKey: randomUUID(),
+      },
+      select: { id: true },
+    });
+    await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
+    return { sent: true };
+  }
+
   private composeBody(input: {
     firstName: string | null;
     appointmentType: string;

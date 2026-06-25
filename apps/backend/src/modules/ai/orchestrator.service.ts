@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { OpenAiService } from './openai.service';
 import { KnowledgeService, type KnowledgeMatch } from './knowledge.service';
@@ -6,6 +7,7 @@ import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WhatsAppAppointmentNotifierService } from '../whatsapp/notifications/appointment-notifier.service';
 import { AppointmentBookingService } from '../appointments/appointment-booking.service';
+import { WhatsAppCallsService } from '../whatsapp/calls/calls.service';
 
 /**
  * The bot's brain. One call per inbound TEXT message after a 60-second
@@ -193,6 +195,7 @@ export class OrchestratorService {
     private readonly notifications: NotificationsService,
     private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
     private readonly booking: AppointmentBookingService,
+    private readonly calls: WhatsAppCallsService,
   ) {}
 
   async decide(input: OrchestratorInput): Promise<OrchestratorDecision> {
@@ -232,7 +235,7 @@ export class OrchestratorService {
             // "Welcome to Tashfeen Immigration Solutions. I'm Iffat,
             // Immigration Solutions Associate…"
             assignedEmployee: {
-              select: { firstName: true },
+              select: { firstName: true, user: { select: { id: true } } },
             },
           },
         },
@@ -277,6 +280,16 @@ export class OrchestratorService {
     // will reach out" (already said) or noise.
     if (thread.aiState === 'HANDED_OFF') {
       return { mode: 'SKIPPED', skipReason: 'handed-off' };
+    }
+
+    // Post-booking email-collection sub-flow. After an auto-booked appointment
+    // we set aiState='ASK_EMAIL' and ask for the client's email; their reply is
+    // handled here DETERMINISTICALLY (no LLM): save it + fire the verification
+    // link, then send the WhatsApp call-permission request. Always ends
+    // HANDED_OFF. (Block/human-reply guards above still apply, so a human
+    // takeover or a blocked contact short-circuits before this.)
+    if (thread.aiState === 'ASK_EMAIL') {
+      return this.handlePostBookingEmail(thread, input.inboundText);
     }
 
     // No bot-reply count cap. The bot keeps engaging the lead for as long as
@@ -548,6 +561,80 @@ export class OrchestratorService {
   }
 
   /**
+   * Deterministic post-booking sub-flow (no LLM). Runs when the thread is in
+   * ASK_EMAIL (set right after an auto-booked appointment). Takes the client's
+   * reply: if it contains an email, save it + fire the verification link (so
+   * it's verified before Finance ever sees it); then send the WhatsApp
+   * call-permission request (attributed to the assigned rep — the human who'll
+   * call). Single attempt — never nags; always ends in HANDED_OFF.
+   */
+  private async handlePostBookingEmail(
+    thread: {
+      id: string;
+      lead: {
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        assignedEmployee: { user: { id: string } | null } | null;
+      } | null;
+    },
+    inboundText: string,
+  ): Promise<OrchestratorDecision> {
+    const leadId = thread.lead?.id ?? null;
+    const repUserId = thread.lead?.assignedEmployee?.user?.id ?? null;
+    const email = this.extractEmail(inboundText);
+
+    let reply: string;
+    if (email && leadId) {
+      try {
+        const token = randomBytes(32).toString('hex');
+        const frontendUrl = process.env.FRONTEND_URL ?? 'https://tashfeengroup.com';
+        const verifyUrl = `${frontendUrl}/verify-lead-email?token=${token}`;
+        await this.prisma.lead.update({
+          where: { id: leadId },
+          data: {
+            email,
+            emailVerificationToken: token,
+            emailVerificationSentAt: new Date(),
+          },
+        });
+        const leadName =
+          `${thread.lead?.firstName ?? ''} ${thread.lead?.lastName ?? ''}`.trim() || 'there';
+        void this.email
+          .sendLeadEmailVerification({ to: email, leadName, verifyUrl })
+          .catch((e) =>
+            this.log.warn(`post-booking verify email failed: ${(e as Error).message}`),
+          );
+        reply = `Thank you! I've emailed a verification link to ${email} — please tap it to confirm. ✅`;
+      } catch (e) {
+        this.log.warn(`post-booking email save failed: ${(e as Error).message}`);
+        reply = 'Thank you!';
+      }
+    } else {
+      reply = 'No problem — we can confirm your email later.';
+    }
+
+    // Ask for call permission (best-effort). The 24h window is open since the
+    // client just replied. Attributed to the assigned rep — the human who will
+    // place the call. Swallow errors so a Meta hiccup never breaks the turn.
+    if (repUserId) {
+      try {
+        await this.calls.requestCallPermission(thread.id, repUserId);
+      } catch (e) {
+        this.log.warn(`post-booking call-permission request failed: ${(e as Error).message}`);
+      }
+    }
+
+    return { mode: 'AUTO', reply, nextAiState: 'HANDED_OFF' };
+  }
+
+  /** Pull the first email address out of free text, lowercased; null if none. */
+  private extractEmail(text: string): string | null {
+    const m = text.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
+    return m ? m[0].toLowerCase() : null;
+  }
+
+  /**
    * Second OpenAI call (small, ~150 tokens) that parses the customer's
    * scheduling message into structured fields. We don't try to be clever in
    * regex — natural-language schedule parsing across English + Roman Urdu
@@ -614,6 +701,7 @@ export class OrchestratorService {
     await this.tryAutoBookFromRequest({
       requestId: requestRow.id,
       leadId: opts.leadId,
+      threadId: opts.threadId,
       preferredDay: parsed?.preferredDay ?? null,
       preferredTime: parsed?.preferredTime ?? null,
       modality,
@@ -637,6 +725,7 @@ export class OrchestratorService {
   private async tryAutoBookFromRequest(opts: {
     requestId: string;
     leadId: string;
+    threadId: string;
     preferredDay: string | null;
     preferredTime: string | null;
     modality: string;
@@ -805,6 +894,27 @@ export class OrchestratorService {
         .catch((e) =>
           this.log.warn(`auto-book confirmation failed: ${(e as Error).message}`),
         );
+
+      // Post-booking: switch the bot into email-collection mode and proactively
+      // ask for the client's email. Their reply is handled by the ASK_EMAIL
+      // branch in decide() (save + verify email, then request call permission).
+      // We set ASK_EMAIL LAST: this runs seconds after the AI-reply processor
+      // wrote HANDED_OFF for this same turn (an LLM extract call + the booking
+      // transaction happened above), so ASK_EMAIL reliably wins. In the rare
+      // event it doesn't, the bot just stays handed-off (email ask skipped) —
+      // never a broken state.
+      try {
+        await this.prisma.whatsAppThread.update({
+          where: { id: opts.threadId },
+          data: { aiState: 'ASK_EMAIL' },
+        });
+        await this.whatsappNotifier.sendBotText(
+          opts.threadId,
+          "To send your appointment confirmation and document checklist, what's the best email address for you? 📧",
+        );
+      } catch (e) {
+        this.log.warn(`post-booking email-ask failed: ${(e as Error).message}`);
+      }
     } catch (e) {
       this.log.warn(`auto-book failed: ${(e as Error).message}`);
     }

@@ -7,6 +7,7 @@ import { AiBacklogSweeperService } from './ai-backlog-sweeper.service';
 import { WhatsAppWindowKeeperService } from './window-keeper.service';
 import { WhatsAppNotificationsModule } from '../whatsapp/notifications/notifications.module';
 import { AppointmentBookingModule } from '../appointments/appointment-booking.module';
+import { WhatsAppCallsModule } from '../whatsapp/calls/calls.module';
 
 /**
  * Global so the WhatsApp inbound processor can inject {@link OrchestratorService}
@@ -21,7 +22,7 @@ import { AppointmentBookingModule } from '../appointments/appointment-booking.mo
  */
 @Global()
 @Module({
-  imports: [WhatsAppNotificationsModule, AppointmentBookingModule],
+  imports: [WhatsAppNotificationsModule, AppointmentBookingModule, WhatsAppCallsModule],
   controllers: [AiAdminController],
   providers: [
     OpenAiService,

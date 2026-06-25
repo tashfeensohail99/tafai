@@ -11,5 +11,8 @@ import { WhatsAppCallsController } from './calls.controller';
   imports: [WhatsAppRealtimeModule, StorageModule],
   controllers: [WhatsAppCallsController],
   providers: [WhatsAppCallsService],
+  // Exported so the AI orchestrator can send the bot's post-booking
+  // call-permission request via requestCallPermission().
+  exports: [WhatsAppCallsService],
 })
 export class WhatsAppCallsModule {}

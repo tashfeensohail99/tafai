@@ -475,6 +475,19 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
         );
   }
 
+  /// Ask the customer to allow WhatsApp calls (Meta requires opt-in before a
+  /// business can call). Once they tap "Allow", the rep can place the call.
+  Future<void> _requestCallPermission() async {
+    try {
+      await ref.read(callControllerProvider.notifier).requestPermission(_threadId);
+      _toast('Call-permission request sent. Once they tap Allow, you can call them.');
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } catch (_) {
+      _toast('Could not send the call-permission request.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final messages = ref.watch(messagesControllerProvider(_threadId));
@@ -570,6 +583,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                 switch (v) {
                   case 'ai': _toggleAi(); break;
                   case 'takeover': _takeOver(); break;
+                  case 'callPermission': _requestCallPermission(); break;
                   case 'lead': _openLead(); break;
                   case 'archive': _archive(); break;
                   case 'unarchive': _unarchive(); break;
@@ -592,6 +606,14 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                     Icon(Icons.pan_tool_outlined, size: 20),
                     SizedBox(width: AppTokens.space3),
                     Text('Take over (stop bot)'),
+                  ]),
+                ),
+                const PopupMenuItem(
+                  value: 'callPermission',
+                  child: Row(children: [
+                    Icon(Icons.call_outlined, size: 20),
+                    SizedBox(width: AppTokens.space3),
+                    Text('Request call permission'),
                   ]),
                 ),
                 if (_thread.leadId != null)

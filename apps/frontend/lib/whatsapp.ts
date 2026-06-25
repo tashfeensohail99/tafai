@@ -148,6 +148,15 @@ export interface ThreadDetail extends ThreadListItem {
       })
     | null;
   channel: ThreadListItem['channel'] & { phoneNumberId: string };
+  /**
+   * Meta WhatsApp call-permission state — a business may only place an outbound
+   * call once the customer has opted in. Drives the chip beside the Call button.
+   * GRANTED is valid until callPermissionExpiresAt (Meta's ~7-day grant, or
+   * permanent when no expiry). Updated live via the `whatsapp.call.permission`
+   * realtime event.
+   */
+  callPermissionStatus?: 'PENDING' | 'GRANTED' | 'REJECTED' | string | null;
+  callPermissionExpiresAt?: string | null;
 }
 
 export interface ChatMessage {

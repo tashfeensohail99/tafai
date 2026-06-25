@@ -197,6 +197,13 @@ class CallController extends StateNotifier<CallState> {
     }
   }
 
+  /// Ask the customer to allow WhatsApp calls. Meta requires this opt-in before
+  /// a business can place an outbound call (an inbound call from them does not
+  /// count). Throws a mapped AppError on failure so the caller can surface it.
+  Future<void> requestPermission(String threadId) async {
+    await _api.requestPermission(threadId);
+  }
+
   // ── Inbound accept / decline ────────────────────────────────────────────────
 
   /// Re-entrancy latch: CallKit can deliver duplicate ACCEPT events; only one

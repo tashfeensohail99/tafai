@@ -278,12 +278,24 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         curr.map((m) => (m.id === evt.messageId ? { ...m, status: evt.status } : m)),
       );
     };
+    // The customer answered our call-permission request — flip the chip live so
+    // the rep sees "Calls allowed" the instant they tap Allow (no refresh).
+    const onPermission = (evt: { threadId: string; status: string; expiresAt?: string | null }) => {
+      if (evt.threadId !== threadId) return;
+      setThread((prev) =>
+        prev
+          ? { ...prev, callPermissionStatus: evt.status, callPermissionExpiresAt: evt.expiresAt ?? null }
+          : prev,
+      );
+    };
     socket.on('whatsapp.message.new', onMessageNew);
     socket.on('whatsapp.message.status', onStatus);
+    socket.on('whatsapp.call.permission', onPermission);
     return () => {
       if (pending) clearTimeout(pending);
       socket.off('whatsapp.message.new', onMessageNew);
       socket.off('whatsapp.message.status', onStatus);
+      socket.off('whatsapp.call.permission', onPermission);
     };
   }, [socket, threadId, reload]);
 
@@ -718,6 +730,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                 }),
               )
             }
+            callPermission={callPermissionChip(
+              thread.callPermissionStatus,
+              thread.callPermissionExpiresAt,
+            )}
           />
         ) : null}
         {/* Click-to-WhatsApp ad attribution banner — shows when the thread's
@@ -1898,6 +1914,61 @@ function ChatHeader(props: {
  * the contact shows on the chat as a Client; this bar still shows Book +
  * Add follow-up so the relationship stays productive.
  */
+/**
+ * Map a thread's Meta call-permission state → a small status chip shown next to
+ * the Call button, so the rep knows whether a business-initiated WhatsApp call
+ * is currently allowed BEFORE clicking. Permission is what authorises an
+ * outbound call (independent of the 24h messaging window). Returns null only if
+ * we choose not to render a chip — here we always render one for clarity.
+ */
+function callPermissionChip(
+  status: string | null | undefined,
+  expiresAt: string | null | undefined,
+): { label: string; color: string; bg: string; title: string } {
+  const exp = expiresAt ? new Date(expiresAt) : null;
+  const expired = !!exp && exp.getTime() < Date.now();
+  if (status === 'GRANTED' && !expired) {
+    const until = exp ? ` · until ${exp.toLocaleDateString()}` : '';
+    return {
+      label: `Calls allowed${until}`,
+      color: 'var(--sos-status-success)',
+      bg: 'var(--sos-status-success-soft)',
+      title: 'The customer has allowed WhatsApp calls — you can call them now.',
+    };
+  }
+  if (status === 'GRANTED' && expired) {
+    return {
+      label: 'Call permission expired',
+      color: 'var(--sos-status-warning)',
+      bg: 'var(--sos-status-warning-soft)',
+      title: 'Permission has expired — request it again before calling.',
+    };
+  }
+  if (status === 'PENDING') {
+    return {
+      label: 'Permission requested',
+      color: 'var(--sos-status-warning)',
+      bg: 'var(--sos-status-warning-soft)',
+      title: 'Waiting for the customer to tap “Allow” on the call-permission request.',
+    };
+  }
+  if (status === 'REJECTED') {
+    return {
+      label: 'Calls declined',
+      color: 'var(--sos-status-danger)',
+      bg: 'var(--sos-status-danger-soft)',
+      title: 'The customer declined call permission. You can request it again.',
+    };
+  }
+  return {
+    label: 'Permission needed',
+    color: 'var(--sos-text-secondary)',
+    bg: 'var(--sos-surface-2)',
+    title:
+      'Meta requires the customer to allow WhatsApp calls first. Click Call — if it’s blocked you can send a permission request.',
+  };
+}
+
 function QuickActionsBar({
   isLead,
   canConvertToLead,
@@ -1907,6 +1978,7 @@ function QuickActionsBar({
   onBook,
   onFollowUp,
   onCall,
+  callPermission,
 }: {
   isLead: boolean;
   canConvertToLead: boolean;
@@ -1916,6 +1988,7 @@ function QuickActionsBar({
   onBook: () => void;
   onFollowUp: () => void;
   onCall: () => void;
+  callPermission: { label: string; color: string; bg: string; title: string };
 }) {
   return (
     <div
@@ -2004,6 +2077,25 @@ function QuickActionsBar({
         <Phone size={13} />
         Call
       </button>
+      {/* Call-permission status — tells the rep whether an outbound WhatsApp
+          call is currently allowed (Meta requires the customer to opt in). */}
+      <span
+        title={callPermission.title}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          alignSelf: 'center',
+          padding: '5px 10px',
+          borderRadius: 999,
+          fontSize: 11,
+          fontWeight: 600,
+          background: callPermission.bg,
+          color: callPermission.color,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {callPermission.label}
+      </span>
       {isLead ? (
         <button
           type="button"

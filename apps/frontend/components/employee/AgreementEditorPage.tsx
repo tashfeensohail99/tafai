@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Eye,
-  FileText,
   MessageSquare,
   Pencil,
   Plus,
@@ -508,20 +507,20 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
         </div>
       </div>
 
-      {/* Closing action bar — generate the document / submit */}
+      {/* Closing action bar — submit to Finance (auto-generates); preview is optional */}
       <GlassCard variant="default">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12.5 }}>
             {editable && validationError ? (
               <span className="sos-text-secondary"><AlertTriangle size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{validationError}</span>
             ) : (
-              <span style={{ color: 'var(--sos-status-success)', fontWeight: 600 }}><CheckCircle2 size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Generate the agreement PDF{editable ? ', then submit to Finance.' : '.'}</span>
+              <span style={{ color: 'var(--sos-status-success)', fontWeight: 600 }}><CheckCircle2 size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{editable ? 'Submit to Finance — this generates the agreement and sends it automatically.' : 'You can preview the agreement PDF anytime.'}</span>
             )}
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <PrimaryButton iconLeft={<FileText size={15} />} onClick={handlePreview} disabled={busy !== null}>
-              {busy === 'preview' ? 'Generating…' : 'Generate Agreement'}
-            </PrimaryButton>
+            <SecondaryButton iconLeft={<Eye size={15} />} onClick={handlePreview} disabled={busy !== null}>
+              {busy === 'preview' ? 'Rendering…' : 'Preview PDF'}
+            </SecondaryButton>
             {editable ? (
               <PrimaryButton iconLeft={<Send size={15} />} onClick={handleSubmit} disabled={busy !== null || !!validationError}>
                 {busy === 'submit' ? 'Submitting…' : 'Submit to Finance'}

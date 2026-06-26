@@ -81,7 +81,8 @@ async function main() {
       if (!pick) { console.log('  (nothing eligible)'); }
       else {
         console.log(`  agent: ${pick.name}  — next ${CONFIG.perTick} of ${pick.firstNames.length}`);
-        for (const n of pick.firstNames.slice(0, CONFIG.perTick)) {
+        for (const raw of pick.firstNames.slice(0, CONFIG.perTick)) {
+          const n = /^[A-Za-z][A-Za-z .'’-]{1,38}$/.test(raw) ? raw : 'there'; // mirror cleanGreetingName
           console.log(`    → "${TEMPLATE_BODY.replace('{{1}}', n).replace('{{2}}', pick.name.split(' ')[0])}"`);
         }
       }

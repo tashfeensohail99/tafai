@@ -129,7 +129,7 @@ export class WhatsAppReengageBlastService implements OnModuleInit, OnModuleDestr
       let queued = 0;
       for (let i = 0; i < targets.rows.length; i++) {
         const t = targets.rows[i];
-        const name = (t.firstName ?? '').trim() || 'there';
+        const name = cleanGreetingName(t.firstName);
         const rep = (t.repFirstName ?? '').trim() || 'our team';
         const components: Array<Record<string, unknown>> = [
           { type: 'body', parameters: [{ type: 'text', text: name }, { type: 'text', text: rep }] },
@@ -332,4 +332,17 @@ export class WhatsAppReengageBlastService implements OnModuleInit, OnModuleDestr
     );
     return new Date(dayPktMidnight - PKT);
   }
+}
+
+/**
+ * Sanitize a lead's first name for the "Hi {{1}}," greeting. Many dormant leads
+ * carry a WhatsApp profile name (emoji, non-Latin script, junk) as their first
+ * name — "Hi 🥰اللہ," reads as spam and hurts the brand. Keep only a plausible
+ * Latin given name; otherwise fall back to a neutral "there" ({{1}} can't be
+ * empty — Meta rejects empty params).
+ */
+function cleanGreetingName(raw: string | null | undefined): string {
+  const v = (raw ?? '').trim();
+  if (/^[A-Za-z][A-Za-z .'’-]{1,38}$/.test(v)) return v;
+  return 'there';
 }

@@ -623,11 +623,32 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'Call contact',
-            icon: const Icon(Icons.call_outlined, color: Colors.white),
-            onPressed: _initiateCall,
-          ),
+          // Single context-aware control: until the customer grants WhatsApp-
+          // call permission this requests it; once granted it becomes the real
+          // Call button. (Replaces the old always-on call icon + the overflow
+          // "Request call permission" item.)
+          Builder(builder: (_) {
+            if (_thread.canCall) {
+              return IconButton(
+                tooltip: 'Call contact',
+                icon: const Icon(Icons.call, color: Colors.white),
+                onPressed: _initiateCall,
+              );
+            }
+            if (_thread.callPermissionStatus == 'PENDING') {
+              return IconButton(
+                tooltip: 'Call permission requested — waiting for the customer to allow',
+                icon: const Icon(Icons.schedule, color: Colors.white),
+                onPressed: () => _toast(
+                    'Waiting for the customer to tap Allow on the call-permission request.'),
+              );
+            }
+            return IconButton(
+              tooltip: 'Request call permission',
+              icon: const Icon(Icons.add_call, color: Colors.white),
+              onPressed: _requestCallPermission,
+            );
+          }),
           if (_busyAi)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: AppTokens.space4),
@@ -645,7 +666,6 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                 switch (v) {
                   case 'ai': _toggleAi(); break;
                   case 'takeover': _takeOver(); break;
-                  case 'callPermission': _requestCallPermission(); break;
                   case 'lead': _openLead(); break;
                   case 'archive': _archive(); break;
                   case 'unarchive': _unarchive(); break;
@@ -668,14 +688,6 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                     Icon(Icons.pan_tool_outlined, size: 20),
                     SizedBox(width: AppTokens.space3),
                     Text('Take over (stop bot)'),
-                  ]),
-                ),
-                const PopupMenuItem(
-                  value: 'callPermission',
-                  child: Row(children: [
-                    Icon(Icons.call_outlined, size: 20),
-                    SizedBox(width: AppTokens.space3),
-                    Text('Request call permission'),
                   ]),
                 ),
                 if (_thread.leadId != null)

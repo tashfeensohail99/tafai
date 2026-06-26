@@ -58,6 +58,11 @@ class WhatsappThread {
   final String? lastMessagePreview;
   final int unreadCount;
   final bool? aiEnabled;
+  /// Meta WhatsApp call permission for this contact: null (never asked) |
+  /// PENDING | GRANTED | REJECTED. GRANTED (+ not past expiry) means we can
+  /// place a business-initiated call.
+  final String? callPermissionStatus;
+  final DateTime? callPermissionExpiresAt;
   final WaParty? lead;
   final WaParty? client;
 
@@ -73,6 +78,8 @@ class WhatsappThread {
     this.lastMessagePreview,
     this.unreadCount = 0,
     this.aiEnabled,
+    this.callPermissionStatus,
+    this.callPermissionExpiresAt,
     this.lead,
     this.client,
   });
@@ -94,6 +101,8 @@ class WhatsappThread {
         lastMessagePreview: lastMessagePreview,
         unreadCount: unreadCount,
         aiEnabled: aiEnabled,
+        callPermissionStatus: callPermissionStatus,
+        callPermissionExpiresAt: callPermissionExpiresAt,
         lead: lead ?? this.lead,
         client: client ?? this.client,
       );
@@ -121,6 +130,13 @@ class WhatsappThread {
   bool get windowOpen =>
       windowExpiresAt != null && windowExpiresAt!.isAfter(DateTime.now());
 
+  /// Customer has granted WhatsApp-call permission (and it hasn't expired) →
+  /// we can place a business-initiated call now.
+  bool get canCall =>
+      callPermissionStatus == 'GRANTED' &&
+      (callPermissionExpiresAt == null ||
+          callPermissionExpiresAt!.isAfter(DateTime.now()));
+
   factory WhatsappThread.fromJson(Map<String, dynamic> j) => WhatsappThread(
         id: j['id'] as String,
         status: j['status'] as String? ?? 'OPEN',
@@ -136,6 +152,8 @@ class WhatsappThread {
         lastMessagePreview: asStringOrNull(j['lastMessagePreview']),
         unreadCount: asInt(j['unreadCount']),
         aiEnabled: j['aiEnabled'] as bool?,
+        callPermissionStatus: asStringOrNull(j['callPermissionStatus']),
+        callPermissionExpiresAt: parseApiDateOrNull(j['callPermissionExpiresAt']),
         lead: j['lead'] is Map<String, dynamic>
             ? WaParty.fromJson(j['lead'] as Map<String, dynamic>)
             : null,

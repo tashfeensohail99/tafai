@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../whatsapp/queues/queue-contracts';
+import { WhatsAppCallsService } from '../whatsapp/calls/calls.service';
 
 /**
  * Window-keeper: a gentle re-engagement nudge fired a few hours before the
@@ -53,8 +54,10 @@ export class WhatsAppWindowKeeperService implements OnModuleInit, OnModuleDestro
 
   /** Sweep cadence. */
   private static readonly INTERVAL_MS = 30 * 60 * 1000;
-  /** Nudge when the window will close within this much time (and is still open). */
-  private static readonly CLOSE_WITHIN_MS = 4 * 60 * 60 * 1000;
+  /** Nudge when the window will close within this much time (and is still open).
+   *  ~7h before the 24h close ≈ the "17h elapsed" mark — early enough to read as
+   *  a genuine follow-up, late enough that the lead has clearly gone quiet. */
+  private static readonly CLOSE_WITHIN_MS = 7 * 60 * 60 * 1000;
   /** Sending hours in org-local time (PKT). No nudges outside [START, END). */
   private static readonly SEND_HOUR_START = 8; // 8am
   private static readonly SEND_HOUR_END = 22; // 10pm
@@ -65,6 +68,7 @@ export class WhatsAppWindowKeeperService implements OnModuleInit, OnModuleDestro
     private readonly prisma: PrismaService,
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundQueue: Queue<OutboundMessageJob>,
+    private readonly calls: WhatsAppCallsService,
   ) {}
 
   onModuleInit(): void {
@@ -125,7 +129,14 @@ export class WhatsAppWindowKeeperService implements OnModuleInit, OnModuleDestro
         id: true,
         channelId: true,
         leadId: true,
-        lead: { select: { firstName: true } },
+        callPermissionStatus: true,
+        lead: {
+          select: {
+            firstName: true,
+            email: true,
+            assignedEmployee: { select: { user: { select: { id: true } } } },
+          },
+        },
       },
       take: 500,
     });
@@ -174,28 +185,72 @@ export class WhatsAppWindowKeeperService implements OnModuleInit, OnModuleDestro
       });
       if (alreadyNudged) continue;
 
-      const body = composeNudge(cleanFirstName(t.lead?.firstName));
-      const msg = await this.prisma.whatsAppMessage.create({
-        data: {
-          threadId: t.id,
-          channelId: t.channelId,
-          leadId: t.leadId,
-          direction: WhatsAppMessageDirection.OUTBOUND,
-          type: WhatsAppMessageType.TEXT,
-          status: WhatsAppMessageStatus.QUEUED,
-          body,
-          idempotencyKey: randomUUID(),
-          payload: { source: 'window_keeper' } as unknown as Prisma.InputJsonValue,
-        },
-        select: { id: true },
-      });
-      await this.outboundQueue.add('send', { messageId: msg.id }, { jobId: msg.id });
-      sent++;
+      // ── Decide what this lead still needs, and ask for ONE thing — never
+      // both in the same touch, and never repeat what we already have:
+      //   1. no email        → ask for email (reply captured by the orchestrator
+      //                         ASK_EMAIL handler, which saves it + verification
+      //                         link, THEN sends the call-permission request — so
+      //                         email and permission stay separate & sequential);
+      //   2. email, no perm   → send the interactive call-permission request
+      //                         (idempotent: status flips to PENDING, never null
+      //                         again, so it can't re-fire);
+      //   3. perm PENDING     → already asked this window — stay quiet;
+      //   4. email + settled  → light re-engagement, no repeated asks.
+      const firstName = cleanFirstName(t.lead?.firstName);
+      const emailMissing = !t.lead?.email;
+      const permStatus = t.callPermissionStatus;
+      const repUserId = t.lead?.assignedEmployee?.user?.id ?? null;
+
+      if (emailMissing) {
+        await this.sendKeeperText(t, askEmailBody(firstName));
+        await this.prisma.whatsAppThread.update({
+          where: { id: t.id },
+          data: { aiState: 'ASK_EMAIL' },
+        });
+        sent++;
+      } else if (permStatus == null && repUserId) {
+        try {
+          await this.calls.requestCallPermission(t.id, repUserId);
+          sent++;
+        } catch (e) {
+          this.log.warn(
+            `window-keeper permission request failed (thread ${t.id}): ${(e as Error).message}`,
+          );
+        }
+      } else if (permStatus === 'PENDING') {
+        continue; // already requested this window — don't nag
+      } else {
+        await this.sendKeeperText(t, composeNudge(firstName));
+        sent++;
+      }
     }
 
     if (sent > 0) {
       this.log.log(`window-keeper nudged ${sent} lead(s) before their window closes`);
     }
+  }
+
+  /** Self-create + enqueue a bot-attributed free-form nudge, stamped with the
+   *  'window_keeper' marker so the fire-once-per-window guard catches it. */
+  private async sendKeeperText(
+    t: { id: string; channelId: string; leadId: string | null },
+    body: string,
+  ): Promise<void> {
+    const msg = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: t.id,
+        channelId: t.channelId,
+        leadId: t.leadId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.TEXT,
+        status: WhatsAppMessageStatus.QUEUED,
+        body,
+        idempotencyKey: randomUUID(),
+        payload: { source: 'window_keeper' } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    await this.outboundQueue.add('send', { messageId: msg.id }, { jobId: msg.id });
   }
 
   /** Current hour (0–23) in the org's PKT timezone. */
@@ -225,4 +280,11 @@ function cleanFirstName(raw: string | null | undefined): string | null {
 function composeNudge(firstName: string | null): string {
   const greet = firstName ? `Hi ${firstName},` : 'Hi,';
   return `${greet} just checking in — are you still considering your immigration options? I'm here whenever you'd like to pick things up. — Tashfeen Immigration`;
+}
+
+/** Email-collection ask — sent inside the still-open window. The lead's reply
+ *  is captured by the orchestrator's ASK_EMAIL handler. */
+function askEmailBody(firstName: string | null): string {
+  const greet = firstName ? `Hi ${firstName},` : 'Hi,';
+  return `${greet} so we can send your consultation details and important updates by email, could you share your best email address? Just reply here. — Tashfeen Immigration`;
 }

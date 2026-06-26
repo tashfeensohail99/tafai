@@ -40,6 +40,7 @@ import {
   Mic,
   Camera,
   Phone,
+  PhoneOutgoing,
   Plus,
   Reply,
   RotateCcw,
@@ -1942,7 +1943,7 @@ function ChatHeader(props: {
 function callPermissionChip(
   status: string | null | undefined,
   expiresAt: string | null | undefined,
-): { label: string; color: string; bg: string; title: string; action: 'request' | null } {
+): { label: string; color: string; bg: string; title: string; action: 'request' | null; canCall?: boolean } {
   const exp = expiresAt ? new Date(expiresAt) : null;
   const expired = !!exp && exp.getTime() < Date.now();
   if (status === 'GRANTED' && !expired) {
@@ -1953,6 +1954,7 @@ function callPermissionChip(
       bg: 'var(--sos-status-success-soft)',
       title: 'The customer has allowed WhatsApp calls — you can call them now.',
       action: null,
+      canCall: true,
     };
   }
   if (status === 'GRANTED' && expired) {
@@ -2009,7 +2011,7 @@ function QuickActionsBar({
   onEditLead: () => void;
   onBook: () => void;
   onCall: () => void;
-  callPermission: { label: string; color: string; bg: string; title: string; action: 'request' | null };
+  callPermission: { label: string; color: string; bg: string; title: string; action: 'request' | null; canCall?: boolean };
   withinWindow: boolean;
   onRequestPermission: () => void;
 }) {
@@ -2075,58 +2077,57 @@ function QuickActionsBar({
         <CalendarClock size={13} />
         Book appointment
       </button>
-      {/* Click-to-call — places a WhatsApp voice call to this contact. The
-          globally-mounted CallDock owns the WebRTC + UI (and the permission
-          opt-in fallback if Meta blocks the call). */}
-      <button
-        type="button"
-        onClick={onCall}
-        title="Call this contact on WhatsApp"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '7px 14px',
-          borderRadius: 999,
-          border: '1px solid var(--sos-border-strong)',
-          background: 'var(--sos-surface-1)',
-          color: 'var(--sos-text-primary)',
-          fontSize: 12.5,
-          fontWeight: 600,
-          cursor: 'pointer',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        <Phone size={13} />
-        Call
-      </button>
-      {/* Call-permission control — when permission is needed, this is a BUTTON
-          that proactively sends the customer the opt-in request (so they can
-          Allow up-front, instead of us calling first and getting blocked). Once
-          granted/pending it's an informational chip. */}
-      {callPermission.action === 'request' ? (
+      {/* Single context-aware call control. While the customer hasn't granted
+          WhatsApp-call permission, this is a "Request call permission" button
+          (sends the opt-in). Once they tap Allow it becomes the real Call
+          button — permanently, until permission lapses. PENDING / out-of-window
+          show an informational chip. Replaces the old always-on Call button +
+          separate permission chip. */}
+      {callPermission.canCall ? (
+        <button
+          type="button"
+          onClick={onCall}
+          title="The customer has allowed WhatsApp calls — call them now."
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '7px 14px',
+            borderRadius: 999,
+            border: '1px solid var(--sos-status-success)',
+            background: 'var(--sos-status-success-soft)',
+            color: 'var(--sos-status-success)',
+            fontSize: 12.5,
+            fontWeight: 700,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <Phone size={13} />
+          Call
+        </button>
+      ) : callPermission.action === 'request' ? (
         withinWindow ? (
           <button
             type="button"
             onClick={onRequestPermission}
-            title="Send the customer a WhatsApp call-permission request. Once they tap “Allow”, you can call them — no need to call first."
+            title="Send the customer a WhatsApp call-permission request. Once they tap “Allow”, this turns into the Call button."
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              alignSelf: 'center',
-              gap: 5,
-              padding: '7px 12px',
+              gap: 6,
+              padding: '7px 14px',
               borderRadius: 999,
               border: '1px solid var(--sos-border-strong)',
               background: 'var(--sos-surface-1)',
               color: 'var(--sos-text-primary)',
-              fontSize: 11.5,
+              fontSize: 12.5,
               fontWeight: 700,
               cursor: 'pointer',
               whiteSpace: 'nowrap',
             }}
           >
-            <Phone size={13} />
+            <PhoneOutgoing size={13} />
             Request call permission
           </button>
         ) : (
@@ -2135,7 +2136,6 @@ function QuickActionsBar({
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              alignSelf: 'center',
               padding: '5px 10px',
               borderRadius: 999,
               fontSize: 11,
@@ -2154,7 +2154,6 @@ function QuickActionsBar({
           style={{
             display: 'inline-flex',
             alignItems: 'center',
-            alignSelf: 'center',
             padding: '5px 10px',
             borderRadius: 999,
             fontSize: 11,

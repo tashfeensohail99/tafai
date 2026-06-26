@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AppointmentStatus, AuditAction, LeadStatus, TimelineEventType } from '@prisma/client';
+import { AppointmentStatus, AuditAction, LeadStatus, TimelineEventType, WhatsAppThreadStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
@@ -535,6 +535,50 @@ export class AppointmentsService {
           closedByUserId: actorUserId,
         },
       });
+    }
+
+    // Post-booking (manual): mirror the bot's auto-book sub-flow — proactively
+    // ask the lead for their email so we can verify it + request WhatsApp call
+    // permission. The client's email reply is handled by the orchestrator's
+    // ASK_EMAIL branch (saves the email, fires the verification link, then sends
+    // the call-permission request) — so email then permission stay separate, in
+    // order, identical to the bot. Fires only when the rep chose to message via
+    // WhatsApp, the lead has an OPEN window, and we don't already hold a verified
+    // email (no re-asking). Best-effort — never fails the booking.
+    if (dto.sendWhatsAppConfirmation && created.leadId) {
+      try {
+        const lead = await this.prisma.lead.findUnique({
+          where: { id: created.leadId },
+          select: { emailVerifiedAt: true },
+        });
+        if (!lead?.emailVerifiedAt) {
+          const thread = await this.prisma.whatsAppThread.findFirst({
+            where: {
+              leadId: created.leadId,
+              status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
+            },
+            orderBy: { lastMessageAt: 'desc' },
+            select: { id: true, windowExpiresAt: true },
+          });
+          const windowOpen =
+            !!thread?.windowExpiresAt && thread.windowExpiresAt.getTime() > Date.now();
+          if (thread && windowOpen) {
+            await this.whatsappNotifier.sendBotText(
+              thread.id,
+              "To send your appointment confirmation and document checklist, what's the best email address for you? 📧",
+            );
+            await this.prisma.whatsAppThread.update({
+              where: { id: thread.id },
+              data: { aiState: 'ASK_EMAIL' },
+            });
+          }
+        }
+      } catch (err) {
+        this.log.warn(
+          { appointmentId: created.id, err: (err as Error).message },
+          'manual-booking email-ask failed',
+        );
+      }
     }
 
     return { ...created, whatsappConfirmation };

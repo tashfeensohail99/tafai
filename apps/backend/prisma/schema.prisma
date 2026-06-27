@@ -791,6 +791,42 @@ model ApiKey {
   @@schema("core")
 }
 
+/// Daily Meta ad spend, one row per (date, ad), pulled from the Marketing API
+/// Insights endpoint. Spend is stored in the ad-account's native currency PLUS
+/// a CAD `baseSpend` (FX-converted at sync time, mirroring Payment.baseAmount)
+/// so the leads dashboard can compute a single-currency ROAS without mixing
+/// currencies. `adId` matches WhatsAppThread.adReferral->>'source_id', which is
+/// how spend attributes to leads (and through them to revenue).
+model AdSpendDaily {
+  id           String   @id @default(uuid())
+  /// The metric day (ad-account timezone), stored as a calendar date.
+  date         DateTime @db.Date
+  adAccountId  String // e.g. "act_1234567890"
+  adId         String // Meta ad id — joins to adReferral.source_id
+  adName       String?
+  campaignId   String?
+  campaignName String?
+  /// Spend in the ad account's own currency.
+  spend        Decimal  @db.Decimal(14, 2)
+  currency     String // ad-account currency, e.g. "PKR" / "USD"
+  /// Spend converted to the firm's base currency (CAD) at sync time.
+  baseSpend    Decimal  @db.Decimal(14, 2)
+  baseCurrency String   @default("CAD")
+  /// Units of `currency` per 1 CAD at sync time (so historicals never drift).
+  fxRate       Decimal? @db.Decimal(18, 8)
+  impressions  Int?
+  clicks       Int?
+  syncedAt     DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([date, adId])
+  @@index([adId])
+  @@index([date])
+  @@map("ad_spend_daily")
+  @@schema("crm")
+}
+
 model Branch {
   id             String   @id @default(uuid())
   organizationId String

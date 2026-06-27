@@ -260,6 +260,54 @@ export class LeadsService {
       sample: speedSample,
     };
 
+    // ── Ad spend → blended efficiency. Spend reads tolerate the table being
+    //    absent (pre-migration) or empty (no meta_ads credential). ────────────
+    const adSpend: Array<{ currency: string; amount: number }> = [];
+    let adSpendBaseCad = 0;
+    try {
+      const spendByCur = await this.prisma.adSpendDaily.groupBy({
+        by: ['currency'],
+        _sum: { spend: true, baseSpend: true },
+      });
+      for (const s of spendByCur) {
+        const amt = Math.round(Number(s._sum.spend ?? 0));
+        if (amt > 0) adSpend.push({ currency: s.currency, amount: amt });
+        adSpendBaseCad += Number(s._sum.baseSpend ?? 0);
+      }
+      adSpend.sort((a, b) => b.amount - a.amount);
+    } catch {
+      /* ad_spend_daily not migrated yet */
+    }
+    adSpendBaseCad = Math.round(adSpendBaseCad);
+
+    // CAD revenue attributable to all ad-sourced leads (for blended ROAS).
+    let adRevenueBaseCad = 0;
+    try {
+      const revRows = await this.prisma.$queryRaw<Array<{ revenue_base: number }>>(Prisma.sql`
+        SELECT COALESCE(SUM(r.rev_base), 0)::float8 AS revenue_base
+        FROM (
+          SELECT DISTINCT ON (l.id) l.id AS lead_id
+          FROM crm.leads l
+          JOIN whatsapp.threads t ON t."leadId" = l.id
+          WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
+        ) led
+        JOIN LATERAL (
+          SELECT COALESCE(SUM(p."baseAmount"), 0) AS rev_base
+          FROM crm.clients c
+          JOIN finance.invoices i ON i."clientId" = c.id
+          JOIN finance.payments p ON p."invoiceId" = i.id
+          WHERE c."sourceLeadId" = led.lead_id AND p.status IN ('PAID', 'PARTIAL')
+        ) r ON true`);
+      adRevenueBaseCad = Math.round(Number(revRows[0]?.revenue_base ?? 0));
+    } catch {
+      /* revenue join unavailable */
+    }
+
+    const blendedCpl =
+      fromAds > 0 && adSpendBaseCad > 0 ? Math.round((adSpendBaseCad / fromAds) * 100) / 100 : null;
+    const blendedRoas =
+      adSpendBaseCad > 0 ? Math.round((adRevenueBaseCad / adSpendBaseCad) * 100) / 100 : null;
+
     const converted = byStatus['CONVERTED'] ?? 0;
     const today = new Date().toISOString().slice(0, 10);
     return {
@@ -275,6 +323,11 @@ export class LeadsService {
       revenuePipeline,
       lostReasons,
       speedToLead,
+      adSpend,
+      adSpendBaseCad,
+      adRevenueBaseCad,
+      blendedCpl,
+      blendedRoas,
     };
   }
 
@@ -282,6 +335,7 @@ export class LeadsService {
   async getAdPerformance() {
     const rows = await this.prisma.$queryRaw<
       Array<{
+        grp: string;
         sourceId: string | null;
         headline: string | null;
         sourceType: string | null;
@@ -291,7 +345,8 @@ export class LeadsService {
         converted: number;
       }>
     >(Prisma.sql`
-      SELECT mode() WITHIN GROUP (ORDER BY sub.source_id)   AS "sourceId",
+      SELECT sub.grp                                        AS grp,
+             mode() WITHIN GROUP (ORDER BY sub.source_id)   AS "sourceId",
              mode() WITHIN GROUP (ORDER BY sub.headline)    AS headline,
              mode() WITHIN GROUP (ORDER BY sub.source_type) AS "sourceType",
              mode() WITHIN GROUP (ORDER BY sub.source_url)  AS "sourceUrl",
@@ -320,15 +375,96 @@ export class LeadsService {
       ) sub
       GROUP BY sub.grp
       ORDER BY leads DESC`);
-    return rows.map((r) => ({
-      sourceId: r.sourceId,
-      headline: r.headline,
-      sourceType: r.sourceType,
-      sourceUrl: r.sourceUrl,
-      leads: Number(r.leads),
-      contacted: Number(r.contacted),
-      converted: Number(r.converted),
-    }));
+
+    // Meta ad spend per ad (native currency + CAD base), summed over all synced
+    // days. Tolerant of the table not existing yet (pre-migration) or being
+    // empty (no meta_ads credential) — the dashboard simply shows no spend.
+    const spendByAd = new Map<string, { byCur: Map<string, number>; baseSpend: number }>();
+    try {
+      const spendRows = await this.prisma.adSpendDaily.groupBy({
+        by: ['adId', 'currency'],
+        _sum: { spend: true, baseSpend: true },
+      });
+      for (const s of spendRows) {
+        const entry = spendByAd.get(s.adId) ?? { byCur: new Map<string, number>(), baseSpend: 0 };
+        entry.byCur.set(s.currency, (entry.byCur.get(s.currency) ?? 0) + Number(s._sum.spend ?? 0));
+        entry.baseSpend += Number(s._sum.baseSpend ?? 0);
+        spendByAd.set(s.adId, entry);
+      }
+    } catch {
+      /* ad_spend_daily not migrated yet — leave spend empty */
+    }
+
+    // CAD revenue attributable to each ad group (dedupe each lead to its latest
+    // ad, then sum received payments of the client it converted into).
+    const revByGrp = new Map<string, number>();
+    try {
+      const revRows = await this.prisma.$queryRaw<Array<{ grp: string; revenue_base: number }>>(Prisma.sql`
+        SELECT led.grp AS grp, COALESCE(SUM(r.rev_base), 0)::float8 AS revenue_base
+        FROM (
+          SELECT DISTINCT ON (l.id)
+            l.id AS lead_id,
+            COALESCE(t."adReferral"->>'source_id', t."adReferral"->>'headline', 'unknown') AS grp
+          FROM crm.leads l
+          JOIN whatsapp.threads t ON t."leadId" = l.id
+          WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
+          ORDER BY l.id, t."adReferralAt" DESC NULLS LAST
+        ) led
+        JOIN LATERAL (
+          SELECT COALESCE(SUM(p."baseAmount"), 0) AS rev_base
+          FROM crm.clients c
+          JOIN finance.invoices i ON i."clientId" = c.id
+          JOIN finance.payments p ON p."invoiceId" = i.id
+          WHERE c."sourceLeadId" = led.lead_id AND p.status IN ('PAID', 'PARTIAL')
+        ) r ON true
+        GROUP BY led.grp`);
+      for (const rr of revRows) revByGrp.set(rr.grp, Number(rr.revenue_base));
+    } catch {
+      /* revenue join unavailable — leave ROAS null */
+    }
+
+    return rows.map((r) => {
+      // One consistent key: the SQL group key. Spend is keyed by ad_id, which
+      // equals grp exactly when the ad carried a source_id; headline-only groups
+      // have no Meta spend to match (spend is keyed on ad_id).
+      const grp = r.grp;
+      const leads = Number(r.leads);
+      const converted = Number(r.converted);
+      const revenueBase = revByGrp.get(grp) ?? 0;
+
+      const sp = spendByAd.get(grp);
+      let spend: number | null = null;
+      let spendCurrency: string | null = null;
+      let baseSpend = 0;
+      if (sp) {
+        baseSpend = sp.baseSpend;
+        const curs = [...sp.byCur.entries()];
+        if (curs.length === 1) {
+          [spendCurrency, spend] = curs[0];
+        } else {
+          // Mixed currencies for one ad — never sum across currencies under one
+          // label; fall back to the CAD base so CPL/CPA stay single-currency.
+          spendCurrency = 'CAD';
+          spend = baseSpend;
+        }
+      }
+
+      return {
+        sourceId: r.sourceId,
+        headline: r.headline,
+        sourceType: r.sourceType,
+        sourceUrl: r.sourceUrl,
+        leads,
+        contacted: Number(r.contacted),
+        converted,
+        spend: spend != null ? Math.round(spend * 100) / 100 : null,
+        spendCurrency,
+        revenueBaseCad: Math.round(revenueBase),
+        cpl: spend != null && leads > 0 ? Math.round((spend / leads) * 100) / 100 : null,
+        cpa: spend != null && converted > 0 ? Math.round((spend / converted) * 100) / 100 : null,
+        roas: baseSpend > 0 ? Math.round((revenueBase / baseSpend) * 100) / 100 : null,
+      };
+    });
   }
 
   async findByIdAccessible(id: string, user: RequestUser) {

@@ -1,6 +1,6 @@
 import { IsBoolean, IsIn, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 
-const SUPPORTED_PROVIDERS = ['openai', 'fcm'] as const;
+const SUPPORTED_PROVIDERS = ['openai', 'fcm', 'meta_ads'] as const;
 
 export class UpsertApiKeyDto {
   @IsString()

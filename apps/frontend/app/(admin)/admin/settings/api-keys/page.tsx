@@ -50,6 +50,12 @@ const PROVIDERS: Array<{ key: string; label: string; hint: string }> = [
     hint:
       'Service-account JSON used to deliver mobile/web push notifications. Firebase Console → Project Settings → Service accounts → Generate new private key, then paste the whole .json here.',
   },
+  {
+    key: 'meta_ads',
+    label: 'Meta Ads (spend / CPL / ROAS)',
+    hint:
+      'Powers the ad-spend, CPL/CPA and ROAS metrics on the Leads dashboard. Label = your ad-account id (act_1234567890, from Meta Business Settings → Ad accounts). For the key, paste a token with ads_read — or just re-enter the account id to reuse your existing WhatsApp token (it already has ads_read). Spend syncs every few hours; use Test to verify access.',
+  },
 ];
 
 function fmtDate(iso: string | null): string {
@@ -622,6 +628,13 @@ function AddKeyModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       setError('Label and key are required.');
       return;
     }
+    if (provider === 'meta_ads') {
+      const acct = label.trim().startsWith('act_') ? label.trim() : `act_${label.trim()}`;
+      if (!/^act_\d+$/.test(acct)) {
+        setError('Ad-account id must look like "act_1234567890" (or just the digits).');
+        return;
+      }
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -672,17 +685,39 @@ function AddKeyModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
                 const p = e.target.value;
                 setProvider(p);
                 // Default the label to something sensible for the chosen provider.
-                setLabel(p === 'fcm' ? 'Firebase service account' : 'Production OpenAI');
+                setLabel(
+                  p === 'fcm'
+                    ? 'Firebase service account'
+                    : p === 'meta_ads'
+                      ? ''
+                      : 'Production OpenAI',
+                );
+                // Clear the secret so a value typed for one provider can't be
+                // submitted against another (e.g. an FCM JSON into a token field).
+                setKey('');
+                setShowKey(false);
               }}
               style={{ width: '100%' }}
             >
               <option value="openai">OpenAI</option>
               <option value="fcm">Firebase Cloud Messaging (push)</option>
+              <option value="meta_ads">Meta Ads (spend / ROAS)</option>
             </select>
           </Field>
 
-          <Field label="Label" hint="A name to remember this key by — e.g. 'Production OpenAI'">
-            <FormInput value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Production OpenAI" />
+          <Field
+            label={provider === 'meta_ads' ? 'Ad-account id' : 'Label'}
+            hint={
+              provider === 'meta_ads'
+                ? 'Your Meta ad-account id — "act_1234567890" (Business Settings → Ad accounts). This is stored as the key label, not as a secret.'
+                : "A name to remember this key by — e.g. 'Production OpenAI'"
+            }
+          >
+            <FormInput
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={provider === 'meta_ads' ? 'act_1234567890' : 'e.g. Production OpenAI'}
+            />
           </Field>
 
           {provider === 'fcm' ? (
@@ -700,14 +735,21 @@ function AddKeyModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
               />
             </Field>
           ) : (
-            <Field label="API key" hint="Paste the full secret. Encrypted before storage; never returned after save.">
+            <Field
+              label={provider === 'meta_ads' ? 'Access token (ads_read)' : 'API key'}
+              hint={
+                provider === 'meta_ads'
+                  ? 'A token with ads_read — OR re-enter the account id (act_…) to reuse your existing WhatsApp token, which already has ads_read. Encrypted before storage; never returned after save.'
+                  : 'Paste the full secret. Encrypted before storage; never returned after save.'
+              }
+            >
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   type={showKey ? 'text' : 'password'}
                   className="sos-input"
                   value={key}
                   onChange={(e) => setKey(e.target.value)}
-                  placeholder="sk-..."
+                  placeholder={provider === 'meta_ads' ? 'EAAG…  or re-enter act_1234567890' : 'sk-...'}
                   style={{ flex: 1, fontFamily: 'monospace', fontSize: 12.5 }}
                   autoComplete="new-password"
                 />

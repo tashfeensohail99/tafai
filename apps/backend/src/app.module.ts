@@ -24,6 +24,7 @@ import { PartnersModule } from './modules/partners/partners.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { LeadImportsModule } from './modules/lead-imports/lead-imports.module';
 import { MetaLeadsModule } from './modules/meta-leads/meta-leads.module';
+import { MetaAdsModule } from './modules/meta-ads/meta-ads.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { QuickRepliesModule } from './modules/quick-replies/quick-replies.module';
@@ -83,6 +84,7 @@ import { TelephonyModule } from './modules/telephony/telephony.module';
     LeadsModule,
     LeadImportsModule,
     MetaLeadsModule,
+    MetaAdsModule,
     ClientsModule,
     AppointmentsModule,
     QuickRepliesModule,

@@ -62,6 +62,22 @@ export class ApiKeysService {
     return plaintext;
   }
 
+  /**
+   * Like {@link getActiveKey} but also returns the row's `label` and returns
+   * `null` (never throws) when unset. Used by providers where the label
+   * carries a second value alongside the secret — e.g. `meta_ads` stores the
+   * Meta ad-account id ("act_…") in the label and the `ads_read` token in the
+   * encrypted key.
+   */
+  async getActiveWithMeta(provider: string): Promise<{ key: string; label: string } | null> {
+    const row = await this.prisma.apiKey.findFirst({
+      where: { provider, isActive: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!row) return null;
+    return { key: this.crypto.decrypt(row.keyEnc), label: row.label };
+  }
+
   /** Does an active key exist for this provider (without decrypting)? */
   async hasActiveKey(provider: string): Promise<boolean> {
     const row = await this.prisma.apiKey.findFirst({
@@ -226,6 +242,46 @@ export class ApiKeysService {
           }
         } catch {
           error = 'Could not parse as JSON — paste the full service-account file contents.';
+        }
+      } else if (row.provider === 'meta_ads') {
+        // label = Meta ad-account id ("act_<digits>" or bare digits). key = a
+        // token with `ads_read`, OR (to reuse the live WhatsApp/leads token)
+        // anything that isn't a token — in which case we decrypt the active
+        // channel token, exactly as MetaAdsService does at sync time. Hit the
+        // account node: a cheap, un-billed read proving the id + token scope.
+        const raw = row.label.trim();
+        const acct = raw.startsWith('act_') ? raw : `act_${raw}`;
+        if (!/^act_\d+$/.test(acct)) {
+          error = `Label must be the Meta ad-account id ("act_1234567890" or just the digits). Got "${row.label}".`;
+        } else {
+          let token = plaintext;
+          const looksLikeToken = plaintext.length > 40 && !plaintext.startsWith('act_');
+          if (!looksLikeToken) {
+            const ch = await this.prisma.whatsAppChannel.findFirst({
+              where: { status: 'ACTIVE' },
+              orderBy: { createdAt: 'desc' },
+              select: { accessTokenEnc: true },
+            });
+            if (ch) {
+              try {
+                token = this.crypto.decrypt(ch.accessTokenEnc);
+              } catch {
+                /* key rotated — fall through and let Meta reject */
+              }
+            }
+          }
+          const ver = process.env.META_GRAPH_API_VERSION?.trim() || 'v21.0';
+          // Meta error bodies never echo the access token, so persisting a
+          // sliced response into lastTestError is safe (no secret leak).
+          const res = await fetch(
+            `https://graph.facebook.com/${ver}/${acct}?fields=name,currency,account_status`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!res.ok) {
+            error = `Meta returned ${res.status}: ${await res.text().then((t) => t.slice(0, 200))}`;
+          } else {
+            ok = true;
+          }
         }
       } else {
         error = `No test handler implemented for provider "${row.provider}"`;

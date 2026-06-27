@@ -124,6 +124,22 @@ function fmtMoney(rows?: MoneyByCurrency[]): string {
     .join(' + ');
 }
 
+/**
+ * Precise single amount with a currency symbol, e.g. "Rs 2,500" or "USD 12.34".
+ * Per-ad cost figures (spend/CPL/CPA) must NOT be compacted — advertisers
+ * compare them directly, so a 1k-bucket rounding would mislead. Thousands get
+ * separators; sub-1000 keep up to 2 decimals (the cents the backend computed).
+ */
+function fmtAmt(amount?: number | null, currency?: string | null): string {
+  if (amount == null) return '—';
+  const sym = currency === 'PKR' ? 'Rs ' : currency ? `${currency} ` : '';
+  const n =
+    Math.abs(amount) >= 1000
+      ? Math.round(amount).toLocaleString()
+      : (Math.round(amount * 100) / 100).toLocaleString();
+  return `${sym}${n}`;
+}
+
 function adName(row: AdPerformanceRow): string {
   if (row.headline && row.headline.trim()) return row.headline.trim();
   if (row.sourceType) return `${row.sourceType} ad`;
@@ -475,6 +491,28 @@ export default function LeadsPage() {
             tone="info"
             Icon={Timer}
           />
+          <MetricCard
+            label="Ad spend"
+            value={fmtMoney(stats.adSpend)}
+            hint={
+              stats.blendedCpl != null
+                ? `~CA$${compactNum(stats.blendedCpl)} per ad lead (CPL)`
+                : 'Connect Meta ads in Settings → API Keys'
+            }
+            tone="warning"
+            Icon={Megaphone}
+          />
+          <MetricCard
+            label="Return on ad spend"
+            value={stats.blendedRoas != null ? `${stats.blendedRoas}×` : '—'}
+            hint={
+              stats.adRevenueBaseCad
+                ? `CA$${compactNum(stats.adRevenueBaseCad)} earned from ad leads`
+                : 'CAD revenue ÷ CAD ad spend'
+            }
+            tone="success"
+            Icon={TrendingUp}
+          />
         </div>
       ) : null}
 
@@ -551,14 +589,18 @@ export default function LeadsPage() {
         ) : (
           <>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 940 }}>
                 <thead>
                   <tr>
                     <th style={th}>Ad</th>
-                    <th style={{ ...th, width: '34%' }}>Leads</th>
+                    <th style={{ ...th, width: '22%' }}>Leads</th>
                     <th style={th}>Contacted</th>
                     <th style={th}>Converted</th>
                     <th style={th}>Conv.</th>
+                    <th style={th}>Spend</th>
+                    <th style={th}>CPL</th>
+                    <th style={th}>CPA</th>
+                    <th style={th}>ROAS</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -595,6 +637,18 @@ export default function LeadsPage() {
                         <td style={td}>{fmtNum(row.converted)}</td>
                         <td style={td}>
                           <StatusBadge tone={conv > 0 ? 'success' : 'neutral'} size="sm" dot={false}>{conv}%</StatusBadge>
+                        </td>
+                        <td style={td}>{fmtAmt(row.spend, row.spendCurrency)}</td>
+                        <td style={td}>{fmtAmt(row.cpl, row.spendCurrency)}</td>
+                        <td style={td}>{fmtAmt(row.cpa, row.spendCurrency)}</td>
+                        <td style={td}>
+                          {row.roas != null ? (
+                            <StatusBadge tone={row.roas >= 1 ? 'success' : 'warning'} size="sm" dot={false}>
+                              {row.roas}×
+                            </StatusBadge>
+                          ) : (
+                            <span className="sos-text-faint">—</span>
+                          )}
                         </td>
                       </tr>
                     );

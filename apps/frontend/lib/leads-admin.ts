@@ -21,6 +21,13 @@ export interface LeadStats {
   revenuePipeline?: MoneyByCurrency[];
   lostReasons?: Array<{ reason: string; count: number }>;
   speedToLead?: { medianMinutes: number | null; pctUnder5min: number | null; sample: number };
+  // Phase 2 ad-spend ROI (Meta Marketing API). Optional — empty until a
+  // `meta_ads` credential is configured + a sync has run.
+  adSpend?: MoneyByCurrency[]; // total spend in native ad-account currency
+  adSpendBaseCad?: number; // total spend rolled to CAD base
+  adRevenueBaseCad?: number; // CAD revenue attributable to ad-sourced leads
+  blendedCpl?: number | null; // CAD spend per ad-sourced lead
+  blendedRoas?: number | null; // CAD revenue ÷ CAD spend
 }
 
 export interface AdPerformanceRow {
@@ -31,6 +38,13 @@ export interface AdPerformanceRow {
   leads: number;
   contacted: number;
   converted: number;
+  // Phase 2 — null until Meta ad spend is synced for this ad.
+  spend?: number | null; // native ad-account currency
+  spendCurrency?: string | null;
+  revenueBaseCad?: number; // CAD revenue from this ad's converted leads
+  cpl?: number | null; // spend ÷ leads (native currency)
+  cpa?: number | null; // spend ÷ converted (native currency)
+  roas?: number | null; // CAD revenue ÷ CAD spend
 }
 
 export interface AdminLead {

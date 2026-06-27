@@ -2,6 +2,11 @@
 
 import { apiFetch, buildQuery } from './api-client';
 
+export interface MoneyByCurrency {
+  currency: string;
+  amount: number;
+}
+
 export interface LeadStats {
   total: number;
   byStatus: Record<string, number>;
@@ -10,6 +15,11 @@ export interface LeadStats {
   fromAds: number;
   newToday: number;
   recent: Array<{ date: string; count: number }>;
+  // Phase 1 efficiency/ROI metrics (optional — tolerate an older backend).
+  revenueWon?: MoneyByCurrency[];
+  revenuePipeline?: MoneyByCurrency[];
+  lostReasons?: Array<{ reason: string; count: number }>;
+  speedToLead?: { medianMinutes: number | null; pctUnder5min: number | null; sample: number };
 }
 
 export interface AdPerformanceRow {

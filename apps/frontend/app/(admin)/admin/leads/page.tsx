@@ -12,9 +12,12 @@ import {
   RotateCcw,
   Search,
   SlidersHorizontal,
+  Timer,
   Trash2,
+  TrendingUp,
   UserPlus,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import {
@@ -46,6 +49,7 @@ import {
   type AdPerformanceRow,
   type LeadFilters,
   type LeadStats,
+  type MoneyByCurrency,
 } from '@/lib/leads-admin';
 
 interface EmployeeOption {
@@ -94,6 +98,29 @@ function fmtDate(iso?: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Funnel stages shown in order on the dashboard (keys are LeadStatus values). */
+const FUNNEL_STAGES: Array<[string, string]> = [
+  ['NEW', 'New'],
+  ['CONTACTED', 'Contacted'],
+  ['QUALIFIED', 'Qualified'],
+  ['PROPOSAL_SENT', 'Proposal sent'],
+  ['CONVERTED', 'Converted'],
+];
+
+function compactNum(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1000)}k`;
+  return `${Math.round(n)}`;
+}
+
+/** Compact money across currencies, e.g. "Rs 1.8M" or "Rs 1.8M + CAD 4k". */
+function fmtMoney(rows?: MoneyByCurrency[]): string {
+  if (!rows || rows.length === 0) return '—';
+  return rows
+    .map((r) => `${r.currency === 'PKR' ? 'Rs ' : `${r.currency} `}${compactNum(r.amount)}`)
+    .join(' + ');
 }
 
 function adName(row: AdPerformanceRow): string {
@@ -433,6 +460,72 @@ export default function LeadsPage() {
               <MetricCard key={k.label} label={k.label} value={fmtNum(k.value)} hint={k.hint} delta={k.delta} tone={k.tone} Icon={k.Icon} />
             ))}
       </div>
+
+      {/* ── Money + speed-to-lead ────────────────────────────────────────── */}
+      {stats ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
+          <MetricCard label="Won revenue" value={fmtMoney(stats.revenueWon)} hint="Converted leads · agreed fee" tone="success" Icon={Wallet} />
+          <MetricCard label="Pipeline value" value={fmtMoney(stats.revenuePipeline)} hint="Open leads · agreed fee" tone="accent" Icon={TrendingUp} />
+          <MetricCard
+            label="Speed-to-lead"
+            value={stats.speedToLead?.medianMinutes != null ? `${stats.speedToLead.medianMinutes} min` : '—'}
+            hint={stats.speedToLead?.pctUnder5min != null ? `${stats.speedToLead.pctUnder5min}% replied under 5 min` : 'Median time to first reply'}
+            tone="info"
+            Icon={Timer}
+          />
+        </div>
+      ) : null}
+
+      {/* ── Conversion funnel + lost reasons ─────────────────────────────── */}
+      {stats ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+          <GlassCard variant="default">
+            <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-base)', margin: '0 0 14px' }}>Conversion funnel</h2>
+            {(() => {
+              const funnelMax = Math.max(1, ...FUNNEL_STAGES.map(([k]) => stats.byStatus[k] ?? 0));
+              return FUNNEL_STAGES.map(([key, label]) => {
+                const n = stats.byStatus[key] ?? 0;
+                const pct = Math.round((n / funnelMax) * 100);
+                return (
+                  <div key={key} style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                      <span style={{ color: 'var(--sos-text-secondary)' }}>{label}</span>
+                      <span style={{ color: 'var(--sos-text-primary)', fontWeight: 600 }}>{fmtNum(n)}</span>
+                    </div>
+                    <div style={{ height: 7, borderRadius: 999, background: 'var(--sos-surface-3)', overflow: 'hidden' }}>
+                      <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: key === 'CONVERTED' ? 'var(--sos-status-success)' : 'var(--sos-brand-primary)' }} />
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </GlassCard>
+          <GlassCard variant="default">
+            <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-base)', margin: '0 0 14px' }}>Top lost reasons</h2>
+            {(stats.lostReasons ?? []).length === 0 ? (
+              <div className="sos-text-faint" style={{ fontSize: 13 }}>No lost leads recorded yet.</div>
+            ) : (
+              (() => {
+                const lostMax = Math.max(1, ...(stats.lostReasons ?? []).map((x) => x.count));
+                return (stats.lostReasons ?? []).map((r) => {
+                  const pct = Math.round((r.count / lostMax) * 100);
+                  return (
+                    <div key={r.reason} style={{ marginBottom: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12.5, marginBottom: 4 }}>
+                        <span style={{ color: 'var(--sos-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason}</span>
+                        <span style={{ color: 'var(--sos-text-primary)', fontWeight: 600 }}>{fmtNum(r.count)}</span>
+                      </div>
+                      <div style={{ height: 7, borderRadius: 999, background: 'var(--sos-surface-3)', overflow: 'hidden' }}>
+                        <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: 'var(--sos-status-danger)' }} />
+                      </div>
+                    </div>
+                  );
+                });
+              })()
+            )}
+          </GlassCard>
+        </div>
+      ) : null}
 
       {/* ── Ad attribution leaderboard ───────────────────────────────────── */}
       <GlassCard variant="default" padded={false} glow="warm">

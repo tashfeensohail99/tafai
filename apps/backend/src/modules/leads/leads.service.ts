@@ -169,6 +169,59 @@ export class LeadsService {
       GROUP BY 1 ORDER BY 1`);
     const recent = recentRows.map((r) => ({ date: r.d, count: Number(r.n) }));
 
+    // Revenue (agreed service fee): won = CONVERTED, pipeline = still-open stages.
+    // Grouped by currency so PKR and CAD are never summed together. Cast to
+    // float8 so the JSON carries plain numbers, not Prisma Decimal objects.
+    const revenueRows = await this.prisma.$queryRaw<
+      Array<{ cur: string; won: number; pipeline: number }>
+    >(Prisma.sql`
+      SELECT COALESCE(NULLIF(TRIM("serviceFeeCurrency"), ''), 'PKR') AS cur,
+             COALESCE(SUM(CASE WHEN status = 'CONVERTED' THEN "serviceFeeAmount" END), 0)::float8 AS won,
+             COALESCE(SUM(CASE WHEN status IN ('NEW','CONTACTED','QUALIFIED','PROPOSAL_SENT','FOLLOW_UP')
+                          THEN "serviceFeeAmount" END), 0)::float8 AS pipeline
+      FROM crm.leads
+      WHERE "deletedAt" IS NULL AND "serviceFeeAmount" IS NOT NULL
+      GROUP BY 1`);
+    const revenueWon = revenueRows
+      .filter((r) => Number(r.won) > 0)
+      .map((r) => ({ currency: r.cur, amount: Math.round(Number(r.won)) }));
+    const revenuePipeline = revenueRows
+      .filter((r) => Number(r.pipeline) > 0)
+      .map((r) => ({ currency: r.cur, amount: Math.round(Number(r.pipeline)) }));
+
+    // Top reasons we lose deals (LOST leads, by reason).
+    const lostRows = await this.prisma.$queryRaw<Array<{ reason: string; n: number }>>(Prisma.sql`
+      SELECT COALESCE(NULLIF(TRIM("lostReason"), ''), 'Not specified') AS reason, count(*)::int AS n
+      FROM crm.leads WHERE "deletedAt" IS NULL AND status = 'LOST'
+      GROUP BY 1 ORDER BY n DESC LIMIT 8`);
+    const lostReasons = lostRows.map((r) => ({ reason: r.reason, count: Number(r.n) }));
+
+    // Speed-to-lead: minutes from the customer's first message to the first
+    // agent reply, over leads' threads in the last 30 days. Median + % under 5m.
+    const speedRows = await this.prisma.$queryRaw<
+      Array<{ median_min: number | null; sample: number; under5: number }>
+    >(Prisma.sql`
+      SELECT
+        percentile_cont(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (t."firstAgentReplyAt" - t."firstInboundAt")) / 60.0
+        )::float8 AS median_min,
+        count(*)::int AS sample,
+        SUM(CASE WHEN t."firstAgentReplyAt" - t."firstInboundAt" <= interval '5 minutes'
+                 THEN 1 ELSE 0 END)::int AS under5
+      FROM whatsapp.threads t
+      JOIN crm.leads l ON l.id = t."leadId"
+      WHERE l."deletedAt" IS NULL
+        AND t."firstAgentReplyAt" IS NOT NULL AND t."firstInboundAt" IS NOT NULL
+        AND t."firstAgentReplyAt" >= t."firstInboundAt"
+        AND t."firstInboundAt" >= now() - interval '30 days'`);
+    const sp = speedRows[0];
+    const speedSample = Number(sp?.sample ?? 0);
+    const speedToLead = {
+      medianMinutes: sp?.median_min != null ? Math.round(Number(sp.median_min)) : null,
+      pctUnder5min: speedSample ? Math.round((Number(sp.under5) / speedSample) * 100) : null,
+      sample: speedSample,
+    };
+
     const converted = byStatus['CONVERTED'] ?? 0;
     const today = new Date().toISOString().slice(0, 10);
     return {
@@ -179,6 +232,10 @@ export class LeadsService {
       fromAds,
       newToday: recent.find((r) => r.date === today)?.count ?? 0,
       recent,
+      revenueWon,
+      revenuePipeline,
+      lostReasons,
+      speedToLead,
     };
   }
 

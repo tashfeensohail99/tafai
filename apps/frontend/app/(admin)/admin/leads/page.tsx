@@ -492,7 +492,7 @@ export default function LeadsPage() {
             Icon={Timer}
           />
           <MetricCard
-            label="Ad spend"
+            label="Ad spend (30d)"
             value={fmtMoney(stats.adSpend)}
             hint={
               stats.blendedCpl != null
@@ -503,7 +503,7 @@ export default function LeadsPage() {
             Icon={Megaphone}
           />
           <MetricCard
-            label="Return on ad spend"
+            label="Return on ad spend (30d)"
             value={stats.blendedRoas != null ? `${stats.blendedRoas}×` : '—'}
             hint={
               stats.adRevenueBaseCad
@@ -573,7 +573,7 @@ export default function LeadsPage() {
           <Megaphone size={16} style={{ color: 'var(--sos-brand-accent)' }} />
           <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-base)', margin: 0 }}>Ad attribution</h2>
           <span className="sos-text-faint" style={{ fontSize: 12 }}>
-            Which Click-to-WhatsApp ads brought leads — click a row to filter the table.
+            Which Click-to-WhatsApp ads brought leads — click a row to filter. Leads/Contacted/Converted are all-time; Spend, CPL, CPA &amp; ROAS cover the last 30 days.
           </span>
           <span style={{ marginLeft: 'auto' }}>
             <StatusBadge tone="warm" size="sm" dot={false}>{ads.length} ads</StatusBadge>

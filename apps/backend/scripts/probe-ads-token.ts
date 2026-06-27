@@ -67,11 +67,15 @@ async function main() {
   console.log('\nWABA id:', chan?.wabaId);
   if (chan?.wabaId) {
     const waba = await g(
-      `${base}/${chan.wabaId}?fields=id,name,owner_business_account{id,name},on_behalf_of_business_info&access_token=${encodeURIComponent(token)}`,
+      `${base}/${chan.wabaId}?fields=id,name,currency,timezone_id,owner_business_info{id,name},on_behalf_of_business_info{id,name}&access_token=${encodeURIComponent(token)}`,
     );
-    console.log('WABA →', waba.status, JSON.stringify(waba.body).slice(0, 600));
-    const bizId =
-      (waba.body as { owner_business_account?: { id?: string } })?.owner_business_account?.id;
+    console.log('WABA →', waba.status, JSON.stringify(waba.body).slice(0, 700));
+    const wb = waba.body as {
+      owner_business_info?: { id?: string };
+      on_behalf_of_business_info?: { id?: string };
+    };
+    const bizId = wb?.owner_business_info?.id ?? wb?.on_behalf_of_business_info?.id;
+    console.log('business id →', bizId);
     if (bizId) {
       for (const edge of ['owned_ad_accounts', 'client_ad_accounts']) {
         const r = await g(

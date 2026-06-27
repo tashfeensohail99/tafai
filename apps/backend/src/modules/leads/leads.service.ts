@@ -262,11 +262,15 @@ export class LeadsService {
 
     // ── Ad spend → blended efficiency. Spend reads tolerate the table being
     //    absent (pre-migration) or empty (no meta_ads credential). ────────────
+    // All ad metrics use a trailing 30-day window so spend, leads and revenue
+    // line up — a ratio mixing 30d spend with all-time leads would mislead.
+    const adWindowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const adSpend: Array<{ currency: string; amount: number }> = [];
     let adSpendBaseCad = 0;
     try {
       const spendByCur = await this.prisma.adSpendDaily.groupBy({
         by: ['currency'],
+        where: { date: { gte: adWindowStart } },
         _sum: { spend: true, baseSpend: true },
       });
       for (const s of spendByCur) {
@@ -280,16 +284,20 @@ export class LeadsService {
     }
     adSpendBaseCad = Math.round(adSpendBaseCad);
 
-    // CAD revenue attributable to all ad-sourced leads (for blended ROAS).
+    // 30-day cohort: ad-sourced leads whose ad click landed in the window, plus
+    // the received revenue (CAD) from the clients they became. Both the lead
+    // count and the revenue are scoped to the same window as the spend above.
+    let adLeads30 = 0;
     let adRevenueBaseCad = 0;
     try {
-      const revRows = await this.prisma.$queryRaw<Array<{ revenue_base: number }>>(Prisma.sql`
-        SELECT COALESCE(SUM(r.rev_base), 0)::float8 AS revenue_base
+      const rows = await this.prisma.$queryRaw<Array<{ leads: number; revenue_base: number }>>(Prisma.sql`
+        SELECT count(*)::int AS leads, COALESCE(SUM(r.rev_base), 0)::float8 AS revenue_base
         FROM (
           SELECT DISTINCT ON (l.id) l.id AS lead_id
           FROM crm.leads l
           JOIN whatsapp.threads t ON t."leadId" = l.id
           WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
+            AND COALESCE(t."adReferralAt", l."createdAt") >= now() - interval '30 days'
         ) led
         JOIN LATERAL (
           SELECT COALESCE(SUM(p."baseAmount"), 0) AS rev_base
@@ -298,13 +306,14 @@ export class LeadsService {
           JOIN finance.payments p ON p."invoiceId" = i.id
           WHERE c."sourceLeadId" = led.lead_id AND p.status IN ('PAID', 'PARTIAL')
         ) r ON true`);
-      adRevenueBaseCad = Math.round(Number(revRows[0]?.revenue_base ?? 0));
+      adLeads30 = Number(rows[0]?.leads ?? 0);
+      adRevenueBaseCad = Math.round(Number(rows[0]?.revenue_base ?? 0));
     } catch {
       /* revenue join unavailable */
     }
 
     const blendedCpl =
-      fromAds > 0 && adSpendBaseCad > 0 ? Math.round((adSpendBaseCad / fromAds) * 100) / 100 : null;
+      adLeads30 > 0 && adSpendBaseCad > 0 ? Math.round((adSpendBaseCad / adLeads30) * 100) / 100 : null;
     const blendedRoas =
       adSpendBaseCad > 0 ? Math.round((adRevenueBaseCad / adSpendBaseCad) * 100) / 100 : null;
 
@@ -376,13 +385,14 @@ export class LeadsService {
       GROUP BY sub.grp
       ORDER BY leads DESC`);
 
-    // Meta ad spend per ad (native currency + CAD base), summed over all synced
-    // days. Tolerant of the table not existing yet (pre-migration) or being
-    // empty (no meta_ads credential) — the dashboard simply shows no spend.
+    // Meta ad spend per ad over the trailing 30 days (native currency + CAD
+    // base). Tolerant of the table being absent (pre-migration) or empty.
+    const adWindowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const spendByAd = new Map<string, { byCur: Map<string, number>; baseSpend: number }>();
     try {
       const spendRows = await this.prisma.adSpendDaily.groupBy({
         by: ['adId', 'currency'],
+        where: { date: { gte: adWindowStart } },
         _sum: { spend: true, baseSpend: true },
       });
       for (const s of spendRows) {
@@ -395,19 +405,28 @@ export class LeadsService {
       /* ad_spend_daily not migrated yet — leave spend empty */
     }
 
-    // CAD revenue attributable to each ad group (dedupe each lead to its latest
-    // ad, then sum received payments of the client it converted into).
-    const revByGrp = new Map<string, number>();
+    // 30-day cohort per ad group: leads acquired in the window (deduped to their
+    // latest ad), how many converted, and the received revenue (CAD) from them.
+    // These power CPL/CPA/ROAS so the ratios match the 30-day spend window — the
+    // all-time leads/contacted/converted columns above stay for volume context.
+    const winByGrp = new Map<string, { leads30: number; conv30: number; rev30: number }>();
     try {
-      const revRows = await this.prisma.$queryRaw<Array<{ grp: string; revenue_base: number }>>(Prisma.sql`
-        SELECT led.grp AS grp, COALESCE(SUM(r.rev_base), 0)::float8 AS revenue_base
+      const winRows = await this.prisma.$queryRaw<
+        Array<{ grp: string; leads30: number; conv30: number; rev30: number }>
+      >(Prisma.sql`
+        SELECT led.grp AS grp,
+               count(*)::int AS leads30,
+               count(*) FILTER (WHERE led.status = 'CONVERTED')::int AS conv30,
+               COALESCE(SUM(r.rev_base), 0)::float8 AS rev30
         FROM (
           SELECT DISTINCT ON (l.id)
             l.id AS lead_id,
+            l.status::text AS status,
             COALESCE(t."adReferral"->>'source_id', t."adReferral"->>'headline', 'unknown') AS grp
           FROM crm.leads l
           JOIN whatsapp.threads t ON t."leadId" = l.id
           WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
+            AND COALESCE(t."adReferralAt", l."createdAt") >= now() - interval '30 days'
           ORDER BY l.id, t."adReferralAt" DESC NULLS LAST
         ) led
         JOIN LATERAL (
@@ -418,9 +437,10 @@ export class LeadsService {
           WHERE c."sourceLeadId" = led.lead_id AND p.status IN ('PAID', 'PARTIAL')
         ) r ON true
         GROUP BY led.grp`);
-      for (const rr of revRows) revByGrp.set(rr.grp, Number(rr.revenue_base));
+      for (const w of winRows)
+        winByGrp.set(w.grp, { leads30: Number(w.leads30), conv30: Number(w.conv30), rev30: Number(w.rev30) });
     } catch {
-      /* revenue join unavailable — leave ROAS null */
+      /* revenue join unavailable — leave ratios null */
     }
 
     return rows.map((r) => {
@@ -428,9 +448,13 @@ export class LeadsService {
       // equals grp exactly when the ad carried a source_id; headline-only groups
       // have no Meta spend to match (spend is keyed on ad_id).
       const grp = r.grp;
-      const leads = Number(r.leads);
-      const converted = Number(r.converted);
-      const revenueBase = revByGrp.get(grp) ?? 0;
+      const leads = Number(r.leads); // all-time volume (display)
+      const converted = Number(r.converted); // all-time volume (display)
+      // 30-day cohort drives the cost ratios so they line up with 30d spend.
+      const win = winByGrp.get(grp);
+      const leads30 = win?.leads30 ?? 0;
+      const conv30 = win?.conv30 ?? 0;
+      const rev30 = win?.rev30 ?? 0;
 
       const sp = spendByAd.get(grp);
       let spend: number | null = null;
@@ -459,10 +483,10 @@ export class LeadsService {
         converted,
         spend: spend != null ? Math.round(spend * 100) / 100 : null,
         spendCurrency,
-        revenueBaseCad: Math.round(revenueBase),
-        cpl: spend != null && leads > 0 ? Math.round((spend / leads) * 100) / 100 : null,
-        cpa: spend != null && converted > 0 ? Math.round((spend / converted) * 100) / 100 : null,
-        roas: baseSpend > 0 ? Math.round((revenueBase / baseSpend) * 100) / 100 : null,
+        revenueBaseCad: Math.round(rev30),
+        cpl: spend != null && leads30 > 0 ? Math.round((spend / leads30) * 100) / 100 : null,
+        cpa: spend != null && conv30 > 0 ? Math.round((spend / conv30) * 100) / 100 : null,
+        roas: baseSpend > 0 ? Math.round((rev30 / baseSpend) * 100) / 100 : null,
       };
     });
   }

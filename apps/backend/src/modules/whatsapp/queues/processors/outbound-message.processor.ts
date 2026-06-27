@@ -118,15 +118,26 @@ export class OutboundMessageProcessor extends WorkerHost {
       // the auto-ack, templates and campaigns all have a null sender, so they
       // leave the chat pending — exactly the real-WhatsApp rule.
       const isHumanSend = message.sentByEmployeeId != null;
+      // A re-engagement TEMPLATE (the dormant-backlog blast or the admin backlog
+      // sender) counts as "we contacted them" per product decision: once it
+      // sends, the lead drops off the Uncontacted list (which keys on
+      // lastHumanReplyAt) and out of awaiting-reply. We're in the SENT branch, so
+      // this only fires on a SUCCESSFUL send — Meta-declined (FAILED) ones never
+      // reach here and correctly stay uncontacted. We set lastHumanReplyAt but
+      // NOT lastHumanActivityAt, so a bulk blast doesn't reorder the whole inbox.
+      const source = (message.payload as { source?: string } | null)?.source;
+      const isReengageSend = source === 'reengage_blast' || source === 'reengagement_backlog';
       await this.prisma.whatsAppThread.update({
         where: { id: message.threadId },
         data: {
           lastMessageAt: now,
           lastMessagePreview: preview,
-          // A human (rep) reply is real activity → bump the inbox sort key.
-          // Bot/auto/template/campaign sends (sentByEmployeeId null) deliberately
-          // do NOT, so they can't push a chat up or bury a real reply.
-          ...(isHumanSend ? { lastHumanReplyAt: now, lastHumanActivityAt: now, awaitingReply: false } : {}),
+          // A human (rep) reply is real activity → bump the inbox sort key too.
+          ...(isHumanSend
+            ? { lastHumanReplyAt: now, lastHumanActivityAt: now, awaitingReply: false }
+            : isReengageSend
+              ? { lastHumanReplyAt: now, awaitingReply: false }
+              : {}),
         },
       });
 

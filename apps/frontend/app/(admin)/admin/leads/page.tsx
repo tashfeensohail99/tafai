@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
+  Banknote,
   CheckCircle2,
   ChevronDown,
   Download,
@@ -464,12 +465,13 @@ export default function LeadsPage() {
       {/* ── Money + speed-to-lead ────────────────────────────────────────── */}
       {stats ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-          <MetricCard label="Won revenue" value={fmtMoney(stats.revenueWon)} hint="Converted leads · agreed fee" tone="success" Icon={Wallet} />
-          <MetricCard label="Pipeline value" value={fmtMoney(stats.revenuePipeline)} hint="Open leads · agreed fee" tone="accent" Icon={TrendingUp} />
+          <MetricCard label="Cash collected" value={fmtMoney(stats.revenueReceived)} hint="Verified payments · lead clients" tone="success" Icon={Banknote} />
+          <MetricCard label="Won (agreed fee)" value={fmtMoney(stats.revenueWon)} hint="Converted leads · promised fee" tone="accent" Icon={Wallet} />
+          <MetricCard label="Pipeline value" value={fmtMoney(stats.revenuePipeline)} hint="Open leads · agreed fee" tone="info" Icon={TrendingUp} />
           <MetricCard
             label="Speed-to-lead"
             value={stats.speedToLead?.medianMinutes != null ? `${stats.speedToLead.medianMinutes} min` : '—'}
-            hint={stats.speedToLead?.pctUnder5min != null ? `${stats.speedToLead.pctUnder5min}% replied under 5 min` : 'Median time to first reply'}
+            hint={stats.speedToLead?.pctUnder5min != null ? `${stats.speedToLead.pctUnder5min}% human reply under 5 min` : 'Median time to first human reply'}
             tone="info"
             Icon={Timer}
           />

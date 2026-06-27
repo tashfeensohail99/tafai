@@ -5,7 +5,14 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { AuditAction, ClientStatus, LeadStatus, Prisma, TimelineEventType } from '@prisma/client';
+import {
+  AuditAction,
+  ClientStatus,
+  LeadStatus,
+  PaymentStatus,
+  Prisma,
+  TimelineEventType,
+} from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
@@ -189,6 +196,26 @@ export class LeadsService {
       .filter((r) => Number(r.pipeline) > 0)
       .map((r) => ({ currency: r.cur, amount: Math.round(Number(r.pipeline)) }));
 
+    // Real cash received: confirmed payments (PAID/PARTIAL) booked against an
+    // invoice whose client originated from a lead. This is actual money in the
+    // door — distinct from the agreed service fee above, which is only a promise.
+    const receivedPayments = await this.prisma.payment.findMany({
+      where: {
+        status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
+        invoice: { client: { sourceLeadId: { not: null } } },
+      },
+      select: { amount: true, currency: true },
+    });
+    const receivedByCur = new Map<string, number>();
+    for (const p of receivedPayments) {
+      const cur = (p.currency || 'CAD').trim() || 'CAD';
+      receivedByCur.set(cur, (receivedByCur.get(cur) ?? 0) + Number(p.amount));
+    }
+    const revenueReceived = [...receivedByCur.entries()]
+      .map(([currency, amount]) => ({ currency, amount: Math.round(amount) }))
+      .filter((r) => r.amount > 0)
+      .sort((a, b) => b.amount - a.amount);
+
     // Top reasons we lose deals (LOST leads, by reason).
     const lostRows = await this.prisma.$queryRaw<Array<{ reason: string; n: number }>>(Prisma.sql`
       SELECT COALESCE(NULLIF(TRIM("lostReason"), ''), 'Not specified') AS reason, count(*)::int AS n
@@ -196,23 +223,34 @@ export class LeadsService {
       GROUP BY 1 ORDER BY n DESC LIMIT 8`);
     const lostReasons = lostRows.map((r) => ({ reason: r.reason, count: Number(r.n) }));
 
-    // Speed-to-lead: minutes from the customer's first message to the first
-    // agent reply, over leads' threads in the last 30 days. Median + % under 5m.
+    // Speed-to-lead (HUMAN): minutes from the customer's first message to the
+    // first reply sent by a real employee — NOT the AI bot. We derive the first
+    // human reply from the earliest OUTBOUND message that carries a
+    // sentByEmployeeId (the bot leaves it null), so the auto-responder no longer
+    // flatters this number. Median + % under 5m over leads' threads, last 30 days.
     const speedRows = await this.prisma.$queryRaw<
       Array<{ median_min: number | null; sample: number; under5: number }>
     >(Prisma.sql`
       SELECT
         percentile_cont(0.5) WITHIN GROUP (
-          ORDER BY EXTRACT(EPOCH FROM (t."firstAgentReplyAt" - t."firstInboundAt")) / 60.0
+          ORDER BY EXTRACT(EPOCH FROM (hr.first_human - t."firstInboundAt")) / 60.0
         )::float8 AS median_min,
         count(*)::int AS sample,
-        SUM(CASE WHEN t."firstAgentReplyAt" - t."firstInboundAt" <= interval '5 minutes'
+        SUM(CASE WHEN hr.first_human - t."firstInboundAt" <= interval '5 minutes'
                  THEN 1 ELSE 0 END)::int AS under5
       FROM whatsapp.threads t
       JOIN crm.leads l ON l.id = t."leadId"
+      JOIN LATERAL (
+        SELECT min(m."createdAt") AS first_human
+        FROM whatsapp.messages m
+        WHERE m."threadId" = t.id
+          AND m.direction = 'OUTBOUND'
+          AND m."sentByEmployeeId" IS NOT NULL
+      ) hr ON true
       WHERE l."deletedAt" IS NULL
-        AND t."firstAgentReplyAt" IS NOT NULL AND t."firstInboundAt" IS NOT NULL
-        AND t."firstAgentReplyAt" >= t."firstInboundAt"
+        AND t."firstInboundAt" IS NOT NULL
+        AND hr.first_human IS NOT NULL
+        AND hr.first_human >= t."firstInboundAt"
         AND t."firstInboundAt" >= now() - interval '30 days'`);
     const sp = speedRows[0];
     const speedSample = Number(sp?.sample ?? 0);
@@ -232,6 +270,7 @@ export class LeadsService {
       fromAds,
       newToday: recent.find((r) => r.date === today)?.count ?? 0,
       recent,
+      revenueReceived,
       revenueWon,
       revenuePipeline,
       lostReasons,

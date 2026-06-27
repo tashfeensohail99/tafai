@@ -16,6 +16,7 @@ export interface LeadStats {
   newToday: number;
   recent: Array<{ date: string; count: number }>;
   // Phase 1 efficiency/ROI metrics (optional — tolerate an older backend).
+  revenueReceived?: MoneyByCurrency[]; // real cash collected (verified payments)
   revenueWon?: MoneyByCurrency[];
   revenuePipeline?: MoneyByCurrency[];
   lostReasons?: Array<{ reason: string; count: number }>;

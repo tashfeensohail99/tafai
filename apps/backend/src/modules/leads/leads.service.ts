@@ -340,8 +340,24 @@ export class LeadsService {
     };
   }
 
-  /** Per-ad leaderboard: Click-to-WhatsApp attribution → lead funnel. */
-  async getAdPerformance() {
+  /**
+   * Per-ad leaderboard: Click-to-WhatsApp attribution → lead funnel. Spend +
+   * lead-cohort metrics are scoped to [from, to] (YYYY-MM-DD); when omitted,
+   * the window defaults to the trailing 30 days. The Leads/Contacted/Converted
+   * volume columns remain all-time.
+   */
+  async getAdPerformance(opts?: { from?: string; to?: string }) {
+    // Parse the window defensively; fall back to a trailing 30 days. `to` is
+    // inclusive of its whole day; guard against an inverted range.
+    const parse = (s: string | undefined, end: boolean): Date | null => {
+      if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+      const d = new Date(`${s}T${end ? '23:59:59.999' : '00:00:00.000'}Z`);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    let toDate = parse(opts?.to, true) ?? new Date();
+    let fromDate = parse(opts?.from, false) ?? new Date(toDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+    if (fromDate > toDate) [fromDate, toDate] = [toDate, fromDate];
+
     const rows = await this.prisma.$queryRaw<
       Array<{
         grp: string;
@@ -385,15 +401,14 @@ export class LeadsService {
       GROUP BY sub.grp
       ORDER BY leads DESC`);
 
-    // Meta ad spend per ad over the trailing 30 days (native currency + CAD
+    // Meta ad spend per ad over [fromDate, toDate] (native currency + CAD
     // base). Tolerant of the table being absent (pre-migration) or empty.
-    const adWindowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     type SpendEntry = { byCur: Map<string, number>; baseSpend: number; impressions: number; clicks: number };
     const spendByAd = new Map<string, SpendEntry>();
     try {
       const spendRows = await this.prisma.adSpendDaily.groupBy({
         by: ['adId', 'currency'],
-        where: { date: { gte: adWindowStart } },
+        where: { date: { gte: fromDate, lte: toDate } },
         _sum: { spend: true, baseSpend: true, impressions: true, clicks: true },
       });
       for (const s of spendRows) {
@@ -430,7 +445,8 @@ export class LeadsService {
           FROM crm.leads l
           JOIN whatsapp.threads t ON t."leadId" = l.id
           WHERE l."deletedAt" IS NULL AND t."adReferral" IS NOT NULL
-            AND COALESCE(t."adReferralAt", l."createdAt") >= now() - interval '30 days'
+            AND COALESCE(t."adReferralAt", l."createdAt") >= ${fromDate}
+            AND COALESCE(t."adReferralAt", l."createdAt") <= ${toDate}
           ORDER BY l.id, t."adReferralAt" DESC NULLS LAST
         ) led
         JOIN LATERAL (

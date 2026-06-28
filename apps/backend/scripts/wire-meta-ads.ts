@@ -57,7 +57,7 @@ async function main() {
 
   // 2) Seed spend (last 35d, per-ad daily).
   const rate = await pkrPerCad();
-  const since = new Date(Date.now() - 35 * 864e5).toISOString().slice(0, 10);
+  const since = new Date(Date.now() - 92 * 864e5).toISOString().slice(0, 10);
   const until = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
   const fields = 'ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks,account_currency';
   let url = `https://graph.facebook.com/${ver}/${ACCT}/insights?level=ad&time_increment=1&fields=${fields}&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}&limit=200`;

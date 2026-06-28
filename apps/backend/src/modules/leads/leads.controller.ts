@@ -81,11 +81,14 @@ export class LeadsController {
     return this.leadsService.getStats();
   }
 
-  /** Per-ad lead leaderboard (Click-to-WhatsApp attribution → funnel). */
+  /**
+   * Per-ad lead leaderboard (Click-to-WhatsApp attribution → funnel). Optional
+   * `from`/`to` (YYYY-MM-DD) scope the spend + lead-cohort window; default 30d.
+   */
   @Get('ad-performance')
   @RequirePermissions('leads.view_all')
-  adPerformance() {
-    return this.leadsService.getAdPerformance();
+  adPerformance(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.leadsService.getAdPerformance({ from, to });
   }
 
   /**

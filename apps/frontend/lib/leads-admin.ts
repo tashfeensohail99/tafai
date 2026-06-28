@@ -86,8 +86,9 @@ export function fetchLeadStats(): Promise<LeadStats> {
   return apiFetch<LeadStats>('/leads/stats', { cache: 'no-store' });
 }
 
-export function fetchAdPerformance(): Promise<AdPerformanceRow[]> {
-  return apiFetch<AdPerformanceRow[]>('/leads/ad-performance', { cache: 'no-store' });
+export function fetchAdPerformance(range?: { from?: string; to?: string }): Promise<AdPerformanceRow[]> {
+  const qs = buildQuery({ from: range?.from, to: range?.to });
+  return apiFetch<AdPerformanceRow[]>(`/leads/ad-performance${qs}`, { cache: 'no-store' });
 }
 
 export function listAdminLeads(filters: LeadFilters): Promise<AdminLead[]> {

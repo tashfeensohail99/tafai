@@ -19,7 +19,10 @@ export class MetaAdsSyncService implements OnModuleInit, OnModuleDestroy {
   private running = false;
 
   private static readonly INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
-  private static readonly TRAILING_DAYS = 35;
+  // Keep ~a quarter of daily spend so the dashboard's calendar range can look
+  // back up to 3 months. Past days only firm up slightly, so re-syncing the
+  // whole window each tick is cheap + idempotent.
+  private static readonly TRAILING_DAYS = 92;
 
   constructor(private readonly ads: MetaAdsService) {}
 

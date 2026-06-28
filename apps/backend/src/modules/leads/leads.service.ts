@@ -463,7 +463,23 @@ export class LeadsService {
       /* revenue join unavailable — leave ratios null */
     }
 
-    return rows.map((r) => {
+    // Names for ads with spend, so spend-only ads (paid for but no attributed
+    // leads in the window) can still display a real ad name.
+    const adNameById = new Map<string, string | null>();
+    if (spendByAd.size > 0) {
+      try {
+        const names = await this.prisma.adSpendDaily.findMany({
+          where: { adId: { in: [...spendByAd.keys()] } },
+          select: { adId: true, adName: true },
+          distinct: ['adId'],
+        });
+        for (const n of names) adNameById.set(n.adId, n.adName);
+      } catch {
+        /* tolerate */
+      }
+    }
+
+    const mapped = rows.map((r) => {
       // One consistent key: the SQL group key. Spend is keyed by ad_id, which
       // equals grp exactly when the ad carried a source_id; headline-only groups
       // have no Meta spend to match (spend is keyed on ad_id).
@@ -518,6 +534,41 @@ export class LeadsService {
         roas: baseSpend > 0 ? Math.round((rev30 / baseSpend) * 100) / 100 : null,
       };
     });
+
+    // Ads we PAID for in the window but that brought no attributed leads still
+    // belong on a spend view — append them so EVERY ad with spend shows (leads
+    // and cost-per-lead null). Keyed by ad_id, the same key spend is stored on.
+    const coveredGrps = new Set(rows.map((r) => r.grp));
+    const spendOnly = [...spendByAd.entries()]
+      .filter(([adId]) => !coveredGrps.has(adId))
+      .map(([adId, sp]) => {
+        const curs = [...sp.byCur.entries()];
+        let spend = sp.baseSpend;
+        let spendCurrency: string | null = 'CAD';
+        if (curs.length === 1) [spendCurrency, spend] = curs[0];
+        return {
+          sourceId: adId,
+          headline: adNameById.get(adId) ?? null,
+          sourceType: 'ad' as string | null,
+          sourceUrl: null as string | null,
+          leads: 0,
+          contacted: 0,
+          converted: 0,
+          leads30: 0,
+          spend: Math.round(spend * 100) / 100,
+          spendCurrency,
+          impressions: sp.impressions,
+          clicks: sp.clicks,
+          ctr: sp.impressions > 0 ? Math.round((sp.clicks / sp.impressions) * 10000) / 100 : null,
+          cpc: sp.clicks > 0 ? Math.round((spend / sp.clicks) * 100) / 100 : null,
+          revenueBaseCad: 0,
+          cpl: null as number | null,
+          cpa: null as number | null,
+          roas: null as number | null,
+        };
+      });
+
+    return [...mapped, ...spendOnly];
   }
 
   async findByIdAccessible(id: string, user: RequestUser) {

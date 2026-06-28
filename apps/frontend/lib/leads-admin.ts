@@ -38,12 +38,19 @@ export interface AdPerformanceRow {
   leads: number;
   contacted: number;
   converted: number;
-  // Phase 2 — null until Meta ad spend is synced for this ad.
-  spend?: number | null; // native ad-account currency
+  // Phase 2 — null until Meta ad spend is synced for this ad. Spend/funnel
+  // metrics cover a trailing 30-day window; leads/contacted/converted above are
+  // all-time volume.
+  leads30?: number; // ad-sourced leads in the last 30 days (matches spend window)
+  spend?: number | null; // native ad-account currency, 30d
   spendCurrency?: string | null;
-  revenueBaseCad?: number; // CAD revenue from this ad's converted leads
-  cpl?: number | null; // spend ÷ leads (native currency)
-  cpa?: number | null; // spend ÷ converted (native currency)
+  impressions?: number | null; // 30d
+  clicks?: number | null; // 30d
+  ctr?: number | null; // clicks ÷ impressions, percent
+  cpc?: number | null; // spend ÷ clicks (native currency)
+  revenueBaseCad?: number; // CAD revenue from this ad's 30d-cohort converted leads
+  cpl?: number | null; // spend ÷ leads30 (native currency)
+  cpa?: number | null; // spend ÷ converted30 (native currency)
   roas?: number | null; // CAD revenue ÷ CAD spend
 }
 

@@ -388,17 +388,21 @@ export class LeadsService {
     // Meta ad spend per ad over the trailing 30 days (native currency + CAD
     // base). Tolerant of the table being absent (pre-migration) or empty.
     const adWindowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const spendByAd = new Map<string, { byCur: Map<string, number>; baseSpend: number }>();
+    type SpendEntry = { byCur: Map<string, number>; baseSpend: number; impressions: number; clicks: number };
+    const spendByAd = new Map<string, SpendEntry>();
     try {
       const spendRows = await this.prisma.adSpendDaily.groupBy({
         by: ['adId', 'currency'],
         where: { date: { gte: adWindowStart } },
-        _sum: { spend: true, baseSpend: true },
+        _sum: { spend: true, baseSpend: true, impressions: true, clicks: true },
       });
       for (const s of spendRows) {
-        const entry = spendByAd.get(s.adId) ?? { byCur: new Map<string, number>(), baseSpend: 0 };
+        const entry: SpendEntry =
+          spendByAd.get(s.adId) ?? { byCur: new Map<string, number>(), baseSpend: 0, impressions: 0, clicks: 0 };
         entry.byCur.set(s.currency, (entry.byCur.get(s.currency) ?? 0) + Number(s._sum.spend ?? 0));
         entry.baseSpend += Number(s._sum.baseSpend ?? 0);
+        entry.impressions += Number(s._sum.impressions ?? 0);
+        entry.clicks += Number(s._sum.clicks ?? 0);
         spendByAd.set(s.adId, entry);
       }
     } catch {
@@ -473,6 +477,9 @@ export class LeadsService {
         }
       }
 
+      const impressions = sp?.impressions ?? null;
+      const clicks = sp?.clicks ?? null;
+
       return {
         sourceId: r.sourceId,
         headline: r.headline,
@@ -481,8 +488,14 @@ export class LeadsService {
         leads,
         contacted: Number(r.contacted),
         converted,
+        // 30-day funnel (matches the spend window).
+        leads30,
         spend: spend != null ? Math.round(spend * 100) / 100 : null,
         spendCurrency,
+        impressions,
+        clicks,
+        ctr: impressions && impressions > 0 && clicks != null ? Math.round((clicks / impressions) * 10000) / 100 : null,
+        cpc: spend != null && clicks && clicks > 0 ? Math.round((spend / clicks) * 100) / 100 : null,
         revenueBaseCad: Math.round(rev30),
         cpl: spend != null && leads30 > 0 ? Math.round((spend / leads30) * 100) / 100 : null,
         cpa: spend != null && conv30 > 0 ? Math.round((spend / conv30) * 100) / 100 : null,

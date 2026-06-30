@@ -77,6 +77,57 @@ export function CallDock() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const recordingCtxRef = useRef<AudioContext | null>(null);
   const recordingCallIdRef = useRef<string | null>(null);
+  // Liveness heartbeat (so the backend sweeper can free a leg if this tab dies)
+  // + the last getStats() sample, POSTed as a quality CDR on hang-up.
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statsRef = useRef<{
+    iceCandidateType?: string;
+    rttMs?: number;
+    jitterMs?: number;
+    packetLossPct?: number;
+    bytesSent?: number;
+    bytesReceived?: number;
+  } | null>(null);
+
+  // Read a compact quality snapshot from the live peer connection: the selected
+  // ICE candidate path (relay vs direct), RTT, jitter, packet loss and bytes.
+  const sampleStats = useCallback(async (pc: RTCPeerConnection) => {
+    try {
+      const stats = await pc.getStats();
+      let pairId: string | undefined;
+      stats.forEach((r) => {
+        if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId as string;
+      });
+      const snap: NonNullable<typeof statsRef.current> = {};
+      stats.forEach((r) => {
+        const isSelectedPair =
+          r.type === 'candidate-pair' &&
+          (r.id === pairId || (!pairId && (r.nominated || r.selected) && r.state === 'succeeded'));
+        if (isSelectedPair) {
+          if (typeof r.currentRoundTripTime === 'number') snap.rttMs = Math.round(r.currentRoundTripTime * 1000);
+          const localId = r.localCandidateId as string | undefined;
+          stats.forEach((c) => {
+            if (c.type === 'local-candidate' && c.id === localId && typeof c.candidateType === 'string') {
+              snap.iceCandidateType = c.candidateType;
+            }
+          });
+        }
+        if (r.type === 'inbound-rtp' && r.kind === 'audio') {
+          if (typeof r.jitter === 'number') snap.jitterMs = Math.round(r.jitter * 1000);
+          if (typeof r.bytesReceived === 'number') snap.bytesReceived = r.bytesReceived;
+          const recv = (r.packetsReceived as number) ?? 0;
+          const lost = (r.packetsLost as number) ?? 0;
+          if (recv + lost > 0) snap.packetLossPct = Math.round((lost / (recv + lost)) * 1000) / 10;
+        }
+        if (r.type === 'outbound-rtp' && r.kind === 'audio' && typeof r.bytesSent === 'number') {
+          snap.bytesSent = r.bytesSent;
+        }
+      });
+      if (Object.keys(snap).length > 0) statsRef.current = { ...statsRef.current, ...snap };
+    } catch {
+      /* best-effort */
+    }
+  }, []);
 
   const playRingTone = useCallback(() => {
     try {
@@ -207,7 +258,21 @@ export function CallDock() {
     }
   }, []);
 
-  const teardown = useCallback(() => {
+  const teardown = useCallback((reason?: string) => {
+    // Best-effort quality CDR (last getStats sample + why it ended) for the
+    // active call, before we tear the peer down. Never blocks teardown.
+    const cdrId = activeIdRef.current;
+    if (cdrId && cdrId !== 'pending') {
+      void apiFetch(`/whatsapp/calls/${cdrId}/stats`, {
+        method: 'POST',
+        body: JSON.stringify({ endReason: reason, ...(statsRef.current ?? {}) }),
+      }).catch(() => undefined);
+    }
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+    statsRef.current = null;
     stopAndUploadRecording();
     stopRing();
     if (ringTimeoutRef.current) {
@@ -274,11 +339,11 @@ export function CallDock() {
           if (!reconnectTimerRef.current) {
             reconnectTimerRef.current = setTimeout(() => {
               reconnectTimerRef.current = null;
-              if (pc === pcRef.current && pc.connectionState !== 'connected') teardown();
+              if (pc === pcRef.current && pc.connectionState !== 'connected') teardown('reconnect-timeout');
             }, 20000);
           }
         } else if (st === 'failed' || st === 'closed') {
-          teardown();
+          teardown('failed');
         }
       };
     },
@@ -315,7 +380,7 @@ export function CallDock() {
     'whatsapp.call.ended',
     useCallback(
       (data) => {
-        if (data?.callId && data.callId === activeIdRef.current) teardown();
+        if (data?.callId && data.callId === activeIdRef.current) teardown('caller-hangup');
       },
       [teardown],
     ),
@@ -384,7 +449,7 @@ export function CallDock() {
         dialTimeoutRef.current = setTimeout(() => {
           if (activeIdRef.current === callId && pcRef.current?.connectionState !== 'connected') {
             void apiFetch(`/whatsapp/calls/${callId}/hangup`, { method: 'POST' }).catch(() => undefined);
-            teardown();
+            teardown('connect-timeout');
           }
         }, 60000);
       } catch (e) {
@@ -438,10 +503,25 @@ export function CallDock() {
 
   useEffect(() => () => teardown(), [teardown]);
 
-  // Start recording the moment media connects (covers inbound + outbound).
+  // Start recording + the liveness heartbeat the moment media connects (covers
+  // inbound + outbound). The heartbeat (every 15s) lets the backend sweeper free
+  // the leg if this tab dies; each tick also re-samples call quality.
   useEffect(() => {
-    if (phase === 'in-call') beginRecording();
-  }, [phase, beginRecording]);
+    if (phase !== 'in-call') return;
+    beginRecording();
+    if (!heartbeatRef.current) {
+      const pc0 = pcRef.current;
+      if (pc0) void sampleStats(pc0); // grab the candidate path early
+      heartbeatRef.current = setInterval(() => {
+        const id = activeIdRef.current;
+        if (id && id !== 'pending') {
+          void apiFetch(`/whatsapp/calls/${id}/heartbeat`, { method: 'POST' }).catch(() => undefined);
+        }
+        const pc1 = pcRef.current;
+        if (pc1) void sampleStats(pc1);
+      }, 15000);
+    }
+  }, [phase, beginRecording, sampleStats]);
 
   async function accept() {
     if (!call) return;
@@ -505,7 +585,7 @@ export function CallDock() {
 
   async function hangup() {
     const id = call?.callId;
-    teardown();
+    teardown('hangup');
     if (id) {
       try {
         await apiFetch(`/whatsapp/calls/${id}/hangup`, { method: 'POST' });

@@ -122,6 +122,133 @@ export class WhatsAppCallsService {
   }
 
   /**
+   * Liveness ping from the rep's client (~every 15s) while a call is connected.
+   * The sweeper uses lastHeartbeatAt to detect a crashed tab/app and terminate
+   * the orphaned Meta leg. Cheap + fire-and-forget; only touches ANSWERED calls,
+   * and updateMany makes an unknown/ended id a harmless no-op.
+   */
+  async heartbeat(id: string): Promise<{ ok: boolean }> {
+    await this.prisma.whatsAppCall.updateMany({
+      where: { id, status: 'ANSWERED' },
+      data: { lastHeartbeatAt: new Date() },
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Per-call quality CDR posted by the client on hang-up (a getStats snapshot).
+   * Best-effort: values are clamped to sane ranges and an unknown id is ignored,
+   * so a malformed body can never break the rep's teardown.
+   */
+  async recordStats(
+    id: string,
+    dto: {
+      endReason?: string;
+      iceCandidateType?: string;
+      rttMs?: number;
+      jitterMs?: number;
+      packetLossPct?: number;
+      bytesSent?: number;
+      bytesReceived?: number;
+    },
+  ): Promise<{ ok: boolean }> {
+    const clampInt = (v: unknown, max: number) =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(Math.round(v), max)) : null;
+    const data: Prisma.WhatsAppCallUpdateManyMutationInput = {};
+    const reason = typeof dto.endReason === 'string' ? dto.endReason.slice(0, 40) : null;
+    if (reason) data.endReason = reason;
+    if (['host', 'srflx', 'prflx', 'relay'].includes(String(dto.iceCandidateType))) {
+      data.iceCandidateType = String(dto.iceCandidateType);
+    }
+    const rtt = clampInt(dto.rttMs, 60_000);
+    const jit = clampInt(dto.jitterMs, 60_000);
+    const sent = clampInt(dto.bytesSent, 2_000_000_000);
+    const recv = clampInt(dto.bytesReceived, 2_000_000_000);
+    if (rtt !== null) data.rttMs = rtt;
+    if (jit !== null) data.jitterMs = jit;
+    if (sent !== null) data.bytesSent = sent;
+    if (recv !== null) data.bytesReceived = recv;
+    if (typeof dto.packetLossPct === 'number' && Number.isFinite(dto.packetLossPct)) {
+      data.packetLossPct = Math.max(0, Math.min(dto.packetLossPct, 100));
+    }
+    if (Object.keys(data).length === 0) return { ok: true };
+    await this.prisma.whatsAppCall.updateMany({ where: { id }, data });
+    return { ok: true };
+  }
+
+  /**
+   * Periodic cleanup so a crashed client or an un-answered ring can't leave a
+   * zombie (Meta leg alive, our row stuck). Driven by CallsSweeperService.
+   *  - RINGING past RING_TTL → MISSED (Meta already ended the user-side ring;
+   *    we just sync our row — the missed-call AI callback already fired on the
+   *    webhook, so this is purely a state correction).
+   *  - ANSWERED whose heartbeat went stale (rep's tab/app crashed) → terminate
+   *    the Meta leg + ENDED(orphan-timeout). A freshly-answered call with no
+   *    heartbeat YET is safe (only the null+very-old backstop catches those).
+   */
+  async sweepStaleCalls(): Promise<{ ringingMissed: number; orphansEnded: number }> {
+    const now = Date.now();
+    const RING_TTL_MS = 90_000;
+    const HEARTBEAT_STALE_MS = 45_000; // 3 missed 15s beats
+    const HARD_TTL_MS = 3 * 60 * 60 * 1000;
+
+    const missed = await this.prisma.whatsAppCall.updateMany({
+      where: { status: 'RINGING', createdAt: { lt: new Date(now - RING_TTL_MS) } },
+      data: { status: 'MISSED', event: 'ring-timeout', endReason: 'ring-timeout', endedAt: new Date() },
+    });
+
+    const zombies = await this.prisma.whatsAppCall.findMany({
+      where: {
+        status: 'ANSWERED',
+        OR: [
+          { lastHeartbeatAt: { lt: new Date(now - HEARTBEAT_STALE_MS) } },
+          { lastHeartbeatAt: null, startedAt: { lt: new Date(now - HARD_TTL_MS) } },
+        ],
+      },
+      select: { id: true, waCallId: true, channelId: true, answeredByEmployeeId: true, startedAt: true },
+      take: 50,
+    });
+
+    let orphansEnded = 0;
+    for (const z of zombies) {
+      try {
+        const channel = await this.prisma.whatsAppChannel.findUnique({ where: { id: z.channelId } });
+        if (channel) {
+          await this.metaFactory
+            .forChannel(channel)
+            .respondToCall({ callId: z.waCallId, action: 'terminate' })
+            .catch(() => undefined); // Meta may already consider it ended — fine
+        }
+        // Guarded on status=ANSWERED so a concurrent real hangup wins the race.
+        const res = await this.prisma.whatsAppCall.updateMany({
+          where: { id: z.id, status: 'ANSWERED' },
+          data: {
+            status: 'ENDED',
+            event: 'terminate',
+            endReason: 'orphan-timeout',
+            endedAt: new Date(),
+            durationSeconds: z.startedAt ? Math.max(0, Math.round((now - z.startedAt.getTime()) / 1000)) : null,
+          },
+        });
+        if (res.count > 0) {
+          orphansEnded++;
+          if (z.answeredByEmployeeId) {
+            await this.publisher
+              .publishToEmployee(z.answeredByEmployeeId, WHATSAPP_WS_EVENTS.CALL_ENDED, { callId: z.id })
+              .catch(() => undefined);
+          }
+        }
+      } catch (e) {
+        this.log.warn(`sweep: orphan ${z.id} terminate failed: ${(e as Error).message}`);
+      }
+    }
+    if (missed.count > 0 || orphansEnded > 0) {
+      this.log.log(`call sweep: ${missed.count} ringing→missed, ${orphansEnded} orphan(s) terminated`);
+    }
+    return { ringingMissed: missed.count, orphansEnded };
+  }
+
+  /**
    * Admin calls history — org-wide list of WhatsApp calls (inbound + outbound)
    * with the contact, who handled it, status and duration. WhatsAppCall holds
    * only scalar cross-schema FKs (no Prisma relations), so display fields are
@@ -160,6 +287,11 @@ export class WhatsAppCallsService {
         recordingKey: true,
         transcript: true,
         transcriptStatus: true,
+        endReason: true,
+        iceCandidateType: true,
+        rttMs: true,
+        jitterMs: true,
+        packetLossPct: true,
       },
     });
 
@@ -228,6 +360,11 @@ export class WhatsAppCallsService {
         hasRecording: !!r.recordingKey,
         transcript: r.transcript,
         transcriptStatus: r.transcriptStatus,
+        endReason: r.endReason,
+        iceCandidateType: r.iceCandidateType,
+        rttMs: r.rttMs,
+        jitterMs: r.jitterMs,
+        packetLossPct: r.packetLossPct,
       };
     });
 

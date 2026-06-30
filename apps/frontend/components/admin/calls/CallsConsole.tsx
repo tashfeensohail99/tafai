@@ -45,6 +45,12 @@ interface CallRow {
   hasRecording?: boolean;
   transcript?: string | null;
   transcriptStatus?: string | null;
+  // Phase 2 quality CDR (null on older calls).
+  endReason?: string | null;
+  iceCandidateType?: string | null; // host | srflx | prflx | relay
+  rttMs?: number | null;
+  jitterMs?: number | null;
+  packetLossPct?: number | null;
 }
 interface CallsResponse {
   items: CallRow[];
@@ -270,6 +276,7 @@ export function CallsConsole() {
                   <Th>Direction</Th>
                   <Th>Outcome</Th>
                   <Th>Duration</Th>
+                  <Th>Quality</Th>
                   <Th>Handled by</Th>
                   <Th>Recording</Th>
                 </tr>
@@ -299,6 +306,9 @@ export function CallsConsole() {
                         <Pill tone={o.tone}>{o.label}</Pill>
                       </Td>
                       <Td>{fmtDuration(c.durationSeconds)}</Td>
+                      <Td>
+                        <QualityCell c={c} />
+                      </Td>
                       <Td>{c.answeredByEmployeeName ?? c.assignedEmployeeName ?? '—'}</Td>
                       <Td>
                         {c.hasRecording ? (
@@ -425,6 +435,44 @@ function CallDetailModal({ call, onClose }: { call: CallRow; onClose: () => void
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Compact per-call quality: media path (relay vs direct) + RTT / packet loss,
+ *  with the end reason underneath. Blank for older calls with no CDR. */
+function QualityCell({ c }: { c: CallRow }) {
+  const relay = c.iceCandidateType === 'relay';
+  const path = c.iceCandidateType ? (relay ? 'Relay' : 'Direct') : null;
+  const loss = c.packetLossPct ?? null;
+  const hasMetrics = c.rttMs != null || loss != null;
+  if (!path && !hasMetrics && !c.endReason) {
+    return <span style={{ color: 'var(--sos-text-faint)' }}>—</span>;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
+      {path ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: relay ? 'var(--sos-status-info, #2563eb)' : 'var(--sos-status-success, #16a34a)',
+              flexShrink: 0,
+            }}
+          />
+          <span style={{ color: 'var(--sos-text-secondary)' }}>{path}</span>
+        </span>
+      ) : null}
+      {hasMetrics ? (
+        <span style={{ color: loss != null && loss >= 5 ? 'var(--sos-status-danger, #dc2626)' : 'var(--sos-text-muted)' }}>
+          {c.rttMs != null ? `${c.rttMs}ms` : ''}
+          {c.rttMs != null && loss != null ? ' · ' : ''}
+          {loss != null ? `${loss}% loss` : ''}
+        </span>
+      ) : null}
+      {c.endReason ? <span style={{ color: 'var(--sos-text-faint)' }}>{c.endReason}</span> : null}
     </div>
   );
 }

@@ -103,6 +103,32 @@ export class WhatsAppCallsController {
     return this.calls.hangup(id);
   }
 
+  // Liveness ping while a call is connected (client sends ~every 15s). No body;
+  // best-effort. Lets the sweeper detect a crashed tab/app and free the leg.
+  @Post(':id/heartbeat')
+  heartbeat(@Param('id', ParseUUIDPipe) id: string) {
+    return this.calls.heartbeat(id);
+  }
+
+  // Per-call quality CDR (a getStats() snapshot) posted by the client on
+  // hang-up. Best-effort; any authenticated employee (reporting their own call).
+  @Post(':id/stats')
+  recordStats(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body()
+    body: {
+      endReason?: string;
+      iceCandidateType?: string;
+      rttMs?: number;
+      jitterMs?: number;
+      packetLossPct?: number;
+      bytesSent?: number;
+      bytesReceived?: number;
+    },
+  ) {
+    return this.calls.recordStats(id, body ?? {});
+  }
+
   // Recording upload (rep's browser, on hang-up). Any authenticated employee —
   // they're uploading their own call. 64MB cap (opus audio is tiny).
   @Audit({ entityType: 'Call', category: 'MUTATION', severity: 'HIGH', idParam: 'id' })

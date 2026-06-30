@@ -77,6 +77,16 @@ class CallApi {
     }
   }
 
+  /// POST /whatsapp/calls/{id}/heartbeat — liveness ping while connected so the
+  /// backend sweeper can free the leg if this app dies. Fire-and-forget.
+  Future<void> heartbeat(String callId) async {
+    try {
+      await _c.post<dynamic>('/whatsapp/calls/$callId/heartbeat');
+    } on DioException catch (_) {
+      // best-effort; a missed beat is fine, never surface
+    }
+  }
+
   /// POST /whatsapp/calls/{id}/reject
   Future<void> reject(String callId) async {
     try {

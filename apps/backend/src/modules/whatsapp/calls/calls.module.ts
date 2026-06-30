@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { StorageModule } from '../../storage/storage.module';
 import { WhatsAppRealtimeModule } from '../realtime/realtime.module';
 import { WhatsAppCallsService } from './calls.service';
+import { CallsSweeperService } from './calls-sweeper.service';
 import { WhatsAppCallsController } from './calls.controller';
 
 // PrismaService, WhatsAppMetaClientFactory (meta module is @Global) and
@@ -10,7 +11,7 @@ import { WhatsAppCallsController } from './calls.controller';
 @Module({
   imports: [WhatsAppRealtimeModule, StorageModule],
   controllers: [WhatsAppCallsController],
-  providers: [WhatsAppCallsService],
+  providers: [WhatsAppCallsService, CallsSweeperService],
   // Exported so the AI orchestrator can send the bot's post-booking
   // call-permission request via requestCallPermission().
   exports: [WhatsAppCallsService],

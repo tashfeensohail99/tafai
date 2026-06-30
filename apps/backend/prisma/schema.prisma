@@ -3502,6 +3502,22 @@ model WhatsAppCall {
   recordingMimeType    String?
   transcript           String?
   transcriptStatus     String?
+  // --- Liveness + per-call quality CDR (Phase 2) ---------------------------
+  // Heartbeat from the rep's client every ~15s while a call is connected; the
+  // sweeper terminates an ANSWERED call whose heartbeat goes stale (tab/app
+  // crashed) so the Meta leg can't linger as a zombie.
+  lastHeartbeatAt      DateTime?
+  // How the call ended, for analytics: hangup | caller-hangup | failed |
+  // reconnect-timeout | connect-timeout | ring-timeout | orphan-timeout.
+  endReason            String?
+  // Selected ICE candidate path: host | srflx | relay (relay = went through
+  // TURN; host/srflx = direct). Posted by the client from getStats() on hangup.
+  iceCandidateType     String?
+  rttMs                Int?
+  jitterMs             Int?
+  packetLossPct        Float?
+  bytesSent            Int?
+  bytesReceived        Int?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
@@ -3509,6 +3525,8 @@ model WhatsAppCall {
   @@index([leadId])
   @@index([clientId])
   @@index([threadId])
+  // Sweeper scans active calls by status + liveness.
+  @@index([status, lastHeartbeatAt])
   @@map("calls")
   @@schema("whatsapp")
 }

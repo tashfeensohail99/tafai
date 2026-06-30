@@ -16,7 +16,7 @@ interface IncomingCall {
   leadName?: string | null;
   leadId?: string | null;
 }
-type Phase = 'ringing' | 'dialing' | 'connecting' | 'in-call' | 'reconnecting' | 'error';
+type Phase = 'ringing' | 'dialing' | 'connecting' | 'in-call' | 'reconnecting' | 'ended' | 'error';
 
 function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -77,6 +77,11 @@ export function CallDock() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const recordingCtxRef = useRef<AudioContext | null>(null);
   const recordingCallIdRef = useRef<string | null>(null);
+  // True once media connected — so we play the "call ended" cue only when a
+  // real call finishes, not on a missed ring or a decline.
+  const wasConnectedRef = useRef(false);
+  // Holds the card on a brief "Call ended" state before clearing it.
+  const endedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Liveness heartbeat (so the backend sweeper can free a leg if this tab dies)
   // + the last getStats() sample, POSTed as a quality CDR on hang-up.
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -174,6 +179,38 @@ export function CallDock() {
     }
   }, []);
 
+  // A short DESCENDING two-tone "call ended" cue (distinct from the ascending
+  // ring) so the rep hears that a connected call has finished.
+  const playEndTone = useCallback(() => {
+    try {
+      let ctx = audioCtxRef.current;
+      if (!ctx) {
+        const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!Ctor) return;
+        ctx = new Ctor();
+        audioCtxRef.current = ctx;
+      }
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+      const now = ctx.currentTime;
+      const tone = (freq: number, start: number, dur: number) => {
+        const osc = ctx!.createOscillator();
+        const g = ctx!.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        g.gain.setValueAtTime(0, start);
+        g.gain.linearRampToValueAtTime(0.28, start + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.connect(g).connect(ctx!.destination);
+        osc.start(start);
+        osc.stop(start + dur + 0.02);
+      };
+      tone(440, now, 0.18); // A4
+      tone(294, now + 0.16, 0.34); // ↓ D4 — descending = "ended"
+    } catch {
+      /* best-effort */
+    }
+  }, []);
+
   // Begin recording both sides once media is flowing. Mixes the local mic and
   // the remote audio (read off the <audio> element's srcObject) into one track
   // via the Web Audio API, then a MediaRecorder. Idempotent + best-effort: any
@@ -267,6 +304,8 @@ export function CallDock() {
   }, []);
 
   const teardown = useCallback((reason?: string) => {
+    const wasConnected = wasConnectedRef.current;
+    wasConnectedRef.current = false;
     // Best-effort quality CDR (last getStats sample + why it ended) for the
     // active call, before we tear the peer down. Never blocks teardown.
     const cdrId = activeIdRef.current;
@@ -310,13 +349,31 @@ export function CallDock() {
     localStreamRef.current = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
     activeIdRef.current = null;
-    setCall(null);
-    setPhase(null);
-    setMuted(false);
-    setSeconds(0);
-    setShowReqPerm(false);
     outboundThreadRef.current = null;
-  }, [stopRing, stopAndUploadRecording]);
+    setMuted(false);
+    if (endedTimerRef.current) {
+      clearTimeout(endedTimerRef.current);
+      endedTimerRef.current = null;
+    }
+    if (wasConnected) {
+      // A connected call just ended: chime + hold a brief "Call ended" card so
+      // the rep knows, then clear. (Missed rings / declines clear silently.)
+      playEndTone();
+      setPhase('ended');
+      endedTimerRef.current = setTimeout(() => {
+        endedTimerRef.current = null;
+        setCall(null);
+        setPhase(null);
+        setSeconds(0);
+        setShowReqPerm(false);
+      }, 1600);
+    } else {
+      setCall(null);
+      setPhase(null);
+      setSeconds(0);
+      setShowReqPerm(false);
+    }
+  }, [stopRing, stopAndUploadRecording, playEndTone]);
 
   // Connection-state handling shared by inbound + outbound. The key fix: WebRTC
   // fires `disconnected` on a brief packet-loss / NAT-rebind / Wi-Fi power-save
@@ -334,6 +391,7 @@ export function CallDock() {
         if (pc !== pcRef.current) return; // stale peer from a previous call
         const st = pc.connectionState;
         if (st === 'connected') {
+          wasConnectedRef.current = true;
           if (reconnectTimerRef.current) {
             clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = null;
@@ -365,6 +423,10 @@ export function CallDock() {
       (data) => {
         if (!data?.callId) return;
         if (activeIdRef.current) return; // already on/handling a call — ignore
+        if (endedTimerRef.current) {
+          clearTimeout(endedTimerRef.current);
+          endedTimerRef.current = null;
+        }
         activeIdRef.current = data.callId;
         setError(null);
         setCall(data);
@@ -421,6 +483,10 @@ export function CallDock() {
     async (detail: { threadId: string; name?: string | null; phone?: string | null }) => {
       if (!detail?.threadId) return;
       if (activeIdRef.current) return; // already on / placing a call
+      if (endedTimerRef.current) {
+        clearTimeout(endedTimerRef.current);
+        endedTimerRef.current = null;
+      }
       activeIdRef.current = 'pending';
       outboundThreadRef.current = detail.threadId;
       setError(null);
@@ -676,6 +742,7 @@ export function CallDock() {
               {phase === 'connecting' && 'Connecting…'}
               {phase === 'in-call' && `In call · ${fmt(seconds)}`}
               {phase === 'reconnecting' && `Reconnecting… · ${fmt(seconds)}`}
+              {phase === 'ended' && `Call ended · ${fmt(seconds)}`}
               {phase === 'error' && 'Call failed'}
             </div>
           </div>
@@ -730,7 +797,7 @@ export function CallDock() {
                 Close
               </button>
             </>
-          ) : (
+          ) : phase === 'ended' ? null : (
             <>
               <button
                 type="button"

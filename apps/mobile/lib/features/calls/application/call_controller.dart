@@ -640,6 +640,18 @@ class CallController extends StateNotifier<CallState> {
       Helper.setSpeakerphoneOn(false);
     } catch (_) {}
 
+    // Audible + haptic "call ended" cue so the rep notices even with the screen
+    // off / phone in a pocket — only for a call that actually connected, not a
+    // missed ring or a decline.
+    final wasConnected =
+        state.phase == CallPhase.inCall || state.phase == CallPhase.reconnecting;
+    if (!error && wasConnected) {
+      try {
+        HapticFeedback.heavyImpact();
+        SystemSound.play(SystemSoundType.alert);
+      } catch (_) {}
+    }
+
     // Show a brief terminal state, then return to idle.
     state = state.copyWith(
       phase: error ? CallPhase.error : CallPhase.ended,

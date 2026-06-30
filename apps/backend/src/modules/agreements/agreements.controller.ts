@@ -162,7 +162,9 @@ export class AgreementsController {
   }
 
   @Post(':id/preview')
-  @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
+  // PDF preview is Finance/admin only — the sales team must never obtain the
+  // agreement file. Sales compose via the on-page live HTML preview, then submit.
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
   async previewAgreement(@Param('id', ParseUUIDPipe) id: string) {
     const buffer = await this.agreements.previewPdf(id);
     return { bytes: buffer.length, pdfBase64: buffer.toString('base64') };
@@ -251,7 +253,8 @@ export class AgreementsController {
   }
 
   @Get(':id/pdf-url')
-  @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
+  // Finance/admin only — sales must never obtain the agreement PDF file.
+  @RequireAnyPermissions('finance.view_all', 'settings.manage')
   @AuditDocumentAccess('Agreement', 'id')
   getPdfUrl(@Param('id', ParseUUIDPipe) id: string) {
     return this.agreements.getPdfUrl(id);

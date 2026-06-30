@@ -22,7 +22,6 @@ import {
   FormInput,
   FormSelect,
   PrimaryButton,
-  SecondaryButton,
   GhostButton,
   ButtonLink,
   type BadgeTone,
@@ -32,7 +31,6 @@ import {
   composeAgreementDocument,
   composeAgreementTitle,
   getAgreement,
-  previewAgreementPdf,
   submitAgreement,
   updateAgreement,
   type AgreementDetail,
@@ -70,7 +68,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'save' | 'preview' | 'submit' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'submit' | null>(null);
   const [dirty, setDirty] = useState(false);
 
   // form state
@@ -185,18 +183,6 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agreementId, bio, planType, currency, gross, discount, netPayable, installments, salesNotes, manual, composedHtml, manualHtml, load]);
 
-  const handlePreview = async () => {
-    setError(null);
-    if (editable && dirty) { const ok = await save(); if (!ok) return; }
-    setBusy('preview');
-    try {
-      const blob = await previewAgreementPdf(agreementId);
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (err) { setError(err instanceof Error ? err.message : 'Preview failed'); }
-    finally { setBusy(null); }
-  };
 
   const handleSubmit = async () => {
     setError(null);
@@ -253,9 +239,6 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <StatusBadge tone={STATUS_TONE[data.status]} dot>{data.status.replace(/_/g, ' ').toLowerCase()}</StatusBadge>
             <ButtonLink href="/sales/agreements" variant="ghost" size="sm">Back</ButtonLink>
-            <SecondaryButton size="sm" iconLeft={<Eye size={15} />} onClick={handlePreview} disabled={busy !== null}>
-              {busy === 'preview' ? 'Rendering…' : 'Preview PDF'}
-            </SecondaryButton>
             {editable ? (
               <>
                 <PrimaryButton size="sm" iconLeft={<Save size={15} />} onClick={() => void save()} disabled={busy !== null || !dirty}>
@@ -514,13 +497,10 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
             {editable && validationError ? (
               <span className="sos-text-secondary"><AlertTriangle size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{validationError}</span>
             ) : (
-              <span style={{ color: 'var(--sos-status-success)', fontWeight: 600 }}><CheckCircle2 size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{editable ? 'Submit to Finance — this generates the agreement and sends it automatically.' : 'You can preview the agreement PDF anytime.'}</span>
+              <span style={{ color: 'var(--sos-status-success)', fontWeight: 600 }}><CheckCircle2 size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{editable ? 'Submit to Finance — this generates the agreement and sends it automatically.' : 'This agreement has been submitted to Finance.'}</span>
             )}
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <SecondaryButton iconLeft={<Eye size={15} />} onClick={handlePreview} disabled={busy !== null}>
-              {busy === 'preview' ? 'Rendering…' : 'Preview PDF'}
-            </SecondaryButton>
             {editable ? (
               <PrimaryButton iconLeft={<Send size={15} />} onClick={handleSubmit} disabled={busy !== null || !!validationError}>
                 {busy === 'submit' ? 'Submitting…' : 'Submit to Finance'}

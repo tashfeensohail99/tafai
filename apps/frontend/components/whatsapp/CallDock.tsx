@@ -16,7 +16,7 @@ interface IncomingCall {
   leadName?: string | null;
   leadId?: string | null;
 }
-type Phase = 'ringing' | 'dialing' | 'connecting' | 'in-call' | 'error';
+type Phase = 'ringing' | 'dialing' | 'connecting' | 'in-call' | 'reconnecting' | 'error';
 
 function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -61,6 +61,9 @@ export function CallDock() {
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const ringRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Grace timer for a transient ICE drop ('disconnected'): we wait for native
+  // recovery instead of killing the call. Mirrors the mobile 20s grace.
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Outbound: give up ringing the customer after 60s with no answer.
@@ -219,6 +222,10 @@ export function CallDock() {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     try {
       pcRef.current?.getSenders().forEach((s) => s.track?.stop());
       pcRef.current?.close();
@@ -237,6 +244,46 @@ export function CallDock() {
     setShowReqPerm(false);
     outboundThreadRef.current = null;
   }, [stopRing, stopAndUploadRecording]);
+
+  // Connection-state handling shared by inbound + outbound. The key fix: WebRTC
+  // fires `disconnected` on a brief packet-loss / NAT-rebind / Wi-Fi power-save
+  // blip and usually RECOVERS on its own — treating it as terminal (the old
+  // behaviour) hard-killed live calls right around the 5-6s ICE consent-freshness
+  // window. Now `disconnected` shows "Reconnecting…" and gets a 20s grace for
+  // native ICE recovery (mirrors the mobile client); only `failed`/`closed` —
+  // or grace expiry without recovery — tears the call down. We don't restartIce()
+  // because WhatsApp call-control has no mid-call SDP-renegotiation path, so
+  // recovery rides the existing candidate pairs (a reachable TURN relay is what
+  // lets that survive a rebind).
+  const monitorConnection = useCallback(
+    (pc: RTCPeerConnection) => {
+      pc.onconnectionstatechange = () => {
+        if (pc !== pcRef.current) return; // stale peer from a previous call
+        const st = pc.connectionState;
+        if (st === 'connected') {
+          if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+          }
+          setPhase('in-call'); // first connect OR recovery from a transient drop
+          if (!timerRef.current) {
+            timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+          }
+        } else if (st === 'disconnected') {
+          setPhase('reconnecting');
+          if (!reconnectTimerRef.current) {
+            reconnectTimerRef.current = setTimeout(() => {
+              reconnectTimerRef.current = null;
+              if (pc === pcRef.current && pc.connectionState !== 'connected') teardown();
+            }, 20000);
+          }
+        } else if (st === 'failed' || st === 'closed') {
+          teardown();
+        }
+      };
+    },
+    [teardown],
+  );
 
   // Incoming-call ring (targeted to this rep by the backend).
   useWhatsAppEvent<IncomingCall>(
@@ -318,17 +365,7 @@ export function CallDock() {
         pc.ontrack = (e) => {
           if (remoteAudioRef.current) remoteAudioRef.current.srcObject = e.streams[0] ?? null;
         };
-        pc.onconnectionstatechange = () => {
-          const st = pc.connectionState;
-          if (st === 'connected') {
-            setPhase('in-call');
-            if (!timerRef.current) {
-              timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-            }
-          } else if (st === 'failed' || st === 'closed' || st === 'disconnected') {
-            teardown();
-          }
-        };
+        monitorConnection(pc);
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -381,7 +418,7 @@ export function CallDock() {
         setPhase('error');
       }
     },
-    [teardown],
+    [teardown, monitorConnection],
   );
 
   // Bridge: a "Call" button anywhere (e.g. the chat panel) dispatches this
@@ -431,17 +468,7 @@ export function CallDock() {
       pc.ontrack = (e) => {
         if (remoteAudioRef.current) remoteAudioRef.current.srcObject = e.streams[0] ?? null;
       };
-      pc.onconnectionstatechange = () => {
-        const st = pc.connectionState;
-        if (st === 'connected') {
-          setPhase('in-call');
-          if (!timerRef.current) {
-            timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-          }
-        } else if (st === 'failed' || st === 'closed' || st === 'disconnected') {
-          teardown();
-        }
-      };
+      monitorConnection(pc);
 
       await pc.setRemoteDescription({ type: 'offer', sdp: detail.sdpOffer });
       const answer = await pc.createAnswer();
@@ -560,6 +587,7 @@ export function CallDock() {
               {phase === 'dialing' && 'Calling…'}
               {phase === 'connecting' && 'Connecting…'}
               {phase === 'in-call' && `In call · ${fmt(seconds)}`}
+              {phase === 'reconnecting' && `Reconnecting… · ${fmt(seconds)}`}
               {phase === 'error' && 'Call failed'}
             </div>
           </div>

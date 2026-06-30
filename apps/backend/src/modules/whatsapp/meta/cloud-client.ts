@@ -415,12 +415,38 @@ export class MetaCloudClient {
     if (input.sdpAnswer && (input.action === 'accept' || input.action === 'pre_accept')) {
       body.session = { sdp_type: 'answer', sdp: input.sdpAnswer };
     }
-    try {
-      const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/calls`, body);
-      return res.data;
-    } catch (err) {
-      throw this.normalizeError(err);
+    // Bounded retry with backoff on TRANSIENT failures only. A lost `accept`
+    // means Meta never receives the SDP answer → media never confirms → the
+    // call drops ~5-6s in; a lost `terminate` leaves a zombie leg. A 4xx (e.g.
+    // "call already accepted/terminated") is deterministic and is NOT retried.
+    const delays = [50, 150, 400];
+    let lastErr: unknown;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/calls`, body);
+        return res.data;
+      } catch (err) {
+        lastErr = err;
+        if (attempt >= delays.length || !this.isRetryablePostError(err)) break;
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+      }
     }
+    throw this.normalizeError(lastErr);
+  }
+
+  /**
+   * A call-control POST is worth a quick retry only when the failure is
+   * transient: a network/timeout error (no HTTP response) or a 5xx / 429 from
+   * Meta. A 4xx is a deterministic rejection (bad state / bad request) and must
+   * not be retried.
+   */
+  private isRetryablePostError(err: unknown): boolean {
+    if (err instanceof AxiosError) {
+      const status = err.response?.status;
+      if (status == null) return true; // network / timeout / connection reset
+      return status >= 500 || status === 429;
+    }
+    return false;
   }
 
   /**

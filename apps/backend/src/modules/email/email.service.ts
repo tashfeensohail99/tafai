@@ -238,6 +238,154 @@ export class EmailService {
     return this.sendMail({ to: opts.to, subject: `Daily presence report — ${opts.date}`, html });
   }
 
+  // ── Daily WhatsApp activity report (8 AM PKT) ──────────────────────────────
+
+  /** A single salesperson's private morning summary + their follow-up list. */
+  async sendRepWhatsAppDailyReport(opts: {
+    to: string;
+    repName: string;
+    date: string;
+    stats: { texted: number; replied: number; replyPct: number; newContacts: number; newReplied: number; awaiting: number };
+    awaiting: Array<{ contact: string | null; phone: string | null; lastInboundAt: string | null; isOld: boolean }>;
+  }): Promise<boolean> {
+    const s = opts.stats;
+    const awaitColor = s.awaiting > 0 ? '#b91c1c' : '#15803d';
+    const kpis = [
+      { label: 'Messaged you', value: `${s.texted}`, color: '#0f2742' },
+      { label: 'You replied', value: `${s.replied} · ${s.replyPct}%`, color: s.replyPct >= 75 ? '#15803d' : s.replyPct >= 60 ? '#b45309' : '#b91c1c' },
+      { label: 'New leads', value: `${s.newReplied}/${s.newContacts}`, color: '#0f2742' },
+      { label: 'Awaiting reply', value: `${s.awaiting}`, color: awaitColor },
+    ];
+    const list =
+      opts.awaiting.length === 0
+        ? `<p style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;color:#15803d;font-size:14px">🎉 You replied to everyone who messaged you that day. Great work — keep it up!</p>`
+        : `<p style="font-size:13px;color:#374151;margin:18px 0 8px">These contacts messaged you and are <strong>still waiting for a reply</strong>. Returning contacts (people you'd spoken to before) are flagged — those are warm and worth prioritising.</p>
+           ${EmailService.waContactTable(opts.awaiting)}`;
+    const html = EmailService.waReportShell(
+      'Your WhatsApp summary',
+      `${EmailService.esc(opts.repName)} · ${opts.date}`,
+      `${EmailService.waKpiRow(kpis)}${list}`,
+    );
+    return this.sendMail({ to: opts.to, subject: `Your WhatsApp summary — ${opts.date}`, html });
+  }
+
+  /** The full team report for management (leaderboard + every awaiting list). */
+  async sendAdminWhatsAppDailyReport(opts: {
+    to: string | string[];
+    date: string;
+    totals: { texted: number; replied: number; replyPct: number; newContacts: number; oldContacts: number; awaiting: number };
+    reps: Array<{ name: string; texted: number; replied: number; replyPct: number; newContacts: number; oldContacts: number; awaiting: number }>;
+    awaitingByRep: Array<{ repName: string; items: Array<{ contact: string | null; phone: string | null; lastInboundAt: string | null; isOld: boolean }> }>;
+  }): Promise<boolean> {
+    const t = opts.totals;
+    const kpis = [
+      { label: 'People messaged', value: `${t.texted}`, color: '#0f2742' },
+      { label: 'Replied', value: `${t.replied} · ${t.replyPct}%`, color: t.replyPct >= 75 ? '#15803d' : '#b45309' },
+      { label: 'New contacts', value: `${t.newContacts}`, color: '#0f2742' },
+      { label: 'Awaiting reply', value: `${t.awaiting}`, color: t.awaiting > 0 ? '#b91c1c' : '#15803d' },
+    ];
+    const cell = 'padding:8px 10px;border-bottom:1px solid #eef2f6;font-size:13px';
+    const head = 'padding:9px 10px;border-bottom:2px solid #e5e7eb;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;text-align:left';
+    const pctColor = (p: number) => (p >= 75 ? '#15803d' : p >= 60 ? '#b45309' : '#b91c1c');
+    const table = `
+      <table style="border-collapse:collapse;width:100%;margin-top:6px">
+        <thead><tr>
+          <th style="${head}">Rep</th><th style="${head};text-align:right">Texted</th>
+          <th style="${head};text-align:right">Replied</th><th style="${head};text-align:right">Reply%</th>
+          <th style="${head};text-align:right">New</th><th style="${head};text-align:right">Old</th>
+          <th style="${head};text-align:right">Awaiting</th>
+        </tr></thead>
+        <tbody>
+          ${opts.reps
+            .map(
+              (r) => `<tr>
+            <td style="${cell};font-weight:600;color:#0f2742">${EmailService.esc(r.name)}</td>
+            <td style="${cell};text-align:right">${r.texted}</td>
+            <td style="${cell};text-align:right">${r.replied}</td>
+            <td style="${cell};text-align:right;font-weight:700;color:${pctColor(r.replyPct)}">${r.replyPct}%</td>
+            <td style="${cell};text-align:right">${r.newContacts}</td>
+            <td style="${cell};text-align:right">${r.oldContacts}</td>
+            <td style="${cell};text-align:right;font-weight:700;color:${r.awaiting > 0 ? '#b91c1c' : '#9ca3af'}">${r.awaiting}</td>
+          </tr>`,
+            )
+            .join('')}
+        </tbody>
+      </table>`;
+    const awaitingSections = opts.awaitingByRep
+      .filter((g) => g.items.length > 0)
+      .map(
+        (g) => `<div style="margin-top:14px">
+          <div style="font-weight:700;color:#0f2742;font-size:13px;margin-bottom:4px">${EmailService.esc(g.repName)} <span style="color:#b91c1c">(${g.items.length})</span></div>
+          ${EmailService.waContactTable(g.items)}
+        </div>`,
+      )
+      .join('');
+    const awaitingBlock = awaitingSections
+      ? `<h3 style="margin:24px 0 4px;color:#0f2742;font-size:15px">Contacts still awaiting a reply</h3>${awaitingSections}`
+      : '';
+    const html = EmailService.waReportShell(
+      'WhatsApp daily report',
+      opts.date,
+      `${EmailService.waKpiRow(kpis)}<h3 style="margin:22px 0 2px;color:#0f2742;font-size:15px">Team — sorted by awaiting</h3>${table}${awaitingBlock}`,
+    );
+    return this.sendMail({ to: opts.to, subject: `WhatsApp daily report — ${opts.date}`, html });
+  }
+
+  // — shared HTML builders for the WhatsApp report emails —
+  private static esc(s: string | null): string {
+    return (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  private static pktTime(iso: string | null): string {
+    if (!iso) return '—';
+    const d = new Date(new Date(iso).getTime() + 5 * 60 * 60 * 1000);
+    return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  }
+  private static waReportShell(title: string, subtitle: string, body: string): string {
+    return `
+      <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
+        <div style="background:#0f2742;padding:20px 24px">
+          <div style="color:#fff;font-size:18px;font-weight:700">${title}</div>
+          <div style="color:#9db4cc;font-size:13px;margin-top:2px">${subtitle}</div>
+        </div>
+        <div style="padding:20px 24px;color:#1f2937">
+          ${body}
+          <p style="color:#9ca3af;font-size:11px;margin-top:24px;border-top:1px solid #eef2f6;padding-top:12px">
+            Tashfeen Immigration Solutions · automated daily WhatsApp report · human replies only (the assistant bot is excluded).
+          </p>
+        </div>
+      </div>`;
+  }
+  private static waKpiRow(kpis: Array<{ label: string; value: string; color: string }>): string {
+    return `<table style="border-collapse:separate;border-spacing:8px 0;width:100%;table-layout:fixed"><tr>${kpis
+      .map(
+        (k) => `<td style="background:#f8fafc;border:1px solid #eef2f6;border-radius:10px;padding:12px;text-align:center;vertical-align:top">
+          <div style="font-size:22px;font-weight:800;color:${k.color};line-height:1.1">${k.value}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:4px">${k.label}</div>
+        </td>`,
+      )
+      .join('')}</tr></table>`;
+  }
+  private static waContactTable(
+    items: Array<{ contact: string | null; phone: string | null; lastInboundAt: string | null; isOld: boolean }>,
+  ): string {
+    const cell = 'padding:7px 10px;border-bottom:1px solid #f1f5f9;font-size:13px';
+    return `<table style="border-collapse:collapse;width:100%">
+      <tbody>${items
+        .map(
+          (it) => `<tr>
+        <td style="${cell};font-weight:600;color:#0f2742">${EmailService.esc(it.contact) || '(no name)'}</td>
+        <td style="${cell};color:#374151;font-family:monospace">${EmailService.esc(it.phone) || '—'}</td>
+        <td style="${cell};color:#6b7280;white-space:nowrap">last msg ${EmailService.pktTime(it.lastInboundAt)} PKT</td>
+        <td style="${cell};text-align:right">${
+          it.isOld
+            ? '<span style="background:#fef3c7;color:#92400e;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600">Returning</span>'
+            : '<span style="background:#e0f2fe;color:#075985;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600">New</span>'
+        }</td>
+      </tr>`,
+        )
+        .join('')}</tbody></table>`;
+  }
+
   async sendLeadEmailVerification(opts: {
     to: string;
     leadName: string;

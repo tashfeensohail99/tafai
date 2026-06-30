@@ -4281,3 +4281,17 @@ model QuickReply {
   @@map("quick_replies")
   @@schema("crm")
 }
+
+/// Idempotency + history marker for the 8 AM daily WhatsApp activity report.
+/// One row per PKT day the report covers; the scheduler skips a day that
+/// already has a row so a backend restart can't re-email the whole team twice.
+model WhatsAppDailyReportLog {
+  reportDate String   @id /// PKT calendar day (YYYY-MM-DD) the report summarises
+  sentAt     DateTime @default(now())
+  recipients Int      @default(0) /// number of emails dispatched (reps + admins)
+  texted     Int      @default(0)
+  replied    Int      @default(0)
+
+  @@map("daily_report_log")
+  @@schema("whatsapp")
+}

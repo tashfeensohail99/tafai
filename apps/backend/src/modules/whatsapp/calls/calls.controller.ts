@@ -106,12 +106,12 @@ export class WhatsAppCallsController {
   // Liveness ping while a call is connected (client sends ~every 15s). No body;
   // best-effort. Lets the sweeper detect a crashed tab/app and free the leg.
   @Post(':id/heartbeat')
-  heartbeat(@Param('id', ParseUUIDPipe) id: string) {
-    return this.calls.heartbeat(id);
+  heartbeat(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    return this.calls.heartbeat(id, user.id);
   }
 
   // Per-call quality CDR (a getStats() snapshot) posted by the client on
-  // hang-up. Best-effort; any authenticated employee (reporting their own call).
+  // hang-up. Best-effort; scoped in the service to the rep who was on the call.
   @Post(':id/stats')
   recordStats(
     @Param('id', ParseUUIDPipe) id: string,
@@ -125,8 +125,9 @@ export class WhatsAppCallsController {
       bytesSent?: number;
       bytesReceived?: number;
     },
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.calls.recordStats(id, body ?? {});
+    return this.calls.recordStats(id, body ?? {}, user.id);
   }
 
   // Recording upload (rep's browser, on hang-up). Any authenticated employee —

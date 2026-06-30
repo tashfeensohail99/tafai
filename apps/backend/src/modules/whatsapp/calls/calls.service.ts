@@ -127,9 +127,14 @@ export class WhatsAppCallsService {
    * the orphaned Meta leg. Cheap + fire-and-forget; only touches ANSWERED calls,
    * and updateMany makes an unknown/ended id a harmless no-op.
    */
-  async heartbeat(id: string): Promise<{ ok: boolean }> {
+  async heartbeat(id: string, userId: string): Promise<{ ok: boolean }> {
+    // Scoped to the rep ON the call (answeredByEmployeeId is set for inbound AND
+    // outbound). Otherwise any authed employee who knew a call UUID could keep a
+    // zombie alive. Fail-silent best-effort: a mismatch is a harmless no-op.
+    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
+    if (!emp) return { ok: true };
     await this.prisma.whatsAppCall.updateMany({
-      where: { id, status: 'ANSWERED' },
+      where: { id, status: 'ANSWERED', answeredByEmployeeId: emp.id },
       data: { lastHeartbeatAt: new Date() },
     });
     return { ok: true };
@@ -151,12 +156,17 @@ export class WhatsAppCallsService {
       bytesSent?: number;
       bytesReceived?: number;
     },
+    userId: string,
   ): Promise<{ ok: boolean }> {
+    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
+    if (!emp) return { ok: true };
     const clampInt = (v: unknown, max: number) =>
       typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(Math.round(v), max)) : null;
     const data: Prisma.WhatsAppCallUpdateManyMutationInput = {};
-    const reason = typeof dto.endReason === 'string' ? dto.endReason.slice(0, 40) : null;
-    if (reason) data.endReason = reason;
+    // Whitelist endReason to the documented set so a client can't inject junk
+    // into outcome analytics.
+    const VALID_REASONS = ['hangup', 'caller-hangup', 'failed', 'reconnect-timeout', 'connect-timeout', 'ring-timeout', 'orphan-timeout'];
+    if (typeof dto.endReason === 'string' && VALID_REASONS.includes(dto.endReason)) data.endReason = dto.endReason;
     if (['host', 'srflx', 'prflx', 'relay'].includes(String(dto.iceCandidateType))) {
       data.iceCandidateType = String(dto.iceCandidateType);
     }
@@ -172,7 +182,9 @@ export class WhatsAppCallsService {
       data.packetLossPct = Math.max(0, Math.min(dto.packetLossPct, 100));
     }
     if (Object.keys(data).length === 0) return { ok: true };
-    await this.prisma.whatsAppCall.updateMany({ where: { id }, data });
+    // Scoped to the rep on the call so one employee can't pollute another
+    // call's CDR. A non-match is a harmless no-op.
+    await this.prisma.whatsAppCall.updateMany({ where: { id, answeredByEmployeeId: emp.id }, data });
     return { ok: true };
   }
 
@@ -189,7 +201,9 @@ export class WhatsAppCallsService {
   async sweepStaleCalls(): Promise<{ ringingMissed: number; orphansEnded: number }> {
     const now = Date.now();
     const RING_TTL_MS = 90_000;
-    const HEARTBEAT_STALE_MS = 45_000; // 3 missed 15s beats
+    // 4 missed 15s beats — margin over the 30s sweep + 15s beat so a brief
+    // network blip on a LIVE call can't trip a false orphan-termination.
+    const HEARTBEAT_STALE_MS = 60_000;
     const HARD_TTL_MS = 3 * 60 * 60 * 1000;
 
     const missed = await this.prisma.whatsAppCall.updateMany({

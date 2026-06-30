@@ -95,14 +95,22 @@ export function CallDock() {
     try {
       const stats = await pc.getStats();
       let pairId: string | undefined;
+      let sawTransport = false;
       stats.forEach((r) => {
-        if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId as string;
+        if (r.type === 'transport') {
+          sawTransport = true;
+          if (r.selectedCandidatePairId) pairId = r.selectedCandidatePairId as string;
+        }
       });
       const snap: NonNullable<typeof statsRef.current> = {};
       stats.forEach((r) => {
+        // Prefer the modern transport.selectedCandidatePairId; only fall back to
+        // the deprecated nominated/selected flags when there's no transport
+        // record at all (older engines), never just because it's early in ICE.
         const isSelectedPair =
           r.type === 'candidate-pair' &&
-          (r.id === pairId || (!pairId && (r.nominated || r.selected) && r.state === 'succeeded'));
+          ((!!pairId && r.id === pairId) ||
+            (!sawTransport && (r.nominated || r.selected) && r.state === 'succeeded'));
         if (isSelectedPair) {
           if (typeof r.currentRoundTripTime === 'number') snap.rttMs = Math.round(r.currentRoundTripTime * 1000);
           const localId = r.localCandidateId as string | undefined;

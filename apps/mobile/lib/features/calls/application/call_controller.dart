@@ -33,6 +33,7 @@ class CallController extends StateNotifier<CallState> {
   Timer? _endReset; // brief "ended" → idle
   Timer? _disconnectGrace; // transient media drop — give ICE time to recover
   Timer? _heartbeat; // 15s liveness ping so the backend can free a dead leg
+  String? _heartbeatCallId; // snapshot so a late tick can't ping a stale call
 
   // Recording (best-effort; never breaks the call).
   AudioRecorder? _recorder;
@@ -499,9 +500,14 @@ class CallController extends StateNotifier<CallState> {
     // mid-call (keeps running through a 'reconnecting' grace; only teardown
     // cancels it).
     _heartbeat?.cancel();
+    _heartbeatCallId = state.callId;
     _heartbeat = Timer.periodic(const Duration(seconds: 15), (_) {
-      final cid = state.callId;
-      if (cid != null) unawaited(_api.heartbeat(cid));
+      final cid = _heartbeatCallId;
+      if (cid != null &&
+          cid == state.callId &&
+          (state.phase == CallPhase.inCall || state.phase == CallPhase.reconnecting)) {
+        unawaited(_api.heartbeat(cid));
+      }
     });
     _beginRecording();
   }
@@ -602,6 +608,7 @@ class CallController extends StateNotifier<CallState> {
     _tick = null;
     _disconnectGrace = null;
     _heartbeat = null;
+    _heartbeatCallId = null;
 
     // Fire-and-forget the recording flush before tearing media down.
     unawaited(_stopAndUploadRecording());

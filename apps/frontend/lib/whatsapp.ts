@@ -457,6 +457,43 @@ export function sendText(threadId: string, body: string, opts?: {
   });
 }
 
+/** React to a customer message with an emoji. `targetWaMessageId` is the Meta
+ *  wa_message_id of the message being reacted to. */
+export function sendReaction(
+  threadId: string,
+  targetWaMessageId: string,
+  emoji: string,
+  opts?: { idempotencyKey?: string },
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(`/whatsapp/threads/${threadId}/messages/reaction`, {
+    method: 'POST',
+    body: JSON.stringify({ targetWaMessageId, emoji, ...opts }),
+  });
+}
+
+/** Send a pin-drop location (name/address optional labels). */
+export function sendLocation(
+  threadId: string,
+  input: { latitude: number; longitude: number; name?: string; address?: string; idempotencyKey?: string },
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(`/whatsapp/threads/${threadId}/messages/location`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Send one or more contact cards ({name, phone}). */
+export function sendContact(
+  threadId: string,
+  contacts: Array<{ name: string; phone: string }>,
+  opts?: { idempotencyKey?: string },
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(`/whatsapp/threads/${threadId}/messages/contact`, {
+    method: 'POST',
+    body: JSON.stringify({ contacts, ...opts }),
+  });
+}
+
 /**
  * Proactively ask the customer to allow WhatsApp calls (Meta's call-permission
  * opt-in). Requires the 24-hour window to be open. On success the thread's

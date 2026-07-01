@@ -76,7 +76,10 @@ import {
   requestCallPermission,
   listMessages,
   markThreadRead,
+  sendContact,
+  sendLocation,
   sendMediaMessage,
+  sendReaction,
   sendText,
   type AdReferral,
   type ChatMessage,
@@ -338,6 +341,180 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     if (remaining < 30_000) return 'warning';
     return 'info';
   }, [thread?.slaDeadlineAt, thread?.firstAgentReplyAt, thread?.slaBreached]);
+
+  const [locationOpen, setLocationOpen] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
+
+  // React to a specific message with an emoji. Optimistic: the reaction row
+  // appears immediately (rendered by SpecialMessageContent from the payload),
+  // then swaps for the server copy. Lightweight on the backend — a reaction
+  // isn't a reply, so it doesn't clear pending or graduate the lead.
+  const handleReact = (target: ChatMessage, emoji: string) => {
+    if (!thread || !target.waMessageId) return;
+    const idempotencyKey = newIdemKey();
+    const tempId = `temp-${idempotencyKey}`;
+    const nowIso = new Date().toISOString();
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      threadId: thread.id,
+      leadId: thread.leadId ?? null,
+      clientId: thread.clientId ?? null,
+      direction: 'OUTBOUND',
+      type: 'REACTION',
+      status: 'QUEUED',
+      body: emoji,
+      payload: { reaction: { message_id: target.waMessageId, emoji } } as unknown as ChatMessage['payload'],
+      mediaUrl: null,
+      mediaMimeType: null,
+      templateName: null,
+      templateLanguage: null,
+      sentByEmployeeId: null,
+      waMessageId: null,
+      repliedToWaMessageId: target.waMessageId,
+      errorCode: null,
+      errorTitle: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      failedAt: null,
+      createdAt: nowIso,
+    };
+    setMessages((curr) => [...curr, tempMessage]);
+    void (async () => {
+      try {
+        const real = await sendReaction(thread.id, target.waMessageId!, emoji, { idempotencyKey });
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Failed to react';
+        setMessages((curr) =>
+          curr.map((m) =>
+            m.id === tempId
+              ? { ...m, status: 'FAILED', errorTitle: reason, failedAt: new Date().toISOString() }
+              : m,
+          ),
+        );
+        setError(reason);
+      }
+    })();
+  };
+
+  const handleSendLocation = (input: {
+    latitude: number;
+    longitude: number;
+    name?: string;
+    address?: string;
+  }) => {
+    if (!thread) return;
+    setLocationOpen(false);
+    const idempotencyKey = newIdemKey();
+    const tempId = `temp-${idempotencyKey}`;
+    const nowIso = new Date().toISOString();
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      threadId: thread.id,
+      leadId: thread.leadId ?? null,
+      clientId: thread.clientId ?? null,
+      direction: 'OUTBOUND',
+      type: 'LOCATION',
+      status: 'QUEUED',
+      body: null,
+      payload: {
+        location: {
+          latitude: input.latitude,
+          longitude: input.longitude,
+          ...(input.name ? { name: input.name } : {}),
+          ...(input.address ? { address: input.address } : {}),
+        },
+      } as unknown as ChatMessage['payload'],
+      mediaUrl: null,
+      mediaMimeType: null,
+      templateName: null,
+      templateLanguage: null,
+      sentByEmployeeId: null,
+      waMessageId: null,
+      repliedToWaMessageId: null,
+      errorCode: null,
+      errorTitle: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      failedAt: null,
+      createdAt: nowIso,
+    };
+    setMessages((curr) => [...curr, tempMessage]);
+    void (async () => {
+      try {
+        const real = await sendLocation(thread.id, { ...input, idempotencyKey });
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Failed to send location';
+        setMessages((curr) =>
+          curr.map((m) =>
+            m.id === tempId
+              ? { ...m, status: 'FAILED', errorTitle: reason, failedAt: new Date().toISOString() }
+              : m,
+          ),
+        );
+        setError(reason);
+      }
+    })();
+  };
+
+  const handleSendContact = (contacts: Array<{ name: string; phone: string }>) => {
+    if (!thread || !contacts.length) return;
+    setContactOpen(false);
+    const idempotencyKey = newIdemKey();
+    const tempId = `temp-${idempotencyKey}`;
+    const nowIso = new Date().toISOString();
+    // Same Meta contact shape the backend stores + renders, so the optimistic
+    // bubble matches the server copy exactly.
+    const metaContacts = contacts.map((c) => ({
+      name: { formatted_name: c.name, first_name: c.name },
+      phones: [{ phone: c.phone, type: 'CELL' }],
+    }));
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      threadId: thread.id,
+      leadId: thread.leadId ?? null,
+      clientId: thread.clientId ?? null,
+      direction: 'OUTBOUND',
+      type: 'CONTACTS',
+      status: 'QUEUED',
+      body: null,
+      payload: { contacts: metaContacts } as unknown as ChatMessage['payload'],
+      mediaUrl: null,
+      mediaMimeType: null,
+      templateName: null,
+      templateLanguage: null,
+      sentByEmployeeId: null,
+      waMessageId: null,
+      repliedToWaMessageId: null,
+      errorCode: null,
+      errorTitle: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      failedAt: null,
+      createdAt: nowIso,
+    };
+    setMessages((curr) => [...curr, tempMessage]);
+    void (async () => {
+      try {
+        const real = await sendContact(thread.id, contacts, { idempotencyKey });
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Failed to send contact';
+        setMessages((curr) =>
+          curr.map((m) =>
+            m.id === tempId
+              ? { ...m, status: 'FAILED', errorTitle: reason, failedAt: new Date().toISOString() }
+              : m,
+          ),
+        );
+        setError(reason);
+      }
+    })();
+  };
 
   const handleSend = () => {
     const body = draft.trim();
@@ -852,6 +1029,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                     message={m}
                     onImageClick={(url) => setLightboxUrl(url)}
                     onReply={() => setReplyingTo(m)}
+                    onReact={(emoji) => handleReact(m, emoji)}
                     allMessages={messages}
                   />
                 );
@@ -985,6 +1163,8 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onOpenCamera={() => setCameraOpen(true)}
           onOpenTemplate={() => setTemplateOpen(true)}
           onOpenQuickReplies={() => setQuickRepliesOpen(true)}
+          onOpenLocation={() => setLocationOpen(true)}
+          onOpenContact={() => setContactOpen(true)}
           disabled={!withinWindow}
           sending={sending}
         />
@@ -1000,6 +1180,18 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onEditLead={() => setEditLeadOpen(true)}
         />
       )}
+
+      <LocationPickerModal
+        open={locationOpen}
+        onClose={() => setLocationOpen(false)}
+        onSend={handleSendLocation}
+      />
+
+      <ContactPickerModal
+        open={contactOpen}
+        onClose={() => setContactOpen(false)}
+        onSend={handleSendContact}
+      />
 
       <ConvertToClientModal
         open={convertOpen}
@@ -2583,6 +2775,203 @@ function isSpecialType(type: string): boolean {
   return SPECIAL_MESSAGE_TYPES.has(type);
 }
 
+// ── Attach-menu send modals (Location / Contact) ────────────────────────────
+
+const sendModalBtn: CSSProperties = {
+  all: 'unset',
+  textAlign: 'center',
+  padding: '8px 16px',
+  borderRadius: 8,
+  fontSize: 13,
+  fontWeight: 600,
+};
+const sendModalInput: CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '9px 11px',
+  background: 'var(--wa-composer-input-bg, #2a3942)',
+  border: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.08))',
+  borderRadius: 8,
+  color: 'var(--sos-text-primary)',
+  fontSize: 14,
+  outline: 'none',
+};
+const sendModalLabel: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: 'var(--sos-text-muted)',
+  marginBottom: 4,
+  display: 'block',
+};
+
+function SendModalShell({
+  title,
+  onClose,
+  children,
+  footer,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer: ReactNode;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '10vh 16px', zIndex: 1100,
+      }}
+    >
+      <div
+        style={{
+          width: '100%', maxWidth: 420,
+          background: 'var(--sos-surface-1, #111b21)',
+          border: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.08))',
+          borderRadius: 12, overflow: 'hidden',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+        }}
+      >
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{title}</span>
+          <button type="button" aria-label="Close" onClick={onClose} style={{ all: 'unset', cursor: 'pointer', color: 'var(--sos-text-muted)', display: 'flex' }}>
+            <X size={18} />
+          </button>
+        </header>
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>
+        <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 16px', borderTop: '1px solid var(--sos-border-subtle)' }}>{footer}</footer>
+      </div>
+    </div>
+  );
+}
+
+function LocationPickerModal({ open, onClose, onSend }: {
+  open: boolean;
+  onClose: () => void;
+  onSend: (input: { latitude: number; longitude: number; name?: string; address?: string }) => void;
+}) {
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+  const [name, setName] = useState('');
+  const [address, setAddress] = useState('');
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoErr, setGeoErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) { setLat(''); setLng(''); setName(''); setAddress(''); setGeoErr(null); setGeoBusy(false); }
+  }, [open]);
+  if (!open) return null;
+  const useCurrent = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGeoErr('Location is not available in this browser'); return;
+    }
+    setGeoBusy(true); setGeoErr(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setLat(pos.coords.latitude.toFixed(6)); setLng(pos.coords.longitude.toFixed(6)); setGeoBusy(false); },
+      (err) => { setGeoErr(err.message || 'Could not get your location'); setGeoBusy(false); },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+  const latN = Number(lat);
+  const lngN = Number(lng);
+  const valid =
+    lat.trim() !== '' && lng.trim() !== '' &&
+    Number.isFinite(latN) && Number.isFinite(lngN) &&
+    Math.abs(latN) <= 90 && Math.abs(lngN) <= 180;
+  return (
+    <SendModalShell
+      title="Send location"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} style={{ ...sendModalBtn, cursor: 'pointer', background: 'transparent', color: 'var(--sos-text-muted)' }}>Cancel</button>
+          <button
+            type="button"
+            disabled={!valid}
+            onClick={() => onSend({ latitude: latN, longitude: lngN, name: name.trim() || undefined, address: address.trim() || undefined })}
+            style={{ ...sendModalBtn, background: valid ? 'var(--wa-accent, #00a884)' : 'var(--sos-surface-2)', color: valid ? '#fff' : 'var(--sos-text-faint)', cursor: valid ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Send size={14} /> Send
+          </button>
+        </>
+      }
+    >
+      <button
+        type="button"
+        onClick={useCurrent}
+        disabled={geoBusy}
+        style={{ ...sendModalBtn, background: 'var(--sos-surface-2, #202c33)', color: 'var(--sos-text-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: geoBusy ? 'default' : 'pointer' }}
+      >
+        <MapPin size={15} /> {geoBusy ? 'Getting your location…' : 'Use my current location'}
+      </button>
+      {geoErr ? <div style={{ fontSize: 12, color: 'var(--sos-status-danger-strong, #f87171)' }}>{geoErr}</div> : null}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <label style={sendModalLabel}>Latitude</label>
+          <input value={lat} onChange={(e) => setLat(e.target.value)} inputMode="decimal" placeholder="24.8607" style={sendModalInput} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={sendModalLabel}>Longitude</label>
+          <input value={lng} onChange={(e) => setLng(e.target.value)} inputMode="decimal" placeholder="67.0011" style={sendModalInput} />
+        </div>
+      </div>
+      <div>
+        <label style={sendModalLabel}>Name (optional)</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Our office" style={sendModalInput} />
+      </div>
+      <div>
+        <label style={sendModalLabel}>Address (optional)</label>
+        <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="123 Main St, Karachi" style={sendModalInput} />
+      </div>
+    </SendModalShell>
+  );
+}
+
+function ContactPickerModal({ open, onClose, onSend }: {
+  open: boolean;
+  onClose: () => void;
+  onSend: (contacts: Array<{ name: string; phone: string }>) => void;
+}) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  useEffect(() => { if (open) { setName(''); setPhone(''); } }, [open]);
+  if (!open) return null;
+  const valid = name.trim().length > 0 && phone.trim().length >= 3;
+  return (
+    <SendModalShell
+      title="Send contact"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} style={{ ...sendModalBtn, cursor: 'pointer', background: 'transparent', color: 'var(--sos-text-muted)' }}>Cancel</button>
+          <button
+            type="button"
+            disabled={!valid}
+            onClick={() => onSend([{ name: name.trim(), phone: phone.trim() }])}
+            style={{ ...sendModalBtn, background: valid ? 'var(--wa-accent, #00a884)' : 'var(--sos-surface-2)', color: valid ? '#fff' : 'var(--sos-text-faint)', cursor: valid ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Send size={14} /> Send
+          </button>
+        </>
+      }
+    >
+      <div>
+        <label style={sendModalLabel}>Name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" style={sendModalInput} />
+      </div>
+      <div>
+        <label style={sendModalLabel}>Phone</label>
+        <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="+92 300 1234567" style={sendModalInput} />
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--sos-text-faint)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <User size={13} /> Shared as a WhatsApp contact card the customer can save or call.
+      </div>
+    </SendModalShell>
+  );
+}
+
 /** Renders the structured non-media types as WhatsApp-style cards instead of a
  *  "[type]" placeholder: location → a map-link card, contacts → a vCard card,
  *  reaction → emoji + label, interactive → the tapped button/list title. Reads
@@ -2962,11 +3351,14 @@ function MessageBubble({
   message,
   onImageClick,
   onReply,
+  onReact,
   allMessages,
 }: {
   message: ChatMessage;
   onImageClick?: (blobUrl: string) => void;
   onReply?: () => void;
+  /** React to this message with an emoji (per-message menu). */
+  onReact?: (emoji: string) => void;
   /** Used to resolve the quoted message preview when this bubble is a reply. */
   allMessages?: ChatMessage[];
 }) {
@@ -2997,6 +3389,13 @@ function MessageBubble({
   // on Meta's side yet). Same for our own optimistic temp bubbles.
   const canReply =
     Boolean(onReply) &&
+    Boolean(message.waMessageId) &&
+    message.status !== 'FAILED' &&
+    !message.id.startsWith('temp-');
+  // React needs a Meta message_id to target, so the same guard as reply: a
+  // delivered message (inbound or our own sent one), not a temp/failed row.
+  const canReact =
+    Boolean(onReact) &&
     Boolean(message.waMessageId) &&
     message.status !== 'FAILED' &&
     !message.id.startsWith('temp-');
@@ -3088,6 +3487,36 @@ function MessageBubble({
                 boxShadow: '0 6px 20px rgba(0,0,0,0.3)', padding: 4, zIndex: 30,
               }}
             >
+              {canReact ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 2,
+                    padding: '2px 2px 6px',
+                    marginBottom: 4,
+                    borderBottom: '1px solid var(--sos-border-subtle)',
+                  }}
+                >
+                  {REACTION_EMOJIS.map((e) => (
+                    <button
+                      key={e}
+                      type="button"
+                      title={`React ${e}`}
+                      onClick={() => { onReact?.(e); setMenuOpen(false); }}
+                      style={{
+                        all: 'unset',
+                        cursor: 'pointer',
+                        fontSize: 18,
+                        lineHeight: 1,
+                        padding: '3px 4px',
+                        borderRadius: 6,
+                      }}
+                    >
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {copyText ? (
                 <BubbleMenuItem
                   icon={<Copy size={15} />}
@@ -3319,6 +3748,17 @@ const COMPOSER_EMOJIS = [
   '💛','💚','💙','💜','🔥','✨','🎉','✅','❌','⚠️','📌','📞','📅','⏰','💯','🚀',
 ];
 
+// WhatsApp's default quick-reaction set, shown in the per-message menu.
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+// Client-side idempotency key so an accidental double-fire (or a retry) doesn't
+// double-send. Browser-only (crypto.randomUUID when available).
+function newIdemKey(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function ChatComposer(props: {
   value: string;
   onChange: (v: string) => void;
@@ -3328,6 +3768,8 @@ function ChatComposer(props: {
   onOpenCamera: () => void;
   onOpenTemplate: () => void;
   onOpenQuickReplies: () => void;
+  onOpenLocation: () => void;
+  onOpenContact: () => void;
   disabled: boolean;
   sending: boolean;
 }) {
@@ -3636,6 +4078,22 @@ function ChatComposer(props: {
                   icon={<FileIcon size={18} />}
                   label="Document"
                   onClick={() => pickFile('document')}
+                />
+                <AttachMenuItem
+                  icon={<MapPin size={18} />}
+                  label="Location"
+                  onClick={() => {
+                    setAttachMenuOpen(false);
+                    props.onOpenLocation();
+                  }}
+                />
+                <AttachMenuItem
+                  icon={<User size={18} />}
+                  label="Contact"
+                  onClick={() => {
+                    setAttachMenuOpen(false);
+                    props.onOpenContact();
+                  }}
                 />
               </div>
             ) : null}

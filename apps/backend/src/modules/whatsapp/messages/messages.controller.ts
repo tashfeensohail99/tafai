@@ -11,7 +11,18 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ArrayMaxSize, IsArray, IsOptional, IsString, MinLength, ValidateNested } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
@@ -63,6 +74,36 @@ class SendTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => TemplateComponentDto)
   components?: TemplateComponentDto[];
+  @IsOptional() @IsString() idempotencyKey?: string;
+}
+
+class SendReactionDto {
+  /** wa_message_id of the message being reacted to. */
+  @IsString() @MinLength(1) targetWaMessageId!: string;
+  @IsString() @MinLength(1) emoji!: string;
+  @IsOptional() @IsString() idempotencyKey?: string;
+}
+
+class SendLocationDto {
+  @IsNumber() @Min(-90) @Max(90) latitude!: number;
+  @IsNumber() @Min(-180) @Max(180) longitude!: number;
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() address?: string;
+  @IsOptional() @IsString() idempotencyKey?: string;
+}
+
+class ContactCardDto {
+  @IsString() @MinLength(1) name!: string;
+  @IsString() @MinLength(3) phone!: string;
+}
+
+class SendContactDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => ContactCardDto)
+  contacts!: ContactCardDto[];
   @IsOptional() @IsString() idempotencyKey?: string;
 }
 
@@ -154,6 +195,45 @@ export class WhatsAppMessagesController {
       caption: caption?.trim() || undefined,
       idempotencyKey,
     });
+  }
+
+  /** React to a customer message with an emoji. */
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
+  @Post('reaction')
+  @RequirePermissions('whatsapp.send_message')
+  async sendReaction(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Body() dto: SendReactionDto,
+  ) {
+    const caller = await this.callerContext(user);
+    return this.messages.sendReaction(caller, { threadId, ...dto });
+  }
+
+  /** Send a pin-drop location. */
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
+  @Post('location')
+  @RequirePermissions('whatsapp.send_message')
+  async sendLocation(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Body() dto: SendLocationDto,
+  ) {
+    const caller = await this.callerContext(user);
+    return this.messages.sendLocation(caller, { threadId, ...dto });
+  }
+
+  /** Send one or more contact cards. */
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
+  @Post('contact')
+  @RequirePermissions('whatsapp.send_message')
+  async sendContact(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Body() dto: SendContactDto,
+  ) {
+    const caller = await this.callerContext(user);
+    return this.messages.sendContact(caller, { threadId, ...dto });
   }
 
   private async callerContext(user: RequestUser) {

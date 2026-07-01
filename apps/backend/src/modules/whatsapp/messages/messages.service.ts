@@ -83,6 +83,31 @@ interface SendMediaInput {
   idempotencyKey?: string;
 }
 
+interface SendReactionInput {
+  threadId: string;
+  /** wa_message_id of the (inbound) message being reacted to. */
+  targetWaMessageId: string;
+  /** Emoji to react with. */
+  emoji: string;
+  idempotencyKey?: string;
+}
+
+interface SendLocationInput {
+  threadId: string;
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  idempotencyKey?: string;
+}
+
+interface SendContactInput {
+  threadId: string;
+  /** Simple {name, phone} pairs; the service assembles the Meta contact shape. */
+  contacts: Array<{ name: string; phone: string }>;
+  idempotencyKey?: string;
+}
+
 /**
  * Compose + enqueue outbound WhatsApp messages. The Meta send happens in the
  * outbound-message worker; this service only persists the Message row and
@@ -235,6 +260,158 @@ export class WhatsAppMessagesService {
     // Stamp the thread so the AI bot stays silent for 4h after any human
     // reply. This rolls forward on every subsequent human send. Bot-sent
     // messages have senderEmployeeId=null and don't touch this stamp.
+    if (senderEmployeeId) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
+    return message;
+  }
+
+  /**
+   * React to a customer message with an emoji (WhatsApp reaction). A reaction is
+   * a free-form session message, so the 24h window must be open — same rule as
+   * text/media. Deliberately lightweight: it does NOT count as a reply, so the
+   * outbound worker skips all thread denormalization (no awaiting-reply clear,
+   * no lead graduation, no SLA resolution) and we do NOT stamp aiDisabledAt.
+   */
+  async sendReaction(caller: CallerContext, input: SendReactionInput) {
+    const emoji = (input.emoji ?? '').trim();
+    if (!emoji) throw new BadRequestException('An emoji is required');
+    if (!input.targetWaMessageId) {
+      throw new BadRequestException('A message to react to is required');
+    }
+    const thread = await this.thread(caller, input.threadId);
+    const now = new Date();
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestException(
+        '24-hour customer-service window has expired. Use a template message instead.',
+      );
+    }
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.REACTION,
+        status: WhatsAppMessageStatus.QUEUED,
+        body: emoji,
+        // Same shape the webhook stores for INBOUND reactions, so the chat panel
+        // renders an outbound reaction identically (reads payload.reaction.emoji).
+        payload: {
+          reaction: { message_id: input.targetWaMessageId, emoji },
+        } as unknown as Prisma.InputJsonValue,
+        repliedToWaMessageId: input.targetWaMessageId,
+        sentByEmployeeId: senderEmployeeId,
+        idempotencyKey: input.idempotencyKey ?? randomUUID(),
+      },
+      select: this.publicSelect(),
+    });
+    await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
+    return message;
+  }
+
+  /**
+   * Send a pin-drop location. A real reply → the normal human-send path (clears
+   * awaiting-reply, graduates the lead, stamps aiDisabledAt). Needs an open 24h
+   * window like text/media.
+   */
+  async sendLocation(caller: CallerContext, input: SendLocationInput) {
+    if (!Number.isFinite(input.latitude) || !Number.isFinite(input.longitude)) {
+      throw new BadRequestException('A valid latitude and longitude are required');
+    }
+    const thread = await this.thread(caller, input.threadId);
+    const now = new Date();
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestException(
+        '24-hour customer-service window has expired. Use a template message instead.',
+      );
+    }
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
+    const name = input.name?.trim() || undefined;
+    const address = input.address?.trim() || undefined;
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.LOCATION,
+        status: WhatsAppMessageStatus.QUEUED,
+        body: null,
+        // Matches the inbound location payload the chat panel reads.
+        payload: {
+          location: {
+            latitude: input.latitude,
+            longitude: input.longitude,
+            ...(name ? { name } : {}),
+            ...(address ? { address } : {}),
+          },
+        } as unknown as Prisma.InputJsonValue,
+        sentByEmployeeId: senderEmployeeId,
+        idempotencyKey: input.idempotencyKey ?? randomUUID(),
+      },
+      select: this.publicSelect(),
+    });
+    await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
+    if (senderEmployeeId) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
+    return message;
+  }
+
+  /**
+   * Send one or more contact cards. A real reply → the normal human-send path.
+   * Needs an open 24h window like text/media.
+   */
+  async sendContact(caller: CallerContext, input: SendContactInput) {
+    const cards = (input.contacts ?? [])
+      .map((c) => ({ name: c.name?.trim() ?? '', phone: c.phone?.trim() ?? '' }))
+      .filter((c) => c.name && c.phone);
+    if (!cards.length) {
+      throw new BadRequestException('At least one contact with a name and phone is required');
+    }
+    const thread = await this.thread(caller, input.threadId);
+    const now = new Date();
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestException(
+        '24-hour customer-service window has expired. Use a template message instead.',
+      );
+    }
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
+    // Assemble the Meta contact shape ONCE. The stored payload is byte-identical
+    // to what the wire send uses AND to what the webhook stores for inbound
+    // contacts, so the chat panel renders it (reads name.formatted_name +
+    // phones[0].phone) with no special-casing.
+    const metaContacts = cards.map((c) => ({
+      name: { formatted_name: c.name, first_name: c.name },
+      phones: [{ phone: c.phone, type: 'CELL' }],
+    }));
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: WhatsAppMessageType.CONTACTS,
+        status: WhatsAppMessageStatus.QUEUED,
+        body: null,
+        payload: { contacts: metaContacts } as unknown as Prisma.InputJsonValue,
+        sentByEmployeeId: senderEmployeeId,
+        idempotencyKey: input.idempotencyKey ?? randomUUID(),
+      },
+      select: this.publicSelect(),
+    });
+    await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
     if (senderEmployeeId) {
       await this.prisma.whatsAppThread.update({
         where: { id: thread.id },

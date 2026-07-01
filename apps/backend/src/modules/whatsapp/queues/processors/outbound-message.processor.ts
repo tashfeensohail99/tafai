@@ -105,6 +105,15 @@ export class OutboundMessageProcessor extends WorkerHost {
         },
       });
 
+      // A REACTION is a lightweight acknowledgement, NOT a message: real
+      // WhatsApp doesn't reorder the chat list or change the sidebar preview when
+      // you react, and it certainly doesn't count as "you replied". So we skip
+      // ALL thread denormalization for reactions — no lastMessage* bump, no
+      // awaiting-reply clear, no lead graduation, no SLA resolution. The reaction
+      // is still delivered to Meta (above) and shown live in the open thread
+      // (realtime fanout below); it just leaves the funnel/inbox state untouched.
+      const isReaction = message.type === WhatsAppMessageType.REACTION;
+
       // 1a) Bump the thread's denormalized lastMessage* fields so the inbox
       //     sidebar re-sorts and the chat preview updates. Without this the
       //     left-side list keeps showing the customer's last inbound as the
@@ -112,34 +121,36 @@ export class OutboundMessageProcessor extends WorkerHost {
       //     with bot replies and human sends). Mirrors the inbound update
       //     in webhook-ingest. We DO NOT touch unreadCount here — outbound
       //     messages don't make the conversation "unread for the agent".
-      const preview = previewOfOutbound(message);
-      // Pending clear: ONLY a manual human send (sentByEmployeeId != null) counts
-      // as "the agent replied" and clears the awaiting-reply flag. Bot replies,
-      // the auto-ack, templates and campaigns all have a null sender, so they
-      // leave the chat pending — exactly the real-WhatsApp rule.
-      const isHumanSend = message.sentByEmployeeId != null;
-      // A re-engagement TEMPLATE (the dormant-backlog blast or the admin backlog
-      // sender) counts as "we contacted them" per product decision: once it
-      // sends, the lead drops off the Uncontacted list (which keys on
-      // lastHumanReplyAt) and out of awaiting-reply. We're in the SENT branch, so
-      // this only fires on a SUCCESSFUL send — Meta-declined (FAILED) ones never
-      // reach here and correctly stay uncontacted. We set lastHumanReplyAt but
-      // NOT lastHumanActivityAt, so a bulk blast doesn't reorder the whole inbox.
-      const source = (message.payload as { source?: string } | null)?.source;
-      const isReengageSend = source === 'reengage_blast' || source === 'reengagement_backlog';
-      await this.prisma.whatsAppThread.update({
-        where: { id: message.threadId },
-        data: {
-          lastMessageAt: now,
-          lastMessagePreview: preview,
-          // A human (rep) reply is real activity → bump the inbox sort key too.
-          ...(isHumanSend
-            ? { lastHumanReplyAt: now, lastHumanActivityAt: now, awaitingReply: false }
-            : isReengageSend
-              ? { lastHumanReplyAt: now, awaitingReply: false }
-              : {}),
-        },
-      });
+      if (!isReaction) {
+        const preview = previewOfOutbound(message);
+        // Pending clear: ONLY a manual human send (sentByEmployeeId != null) counts
+        // as "the agent replied" and clears the awaiting-reply flag. Bot replies,
+        // the auto-ack, templates and campaigns all have a null sender, so they
+        // leave the chat pending — exactly the real-WhatsApp rule.
+        const isHumanSend = message.sentByEmployeeId != null;
+        // A re-engagement TEMPLATE (the dormant-backlog blast or the admin backlog
+        // sender) counts as "we contacted them" per product decision: once it
+        // sends, the lead drops off the Uncontacted list (which keys on
+        // lastHumanReplyAt) and out of awaiting-reply. We're in the SENT branch, so
+        // this only fires on a SUCCESSFUL send — Meta-declined (FAILED) ones never
+        // reach here and correctly stay uncontacted. We set lastHumanReplyAt but
+        // NOT lastHumanActivityAt, so a bulk blast doesn't reorder the whole inbox.
+        const source = (message.payload as { source?: string } | null)?.source;
+        const isReengageSend = source === 'reengage_blast' || source === 'reengagement_backlog';
+        await this.prisma.whatsAppThread.update({
+          where: { id: message.threadId },
+          data: {
+            lastMessageAt: now,
+            lastMessagePreview: preview,
+            // A human (rep) reply is real activity → bump the inbox sort key too.
+            ...(isHumanSend
+              ? { lastHumanReplyAt: now, lastHumanActivityAt: now, awaitingReply: false }
+              : isReengageSend
+                ? { lastHumanReplyAt: now, awaitingReply: false }
+                : {}),
+          },
+        });
+      }
 
       // 1b) Rolling Response-SLA resolution. A genuine agent reply closes the
       //     current pending window: stamp Met or Breached, move the assigned
@@ -363,6 +374,33 @@ export class OutboundMessageProcessor extends WorkerHost {
           ...(isVoiceNote ? { voice: true } : {}),
         });
       }
+      case WhatsAppMessageType.REACTION: {
+        const r = (message.payload as { reaction?: { message_id?: string; emoji?: string } } | null)
+          ?.reaction;
+        return client.sendReaction({
+          to,
+          waMessageId: r?.message_id ?? message.repliedToWaMessageId ?? '',
+          emoji: r?.emoji ?? message.body ?? '',
+        });
+      }
+      case WhatsAppMessageType.LOCATION: {
+        const loc =
+          (message.payload as {
+            location?: { latitude?: number; longitude?: number; name?: string; address?: string };
+          } | null)?.location ?? {};
+        return client.sendLocation({
+          to,
+          latitude: Number(loc.latitude),
+          longitude: Number(loc.longitude),
+          ...(loc.name ? { name: loc.name } : {}),
+          ...(loc.address ? { address: loc.address } : {}),
+        });
+      }
+      case WhatsAppMessageType.CONTACTS: {
+        const contacts =
+          (message.payload as { contacts?: Array<Record<string, unknown>> } | null)?.contacts ?? [];
+        return client.sendContacts({ to, contacts });
+      }
       default:
         throw new Error(`Unsupported outbound type: ${message.type}`);
     }
@@ -386,6 +424,8 @@ function previewOfOutbound(message: { body: string | null; type: string }): stri
     case 'DOCUMENT': return '[document]';
     case 'STICKER': return '[sticker]';
     case 'TEMPLATE': return '[template]';
+    case 'LOCATION': return '[location]';
+    case 'CONTACTS': return '[contacts]';
     default: return null;
   }
 }

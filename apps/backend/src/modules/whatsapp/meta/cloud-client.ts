@@ -70,6 +70,32 @@ export interface SendMediaInput {
   voice?: boolean;
 }
 
+export interface SendReactionInput {
+  to: string;
+  /** wa_message_id of the message being reacted to. */
+  waMessageId: string;
+  /** Emoji to react with. An empty string REMOVES a prior reaction. */
+  emoji: string;
+}
+
+export interface SendLocationInput {
+  to: string;
+  latitude: number;
+  longitude: number;
+  /** Optional place name (bold label in WhatsApp). */
+  name?: string;
+  /** Optional street address (shown under the name). */
+  address?: string;
+}
+
+export interface SendContactsInput {
+  to: string;
+  /** Pre-built Meta contact objects ({ name:{formatted_name,...}, phones:[...] }).
+   *  The caller assembles these once so the stored payload and the wire payload
+   *  are the exact same shape the webhook stores for inbound contacts. */
+  contacts: Array<Record<string, unknown>>;
+}
+
 export interface MetaSendResponse {
   messaging_product: 'whatsapp';
   contacts: Array<{ input: string; wa_id: string }>;
@@ -174,6 +200,51 @@ export class MetaCloudClient {
       [input.type]: media,
     };
     return this.post(body);
+  }
+
+  /**
+   * React to a customer message with an emoji. An empty emoji removes a prior
+   * reaction. A reaction is a free-form session message, so it needs an open
+   * 24h window (enforced upstream in the service).
+   *   POST /{phoneNumberId}/messages
+   *   { type:'reaction', reaction:{ message_id, emoji } }
+   */
+  async sendReaction(input: SendReactionInput): Promise<MetaSendResponse> {
+    return this.post({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: input.to,
+      type: 'reaction',
+      reaction: { message_id: input.waMessageId, emoji: input.emoji },
+    });
+  }
+
+  /** Send a pin-drop location. name/address are optional display labels. */
+  async sendLocation(input: SendLocationInput): Promise<MetaSendResponse> {
+    const location: Record<string, unknown> = {
+      latitude: input.latitude,
+      longitude: input.longitude,
+    };
+    if (input.name) location.name = input.name;
+    if (input.address) location.address = input.address;
+    return this.post({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: input.to,
+      type: 'location',
+      location,
+    });
+  }
+
+  /** Send one or more contact cards. `contacts` is already Meta-shaped. */
+  async sendContacts(input: SendContactsInput): Promise<MetaSendResponse> {
+    return this.post({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: input.to,
+      type: 'contacts',
+      contacts: input.contacts,
+    });
   }
 
   async markAsRead(waMessageId: string): Promise<void> {

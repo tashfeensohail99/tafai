@@ -1029,7 +1029,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                     message={m}
                     onImageClick={(url) => setLightboxUrl(url)}
                     onReply={() => setReplyingTo(m)}
-                    onReact={(emoji) => handleReact(m, emoji)}
+                    // Reactions are session messages → only offer them while the
+                    // 24h window is open (backend hard-rejects otherwise). No
+                    // onReact ⇒ canReact is false ⇒ the emoji row hides.
+                    onReact={withinWindow ? (emoji) => handleReact(m, emoji) : undefined}
                     allMessages={messages}
                   />
                 );

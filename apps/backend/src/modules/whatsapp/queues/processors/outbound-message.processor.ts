@@ -160,7 +160,9 @@ export class OutboundMessageProcessor extends WorkerHost {
       //     human reply for the window to count as met.
       const isAutoAck =
         (message.payload as { autoAck?: boolean } | null)?.autoAck === true;
-      if (!isAutoAck && message.thread.responseDeadlineAt) {
+      // A reaction is not a reply → it must NOT resolve the response-SLA window
+      // or touch the agent's Met/Breached tally (same reason it skips 1a).
+      if (!isAutoAck && !isReaction && message.thread.responseDeadlineAt) {
         const creditEmployeeId = message.sentByEmployeeId; // resolved sender (assignee for super-admin sends)
         // If the sweeper already counted this window as a breach, don't
         // double-count — just clear the clock. Otherwise score it now.
@@ -188,7 +190,9 @@ export class OutboundMessageProcessor extends WorkerHost {
 
       // 2) SLA + leadStage transitions (only on the conversation's FIRST agent reply).
       //    Skip for the auto-ack so it doesn't masquerade as the first human reply.
-      if (!isAutoAck && !message.thread.firstAgentReplyAt && message.leadId) {
+      //    Skip for a reaction — it's not a reply, so it must NOT stamp the
+      //    first-agent-reply clock or graduate the lead NEW → CONTACTED.
+      if (!isAutoAck && !isReaction && !message.thread.firstAgentReplyAt && message.leadId) {
         const breached = message.thread.slaDeadlineAt
           ? now > message.thread.slaDeadlineAt
           : false;

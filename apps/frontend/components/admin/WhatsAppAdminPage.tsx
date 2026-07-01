@@ -32,13 +32,20 @@ import {
   ArchiveRestore,
   Ban,
   CheckCircle2,
+  FileText,
+  Image as ImageIcon,
   Inbox as InboxIcon,
+  MapPin,
   MessageSquare,
+  Mic,
   RefreshCw,
   Search,
   ShieldOff,
+  Sticker,
   TimerReset,
+  User,
   UserCog,
+  Video,
 } from 'lucide-react';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { useAdminSession } from '../layout/AdminShell';
@@ -1425,7 +1432,7 @@ const ThreadRow = memo(function ThreadRow({
               maxWidth: 200,
             }}
           >
-            {item.lastMessagePreview ?? ''}
+            {renderPreview(item.lastMessagePreview)}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             {item.unreadCount > 0 && (
@@ -1603,6 +1610,43 @@ function initials(name: string): string {
   const first = parts[0]?.[0] ?? '';
   const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
   return (first + last).toUpperCase();
+}
+
+// Turn a `lastMessagePreview` token (e.g. "[image]", "[document: passport.pdf]",
+// "[reaction 👍]") into a small icon + label, exactly like the sales inbox.
+// Plain-text previews pass through unchanged. Kept byte-identical to
+// /sales/inbox's renderPreview so both inboxes read the same.
+function renderPreview(preview: string | null): React.ReactNode {
+  if (!preview) return '';
+  // Reactions carry an emoji after a space (not a colon), e.g. "[reaction 👍]".
+  const react = preview.match(/^\[reaction\s+([\s\S]+)\]$/i);
+  if (react) return `Reacted ${react[1]}`;
+  // Every other token is a single word with an optional ": detail" (documents).
+  const m = preview.match(/^\[([a-z]+)(?::\s*([\s\S]+))?\]$/i);
+  if (!m) return preview; // plain text — show as-is
+  const kind = m[1]!.toLowerCase();
+  const rest = m[2]?.trim();
+  const glyph = (
+    Icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>,
+    label: string,
+  ) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <Icon size={13} style={{ flexShrink: 0 }} />
+      {label}
+    </span>
+  );
+  switch (kind) {
+    case 'image': return glyph(ImageIcon, 'Photo');
+    case 'video': return glyph(Video, 'Video');
+    case 'audio': return glyph(Mic, 'Voice message');
+    case 'document': return glyph(FileText, rest || 'Document');
+    case 'sticker': return glyph(Sticker, 'Sticker');
+    case 'location': return glyph(MapPin, 'Location');
+    case 'contacts':
+    case 'contact': return glyph(User, 'Contact');
+    // interactive / unknown single-word tokens — title-case, no stray brackets.
+    default: return kind.charAt(0).toUpperCase() + kind.slice(1);
+  }
 }
 
 function formatRelativeShort(iso: string, now = new Date()): string {

@@ -34,8 +34,12 @@ import {
   CalendarClock,
   Check,
   CheckCheck,
+  ChevronDown,
   Clock4,
+  Copy,
   Download,
+  Info,
+  Smile,
   File as FileIcon,
   FileText,
   Image as ImageIcon,
@@ -2900,6 +2904,60 @@ function MediaBubbleContent({
   );
 }
 
+/** Full date+time for the per-message "Message info" panel. */
+function fmtInfoTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+/** A single row inside the per-message hover menu (Copy / Message info). */
+function BubbleMenuItem({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        width: '100%',
+        textAlign: 'left',
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        padding: '7px 10px',
+        borderRadius: 6,
+        fontSize: 13,
+        color: 'var(--sos-text-primary)',
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--wa-composer-input-bg)'; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
 function MessageBubble({
   message,
   onImageClick,
@@ -2916,6 +2974,19 @@ function MessageBubble({
   const isMedia = ['IMAGE', 'AUDIO', 'VIDEO', 'DOCUMENT', 'STICKER'].includes(message.type);
   const isSpecial = isSpecialType(message.type);
   const [hovered, setHovered] = useState(false);
+  // Per-message hover menu (Copy / Message info) + the expandable info panel.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [menuOpen]);
+  const copyText = message.body ?? '';
   // Resolve the message this bubble is replying to, if any. Match by
   // waMessageId since that's what Meta uses for cross-message references.
   // Falls through to undefined if the original isn't in the loaded window.
@@ -2988,6 +3059,50 @@ function MessageBubble({
         {/* If this message is a reply, render the quoted message above
             the body. Click jumps to the original (browser native anchor
             scroll-into-view via id). */}
+        {/* Hover chevron → per-message menu (Copy / Message info). */}
+        <div ref={menuRef} style={{ position: 'absolute', top: 2, right: 3, zIndex: 6 }}>
+          {hovered || menuOpen ? (
+            <button
+              type="button"
+              aria-label="Message menu"
+              onClick={(e) => { e.stopPropagation(); setMenuOpen((o) => !o); }}
+              style={{
+                all: 'unset', cursor: 'pointer',
+                width: 22, height: 18, borderRadius: 4,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: isOut ? 'var(--wa-bubble-out)' : 'var(--wa-bubble-in)',
+                color: 'var(--sos-text-muted)',
+              }}
+            >
+              <ChevronDown size={15} />
+            </button>
+          ) : null}
+          {menuOpen ? (
+            <div
+              role="menu"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute', top: 'calc(100% + 2px)', right: 0,
+                minWidth: 158, background: 'var(--sos-surface-2)',
+                border: '1px solid var(--sos-border-subtle)', borderRadius: 8,
+                boxShadow: '0 6px 20px rgba(0,0,0,0.3)', padding: 4, zIndex: 30,
+              }}
+            >
+              {copyText ? (
+                <BubbleMenuItem
+                  icon={<Copy size={15} />}
+                  label="Copy"
+                  onClick={() => { void navigator.clipboard?.writeText(copyText).catch(() => {}); setMenuOpen(false); }}
+                />
+              ) : null}
+              <BubbleMenuItem
+                icon={<Info size={15} />}
+                label={showInfo ? 'Hide info' : 'Message info'}
+                onClick={() => { setShowInfo((s) => !s); setMenuOpen(false); }}
+              />
+            </div>
+          ) : null}
+        </div>
         {quoted ? <QuotedMessagePreview quoted={quoted} /> : null}
         <div
           style={{
@@ -3016,6 +3131,32 @@ function MessageBubble({
             </div>
           )}
         </div>
+        {/* Message info panel — delivery milestones from the stored timestamps. */}
+        {showInfo ? (
+          <div
+            style={{
+              marginTop: 6,
+              paddingTop: 6,
+              borderTop: '1px solid var(--sos-border-subtle)',
+              fontSize: 11,
+              color: 'var(--sos-text-muted)',
+              lineHeight: 1.6,
+            }}
+          >
+            {isOut ? (
+              <>
+                {message.sentAt ? <div>Sent · {fmtInfoTime(message.sentAt)}</div> : null}
+                {message.deliveredAt ? <div>Delivered · {fmtInfoTime(message.deliveredAt)}</div> : null}
+                {message.readAt ? <div>Read · {fmtInfoTime(message.readAt)}</div> : null}
+                {!message.sentAt && !message.deliveredAt && !message.readAt ? (
+                  <div>Not sent yet</div>
+                ) : null}
+              </>
+            ) : (
+              <div>Received · {fmtInfoTime(message.createdAt)}</div>
+            )}
+          </div>
+        ) : null}
         <div
           style={{
             display: 'flex',
@@ -3169,6 +3310,15 @@ function AttachMenuItem(props: {
 
 // ---- Composer -----------------------------------------------------------
 
+// A curated set of common emojis for the composer picker — client-only, no
+// library. Inserted at the caret as plain unicode (renders on the customer side
+// like any other text). Kept small on purpose (fast, no scroll fatigue).
+const COMPOSER_EMOJIS = [
+  '😀','😃','😄','😁','😅','😂','🙂','😊','😉','😍','😘','😎','🤔','😐','🙄','😴',
+  '😢','😭','😤','😠','👍','👎','👏','🙏','💪','🙌','👌','✌️','🤝','👋','❤️','🧡',
+  '💛','💚','💙','💜','🔥','✨','🎉','✅','❌','⚠️','📌','📞','📅','⏰','💯','🚀',
+];
+
 function ChatComposer(props: {
   value: string;
   onChange: (v: string) => void;
@@ -3193,6 +3343,23 @@ function ChatComposer(props: {
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const docInputRef = useRef<HTMLInputElement | null>(null);
   const attachRootRef = useRef<HTMLDivElement | null>(null);
+  // Emoji picker state — textarea ref lets us insert at the caret, not just append.
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const emojiRootRef = useRef<HTMLDivElement | null>(null);
+  const insertEmoji = (emoji: string) => {
+    const el = textareaRef.current;
+    if (!el) { props.onChange(props.value + emoji); return; }
+    const start = el.selectionStart ?? props.value.length;
+    const end = el.selectionEnd ?? props.value.length;
+    props.onChange(props.value.slice(0, start) + emoji + props.value.slice(end));
+    // Restore focus + caret just after the inserted emoji (post-render).
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      try { el.setSelectionRange(pos, pos); } catch { /* selection may be unavailable */ }
+    });
+  };
 
   // Close attach menu on outside-click / Escape so it behaves like a
   // proper dropdown rather than a stuck overlay.
@@ -3214,6 +3381,25 @@ function ChatComposer(props: {
       document.removeEventListener('keydown', onKey);
     };
   }, [attachMenuOpen]);
+
+  // Same outside-click / Escape close for the emoji picker.
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (emojiRootRef.current && !emojiRootRef.current.contains(e.target as Node)) {
+        setEmojiOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEmojiOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [emojiOpen]);
 
   const pickFile = (kind: 'image' | 'video' | 'document') => {
     setAttachMenuOpen(false);
@@ -3497,6 +3683,7 @@ function ChatComposer(props: {
             }}
           >
             <textarea
+              ref={textareaRef}
               disabled={props.disabled}
               value={props.value}
               onChange={(e) => props.onChange(e.target.value)}
@@ -3528,6 +3715,62 @@ function ChatComposer(props: {
                 el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
               }}
             />
+            {/* Emoji picker — client-only unicode insert at the caret. */}
+            <div ref={emojiRootRef} style={{ position: 'relative', flexShrink: 0 }}>
+              <button
+                type="button"
+                title="Emoji"
+                onClick={() => setEmojiOpen((o) => !o)}
+                disabled={props.disabled}
+                style={{
+                  all: 'unset', cursor: props.disabled ? 'not-allowed' : 'pointer',
+                  color: emojiOpen ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 32, height: 36, borderRadius: '50%',
+                  opacity: props.disabled ? 0.4 : 1,
+                }}
+              >
+                <Smile size={19} />
+              </button>
+              {emojiOpen ? (
+                <div
+                  role="menu"
+                  style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% + 8px)',
+                    right: 0,
+                    width: 272,
+                    maxHeight: 220,
+                    overflowY: 'auto',
+                    background: 'var(--sos-surface-2)',
+                    border: '1px solid var(--sos-border-subtle)',
+                    borderRadius: 12,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.28)',
+                    padding: 8,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(8, 1fr)',
+                    gap: 2,
+                    zIndex: 40,
+                  }}
+                >
+                  {COMPOSER_EMOJIS.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => insertEmoji(em)}
+                      style={{
+                        all: 'unset', cursor: 'pointer', fontSize: 20,
+                        textAlign: 'center', borderRadius: 6, height: 30, lineHeight: '30px',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--wa-composer-input-bg)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             {/* Quick replies — saved snippets inserted into the box. */}
             <button
               type="button"

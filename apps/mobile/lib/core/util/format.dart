@@ -50,6 +50,28 @@ String chatTimestamp(DateTime d) {
   return DateFormat('d MMM yyyy').format(local);
 }
 
+/// Local-calendar-day bucket key, for grouping messages into date sections in
+/// the chat thread. Two instants share a key iff they fall on the same day.
+String chatDayKey(DateTime d) {
+  final l = d.toLocal();
+  return '${l.year}-${l.month}-${l.day}';
+}
+
+/// WhatsApp-style day-separator label shown between message groups in the chat
+/// thread: Today / Yesterday / weekday (last 7 days) / full date. Mirrors the
+/// web chat panel's formatDaySeparator so both surfaces read identically.
+String chatDaySeparator(DateTime d) {
+  final local = d.toLocal();
+  final now = DateTime.now();
+  final startToday = DateTime(now.year, now.month, now.day);
+  final startThat = DateTime(local.year, local.month, local.day);
+  final dayDiff = startToday.difference(startThat).inDays;
+  if (dayDiff <= 0) return 'Today';
+  if (dayDiff == 1) return 'Yesterday';
+  if (dayDiff < 7) return DateFormat('EEEE').format(local); // Monday…
+  return DateFormat('d MMM yyyy').format(local);
+}
+
 // --- Pakistan Standard Time (UTC+5, no DST) --------------------------------
 // Appointment office-hours, availability slots and business-day logic are all
 // PKT on the backend. These render an instant in PKT wall-clock regardless of

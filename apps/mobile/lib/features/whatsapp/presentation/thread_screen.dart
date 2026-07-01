@@ -809,7 +809,13 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             ),
           );
         }
-        final msg = state.items[hasHeader ? i - 1 : i];
+        final di = hasHeader ? i - 1 : i;
+        final msg = state.items[di];
+        // WhatsApp-style day separator: a centered date chip is inserted above
+        // this bubble whenever it starts a new calendar day vs the previous one.
+        final prevMsg = di > 0 ? state.items[di - 1] : null;
+        final showDay = prevMsg == null ||
+            chatDayKey(prevMsg.createdAt) != chatDayKey(msg.createdAt);
         // Resolve the quoted message (if this is a reply) from the loaded list.
         ChatMessage? quoted;
         if (msg.repliedToWaMessageId != null) {
@@ -822,7 +828,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
           }
         }
         // Swipe a bubble left→right to reply to it (bounces back, like WhatsApp).
-        return Dismissible(
+        final bubble = Dismissible(
           key: ValueKey('swipe-${msg.id}'),
           direction: DismissDirection.startToEnd,
           dismissThresholds: const {DismissDirection.startToEnd: 0.28},
@@ -839,6 +845,14 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             ),
           ),
           child: _Bubble(message: msg, threadId: _threadId, quoted: quoted),
+        );
+        if (!showDay) return bubble;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DaySeparator(label: chatDaySeparator(msg.createdAt)),
+            bubble,
+          ],
         );
       },
     );
@@ -1012,6 +1026,39 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                 ],
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Centered date chip shown between message groups in the chat thread, like
+/// WhatsApp (Today / Yesterday / weekday / date — see chatDaySeparator).
+class _DaySeparator extends StatelessWidget {
+  const _DaySeparator({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: isDark ? AppTokens.waHeaderDark : Colors.white,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: isDark ? AppTokens.borderDark : AppTokens.borderLight,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: isDark ? AppTokens.textMutedDark : AppTokens.textMutedLight,
+          ),
         ),
       ),
     );

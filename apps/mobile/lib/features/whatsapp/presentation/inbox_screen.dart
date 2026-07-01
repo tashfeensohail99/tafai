@@ -191,7 +191,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
           child: _InboxTabs(
             selected: filter.tab,
             all: stats.total,
-            open: stats.open,
+            unread: stats.unread,
             uncontacted: stats.uncontacted,
             onSelect: _setTab,
           ),
@@ -260,14 +260,14 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
 class _InboxTabs extends StatelessWidget {
   final WaTab selected;
   final int all;
-  final int open;
+  final int unread;
   final int uncontacted;
   final ValueChanged<WaTab> onSelect;
 
   const _InboxTabs({
     required this.selected,
     required this.all,
-    required this.open,
+    required this.unread,
     required this.uncontacted,
     required this.onSelect,
   });
@@ -288,7 +288,7 @@ class _InboxTabs extends StatelessWidget {
             selected: selected, onSelect: onSelect,
           )),
           Expanded(child: _InboxTabItem(
-            label: 'Open', count: open, tab: WaTab.open,
+            label: 'Unread', count: unread, tab: WaTab.unread,
             selected: selected, onSelect: onSelect,
           )),
           Expanded(child: _InboxTabItem(
@@ -441,6 +441,39 @@ class _ThreadsList extends StatelessWidget {
 
 // ── Thread tile ───────────────────────────────────────────────────────────────
 
+/// Map the backend's lastMessagePreview tokens ([image] / [audio] / [video] /
+/// [document: name] / [sticker] / [location] / [reaction ..]) to a WhatsApp-style
+/// glyph + label ("📷 Photo" / "🎤 Voice message" / …). Plain text passes through
+/// unchanged. Mirrors the web renderPreview so both surfaces read the same.
+(IconData?, String) _previewParts(String? preview) {
+  if (preview == null || preview.isEmpty) return (null, '');
+  final react = RegExp(r'^\[reaction\s+(.+)\]$').firstMatch(preview);
+  if (react != null) return (null, 'Reacted ${react.group(1)}');
+  final m = RegExp(r'^\[([a-zA-Z]+)(?::\s*(.+))?\]$').firstMatch(preview);
+  if (m == null) return (null, preview);
+  final kind = m.group(1)!.toLowerCase();
+  final rest = m.group(2)?.trim();
+  switch (kind) {
+    case 'image':
+      return (Icons.photo, 'Photo');
+    case 'video':
+      return (Icons.videocam, 'Video');
+    case 'audio':
+      return (Icons.mic, 'Voice message');
+    case 'document':
+      return (Icons.description, (rest != null && rest.isNotEmpty) ? rest : 'Document');
+    case 'sticker':
+      return (Icons.emoji_emotions_outlined, 'Sticker');
+    case 'location':
+      return (Icons.location_on, 'Location');
+    case 'contacts':
+    case 'contact':
+      return (Icons.person, 'Contact');
+    default:
+      return (null, preview);
+  }
+}
+
 class _ThreadTile extends StatelessWidget {
   final WhatsappThread thread;
   final VoidCallback onTap;
@@ -461,6 +494,7 @@ class _ThreadTile extends StatelessWidget {
     final when = thread.lastMessageAt;
     final hasUnread = thread.unreadCount > 0;
     final awaiting = thread.awaitingReply;
+    final (previewIcon, previewText) = _previewParts(thread.lastMessagePreview);
 
     return Material(
       // Subtle amber tint on awaiting-reply rows
@@ -534,9 +568,11 @@ class _ThreadTile extends StatelessWidget {
                           Text(
                             chatTimestamp(when),
                             style: TextStyle(
-                              color: awaiting
-                                  ? AppTokens.statusWarning
-                                  : AppTokens.textMutedLight,
+                              color: hasUnread
+                                  ? AppTokens.statusSuccess
+                                  : awaiting
+                                      ? AppTokens.statusWarning
+                                      : AppTokens.textMutedLight,
                               fontSize: 11.5,
                               fontWeight:
                                   hasUnread ? FontWeight.w700 : FontWeight.w500,
@@ -553,19 +589,35 @@ class _ThreadTile extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
-                          child: Text(
-                            thread.lastMessagePreview ?? '',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: hasUnread
-                                  ? AppTokens.textSecondaryLight
-                                  : AppTokens.textMutedLight,
-                              fontWeight: hasUnread
-                                  ? FontWeight.w500
-                                  : FontWeight.w400,
-                            ),
+                          child: Row(
+                            children: [
+                              if (previewIcon != null) ...[
+                                Icon(
+                                  previewIcon,
+                                  size: 13,
+                                  color: hasUnread
+                                      ? AppTokens.textSecondaryLight
+                                      : AppTokens.textMutedLight,
+                                ),
+                                const SizedBox(width: 3),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  previewText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: hasUnread
+                                        ? AppTokens.textSecondaryLight
+                                        : AppTokens.textMutedLight,
+                                    fontWeight: hasUnread
+                                        ? FontWeight.w500
+                                        : FontWeight.w400,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
 

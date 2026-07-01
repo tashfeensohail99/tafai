@@ -9,7 +9,7 @@ import 'whatsapp_repository.dart';
 /// "show ONLY these" views (each maps to a single backend flag); the other
 /// tabs show the default list, which the backend already excludes archived +
 /// blocked threads from.
-enum WaTab { all, open, uncontacted, archived, blocked }
+enum WaTab { all, unread, open, uncontacted, archived, blocked }
 
 class WaFilter {
   final WaTab tab;
@@ -67,18 +67,50 @@ class ThreadsController extends StateNotifier<ThreadsState> {
     load();
   }
 
-  ({bool? contacted, bool? uncontacted, bool? archived, bool? blocked})
+  ({bool? contacted, bool? uncontacted, bool? unread, bool? archived, bool? blocked})
       get _tabFlags => switch (_filter.tab) {
-            WaTab.open =>
-              (contacted: true, uncontacted: null, archived: null, blocked: null),
-            WaTab.uncontacted =>
-              (contacted: null, uncontacted: true, archived: null, blocked: null),
-            WaTab.archived =>
-              (contacted: null, uncontacted: null, archived: true, blocked: null),
-            WaTab.blocked =>
-              (contacted: null, uncontacted: null, archived: null, blocked: true),
-            WaTab.all =>
-              (contacted: null, uncontacted: null, archived: null, blocked: null),
+            WaTab.open => (
+                contacted: true,
+                uncontacted: null,
+                unread: null,
+                archived: null,
+                blocked: null
+              ),
+            WaTab.unread => (
+                contacted: null,
+                uncontacted: null,
+                unread: true,
+                archived: null,
+                blocked: null
+              ),
+            WaTab.uncontacted => (
+                contacted: null,
+                uncontacted: true,
+                unread: null,
+                archived: null,
+                blocked: null
+              ),
+            WaTab.archived => (
+                contacted: null,
+                uncontacted: null,
+                unread: null,
+                archived: true,
+                blocked: null
+              ),
+            WaTab.blocked => (
+                contacted: null,
+                uncontacted: null,
+                unread: null,
+                archived: null,
+                blocked: true
+              ),
+            WaTab.all => (
+                contacted: null,
+                uncontacted: null,
+                unread: null,
+                archived: null,
+                blocked: null
+              ),
           };
 
   /// The Due chip only makes sense on the live (non-archived/non-blocked) lists.
@@ -95,6 +127,7 @@ class ThreadsController extends StateNotifier<ThreadsState> {
       final page = await _repo.listThreads(
         contacted: f.contacted,
         uncontacted: f.uncontacted,
+        unread: f.unread,
         archived: f.archived,
         blocked: f.blocked,
         followUpDue: _dueFlag,
@@ -123,6 +156,7 @@ class ThreadsController extends StateNotifier<ThreadsState> {
       final page = await _repo.listThreads(
         contacted: f.contacted,
         uncontacted: f.uncontacted,
+        unread: f.unread,
         archived: f.archived,
         blocked: f.blocked,
         followUpDue: _dueFlag,

@@ -5,11 +5,19 @@ import {
   Archive,
   ArchiveRestore,
   Ban,
+  FileText,
+  Image as ImageIcon,
   Inbox as InboxIcon,
+  MapPin,
   MessageSquare,
+  Mic,
   MoreVertical,
+  Plus,
   Search,
   ShieldOff,
+  Sticker,
+  User,
+  Video,
 } from 'lucide-react';
 import {
   archiveThread,
@@ -21,7 +29,6 @@ import {
   unblockContact,
   type ThreadListItem,
   type ThreadStats,
-  type WhatsAppThreadStatus,
 } from '@/lib/whatsapp';
 import { useSession } from '@/lib/session';
 import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realtime';
@@ -42,24 +49,21 @@ function useIsMobile(threshold = 1024): boolean {
   return isMobile;
 }
 
-// 'UNCONTACTED' is a virtual filter (not a thread status): chats awaiting a
-// human reply where NO human has ever replied — the bot greeting doesn't count.
-// 'BLOCKED' is an exclusive view; the default tabs exclude archived + blocked.
-type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED' | 'BLOCKED';
+// WhatsApp-style filter chips. 'UNREAD' = literal WhatsApp unread (unreadCount>0,
+// clears when the rep opens the chat). 'UNCONTACTED' = no human has ever replied
+// (bot greeting doesn't count). 'BLOCKED' = an exclusive view. 'ARCHIVED' is NOT
+// a chip — it's the dedicated "Archived N" row above the list (WhatsApp-style).
+type Filter = 'ALL' | 'UNREAD' | 'UNCONTACTED' | 'ARCHIVED' | 'BLOCKED';
 
-// Non-overlapping tabs:
-//   All         — every ACTIVE chat (newest first; archived + blocked hidden)
-//   Open        — a human HAS replied (the active, being-handled pile)
-//   Uncontacted — NO human has ever replied yet (the to-do list)
-//   Archived    — threads you archived
-//   Blocked     — contacts you blocked
-// All + Open + Uncontacted operate on the active set. When a rep first replies,
-// the chat moves Uncontacted → Open automatically (lastHumanReplyAt stamped).
+// The chip bar (Archived is deliberately absent — it's its own top row):
+//   All         — every ACTIVE chat (newest message first; archived + blocked hidden)
+//   Unread      — chats the rep hasn't opened since the last inbound
+//   Uncontacted — NO human has ever replied yet (first-touch to-do list)
+//   Blocked     — contacts the rep blocked
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
-  { key: 'OPEN', label: 'Open' },
+  { key: 'UNREAD', label: 'Unread' },
   { key: 'UNCONTACTED', label: 'Uncontacted' },
-  { key: 'ARCHIVED', label: 'Archived' },
   { key: 'BLOCKED', label: 'Blocked' },
 ];
 
@@ -86,6 +90,9 @@ export default function SalesInboxPage() {
   // How many pages we've loaded — so the 30s/focus reconcile re-fetches the
   // same depth instead of collapsing the list back to the first 100.
   const pagesRef = useRef(1);
+  // Focused by the header "+" (new chat) — WhatsApp's "+" opens contact search;
+  // ours jumps the rep straight into the search box to find the contact.
+  const searchRef = useRef<HTMLInputElement>(null);
   const { socket } = useWhatsAppSocket();
   const isMobile = useIsMobile();
   const session = useSession();
@@ -133,8 +140,8 @@ export default function SalesInboxPage() {
       const base =
         filter === 'UNCONTACTED'
           ? { uncontacted: true as const }
-          : filter === 'OPEN'
-            ? { contacted: true as const }
+          : filter === 'UNREAD'
+            ? { unread: true as const }
             : filter === 'ARCHIVED'
               ? { archived: true as const }
               : filter === 'BLOCKED'
@@ -259,10 +266,11 @@ export default function SalesInboxPage() {
           // No human has ever replied. The moment a rep replies, lastHumanReplyAt
           // is stamped → this returns false → the chat drops out of Uncontacted.
           if (row.lastHumanReplyAt != null) return false;
-        } else if (filter === 'OPEN') {
-          // Open = a human has replied. A freshly-replied chat now matches here →
-          // it appears in Open (the "moved to Open" half of the transition).
-          if (row.lastHumanReplyAt == null) return false;
+        } else if (filter === 'UNREAD') {
+          // Literal unread — the rep hasn't opened it since the last inbound.
+          // Opening it (markRead → unreadCount 0) drops it on the next reconcile;
+          // a fresh inbound bumps unreadCount back above 0 and it returns.
+          if (row.unreadCount === 0) return false;
         }
       }
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
@@ -277,7 +285,16 @@ export default function SalesInboxPage() {
 
   // Stable handler so memo(ThreadRow) skips re-rendering unaffected rows when
   // the list updates — only the rows whose `active` flag flips re-render.
-  const handleSelect = useCallback((id: string) => setActiveId(id), []);
+  // Also optimistically clears the row's unread badge: opening a thread marks it
+  // read on the backend (WhatsAppChatPanel → markThreadRead), so the count drops
+  // immediately, WhatsApp-style, instead of lingering until the next reconcile —
+  // this is what makes the "Unread" chip's clear-on-open feel instant.
+  const handleSelect = useCallback((id: string) => {
+    setActiveId(id);
+    setItems((prev) =>
+      prev.map((t) => (t.id === id && t.unreadCount > 0 ? { ...t, unreadCount: 0 } : t)),
+    );
+  }, []);
 
   // Archive / unarchive one of the rep's own threads, then refresh so the row
   // leaves/enters the active list per the current tab.
@@ -349,7 +366,13 @@ export default function SalesInboxPage() {
     return () => clearTimeout(id);
   }, [notice]);
 
-  const totalUnread = useMemo(() => items.reduce((acc, t) => acc + t.unreadCount, 0), [items]);
+  // Prefer the real DB unread total (stats) so the header badge is truthful even
+  // before every page is loaded; fall back to summing the loaded rows while
+  // stats are still fetching.
+  const totalUnread = useMemo(
+    () => stats?.unread ?? items.reduce((acc, t) => acc + t.unreadCount, 0),
+    [stats, items],
+  );
 
   // Defensive render guard: only show rows that actually match the ACTIVE tab's
   // rule. The list loads server-filtered, but if a row ever goes stale in
@@ -364,9 +387,13 @@ export default function SalesInboxPage() {
     if (filter === 'BLOCKED') return items;
     const active = items.filter((t) => t.status !== 'ARCHIVED');
     if (filter === 'UNCONTACTED') return active.filter((t) => t.lastHumanReplyAt == null);
-    if (filter === 'OPEN') return active.filter((t) => t.lastHumanReplyAt != null);
+    if (filter === 'UNREAD') {
+      // Literal WhatsApp unread. Keep the currently-open chat visible even after
+      // opening it zeroed its badge, so the active row doesn't vanish mid-read.
+      return active.filter((t) => t.unreadCount > 0 || t.id === activeId);
+    }
     return active; // ALL
-  }, [items, filter]);
+  }, [items, filter, activeId]);
 
   // Real DB total for the active tab (from stats) — drives the "showing N of M"
   // footer so the loaded list and the tab badge are never confusingly different.
@@ -378,13 +405,38 @@ export default function SalesInboxPage() {
     if (followUpDueOnly) return null;
     switch (filter) {
       case 'ALL': return stats.total;
-      case 'OPEN': return stats.total - stats.uncontacted;
+      case 'UNREAD': return stats.unread;
       case 'UNCONTACTED': return stats.uncontacted;
       case 'ARCHIVED': return stats.archived;
       case 'BLOCKED': return stats.blocked;
       default: return null;
     }
   }, [stats, filter, followUpDueOnly]);
+
+  // Live count for each chip badge — real DB totals from stats, with a
+  // page-based fallback while stats are still loading.
+  const chipCount = useCallback(
+    (key: Filter): number => {
+      if (stats) {
+        switch (key) {
+          case 'ALL': return stats.total;
+          case 'UNREAD': return stats.unread;
+          case 'UNCONTACTED': return stats.uncontacted;
+          case 'BLOCKED': return stats.blocked;
+          case 'ARCHIVED': return stats.archived;
+          default: return 0;
+        }
+      }
+      switch (key) {
+        case 'ALL': return items.length;
+        case 'UNREAD': return items.filter((t) => t.unreadCount > 0).length;
+        case 'UNCONTACTED': return items.filter((t) => t.lastHumanReplyAt == null).length;
+        case 'ARCHIVED': return items.filter((t) => t.status === 'ARCHIVED').length;
+        default: return 0;
+      }
+    },
+    [stats, items],
+  );
 
   // Mobile single-pane: when a chat is selected we show only the chat;
   // back button returns to the list. On desktop both panes stay visible.
@@ -431,25 +483,15 @@ export default function SalesInboxPage() {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
+            <span
               style={{
-                width: 38,
-                height: 38,
-                borderRadius: '50%',
-                background: 'var(--wa-accent)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 15,
                 fontWeight: 700,
-                color: '#fff',
-                flexShrink: 0,
+                fontSize: 22,
+                letterSpacing: '-0.01em',
+                color: 'var(--sos-text-primary)',
               }}
             >
-              WA
-            </div>
-            <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--sos-text-primary)' }}>
-              Inbox
+              Chats
             </span>
             {totalUnread > 0 && (
               <span
@@ -467,6 +509,29 @@ export default function SalesInboxPage() {
               </span>
             )}
           </div>
+          {/* WhatsApp's "+" opens contact search; ours focuses the search box so
+              the rep can look up the contact to start/continue a chat. */}
+          <button
+            type="button"
+            aria-label="New chat"
+            title="New chat"
+            onClick={() => searchRef.current?.focus()}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: '50%',
+              background: 'var(--wa-accent)',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <Plus size={18} />
+          </button>
         </div>
 
         {/* Search */}
@@ -489,6 +554,7 @@ export default function SalesInboxPage() {
           >
             <Search size={15} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
             <input
+              ref={searchRef}
               type="search"
               placeholder="Search or start new chat"
               value={search}
@@ -505,97 +571,70 @@ export default function SalesInboxPage() {
           </div>
         </div>
 
-        {/* Filter tabs */}
+        {/* Filter chips — WhatsApp-style rounded pills with live counts */}
         <div
           style={{
             display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 12px',
             borderBottom: '1px solid var(--sos-border-subtle)',
             background: 'var(--wa-panel-header)',
             flexShrink: 0,
+            overflowX: 'auto',
           }}
         >
           {FILTERS.map((f) => {
             const active = filter === f.key;
-            // Real DB totals from the stats endpoint — NOT a count of the loaded
-            // page. The three tabs partition every chat:
-            //   All         → stats.total
-            //   Open        → contacted = total − uncontacted (a human replied)
-            //   Uncontacted → stats.uncontacted (no human reply ever)
-            const count = stats
-              ? f.key === 'ALL'
-                ? stats.total
-                : f.key === 'OPEN'
-                  ? stats.total - stats.uncontacted
-                  : f.key === 'UNCONTACTED'
-                    ? stats.uncontacted
-                    : f.key === 'ARCHIVED'
-                      ? stats.archived
-                      : f.key === 'BLOCKED'
-                        ? stats.blocked
-                        : 0
-              : // Stats not yet loaded — fall back to page-based count while fetching.
-                f.key === 'ALL'
-                ? items.length
-                : f.key === 'OPEN'
-                  ? items.filter((t) => t.lastHumanReplyAt != null).length
-                  : f.key === 'UNCONTACTED'
-                    ? items.filter((t) => t.lastHumanReplyAt == null).length
-                    : f.key === 'ARCHIVED'
-                      ? items.filter((t) => t.status === 'ARCHIVED').length
-                      : 0;
+            const count = chipCount(f.key);
             return (
               <button
                 key={f.key}
                 type="button"
                 onClick={() => setFilter(f.key)}
                 style={{
-                  flex: 1,
-                  padding: '8px 4px',
-                  border: 'none',
-                  borderBottom: active ? '2px solid var(--wa-accent)' : '2px solid transparent',
-                  background: 'transparent',
-                  color: active ? 'var(--wa-accent)' : 'var(--sos-text-muted)',
-                  fontSize: 12,
-                  fontWeight: active ? 600 : 400,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                  display: 'flex',
+                  flexShrink: 0,
+                  display: 'inline-flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 4,
+                  gap: 5,
+                  padding: '5px 13px',
+                  borderRadius: 16,
+                  border: `1px solid ${active ? 'var(--wa-accent)' : 'var(--sos-border-subtle)'}`,
+                  background: active ? 'var(--wa-accent)' : 'transparent',
+                  color: active ? '#fff' : 'var(--sos-text-secondary)',
+                  fontSize: 12.5,
+                  fontWeight: active ? 600 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.12s',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 {f.label}
-                {count > 0 && (
-                  <span
-                    style={{
-                      background: active ? 'var(--wa-accent)' : 'var(--sos-border-subtle)',
-                      color: active ? '#fff' : 'var(--sos-text-muted)',
-                      borderRadius: 8,
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: '0 5px',
-                      lineHeight: '16px',
-                    }}
-                  >
-                    {count}
-                  </span>
-                )}
+                {count > 0 ? (
+                  <span style={{ fontWeight: 700, opacity: active ? 1 : 0.75 }}>{count}</span>
+                ) : null}
               </button>
             );
           })}
-          {/* ⓘ — hover explains what each tab means */}
-          <div style={{ display: 'flex', alignItems: 'center', padding: '0 10px', color: 'var(--sos-text-muted)' }}>
+          {/* ⓘ — hover explains what each chip means */}
+          <div
+            style={{
+              marginLeft: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              paddingLeft: 6,
+              color: 'var(--sos-text-muted)',
+            }}
+          >
             <InfoHint
               align="right"
               width={300}
-              title="What these tabs mean"
+              title="What these filters mean"
               items={[
-                { term: 'All', desc: 'Every active chat, newest first (archived + blocked are hidden).' },
-                { term: 'Open', desc: 'A human has replied at least once — the active, being-handled conversations.' },
-                { term: 'Uncontacted', desc: "No human has ever replied — only the AI bot greeted them. Your to-do list. The moment you reply, the chat moves to Open." },
-                { term: 'Archived', desc: 'Chats you archived to clear them from the active list. Unarchive to bring one back.' },
-                { term: 'Blocked', desc: 'Contacts you blocked. Their conversations stay out of the active list until you unblock them.' },
+                { term: 'All', desc: 'Every active chat, newest message first (archived + blocked are hidden).' },
+                { term: 'Unread', desc: "Chats you haven't opened since the last message. Opening one clears it — even if it just says “thanks”." },
+                { term: 'Uncontacted', desc: 'No human has ever replied — only the AI bot greeted them. Your first-touch to-do list.' },
+                { term: 'Blocked', desc: 'Contacts you blocked. Their chats stay out of the active list until you unblock them.' },
               ]}
             />
           </div>
@@ -643,6 +682,54 @@ export default function SalesInboxPage() {
               </span>
             ) : null}
           </div>
+        ) : null}
+
+        {/* Archived — WhatsApp-style top row (not a chip). Tap to view archived
+            chats; tap again while viewing to return to All. Shown whenever there
+            are archived chats, or while the archived view is open. */}
+        {filter === 'ARCHIVED' || (stats?.archived ?? 0) > 0 ? (
+          <button
+            type="button"
+            onClick={() => setFilter((f) => (f === 'ARCHIVED' ? 'ALL' : 'ARCHIVED'))}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              padding: '11px 16px',
+              border: 'none',
+              borderBottom: '1px solid var(--sos-border-subtle)',
+              background: filter === 'ARCHIVED' ? 'var(--wa-composer-input-bg)' : 'transparent',
+              cursor: 'pointer',
+              flexShrink: 0,
+              width: '100%',
+              textAlign: 'left',
+            }}
+          >
+            <span
+              style={{
+                width: 46,
+                display: 'flex',
+                justifyContent: 'center',
+                color: 'var(--sos-text-secondary)',
+                flexShrink: 0,
+              }}
+            >
+              {filter === 'ARCHIVED' ? <ArchiveRestore size={20} /> : <Archive size={20} />}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                fontSize: 15,
+                fontWeight: filter === 'ARCHIVED' ? 600 : 500,
+                color: 'var(--sos-text-primary)',
+              }}
+            >
+              {filter === 'ARCHIVED' ? 'Archived — back to chats' : 'Archived'}
+            </span>
+            {filter !== 'ARCHIVED' && (stats?.archived ?? 0) > 0 ? (
+              <span style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>{stats?.archived}</span>
+            ) : null}
+          </button>
         ) : null}
 
         {/* Thread list */}
@@ -1063,7 +1150,7 @@ const ThreadRow = memo(function ThreadRow({
                 maxWidth: 200,
               }}
             >
-              {item.lastMessagePreview ?? ''}
+              {renderPreview(item.lastMessagePreview)}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
               {needsReply && (
@@ -1321,4 +1408,45 @@ function formatRelativeShort(iso: string, now = new Date()): string {
   const day = Math.round(hr / 24);
   if (day < 7) return `${day}d`;
   return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Render a WhatsApp-style last-message preview. The backend denormalizes media
+ * messages into bracket tokens (`[image]`, `[video]`, `[audio]`, `[document: x]`,
+ * `[sticker]`, `[location]`, `[reaction 👍]` — see previewOf() in the webhook
+ * ingest processor); this maps them to a small glyph + label ("📷 Photo",
+ * "🎤 Voice message", …) so the row reads like the real app instead of showing
+ * a raw "[image]". Plain text passes straight through.
+ */
+function renderPreview(preview: string | null): React.ReactNode {
+  if (!preview) return '';
+  // Reactions carry an emoji after a space (not a colon), e.g. "[reaction 👍]".
+  const react = preview.match(/^\[reaction\s+([\s\S]+)\]$/i);
+  if (react) return `Reacted ${react[1]}`;
+  // Every other token is a single word with an optional ": detail" (documents).
+  const m = preview.match(/^\[([a-z]+)(?::\s*([\s\S]+))?\]$/i);
+  if (!m) return preview; // plain text — show as-is
+  const kind = m[1]!.toLowerCase();
+  const rest = m[2]?.trim();
+  const glyph = (
+    Icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>,
+    label: string,
+  ) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <Icon size={13} style={{ flexShrink: 0 }} />
+      {label}
+    </span>
+  );
+  switch (kind) {
+    case 'image': return glyph(ImageIcon, 'Photo');
+    case 'video': return glyph(Video, 'Video');
+    case 'audio': return glyph(Mic, 'Voice message');
+    case 'document': return glyph(FileText, rest || 'Document');
+    case 'sticker': return glyph(Sticker, 'Sticker');
+    case 'location': return glyph(MapPin, 'Location');
+    case 'contacts':
+    case 'contact': return glyph(User, 'Contact');
+    // interactive / unknown single-word tokens — title-case, no stray brackets.
+    default: return kind.charAt(0).toUpperCase() + kind.slice(1);
+  }
 }

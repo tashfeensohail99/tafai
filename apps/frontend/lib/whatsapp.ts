@@ -212,6 +212,9 @@ export function listThreads(opts: {
   /** "Open" tab — the complement: chats where a human HAS replied at least once
    *  (lastHumanReplyAt IS NOT NULL). Open + Uncontacted partition every chat. */
   contacted?: boolean;
+  /** "Unread" chip — literal WhatsApp unread (unreadCount>0): the rep hasn't
+   *  opened the chat since the last inbound. Opening it clears the count. */
+  unread?: boolean;
   /** "Due (N)" chip — only chats whose lead has an OPEN follow-up due/overdue now. */
   followUpDue?: boolean;
   /** "Archived" tab — show ONLY archived threads (status=ARCHIVED). When this

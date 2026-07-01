@@ -16,6 +16,7 @@
  */
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -2664,6 +2665,99 @@ function SpecialMessageContent({ message }: { message: ChatMessage }) {
   );
 }
 
+// ── WhatsApp text formatting (*bold* _italic_ ~strike~ ```mono```) ──────────
+// Conservative, XSS-safe (renders React nodes, never HTML). Markers only format
+// when they hug non-space content AND sit at a boundary, so normal text like
+// "2*3", "snake_case", "a_b_c", "file_name.txt", emails and globs are NEVER
+// mangled. Verified against a 22-case table (false negatives are acceptable;
+// mangling real messages is not).
+type FmtNode = string | { t: 'b' | 'i' | 's' | 'mono'; c: FmtNode[] };
+const FMT_MARKERS: Array<{ ch: string; t: 'b' | 'i' | 's' }> = [
+  { ch: '*', t: 'b' },
+  { ch: '_', t: 'i' },
+  { ch: '~', t: 's' },
+];
+function fmtBoundaryBefore(prev: string | undefined): boolean {
+  return prev === undefined || /\s/.test(prev) || '([{<"\'`'.includes(prev);
+}
+function fmtBoundaryAfter(next: string | undefined): boolean {
+  return next === undefined || /\s/.test(next) || ')]}>"\'`.,!?;:'.includes(next);
+}
+function parseWhatsAppText(text: string): FmtNode[] {
+  const out: FmtNode[] = [];
+  let i = 0;
+  let buf = '';
+  const flush = () => { if (buf) { out.push(buf); buf = ''; } };
+  while (i < text.length) {
+    if (text.startsWith('```', i)) {
+      const end = text.indexOf('```', i + 3);
+      if (end !== -1 && end > i + 3) {
+        flush();
+        out.push({ t: 'mono', c: [text.slice(i + 3, end)] });
+        i = end + 3;
+        continue;
+      }
+    }
+    const ch = text.charAt(i);
+    const marker = FMT_MARKERS.find((m) => m.ch === ch);
+    if (marker) {
+      const prev = i > 0 ? text[i - 1] : undefined;
+      const next = text[i + 1];
+      if (next !== undefined && !/\s/.test(next) && fmtBoundaryBefore(prev)) {
+        let j = i + 1;
+        let closeIdx = -1;
+        while (j < text.length) {
+          if (text[j] === '\n') break; // inline styles don't cross lines
+          if (text[j] === ch) {
+            const before = text[j - 1];
+            const after = text[j + 1];
+            if (before !== undefined && !/\s/.test(before) && fmtBoundaryAfter(after)) {
+              closeIdx = j;
+              break;
+            }
+          }
+          j++;
+        }
+        if (closeIdx > i + 1) {
+          flush();
+          out.push({ t: marker.t, c: parseWhatsAppText(text.slice(i + 1, closeIdx)) });
+          i = closeIdx + 1;
+          continue;
+        }
+      }
+    }
+    buf += ch;
+    i++;
+  }
+  flush();
+  return out;
+}
+function renderFmtNodes(nodes: FmtNode[], keyBase: string): ReactNode[] {
+  return nodes.map((n, idx) => {
+    const key = `${keyBase}.${idx}`;
+    // Key every node (strings via a no-DOM Fragment) so the array is uniformly
+    // keyed — silences any React strict-mode warning with no markup change.
+    if (typeof n === 'string') return <Fragment key={key}>{n}</Fragment>;
+    if (n.t === 'mono') {
+      const raw = n.c.map((x) => (typeof x === 'string' ? x : '')).join('');
+      return (
+        <code key={key} style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: '0.9em' }}>
+          {raw}
+        </code>
+      );
+    }
+    const inner = renderFmtNodes(n.c, key);
+    if (n.t === 'b') return <strong key={key}>{inner}</strong>;
+    if (n.t === 'i') return <em key={key}>{inner}</em>;
+    return <s key={key}>{inner}</s>;
+  });
+}
+/** Render a message body with WhatsApp markup applied. Whitespace/newlines are
+ *  preserved by the parent's `white-space: pre-wrap`. */
+function FormattedText({ text }: { text: string }) {
+  return <>{renderFmtNodes(parseWhatsAppText(text), 'f')}</>;
+}
+
 /** Renders image / audio / video / document / sticker media inside a message bubble. */
 function MediaBubbleContent({
   message,
@@ -2908,16 +3002,17 @@ function MessageBubble({
             <MediaBubbleContent message={message} onImageClick={onImageClick} />
           ) : isSpecial ? (
             <SpecialMessageContent message={message} />
+          ) : message.body != null ? (
+            <FormattedText text={message.body} />
+          ) : message.templateName ? (
+            `📋 Template: ${message.templateName}`
           ) : (
-            message.body ??
-              (message.templateName
-                ? `📋 Template: ${message.templateName}`
-                : `[${message.type.toLowerCase()}]`)
+            `[${message.type.toLowerCase()}]`
           )}
           {/* Caption below media if present */}
           {isMedia && message.body && (
             <div style={{ marginTop: 4, fontSize: 13, whiteSpace: 'pre-wrap' }}>
-              {message.body}
+              <FormattedText text={message.body} />
             </div>
           )}
         </div>

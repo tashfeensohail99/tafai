@@ -76,19 +76,18 @@ function useIsMobile(threshold = 1024): boolean {
   return isMobile;
 }
 
-// 'UNCONTACTED' is a virtual filter: pending chats where no human has ever
-// replied (the bot greeting doesn't count) — leads awaiting a first sales reply.
-// 'ARCHIVED' / 'BLOCKED' are exclusive views: the default tabs (All/Open/
-// Uncontacted) EXCLUDE archived + blocked threads, so they live behind their
-// own tabs to be seen at all.
-type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED' | 'BLOCKED';
+// Funnel model (mirrors /sales/inbox): the chips are DISJOINT and follow the
+// sales flow. 'UNCONTACTED' = the entry queue (no human has ever replied; the
+// bot greeting doesn't count). 'ALL' = engaged (a human HAS replied) — a lead
+// graduates out of Uncontacted into All the moment a rep replies. 'UNREAD' =
+// engaged AND unread (clears when the thread is opened). 'ARCHIVED' / 'BLOCKED'
+// are exclusive views the default tabs (All/Unread/Uncontacted) EXCLUDE, so
+// they live behind their own tabs to be seen at all.
+type Filter = WhatsAppThreadStatus | 'ALL' | 'UNCONTACTED' | 'UNREAD' | 'BLOCKED';
 
-// Non-overlapping tabs: All (active), Open (a human has replied), Uncontacted
-// (no human has ever replied), Archived, Blocked. Open + Uncontacted partition
-// the ACTIVE (non-archived, non-blocked) set; Archived/Blocked are separate.
 const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'ALL', label: 'All' },
-  { key: 'OPEN', label: 'Open' },
+  { key: 'UNREAD', label: 'Unread' },
   { key: 'UNCONTACTED', label: 'Uncontacted' },
   { key: 'ARCHIVED', label: 'Archived' },
   { key: 'BLOCKED', label: 'Blocked' },
@@ -162,13 +161,13 @@ export function WhatsAppAdminPage() {
     (cursor?: string) => ({
       ...(filter === 'UNCONTACTED'
         ? { uncontacted: true as const }
-        : filter === 'OPEN'
-          ? { contacted: true as const } // "Open" = a human has replied
+        : filter === 'UNREAD'
+          ? { contacted: true as const, unread: true as const } // engaged + unread
           : filter === 'ARCHIVED'
             ? { archived: true as const } // ONLY archived threads
             : filter === 'BLOCKED'
               ? { blocked: true as const } // ONLY blocked contacts
-              : {}),
+              : { contacted: true as const }), // ALL = engaged (a human has replied)
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
       ...(unassignedOnly ? { unassigned: true } : {}),
       ...(agentFilter ? { employeeId: agentFilter } : {}),
@@ -334,14 +333,17 @@ export function WhatsAppAdminPage() {
         // row mistakenly patch into the Blocked view via a message event.
         return false;
       } else {
-        // Default tabs (All / Open / Uncontacted) exclude archived threads.
+        // Default tabs (All / Unread / Uncontacted) exclude archived threads.
         if (row.status === 'ARCHIVED') return false;
         if (filter === 'UNCONTACTED') {
           // No human has ever replied. A first reply stamps lastHumanReplyAt → drops out.
           if (row.lastHumanReplyAt != null) return false;
-        } else if (filter === 'OPEN') {
-          // Open = a human has replied. A freshly-replied chat appears here.
+        } else {
+          // Funnel: ALL and UNREAD are both engaged-only — a chat only enters
+          // once a human has replied (before that it lives in Uncontacted).
           if (row.lastHumanReplyAt == null) return false;
+          // UNREAD additionally requires unread; opening it (markRead) drops it.
+          if (filter === 'UNREAD' && row.unreadCount === 0) return false;
         }
       }
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
@@ -391,9 +393,17 @@ export function WhatsAppAdminPage() {
     // Active tabs hide archived threads.
     const active = items.filter((t) => t.status !== 'ARCHIVED');
     if (filter === 'UNCONTACTED') return active.filter((t) => t.lastHumanReplyAt == null);
-    if (filter === 'OPEN') return active.filter((t) => t.lastHumanReplyAt != null);
-    return active; // ALL
-  }, [items, filter]);
+    if (filter === 'UNREAD') {
+      // Funnel Unread = engaged AND unread. Keep the currently-open chat visible
+      // even after opening it zeroed its badge, so it doesn't vanish mid-read.
+      return active.filter(
+        (t) => (t.unreadCount > 0 && t.lastHumanReplyAt != null) || t.id === activeId,
+      );
+    }
+    // ALL = engaged only (a human has replied). New leads live in Uncontacted
+    // until a rep replies. Keep the open chat visible even if it isn't engaged.
+    return active.filter((t) => t.lastHumanReplyAt != null || t.id === activeId);
+  }, [items, filter, activeId]);
 
   const eligibleTeam = useMemo(
     () => team.filter((t) => t.whatsappInboxMember).sort((a, b) => a.name.localeCompare(b.name)),
@@ -659,9 +669,9 @@ export function WhatsAppAdminPage() {
                 // stats is still loading.
                 const count = stats
                   ? f.key === 'ALL'
-                    ? stats.total
-                    : f.key === 'OPEN'
-                      ? stats.total - stats.uncontacted // contacted = a human replied
+                    ? stats.total - stats.uncontacted // engaged = a human replied
+                    : f.key === 'UNREAD'
+                      ? stats.unreadEngaged
                       : f.key === 'UNCONTACTED'
                         ? stats.uncontacted
                         : f.key === 'ARCHIVED'
@@ -670,9 +680,9 @@ export function WhatsAppAdminPage() {
                             ? stats.blocked
                             : 0
                   : f.key === 'ALL'
-                    ? items.length
-                    : f.key === 'OPEN'
-                      ? items.filter((t) => t.lastHumanReplyAt != null).length
+                    ? items.filter((t) => t.lastHumanReplyAt != null).length
+                    : f.key === 'UNREAD'
+                      ? items.filter((t) => t.unreadCount > 0 && t.lastHumanReplyAt != null).length
                       : f.key === 'UNCONTACTED'
                         ? items.filter((t) => t.lastHumanReplyAt == null).length
                         : f.key === 'ARCHIVED'

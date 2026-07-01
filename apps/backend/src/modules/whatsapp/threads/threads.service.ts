@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { WhatsAppAssignmentReason, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 
 interface ThreadListOptions {
   status?: 'OPEN' | 'PENDING' | 'RESOLVED' | 'ARCHIVED';
@@ -45,6 +46,12 @@ interface ThreadListOptions {
    * is lifted for this list.
    */
   blocked?: boolean;
+  /**
+   * "Unread" chip — threads with unreadCount > 0 (rep hasn't opened them since
+   * the last inbound). Literal WhatsApp unread; opening clears it (markRead).
+   * Server-side kill-switch: WA_UNREAD_FILTER_ENABLED=false makes it a no-op.
+   */
+  unread?: boolean;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -131,7 +138,12 @@ const THREAD_LIST_INCLUDE = {
  */
 @Injectable()
 export class WhatsAppThreadsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Injected to ack inbound messages read to Meta on thread-open (blue ticks).
+    // Available app-wide because WhatsAppMetaModule is @Global.
+    private readonly metaFactory: WhatsAppMetaClientFactory,
+  ) {}
 
   /**
    * Distinct lead ids that currently have at least one non-DRAFT agreement
@@ -223,6 +235,15 @@ export class WhatsAppThreadsService {
       and.push({ lastHumanReplyAt: { not: null } });
     }
 
+    if (opts.unread && process.env.WA_UNREAD_FILTER_ENABLED !== 'false') {
+      // "Unread" chip — literal WhatsApp unread: the rep hasn't opened the chat
+      // since the last inbound (unreadCount > 0). Opening it calls markRead(),
+      // which resets the count, so the row drops off this filter — even if the
+      // customer's last message needed no reply ("thanks/ok"). Kill-switch:
+      // WA_UNREAD_FILTER_ENABLED=false turns the param into a no-op.
+      and.push({ unreadCount: { gt: 0 } });
+    }
+
     if (opts.followUpDue) {
       // "Due (N)" chip: only chats whose lead has an OPEN CRM follow-up that is
       // due or overdue right now. Live relation query — always accurate, no
@@ -281,29 +302,36 @@ export class WhatsAppThreadsService {
 
     where.AND = and;
 
+    // Ordering. DEFAULT (today's behavior, flag off): ACTION-REQUIRED FIRST —
+    //   awaitingReply pinned to the top, then newest real human activity, so an
+    //   unanswered lead can never get buried. WHATSAPP-PARITY (WA_ALL_NEWEST_FIRST
+    //   = 'true'): strictly newest MESSAGE on top, exactly like the real app —
+    //   the awaitingReply pin is dropped for the general lists (the "who's
+    //   waiting" signal moves to the Unread chip + the per-row badge). The
+    //   Pending tab (needsReply) is an action queue by definition, so it KEEPS
+    //   the pin regardless of the flag. `id` is the stable cursor tiebreaker
+    //   (timestamps aren't unique; paging a non-unique sort can otherwise
+    //   skip/duplicate rows). Flag defaults OFF — deploying this changes nothing
+    //   until it is explicitly flipped to 'true'.
+    const newestFirst =
+      process.env.WA_ALL_NEWEST_FIRST === 'true' && !opts.needsReply;
+    const orderBy: Prisma.WhatsAppThreadOrderByWithRelationInput[] = newestFirst
+      ? [
+          { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ]
+      : [
+          { awaitingReply: 'desc' },
+          { lastHumanActivityAt: { sort: 'desc', nulls: 'last' } },
+          { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ];
+
     const rows = await this.prisma.whatsAppThread.findMany({
       where,
-      // ACTION REQUIRED FIRST, then newest real activity.
-      //  1. awaitingReply desc — chats awaiting a human reply (a customer
-      //     messaged and no human has answered yet) are PINNED to the top, so an
-      //     unanswered lead can never get buried under newer chatter no matter
-      //     how old it is. In the Open tab (contacted) this is exactly "the lead
-      //     replied and the salesperson hasn't yet".
-      //  2. within each group, lastHumanActivityAt (latest inbound customer msg
-      //     OR manual rep reply) so a fresh real message surfaces — while the
-      //     bot's "just checking in" nudges, which bump lastMessageAt but NOT
-      //     lastHumanActivityAt, can neither push a chat up nor bury a real one.
-      //  3. lastMessageAt is the fallback for bot-only greetings (no human
-      //     activity yet); `id` is the stable cursor tiebreaker (the timestamps
-      //     aren't unique; cursor pagination over a non-unique sort can otherwise
-      //     skip/duplicate rows).
-      orderBy: [
-        { awaitingReply: 'desc' },
-        { lastHumanActivityAt: { sort: 'desc', nulls: 'last' } },
-        { lastMessageAt: { sort: 'desc', nulls: 'last' } },
-        { createdAt: 'desc' },
-        { id: 'desc' },
-      ],
+      orderBy,
       take: limit + 1,
       ...(opts.cursor ? { skip: 1, cursor: { id: opts.cursor } } : {}),
       include: THREAD_LIST_INCLUDE,
@@ -715,7 +743,18 @@ export class WhatsAppThreadsService {
     return t;
   }
 
-  /** Mark a thread as read by the calling agent (resets unreadCount). */
+  /**
+   * Mark a thread as read by the calling agent. Resets the local unreadCount
+   * (drives the inbox badge + the new "Unread" chip) AND — best-effort — acks
+   * the latest inbound message to Meta so the CUSTOMER sees blue double-ticks,
+   * exactly like opening the chat in the real WhatsApp app.
+   *
+   * The Meta ack is FIRE-AND-FORGET: never awaited into the request path and
+   * fully swallowed, so a Meta outage or a stale wamid can never break opening
+   * a thread. Gated by WA_MARK_READ_META so it can be killed instantly. Note
+   * the local unread clear (which the UI depends on) is INDEPENDENT of the ack,
+   * so the Unread chip keeps working even if Meta errors.
+   */
   async markRead(caller: CallerContext, threadId: string): Promise<void> {
     const t = await this.getOrFail(caller, threadId);
     if (t.unreadCount === 0) return;
@@ -723,6 +762,38 @@ export class WhatsAppThreadsService {
       where: { id: threadId },
       data: { unreadCount: 0 },
     });
+    if (process.env.WA_MARK_READ_META !== 'false') {
+      void this.ackReadToMeta(threadId);
+    }
+  }
+
+  /**
+   * Best-effort "send blue ticks to the customer": ack the latest inbound
+   * message on this thread to Meta. Marking the NEWEST inbound read marks all
+   * earlier ones read too (WhatsApp semantics), so one call suffices. Only
+   * reached when there WAS unread mail (markRead early-returns otherwise), so
+   * it can't spam Meta on every open. Any failure (Meta down, expired token,
+   * missing wamid) is swallowed — thread open + the local unread clear already
+   * succeeded, and the only cost is the customer not seeing blue ticks once.
+   */
+  private async ackReadToMeta(threadId: string): Promise<void> {
+    try {
+      const thread = await this.prisma.whatsAppThread.findUnique({
+        where: { id: threadId },
+        select: { channel: { select: { phoneNumberId: true, accessTokenEnc: true } } },
+      });
+      if (!thread?.channel?.accessTokenEnc) return;
+      const lastInbound = await this.prisma.whatsAppMessage.findFirst({
+        where: { threadId, direction: 'INBOUND', waMessageId: { not: null } },
+        orderBy: { createdAt: 'desc' },
+        select: { waMessageId: true },
+      });
+      const wamid = lastInbound?.waMessageId;
+      if (!wamid) return;
+      await this.metaFactory.forChannel(thread.channel).markAsRead(wamid);
+    } catch {
+      // Best-effort only — never rethrow into the read path.
+    }
   }
 
   /**

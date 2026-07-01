@@ -134,6 +134,17 @@ class ListThreadsDto {
   @Transform(({ value }) => value === 'true' || value === true)
   blocked?: boolean;
 
+  /**
+   * "Unread" chip: threads with unreadCount > 0 — the rep hasn't opened them
+   * since the last inbound. Literal WhatsApp unread; opening the thread clears
+   * it (markRead). Server-side kill-switch: WA_UNREAD_FILTER_ENABLED=false makes
+   * it a no-op. Validated as a real boolean (see the @Transform note above).
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  unread?: boolean;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
 

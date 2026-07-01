@@ -14,6 +14,9 @@ class ChatMessage {
   final String? errorTitle;
   final String? waMessageId; // Meta's id — the key a reply quotes
   final String? repliedToWaMessageId; // set when this message quotes another
+  /// Raw Meta JSON for structured types (location / contacts / reaction /
+  /// interactive). Same shape the backend stores for inbound + outbound.
+  final Map<String, dynamic>? payload;
   final DateTime createdAt;
   final DateTime? sentAt;
   final DateTime? deliveredAt;
@@ -33,6 +36,7 @@ class ChatMessage {
     this.errorTitle,
     this.waMessageId,
     this.repliedToWaMessageId,
+    this.payload,
     required this.createdAt,
     this.sentAt,
     this.deliveredAt,
@@ -49,6 +53,15 @@ class ChatMessage {
       type == 'AUDIO' ||
       type == 'DOCUMENT' ||
       type == 'STICKER';
+  bool get isReaction => type == 'REACTION';
+  bool get isLocation => type == 'LOCATION';
+  bool get isContacts => type == 'CONTACTS';
+  /// Structured non-media types rendered as cards (not a plain text bubble).
+  bool get isSpecial =>
+      type == 'REACTION' ||
+      type == 'LOCATION' ||
+      type == 'CONTACTS' ||
+      type == 'INTERACTIVE';
 
   factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
         id: j['id'] as String,
@@ -63,6 +76,9 @@ class ChatMessage {
         errorTitle: asStringOrNull(j['errorTitle']),
         waMessageId: asStringOrNull(j['waMessageId']),
         repliedToWaMessageId: asStringOrNull(j['repliedToWaMessageId']),
+        payload: j['payload'] is Map<String, dynamic>
+            ? j['payload'] as Map<String, dynamic>
+            : null,
         createdAt: parseApiDate(j['createdAt']),
         sentAt: parseApiDateOrNull(j['sentAt']),
         deliveredAt: parseApiDateOrNull(j['deliveredAt']),

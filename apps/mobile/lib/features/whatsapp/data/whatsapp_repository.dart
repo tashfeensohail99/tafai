@@ -161,6 +161,72 @@ class WhatsappRepository {
     }
   }
 
+  /// POST /whatsapp/threads/:id/messages/reaction — react to a message with an
+  /// emoji. Needs an open 24h window (else 400).
+  Future<ChatMessage> sendReaction(
+    String threadId, {
+    required String targetWaMessageId,
+    required String emoji,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/messages/reaction',
+        data: {
+          'targetWaMessageId': targetWaMessageId,
+          'emoji': emoji,
+        },
+      );
+      return ChatMessage.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /whatsapp/threads/:id/messages/location — send a pin-drop location.
+  Future<ChatMessage> sendLocation(
+    String threadId, {
+    required double latitude,
+    required double longitude,
+    String? name,
+    String? address,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/messages/location',
+        data: {
+          'latitude': latitude,
+          'longitude': longitude,
+          if (name != null && name.isNotEmpty) 'name': name,
+          if (address != null && address.isNotEmpty) 'address': address,
+        },
+      );
+      return ChatMessage.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /whatsapp/threads/:id/messages/contact — send one contact card.
+  Future<ChatMessage> sendContact(
+    String threadId, {
+    required String name,
+    required String phone,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$threadId/messages/contact',
+        data: {
+          'contacts': [
+            {'name': name, 'phone': phone},
+          ],
+        },
+      );
+      return ChatMessage.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   /// POST /whatsapp/threads/:id/read — clears unread.
   Future<void> markRead(String threadId) async {
     try {

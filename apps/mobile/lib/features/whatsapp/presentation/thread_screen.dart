@@ -348,6 +348,264 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     }
   }
 
+  /// Attach menu: photo/video (existing media flow), location, or contact.
+  void _openAttachSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Photo or video'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _sendMedia();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.location_on_outlined),
+              title: const Text('Location'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickLocation();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('Contact'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickContact();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Prompt for a location (name/address + coordinates) then send it.
+  Future<void> _pickLocation() async {
+    final nameC = TextEditingController();
+    final addressC = TextEditingController();
+    final latC = TextEditingController();
+    final lngC = TextEditingController();
+    void disposeAll() {
+      nameC.dispose();
+      addressC.dispose();
+      latC.dispose();
+      lngC.dispose();
+    }
+
+    const coordKeyboard =
+        TextInputType.numberWithOptions(decimal: true, signed: true);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Send location'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameC,
+                decoration: const InputDecoration(labelText: 'Name (optional)'),
+              ),
+              TextField(
+                controller: addressC,
+                decoration:
+                    const InputDecoration(labelText: 'Address (optional)'),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: latC,
+                      keyboardType: coordKeyboard,
+                      decoration: const InputDecoration(labelText: 'Latitude'),
+                    ),
+                  ),
+                  const SizedBox(width: AppTokens.space2),
+                  Expanded(
+                    child: TextField(
+                      controller: lngC,
+                      keyboardType: coordKeyboard,
+                      decoration: const InputDecoration(labelText: 'Longitude'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) {
+      disposeAll();
+      return;
+    }
+    final lat = double.tryParse(latC.text.trim());
+    final lng = double.tryParse(lngC.text.trim());
+    final name = nameC.text.trim();
+    final address = addressC.text.trim();
+    disposeAll();
+    if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180) {
+      _toast('Enter a valid latitude (-90 to 90) and longitude (-180 to 180).');
+      return;
+    }
+    await _sendLocationMsg(
+        lat, lng, name.isEmpty ? null : name, address.isEmpty ? null : address);
+  }
+
+  Future<void> _sendLocationMsg(
+      double lat, double lng, String? name, String? address) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final msg = await ref.read(whatsappRepositoryProvider).sendLocation(
+            _threadId,
+            latitude: lat,
+            longitude: lng,
+            name: name,
+            address: address,
+          );
+      ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
+      _jumpToBottom(animate: true);
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// Prompt for a contact (name + phone) then send it as a contact card.
+  Future<void> _pickContact() async {
+    final nameC = TextEditingController();
+    final phoneC = TextEditingController();
+    void disposeAll() {
+      nameC.dispose();
+      phoneC.dispose();
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Send contact'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameC,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Name'),
+            ),
+            TextField(
+              controller: phoneC,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(labelText: 'Phone'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) {
+      disposeAll();
+      return;
+    }
+    final name = nameC.text.trim();
+    final phone = phoneC.text.trim();
+    disposeAll();
+    if (name.isEmpty || phone.length < 3) {
+      _toast('Enter a name and a phone number.');
+      return;
+    }
+    await _sendContactMsg(name, phone);
+  }
+
+  Future<void> _sendContactMsg(String name, String phone) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final msg = await ref
+          .read(whatsappRepositoryProvider)
+          .sendContact(_threadId, name: name, phone: phone);
+      ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
+      _jumpToBottom(animate: true);
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// Emoji picker shown on long-press of a message → sends a reaction.
+  Future<void> _showReactionPicker(ChatMessage target) async {
+    HapticFeedback.selectionClick();
+    const emojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              for (final e in emojis)
+                InkResponse(
+                  onTap: () => Navigator.pop(ctx, e),
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Text(e, style: const TextStyle(fontSize: 30)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await _reactTo(target, picked);
+  }
+
+  Future<void> _reactTo(ChatMessage target, String emoji) async {
+    final wam = target.waMessageId;
+    if (wam == null) return;
+    try {
+      final msg = await ref.read(whatsappRepositoryProvider).sendReaction(
+            _threadId,
+            targetWaMessageId: wam,
+            emoji: emoji,
+          );
+      ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
+      _jumpToBottom(animate: true);
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    }
+  }
+
   Future<void> _sendMedia() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.media,
@@ -844,7 +1102,15 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
               child: Icon(Icons.reply, color: AppTokens.brandNavy),
             ),
           ),
-          child: _Bubble(message: msg, threadId: _threadId, quoted: quoted),
+          child: GestureDetector(
+            // Long-press a delivered message to react with an emoji, WhatsApp-style.
+            onLongPress: (msg.waMessageId != null &&
+                    !msg.isFailed &&
+                    !msg.id.startsWith('temp-'))
+                ? () => _showReactionPicker(msg)
+                : null,
+            child: _Bubble(message: msg, threadId: _threadId, quoted: quoted),
+          ),
         );
         if (!showDay) return bubble;
         return Column(
@@ -905,11 +1171,11 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                 : Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // Media attach (only inside window)
+                  // Attach menu (photo/video, location, contact)
                   IconButton(
                     tooltip: 'Attach',
                     icon: const Icon(Icons.add, size: 24),
-                    onPressed: _sending ? null : _sendMedia,
+                    onPressed: _sending ? null : _openAttachSheet,
                   ),
                   // Rounded input pill: text field + quick-reply (⚡) and
                   // template (✨) tucked inside on the right, WhatsApp-style.
@@ -1180,6 +1446,9 @@ class _Bubble extends StatelessWidget {
     if (message.isMedia) {
       return _MediaContent(threadId: threadId, message: message, fg: fg);
     }
+    if (message.isSpecial) {
+      return _SpecialContent(message: message, fg: fg);
+    }
     final text = message.body?.isNotEmpty == true
         ? message.body!
         : (message.type == 'TEMPLATE' ? '[template message]' : '…');
@@ -1196,6 +1465,107 @@ class _Bubble extends StatelessWidget {
       _ => (Icons.schedule, const Color(0xFF8FA89E)),
     };
     return Icon(icon, size: 13, color: color);
+  }
+}
+
+/// Renders structured non-media messages (location / contacts / reaction /
+/// interactive) as compact cards, reading the same payload shape the backend
+/// stores for inbound + outbound.
+class _SpecialContent extends StatelessWidget {
+  final ChatMessage message;
+  final Color fg;
+  const _SpecialContent({required this.message, required this.fg});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = message.payload ?? const <String, dynamic>{};
+    if (message.isReaction) {
+      final r = p['reaction'];
+      final emoji = (r is Map && r['emoji'] is String)
+          ? r['emoji'] as String
+          : (message.body ?? '');
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 18)),
+          const SizedBox(width: 6),
+          Text('Reacted to a message',
+              style: TextStyle(color: fg.withValues(alpha: 0.8), fontSize: 13)),
+        ],
+      );
+    }
+    if (message.isLocation) {
+      final loc =
+          p['location'] is Map ? p['location'] as Map : const <dynamic, dynamic>{};
+      final name = loc['name'] is String ? (loc['name'] as String).trim() : '';
+      final address =
+          loc['address'] is String ? (loc['address'] as String).trim() : '';
+      final title = name.isNotEmpty
+          ? name
+          : (address.isNotEmpty ? address : 'Shared location');
+      return _card(Icons.location_on, title, name.isNotEmpty ? address : '');
+    }
+    if (message.isContacts) {
+      final list =
+          p['contacts'] is List ? p['contacts'] as List : const <dynamic>[];
+      final first = list.isNotEmpty && list.first is Map
+          ? list.first as Map
+          : const <dynamic, dynamic>{};
+      final nameMap =
+          first['name'] is Map ? first['name'] as Map : const <dynamic, dynamic>{};
+      final name = nameMap['formatted_name'] is String
+          ? nameMap['formatted_name'] as String
+          : 'Contact';
+      final phones =
+          first['phones'] is List ? first['phones'] as List : const <dynamic>[];
+      final phone = (phones.isNotEmpty &&
+              phones.first is Map &&
+              (phones.first as Map)['phone'] is String)
+          ? (phones.first as Map)['phone'] as String
+          : '';
+      final extra = list.length > 1 ? ' +${list.length - 1} more' : '';
+      return _card(Icons.person, '$name$extra', phone);
+    }
+    // INTERACTIVE / unknown — show the tapped button or list title, if any.
+    final it =
+        p['interactive'] is Map ? p['interactive'] as Map : const <dynamic, dynamic>{};
+    final br = it['button_reply'];
+    final lr = it['list_reply'];
+    String? title;
+    if (br is Map && br['title'] is String) title = br['title'] as String;
+    title ??= (lr is Map && lr['title'] is String) ? lr['title'] as String : null;
+    return Text(title ?? '[${message.type.toLowerCase()}]',
+        style: TextStyle(color: fg, fontSize: 13));
+  }
+
+  Widget _card(IconData icon, String title, String subtitle) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: AppTokens.brandNavy),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: fg, fontSize: 13.5, fontWeight: FontWeight.w500)),
+              if (subtitle.isNotEmpty)
+                Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(color: fg.withValues(alpha: 0.7), fontSize: 12)),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 

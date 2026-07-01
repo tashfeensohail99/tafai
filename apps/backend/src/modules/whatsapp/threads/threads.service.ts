@@ -481,6 +481,9 @@ export class WhatsAppThreadsService {
     unassigned: number;
     slaBreached: number;
     unread: number;
+    /** Unread AND a human has replied at least once — backs the funnel "Unread"
+     *  chip (engaged chats only; a never-contacted lead stays in Uncontacted). */
+    unreadEngaged: number;
     awaitingReply: number;
     uncontacted: number;
     /** Chats whose lead has an OPEN follow-up due/overdue now — powers "Due (N)". */
@@ -496,6 +499,7 @@ export class WhatsAppThreadsService {
   }> {
     const empty = {
       total: 0, active: 0, resolved: 0, unassigned: 0, slaBreached: 0, unread: 0,
+      unreadEngaged: 0,
       awaitingReply: 0, uncontacted: 0, followUpDue: 0, archived: 0, blocked: 0,
       approaching: 0, overdue: 0,
       slaScore: null as number | null, slaScoreScope: null as 'self' | 'org' | null,
@@ -649,7 +653,7 @@ export class WhatsAppThreadsService {
     // Archived/blocked chips ride alongside — both are cheap indexed counts
     // (whatsapp.threads.status; crm.{leads,clients}.blockedAt) scoped to the
     // caller via the same `base` filter the other counts use.
-    const [followUpDue, archived, blocked] = await Promise.all([
+    const [followUpDue, archived, blocked, unreadEngaged] = await Promise.all([
       this.prisma.whatsAppThread.count({
         where: and({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
       }),
@@ -662,10 +666,16 @@ export class WhatsAppThreadsService {
           ],
         }),
       }),
+      // Funnel "Unread" = engaged (a human has replied) AND unread. Uses andLive
+      // so it matches the Unread chip's list (active, non-blocked). A brand-new
+      // lead stays in Uncontacted, never here.
+      this.prisma.whatsAppThread.count({
+        where: andLive({ unreadCount: { gt: 0 }, lastHumanReplyAt: { not: null } }),
+      }),
     ]);
 
     return {
-      total, active, resolved, unassigned, slaBreached, unread,
+      total, active, resolved, unassigned, slaBreached, unread, unreadEngaged,
       awaitingReply, uncontacted, followUpDue, archived, blocked,
       approaching, overdue, slaScore, slaScoreScope,
     };

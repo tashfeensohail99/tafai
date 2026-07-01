@@ -137,16 +137,19 @@ export default function SalesInboxPage() {
   // chip layers an OPEN-follow-up-due filter on top of whichever tab is active.
   const scopeQuery = useCallback(
     () => {
+      // Funnel model: "All" = ENGAGED (a human has replied); "Unread" = engaged
+      // AND unread. A never-contacted lead lives only in "Uncontacted" until a
+      // rep replies, then it graduates into All.
       const base =
         filter === 'UNCONTACTED'
           ? { uncontacted: true as const }
           : filter === 'UNREAD'
-            ? { unread: true as const }
+            ? { contacted: true as const, unread: true as const }
             : filter === 'ARCHIVED'
               ? { archived: true as const }
               : filter === 'BLOCKED'
                 ? { blocked: true as const }
-                : {};
+                : { contacted: true as const };
       return followUpDueOnly ? { ...base, followUpDue: true as const } : base;
     },
     [filter, followUpDueOnly],
@@ -266,11 +269,12 @@ export default function SalesInboxPage() {
           // No human has ever replied. The moment a rep replies, lastHumanReplyAt
           // is stamped → this returns false → the chat drops out of Uncontacted.
           if (row.lastHumanReplyAt != null) return false;
-        } else if (filter === 'UNREAD') {
-          // Literal unread — the rep hasn't opened it since the last inbound.
-          // Opening it (markRead → unreadCount 0) drops it on the next reconcile;
-          // a fresh inbound bumps unreadCount back above 0 and it returns.
-          if (row.unreadCount === 0) return false;
+        } else {
+          // Funnel: ALL and UNREAD are both ENGAGED-only — a chat only enters
+          // once a human has replied (before that it lives in Uncontacted).
+          if (row.lastHumanReplyAt == null) return false;
+          // UNREAD additionally requires unread; opening it (markRead) drops it.
+          if (filter === 'UNREAD' && row.unreadCount === 0) return false;
         }
       }
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
@@ -388,11 +392,16 @@ export default function SalesInboxPage() {
     const active = items.filter((t) => t.status !== 'ARCHIVED');
     if (filter === 'UNCONTACTED') return active.filter((t) => t.lastHumanReplyAt == null);
     if (filter === 'UNREAD') {
-      // Literal WhatsApp unread. Keep the currently-open chat visible even after
-      // opening it zeroed its badge, so the active row doesn't vanish mid-read.
-      return active.filter((t) => t.unreadCount > 0 || t.id === activeId);
+      // Funnel Unread = engaged (a human replied) AND unread. Keep the currently-
+      // open chat visible even after opening it zeroed its badge, so the active
+      // row doesn't vanish mid-read.
+      return active.filter(
+        (t) => (t.unreadCount > 0 && t.lastHumanReplyAt != null) || t.id === activeId,
+      );
     }
-    return active; // ALL
+    // ALL = engaged only (a human has replied). New leads live in Uncontacted
+    // until a rep replies. Keep the open chat visible even if it isn't engaged.
+    return active.filter((t) => t.lastHumanReplyAt != null || t.id === activeId);
   }, [items, filter, activeId]);
 
   // Real DB total for the active tab (from stats) — drives the "showing N of M"
@@ -404,8 +413,8 @@ export default function SalesInboxPage() {
     // that doesn't match any tab total — hide the "of M" so it's not misleading.
     if (followUpDueOnly) return null;
     switch (filter) {
-      case 'ALL': return stats.total;
-      case 'UNREAD': return stats.unread;
+      case 'ALL': return stats.total - stats.uncontacted; // engaged only
+      case 'UNREAD': return stats.unreadEngaged;
       case 'UNCONTACTED': return stats.uncontacted;
       case 'ARCHIVED': return stats.archived;
       case 'BLOCKED': return stats.blocked;
@@ -419,8 +428,8 @@ export default function SalesInboxPage() {
     (key: Filter): number => {
       if (stats) {
         switch (key) {
-          case 'ALL': return stats.total;
-          case 'UNREAD': return stats.unread;
+          case 'ALL': return stats.total - stats.uncontacted; // engaged only
+          case 'UNREAD': return stats.unreadEngaged;
           case 'UNCONTACTED': return stats.uncontacted;
           case 'BLOCKED': return stats.blocked;
           case 'ARCHIVED': return stats.archived;
@@ -428,8 +437,9 @@ export default function SalesInboxPage() {
         }
       }
       switch (key) {
-        case 'ALL': return items.length;
-        case 'UNREAD': return items.filter((t) => t.unreadCount > 0).length;
+        case 'ALL': return items.filter((t) => t.lastHumanReplyAt != null).length;
+        case 'UNREAD':
+          return items.filter((t) => t.unreadCount > 0 && t.lastHumanReplyAt != null).length;
         case 'UNCONTACTED': return items.filter((t) => t.lastHumanReplyAt == null).length;
         case 'ARCHIVED': return items.filter((t) => t.status === 'ARCHIVED').length;
         default: return 0;
@@ -631,9 +641,9 @@ export default function SalesInboxPage() {
               width={300}
               title="What these filters mean"
               items={[
-                { term: 'All', desc: 'Every active chat, newest message first (archived + blocked are hidden).' },
-                { term: 'Unread', desc: "Chats you haven't opened since the last message. Opening one clears it — even if it just says “thanks”." },
-                { term: 'Uncontacted', desc: 'No human has ever replied — only the AI bot greeted them. Your first-touch to-do list.' },
+                { term: 'All', desc: 'Your engaged chats — the ones a rep has replied to at least once, newest first. New leads live in Uncontacted until you reply, then move here.' },
+                { term: 'Unread', desc: "Engaged chats where the customer wrote again and you haven't opened them yet. Opening one clears it — even if it just says “thanks”." },
+                { term: 'Uncontacted', desc: 'Brand-new leads no human has replied to yet — your first-touch queue. Reply once and the chat graduates to All.' },
                 { term: 'Blocked', desc: 'Contacts you blocked. Their chats stay out of the active list until you unblock them.' },
               ]}
             />

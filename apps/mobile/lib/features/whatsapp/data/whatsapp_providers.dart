@@ -77,7 +77,7 @@ class ThreadsController extends StateNotifier<ThreadsState> {
                 blocked: null
               ),
             WaTab.unread => (
-                contacted: null,
+                contacted: true,
                 uncontacted: null,
                 unread: true,
                 archived: null,
@@ -105,7 +105,10 @@ class ThreadsController extends StateNotifier<ThreadsState> {
                 blocked: true
               ),
             WaTab.all => (
-                contacted: null,
+                // Funnel: "All" = engaged (a human has replied). New leads live
+                // in Uncontacted until a rep replies, then graduate here — this
+                // matches the badge, which shows stats.open (total − uncontacted).
+                contacted: true,
                 uncontacted: null,
                 unread: null,
                 archived: null,

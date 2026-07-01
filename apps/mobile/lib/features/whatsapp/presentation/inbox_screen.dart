@@ -190,8 +190,8 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
           padding: const EdgeInsets.symmetric(horizontal: AppTokens.space4),
           child: _InboxTabs(
             selected: filter.tab,
-            all: stats.total,
-            unread: stats.unread,
+            all: stats.open,
+            unread: stats.unreadEngaged,
             uncontacted: stats.uncontacted,
             onSelect: _setTab,
           ),

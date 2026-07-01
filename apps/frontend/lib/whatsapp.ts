@@ -305,6 +305,9 @@ export interface ThreadStats {
   unassigned: number;
   slaBreached: number;
   unread: number;
+  /** "Unread" chip (funnel) — unread AND a human has replied (engaged only). A
+   *  never-contacted lead stays in Uncontacted, not here. */
+  unreadEngaged: number;
   /** "Pending" — conversations awaiting a human reply (bot replies don't count). */
   awaitingReply: number;
   /** "Uncontacted" — pending conversations where no human has ever replied. */

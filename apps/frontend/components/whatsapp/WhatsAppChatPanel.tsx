@@ -22,6 +22,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
@@ -38,6 +39,7 @@ import {
   FileText,
   Image as ImageIcon,
   Mic,
+  MapPin,
   Camera,
   Phone,
   PhoneOutgoing,
@@ -47,6 +49,7 @@ import {
   Send,
   Sparkles,
   Square,
+  User,
   UserCog,
   UserPlus,
   Video as VideoIcon,
@@ -2568,7 +2571,100 @@ function MediaUnavailableWithRetry({
   );
 }
 
-/** Renders image / audio / video / document media inside a message bubble. */
+/** Structured, non-media message types the backend already ingests but that used
+ *  to render as a raw "[location]" / "[contacts]" placeholder. */
+const SPECIAL_MESSAGE_TYPES = new Set(['LOCATION', 'CONTACTS', 'REACTION', 'INTERACTIVE']);
+function isSpecialType(type: string): boolean {
+  return SPECIAL_MESSAGE_TYPES.has(type);
+}
+
+/** Renders the structured non-media types as WhatsApp-style cards instead of a
+ *  "[type]" placeholder: location → a map-link card, contacts → a vCard card,
+ *  reaction → emoji + label, interactive → the tapped button/list title. Reads
+ *  the payload shapes decodeIncoming() stores in the webhook ingest processor. */
+function SpecialMessageContent({ message }: { message: ChatMessage }) {
+  // Payloads are Meta's raw JSON objects; type loosely and read defensively.
+  const p = (message.payload ?? {}) as Record<string, any>;
+
+  const card: CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '8px 12px',
+    borderRadius: 8,
+    background: 'var(--wa-composer-input-bg)',
+    color: 'var(--sos-text-primary)',
+    textDecoration: 'none',
+    maxWidth: 260,
+  };
+
+  if (message.type === 'LOCATION') {
+    const loc = p.location ?? {};
+    const lat = loc.latitude;
+    const lng = loc.longitude;
+    const label = loc.name || loc.address || 'Shared location';
+    const href =
+      lat != null && lng != null ? `https://www.google.com/maps?q=${lat},${lng}` : undefined;
+    return (
+      <a href={href} target="_blank" rel="noreferrer" style={card}>
+        <MapPin size={18} style={{ flexShrink: 0, color: 'var(--wa-accent)' }} />
+        <span style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {label}
+          </div>
+          {loc.address && loc.name ? (
+            <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {loc.address}
+            </div>
+          ) : null}
+          {href ? <div style={{ fontSize: 11, color: 'var(--sos-text-faint)' }}>Open in Maps</div> : null}
+        </span>
+      </a>
+    );
+  }
+
+  if (message.type === 'CONTACTS') {
+    const contacts: any[] = Array.isArray(p.contacts) ? p.contacts : [];
+    const c = contacts[0] ?? {};
+    const name = c?.name?.formatted_name || 'Contact';
+    const phone = c?.phones?.[0]?.phone || '';
+    const extra = contacts.length > 1 ? ` +${contacts.length - 1} more` : '';
+    return (
+      <div style={card}>
+        <User size={18} style={{ flexShrink: 0, color: 'var(--wa-accent)' }} />
+        <span style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {name}{extra}
+          </div>
+          {phone ? <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>{phone}</div> : null}
+        </span>
+      </div>
+    );
+  }
+
+  if (message.type === 'REACTION') {
+    const emoji = p.reaction?.emoji || message.body || '';
+    return (
+      <span style={{ fontSize: 13, color: 'var(--sos-text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 18 }}>{emoji}</span>
+        Reacted to a message
+      </span>
+    );
+  }
+
+  // INTERACTIVE — the customer tapped a quick-reply button or picked a list row.
+  const it = p.interactive ?? {};
+  const title =
+    it.button_reply?.title ?? it.list_reply?.title ?? it.nfm_reply?.name ?? 'Interactive reply';
+  return (
+    <span style={{ fontSize: 14, color: 'var(--sos-text-primary)' }}>
+      <span style={{ opacity: 0.6, marginRight: 4 }}>↳</span>
+      {title}
+    </span>
+  );
+}
+
+/** Renders image / audio / video / document / sticker media inside a message bubble. */
 function MediaBubbleContent({
   message,
   onImageClick,
@@ -2578,7 +2674,7 @@ function MediaBubbleContent({
 }) {
   type AnyPayload = Record<string, { id?: string; filename?: string }>;
   const p = message.payload as AnyPayload | null;
-  const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document';
+  const typeKey = message.type.toLowerCase() as 'image' | 'audio' | 'video' | 'document' | 'sticker';
   // Inbound: media ID lives in payload.audio.id etc.
   // Outbound (voice notes we sent): media ID lives in mediaUrl as "meta:<id>", payload is null.
   // Optimistic placeholder (just-picked + attach): mediaUrl is a "blob:" URL
@@ -2644,6 +2740,17 @@ function MediaBubbleContent({
     );
   }
 
+  if (message.type === 'STICKER') {
+    // Stickers are .webp images — render inline like a small image (no lightbox).
+    return (
+      <img
+        src={blobUrl}
+        alt="Sticker"
+        style={{ width: 120, height: 120, objectFit: 'contain', display: 'block' }}
+      />
+    );
+  }
+
   if (message.type === 'AUDIO') {
     return (
       // eslint-disable-next-line jsx-a11y/media-has-caption
@@ -2655,7 +2762,22 @@ function MediaBubbleContent({
     );
   }
 
-  // VIDEO and DOCUMENT — download to device.
+  if (message.type === 'VIDEO') {
+    // Inline player instead of the old "Download video" link — the single most
+    // jarring "this isn't WhatsApp" gap. The download fallback still applies if
+    // the browser can't play the codec (native <video> shows its own message).
+    return (
+      // eslint-disable-next-line jsx-a11y/media-has-caption
+      <video
+        controls
+        preload="metadata"
+        src={blobUrl}
+        style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 6, display: 'block' }}
+      />
+    );
+  }
+
+  // DOCUMENT — a proper file card (icon + filename), tap to download.
   return (
     <a
       href={blobUrl}
@@ -2663,19 +2785,23 @@ function MediaBubbleContent({
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
-        padding: '6px 12px',
-        borderRadius: 6,
+        gap: 8,
+        padding: '8px 12px',
+        borderRadius: 8,
         background: 'var(--wa-bubble-out)',
         color: 'var(--sos-text-primary)',
         textDecoration: 'none',
         fontSize: 13,
         fontWeight: 500,
         border: '1px solid var(--sos-border)',
+        maxWidth: 260,
       }}
     >
-      <Download size={14} />
-      {message.type === 'VIDEO' ? 'Download video' : filename}
+      <FileText size={20} style={{ flexShrink: 0, opacity: 0.85 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {filename}
+      </span>
+      <Download size={14} style={{ flexShrink: 0, opacity: 0.6 }} />
     </a>
   );
 }
@@ -2693,7 +2819,8 @@ function MessageBubble({
   allMessages?: ChatMessage[];
 }) {
   const isOut = message.direction === 'OUTBOUND';
-  const isMedia = ['IMAGE', 'AUDIO', 'VIDEO', 'DOCUMENT'].includes(message.type);
+  const isMedia = ['IMAGE', 'AUDIO', 'VIDEO', 'DOCUMENT', 'STICKER'].includes(message.type);
+  const isSpecial = isSpecialType(message.type);
   const [hovered, setHovered] = useState(false);
   // Resolve the message this bubble is replying to, if any. Match by
   // waMessageId since that's what Meta uses for cross-message references.
@@ -2779,6 +2906,8 @@ function MessageBubble({
         >
           {isMedia ? (
             <MediaBubbleContent message={message} onImageClick={onImageClick} />
+          ) : isSpecial ? (
+            <SpecialMessageContent message={message} />
           ) : (
             message.body ??
               (message.templateName

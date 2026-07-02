@@ -442,8 +442,13 @@ export async function fetchReceiptPdfBlob(receiptId: string): Promise<Blob> {
 
 /** Firm-wide finance report (Insight layer). */
 export interface FinanceReportsSummary {
+  /** Currency the rolled-up figures are consolidated in — always the CAD base. */
   currency: string;
-  /** True when paid invoices span >1 currency — rolled-up totals are then indicative only. */
+  /** The base currency (CAD) the figures are expressed in. */
+  baseCurrency?: string;
+  /** CAD plus every native currency in play — the options for the display-currency toggle. */
+  currencies?: string[];
+  /** True when a non-CAD currency is present, i.e. some figures were converted into CAD. */
   mixedCurrency?: boolean;
   // Cash — money actually received vs spent.
   cash: { collected: number; expenses: number; margin: number };
@@ -484,6 +489,15 @@ export function toBaseCAD(amount: number, currency: string, rates: Record<string
   const rate = rates[ccy];
   if (!rate || rate <= 0) return amount;
   return Math.round((amount / rate) * 100) / 100;
+}
+
+/** Convert a CAD (base) amount INTO a display currency (1 CAD = rates[ccy]). Inverse of toBaseCAD. */
+export function fromBaseCAD(cadAmount: number, currency: string, rates: Record<string, number>): number {
+  const ccy = (currency || 'CAD').toUpperCase();
+  if (ccy === 'CAD') return Math.round(cadAmount * 100) / 100;
+  const rate = rates[ccy];
+  if (!rate || rate <= 0) return cadAmount;
+  return Math.round(cadAmount * rate * 100) / 100;
 }
 
 /** Currencies offered in the finance pickers (base first, then PKR for PK ops). */

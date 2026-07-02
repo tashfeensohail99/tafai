@@ -182,20 +182,35 @@ export class FinanceService {
     const dec = (d: Prisma.Decimal | number | null | undefined): number =>
       d == null ? 0 : Number(d.toString());
 
+    // Every cross-agreement roll-up below is consolidated into the CAD base at
+    // the current rate — agreements may be in different native currencies, so
+    // summing native amounts would be meaningless. Fetch the rate table once and
+    // convert synchronously; a missing rate falls back to treating the amount as
+    // CAD (all agreement currencies are in the FX table, so this is defensive).
+    const fxRates = await this.fx.getRates();
+    const base = fxRates.base; // 'CAD'
+    const toCad = (amount: number, ccy: string | null | undefined): number => {
+      const c = (ccy || base).toUpperCase();
+      if (c === base) return amount;
+      const r = fxRates.rates[c];
+      return r && r > 0 ? amount / r : amount;
+    };
+
     // SIGNED agreements = the real receivable; resolve their owners so we can
     // measure what's been collected against them.
     const signedAgreements = await this.prisma.agreement.findMany({
       where: { deletedAt: null, status: AgreementStatus.SIGNED },
-      select: { leadId: true, totalAmount: true },
+      select: { leadId: true, totalAmount: true, currency: true },
     });
-    const signedFees = signedAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
+    // Consolidated into CAD (agreements can be PKR / CAD / …).
+    const signedFees = signedAgreements.reduce((s, a) => s + toCad(dec(a.totalAmount), a.currency), 0);
     const signedLeadIds = [...new Set(signedAgreements.map((a) => a.leadId).filter((x): x is string => !!x))];
     const signedLeads = signedLeadIds.length
       ? await this.prisma.lead.findMany({ where: { id: { in: signedLeadIds } }, select: { convertedClientId: true } })
       : [];
     const signedClientIds = [...new Set(signedLeads.map((l) => l.convertedClientId).filter((x): x is string => !!x))];
 
-    const [revenue, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPayments, earnedAgg] =
+    const [revenue, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPayments, earnedInstallments] =
       await Promise.all([
         this.getRevenueByService(),
         // Only ABSORBED expenses are a cost; billable disbursements are recoverable.
@@ -207,12 +222,14 @@ export class FinanceService {
         this.prisma.lead.count({ where: { deletedAt: null, convertedClientId: { not: null } } }),
         this.prisma.agreement.findMany({
           where: { deletedAt: null, status: { notIn: [AgreementStatus.SIGNED, AgreementStatus.CANCELLED] } },
-          select: { totalAmount: true },
+          select: { totalAmount: true, currency: true },
         }),
-        // Cash collected on SIGNED engagements, rolled up in the CAD base. The
-        // per-invoice paidAmount is now native (a PKR agreement tracks PKR), so a
-        // consolidated cross-agreement total must sum each verified payment's
-        // stored CAD equivalent (baseAmount) rather than mixing native amounts.
+        // Verified payments on SIGNED engagements. We convert each payment's
+        // NATIVE amount to CAD at TODAY's rate (below) — NOT the historically
+        // stamped baseAmount — so `collectedOnSigned` shares a rate basis with
+        // `signedFees` (also today's rate). Otherwise receivables.outstanding =
+        // fees − collected would subtract two different-rate CAD figures and a
+        // fully-paid foreign agreement could show a phantom balance after drift.
         signedLeadIds.length || signedClientIds.length
           ? this.prisma.payment.findMany({
               where: {
@@ -224,12 +241,16 @@ export class FinanceService {
                   OR: [{ leadId: { in: signedLeadIds } }, { clientId: { in: signedClientIds } }],
                 },
               },
-              select: { amount: true, baseAmount: true },
+              select: { amount: true, currency: true },
             })
-          : Promise.resolve([] as Array<{ amount: any; baseAmount: any }>),
+          : Promise.resolve([] as Array<{ amount: any; currency: any }>),
         // Revenue EARNED = installments whose milestone has been delivered
         // (recognizedAt set). Cash collected beyond this is unearned (deferred).
-        this.prisma.installment.aggregate({ _sum: { amount: true }, where: { recognizedAt: { not: null } } }),
+        // Pull each installment's contract currency so we can consolidate to CAD.
+        this.prisma.installment.findMany({
+          where: { recognizedAt: { not: null } },
+          select: { amount: true, contract: { select: { currency: true } } },
+        }),
       ]);
 
     // Total cash collected, in the CAD base. This is exactly revenue.totals.allTime
@@ -237,12 +258,12 @@ export class FinanceService {
     // — that is now native per agreement and would mix currencies into a bogus total.
     const collected = revenue.totals.allTime;
     const expenses = dec(expenseAgg._sum.baseAmount);
-    const collectedOnSigned = signedPayments.reduce((s, p) => s + Number(p.baseAmount ?? p.amount), 0);
-    const pipelineValue = pipelineAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
+    const collectedOnSigned = signedPayments.reduce((s, p) => s + toCad(Number(p.amount), p.currency), 0);
+    const pipelineValue = pipelineAgreements.reduce((s, a) => s + toCad(dec(a.totalAmount), a.currency), 0);
     // Accrual view: earned (delivered milestones) vs received (cash) → the gap
     // is either deferred revenue (cash ahead of delivery, a liability) or
-    // accrued/unbilled (delivery ahead of cash, an asset).
-    const earned = dec(earnedAgg._sum.amount);
+    // accrued/unbilled (delivery ahead of cash, an asset). Consolidated to CAD.
+    const earned = earnedInstallments.reduce((s, i) => s + toCad(dec(i.amount), i.contract?.currency), 0);
     // Period-lock (book-close) date — surfaced so the UI can show "books
     // closed through X" and the admin control can render the current state.
     const orgLock = await this.prisma.organization.findFirst({
@@ -250,19 +271,31 @@ export class FinanceService {
       select: { booksLockedBefore: true },
     });
 
-    // Currency integrity: a single rolled-up total must not silently span
-    // currencies. Derive the real currency from the data; flag if >1 is in
-    // play so the UI can warn instead of presenting a meaningless sum.
+    // Every rolled-up figure above is now consolidated in the CAD base, so the
+    // summary currency IS the base. `currencies` lists CAD plus every native
+    // currency actually in play (paid invoices + signed/pipeline agreements) so
+    // the UI can offer a CAD ⇄ native display toggle; `mixedCurrency` is true
+    // whenever a non-CAD currency is present (i.e. some figures were converted).
     const ccyGroups = await this.prisma.invoice.groupBy({
       by: ['currency'],
       where: { deletedAt: null, paidAmount: { gt: 0 } },
       _sum: { paidAmount: true },
     });
-    const currency = [...ccyGroups].sort((a, b) => dec(b._sum.paidAmount) - dec(a._sum.paidAmount))[0]?.currency ?? 'CAD';
-    const mixedCurrency = ccyGroups.length > 1;
+    const nativeCcys = [
+      ...ccyGroups.map((g) => g.currency),
+      ...signedAgreements.map((a) => a.currency),
+      ...pipelineAgreements.map((a) => a.currency),
+    ]
+      .filter((c): c is string => !!c)
+      .map((c) => c.toUpperCase());
+    const currencies = [base, ...new Set(nativeCcys.filter((c) => c !== base))];
+    const currency = base;
+    const mixedCurrency = currencies.length > 1;
 
     return {
       currency,
+      baseCurrency: base,
+      currencies,
       mixedCurrency,
       // Cash — money actually received vs spent.
       cash: { collected, expenses, margin: collected - expenses },

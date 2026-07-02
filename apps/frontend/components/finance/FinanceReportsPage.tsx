@@ -12,10 +12,13 @@ import {
   fetchAgingReport,
   fetchCreditNotes,
   fetchFinanceReports,
+  fetchFxRates,
   fetchTaxReport,
+  fromBaseCAD,
   type AgingReport,
   type ApiCreditNote,
   type FinanceReportsSummary,
+  type FxRatesResponse,
   type TaxReport,
 } from '@/lib/finance-api';
 
@@ -31,6 +34,8 @@ export function FinanceReportsPage() {
   const [aging, setAging] = useState<AgingReport | null>(null);
   const [tax, setTax] = useState<TaxReport | null>(null);
   const [creditNotes, setCreditNotes] = useState<ApiCreditNote[]>([]);
+  const [rates, setRates] = useState<FxRatesResponse | null>(null);
+  const [display, setDisplay] = useState<string>('CAD');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,12 +49,29 @@ export function FinanceReportsPage() {
     fetchAgingReport().then(setAging).catch(() => {});
     fetchTaxReport().then(setTax).catch(() => {});
     fetchCreditNotes().then(setCreditNotes).catch(() => {});
+    // Live rates power the CAD ⇄ native display toggle (best-effort).
+    fetchFxRates().then(setRates).catch(() => {});
   }, []);
 
   if (loading) return <div className="sos-text-muted" style={{ padding: 40, textAlign: 'center' }}>Loading report…</div>;
   if (!data) return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
 
-  const { cash, receivables, pipeline, revenue, counts, byService, currency: ccy } = data;
+  const { cash, receivables, pipeline, revenue, counts, byService } = data;
+
+  // All summary figures come from the backend in the CAD base. The display
+  // toggle re-expresses them in a chosen currency at the live rate; if that
+  // rate isn't available yet we stay in the base so we never mislabel a CAD
+  // number. Per-currency tables (aging/tax/credit-notes) are left untouched —
+  // they already show each agreement's own native currency.
+  const baseCcy = data.baseCurrency ?? data.currency ?? 'CAD';
+  const options = data.currencies?.length ? data.currencies : [baseCcy];
+  const wantCcy = options.includes(display) ? display : baseCcy;
+  const rateOk = wantCcy === baseCcy || !!(rates && rates.rates[wantCcy.toUpperCase()] > 0);
+  const displayCcy = rateOk ? wantCcy : baseCcy;
+  const fmt = (cadValue: number) =>
+    displayCcy === baseCcy
+      ? money(cadValue, baseCcy)
+      : money(fromBaseCAD(cadValue, displayCcy, rates?.rates ?? {}), displayCcy);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -60,9 +82,37 @@ export function FinanceReportsPage() {
       />
 
       {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}
+
+      {options.length > 1 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span className="sos-text-faint" style={{ fontSize: 12 }}>Show totals in</span>
+          <div style={{ display: 'inline-flex', border: '1px solid var(--sos-border-subtle)', borderRadius: 8, overflow: 'hidden' }}>
+            {options.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setDisplay(c)}
+                style={{
+                  padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+                  background: displayCcy === c ? 'var(--sos-accent)' : 'transparent',
+                  color: displayCcy === c ? '#fff' : 'var(--sos-text-secondary)',
+                }}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+          {displayCcy !== baseCcy && rates?.rates[displayCcy.toUpperCase()] ? (
+            <span className="sos-text-faint" style={{ fontSize: 11 }}>
+              1 {baseCcy} = {rates.rates[displayCcy.toUpperCase()].toLocaleString()} {displayCcy}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {data.mixedCurrency ? (
-        <div className="sos-banner sos-banner--warning" style={{ fontSize: 13 }}>
-          ⚠︎ Payments span more than one currency. These rolled-up totals mix currencies and are indicative only — read per-customer figures for accuracy.
+        <div style={{ fontSize: 13, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--sos-border-subtle)', color: 'var(--sos-text-secondary)' }}>
+          These firm-wide totals are consolidated to {displayCcy}: cash received is valued at the rate on each payment’s date, while receivables & pipeline use today’s rate. Underlying agreements are held in {options.join(', ')} — the per-currency AR aging & tax tables below stay in each agreement’s own currency.
         </div>
       ) : null}
 
@@ -70,9 +120,9 @@ export function FinanceReportsPage() {
       <div>
         <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Cash — actuals</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-          <MetricCard label="Collected" value={money(cash.collected, ccy)} tone="success" Icon={ReceiptIcon} />
-          <MetricCard label="Spent on clients" value={money(cash.expenses, ccy)} tone={cash.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} />
-          <MetricCard label="Margin" value={money(cash.margin, ccy)} tone={cash.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint="collected − expenses" />
+          <MetricCard label="Collected" value={fmt(cash.collected)} tone="success" Icon={ReceiptIcon} />
+          <MetricCard label="Spent on clients" value={fmt(cash.expenses)} tone={cash.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} />
+          <MetricCard label="Margin" value={fmt(cash.margin)} tone={cash.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint="collected − expenses" />
         </div>
       </div>
 
@@ -80,9 +130,9 @@ export function FinanceReportsPage() {
       <div>
         <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Receivables — signed agreements</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-          <MetricCard label="Fees (signed)" value={money(receivables.fees, ccy)} tone="accent" Icon={Wallet} />
-          <MetricCard label="Collected on signed" value={money(receivables.collected, ccy)} tone="success" Icon={ReceiptIcon} />
-          <MetricCard label="Outstanding" value={money(receivables.outstanding, ccy)} tone={receivables.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
+          <MetricCard label="Fees (signed)" value={fmt(receivables.fees)} tone="accent" Icon={Wallet} />
+          <MetricCard label="Collected on signed" value={fmt(receivables.collected)} tone="success" Icon={ReceiptIcon} />
+          <MetricCard label="Outstanding" value={fmt(receivables.outstanding)} tone={receivables.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
         </div>
       </div>
 
@@ -93,7 +143,7 @@ export function FinanceReportsPage() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
           <MetricCard label="Agreements in progress" value={String(pipeline.agreements)} tone="info" Icon={FileText} />
-          <MetricCard label="Potential value" value={money(pipeline.value, ccy)} tone="neutral" Icon={Wallet} hint="if all get signed & paid" />
+          <MetricCard label="Potential value" value={fmt(pipeline.value)} tone="neutral" Icon={Wallet} hint="if all get signed & paid" />
         </div>
       </div>
 
@@ -101,9 +151,9 @@ export function FinanceReportsPage() {
       <div>
         <div className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Collections (cash received)</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-          <MetricCard label="This month" value={money(revenue.month, ccy)} tone="neutral" />
-          <MetricCard label="Year to date" value={money(revenue.ytd, ccy)} tone="neutral" />
-          <MetricCard label="All time" value={money(revenue.allTime, ccy)} tone="neutral" />
+          <MetricCard label="This month" value={fmt(revenue.month)} tone="neutral" />
+          <MetricCard label="Year to date" value={fmt(revenue.ytd)} tone="neutral" />
+          <MetricCard label="All time" value={fmt(revenue.allTime)} tone="neutral" />
         </div>
       </div>
 
@@ -114,9 +164,9 @@ export function FinanceReportsPage() {
             Revenue recognition (accrual) <span style={{ textTransform: 'none', fontWeight: 400 }}>· earned when milestones are delivered</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-            <MetricCard label="Earned revenue" value={money(data.recognition.earned, ccy)} tone="success" Icon={TrendingUp} hint="delivered milestones" />
-            <MetricCard label="Deferred (unearned)" value={money(data.recognition.deferred, ccy)} tone={data.recognition.deferred > 0 ? 'warning' : 'neutral'} Icon={Hourglass} hint="cash for work not yet delivered — a liability" />
-            <MetricCard label="Accrued (unbilled)" value={money(data.recognition.accrued, ccy)} tone={data.recognition.accrued > 0 ? 'info' : 'neutral'} Icon={Wallet} hint="delivered but not yet collected" />
+            <MetricCard label="Earned revenue" value={fmt(data.recognition.earned)} tone="success" Icon={TrendingUp} hint="delivered milestones" />
+            <MetricCard label="Deferred (unearned)" value={fmt(data.recognition.deferred)} tone={data.recognition.deferred > 0 ? 'warning' : 'neutral'} Icon={Hourglass} hint="cash for work not yet delivered — a liability" />
+            <MetricCard label="Accrued (unbilled)" value={fmt(data.recognition.accrued)} tone={data.recognition.accrued > 0 ? 'info' : 'neutral'} Icon={Wallet} hint="delivered but not yet collected" />
           </div>
         </div>
       ) : null}
@@ -153,9 +203,9 @@ export function FinanceReportsPage() {
                 {byService.map((s) => (
                   <tr key={s.service}>
                     <td style={{ ...td, color: 'var(--sos-text-primary)', fontWeight: 600 }}>{s.service}</td>
-                    <td style={tdRight}>{money(s.month, ccy)}</td>
-                    <td style={tdRight}>{money(s.ytd, ccy)}</td>
-                    <td style={tdRight}>{money(s.allTime, ccy)}</td>
+                    <td style={tdRight}>{fmt(s.month)}</td>
+                    <td style={tdRight}>{fmt(s.ytd)}</td>
+                    <td style={tdRight}>{fmt(s.allTime)}</td>
                   </tr>
                 ))}
               </tbody>

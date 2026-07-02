@@ -1706,14 +1706,98 @@ export class FinanceService {
       }),
       this.prisma.invoice.findMany({
         where: { OR: ownerOr, deletedAt: null },
-        select: { paidAmount: true },
+        select: { paidAmount: true, currency: true },
       }),
     ]);
 
     const totalPaid = invoices.reduce((s, i) => s + num(i.paidAmount), 0);
 
+    // No signed ServiceContract yet? Fall back to the sales AGREEMENT the client
+    // actually signed up under. A payment can be taken against an agreement's
+    // first installment (e.g. the sign-up milestone) long before that agreement
+    // is materialised into a ServiceContract, so without this the receipt would
+    // collapse to the single invoice this payment settled and wrongly read
+    // "PAID IN FULL" while the rest of the engagement is still owed. We mirror
+    // the customer profile, which already falls back to agreement.totalAmount,
+    // so the receipt and the profile show the SAME engagement figures.
     if (!contract) {
-      return { account: fallbackAccount(totalPaid), upcomingInstallments: [] };
+      const agreement = await this.prisma.agreement.findFirst({
+        where: { OR: ownerOr, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { totalAmount: true, currency: true, paymentPlan: true },
+      });
+      if (!agreement) {
+        return { account: fallbackAccount(totalPaid), upcomingInstallments: [] };
+      }
+
+      // Fold in only payments made in the agreement's own currency — the ledger
+      // is native per engagement, so a second agreement in another currency must
+      // not pollute this figure (same rule the customer profile applies).
+      const agrCurrency = agreement.currency || fallback.currency;
+      const agrPaid = invoices
+        .filter((i) => (i.currency ?? agrCurrency) === agrCurrency)
+        .reduce((s, i) => s + num(i.paidAmount), 0);
+
+      // The installment schedule lives on the agreement as JSON:
+      // { installments: [{ sequence, stage, trigger, amount, dueDate }] }.
+      const plan = (agreement.paymentPlan ?? {}) as unknown as {
+        installments?: Array<{
+          sequence?: number;
+          stage?: string | null;
+          trigger?: string | null;
+          amount?: number | string | null;
+          dueDate?: string | null;
+        }>;
+      };
+      const planInstallments = Array.isArray(plan.installments) ? plan.installments : [];
+
+      const agrTotalFee =
+        num(agreement.totalAmount) || planInstallments.reduce((s, i) => s + num(i.amount ?? 0), 0);
+      const agrRemaining = Math.max(0, agrTotalFee - agrPaid);
+
+      // AR waterfall across the planned installments, in sequence order.
+      let agrPool = agrPaid;
+      const agrRows = planInstallments
+        .slice()
+        .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))
+        .map((i) => {
+          const amount = num(i.amount ?? 0);
+          const covered = Math.max(0, Math.min(agrPool, amount));
+          agrPool -= covered;
+          const fullyPaid = amount > 0 && covered >= amount - 0.005;
+          const status: 'PAID' | 'PARTIALLY_PAID' | 'PENDING' = fullyPaid
+            ? 'PAID'
+            : covered > 0
+              ? 'PARTIALLY_PAID'
+              : 'PENDING';
+          // Trigger-based milestones ("On JR approval") carry no calendar date;
+          // parse an explicit date when present, else leave null so the renderer
+          // prints "—" and the Stage text conveys the trigger.
+          let dueDate: Date | null = null;
+          if (typeof i.dueDate === 'string' && i.dueDate.trim()) {
+            const d = new Date(i.dueDate);
+            if (!Number.isNaN(d.getTime())) dueDate = d;
+          }
+          const description = [i.stage, i.trigger].filter(Boolean).join(' · ') || null;
+          return { sequence: i.sequence ?? 0, description, dueDate, amount, status };
+        });
+
+      const agrInstallmentsPaid = agrRows.filter((i) => i.status === 'PAID').length;
+      const agrUpcoming = agrRows
+        .filter((i) => i.status !== 'PAID')
+        .map(({ status, ...rest }) => ({ ...rest, status: status as 'PENDING' | 'PARTIALLY_PAID' }));
+
+      return {
+        account: {
+          totalFee: agrTotalFee,
+          totalPaid: agrPaid,
+          remaining: agrRemaining,
+          installmentsPaid: agrInstallmentsPaid,
+          installmentsTotal: agrRows.length,
+          currency: agrCurrency,
+        },
+        upcomingInstallments: agrUpcoming,
+      };
     }
 
     const totalFee = num(contract.totalAmount);

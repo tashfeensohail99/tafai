@@ -72,6 +72,9 @@ export function CallDock() {
   const outboundThreadRef = useRef<string | null>(null);
   // Mirror of the active call id so socket handlers read fresh state.
   const activeIdRef = useRef<string | null>(null);
+  // Mirror of `phase` so socket handlers read the current phase without being
+  // re-created on every phase change (used by the answered-elsewhere handler).
+  const phaseRef = useRef<Phase | null>(null);
   // Call recording (both sides, mixed) → uploaded on hang-up for QA/AI training.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -414,6 +417,31 @@ export function CallDock() {
       };
     },
     [teardown],
+  );
+
+  // Keep phaseRef in sync so socket handlers can read the current phase.
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  // Another of this rep's OWN devices (e.g. their phone) answered this call.
+  // Stop ringing here — but ONLY if we're still 'ringing'. The device that
+  // actually answered is already 'connecting'/'in-call', so it ignores this
+  // and keeps the live call; only the other still-ringing clients tear down.
+  useWhatsAppEvent<{ callId: string }>(
+    'whatsapp.call.answered_elsewhere',
+    useCallback(
+      (data) => {
+        if (
+          data?.callId &&
+          data.callId === activeIdRef.current &&
+          phaseRef.current === 'ringing'
+        ) {
+          teardown('answered-elsewhere');
+        }
+      },
+      [teardown],
+    ),
   );
 
   // Incoming-call ring (targeted to this rep by the backend).

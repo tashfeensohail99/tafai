@@ -85,6 +85,10 @@ export const WHATSAPP_WS_EVENTS = {
   // Outbound (business-initiated): the user accepted; carries their SDP answer
   // for the initiating rep's browser to apply as the remote description.
   CALL_ANSWERED: 'whatsapp.call.answered',
+  // A DIFFERENT device of the same rep answered this inbound call — their other
+  // still-ringing clients (e.g. the web CallDock while they picked up on the
+  // phone) use this to stop ringing. Payload: { callId }.
+  CALL_ANSWERED_ELSEWHERE: 'whatsapp.call.answered_elsewhere',
   // A call-permission request was answered (granted/rejected) — UI hint refresh.
   CALL_PERMISSION: 'whatsapp.call.permission',
 } as const;

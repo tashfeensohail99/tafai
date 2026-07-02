@@ -19,6 +19,7 @@ import { OpenAiService } from '../../ai/openai.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WhatsAppRealtimePublisher } from '../realtime/publisher.service';
 import { WHATSAPP_WS_EVENTS } from '../queues/queue-contracts';
+import { PushService } from '../../push/push.service';
 
 /**
  * Phase 1 — live answering of inbound WhatsApp calls in the CRM.
@@ -39,6 +40,7 @@ export class WhatsAppCallsService {
     private readonly config: ConfigService,
     private readonly storage: StorageService,
     private readonly openai: OpenAiService,
+    private readonly push: PushService,
   ) {}
 
   /** ICE servers for the browser RTCPeerConnection (STUN always; TURN if configured). */
@@ -86,6 +88,41 @@ export class WhatsAppCallsService {
       },
     });
     this.log.log(`call ${id} answered by user ${userId}`);
+
+    // Multi-device: the same inbound call may be ringing on this rep's phone AND
+    // their laptop. Now that it's answered on ONE device, tell the rep's OTHER
+    // devices to stop ringing. The device that answered ignores this (it's
+    // already 'connecting'/in-call, not 'ringing'); only still-ringing clients
+    // tear down. Two fan-outs so every client is covered:
+    //   • socket CALL_ANSWERED_ELSEWHERE → the web CallDock / any foregrounded app
+    //   • FCM call_cancelled → dismisses the native ring on backgrounded phones
+    //     (endCallkit only closes the incoming screen; it never hangs up an
+    //     already-accepted call — see the mobile push_service actionCallEnded note)
+    // Non-fatal: the call is already answered, so a failed fan-out just leaves
+    // other devices ringing until their own 45s timeout.
+    try {
+      const ringEmployeeIds = new Set<string>();
+      if (emp?.id) ringEmployeeIds.add(emp.id);
+      if (call.leadId) {
+        const lead = await this.prisma.lead.findUnique({
+          where: { id: call.leadId },
+          select: { assignedEmployeeId: true },
+        });
+        if (lead?.assignedEmployeeId) ringEmployeeIds.add(lead.assignedEmployeeId);
+      }
+      await Promise.all([
+        ...[...ringEmployeeIds].map((empId) =>
+          this.publisher.publishToEmployee(empId, WHATSAPP_WS_EVENTS.CALL_ANSWERED_ELSEWHERE, {
+            callId: id,
+          }),
+        ),
+        this.push.sendCallCancel(userId, id),
+      ]);
+    } catch (err) {
+      this.log.warn(
+        `answered-elsewhere fan-out failed for call ${id}: ${(err as Error)?.message}`,
+      );
+    }
     return { ok: true };
   }
 

@@ -41,9 +41,55 @@ export class WhatsAppCallsService {
     private readonly openai: OpenAiService,
   ) {}
 
-  /** ICE servers for the browser RTCPeerConnection (STUN always; TURN if configured). */
-  getIceServers(): { iceServers: unknown } {
-    return { iceServers: this.config.get('app.whatsapp.iceServers') ?? [] };
+  // Cloudflare TURN mints SHORT-LIVED credentials; cache them well inside their
+  // TTL so we don't call Cloudflare on every ICE fetch.
+  private cfIceCache: { servers: unknown[]; expiresAt: number } | null = null;
+
+  /** ICE servers for the RTCPeerConnection. Cloudflare TURN (anycast — each rep
+   *  hits the nearest PoP, e.g. Karachi/Lahore, a fraction of the RTT to a single
+   *  fixed relay, which is what makes calls connect fast + keeps audio two-way)
+   *  first when configured, then the static STUN/coturn config as a fallback so
+   *  calls still work if Cloudflare is ever unreachable. */
+  async getIceServers(): Promise<{ iceServers: unknown }> {
+    const fallback = (this.config.get('app.whatsapp.iceServers') as unknown[]) ?? [];
+    const cf = await this.cloudflareIceServers();
+    return { iceServers: cf ? [...cf, ...fallback] : fallback };
+  }
+
+  /** Mint (and cache) Cloudflare TURN ICE servers. Returns null when Cloudflare
+   *  TURN isn't configured or the mint fails, so the caller falls back to the
+   *  static config — a Cloudflare hiccup never takes calling down. */
+  private async cloudflareIceServers(): Promise<unknown[] | null> {
+    const keyId = process.env.CLOUDFLARE_TURN_KEY_ID;
+    const token = process.env.CLOUDFLARE_TURN_API_TOKEN;
+    if (!keyId || !token) return null;
+    if (this.cfIceCache && this.cfIceCache.expiresAt > Date.now()) return this.cfIceCache.servers;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${keyId}/credentials/generate-ice-servers`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ttl: 86400 }),
+          signal: ctrl.signal,
+        },
+      ).finally(() => clearTimeout(timer));
+      if (!res.ok) {
+        this.log.warn(`Cloudflare TURN mint failed: HTTP ${res.status} — using fallback ICE`);
+        return null;
+      }
+      const data = (await res.json()) as { iceServers?: unknown[] };
+      const servers = Array.isArray(data.iceServers) ? data.iceServers : null;
+      if (!servers || servers.length === 0) return null;
+      // Creds are valid 24h; re-mint every 12h to stay well inside the window.
+      this.cfIceCache = { servers, expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
+      return servers;
+    } catch (e) {
+      this.log.warn(`Cloudflare TURN mint error: ${(e as Error).message} — using fallback ICE`);
+      return null;
+    }
   }
 
   /** Offer + status for the CallDock to set up its peer connection. */

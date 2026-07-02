@@ -601,6 +601,7 @@ export class FinanceService {
 
   async createInvoice(dto: CreateInvoiceDto, actorUserId: string) {
     await this.assertInvoiceOwner(dto.leadId, dto.clientId);
+    await this.assertAgreementReadyForMoney(dto.leadId, dto.clientId);
 
     if (dto.leadId) {
       await this.ensureLeadExists(dto.leadId);
@@ -721,6 +722,7 @@ export class FinanceService {
 
   async recordPayment(dto: CreatePaymentDto, actorUserId: string) {
     const invoice = await this.findInvoiceById(dto.invoiceId);
+    await this.assertAgreementReadyForMoney(invoice.leadId, invoice.clientId);
 
     // Period lock: can't book a payment dated into a closed accounting period.
     await this.assertPeriodOpen(dto.paidAt ? new Date(dto.paidAt) : new Date());
@@ -1148,6 +1150,11 @@ export class FinanceService {
         receiptDownloadUrl: await this.getSignedReceiptUrl(rejected.receiptKey),
       };
     }
+
+    // RECORD_PAYMENT: gate BEFORE we resolve/create any invoice, so an
+    // unapproved-agreement handover can't leave an orphan invoice behind.
+    // (Handovers are lead-scoped — no clientId column — so gate on the lead.)
+    await this.assertAgreementReadyForMoney(existing.leadId);
 
     // Invoice resolution — pick in priority order:
     //   1. The handover already has its own invoiceId from a prior
@@ -2790,6 +2797,44 @@ export class FinanceService {
 
     if (leadId && clientId) {
       throw new BadRequestException('An invoice cannot belong to both a lead and a client at creation time');
+    }
+  }
+
+  /**
+   * Agreement-first gate: money (invoices / payments / receipts) can only be
+   * recorded against a lead/client once Finance has APPROVED their agreement
+   * (approval locks the payment plan and materialises the ledger). If a
+   * non-cancelled agreement exists but is still before APPROVED (DRAFT /
+   * SUBMITTED / FINANCE_REVIEW / CHANGES_REQUESTED / EDITED_PENDING_SALES) we
+   * block — this is what stops an invoice/receipt being raised against a
+   * still-unapproved agreement (which then can't reflect the real engagement,
+   * e.g. a "paid in full" receipt for a client who still owes later
+   * installments). No agreement on file → allowed (direct/legacy invoicing
+   * is unaffected).
+   */
+  private async assertAgreementReadyForMoney(leadId?: string | null, clientId?: string | null) {
+    const or: Array<{ leadId?: string; clientId?: string }> = [];
+    if (leadId) or.push({ leadId });
+    if (clientId) or.push({ clientId });
+    if (or.length === 0) return;
+
+    const agreement = await this.prisma.agreement.findFirst({
+      where: { OR: or, deletedAt: null, status: { not: AgreementStatus.CANCELLED } },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true, agreementNumber: true },
+    });
+    if (!agreement) return;
+
+    const ready: AgreementStatus[] = [
+      AgreementStatus.APPROVED,
+      AgreementStatus.SENT,
+      AgreementStatus.SIGNED,
+    ];
+    if (!ready.includes(agreement.status)) {
+      const human = agreement.status.replace(/_/g, ' ').toLowerCase();
+      throw new BadRequestException(
+        `Agreement ${agreement.agreementNumber} hasn't been approved yet (it's ${human}). Finance must approve the agreement — which locks the payment plan and creates the ledger — before any invoice, payment or receipt can be recorded. Approve it first, then record the payment.`,
+      );
     }
   }
 

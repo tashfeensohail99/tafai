@@ -552,6 +552,15 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const name = `${lead.firstName} ${lead.lastName}`.trim();
   const agent = lead.assignedEmployee ? `${lead.assignedEmployee.firstName ?? ''} ${lead.assignedEmployee.lastName ?? ''}`.trim() : '—';
   const reviewable = agreement && ['SUBMITTED', 'FINANCE_REVIEW', 'CHANGES_REQUESTED'].includes(agreement.status);
+  // Agreement-first gate: money actions (record/verify payment) stay locked
+  // until Finance approves the agreement — which locks the plan and builds the
+  // ledger. No agreement on file → nothing to gate (direct/legacy invoicing).
+  // The backend enforces the same rule; this just makes the UI reflect it.
+  const agreementApproved = !agreement || ['APPROVED', 'SENT', 'SIGNED'].includes(agreement.status);
+  const moneyLocked = !agreementApproved;
+  const moneyLockHint = agreement
+    ? `Approve agreement ${agreement.agreementNumber} first — it's currently ${agreement.status.replace(/_/g, ' ').toLowerCase()}. Approving locks the payment plan and creates the ledger, then payments unlock.`
+    : '';
 
   const idTile = (k: string, v: ReactNode) => (
     <div>
@@ -767,15 +776,19 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                 <Upload size={16} className="sos-text-faint" />
                 <div>
                   <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>Record a payment</h3>
-                  <div className="sos-text-faint" style={{ fontSize: 12, marginTop: 2 }}>
-                    Upload the client&apos;s receipt + amount. It lands in the queue below to confirm.
+                  <div className={moneyLocked ? undefined : 'sos-text-faint'} style={{ fontSize: 12, marginTop: 2, color: moneyLocked ? 'var(--sos-warning, #b45309)' : undefined }}>
+                    {moneyLocked
+                      ? moneyLockHint
+                      : "Upload the client's receipt + amount. It lands in the queue below to confirm."}
                   </div>
                 </div>
               </div>
               {payOpen ? (
                 <GhostButton size="sm" onClick={resetPayForm} disabled={busy !== null}>Cancel</GhostButton>
               ) : (
-                <PrimaryButton size="sm" iconLeft={<Upload size={14} />} onClick={openPayForm}>Record payment</PrimaryButton>
+                <span title={moneyLocked ? moneyLockHint : undefined} style={moneyLocked ? { display: 'inline-flex', opacity: 0.5, filter: 'blur(0.4px)', cursor: 'not-allowed' } : undefined}>
+                  <PrimaryButton size="sm" iconLeft={<Upload size={14} />} onClick={openPayForm} disabled={moneyLocked || busy !== null}>Record payment</PrimaryButton>
+                </span>
               )}
             </div>
             {payOpen ? (
@@ -919,7 +932,9 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     ? <StatusBadge key="a" tone="danger" size="sm" dot={false}>Rejected</StatusBadge>
                     : h.status === 'CANCELLED'
                       ? <span key="a" className="sos-text-faint">—</span>
-                      : <PrimaryButton key="a" size="sm" onClick={() => void openVerify(h.id)} disabled={busy !== null}>Review &amp; verify</PrimaryButton>;
+                      : moneyLocked
+                        ? <span key="a" title={moneyLockHint} className="sos-text-faint" style={{ fontSize: 12, cursor: 'not-allowed' }}>Locked · approve agreement first</span>
+                        : <PrimaryButton key="a" size="sm" onClick={() => void openVerify(h.id)} disabled={busy !== null}>Review &amp; verify</PrimaryButton>;
                 return [
                   money(h.amount, h.currency),
                   h.receiptFileName ?? '—',

@@ -24,25 +24,51 @@ function fmt(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-/** Resolve once ICE gathering completes (Meta uses non-trickle SDP), capped at 5s.
- *  The cap must be generous enough to gather TURN relay candidates (UDP + the
- *  TCP-relay fallback), which can take a couple of seconds on slow networks —
- *  cutting it short drops the relay candidate and the call sticks in "connecting". */
+/** Resolve once we can safely answer with a non-trickle SDP. Meta's call-control
+ *  bakes all ICE candidates into ONE answer (no trickle path), so we must not
+ *  answer before the TURN **relay** candidate is gathered — otherwise the answer
+ *  goes out with only direct candidates and, on CGNAT / mobile networks, the call
+ *  sticks in "connecting", connects with one-way audio, or drops mid-call because
+ *  there's no relay path to ride or fall back to.
+ *
+ *  Strategy: resolve immediately when gathering completes (fast networks, ~1s);
+ *  otherwise resolve as soon as a relay candidate is in hand (plus a short floor
+ *  so we also pick up the quicker direct candidate); hard-cap at 12s so even a
+ *  very slow link answers eventually rather than hanging. The old fixed 5s cap
+ *  was too tight — a slow link couldn't gather the relay candidate (a TURN
+ *  round-trip + TLS handshake) in time, and it got dropped from the answer. */
 function waitForIce(pc: RTCPeerConnection): Promise<void> {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') return resolve();
-    const done = () => {
-      if (pc.iceGatheringState === 'complete') {
-        pc.removeEventListener('icegatheringstatechange', done);
-        clearTimeout(t);
-        resolve();
-      }
-    };
-    const t = setTimeout(() => {
-      pc.removeEventListener('icegatheringstatechange', done);
+    let settled = false;
+    let sawRelay = false;
+    const startedAt = Date.now();
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      pc.removeEventListener('icegatheringstatechange', onGather);
+      pc.removeEventListener('icecandidate', onCand);
+      clearInterval(poll);
+      clearTimeout(cap);
       resolve();
-    }, 5000);
-    pc.addEventListener('icegatheringstatechange', done);
+    };
+    const onGather = () => {
+      if (pc.iceGatheringState === 'complete') finish();
+    };
+    const onCand = (e: RTCPeerConnectionIceEvent) => {
+      // "typ relay" = a TURN relay candidate made it into our gathered set — the
+      // path that actually works behind CGNAT / mobile NAT.
+      if (e.candidate && /\btyp relay\b/.test(e.candidate.candidate)) sawRelay = true;
+    };
+    // Once the relay candidate is present and a brief floor has elapsed (enough
+    // to also gather the faster direct/srflx candidate), answer without waiting
+    // out the full cap.
+    const poll = setInterval(() => {
+      if (sawRelay && Date.now() - startedAt > 2500) finish();
+    }, 250);
+    const cap = setTimeout(finish, 12000);
+    pc.addEventListener('icegatheringstatechange', onGather);
+    pc.addEventListener('icecandidate', onCand);
   });
 }
 
@@ -611,16 +637,31 @@ export function CallDock() {
   useEffect(() => {
     if (phase !== 'in-call') return;
     beginRecording();
+    // Sample quality AND persist it DURING the call — not only at teardown, whose
+    // fire-and-forget POST usually dies when the dock unmounts as the call ends
+    // (which is why the quality CDR was almost always empty). Posting live means
+    // the relay-vs-direct path + RTT actually land. recordStats does partial,
+    // whitelisted updates, so repeated posts only fill fields in — never null out.
+    const flushStats = async () => {
+      const id = activeIdRef.current;
+      const pc1 = pcRef.current;
+      if (!pc1 || !id || id === 'pending') return;
+      await sampleStats(pc1);
+      if (statsRef.current && Object.keys(statsRef.current).length > 0) {
+        void apiFetch(`/whatsapp/calls/${id}/stats`, {
+          method: 'POST',
+          body: JSON.stringify({ ...statsRef.current }),
+        }).catch(() => undefined);
+      }
+    };
     if (!heartbeatRef.current) {
-      const pc0 = pcRef.current;
-      if (pc0) void sampleStats(pc0); // grab the candidate path early
+      void flushStats(); // capture + persist the candidate path as soon as media connects
       heartbeatRef.current = setInterval(() => {
         const id = activeIdRef.current;
         if (id && id !== 'pending') {
           void apiFetch(`/whatsapp/calls/${id}/heartbeat`, { method: 'POST' }).catch(() => undefined);
         }
-        const pc1 = pcRef.current;
-        if (pc1) void sampleStats(pc1);
+        void flushStats();
       }, 15000);
     }
   }, [phase, beginRecording, sampleStats]);

@@ -357,11 +357,12 @@ export class WhatsAppThreadsService {
     caller: CallerContext,
   ): Promise<'all' | 'none' | Prisma.LeadWhereInput> {
     if (caller.canViewAll) return 'all';
-    if (caller.canViewFinanceScope) {
-      const ids = await this.eligibleLeadIdsForFinance();
-      if (ids.length === 0) return 'none';
-      return { id: { in: ids }, deletedAt: null };
-    }
+    // Finance: per-lead / per-thread resolution (opening a specific lead's
+    // profile WhatsApp tab) is NOT agreement-gated — Finance may reach any lead
+    // they open. The closed-loop agreement gate only governs the finance INBOX
+    // LIST (scoped separately in list()/stats()), so this doesn't expose the
+    // whole inbox; it just lets the per-lead tab load the chat + send.
+    if (caller.canViewFinanceScope) return 'all';
     if (caller.canViewProcessingScope) {
       // Only leads that have reached processing (have a case) — this covers the
       // client's thread for the processing team without exposing the inbox.

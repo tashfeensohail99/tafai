@@ -505,6 +505,7 @@ export class WebhookIngestProcessor extends WorkerHost {
           status: true,
           startedAt: true,
           assignedEmployeeId: true,
+          answeredByEmployeeId: true,
           direction: true,
           threadId: true,
           channelId: true,
@@ -513,7 +514,20 @@ export class WebhookIngestProcessor extends WorkerHost {
         },
       });
       if (!existing) return;
-      const answered = existing.status === 'ANSWERED';
+      // Idempotency: Meta delivers webhooks at-least-once, and duplicate
+      // 'terminate' events are common (more so when media took a while to
+      // negotiate). A duplicate terminate on an ALREADY-CLOSED call must not be
+      // reprocessed — otherwise the second run reads status=ENDED (not
+      // ANSWERED), recomputes answered=false, flips a genuinely-answered call to
+      // MISSED, and fires a bogus "we missed your call" invite for a call that
+      // actually connected. If the row is already terminal, the first terminate
+      // handled everything (teardown + status + any invite); stop here.
+      if (existing.status === 'ENDED' || existing.status === 'MISSED') return;
+      // A call a rep actually answered is never "missed" — key off
+      // answeredByEmployeeId as well as status, so a status race can't
+      // mislabel a connected call.
+      const answered =
+        existing.status === 'ANSWERED' || existing.answeredByEmployeeId != null;
       await this.prisma.whatsAppCall.update({
         where: { id: existing.id },
         data: {

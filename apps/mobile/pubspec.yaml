@@ -1,7 +1,7 @@
 name: tafsheen_mobile
 description: Tafsheen Immigration Solutions — Mobile App
 publish_to: 'none'
-version: 1.0.27+29
+version: 1.0.28+30
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

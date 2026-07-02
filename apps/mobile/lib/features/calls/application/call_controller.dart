@@ -439,11 +439,14 @@ class CallController extends StateNotifier<CallState> {
   }
 
   /// Non-trickle: the SDP we send must already carry usable candidates, so we
-  /// wait for ICE gathering — but not blindly. Waiting for full completion
-  /// burned 4-5s per call (TURN servers that answer slowly hold gathering
-  /// open). Instead: once a TURN relay candidate has arrived and gathering has
-  /// been quiet for 800ms, the SDP is good enough — go. Full completion or the
-  /// 5s cap still apply as backstops.
+  /// wait for ICE gathering — but not blindly. Once a TURN relay candidate has
+  /// arrived and gathering has been quiet for 800ms, the SDP is good enough — go
+  /// (full completion resolves even earlier when it happens). The hard cap is
+  /// 12s (was 5s): on a slow link the relay candidate — a TURN round-trip plus a
+  /// TLS handshake — can take longer than 5s, and cutting it short sent the
+  /// answer WITHOUT the relay path, so the call stuck "connecting", connected
+  /// one-way, or dropped on CGNAT/mobile networks. 12s lets the relay candidate
+  /// make it in; fast links still resolve in ~1-2s via the relay-quiet path.
   Future<void> _waitForIce(RTCPeerConnection pc) async {
     if (pc.iceGatheringState ==
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
@@ -469,7 +472,7 @@ class CallController extends StateNotifier<CallState> {
         done();
       }
     };
-    final timeout = Timer(const Duration(seconds: 5), done);
+    final timeout = Timer(const Duration(seconds: 12), done);
     await completer.future;
     timeout.cancel();
     quiet?.cancel();

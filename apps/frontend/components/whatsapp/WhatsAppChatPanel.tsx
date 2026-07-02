@@ -300,14 +300,29 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           : prev,
       );
     };
+    // Self-heal on (re)connect. Real-time events fire once and are gone — if the
+    // socket drops for even a moment (mobile reps on weak networks) during the
+    // minute a customer takes to tap "Allow", that whatsapp.call.permission event
+    // is lost and the chip would stay stale until a manual reload. Socket.IO
+    // re-emits 'connect' on every reconnect, so re-syncing here pulls the fresh
+    // callPermissionStatus (and any messages missed while offline), making the
+    // grant appear live without the rep ever refreshing. We reuse flushNew (not
+    // reload) so this is spinner-free — flushNew refreshes the thread via
+    // getThread and appends only new messages, without flipping loading=true and
+    // flashing the whole panel on every reconnect.
+    const onConnect = () => {
+      void flushNew();
+    };
     socket.on('whatsapp.message.new', onMessageNew);
     socket.on('whatsapp.message.status', onStatus);
     socket.on('whatsapp.call.permission', onPermission);
+    socket.on('connect', onConnect);
     return () => {
       if (pending) clearTimeout(pending);
       socket.off('whatsapp.message.new', onMessageNew);
       socket.off('whatsapp.message.status', onStatus);
       socket.off('whatsapp.call.permission', onPermission);
+      socket.off('connect', onConnect);
     };
   }, [socket, threadId, reload]);
 

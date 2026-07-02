@@ -19,7 +19,6 @@ import { OpenAiService } from '../../ai/openai.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 import { WhatsAppRealtimePublisher } from '../realtime/publisher.service';
 import { WHATSAPP_WS_EVENTS } from '../queues/queue-contracts';
-import { PushService } from '../../push/push.service';
 
 /**
  * Phase 1 — live answering of inbound WhatsApp calls in the CRM.
@@ -40,7 +39,6 @@ export class WhatsAppCallsService {
     private readonly config: ConfigService,
     private readonly storage: StorageService,
     private readonly openai: OpenAiService,
-    private readonly push: PushService,
   ) {}
 
   /** ICE servers for the browser RTCPeerConnection (STUN always; TURN if configured). */
@@ -91,15 +89,19 @@ export class WhatsAppCallsService {
 
     // Multi-device: the same inbound call may be ringing on this rep's phone AND
     // their laptop. Now that it's answered on ONE device, tell the rep's OTHER
-    // devices to stop ringing. The device that answered ignores this (it's
-    // already 'connecting'/in-call, not 'ringing'); only still-ringing clients
-    // tear down. Two fan-outs so every client is covered:
-    //   • socket CALL_ANSWERED_ELSEWHERE → the web CallDock / any foregrounded app
-    //   • FCM call_cancelled → dismisses the native ring on backgrounded phones
-    //     (endCallkit only closes the incoming screen; it never hangs up an
-    //     already-accepted call — see the mobile push_service actionCallEnded note)
-    // Non-fatal: the call is already answered, so a failed fan-out just leaves
-    // other devices ringing until their own 45s timeout.
+    // clients to stop ringing via a socket event. The device that answered
+    // ignores it (it's already 'connecting'/in-call, not 'ringing'); only
+    // still-ringing clients tear down. Targets the answering employee AND the
+    // lead's assigned rep (normally the same). Non-fatal: the call is already
+    // answered, so a failed fan-out just lets other clients ring to their own
+    // 45s timeout.
+    //
+    // We deliberately do NOT push an FCM 'call_cancelled' here: it would also
+    // reach the ANSWERING phone and tear down the in-call CallKit/Telecom state
+    // the app holds to survive Android doze — risking the media-drop the calling
+    // code guards against. Dismissing a backgrounded phone's ring when the call
+    // was answered on the WEB is a mobile-side follow-up (a ringing-only handler)
+    // that ships with the next APK.
     try {
       const ringEmployeeIds = new Set<string>();
       if (emp?.id) ringEmployeeIds.add(emp.id);
@@ -110,14 +112,13 @@ export class WhatsAppCallsService {
         });
         if (lead?.assignedEmployeeId) ringEmployeeIds.add(lead.assignedEmployeeId);
       }
-      await Promise.all([
-        ...[...ringEmployeeIds].map((empId) =>
+      await Promise.all(
+        [...ringEmployeeIds].map((empId) =>
           this.publisher.publishToEmployee(empId, WHATSAPP_WS_EVENTS.CALL_ANSWERED_ELSEWHERE, {
             callId: id,
           }),
         ),
-        this.push.sendCallCancel(userId, id),
-      ]);
+      );
     } catch (err) {
       this.log.warn(
         `answered-elsewhere fan-out failed for call ${id}: ${(err as Error)?.message}`,

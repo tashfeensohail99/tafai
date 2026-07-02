@@ -21,11 +21,17 @@ import { WhatsAppChatPanel } from './WhatsAppChatPanel';
 export function WhatsAppLeadTab({
   leadId,
   renderHeaderActions,
+  fillHeight = false,
 }: {
   leadId: string;
   /** Accepted for API compatibility; the lookup now resolves by lead + phone server-side. */
   leadPhone?: string | null;
   renderHeaderActions?: (threadId: string) => ReactNode;
+  /** When true, fill the parent's height and let the chat scroll INTERNALLY
+   *  (the parent must give a bounded height). Used by the Finance customer
+   *  profile so the conversation scrolls in a box instead of growing to fill
+   *  the whole page. Default (Sales lead page) keeps the original layout. */
+  fillHeight?: boolean;
 }) {
   const [thread, setThread] = useState<ThreadListItem | null | undefined>(undefined);
 
@@ -72,9 +78,24 @@ export function WhatsAppLeadTab({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        ...(fillHeight ? { height: '100%', minHeight: 0 } : {}),
+      }}
+    >
       {renderHeaderActions ? renderHeaderActions(thread.id) : null}
-      <WhatsAppChatPanel threadId={thread.id} />
+      {fillHeight ? (
+        // flex:1 + minHeight:0 gives the panel a bounded height so its own
+        // message list (overflowY:auto) scrolls instead of the page.
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <WhatsAppChatPanel threadId={thread.id} />
+        </div>
+      ) : (
+        <WhatsAppChatPanel threadId={thread.id} />
+      )}
     </div>
   );
 }

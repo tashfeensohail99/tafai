@@ -1123,8 +1123,8 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
           finance can verify a payment, share the receipt PDF and pick up
           the client's "got it, thanks" reply without leaving the page. */}
       {tab === 'whatsapp' ? (
-        <div style={{ minHeight: 520 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ height: 'min(72vh, 820px)', minHeight: 480, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexShrink: 0 }}>
             <MessageSquare size={16} className="sos-text-faint" />
             <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>
               WhatsApp conversation
@@ -1133,18 +1133,23 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
               · share the agreement / receipt, pick up replies
             </span>
           </div>
-          <WhatsAppLeadTab
-            leadId={lead.id}
-            leadPhone={lead.phone ?? null}
-            renderHeaderActions={(threadId) => (
-              <ConsultationReminderButton
-                threadId={threadId}
-                clientFirstName={lead.firstName}
-                onSent={() => setNotice('Consultation reminder sent — waiting for the client to reply to open the 24-hour chat window.')}
-                onError={(msg) => setError(msg)}
-              />
-            )}
-          />
+          {/* Bounded, scrollable chat box — fillHeight makes the panel scroll
+              internally instead of the whole conversation stretching the page. */}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <WhatsAppLeadTab
+              leadId={lead.id}
+              leadPhone={lead.phone ?? null}
+              fillHeight
+              renderHeaderActions={(threadId) => (
+                <ConsultationReminderButton
+                  threadId={threadId}
+                  clientFirstName={lead.firstName}
+                  onSent={() => setNotice('Consultation reminder sent — waiting for the client to reply to open the 24-hour chat window.')}
+                  onError={(msg) => setError(msg)}
+                />
+              )}
+            />
+          </div>
         </div>
       ) : null}
     </div>

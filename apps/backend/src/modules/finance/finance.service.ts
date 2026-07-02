@@ -195,10 +195,9 @@ export class FinanceService {
       : [];
     const signedClientIds = [...new Set(signedLeads.map((l) => l.convertedClientId).filter((x): x is string => !!x))];
 
-    const [revenue, paidAgg, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPaidAgg, earnedAgg] =
+    const [revenue, expenseAgg, receiptsCount, payingCustomers, pipelineAgreements, signedPayments, earnedAgg] =
       await Promise.all([
         this.getRevenueByService(),
-        this.prisma.invoice.aggregate({ _sum: { paidAmount: true }, where: { deletedAt: null } }),
         // Only ABSORBED expenses are a cost; billable disbursements are recoverable.
         // baseAmount = CAD equivalent so the cost rolls up in the base currency.
         this.prisma.expense.aggregate({ _sum: { baseAmount: true }, where: { deletedAt: null, billable: false } }),
@@ -210,20 +209,35 @@ export class FinanceService {
           where: { deletedAt: null, status: { notIn: [AgreementStatus.SIGNED, AgreementStatus.CANCELLED] } },
           select: { totalAmount: true },
         }),
+        // Cash collected on SIGNED engagements, rolled up in the CAD base. The
+        // per-invoice paidAmount is now native (a PKR agreement tracks PKR), so a
+        // consolidated cross-agreement total must sum each verified payment's
+        // stored CAD equivalent (baseAmount) rather than mixing native amounts.
         signedLeadIds.length || signedClientIds.length
-          ? this.prisma.invoice.aggregate({
-              _sum: { paidAmount: true },
-              where: { deletedAt: null, OR: [{ leadId: { in: signedLeadIds } }, { clientId: { in: signedClientIds } }] },
+          ? this.prisma.payment.findMany({
+              where: {
+                deletedAt: null,
+                status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
+                verifiedAt: { not: null },
+                invoice: {
+                  deletedAt: null,
+                  OR: [{ leadId: { in: signedLeadIds } }, { clientId: { in: signedClientIds } }],
+                },
+              },
+              select: { amount: true, baseAmount: true },
             })
-          : Promise.resolve({ _sum: { paidAmount: null } }),
+          : Promise.resolve([] as Array<{ amount: any; baseAmount: any }>),
         // Revenue EARNED = installments whose milestone has been delivered
         // (recognizedAt set). Cash collected beyond this is unearned (deferred).
         this.prisma.installment.aggregate({ _sum: { amount: true }, where: { recognizedAt: { not: null } } }),
       ]);
 
-    const collected = dec(paidAgg._sum.paidAmount);
+    // Total cash collected, in the CAD base. This is exactly revenue.totals.allTime
+    // (which sums every verified payment's baseAmount). It is NOT sum(invoice.paidAmount)
+    // — that is now native per agreement and would mix currencies into a bogus total.
+    const collected = revenue.totals.allTime;
     const expenses = dec(expenseAgg._sum.baseAmount);
-    const collectedOnSigned = dec(signedPaidAgg._sum.paidAmount);
+    const collectedOnSigned = signedPayments.reduce((s, p) => s + Number(p.baseAmount ?? p.amount), 0);
     const pipelineValue = pipelineAgreements.reduce((s, a) => s + dec(a.totalAmount), 0);
     // Accrual view: earned (delivered milestones) vs received (cash) → the gap
     // is either deferred revenue (cash ahead of delivery, a liability) or
@@ -292,6 +306,10 @@ export class FinanceService {
         deletedAt: null,
         status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
         verifiedAt: { not: null },
+        // Exclude cash on soft-deleted (voided) invoices — keeps this CAD roll-up
+        // (which now also powers the reports 'collected' KPI) consistent with the
+        // report's other tiers (collectedOnSigned + expenses both filter deletedAt).
+        invoice: { deletedAt: null },
       },
       select: {
         amount: true,
@@ -1233,11 +1251,19 @@ export class FinanceService {
       clientId = conversion.client.id;
     }
 
-    // Apply the CAD-equivalent (baseAmount) to the CAD invoice — the payment
-    // may have been received in a foreign currency, but the ledger is CAD.
-    // Fall back to amount for any legacy row recorded before multi-currency.
-    const paymentCad = Number(payment.baseAmount ?? payment.amount);
-    const newPaidAmount = Number(payment.invoice.paidAmount) + paymentCad;
+    // Apply the payment in the INVOICE's own currency. The per-agreement ledger
+    // (invoice totalAmount + paidAmount) is native — a PKR agreement is billed,
+    // paid and reconciled entirely in PKR. The payment is recorded in that same
+    // agreement currency, so normally payment.currency === invoice.currency and
+    // we apply the native amount directly. The stored baseAmount (CAD) is used
+    // ONLY by the consolidated reporting layer, never the per-agreement ledger.
+    // (Legacy/cross-currency edge — a payment booked in a different currency
+    // than its invoice — falls back to the CAD base, preserving old behaviour.)
+    const paymentApplied =
+      (payment.currency ?? payment.invoice.currency) === payment.invoice.currency
+        ? Number(payment.amount)
+        : Number(payment.baseAmount ?? payment.amount);
+    const newPaidAmount = Number(payment.invoice.paidAmount) + paymentApplied;
     const totalAmount = Number(payment.invoice.totalAmount);
 
     // Overpayment is checked at the ENGAGEMENT level, not per-invoice. A
@@ -1253,11 +1279,11 @@ export class FinanceService {
       Number(payment.invoice.paidAmount),
       Number(payment.invoice.totalAmount),
     );
-    const newEngagementPaid = overpay.engagementPaidBefore + paymentCad;
+    const newEngagementPaid = overpay.engagementPaidBefore + paymentApplied;
     if (Math.round(newEngagementPaid * 100) > Math.round(overpay.engagementFee * 100) + 1) {
       const balance = Math.max(0, overpay.engagementFee - overpay.engagementPaidBefore);
       throw new BadRequestException(
-        `This payment (${paymentCad.toLocaleString()} ${payment.invoice.currency}) exceeds the remaining engagement balance of ${balance.toLocaleString()} ${payment.invoice.currency}. The client owes only ${balance.toLocaleString()} on this agreement — refund the excess, split into smaller payments, or move it to a new engagement.`,
+        `This payment (${paymentApplied.toLocaleString()} ${payment.invoice.currency}) exceeds the remaining engagement balance of ${balance.toLocaleString()} ${payment.invoice.currency}. The client owes only ${balance.toLocaleString()} on this agreement — refund the excess, split into smaller payments, or move it to a new engagement.`,
       );
     }
 
@@ -2005,10 +2031,15 @@ export class FinanceService {
       },
     });
 
-    // Reverse the CAD-equivalent that was booked (baseAmount), not the foreign
-    // original — the invoice ledger is in CAD.
-    const reversedBase = Number(payment.baseAmount ?? payment.amount);
-    const newPaidAmount = Math.max(Number(payment.invoice.paidAmount) - reversedBase, 0);
+    // Reverse in the invoice's own currency — mirror how verifyPayment applied
+    // it. The per-agreement ledger is native (a PKR invoice tracks PKR paid),
+    // so a PKR payment reversed must subtract the PKR amount, not its CAD
+    // equivalent. (Legacy/cross-currency edge falls back to the CAD base.)
+    const reversedNative =
+      (payment.currency ?? payment.invoice.currency) === payment.invoice.currency
+        ? Number(payment.amount)
+        : Number(payment.baseAmount ?? payment.amount);
+    const newPaidAmount = Math.max(Number(payment.invoice.paidAmount) - reversedNative, 0);
     await this.prisma.invoice.update({
       where: { id: payment.invoiceId },
       data: {

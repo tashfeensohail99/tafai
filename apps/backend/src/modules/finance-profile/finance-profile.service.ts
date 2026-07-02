@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AgreementStatus, FinanceHandoverStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { FxService } from '../../common/fx/fx.service';
 
 /** Coerce a Prisma Decimal (or number/null) to a plain number for the UI. */
 const num = (d: Prisma.Decimal | number | null | undefined): number =>
@@ -14,7 +15,10 @@ const num = (d: Prisma.Decimal | number | null | undefined): number =>
  */
 @Injectable()
 export class FinanceProfileService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: FxService,
+  ) {}
 
   async getCustomerProfile(leadId: string) {
     const lead = await this.prisma.lead.findUnique({
@@ -126,8 +130,16 @@ export class FinanceProfileService {
     ]);
 
     const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
-    const paid = invoices.reduce((s, i) => s + num(i.paidAmount), 0);
     const currency = contract?.currency || agreement?.currency || 'CAD';
+    // Sum paid ONLY over invoices in the displayed agreement's currency. The
+    // ledger is native per agreement (paidAmount is now stored native), so if
+    // this customer happens to hold a second agreement in a DIFFERENT currency,
+    // its invoices must not be folded into this figure — that would add e.g.
+    // PKR + CAD into one number, then mislabel the sum with a single currency.
+    // fee / installments below already describe the single (latest) agreement.
+    const paid = invoices
+      .filter((i) => (i.currency || currency) === currency)
+      .reduce((s, i) => s + num(i.paidAmount), 0);
 
     // Allocate total verified payments across the installment schedule in
     // order (AR waterfall) so the ledger shows precise "paid X of Y" without
@@ -154,14 +166,39 @@ export class FinanceProfileService {
       };
     });
     const installmentsPaid = installmentsView.filter((i) => i.paidStatus === 'PAID').length;
-    // Expenses may be in a foreign currency — roll up the CAD equivalent
-    // (baseAmount) so the customer ledger is all in CAD.
-    const expBase = (e: { baseAmount: Prisma.Decimal | null; amount: Prisma.Decimal }) =>
-      num(e.baseAmount ?? e.amount);
-    const totalExpenses = expenses.reduce((s, e) => s + expBase(e), 0);
+    // Express expenses in the AGREEMENT's own currency so the whole ledger is
+    // native and internally consistent — a PKR agreement's margin is PKR fee −
+    // PKR cost, never PKR − CAD. An expense already in that currency contributes
+    // its native amount; one in a different currency is converted from its
+    // stored CAD base at the current rate (the per-CAD rate is cached, so this
+    // is cheap and only runs when a foreign-currency expense is actually present).
+    const nativePart = (list: typeof expenses) =>
+      list
+        .filter((e) => (e.currency || currency) === currency)
+        .reduce((s, e) => s + num(e.amount), 0);
+    const convForeign = async (list: typeof expenses): Promise<number> => {
+      const cad = list
+        .filter((e) => (e.currency || currency) !== currency)
+        .reduce((s, e) => s + num(e.baseAmount ?? e.amount), 0);
+      if (cad <= 0) return 0;
+      try {
+        return await this.fx.convertFromBase(cad, currency);
+      } catch {
+        // No live rate for this agreement currency — degrade gracefully to the
+        // CAD figure (the pre-native behaviour) rather than 500-ing the whole
+        // customer profile over an unconvertible foreign-currency expense.
+        return cad;
+      }
+    };
+    const billableList = expenses.filter((e) => e.billable);
+    const [totalForeign, billableForeign] = await Promise.all([
+      convForeign(expenses),
+      convForeign(billableList),
+    ]);
+    const totalExpenses = nativePart(expenses) + totalForeign;
     // Billable disbursements are recoverable (client reimburses) → not a cost.
     // Only absorbed expenses reduce margin.
-    const billableExpenses = expenses.filter((e) => e.billable).reduce((s, e) => s + expBase(e), 0);
+    const billableExpenses = nativePart(billableList) + billableForeign;
     const absorbedExpenses = totalExpenses - billableExpenses;
 
     // "Send to Processing" gate — finance manually hands the file over after

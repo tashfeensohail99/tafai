@@ -79,6 +79,36 @@ export class FxService {
     return { baseAmount: round2(amount / rate), baseCurrency: this.base, rate, source };
   }
 
+  /**
+   * Convert a CAD amount INTO `currency` (inverse of convertToBase). Used by the
+   * reporting layer to express consolidated CAD totals in a chosen display
+   * currency, and to state a foreign-currency cost in an agreement's own
+   * currency. Rates are "1 CAD = N currency", so `amount = cad * rate`.
+   */
+  async convertFromBase(cadAmount: number, currency: string | null | undefined): Promise<number> {
+    const ccy = (currency || this.base).toUpperCase();
+    if (ccy === this.base) return round2(cadAmount);
+    const { rates } = await this.getRates();
+    const rate = rates[ccy];
+    if (!rate || rate <= 0) {
+      throw new Error(`No exchange rate available for ${this.base} → ${ccy}`);
+    }
+    return round2(cadAmount * rate);
+  }
+
+  /** Convert `amount` from one currency to another (via the CAD base). */
+  async convertBetween(
+    amount: number,
+    from: string | null | undefined,
+    to: string | null | undefined,
+  ): Promise<number> {
+    const src = (from || this.base).toUpperCase();
+    const dst = (to || this.base).toUpperCase();
+    if (src === dst) return round2(amount);
+    const { baseAmount } = await this.convertToBase(amount, src);
+    return this.convertFromBase(baseAmount, dst);
+  }
+
   private async refresh(): Promise<FxRates> {
     // 1) open.er-api.com
     try {

@@ -1002,19 +1002,13 @@ export class WhatsAppMessagesService {
       },
     });
     if (!t) throw new NotFoundException('Thread not found');
-    if (!caller.canViewAll) {
-      if (caller.canViewFinanceScope) {
-        // Finance can only operate on threads whose lead has a
-        // non-DRAFT agreement on file (closed-loop comms scope).
-        if (!t.lead?.id) throw new ForbiddenException('Thread not visible to Finance');
-        const hasAgreement = await this.prisma.agreement.findFirst({
-          where: { leadId: t.lead.id, status: { not: 'DRAFT' }, deletedAt: null },
-          select: { id: true },
-        });
-        if (!hasAgreement) {
-          throw new ForbiddenException('Thread not visible to Finance until Sales sends an agreement');
-        }
-      } else if (caller.canViewProcessingScope) {
+    // Admin (canViewAll) and Finance (canViewFinanceScope) may operate on any
+    // thread they open: Finance's per-lead WhatsApp works from any lead/client
+    // profile they open (view history + send message/template/media). The
+    // closed-loop agreement gate only scopes the finance INBOX LIST elsewhere,
+    // not per-thread access. Processing and plain agents stay scoped below.
+    if (!caller.canViewAll && !caller.canViewFinanceScope) {
+      if (caller.canViewProcessingScope) {
         // Processing may send only on a thread for one of their own clients
         // (lead/client has a ProcessingCase).
         const inProcessing = await this.prisma.processingCase.findFirst({

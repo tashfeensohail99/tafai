@@ -295,6 +295,13 @@ export function LeadImportDetailPage({ batchId }: Props) {
           <div style={{ width: `${pct}%`, height: '100%', background: 'var(--sos-brand-primary-strong)', transition: 'width 400ms' }} />
         </div>
 
+        {batch.status === 'PROCESSING' || batch.status === 'QUEUED' ? (
+          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--sos-text-secondary)' }}>
+            Importing in the background — you can safely leave this page or close the tab; it keeps
+            running on the server. The progress here only updates while this page is open.
+          </div>
+        ) : null}
+
         <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', marginTop: 20 }}>
           <Stat label="Imported" value={batch.importedCount} tone="success" />
           <Stat label="Duplicates" value={batch.duplicateCount} tone="neutral" />

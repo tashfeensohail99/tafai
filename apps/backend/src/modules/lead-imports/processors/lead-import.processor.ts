@@ -123,9 +123,39 @@ export class LeadImportProcessor extends WorkerHost {
         await this.processRow(batch.id, rowNumber, parsed.rows[idx]!, batch, mapping);
       }
 
+      // Reconcile the batch's aggregate counters from the source-of-truth row
+      // records before marking complete. The per-row counter bumps and the row
+      // inserts are separate (non-transactional) writes, so if the worker is
+      // restarted mid-batch — a BullMQ retry after a redeploy/crash — a row can
+      // be recorded while its counter increment is lost on the resume (the row
+      // is then skipped). That leaves the progress bar stuck a hair under 100%
+      // (e.g. 36/37) even though every row was processed. Recomputing straight
+      // from LeadImportRow here makes the final totals exact and self-healing.
+      const grouped = await this.prisma.leadImportRow.groupBy({
+        by: ['outcome'],
+        where: { batchId },
+        _count: { _all: true },
+      });
+      const countOf = (o: LeadImportRowOutcome): number =>
+        grouped.find((g) => g.outcome === o)?._count._all ?? 0;
+      const assignedCount = await this.prisma.leadImportRow.count({
+        where: {
+          batchId,
+          outcome: LeadImportRowOutcome.IMPORTED,
+          assignedEmployeeId: { not: null },
+        },
+      });
       await this.prisma.leadImportBatch.update({
         where: { id: batchId },
-        data: { status: LeadImportStatus.COMPLETED, completedAt: new Date() },
+        data: {
+          status: LeadImportStatus.COMPLETED,
+          completedAt: new Date(),
+          importedCount: countOf(LeadImportRowOutcome.IMPORTED),
+          duplicateCount: countOf(LeadImportRowOutcome.DUPLICATE),
+          invalidCount:
+            countOf(LeadImportRowOutcome.INVALID) + countOf(LeadImportRowOutcome.FAILED),
+          assignedCount,
+        },
       });
       this.log.log(`batch ${batchId} completed`);
     } catch (err) {

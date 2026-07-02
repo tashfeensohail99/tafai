@@ -488,12 +488,14 @@ export class AgreementsService {
   // ─── Finance review ──────────────────────────────────────────────────────
 
   /**
-   * Finance approves: re-validate, lock the plan, and generate + store the
-   * final PDF from the approved record. Crucially this does NOT yet create
-   * a ServiceContract — the **ledger** (ServiceContract + Installments) is
-   * a binding billing schedule and only materialises the moment the signed
-   * agreement is uploaded (see `uploadSignedAgreement`). Per the finance
-   * team: until the client signs, there's a *proposal*, not a ledger.
+   * Finance approves: re-validate, lock the plan, generate + store the final
+   * PDF, and materialise the **ledger** (ServiceContract + Installments) as a
+   * DRAFT (unsigned) contract. Approval is the gate that unlocks Finance's
+   * money actions — no invoice / payment / receipt can be recorded for the
+   * client until an approved agreement (hence a real ledger) exists. The
+   * signed-copy upload (see `uploadSignedAgreement`) later flips the contract
+   * ACTIVE with the real signed date; until then it's an approved proposal
+   * with a provisional ledger.
    */
   async approve(id: string, userId: string) {
     const a = await this.prisma.agreement.findFirst({ where: { id, deletedAt: null } });
@@ -541,6 +543,16 @@ export class AgreementsService {
     }
 
     const now = new Date();
+    // Materialise the ledger NOW: approving locks the plan AND creates the
+    // service contract + installment schedule (as a DRAFT contract, since the
+    // client hasn't signed yet — the signed-copy upload flips it to ACTIVE).
+    // This is the point that unlocks Finance's money actions: no invoice /
+    // payment / receipt can be recorded for the client until an approved
+    // agreement (hence a real ledger) exists. Idempotent: reuse the contract
+    // if one already exists (e.g. re-approval after CHANGES_REQUESTED).
+    const serviceContractId =
+      a.serviceContractId ?? (await this.materializeServiceContract(a, plan, userId, { signed: false }));
+
     const updated = await this.prisma.agreement.update({
       where: { id },
       data: {
@@ -551,6 +563,7 @@ export class AgreementsService {
         paymentPlanLockedByUserId: userId,
         generatedPdfKey: pdfKey ?? undefined,
         generatedPdfAt: pdfKey ? now : undefined,
+        serviceContractId,
       },
     });
 
@@ -558,9 +571,9 @@ export class AgreementsService {
       id,
       userId,
       'APPROVED',
-      'Approved by Finance; payment plan locked. Ledger materializes on signed-agreement upload.',
+      'Approved by Finance; payment plan locked and service contract + installment ledger created.',
       null,
-      null,
+      { serviceContractId } as unknown as Prisma.InputJsonValue,
     );
     await this.notifyAuthor(a.createdByUserId, 'approved', {
       agreementNumber: a.agreementNumber,
@@ -787,8 +800,18 @@ export class AgreementsService {
     },
     plan: AgreementPlanData,
     userId: string,
+    opts?: { signed?: boolean },
   ): Promise<string> {
+    // `signed` = the client's signed copy is on file (contract is live).
+    // Finance approval materialises the ledger EARLY as a DRAFT (unsigned)
+    // so payments can be recorded against a real contract; the signed-copy
+    // upload later flips it to ACTIVE with the real signed date.
+    const signed = opts?.signed ?? true;
     const net = Number(a.totalAmount.toString());
+    // signedDate doubles as the anchor/placeholder date for trigger-based
+    // installments (the receipt view nulls any installment whose dueDate equals
+    // it). Always set it; the `signed` flag drives only the contract STATUS
+    // (DRAFT when materialised at approval → ACTIVE once the signed copy lands).
     const signedDate = new Date();
     let rows = plan.installments ?? [];
     if (rows.length === 0) {
@@ -803,8 +826,10 @@ export class AgreementsService {
         totalAmount: a.totalAmount,
         currency: a.currency,
         signedDate,
-        status: ServiceContractStatus.ACTIVE,
-        notes: `Materialised on signature from agreement ${a.agreementNumber}`,
+        status: signed ? ServiceContractStatus.ACTIVE : ServiceContractStatus.DRAFT,
+        notes: signed
+          ? `Materialised on signature from agreement ${a.agreementNumber}`
+          : `Materialised on Finance approval of agreement ${a.agreementNumber} (awaiting client signature)`,
         createdByUserId: userId,
         installments: {
           create: rows.map((i, idx) => ({

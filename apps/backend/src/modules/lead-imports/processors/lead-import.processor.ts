@@ -237,12 +237,28 @@ export class LeadImportProcessor extends WorkerHost {
       return;
     }
 
-    // 2. Dedupe — phone-only per the build spec. Email-only or
-    //    phone+email matching can be added later if needed.
-    const existing = await this.prisma.lead.findFirst({
-      where: { phone: normalised.e164, deletedAt: null },
-      select: { id: true, assignedEmployeeId: true },
-    });
+    // 2. Dedupe by the last 10 significant digits, so we catch an existing lead
+    //    no matter how ITS number is stored — local "03xx…", "+92 3xx…", with
+    //    spaces, etc. The old exact-e164 string match missed those format
+    //    variants, re-created the lead, and it got assigned to a random rep
+    //    instead of staying with whoever already owns/works it (e.g. a live
+    //    WhatsApp chat). On a match we keep the existing lead + its current
+    //    owner (recorded as DUPLICATE below). Match the oldest row so the
+    //    original owner wins if there are somehow several.
+    const dedupeDigits = normalised.e164.replace(/\D/g, '');
+    const dedupeKey = dedupeDigits.length >= 10 ? dedupeDigits.slice(-10) : dedupeDigits;
+    const existingRows = await this.prisma.$queryRawUnsafe<
+      Array<{ id: string; assignedEmployeeId: string | null }>
+    >(
+      `SELECT id, "assignedEmployeeId" FROM crm.leads
+       WHERE "deletedAt" IS NULL
+         AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), $2::int) = $1
+       ORDER BY "createdAt" ASC
+       LIMIT 1`,
+      dedupeKey,
+      dedupeKey.length,
+    );
+    const existing = existingRows[0] ?? null;
     if (existing) {
       await this.prisma.leadImportRow.create({
         data: {

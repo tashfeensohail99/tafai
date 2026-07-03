@@ -29,6 +29,7 @@ import {
   WhatsAppMessageDirection,
   WhatsAppMessageStatus,
   WhatsAppMessageType,
+  WhatsAppTemplateCategory,
   WhatsAppThreadStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -216,6 +217,38 @@ export class WhatsAppMessagesService {
 
   async sendTemplate(caller: CallerContext, input: SendTemplateInput) {
     const thread = await this.thread(caller, input.threadId);
+    // Opt-out gate — MARKETING templates only. A customer who replied STOP has
+    // their waId recorded in whatsapp.opt_outs (see ai-reply.processor OPT_OUT).
+    // Meta's opt-out is about PROMOTIONAL (MARKETING) messaging, so we refuse
+    // MARKETING templates to them — bulk re-engage, per-lead CRM outreach, and
+    // any other promotional template all funnel through here, so this one check
+    // honors the opt-out everywhere. Transactional templates (UTILITY receipts /
+    // appointment confirmations, AUTHENTICATION OTPs) are deliberately NOT gated:
+    // a lead who opted out and later became a paying client must still receive
+    // their receipts — those are consented-to and, with the 24h window closed,
+    // a template is the only channel. In-window replies (sendText/media) aren't
+    // gated either. Unknown/unsynced templates fail OPEN (send) — the only
+    // promotional template we send, reengage_personal, is synced as MARKETING,
+    // and blocking a transactional message is the worse failure. To resume
+    // promotional messages to an opted-out contact, an admin clears the
+    // whatsapp.opt_outs row (no self-serve UI yet — see backlog).
+    if (thread.waContactId) {
+      const tpl = await this.prisma.whatsAppTemplate.findFirst({
+        where: { channelId: thread.channelId, name: input.templateName },
+        select: { category: true },
+      });
+      if (tpl?.category === WhatsAppTemplateCategory.MARKETING) {
+        const optedOut = await this.prisma.whatsAppOptOut.findUnique({
+          where: { waId: thread.waContactId },
+          select: { waId: true },
+        });
+        if (optedOut) {
+          throw new ForbiddenException(
+            'This contact opted out of promotional WhatsApp messages (they replied STOP). Transactional messages are unaffected.',
+          );
+        }
+      }
+    }
     const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
     // Repair empty template BODY parameters before the message reaches Meta.
     // The web picker pre-fills {{1}} with the contact name and blocks empty
@@ -998,6 +1031,7 @@ export class WhatsAppMessagesService {
         leadId: true,
         clientId: true,
         windowExpiresAt: true,
+        waContactId: true,
         lead: { select: { id: true, assignedEmployeeId: true } },
       },
     });

@@ -136,7 +136,7 @@ export class AiReplyProcessor extends WorkerHost {
     // for good (it's the customer asking us to stop).
     const thread = await this.prisma.whatsAppThread.findUnique({
       where: { id: threadId },
-      select: { id: true, channelId: true, leadId: true, clientId: true, windowExpiresAt: true },
+      select: { id: true, channelId: true, leadId: true, clientId: true, windowExpiresAt: true, waContactId: true },
     });
     if (!thread) {
       await this.prisma.aiRun.create({
@@ -263,6 +263,21 @@ export class AiReplyProcessor extends WorkerHost {
           aiState: 'HANDED_OFF',
         },
       });
+      // Persist the opt-out on the contact's waId so ALL future proactive
+      // template sends (bulk re-engage, finance, per-lead CRM outreach) refuse
+      // to message them — not just the bot. Best-effort: a write hiccup must
+      // never fail the opt-out acknowledgement that already went out above.
+      if (thread.waContactId) {
+        await this.prisma.whatsAppOptOut
+          .upsert({
+            where: { waId: thread.waContactId },
+            create: { waId: thread.waContactId, reason: 'inbound_stop' },
+            update: {},
+          })
+          .catch((e) =>
+            this.log.warn(`opt-out persist failed for ${thread.waContactId}: ${(e as Error).message}`),
+          );
+      }
       return;
     }
 

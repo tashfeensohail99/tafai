@@ -68,6 +68,15 @@ export class LeadImportProcessor extends WorkerHost {
       return;
     }
 
+    // The rep who uploaded this batch. Their extracted leads are assigned to
+    // them by default (see the assignment rule in processRowInner) — resolved
+    // once here rather than per-row.
+    const uploader = await this.prisma.employee.findFirst({
+      where: { userId: batch.uploadedByUserId },
+      select: { id: true },
+    });
+    const uploaderEmployeeId = uploader?.id ?? null;
+
     await this.prisma.leadImportBatch.update({
       where: { id: batchId },
       data: { status: LeadImportStatus.PROCESSING, startedAt: batch.startedAt ?? new Date() },
@@ -120,7 +129,7 @@ export class LeadImportProcessor extends WorkerHost {
           return;
         }
 
-        await this.processRow(batch.id, rowNumber, parsed.rows[idx]!, batch, mapping);
+        await this.processRow(batch.id, rowNumber, parsed.rows[idx]!, { ...batch, uploaderEmployeeId }, mapping);
       }
 
       // Reconcile the batch's aggregate counters from the source-of-truth row
@@ -172,7 +181,7 @@ export class LeadImportProcessor extends WorkerHost {
     batchId: string,
     rowNumber: number,
     row: Record<string, string>,
-    batch: { defaultCountry: string; uploadedByUserId: string; selectedAgentIds: string[] },
+    batch: { defaultCountry: string; uploadedByUserId: string; selectedAgentIds: string[]; uploaderEmployeeId: string | null },
     mapping: ColumnMapping,
   ): Promise<void> {
     // Last-resort guard: a single row must NEVER crash the whole batch. The
@@ -210,7 +219,7 @@ export class LeadImportProcessor extends WorkerHost {
     batchId: string,
     rowNumber: number,
     row: Record<string, string>,
-    batch: { defaultCountry: string; uploadedByUserId: string; selectedAgentIds: string[] },
+    batch: { defaultCountry: string; uploadedByUserId: string; selectedAgentIds: string[]; uploaderEmployeeId: string | null },
     mapping: ColumnMapping,
   ): Promise<void> {
     const rawPhone = row[mapping.phone] ?? '';
@@ -262,9 +271,19 @@ export class LeadImportProcessor extends WorkerHost {
       return;
     }
 
-    // 3. Round-robin pick — same cursor as the WhatsApp engine so the
-    //    overall workload is fair across CSV imports + live chats.
-    const assigneeId = await this.pickNextAgent(batch.selectedAgentIds);
+    // 3. Assignment. When the import didn't pick a sub-team to distribute
+    //    across (no selectedAgentIds), the new lead goes to the rep who
+    //    uploaded the batch — extracted leads belong to whoever brought them
+    //    in. When a sub-team IS selected (admin distributing across agents),
+    //    keep the round-robin (same cursor as the WhatsApp engine, so the
+    //    overall workload is fair across CSV imports + live chats). Falls back
+    //    to round-robin if the uploader has no employee record.
+    //    NB dedupe returns above, so this only assigns NEW leads — an existing
+    //    lead keeps its current owner.
+    const assigneeId =
+      batch.selectedAgentIds.length === 0 && batch.uploaderEmployeeId
+        ? batch.uploaderEmployeeId
+        : await this.pickNextAgent(batch.selectedAgentIds);
 
     // 4. Create the lead. Field mapping comes from the admin's column
     //    choices; everything except phone is optional.

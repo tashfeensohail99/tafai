@@ -177,3 +177,33 @@ export async function collectConsultation(
     body: JSON.stringify(input),
   });
 }
+
+// ── Reports / insights (phase 3) ─────────────────────────────────────────────
+
+export interface ReceptionReport {
+  range: { from: string; to: string; days: number };
+  footfall: {
+    total: number;
+    walkIn: number;
+    existingClient: number;
+    paidConsult: number;
+    daily: Array<{ date: string; walkIn: number; existingClient: number; paidConsult: number; total: number }>;
+  };
+  outcomes: {
+    waiting: number;
+    inMeeting: number;
+    done: number;
+    noShow: number;
+    cancelled: number;
+    noShowRate: number;
+  };
+  conversion: { walkIns: number; leads: number; converted: number; conversionRate: number };
+  consult: { count: number; noShow: number; collected: Array<{ currency: string; amount: number }> };
+  hosts: Array<{ id: string; name: string; visits: number }>;
+}
+
+export async function getReceptionReport(params: { from?: string; to?: string } = {}): Promise<ReceptionReport> {
+  return apiFetch<ReceptionReport>(`/reception/reports${buildQuery(params as Record<string, unknown>)}`, {
+    cache: 'no-store',
+  });
+}

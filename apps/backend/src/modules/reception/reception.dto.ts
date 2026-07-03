@@ -131,6 +131,23 @@ export class ConsultAvailabilityQueryDto {
   date!: string;
 }
 
+// ── Phase 3: reports / insights ────────────────────────────────────────────
+
+export class ReceptionReportQueryDto {
+  /** Inclusive PKT date window, YYYY-MM-DD. Defaults to the last 30 days. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD' })
+  from?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'to must be YYYY-MM-DD' })
+  to?: string;
+}
+
 export class CollectConsultationDto {
   /** Required only when no slot is pre-booked (schedule-at-collect / see-now). */
   @IsOptional()

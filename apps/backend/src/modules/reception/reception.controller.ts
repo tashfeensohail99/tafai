@@ -25,6 +25,7 @@ import {
   CreateVisitDto,
   ListVisitsQueryDto,
   LookupQueryDto,
+  ReceptionReportQueryDto,
   UpdateReceptionSettingsDto,
   UpdateVisitDto,
 } from './reception.dto';
@@ -50,6 +51,12 @@ export class ReceptionController {
   @RequireAnyPermissions('reception.view', 'reception.check_in')
   list(@Query() query: ListVisitsQueryDto) {
     return this.reception.listVisits(query);
+  }
+
+  @Get('reports')
+  @RequireAnyPermissions('reception.view', 'reception.check_in')
+  reports(@Query() query: ReceptionReportQueryDto) {
+    return this.reception.getReports(query);
   }
 
   @Post('visits')

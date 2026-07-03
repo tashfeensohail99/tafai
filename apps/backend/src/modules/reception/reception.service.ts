@@ -17,6 +17,7 @@ import {
   CreateVisitDto,
   ListVisitsQueryDto,
   LookupQueryDto,
+  ReceptionReportQueryDto,
   UpdateReceptionSettingsDto,
   UpdateVisitDto,
 } from './reception.dto';
@@ -576,6 +577,146 @@ export class ReceptionService {
       },
       actorUserId,
     );
+  }
+
+  // ── Reports / insights (footfall, conversion, consult revenue, no-shows) ──
+  async getReports(query: ReceptionReportQueryDto) {
+    const dayStart = (s: string) => new Date(`${s}T00:00:00.000+05:00`);
+    const plusDay = (dt: Date) => new Date(dt.getTime() + 24 * 60 * 60 * 1000);
+    // PKT calendar date of an instant (add +05:00 then read the UTC date parts).
+    const pktDay = (dt: Date) => new Date(dt.getTime() + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const today = pktDay(new Date());
+    let toStr = isRealDay(query.to) ? query.to! : today;
+    let fromStr = isRealDay(query.from)
+      ? query.from!
+      : pktDay(new Date(dayStart(toStr).getTime() - 29 * 24 * 60 * 60 * 1000));
+    if (fromStr > toStr) [fromStr, toStr] = [toStr, fromStr]; // normalise a reversed range
+    // Cap the window so a stray wide range can't trigger an unbounded scan
+    // (and an unbounded daily-trend map). A year is ample for a front desk.
+    const MAX_DAYS = 366;
+    if ((dayStart(toStr).getTime() - dayStart(fromStr).getTime()) / 86400000 + 1 > MAX_DAYS) {
+      fromStr = pktDay(new Date(dayStart(toStr).getTime() - (MAX_DAYS - 1) * 24 * 60 * 60 * 1000));
+    }
+    const start = dayStart(fromStr);
+    const end = plusDay(dayStart(toStr)); // exclusive upper bound
+    const days = Math.round((dayStart(toStr).getTime() - dayStart(fromStr).getTime()) / 86400000) + 1;
+
+    const visits = await this.prisma.visit.findMany({
+      where: { checkedInAt: { gte: start, lt: end } },
+      select: {
+        visitType: true,
+        status: true,
+        checkedInAt: true,
+        leadId: true,
+        hostEmployeeId: true,
+        paymentId: true,
+        feeAmount: true,
+        feeCurrency: true,
+      },
+    });
+
+    // Footfall — totals + per-type + a per-day trend across the whole window.
+    const byType = { WALK_IN: 0, EXISTING_CLIENT: 0, PAID_CONSULT: 0 };
+    const status = { WAITING: 0, IN_MEETING: 0, DONE: 0, NO_SHOW: 0, CANCELLED: 0 };
+    const dailyMap = new Map<string, { walkIn: number; existingClient: number; paidConsult: number; total: number }>();
+    for (let d = dayStart(fromStr); d < end; d = plusDay(d)) {
+      dailyMap.set(pktDay(d), { walkIn: 0, existingClient: 0, paidConsult: 0, total: 0 });
+    }
+    for (const v of visits) {
+      byType[v.visitType] += 1;
+      status[v.status] += 1;
+      const bucket = dailyMap.get(pktDay(v.checkedInAt));
+      if (bucket) {
+        bucket.total += 1;
+        if (v.visitType === VisitType.WALK_IN) bucket.walkIn += 1;
+        else if (v.visitType === VisitType.EXISTING_CLIENT) bucket.existingClient += 1;
+        else bucket.paidConsult += 1;
+      }
+    }
+    const daily = [...dailyMap.entries()].map(([date, b]) => ({ date, ...b }));
+
+    // Conversion — DISTINCT walk-in leads that have since become clients (a repeat
+    // walk-in is one lead, not many). convertedClientId is the authoritative flag.
+    const walkInLeadIds = [
+      ...new Set(visits.filter((v) => v.visitType === VisitType.WALK_IN && v.leadId).map((v) => v.leadId!)),
+    ];
+    const leads = walkInLeadIds.length
+      ? await this.prisma.lead.findMany({
+          where: { id: { in: walkInLeadIds } },
+          select: { id: true, convertedClientId: true },
+        })
+      : [];
+    const converted = leads.filter((l) => l.convertedClientId).length;
+
+    // Consultation revenue — sum the NATIVE fee stamped on paid consult visits,
+    // grouped by currency (no FX; the visit carries the authoritative amount).
+    const paidConsults = visits.filter((v) => v.visitType === VisitType.PAID_CONSULT && v.paymentId);
+    const collectedMap = new Map<string, Prisma.Decimal>();
+    for (const v of paidConsults) {
+      if (v.feeAmount == null) continue;
+      const cur = (v.feeCurrency || 'PKR').toUpperCase();
+      collectedMap.set(cur, (collectedMap.get(cur) ?? new Prisma.Decimal(0)).plus(v.feeAmount));
+    }
+    // Sort desc so the "primary" currency the UI surfaces is deterministic
+    // (findMany has no stable order) and the largest revenue leads.
+    const collected = [...collectedMap.entries()]
+      .map(([currency, amount]) => ({ currency, amount: Number(amount) }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // Hosts — visits handled per staff member (skip unassigned).
+    const hostCount = new Map<string, number>();
+    for (const v of visits) {
+      if (v.hostEmployeeId) hostCount.set(v.hostEmployeeId, (hostCount.get(v.hostEmployeeId) ?? 0) + 1);
+    }
+    const hostIds = [...hostCount.keys()];
+    const emps = hostIds.length
+      ? await this.prisma.employee.findMany({
+          where: { id: { in: hostIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const nameById = new Map(emps.map((e) => [e.id, `${e.firstName} ${e.lastName}`.trim()]));
+    const hosts = [...hostCount.entries()]
+      .map(([id, count]) => ({ id, name: nameById.get(id) ?? 'Unknown', visits: count }))
+      .sort((a, b) => b.visits - a.visits);
+
+    const total = visits.length;
+    // No-show rate is over BOOKED footfall (exclude cancellations, which were
+    // called off rather than missed) — guarded against divide-by-zero.
+    const booked = total - status.CANCELLED;
+    const noShowRate = booked > 0 ? status.NO_SHOW / booked : 0;
+
+    return {
+      range: { from: fromStr, to: toStr, days },
+      footfall: {
+        total,
+        walkIn: byType.WALK_IN,
+        existingClient: byType.EXISTING_CLIENT,
+        paidConsult: byType.PAID_CONSULT,
+        daily,
+      },
+      outcomes: {
+        waiting: status.WAITING,
+        inMeeting: status.IN_MEETING,
+        done: status.DONE,
+        noShow: status.NO_SHOW,
+        cancelled: status.CANCELLED,
+        noShowRate,
+      },
+      conversion: {
+        walkIns: byType.WALK_IN,
+        leads: walkInLeadIds.length,
+        converted,
+        conversionRate: walkInLeadIds.length > 0 ? converted / walkInLeadIds.length : 0,
+      },
+      consult: {
+        count: paidConsults.length,
+        noShow: paidConsults.filter((v) => v.status === VisitStatus.NO_SHOW).length,
+        collected,
+      },
+      hosts,
+    };
   }
 
   private consultInvoiceNote(

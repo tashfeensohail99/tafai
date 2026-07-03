@@ -3,6 +3,7 @@
 // A reception-role user logs in and lands here; the front-desk console is the home.
 
 import {
+  BarChart3,
   ClipboardList,
   DoorOpen,
   LogOut,
@@ -59,11 +60,15 @@ const RECEPTION_ROLES = new Set(['reception', 'super_admin', 'admin']);
 const NAV: DrawerMenuItem[] = [
   { label: 'Front Desk', href: '/reception', icon: DoorOpen, caption: 'Live lobby & check-in' },
   { label: 'Visitors', href: '/reception/visitors', icon: ClipboardList, caption: 'Full visit log' },
+  { label: 'Reports', href: '/reception/reports', icon: BarChart3, caption: 'Footfall, conversion & revenue' },
 ];
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/reception/visitors') {
     return { title: 'Visitors', subtitle: 'The full visit log — search, filter and history' };
+  }
+  if (pathname === '/reception/reports') {
+    return { title: 'Reports', subtitle: 'Footfall, conversion, consultation revenue and no-shows' };
   }
   if (pathname === '/reception') {
     return { title: 'Front Desk', subtitle: 'Live lobby — check visitors in, out and no-show' };

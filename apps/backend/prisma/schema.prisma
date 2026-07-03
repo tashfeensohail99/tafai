@@ -1329,6 +1329,20 @@ model Lead {
   blockedReason   String?
   blockedByUserId String?
 
+  // --- CSV auto-drip (imported-lead outreach) -------------------------------
+  // Two-touch WhatsApp template drip fired when a lead enters via CSV import
+  // (see csv-drip.service). dripTouch1At / dripTouch2At stamp when each touch
+  // was SENT via the business API (bot-style, payload.source='csv_drip'); NULL
+  // = not sent yet. dripSkippedReason records why a touch was NOT sent
+  // ('opted_out' | 'blocked' | 'recently_active' | 'daily_cap' | 'no_channel' |
+  // 'invalid_phone' | 'no_template'), so the CSV-leads page and operators can
+  // see why a lead didn't receive its template. These drive the CSV page's
+  // drip-status chips + the "after 2 touches, no reply" personal-WhatsApp
+  // fallback button; reply-state itself is read from the lead's WhatsApp thread.
+  dripTouch1At      DateTime?
+  dripTouch2At      DateTime?
+  dripSkippedReason String?
+
   branch            Branch?              @relation(fields: [branchId], references: [id])
   assignedEmployee  Employee?            @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
   preferredEmployee Employee?            @relation("LeadPreferredEmployee", fields: [preferredEmployeeId], references: [id])

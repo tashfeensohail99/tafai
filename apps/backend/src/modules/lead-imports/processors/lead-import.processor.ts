@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import type { Job } from 'bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import type { Job, Queue } from 'bullmq';
 import { LeadImportRowOutcome, LeadImportStatus, LeadStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
@@ -9,6 +9,10 @@ import { generateLeadReferenceCode } from '../../../common/reference-codes/refer
 import { normalisePhone } from '../../../common/phone/phone.util';
 import { parseSpreadsheet } from '../parsers/spreadsheet-parser';
 import { LEAD_IMPORT_QUEUE, type LeadImportJob } from '../queue-contracts';
+import {
+  WHATSAPP_QUEUE,
+  type CsvDripJob,
+} from '../../whatsapp/queues/queue-contracts';
 
 /** Shape of the columnMapping JSONB on LeadImportBatch. */
 interface ColumnMapping {
@@ -52,8 +56,25 @@ export class LeadImportProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly leadAssignment: LeadAssignmentService,
+    @InjectQueue(WHATSAPP_QUEUE.CSV_DRIP)
+    private readonly csvDripQueue: Queue<CsvDripJob>,
   ) {
     super();
+  }
+
+  /**
+   * Kick off the 2-touch WhatsApp template drip for a freshly imported (or
+   * reconciled-existing) lead. Fire-and-forget: an enqueue hiccup must never
+   * fail the import row. jobId is derived from the lead so a re-import / resume
+   * can't double-schedule touch-1; the drip service also guards on
+   * lead.dripTouch1At. A small per-row stagger spreads a big batch so touch-1
+   * sends trickle out rather than bursting the business number.
+   */
+  private scheduleDrip(leadId: string, rowNumber: number): void {
+    const delay = Math.min(rowNumber, 600) * 1_000;
+    void this.csvDripQueue
+      .add('touch1', { leadId, touch: 1 }, { jobId: `drip-${leadId}-t1`, delay })
+      .catch((e) => this.log.warn(`CSV drip schedule failed for lead ${leadId}: ${(e as Error).message}`));
   }
 
   override async process(job: Job<LeadImportJob>): Promise<void> {
@@ -275,6 +296,10 @@ export class LeadImportProcessor extends WorkerHost {
         where: { id: batchId },
         data: { duplicateCount: { increment: 1 } },
       });
+      // Existing lead re-imported → it stays with its ORIGINAL owner (above).
+      // Still send it the drip template (the drip service skips it if the lead
+      // is already in an active conversation).
+      this.scheduleDrip(existing.id, rowNumber);
       return;
     }
 
@@ -348,6 +373,8 @@ export class LeadImportProcessor extends WorkerHost {
           ...(assigneeId ? { assignedCount: { increment: 1 } } : {}),
         },
       });
+      // New lead created → start its 2-touch WhatsApp template drip.
+      this.scheduleDrip(lead.id, rowNumber);
     } catch (err) {
       // Lead.create could fail on unique constraints (race-condition
       // dedupe: two import jobs uploading the same number simultaneously)

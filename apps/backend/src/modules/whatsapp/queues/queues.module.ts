@@ -57,6 +57,7 @@ const DEFAULT_JOB_OPTS = {
       { name: WHATSAPP_QUEUE.CAMPAIGN_DISPATCH },
       { name: WHATSAPP_QUEUE.CAMPAIGN_RECIPIENT },
       { name: WHATSAPP_QUEUE.AI_REPLY },
+      { name: WHATSAPP_QUEUE.CSV_DRIP },
       // Meta Lead Ads (forked off the shared webhook → meta-leads module).
       { name: META_LEADGEN_QUEUE },
       // Phase E — inbound document intake (producer: media-download worker;

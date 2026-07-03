@@ -7,6 +7,8 @@ import { OutboundMessageProcessor } from './outbound-message.processor';
 import { MediaDownloadProcessor } from './media-download.processor';
 import { TemplateSyncProcessor } from './template-sync.processor';
 import { AiReplyProcessor } from './ai-reply.processor';
+import { CsvDripProcessor } from './csv-drip.processor';
+import { CsvDripService } from '../../drip/csv-drip.service';
 import { OutboundOrphanDrainerService } from './outbound-orphan-drainer.service';
 
 // StorageModule is imported here so AiReplyProcessor can pull voice-note
@@ -21,6 +23,9 @@ import { OutboundOrphanDrainerService } from './outbound-orphan-drainer.service'
     MediaDownloadProcessor,
     TemplateSyncProcessor,
     AiReplyProcessor,
+    // CSV auto-drip: 2-touch template outreach for imported leads.
+    CsvDripProcessor,
+    CsvDripService,
     // Boot-time sweep that re-enqueues OUTBOUND messages stuck in QUEUED
     // status without a Redis job (typical when a maintenance script wrote
     // them from outside the VPC and couldn't reach internal Redis).

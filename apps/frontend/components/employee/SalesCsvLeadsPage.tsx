@@ -24,12 +24,13 @@ import { renderWelcomeMessage, waWebLink } from '@/lib/lead-imports-api';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 /**
- * Sales agent view of leads sourced from CSV/Excel uploads. Each row gets
- * a WhatsApp button that opens the rep's PERSONAL WhatsApp with the
- * welcome message pre-filled — Tashfeen policy is to use personal numbers
- * to avoid the 24-hour Meta-API window cost. The welcome message asks
- * the customer to reply to the business number, which is when the lead
- * enters the WhatsApp CRM proper.
+ * Sales agent view of leads sourced from CSV/Excel uploads. On import each lead
+ * is auto-sent a WhatsApp TEMPLATE (business number) and a second one ~40h later
+ * if they stay quiet — the "Auto-outreach" column shows that drip's progress.
+ * A lead leaves this list the moment the customer REPLIES (it becomes a live
+ * inbox conversation). If BOTH auto-touches go unanswered, the row surfaces a
+ * personal-WhatsApp button so the rep can escalate on their own number (the old
+ * behaviour, now a deliberate last resort rather than the first touch).
  */
 
 interface ApiCsvLead {
@@ -45,6 +46,10 @@ interface ApiCsvLead {
   sourceChannel: string | null;
   notes: string | null;
   createdAt: string;
+  // CSV auto-drip state (see csv-drip.service). Nulls until each touch fires.
+  dripTouch1At: string | null;
+  dripTouch2At: string | null;
+  dripSkippedReason: string | null;
   importRows?: Array<{
     id: string;
     createdAt: string;
@@ -61,6 +66,40 @@ function statusTone(status: string): BadgeTone {
     case 'LOST': return 'danger';
     default: return 'neutral';
   }
+}
+
+const SKIP_LABEL: Record<string, string> = {
+  opted_out: 'Opted out',
+  blocked: 'Blocked',
+  recently_active: 'Already active',
+  daily_cap: 'Sending soon',
+  no_channel: 'Retrying (channel)',
+  no_template: 'Retrying (template)',
+  invalid_phone: 'Bad number',
+  thread_conflict: 'Duplicate contact',
+  converted_client: 'Existing client',
+};
+// The personal-WhatsApp escalation is offered ONLY on genuinely terminal states
+// where the auto-drip is truly finished (2 touches sent, or an "already active"
+// lead a rep is handling). Everything here is either never-message (opt-out /
+// block / bad number / existing client), auto-retrying (daily_cap / no_channel /
+// no_template), or a duplicate whose real thread lives in the inbox — so no
+// premature "continue on personal WhatsApp" button.
+const NO_FALLBACK = new Set([
+  'opted_out', 'blocked', 'invalid_phone', 'daily_cap',
+  'no_channel', 'no_template', 'thread_conflict', 'converted_client',
+]);
+
+/** Drip status + whether to offer the personal-WhatsApp escalation button. */
+function dripCell(lead: ApiCsvLead): { label: string; tone: BadgeTone; showFallback: boolean } {
+  if (lead.dripTouch2At) return { label: '2 sent · no reply', tone: 'warning', showFallback: true };
+  if (lead.dripSkippedReason) {
+    const r = lead.dripSkippedReason;
+    const danger = r === 'opted_out' || r === 'blocked' || r === 'invalid_phone';
+    return { label: SKIP_LABEL[r] ?? r, tone: danger ? 'danger' : 'neutral', showFallback: !NO_FALLBACK.has(r) };
+  }
+  if (lead.dripTouch1At) return { label: 'Touch 1 sent', tone: 'info', showFallback: false };
+  return { label: 'Auto-message queued', tone: 'neutral', showFallback: false };
 }
 
 export function SalesCsvLeadsPage() {
@@ -123,7 +162,7 @@ export function SalesCsvLeadsPage() {
       <PageHeader
         eyebrow="Sales · CSV Leads"
         title="CSV Leads"
-        description="Leads assigned to you from spreadsheet uploads. Click the WhatsApp button to send the welcome message from your personal number."
+        description="Leads assigned to you from spreadsheet uploads. Each is auto-sent a WhatsApp template on import (and a follow-up ~40h later if they stay quiet). A lead leaves this list once they reply; if both auto-touches go unanswered, use the WhatsApp button to continue on your personal number."
       />
 
       {/* KPIs */}
@@ -187,7 +226,7 @@ export function SalesCsvLeadsPage() {
             <table style={{ width: '100%', minWidth: 800, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--sos-surface-1)' }}>
-                  {['Lead', 'Phone', 'Status', 'Batch', 'Assigned', ''].map((h) => (
+                  {['Lead', 'Phone', 'Status', 'Batch', 'Imported', 'Auto-outreach'].map((h) => (
                     <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '1px solid var(--sos-divider)', whiteSpace: 'nowrap' }}>
                       {h}
                     </th>
@@ -232,25 +271,34 @@ export function SalesCsvLeadsPage() {
                         </div>
                       </td>
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                        <a
-                          href={link}
-                          target="tashfeen-whatsapp"
-                          onClick={(e) => {
-                            // Reuse ONE WhatsApp tab instead of spawning a fresh,
-                            // cold-loading tab on every click (the old target="_blank"
-                            // behaviour). window.open with a fixed window name navigates
-                            // the existing WhatsApp tab to the new chat and focuses it,
-                            // so reps aren't left with a pile of slow WhatsApp tabs.
-                            e.preventDefault();
-                            const w = window.open(link, 'tashfeen-whatsapp');
-                            if (w) w.focus();
-                          }}
-                          className="sos-btn sos-btn--primary sos-btn--sm"
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-                          title="Opens WhatsApp with the welcome message pre-filled (reuses one WhatsApp tab)"
-                        >
-                          <MessageSquare size={13} /> WhatsApp
-                        </a>
+                        {(() => {
+                          const d = dripCell(lead);
+                          return (
+                            <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                              <StatusBadge tone={d.tone} size="sm">{d.label}</StatusBadge>
+                              {d.showFallback ? (
+                                <a
+                                  href={link}
+                                  target="tashfeen-whatsapp"
+                                  onClick={(e) => {
+                                    // Reuse ONE WhatsApp tab instead of spawning a fresh,
+                                    // cold-loading tab on every click. window.open with a
+                                    // fixed window name navigates the existing WhatsApp tab
+                                    // to the new chat and focuses it.
+                                    e.preventDefault();
+                                    const w = window.open(link, 'tashfeen-whatsapp');
+                                    if (w) w.focus();
+                                  }}
+                                  className="sos-btn sos-btn--primary sos-btn--sm"
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#25D366', borderColor: '#25D366', color: '#fff' }}
+                                  title="No reply after 2 auto-messages — continue on your personal WhatsApp"
+                                >
+                                  <MessageSquare size={13} /> WhatsApp
+                                </a>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );

@@ -12,10 +12,12 @@ import {
 import {
   collectConsultation,
   getConsultAvailability,
+  getPayQr,
   getReceptionSettings,
   type Availability,
   type AvailabilitySlot,
   type CollectConsultationResult,
+  type PayQr,
   type ReceptionSettings,
   type VisitRow,
 } from '@/lib/reception-api';
@@ -53,6 +55,7 @@ export function ConsultCollectModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CollectConsultationResult | null>(null);
+  const [payQr, setPayQr] = useState<PayQr | null>(null);
   // Re-fetch settings on open so the fee the desk quotes/collects is never a
   // stale copy from an admin edit made after this screen first loaded.
   const [liveSettings, setLiveSettings] = useState<ReceptionSettings | null>(null);
@@ -65,6 +68,7 @@ export function ConsultCollectModal({
     setRef('');
     setError(null);
     setResult(null);
+    setPayQr(null);
     setSubmitting(false);
   }, []);
 
@@ -119,6 +123,23 @@ export function ConsultCollectModal({
       cancelled = true;
     };
   }, [open, date, result]);
+
+  // A bank transfer lands in "pending" — pull a QR the customer can scan at the
+  // desk to upload their own receipt (they may not have it on them at the desk).
+  useEffect(() => {
+    if (result?.status !== 'pending' || !result.visitorPaymentId) return;
+    let cancelled = false;
+    getPayQr(result.visitorPaymentId)
+      .then((q) => {
+        if (!cancelled) setPayQr(q);
+      })
+      .catch(() => {
+        /* QR is a convenience; finance can still verify from the register */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [result]);
 
   if (!open || !visit) return null;
 
@@ -193,6 +214,17 @@ export function ConsultCollectModal({
                   {money(result.feeAmount, result.feeCurrency)} · slot held for {fmtTime(result.scheduledAt)} PKT.
                   <br />Finance will verify the transfer and confirm the consultation.
                 </div>
+                {payQr ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 4, padding: '14px 16px', borderRadius: 12, border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-1)', width: '100%' }}>
+                    <div className="sos-text-faint" style={{ fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Customer uploads their receipt</div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={payQr.qrDataUrl} alt="Scan to upload receipt" width={168} height={168} style={{ borderRadius: 8, background: '#fff', padding: 6 }} />
+                    <div className="sos-text-secondary" style={{ fontSize: 12, textAlign: 'center', lineHeight: 1.45 }}>
+                      Ask the customer to <strong>scan &amp; upload</strong> their transfer screenshot.
+                      <br />Finance verifies it and confirms the consultation.
+                    </div>
+                  </div>
+                ) : null}
                 <PrimaryButton onClick={close}>Done</PrimaryButton>
               </div>
             ) : (

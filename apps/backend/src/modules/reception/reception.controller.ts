@@ -114,6 +114,12 @@ export class ReceptionController {
     return this.reception.listVisitorPayments(query);
   }
 
+  @Get('visitor-payments/:id/pay-qr')
+  @RequireAnyPermissions('reception.view', 'reception.check_in')
+  payQr(@Param('id', ParseUUIDPipe) id: string) {
+    return this.reception.getPayQr(id);
+  }
+
   @Post('visitor-payments/:id/verify')
   @RequirePermissions('finance.verify_payment')
   @Audit({ entityType: 'VisitorPayment', category: 'MUTATION', severity: 'HIGH', action: 'PAYMENT_VERIFIED' })

@@ -95,6 +95,8 @@ export interface VisitorPaymentRow {
   currency: string;
   transactionRef: string | null;
   receiptNumber: string | null;
+  hasProof: boolean;
+  proofUrl: string | null;
   createdAt: string;
   verifiedAt: string | null;
   rejectedReason: string | null;
@@ -234,6 +236,18 @@ export async function rejectVisitorPayment(id: string, reason: string): Promise<
     method: 'POST',
     body: JSON.stringify({ reason }),
   });
+}
+
+export interface PayQr {
+  token: string;
+  payUrl: string;
+  qrDataUrl: string;
+  expiresAt: string;
+}
+
+/** A QR + link the desk shows so the customer can scan + upload their receipt. */
+export async function getPayQr(visitorPaymentId: string): Promise<PayQr> {
+  return apiFetch<PayQr>(`/reception/visitor-payments/${visitorPaymentId}/pay-qr`, { cache: 'no-store' });
 }
 
 // ── Reports / insights (phase 3) ─────────────────────────────────────────────

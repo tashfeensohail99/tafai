@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BadgeCheck, Clock, Loader2, Wallet, XCircle } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, Clock, ImageOff, Loader2, Wallet, X, XCircle } from 'lucide-react';
 import { GlassCard, GhostButton, PageHeader, PrimaryButton } from '@/components/sales-v2/ui';
 import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
 import { useFinanceSession } from '@/components/layout/FinanceShell';
@@ -34,6 +34,7 @@ export function VisitorPaymentsPage() {
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [flash, setFlash] = useState<string | null>(null);
+  const [proofView, setProofView] = useState<{ url: string; name: string } | null>(null);
   const seq = useRef(0);
 
   const load = useCallback(() => {
@@ -144,11 +145,33 @@ export function VisitorPaymentsPage() {
                   background: 'var(--sos-surface-1)',
                 }}
               >
+                {r.hasProof && r.proofUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => setProofView({ url: r.proofUrl!, name: r.name })}
+                    title="View uploaded receipt"
+                    style={{ padding: 0, border: '1px solid var(--sos-border-subtle)', borderRadius: 8, overflow: 'hidden', cursor: 'zoom-in', background: 'var(--sos-surface-2)', width: 52, height: 52, flexShrink: 0 }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={r.proofUrl} alt={`Receipt from ${r.name}`} style={{ width: 52, height: 52, objectFit: 'cover', display: 'block' }} />
+                  </button>
+                ) : (
+                  <div
+                    title="No receipt uploaded yet"
+                    style={{ width: 52, height: 52, flexShrink: 0, borderRadius: 8, border: '1px dashed var(--sos-border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sos-text-faint)' }}
+                  >
+                    <ImageOff size={16} />
+                  </div>
+                )}
+
                 <div style={{ minWidth: 160, flex: '1 1 200px' }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>{r.name}</div>
                   <div className="sos-text-faint" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <Clock size={12} /> {fmtWhen(r.createdAt)}{r.phone ? ` · ${r.phone}` : ''}
                   </div>
+                  {!r.hasProof ? (
+                    <div className="sos-text-faint" style={{ fontSize: 11, fontStyle: 'italic', marginTop: 2 }}>Awaiting receipt upload</div>
+                  ) : null}
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--sos-text-primary)' }}>{money(r.currency, r.amount)}</div>
@@ -203,6 +226,25 @@ export function VisitorPaymentsPage() {
       <div className="sos-text-faint" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
         <Wallet size={13} /> Cash payments are verified at the desk and appear in the reception payment register. Receipt scans + OCR land in a later update.
       </div>
+
+      {proofView ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Receipt from ${proofView.name}`}
+          onClick={() => setProofView(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(9,16,28,0.78)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '5vh 16px', zIndex: 1000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative', maxWidth: 640, width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff' }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600 }}>Receipt · {proofView.name}</div>
+              <button type="button" onClick={() => setProofView(null)} aria-label="Close" className="sos-btn sos-btn--ghost sos-btn--sm" style={{ color: '#fff' }}><X size={16} /></button>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={proofView.url} alt={`Receipt from ${proofView.name}`} style={{ width: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 12, background: '#fff' }} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

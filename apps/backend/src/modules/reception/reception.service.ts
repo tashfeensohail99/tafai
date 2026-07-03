@@ -13,6 +13,7 @@ import {
   VisitorPaymentStatus,
   WhatsAppThreadStatus,
 } from '@prisma/client';
+import * as QRCode from 'qrcode';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { LeadsService } from '../leads/leads.service';
 import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
@@ -20,6 +21,8 @@ import { FinanceService } from '../finance/finance.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { WhatsAppAppointmentNotifierService } from '../whatsapp/notifications/appointment-notifier.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { StorageService } from '../storage/storage.service';
+import { ConsultPayTokenService } from './consult-pay-token.service';
 import {
   CollectConsultationDto,
   CreateVisitDto,
@@ -67,6 +70,8 @@ export class ReceptionService {
     private readonly appointments: AppointmentsService,
     private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
     private readonly notifications: NotificationsService,
+    private readonly storage: StorageService,
+    private readonly payToken: ConsultPayTokenService,
   ) {}
 
   // ── Lookup — is this visitor already in the CRM? ─────────────────────────
@@ -707,6 +712,22 @@ export class ReceptionService {
       : [];
     const vmap = new Map(visits.map((v) => [v.id, v]));
 
+    // Sign the uploaded-receipt images (bank transfers only) so the finance
+    // verify screen can show them inline. Best-effort — a signing failure just
+    // drops the thumbnail, never the row.
+    const proofUrls = new Map<string, string>();
+    await Promise.all(
+      rows
+        .filter((r) => r.proofImageKey)
+        .map(async (r) => {
+          try {
+            proofUrls.set(r.id, await this.storage.getSignedUrl(r.proofImageKey!));
+          } catch (err) {
+            this.log.warn(`consult proof url failed: ${(err as Error).message}`);
+          }
+        }),
+    );
+
     const out = rows.map((r) => ({
       id: r.id,
       visitId: r.visitId,
@@ -718,6 +739,8 @@ export class ReceptionService {
       currency: r.currency,
       transactionRef: r.transactionRef,
       receiptNumber: r.receiptNumber,
+      hasProof: !!r.proofImageKey,
+      proofUrl: proofUrls.get(r.id) ?? null,
       createdAt: r.createdAt.toISOString(),
       verifiedAt: r.verifiedAt?.toISOString() ?? null,
       rejectedReason: r.rejectedReason,
@@ -738,6 +761,83 @@ export class ReceptionService {
     }
 
     return { rows: out, totals: { pendingCount, byCurrency } };
+  }
+
+  // ── QR self-upload (P4b): customer scans a desk QR → public upload page ────
+
+  /** A QR + link the desk shows so the customer can scan and upload their
+   *  transfer receipt. Only for a pending bank transfer. */
+  async getPayQr(visitorPaymentId: string) {
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id: visitorPaymentId } });
+    if (!vp) throw new NotFoundException('Payment not found');
+    if (vp.method !== VisitorPaymentMethod.BANK_TRANSFER || vp.status !== VisitorPaymentStatus.PENDING_REVIEW) {
+      throw new BadRequestException('A receipt upload is only available for a pending bank transfer.');
+    }
+    const { token, expiresAt } = this.payToken.make(vp.id);
+    const base = (process.env.FRONTEND_URL ?? 'https://tashfeengroup.com').replace(/\/$/, '');
+    const payUrl = `${base}/pay/${token}`;
+    const qrDataUrl = await QRCode.toDataURL(payUrl, { width: 320, margin: 1 });
+    return { token, payUrl, qrDataUrl, expiresAt };
+  }
+
+  /** PUBLIC (token-gated): fee + our receiving-bank details for the pay page.
+   *  No customer PII is returned — just the amount + where to send it. */
+  async getConsultPayInfo(token: string) {
+    const vpId = this.payToken.verify(token);
+    if (!vpId) throw new NotFoundException('This link is invalid or has expired.');
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id: vpId } });
+    if (!vp) throw new NotFoundException('This link is invalid or has expired.');
+    // Only hand out the receiving-bank details while the payment is still
+    // awaiting a transfer. Once finance has verified/rejected it, the page
+    // shows an "already handled" state — no need to keep exposing our bank
+    // block for the rest of the token's lifetime.
+    const pending = vp.status === VisitorPaymentStatus.PENDING_REVIEW;
+    const org = pending ? await this.orgRow() : null;
+    return {
+      status: vp.status,
+      amount: Number(vp.amount),
+      currency: vp.currency,
+      hasProof: !!vp.proofImageKey,
+      bank: {
+        name: pending ? org?.consultationBankName ?? null : null,
+        title: pending ? org?.consultationBankTitle ?? null : null,
+        iban: pending ? org?.consultationBankIban ?? null : null,
+      },
+    };
+  }
+
+  /** PUBLIC (token-gated): store the uploaded receipt image on the pending
+   *  payment. Finance still verifies it — this only attaches the proof. */
+  async uploadConsultProof(token: string, buffer: Buffer, mimeType: string, _filename?: string) {
+    const vpId = this.payToken.verify(token);
+    if (!vpId) throw new NotFoundException('This link is invalid or has expired.');
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id: vpId } });
+    if (!vp) throw new NotFoundException('This link is invalid or has expired.');
+    if (vp.status !== VisitorPaymentStatus.PENDING_REVIEW) {
+      throw new BadRequestException('This payment has already been handled — no upload is needed.');
+    }
+    if (!/^image\/(jpe?g|png|webp|heic|heif)$/i.test(mimeType)) {
+      throw new BadRequestException('Please upload a photo or screenshot of your receipt (JPG/PNG).');
+    }
+    // Deterministic, per-payment key: a re-upload (double-tap, retry, or the
+    // customer swapping the image) OVERWRITES the same object in place instead
+    // of minting a new one, so concurrent/repeated uploads can never orphan
+    // storage. Content-Type is set at upload, so the extension-less key still
+    // renders as an image via the signed URL.
+    const key = `receipts/consult/${vpId}`;
+    await this.storage.uploadAt(key, buffer, mimeType);
+    // Only attach the proof if the payment is STILL pending. If finance
+    // verified/rejected it in the tiny window since the check above, do NOT
+    // stamp the terminal row (a proof is meaningless there) — status-scoped so
+    // the write can never resurrect or re-flag a settled payment.
+    const res = await this.prisma.visitorPayment.updateMany({
+      where: { id: vpId, status: VisitorPaymentStatus.PENDING_REVIEW },
+      data: { proofImageKey: key },
+    });
+    if (res.count === 0) {
+      throw new BadRequestException('This payment has already been handled — no upload is needed.');
+    }
+    return { ok: true as const };
   }
 
   /**

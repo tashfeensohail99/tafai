@@ -1530,6 +1530,7 @@ model VisitorPayment {
 
   // OCR-extracted fields (later phase; advisory, finance still confirms).
   ocrAmount     Decimal? @db.Decimal(12, 2)
+  ocrCurrency   String?
   ocrReference  String?
   ocrBankName   String?
   ocrPaidAt     DateTime?

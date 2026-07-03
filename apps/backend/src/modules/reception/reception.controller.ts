@@ -120,6 +120,13 @@ export class ReceptionController {
     return this.reception.getPayQr(id);
   }
 
+  /** Finance re-runs the advisory OCR read on a pending payment's receipt. */
+  @Post('visitor-payments/:id/ocr')
+  @RequirePermissions('finance.verify_payment')
+  reReadOcr(@Param('id', ParseUUIDPipe) id: string) {
+    return this.reception.reReadReceiptOcr(id);
+  }
+
   @Post('visitor-payments/:id/verify')
   @RequirePermissions('finance.verify_payment')
   @Audit({ entityType: 'VisitorPayment', category: 'MUTATION', severity: 'HIGH', action: 'PAYMENT_VERIFIED' })

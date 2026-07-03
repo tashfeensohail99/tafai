@@ -97,6 +97,14 @@ export interface VisitorPaymentRow {
   receiptNumber: string | null;
   hasProof: boolean;
   proofUrl: string | null;
+  // Advisory OCR read of the uploaded receipt (P4c) — finance still confirms.
+  ocrStatus: string | null; // SKIPPED | READING | DONE | FAILED | null
+  ocrAmount: number | null;
+  ocrCurrency: string | null;
+  ocrReference: string | null;
+  ocrBankName: string | null;
+  ocrPaidAt: string | null;
+  ocrConfidence: number | null;
   createdAt: string;
   verifiedAt: string | null;
   rejectedReason: string | null;
@@ -236,6 +244,11 @@ export async function rejectVisitorPayment(id: string, reason: string): Promise<
     method: 'POST',
     body: JSON.stringify({ reason }),
   });
+}
+
+/** Finance re-runs the advisory OCR read on a pending payment's receipt. */
+export async function reReadVisitorPaymentOcr(id: string): Promise<{ ocrStatus: string }> {
+  return apiFetch(`/reception/visitor-payments/${id}/ocr`, { method: 'POST' });
 }
 
 export interface PayQr {

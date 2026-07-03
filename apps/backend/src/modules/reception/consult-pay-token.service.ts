@@ -21,13 +21,14 @@ export class ConsultPayTokenService {
     DEV_FALLBACK_SECRET;
 
   constructor() {
-    // A public, token-gated surface: if the signing secret is the built-in
-    // dev default, anyone could forge an upload token. Loudly flag it so a
-    // misconfigured prod (neither env var set) can't slip through unnoticed.
+    // A public, token-gated surface: if the signing secret is the built-in dev
+    // default, anyone could forge an upload token. FAIL CLOSED in production —
+    // refuse to boot rather than serve forgeable tokens; only warn in dev.
     if (this.secret === DEV_FALLBACK_SECRET) {
-      this.log.warn(
-        'Using the built-in dev secret for consult-pay tokens — set CONSULT_PAY_TOKEN_SECRET or WHATSAPP_ENCRYPTION_KEY so QR receipt-upload tokens are unforgeable.',
-      );
+      const msg =
+        'consult-pay tokens are using the built-in dev secret — set CONSULT_PAY_TOKEN_SECRET or WHATSAPP_ENCRYPTION_KEY so QR receipt-upload tokens are unforgeable.';
+      if (process.env.NODE_ENV === 'production') throw new Error(msg);
+      this.log.warn(msg);
     }
   }
 

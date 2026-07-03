@@ -1,12 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BadgeCheck, Clock, ImageOff, Loader2, Wallet, X, XCircle } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, Clock, ImageOff, Loader2, RefreshCw, ScanLine, Wallet, X, XCircle } from 'lucide-react';
 import { GlassCard, GhostButton, PageHeader, PrimaryButton } from '@/components/sales-v2/ui';
 import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
 import { useFinanceSession } from '@/components/layout/FinanceShell';
 import {
   listVisitorPayments,
+  reReadVisitorPaymentOcr,
   rejectVisitorPayment,
   verifyVisitorPayment,
   type VisitorPaymentList,
@@ -23,6 +24,22 @@ function fmtWhen(iso: string): string {
   return `${d.getUTCDate()}/${d.getUTCMonth() + 1} ${t}`;
 }
 
+/** Short date (no time) for the OCR-read transaction date. */
+function fmtDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Does the OCR-read amount AND currency line up with what the desk expects? A
+ *  same-number receipt in another currency is a mismatch, not a match. */
+function amountMatch(row: VisitorPaymentRow): 'match' | 'mismatch' | null {
+  if (row.ocrAmount == null) return null;
+  const numOk = Math.abs(row.ocrAmount - row.amount) < 1;
+  const curOk = !row.ocrCurrency || row.ocrCurrency.toUpperCase() === row.currency.toUpperCase();
+  return numOk && curOk ? 'match' : 'mismatch';
+}
+
 export function VisitorPaymentsPage() {
   const { user } = useFinanceSession();
   const canVerify = user.permissions.includes('finance.verify_payment');
@@ -35,6 +52,7 @@ export function VisitorPaymentsPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [flash, setFlash] = useState<string | null>(null);
   const [proofView, setProofView] = useState<{ url: string; name: string } | null>(null);
+  const [ocrBusyId, setOcrBusyId] = useState<string | null>(null);
   const seq = useRef(0);
 
   const load = useCallback(() => {
@@ -96,6 +114,18 @@ export function VisitorPaymentsPage() {
       load();
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function reReadOcr(row: VisitorPaymentRow) {
+    setOcrBusyId(row.id);
+    try {
+      await reReadVisitorPaymentOcr(row.id);
+    } catch {
+      /* the row refresh below surfaces the resulting ocrStatus */
+    } finally {
+      setOcrBusyId(null);
+      load();
     }
   }
 
@@ -180,6 +210,77 @@ export function VisitorPaymentsPage() {
                   </div>
                 </div>
 
+                {/* OCR read of the uploaded receipt (advisory). Only for rows with a proof. */}
+                {r.hasProof && r.ocrStatus && r.ocrStatus !== 'SKIPPED' ? (
+                  (() => {
+                    const reading = r.ocrStatus === 'READING' || ocrBusyId === r.id;
+                    const match = amountMatch(r);
+                    return (
+                      <div
+                        style={{
+                          flex: '1 1 100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          flexWrap: 'wrap',
+                          padding: '8px 11px',
+                          borderRadius: 9,
+                          border: '1px solid var(--sos-border-subtle)',
+                          background: 'var(--sos-surface-2)',
+                          fontSize: 12.5,
+                        }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--sos-text-faint)', fontWeight: 600 }}>
+                          <ScanLine size={13} /> Receipt read
+                        </span>
+                        {reading ? (
+                          <span className="sos-text-faint" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> reading…
+                          </span>
+                        ) : r.ocrStatus === 'FAILED' ? (
+                          <>
+                            <span className="sos-text-faint">couldn’t read this image</span>
+                            <button
+                              type="button"
+                              onClick={() => void reReadOcr(r)}
+                              disabled={ocrBusyId != null}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: 'var(--sos-brand-accent)', fontSize: 12, cursor: 'pointer', padding: 0 }}
+                            >
+                              <RefreshCw size={12} /> Re-read
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span style={{ color: 'var(--sos-text-primary)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                              {r.ocrAmount != null ? money(r.ocrCurrency ?? r.currency, r.ocrAmount) : '—'}
+                            </span>
+                            {/* Only a MISMATCH is flagged (warning). A "match" is deliberately
+                                NOT shown as a reassuring green tick — the read comes from a
+                                customer-supplied image and must never substitute for checking
+                                the amount + that funds landed. A neutral note is the most we say. */}
+                            {match === 'mismatch' ? (
+                              <span
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                                  color: 'var(--sos-status-warning)',
+                                  background: 'var(--sos-status-warning-soft, rgba(245,158,11,0.12))',
+                                }}
+                              >
+                                <AlertTriangle size={11} /> differs from expected
+                              </span>
+                            ) : match === 'match' ? (
+                              <span className="sos-text-faint" style={{ fontSize: 11 }}>≈ expected — verify against the image</span>
+                            ) : null}
+                            {r.ocrPaidAt ? <span className="sos-text-faint">· {fmtDay(r.ocrPaidAt)}</span> : null}
+                            {r.ocrReference ? <span className="sos-text-faint" style={{ fontVariantNumeric: 'tabular-nums' }}>· Ref {r.ocrReference}</span> : null}
+                            {r.ocrBankName ? <span className="sos-text-faint">· {r.ocrBankName}</span> : null}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : null}
+
                 {rejectId === r.id ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '1 1 100%' }}>
                     <input
@@ -224,7 +325,7 @@ export function VisitorPaymentsPage() {
       </GlassCard>
 
       <div className="sos-text-faint" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Wallet size={13} /> Cash payments are verified at the desk and appear in the reception payment register. Receipt scans + OCR land in a later update.
+        <Wallet size={13} /> Cash payments are verified at the desk and appear in the reception payment register. The receipt read is an AI assist that can be fooled by a doctored image — always confirm the amount against the image <em>and</em> that the funds actually landed in our account before verifying.
       </div>
 
       {proofView ? (

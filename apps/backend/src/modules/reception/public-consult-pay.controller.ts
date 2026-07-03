@@ -14,7 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { MulterError } from 'multer';
 import type { Response } from 'express';
 import { ReceptionService } from './reception.service';
@@ -62,6 +62,9 @@ export class PublicConsultPayController {
 
   /** Store the customer's uploaded receipt/screenshot on the pending payment. */
   @Post(':token/upload')
+  // A receipt upload triggers a billed OCR read; cap it tighter than the
+  // controller default (a customer needs one or two tries, not a page-nav budget).
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
   @UseFilters(MulterUploadExceptionFilter)
   @UseInterceptors(
     FileInterceptor('file', {

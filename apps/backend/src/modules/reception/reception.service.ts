@@ -22,6 +22,8 @@ import { AppointmentsService } from '../appointments/appointments.service';
 import { WhatsAppAppointmentNotifierService } from '../whatsapp/notifications/appointment-notifier.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
+import { OpenAiService } from '../ai/openai.service';
+import { ApiKeysService } from '../api-keys/api-keys.service';
 import { ConsultPayTokenService } from './consult-pay-token.service';
 import {
   CollectConsultationDto,
@@ -72,6 +74,8 @@ export class ReceptionService {
     private readonly notifications: NotificationsService,
     private readonly storage: StorageService,
     private readonly payToken: ConsultPayTokenService,
+    private readonly openai: OpenAiService,
+    private readonly apiKeys: ApiKeysService,
   ) {}
 
   // ── Lookup — is this visitor already in the CRM? ─────────────────────────
@@ -741,6 +745,14 @@ export class ReceptionService {
       receiptNumber: r.receiptNumber,
       hasProof: !!r.proofImageKey,
       proofUrl: proofUrls.get(r.id) ?? null,
+      // Advisory OCR read of the uploaded receipt (P4c) — finance still confirms.
+      ocrStatus: r.ocrStatus,
+      ocrAmount: r.ocrAmount != null ? Number(r.ocrAmount) : null,
+      ocrCurrency: r.ocrCurrency, // what the model read on the receipt (may differ from expected)
+      ocrReference: r.ocrReference,
+      ocrBankName: r.ocrBankName,
+      ocrPaidAt: r.ocrPaidAt?.toISOString() ?? null,
+      ocrConfidence: r.ocrConfidence,
       createdAt: r.createdAt.toISOString(),
       verifiedAt: r.verifiedAt?.toISOString() ?? null,
       rejectedReason: r.rejectedReason,
@@ -837,7 +849,116 @@ export class ReceptionService {
     if (res.count === 0) {
       throw new BadRequestException('This payment has already been handled — no upload is needed.');
     }
+    // Fire-and-forget an advisory OCR read so finance sees the amount/date/ref
+    // parsed off the receipt when they open the queue. Never blocks the
+    // customer's upload response, never throws into it.
+    void this.runReceiptOcr(vpId, buffer, mimeType);
     return { ok: true as const };
+  }
+
+  // ── Receipt OCR (P4c): advisory read of the uploaded proof for finance ──────
+
+  /** Status-scoped ocrStatus write; returns rows touched (0 = row not pending). */
+  private async setOcrStatus(visitorPaymentId: string, ocrStatus: string): Promise<number> {
+    const res = await this.prisma.visitorPayment.updateMany({
+      where: { id: visitorPaymentId, status: VisitorPaymentStatus.PENDING_REVIEW },
+      data: { ocrStatus },
+    });
+    return res.count;
+  }
+
+  /**
+   * Best-effort vision OCR of an uploaded receipt → the advisory ocr* fields on
+   * the VisitorPayment. Reuses the admin OpenAI key (the same engine the
+   * document parser uses for extraction). Never throws; every DB write is
+   * status-scoped to PENDING_REVIEW so a concurrent verify/reject is never
+   * clobbered and a settled payment is never re-stamped.
+   *
+   * Cost-bounded: the read is claimed atomically and ONLY from an unread row
+   * (ocrStatus null) or a STALE 'READING' (a prior read that died mid-flight).
+   * So the public upload path bills at most ONE vision call per payment no
+   * matter how many times a (reusable) token re-uploads, and a distributed set
+   * of IPs can't amplify it — the cap lives on the payment row, not the IP.
+   * A fresh read on demand goes through the auth-gated {@link reReadReceiptOcr},
+   * which resets ocrStatus to null first.
+   */
+  private async runReceiptOcr(visitorPaymentId: string, buffer: Buffer, mimeType: string): Promise<void> {
+    try {
+      // No OpenAI key configured → mark SKIPPED (UI shows nothing), don't error.
+      if (!(await this.apiKeys.hasActiveKey('openai'))) {
+        await this.setOcrStatus(visitorPaymentId, 'SKIPPED');
+        return;
+      }
+      // Atomic claim: unread (null) OR a stale in-flight read (self-heals a
+      // process that died mid-OCR). A concurrent claim on the same row loses
+      // (the row is no longer null/stale), so no duplicate billed calls.
+      const staleBefore = new Date(Date.now() - 2 * 60 * 1000);
+      const claim = await this.prisma.visitorPayment.updateMany({
+        where: {
+          id: visitorPaymentId,
+          status: VisitorPaymentStatus.PENDING_REVIEW,
+          OR: [{ ocrStatus: null }, { ocrStatus: 'READING', updatedAt: { lt: staleBefore } }],
+        },
+        data: { ocrStatus: 'READING' },
+      });
+      if (claim.count === 0) return; // already read/reading, or settled
+      const r = await this.openai.readReceiptImage(buffer, mimeType);
+      if (!r) {
+        await this.setOcrStatus(visitorPaymentId, 'FAILED');
+        return;
+      }
+      const paidAt = r.paidAt ? new Date(r.paidAt) : null;
+      // Clamp the amount to the column's Decimal(12,2) range — an absurd OCR
+      // number (garbled/adversarial image) becomes null instead of throwing the
+      // whole write and nuking the other correctly-read fields.
+      const ocrAmount =
+        r.amount != null && Number.isFinite(r.amount) && Math.abs(r.amount) < 1e10
+          ? new Prisma.Decimal(r.amount.toFixed(2))
+          : null;
+      await this.prisma.visitorPayment.updateMany({
+        where: { id: visitorPaymentId, status: VisitorPaymentStatus.PENDING_REVIEW },
+        data: {
+          ocrAmount,
+          ocrCurrency: r.currency,
+          ocrReference: r.reference,
+          ocrBankName: r.bankName,
+          ocrPaidAt: paidAt && !Number.isNaN(paidAt.getTime()) ? paidAt : null,
+          ocrRawText: r.rawText,
+          ocrConfidence: r.confidence,
+          ocrStatus: 'DONE',
+        },
+      });
+    } catch (e) {
+      this.log.warn(`receipt OCR error for ${visitorPaymentId}: ${(e as Error).message}`);
+      await this.setOcrStatus(visitorPaymentId, 'FAILED').catch(() => undefined);
+    }
+  }
+
+  /**
+   * Finance-triggered re-read of a pending payment's uploaded receipt (the
+   * upload-time OCR is fire-and-forget, so this is the retry when it failed or
+   * the desk wants a fresh read). Downloads the stored proof and re-runs OCR.
+   */
+  async reReadReceiptOcr(visitorPaymentId: string): Promise<{ ocrStatus: string }> {
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id: visitorPaymentId } });
+    if (!vp) throw new NotFoundException('Payment not found');
+    if (vp.status !== VisitorPaymentStatus.PENDING_REVIEW) {
+      throw new BadRequestException('Only a pending payment can be re-read.');
+    }
+    if (!vp.proofImageKey) throw new BadRequestException('No receipt has been uploaded yet.');
+    const { bytes, mimeType } = await this.storage.download(vp.proofImageKey);
+    // Reset the read state (clears a prior DONE or a stuck 'READING') so the
+    // claim in runReceiptOcr always re-runs on this finance-triggered retry.
+    await this.prisma.visitorPayment.updateMany({
+      where: { id: visitorPaymentId, status: VisitorPaymentStatus.PENDING_REVIEW },
+      data: { ocrStatus: null },
+    });
+    await this.runReceiptOcr(visitorPaymentId, bytes, mimeType ?? 'image/jpeg');
+    const after = await this.prisma.visitorPayment.findUnique({
+      where: { id: visitorPaymentId },
+      select: { ocrStatus: true },
+    });
+    return { ocrStatus: after?.ocrStatus ?? 'FAILED' };
   }
 
   /**

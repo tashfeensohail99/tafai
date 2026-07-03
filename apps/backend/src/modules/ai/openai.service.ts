@@ -5,6 +5,23 @@ import { ApiKeysService } from '../api-keys/api-keys.service';
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const CHAT_MODEL = 'gpt-4o-mini';
 const TRANSCRIPTION_MODEL = 'whisper-1';
+// gpt-4o-mini is multimodal — the same "gpt4o_mini_vision" tier the document
+// parser already uses for field extraction. Reused here to OCR bank receipts.
+const VISION_MODEL = 'gpt-4o-mini';
+
+/** Advisory fields lifted off a bank-transfer receipt / payment screenshot. */
+export interface ReceiptOcrFields {
+  amount: number | null;
+  currency: string | null;
+  /** Transaction date as YYYY-MM-DD, or null if not clearly printed. */
+  paidAt: string | null;
+  sender: string | null;
+  bankName: string | null;
+  reference: string | null;
+  rawText: string | null;
+  /** 0..1 — the model's confidence this is a genuine receipt for the amount. */
+  confidence: number | null;
+}
 
 /**
  * Thin wrapper around the OpenAI SDK that:
@@ -78,6 +95,86 @@ export class OpenAiService {
       outputTokens: res.usage?.completion_tokens ?? 0,
       latencyMs,
     };
+  }
+
+  /**
+   * Vision-extract the key fields from a bank-transfer RECEIPT / payment-app
+   * screenshot (amount, date, sender, bank, reference) as strict JSON. Used by
+   * the reception module to give finance an advisory read of a QR-uploaded
+   * consultation receipt — the officer still verifies the payment by hand, so a
+   * wrong or missing read is harmless. Returns null on ANY failure (no key,
+   * transport, non-JSON) rather than throwing: a missed read just hides the hint.
+   *
+   * The read is deliberately INDEPENDENT of what the desk expects — no expected
+   * amount is fed to the model, so a doctored image can't be nudged into
+   * "confirming" the desk's figure; a real discrepancy surfaces as a mismatch.
+   */
+  async readReceiptImage(image: Buffer, mimeType: string): Promise<ReceiptOcrFields | null> {
+    try {
+      const c = await this.getClient();
+      const dataUrl = `data:${mimeType};base64,${image.toString('base64')}`;
+      const res = await c.chat.completions.create({
+        model: VISION_MODEL,
+        temperature: 0,
+        max_tokens: 700,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You read Pakistani and international bank-transfer receipts and payment-app screenshots (UBL, HBL, Meezan, Bank Alfalah, JazzCash, Easypaisa, Raast, SWIFT wire slips). Extract ONLY what is literally printed; never guess. Always reply with a single JSON object.',
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text:
+                  'Return a JSON object with exactly these keys: ' +
+                  'amount (number — the transferred/paid amount, digits only, no thousands separators; null if unreadable), ' +
+                  'currency (ISO code like PKR/USD/AED if shown, else null), ' +
+                  'paidAt (transaction date as YYYY-MM-DD if present, else null), ' +
+                  'sender (payer / from-account holder name if shown, else null), ' +
+                  'bankName (bank or wallet name, e.g. UBL / HBL / JazzCash, else null), ' +
+                  'reference (transaction id / TID / reference / trace number, else null), ' +
+                  'confidence (0..1 — how sure you are this is a genuine payment receipt AND the amount is correct), ' +
+                  'rawText (all text you can read as one string). ' +
+                  'The transferred amount is usually the figure labelled Amount / Transfer / Debit / Paid — not an account or reference number. ' +
+                  'Use null for anything not clearly present.',
+              },
+              { type: 'image_url', image_url: { url: dataUrl, detail: 'auto' } },
+            ],
+          },
+        ],
+      });
+      const txt = res.choices[0]?.message?.content?.trim();
+      if (!txt) return null;
+      const p = JSON.parse(txt) as Record<string, unknown>;
+      const num = (v: unknown): number | null => {
+        if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+        if (typeof v === 'string') {
+          const n = parseFloat(v.replace(/[^0-9.]/g, ''));
+          return Number.isFinite(n) ? n : null;
+        }
+        return null;
+      };
+      const str = (v: unknown): string | null =>
+        typeof v === 'string' && v.trim() ? v.trim().slice(0, 500) : null;
+      const conf = num(p.confidence);
+      return {
+        amount: num(p.amount),
+        currency: str(p.currency),
+        paidAt: str(p.paidAt),
+        sender: str(p.sender),
+        bankName: str(p.bankName),
+        reference: str(p.reference),
+        rawText: typeof p.rawText === 'string' ? p.rawText.slice(0, 4000) : null,
+        confidence: conf != null ? Math.max(0, Math.min(1, conf)) : null,
+      };
+    } catch (e) {
+      this.log.warn(`receipt OCR failed: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   /**

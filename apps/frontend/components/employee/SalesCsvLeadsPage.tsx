@@ -20,7 +20,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { apiFetch } from '@/lib/api-client';
-import { sendTemplateToLead } from '@/lib/whatsapp';
+import { renderWelcomeMessage, waWebLink } from '@/lib/lead-imports-api';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 
 /**
@@ -69,7 +69,6 @@ export function SalesCsvLeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [batchFilter, setBatchFilter] = useState<string>('ALL');
-  const [sendingId, setSendingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -199,6 +198,8 @@ export function SalesCsvLeadsPage() {
                 {filtered.map((lead) => {
                   const batch = lead.importRows?.[0]?.batch;
                   const importedAt = lead.importRows?.[0]?.createdAt ?? lead.createdAt;
+                  const text = renderWelcomeMessage(null, { firstName: lead.firstName });
+                  const link = waWebLink(lead.phone, text);
                   return (
                     <tr key={lead.id} style={{ borderBottom: '1px solid var(--sos-divider)' }}>
                       <td style={{ padding: '14px 16px' }}>
@@ -231,27 +232,25 @@ export function SalesCsvLeadsPage() {
                         </div>
                       </td>
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          disabled={sendingId === lead.id}
-                          onClick={async () => {
-                            // Send the CRM welcome template from the BUSINESS number
-                            // (not the rep's personal WhatsApp), then open the chat.
-                            setSendingId(lead.id);
-                            try {
-                              await sendTemplateToLead(lead.id);
-                              window.location.href = `/sales/leads/${lead.id}?tab=whatsapp`;
-                            } catch (err) {
-                              alert(err instanceof Error ? err.message : 'Failed to send WhatsApp template');
-                              setSendingId(null);
-                            }
+                        <a
+                          href={link}
+                          target="tashfeen-whatsapp"
+                          onClick={(e) => {
+                            // Reuse ONE WhatsApp tab instead of spawning a fresh,
+                            // cold-loading tab on every click (the old target="_blank"
+                            // behaviour). window.open with a fixed window name navigates
+                            // the existing WhatsApp tab to the new chat and focuses it,
+                            // so reps aren't left with a pile of slow WhatsApp tabs.
+                            e.preventDefault();
+                            const w = window.open(link, 'tashfeen-whatsapp');
+                            if (w) w.focus();
                           }}
                           className="sos-btn sos-btn--primary sos-btn--sm"
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-                          title="Sends the CRM welcome template from the business number, then opens the chat"
+                          title="Opens WhatsApp with the welcome message pre-filled (reuses one WhatsApp tab)"
                         >
-                          <MessageSquare size={13} /> {sendingId === lead.id ? 'Sending…' : 'Send message'}
-                        </button>
+                          <MessageSquare size={13} /> WhatsApp
+                        </a>
                       </td>
                     </tr>
                   );

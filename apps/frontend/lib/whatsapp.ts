@@ -251,6 +251,22 @@ export async function getThreadForLead(leadId: string): Promise<ThreadListItem |
 }
 
 /**
+ * Send the CRM welcome/outreach TEMPLATE to a lead by lead id, from the
+ * business number. The backend resolves-or-creates the WhatsApp thread for the
+ * lead, sends the approved template, and returns the thread id — so the caller
+ * can open the in-CRM chat. Use this for FIRST contact (no personal WhatsApp).
+ */
+export async function sendTemplateToLead(
+  leadId: string,
+  input?: { templateName?: string; language?: string; idempotencyKey?: string },
+): Promise<{ threadId: string; message: ChatMessage | null }> {
+  return apiFetch<{ threadId: string; message: ChatMessage | null }>(
+    `/whatsapp/leads/${leadId}/send-template`,
+    { method: 'POST', body: JSON.stringify(input ?? {}) },
+  );
+}
+
+/**
  * Fetch a single thread in the exact list-row shape — used by the realtime
  * patch path to refresh just one row on a socket event instead of refetching
  * the whole list. Resolves to null when the thread no longer exists or is no

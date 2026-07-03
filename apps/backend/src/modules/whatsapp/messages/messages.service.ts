@@ -26,12 +26,15 @@ const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = 'ffmpeg';
 import {
   Prisma,
+  WhatsAppChannelStatus,
   WhatsAppMessageDirection,
   WhatsAppMessageStatus,
   WhatsAppMessageType,
+  WhatsAppTemplateCategory,
   WhatsAppThreadStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { normalisePhone } from '../../../common/phone/phone.util';
 import { StorageService } from '../../storage/storage.service';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../queues/queue-contracts';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
@@ -216,6 +219,38 @@ export class WhatsAppMessagesService {
 
   async sendTemplate(caller: CallerContext, input: SendTemplateInput) {
     const thread = await this.thread(caller, input.threadId);
+    // Opt-out gate — MARKETING templates only. A customer who replied STOP has
+    // their waId recorded in whatsapp.opt_outs (see ai-reply.processor OPT_OUT).
+    // Meta's opt-out is about PROMOTIONAL (MARKETING) messaging, so we refuse
+    // MARKETING templates to them — bulk re-engage, per-lead CRM outreach, and
+    // any other promotional template all funnel through here, so this one check
+    // honors the opt-out everywhere. Transactional templates (UTILITY receipts /
+    // appointment confirmations, AUTHENTICATION OTPs) are deliberately NOT gated:
+    // a lead who opted out and later became a paying client must still receive
+    // their receipts — those are consented-to and, with the 24h window closed,
+    // a template is the only channel. In-window replies (sendText/media) aren't
+    // gated either. Unknown/unsynced templates fail OPEN (send) — the only
+    // promotional template we send, reengage_personal, is synced as MARKETING,
+    // and blocking a transactional message is the worse failure. To resume
+    // promotional messages to an opted-out contact, an admin clears the
+    // whatsapp.opt_outs row (no self-serve UI yet — see backlog).
+    if (thread.waContactId) {
+      const tpl = await this.prisma.whatsAppTemplate.findFirst({
+        where: { channelId: thread.channelId, name: input.templateName },
+        select: { category: true },
+      });
+      if (tpl?.category === WhatsAppTemplateCategory.MARKETING) {
+        const optedOut = await this.prisma.whatsAppOptOut.findUnique({
+          where: { waId: thread.waContactId },
+          select: { waId: true },
+        });
+        if (optedOut) {
+          throw new ForbiddenException(
+            'This contact opted out of promotional WhatsApp messages (they replied STOP). Transactional messages are unaffected.',
+          );
+        }
+      }
+    }
     const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
     // Repair empty template BODY parameters before the message reaches Meta.
     // The web picker pre-fills {{1}} with the contact name and blocks empty
@@ -267,6 +302,180 @@ export class WhatsAppMessagesService {
       });
     }
     return message;
+  }
+
+  /**
+   * Send an approved WhatsApp TEMPLATE to a LEAD from the CRM business number,
+   * creating the conversation thread on the fly when the lead has never
+   * messaged. This is how a rep makes FIRST contact on the CRM number instead
+   * of their personal WhatsApp: Meta only permits business-initiated messages
+   * via an approved template, so this always sends a template (never free
+   * text) and is exempt from the 24h window. Returns the thread id so the UI
+   * can open the in-CRM chat.
+   *
+   * Guards: the lead must be assigned to the caller (admins may message any),
+   * and blocked leads are refused. The thread is keyed on the same
+   * (channelId, waContactId) as the inbound webhook, so a later inbound reply
+   * updates THIS row instead of creating a duplicate.
+   */
+  async sendTemplateToLead(
+    caller: CallerContext,
+    input: { leadId: string; templateName?: string; language?: string; idempotencyKey?: string },
+  ) {
+    const lead = await this.prisma.lead.findUnique({
+      where: { id: input.leadId },
+      select: {
+        id: true,
+        phone: true,
+        firstName: true,
+        assignedEmployeeId: true,
+        convertedClientId: true,
+        blockedAt: true,
+      },
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+
+    // Ownership: a rep may only message their OWN lead; admins (view_all) any.
+    if (!caller.canViewAll && lead.assignedEmployeeId !== caller.employeeId) {
+      throw new ForbiddenException('This lead is not assigned to you');
+    }
+    // Refuse BLOCKED contacts. Block state lives on the lead AND, after
+    // conversion, on the client — and the inbound webhook roots a converted
+    // contact's thread on the CLIENT (leadId null), so a client-only block must
+    // count too. Mirrors the reengage batch, which filters lead+client blockedAt.
+    let contactBlocked = !!lead.blockedAt;
+    if (!contactBlocked && lead.convertedClientId) {
+      const client = await this.prisma.client.findUnique({
+        where: { id: lead.convertedClientId },
+        select: { blockedAt: true },
+      });
+      contactBlocked = !!client?.blockedAt;
+    }
+    if (contactBlocked) {
+      throw new BadRequestException('This contact is blocked — unblock them before messaging.');
+    }
+
+    // Reuse the lead's existing thread if it already has one (from any prior
+    // inbound message/call). Lead↔Thread is 1:1 (WhatsAppThread.leadId is
+    // @unique), so we must NEVER create a second thread for the same lead — and
+    // reusing it also reconciles any phone-format drift between the lead's
+    // stored number and the thread's waContactId. Only when there's no thread
+    // yet do we open one outbound-first on the active channel.
+    const existingThread = await this.prisma.whatsAppThread.findUnique({
+      where: { leadId: lead.id },
+      select: { id: true },
+    });
+
+    let threadId: string;
+    if (existingThread) {
+      threadId = existingThread.id;
+    } else {
+      // Normalise to E.164 digits WITHOUT the '+', exactly how the inbound
+      // webhook stores waContactId, so this thread reconciles with any thread a
+      // future inbound message would upsert on the same (channelId, waContactId).
+      const norm = normalisePhone(lead.phone);
+      if (!norm.ok || !norm.e164) {
+        throw new BadRequestException(
+          `This lead has no valid phone number to message (${norm.reason ?? 'invalid number'}).`,
+        );
+      }
+      const waContactId = norm.e164.replace(/\D/g, '');
+
+      // Persist the canonical E.164 back to the lead so a future inbound REPLY
+      // (the webhook resolves the sender by EXACT phone) reconciles to THIS lead
+      // instead of spawning a duplicate. Skip if another lead already holds the
+      // canonical number, to avoid creating a same-number duplicate — the
+      // outbound thread still links to this lead either way.
+      if (lead.phone !== norm.e164) {
+        const clash = await this.prisma.lead.findFirst({
+          where: { phone: norm.e164, deletedAt: null, id: { not: lead.id } },
+          select: { id: true },
+        });
+        if (!clash) {
+          await this.prisma.lead.update({
+            where: { id: lead.id },
+            data: { phone: norm.e164 },
+          });
+        }
+      }
+
+      // Send from the org's ACTIVE WhatsApp channel (the CRM business number).
+      const channel = await this.prisma.whatsAppChannel.findFirst({
+        where: { status: WhatsAppChannelStatus.ACTIVE },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      if (!channel) {
+        throw new BadRequestException('No active WhatsApp channel is configured to send from.');
+      }
+
+      const clientId = lead.convertedClientId ?? null;
+      const now = new Date();
+      // upsert on (channelId, waContactId): if the inbound webhook races us with
+      // a message from the same number, whichever runs second just updates the
+      // existing row instead of creating a duplicate.
+      const created = await this.prisma.whatsAppThread.upsert({
+        where: { channelId_waContactId: { channelId: channel.id, waContactId } },
+        create: {
+          channelId: channel.id,
+          waContactId,
+          leadId: lead.id,
+          clientId,
+          status: WhatsAppThreadStatus.OPEN,
+          lastMessageAt: now,
+          lastHumanActivityAt: now,
+        },
+        update: {
+          leadId: lead.id,
+          ...(clientId ? { clientId } : {}),
+        },
+        select: { id: true },
+      });
+      threadId = created.id;
+    }
+
+    // Template body params — reengage_personal: "Hi {{1}}, this is {{2}} from
+    // Tashfeen …". {{1}} = the lead's first name, {{2}} = the rep's name.
+    const rep = caller.employeeId
+      ? await this.prisma.employee.findUnique({
+          where: { id: caller.employeeId },
+          select: { firstName: true },
+        })
+      : null;
+    const repName = rep?.firstName?.trim() || 'Tashfeen Immigration Solutions';
+    const leadFirstName = lead.firstName?.trim() || 'there';
+    const components: Array<Record<string, unknown>> = [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: leadFirstName },
+          { type: 'text', text: repName },
+        ],
+      },
+    ];
+
+    // Coarse time-bucketed idempotency key: a double-click / two-tab / retry
+    // burst collapses to ONE send (WhatsAppMessage.idempotencyKey is @unique),
+    // while genuinely re-contacting the lead a couple of minutes later stays
+    // allowed. A collision throws P2002, which we treat as an idempotent no-op.
+    const bucket = Math.floor(Date.now() / 120_000); // 2-minute window
+    const idempotencyKey = input.idempotencyKey ?? `wa-tpl-lead-${threadId}-b${bucket}`;
+    try {
+      const message = await this.sendTemplate(caller, {
+        threadId,
+        templateName: input.templateName?.trim() || 'reengage_personal',
+        language: input.language?.trim() || 'en',
+        components,
+        idempotencyKey,
+      });
+      return { threadId, message };
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // Same lead + same 2-minute window: the template already went out.
+        return { threadId, message: null };
+      }
+      throw err;
+    }
   }
 
   /**
@@ -998,6 +1207,7 @@ export class WhatsAppMessagesService {
         leadId: true,
         clientId: true,
         windowExpiresAt: true,
+        waContactId: true,
         lead: { select: { id: true, assignedEmployeeId: true } },
       },
     });

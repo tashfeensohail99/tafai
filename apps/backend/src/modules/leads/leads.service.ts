@@ -49,9 +49,17 @@ export class LeadsService {
       ...(query.targetCountry ? { targetCountry: { equals: query.targetCountry, mode: 'insensitive' } } : {}),
       ...this.createdRange(query),
       // CSV-origin filter: lead has at least one import-row with a
-      // successful (IMPORTED or DUPLICATE) outcome.
+      // successful (IMPORTED or DUPLICATE) outcome. Once the customer REPLIES
+      // (their WhatsApp thread gets a first inbound) the lead is a live inbox
+      // conversation, so it drops off the CSV worklist — "leave on reply". The
+      // drip's own outbound template does NOT set firstInboundAt, so a lead
+      // mid-drip (touch sent, no reply) correctly stays on the list. NOT (vs a
+      // top-level OR) so it composes with the rep-scope / search OR clauses.
       ...(query.fromCsv
-        ? { importRows: { some: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } } } }
+        ? {
+            importRows: { some: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } } },
+            NOT: { whatsappThread: { is: { firstInboundAt: { not: null } } } },
+          }
         : {}),
       ...(!canViewAll
         ? {

@@ -16,6 +16,11 @@ export const WHATSAPP_QUEUE = {
   // a human has since replied, a newer inbound landed, or the thread's AI
   // got disabled.
   AI_REPLY: 'whatsapp-ai-reply',
+  // CSV auto-drip — two-touch template outreach for CSV-imported leads.
+  // touch 1 fires ~on import (small stagger), touch 2 ~40h later ONLY if the
+  // lead hasn't replied. The processor re-checks every guard at fire-time
+  // (opted-out, blocked, recently-active, per-channel daily cap, replied).
+  CSV_DRIP: 'whatsapp-csv-drip',
 } as const;
 
 export type WhatsAppQueueName = (typeof WHATSAPP_QUEUE)[keyof typeof WHATSAPP_QUEUE];
@@ -48,6 +53,18 @@ export interface AiReplyJob {
   inboundMessageId: string;
   threadId: string;
   body: string;
+}
+
+export interface CsvDripJob {
+  leadId: string;
+  // Which of the two touches this job is. touch 1 also schedules touch 2.
+  touch: 1 | 2;
+  // touch1 send time (ms epoch), carried on the touch-2 job so its "has the
+  // lead replied since touch 1?" guard needs no extra lookup.
+  touch1At?: number;
+  // Incremented each time the per-channel daily cap defers this touch, so the
+  // processor can give up after a bounded number of re-checks.
+  deferrals?: number;
 }
 
 export interface CampaignRecipientJob {

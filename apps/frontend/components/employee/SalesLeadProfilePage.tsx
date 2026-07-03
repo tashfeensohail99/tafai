@@ -84,6 +84,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
+import { sendTemplateToLead } from '@/lib/whatsapp';
 import { EditLeadModal } from '@/components/whatsapp/EditLeadModal';
 import {
   fetchLead,
@@ -186,6 +187,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   const [leadAppointments, setLeadAppointments] = useState<Appointment[]>([]);
   const [loadingLead, setLoadingLead] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sendingWa, setSendingWa] = useState(false);
 
   const [stage, setStage] = useState<LeadStage>('NEW');
   const [priority, setPriority] = useState<Priority>('MEDIUM');
@@ -452,20 +454,28 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
             >
               <Phone size={15} /> Call now
             </a>
-            <a
-              href={`https://web.whatsapp.com/send?phone=${phoneClean.replace('+', '')}`}
-              target="tashfeen-whatsapp"
-              onClick={(e) => {
-                // Reuse one WhatsApp tab instead of cold-loading a new one each click.
-                e.preventDefault();
-                const w = window.open(`https://web.whatsapp.com/send?phone=${phoneClean.replace('+', '')}`, 'tashfeen-whatsapp');
-                if (w) w.focus();
+            <button
+              type="button"
+              disabled={sendingWa}
+              onClick={async () => {
+                // Send the CRM welcome template from the BUSINESS number (not the
+                // rep's personal WhatsApp), then switch to the in-CRM chat.
+                setSendingWa(true);
+                try {
+                  await sendTemplateToLead(lead.id);
+                  setTab('WHATSAPP');
+                } catch (err) {
+                  alert(err instanceof Error ? err.message : 'Failed to send WhatsApp template');
+                } finally {
+                  setSendingWa(false);
+                }
               }}
               className="sos-btn sos-btn--secondary"
               style={{ textDecoration: 'none' }}
+              title="Sends the CRM welcome template from the business number, then opens the chat"
             >
-              <MessageSquare size={15} /> WhatsApp
-            </a>
+              <MessageSquare size={15} /> {sendingWa ? 'Sending…' : 'WhatsApp'}
+            </button>
             {lead.email ? (
               <a
                 href={`mailto:${lead.email}`}

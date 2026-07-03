@@ -61,6 +61,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { fetchFollowUps, fetchLead, completeFollowUp, patchFollowUp } from '@/lib/sales-api';
+import { sendTemplateToLead } from '@/lib/whatsapp';
 
 const STATUSES: FollowUpStatus[] = [
   'PENDING',
@@ -146,6 +147,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
   const [outcome, setOutcome] = useState('');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
+  const [sendingWa, setSendingWa] = useState(false);
   const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
@@ -326,20 +328,28 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
               </a>
             ) : null}
             {lead && phoneClean ? (
-              <a
-                href={`https://web.whatsapp.com/send?phone=${phoneClean.replace('+', '')}`}
-                target="tashfeen-whatsapp"
-                onClick={(e) => {
-                  // Reuse one WhatsApp tab instead of cold-loading a new one each click.
-                  e.preventDefault();
-                  const w = window.open(`https://web.whatsapp.com/send?phone=${phoneClean.replace('+', '')}`, 'tashfeen-whatsapp');
-                  if (w) w.focus();
+              <button
+                type="button"
+                disabled={sendingWa}
+                onClick={async () => {
+                  // Send the CRM welcome template from the BUSINESS number (not the
+                  // rep's personal WhatsApp), then open the in-CRM chat.
+                  setSendingWa(true);
+                  try {
+                    await sendTemplateToLead(lead.id);
+                    window.location.href = `/sales/leads/${lead.id}?tab=whatsapp`;
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : 'Failed to send WhatsApp template');
+                  } finally {
+                    setSendingWa(false);
+                  }
                 }}
                 className="sos-btn sos-btn--secondary"
                 style={{ textDecoration: 'none' }}
+                title="Sends the CRM welcome template from the business number, then opens the chat"
               >
-                <MessageSquare size={15} /> WhatsApp
-              </a>
+                <MessageSquare size={15} /> {sendingWa ? 'Sending…' : 'WhatsApp'}
+              </button>
             ) : null}
             {lead?.email ? (
               <a

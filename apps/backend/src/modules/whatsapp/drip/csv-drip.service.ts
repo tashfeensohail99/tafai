@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { normalisePhone } from '../../../common/phone/phone.util';
+import { findLeadByNormalizedPhone } from '../../../common/phone/lead-dedupe';
 import {
   WHATSAPP_QUEUE,
   type CsvDripJob,
@@ -94,21 +95,31 @@ export class CsvDripService {
         },
       });
       if (!lead || lead.deletedAt) return; // lead vanished / soft-deleted
-      // Idempotency: this exact touch already went out.
-      if (touch === 1 && lead.dripTouch1At) return;
+      // Idempotency: this exact touch already went out. On a re-run of touch-1
+      // (e.g. last time the touch-2 enqueue failed after dripTouch1At committed)
+      // (re)ensure the touch-2 job exists — add with the fixed jobId is a no-op
+      // if it's already queued, so this can't double-schedule.
+      if (touch === 1 && lead.dripTouch1At) {
+        if (!lead.dripTouch2At) {
+          await this.dripQueue
+            .add(
+              'touch2',
+              { leadId, touch: 2, touch1At: lead.dripTouch1At.getTime() },
+              { jobId: `drip-${leadId}-t2`, delay: TOUCH2_DELAY_MS },
+            )
+            .catch(() => undefined);
+        }
+        return;
+      }
       if (touch === 2 && lead.dripTouch2At) return;
 
       const thread = lead.whatsappThread as ThreadState;
 
       // --- guards (each either sends, skips-with-reason, or defers) ----------
       if (lead.blockedAt) return this.skip(leadId, touch, 'blocked');
-      if (lead.convertedClientId) {
-        const c = await this.prisma.client.findUnique({
-          where: { id: lead.convertedClientId },
-          select: { blockedAt: true },
-        });
-        if (c?.blockedAt) return this.skip(leadId, touch, 'blocked');
-      }
+      // A converted lead is an existing (often paying) client — the drip is a
+      // lead-acquisition tool and must NEVER fire on them, blocked or not.
+      if (lead.convertedClientId) return this.skip(leadId, touch, 'converted_client');
 
       // Touch-2: if the customer replied since touch-1, STOP — the drip did its
       // job and the lead now drops off the CSV list (reply filter) into the
@@ -125,7 +136,21 @@ export class CsvDripService {
       if (!norm.ok || !norm.e164) return this.skip(leadId, touch, 'invalid_phone');
       const waId = norm.e164.replace(/\D/g, '');
 
-      // Opt-out gate — reengage_personal is MARKETING, so honor STOP.
+      // Phone-scoped block: Lead.phone isn't unique, so a sibling lead row stored
+      // in a different format — or the converted client for this number — may
+      // carry the block even when THIS lead row doesn't. Honor it (mirrors how
+      // the inbound webhook resolves + drops blocked contacts).
+      const dupLead = await findLeadByNormalizedPhone(this.prisma, norm.e164);
+      if (dupLead?.blockedAt) return this.skip(leadId, touch, 'blocked');
+      const blockedClient = await this.prisma.client.findFirst({
+        where: { phone: norm.e164, deletedAt: null, blockedAt: { not: null } },
+        select: { id: true },
+      });
+      if (blockedClient) return this.skip(leadId, touch, 'blocked');
+
+      // Opt-out gate — reengage_personal is MARKETING, so honor STOP. The
+      // opt_outs rows are written by the wa-optout-gate branch's OPT_OUT handler
+      // (MUST be merged before this feature — see the drip PR notes).
       const optedOut = await this.prisma.whatsAppOptOut.findUnique({
         where: { waId },
         select: { waId: true },
@@ -137,35 +162,26 @@ export class CsvDripService {
         orderBy: { createdAt: 'asc' },
         select: { id: true },
       });
-      if (!channel) return this.skip(leadId, touch, 'no_channel');
+      // no_channel / no_template are TRANSIENT (channel briefly inactive, template
+      // still syncing/approving) — defer + retry, don't kill the whole drip.
+      if (!channel) return this.deferTouch(data, 'no_channel');
 
       // Per-channel daily cap. When hit, defer (bounded) rather than drop.
       const sentToday = await this.countRecentDripSends(channel.id);
-      if (sentToday >= DAILY_CAP) {
-        await this.skip(leadId, touch, 'daily_cap');
-        const deferrals = (data.deferrals ?? 0) + 1;
-        if (deferrals <= MAX_DEFERRALS) {
-          await this.dripQueue.add(
-            touch === 1 ? 'touch1' : 'touch2',
-            { ...data, deferrals },
-            { jobId: `drip-${leadId}-t${touch}-d${deferrals}`, delay: CAP_DEFER_MS },
-          );
-        } else {
-          this.log.warn(`drip lead ${leadId} touch ${touch}: gave up after ${MAX_DEFERRALS} cap deferrals`);
-        }
-        return;
-      }
+      if (sentToday >= DAILY_CAP) return this.deferTouch(data, 'daily_cap');
 
       const tpl = await this.prisma.whatsAppTemplate.findFirst({
         where: { channelId: channel.id, name: DRIP_TEMPLATE },
         select: { status: true, language: true, components: true },
       });
       if (!tpl || tpl.status !== WhatsAppTemplateStatus.APPROVED) {
-        return this.skip(leadId, touch, 'no_template');
+        return this.deferTouch(data, 'no_template');
       }
 
       const threadId = await this.ensureThread(lead.id, thread, channel.id, waId, norm.e164, lead.phone);
-      if (!threadId) return this.skip(leadId, touch, 'no_channel');
+      // null = the number's thread already belongs to a DIFFERENT lead/client —
+      // this is a duplicate lead; never steal that conversation (terminal skip).
+      if (!threadId) return this.skip(leadId, touch, 'thread_conflict');
 
       // --- send (bot-style TEMPLATE) ----------------------------------------
       const repName = (lead.assignedEmployee?.firstName ?? '').trim() || 'Tashfeen Immigration Solutions';
@@ -196,9 +212,19 @@ export class CsvDripService {
         });
         await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
       } catch (e) {
-        // @unique idempotencyKey collision = this touch already went out (a
-        // duplicate job). Treat as sent: fall through to stamp + schedule.
         if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+        // Row already exists — a duplicate job, OR a prior attempt committed the
+        // row but failed to enqueue the send. Re-enqueue idempotently (jobId =
+        // message.id) so it isn't left stuck in QUEUED waiting on the boot
+        // drainer. Only when still QUEUED, so a genuinely-sent duplicate isn't
+        // re-dispatched.
+        const existingMsg = await this.prisma.whatsAppMessage.findUnique({
+          where: { idempotencyKey: `drip-${lead.id}-t${touch}` },
+          select: { id: true, status: true },
+        });
+        if (existingMsg && existingMsg.status === WhatsAppMessageStatus.QUEUED) {
+          await this.outboundQueue.add('send', { messageId: existingMsg.id }, { jobId: existingMsg.id });
+        }
       }
 
       await this.prisma.lead.update({
@@ -276,21 +302,61 @@ export class CsvDripService {
       }
     }
 
-    const now = new Date();
-    const created = await this.prisma.whatsAppThread.upsert({
+    // A thread for this (channel, waId) may ALREADY exist under a DIFFERENT lead
+    // (a same-number duplicate stored in another format) or a converted client.
+    // NEVER steal it — that would orphan the real owner and mis-route replies.
+    // Resolve first; claim only when unowned; otherwise return null (the caller
+    // skips as 'thread_conflict').
+    const found = await this.prisma.whatsAppThread.findUnique({
       where: { channelId_waContactId: { channelId, waContactId } },
-      create: {
-        channelId,
-        waContactId,
-        leadId,
-        status: WhatsAppThreadStatus.OPEN,
-        lastMessageAt: now,
-        lastHumanActivityAt: now,
-      },
-      update: { leadId },
-      select: { id: true },
+      select: { id: true, leadId: true, clientId: true },
     });
-    return created.id;
+    if (found) {
+      if (found.clientId || (found.leadId && found.leadId !== leadId)) return null;
+      if (found.leadId !== leadId) {
+        await this.prisma.whatsAppThread.update({ where: { id: found.id }, data: { leadId } });
+      }
+      return found.id;
+    }
+    try {
+      // Bot-created thread: deliberately do NOT stamp lastHumanActivityAt /
+      // lastCustomerMessageAt / lastHumanReplyAt — a drip send is not human/
+      // customer activity, and those drive inbox sort ordering.
+      const created = await this.prisma.whatsAppThread.create({
+        data: { channelId, waContactId, leadId, status: WhatsAppThreadStatus.OPEN, lastMessageAt: new Date() },
+        select: { id: true },
+      });
+      return created.id;
+    } catch (e) {
+      // Lost a race to create the same (channel, waId) — re-read and apply the
+      // same no-steal rule.
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+      const r = await this.prisma.whatsAppThread.findUnique({
+        where: { channelId_waContactId: { channelId, waContactId } },
+        select: { id: true, leadId: true, clientId: true },
+      });
+      if (!r || r.clientId || (r.leadId && r.leadId !== leadId)) return null;
+      return r.id;
+    }
+  }
+
+  /**
+   * Record why a touch didn't send AND re-enqueue it (bounded) — for TRANSIENT
+   * conditions (daily cap hit, channel briefly inactive, template still syncing)
+   * that should retry rather than silently kill the drip.
+   */
+  private async deferTouch(data: CsvDripJob, reason: string): Promise<void> {
+    await this.skip(data.leadId, data.touch, reason);
+    const deferrals = (data.deferrals ?? 0) + 1;
+    if (deferrals <= MAX_DEFERRALS) {
+      await this.dripQueue.add(
+        data.touch === 1 ? 'touch1' : 'touch2',
+        { ...data, deferrals },
+        { jobId: `drip-${data.leadId}-t${data.touch}-d${deferrals}`, delay: CAP_DEFER_MS },
+      );
+    } else {
+      this.log.warn(`drip lead ${data.leadId} touch ${data.touch}: gave up after ${MAX_DEFERRALS} deferrals (${reason})`);
+    }
   }
 
   /** Substitute {{1}},{{2}}… in the template's BODY text for the stored display body. */

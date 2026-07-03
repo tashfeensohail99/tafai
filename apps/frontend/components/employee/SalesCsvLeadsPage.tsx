@@ -73,13 +73,22 @@ const SKIP_LABEL: Record<string, string> = {
   blocked: 'Blocked',
   recently_active: 'Already active',
   daily_cap: 'Sending soon',
-  no_channel: 'No WA channel',
-  no_template: 'Template missing',
+  no_channel: 'Retrying (channel)',
+  no_template: 'Retrying (template)',
   invalid_phone: 'Bad number',
+  thread_conflict: 'Duplicate contact',
+  converted_client: 'Existing client',
 };
-// No auto-fallback for these: opt-out/block must be respected, a bad number
-// can't be messaged, and daily_cap re-sends itself automatically.
-const NO_FALLBACK = new Set(['opted_out', 'blocked', 'invalid_phone', 'daily_cap']);
+// The personal-WhatsApp escalation is offered ONLY on genuinely terminal states
+// where the auto-drip is truly finished (2 touches sent, or an "already active"
+// lead a rep is handling). Everything here is either never-message (opt-out /
+// block / bad number / existing client), auto-retrying (daily_cap / no_channel /
+// no_template), or a duplicate whose real thread lives in the inbox — so no
+// premature "continue on personal WhatsApp" button.
+const NO_FALLBACK = new Set([
+  'opted_out', 'blocked', 'invalid_phone', 'daily_cap',
+  'no_channel', 'no_template', 'thread_conflict', 'converted_client',
+]);
 
 /** Drip status + whether to offer the personal-WhatsApp escalation button. */
 function dripCell(lead: ApiCsvLead): { label: string; tone: BadgeTone; showFallback: boolean } {

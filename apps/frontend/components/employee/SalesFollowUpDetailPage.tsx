@@ -348,7 +348,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
                 style={{ textDecoration: 'none' }}
                 title="Sends the CRM welcome template from the business number, then opens the chat"
               >
-                <MessageSquare size={15} /> {sendingWa ? 'Sending…' : 'WhatsApp'}
+                <MessageSquare size={15} /> {sendingWa ? 'Sending…' : 'Send message'}
               </button>
             ) : null}
             {lead?.email ? (

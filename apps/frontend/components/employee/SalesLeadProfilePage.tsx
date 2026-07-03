@@ -474,7 +474,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
               style={{ textDecoration: 'none' }}
               title="Sends the CRM welcome template from the business number, then opens the chat"
             >
-              <MessageSquare size={15} /> {sendingWa ? 'Sending…' : 'WhatsApp'}
+              <MessageSquare size={15} /> {sendingWa ? 'Sending…' : 'Send message'}
             </button>
             {lead.email ? (
               <a

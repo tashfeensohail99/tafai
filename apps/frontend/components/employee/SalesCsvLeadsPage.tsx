@@ -250,7 +250,7 @@ export function SalesCsvLeadsPage() {
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#25D366', borderColor: '#25D366', color: '#fff' }}
                           title="Sends the CRM welcome template from the business number, then opens the chat"
                         >
-                          <MessageSquare size={13} /> {sendingId === lead.id ? 'Sending…' : 'WhatsApp'}
+                          <MessageSquare size={13} /> {sendingId === lead.id ? 'Sending…' : 'Send message'}
                         </button>
                       </td>
                     </tr>

@@ -601,7 +601,11 @@ export class FinanceService {
 
   async createInvoice(dto: CreateInvoiceDto, actorUserId: string) {
     await this.assertInvoiceOwner(dto.leadId, dto.clientId);
-    await this.assertAgreementReadyForMoney(dto.leadId, dto.clientId);
+    // A consultation fee is a standalone charge, not part of the service-fee
+    // ledger, so it skips the "agreement must be approved" gate.
+    if (!dto.isConsultation) {
+      await this.assertAgreementReadyForMoney(dto.leadId, dto.clientId);
+    }
 
     if (dto.leadId) {
       await this.ensureLeadExists(dto.leadId);

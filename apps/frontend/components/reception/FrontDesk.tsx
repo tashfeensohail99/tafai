@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Users,
   UserPlus,
+  Wallet,
   XCircle,
 } from 'lucide-react';
 import {
@@ -23,16 +24,19 @@ import {
   type MetricTone,
 } from '@/components/sales-v2/ui';
 import {
+  getReceptionSettings,
   listHosts,
   listVisits,
   updateVisit,
   type Host,
+  type ReceptionSettings,
   type VisitList,
   type VisitRow,
   type VisitStatus,
 } from '@/lib/reception-api';
 import { CheckInModal } from './CheckInModal';
-import { avatarStyle, fmtElapsed, initials, TYPE_META } from './shared';
+import { ConsultCollectModal } from './ConsultCollectModal';
+import { avatarStyle, fmtElapsed, fmtTime, initials, TYPE_META } from './shared';
 
 function fmtMins(mins: number): string {
   if (mins < 1) return '0m';
@@ -47,7 +51,9 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [hosts, setHosts] = useState<Host[]>([]);
+  const [settings, setSettings] = useState<ReceptionSettings | null>(null);
   const [checkInOpen, setCheckInOpen] = useState(false);
+  const [consultVisit, setConsultVisit] = useState<VisitRow | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const reload = useCallback(async (opts?: { quiet?: boolean }) => {
@@ -67,6 +73,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
   useEffect(() => {
     void reload();
     listHosts().then((r) => setHosts(r.hosts)).catch(() => setHosts([]));
+    getReceptionSettings().then(setSettings).catch(() => setSettings(null));
   }, [reload]);
 
   // Keep the board live: refetch every 25s, and tick the clock every 30s so
@@ -152,7 +159,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
           <QueueColumn title="Waiting" tone="warning" count={waiting.length}>
             {waiting.map((v) => (
-              <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} />
+              <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} onCollect={setConsultVisit} />
             ))}
           </QueueColumn>
           <QueueColumn title="In meeting" tone="info" count={inMeeting.length}>
@@ -160,7 +167,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
               <div className="sos-text-faint" style={{ fontSize: 12.5, padding: '10px 2px' }}>Nobody in a meeting.</div>
             ) : (
               inMeeting.map((v) => (
-                <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} />
+                <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} onCollect={setConsultVisit} />
               ))
             )}
           </QueueColumn>
@@ -168,6 +175,13 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
       )}
 
       <CheckInModal open={checkInOpen} hosts={hosts} onClose={() => setCheckInOpen(false)} onDone={() => void reload({ quiet: true })} />
+      <ConsultCollectModal
+        open={!!consultVisit}
+        visit={consultVisit}
+        settings={settings}
+        onClose={() => setConsultVisit(null)}
+        onDone={() => void reload({ quiet: true })}
+      />
     </div>
   );
 }
@@ -200,12 +214,14 @@ function QueueCard({
   canCheckIn,
   busy,
   onAct,
+  onCollect,
 }: {
   v: VisitRow;
   nowMs: number;
   canCheckIn: boolean;
   busy: boolean;
   onAct: (id: string, status: VisitStatus) => void;
+  onCollect: (v: VisitRow) => void;
 }) {
   const type = TYPE_META[v.visitType];
   const waited = fmtElapsed(v.checkedInAt, nowMs);
@@ -231,6 +247,27 @@ function QueueCard({
         {v.hostName ? <span className="sos-text-muted" style={{ fontSize: 12 }}>→ {v.hostName}</span> : null}
         {v.purpose ? <span className="sos-text-faint" style={{ fontSize: 12 }}>· {v.purpose}</span> : null}
       </div>
+
+      {v.visitType === 'PAID_CONSULT' ? (
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {v.paid ? (
+            <>
+              <StatusBadge tone="success" size="sm" dot>Fee paid</StatusBadge>
+              {v.appointmentAt ? <span className="sos-text-muted" style={{ fontSize: 12 }}>Consult @ {fmtTime(v.appointmentAt)}</span> : null}
+            </>
+          ) : canCheckIn ? (
+            <button
+              type="button"
+              style={{ ...cardBtn, borderColor: 'var(--sos-brand-primary-border)', background: 'var(--sos-brand-primary-soft)', color: 'var(--sos-brand-primary-strong)' }}
+              onClick={() => onCollect(v)}
+            >
+              <Wallet size={13} /> Collect fee &amp; confirm
+            </button>
+          ) : (
+            <StatusBadge tone="warning" size="sm" dot>Fee due</StatusBadge>
+          )}
+        </div>
+      ) : null}
 
       {canCheckIn ? (
         <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>

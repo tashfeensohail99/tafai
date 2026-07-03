@@ -4,14 +4,20 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, VisitStatus, VisitType } from '@prisma/client';
+import { AppointmentStatus, Prisma, VisitStatus, VisitType } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { LeadsService } from '../leads/leads.service';
 import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
+import { FinanceService } from '../finance/finance.service';
+import { AppointmentsService } from '../appointments/appointments.service';
+import { WhatsAppAppointmentNotifierService } from '../whatsapp/notifications/appointment-notifier.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
+  CollectConsultationDto,
   CreateVisitDto,
   ListVisitsQueryDto,
   LookupQueryDto,
+  UpdateReceptionSettingsDto,
   UpdateVisitDto,
 } from './reception.dto';
 
@@ -33,6 +39,12 @@ function splitName(full: string): { firstName: string; lastName: string } {
   return { firstName: firstName || 'Guest', lastName };
 }
 
+/** Well-shaped YYYY-MM-DD AND a real calendar day (rejects e.g. 2026-13-45,
+ *  which would otherwise build an Invalid Date and crash the query with a 500). */
+function isRealDay(s?: string): boolean {
+  return !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(`${s}T00:00:00.000+05:00`).getTime());
+}
+
 @Injectable()
 export class ReceptionService {
   private readonly log = new Logger(ReceptionService.name);
@@ -41,6 +53,10 @@ export class ReceptionService {
     private readonly prisma: PrismaService,
     private readonly leads: LeadsService,
     private readonly assignment: LeadAssignmentService,
+    private readonly finance: FinanceService,
+    private readonly appointments: AppointmentsService,
+    private readonly whatsappNotifier: WhatsAppAppointmentNotifierService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Lookup — is this visitor already in the CRM? ─────────────────────────
@@ -183,7 +199,9 @@ export class ReceptionService {
     const clientIds = uniq(visits.map((v) => v.clientId));
     const empIds = uniq(visits.map((v) => v.hostEmployeeId));
 
-    const [leadRows, clientRows, empRows] = await Promise.all([
+    const apptIds = uniq(visits.map((v) => v.appointmentId));
+
+    const [leadRows, clientRows, empRows, apptRows] = await Promise.all([
       leadIds.length
         ? this.prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, referenceCode: true } })
         : Promise.resolve([]),
@@ -193,10 +211,14 @@ export class ReceptionService {
       empIds.length
         ? this.prisma.employee.findMany({ where: { id: { in: empIds } }, select: { id: true, firstName: true, lastName: true } })
         : Promise.resolve([]),
+      apptIds.length
+        ? this.prisma.appointment.findMany({ where: { id: { in: apptIds } }, select: { id: true, scheduledAt: true } })
+        : Promise.resolve([]),
     ]);
     const leadRef = new Map(leadRows.map((r) => [r.id, r.referenceCode]));
     const clientRef = new Map(clientRows.map((r) => [r.id, r.referenceCode]));
     const empName = new Map(empRows.map((r) => [r.id, `${r.firstName} ${r.lastName}`.trim()]));
+    const apptAt = new Map(apptRows.map((r) => [r.id, r.scheduledAt.toISOString()]));
 
     const rows = visits.map((v) => ({
       id: v.id,
@@ -214,6 +236,11 @@ export class ReceptionService {
         (v.leadId ? leadRef.get(v.leadId) : undefined) ??
         null,
       hostName: v.hostEmployeeId ? empName.get(v.hostEmployeeId) ?? null : null,
+      // Paid consultation (phase 2).
+      paid: !!v.paymentId,
+      feeAmount: v.feeAmount != null ? Number(v.feeAmount) : null,
+      feeCurrency: v.feeCurrency,
+      appointmentAt: v.appointmentId ? apptAt.get(v.appointmentId) ?? null : null,
       checkedInAt: v.checkedInAt.toISOString(),
       checkedOutAt: v.checkedOutAt ? v.checkedOutAt.toISOString() : null,
     }));
@@ -303,6 +330,284 @@ export class ReceptionService {
     if (dto.notes !== undefined) data.notes = dto.notes || null;
 
     return this.prisma.visit.update({ where: { id }, data });
+  }
+
+  // ── Consultation settings (principal, fee, receiving bank) ────────────────
+  async getSettings() {
+    const org = await this.orgRow();
+    let principal: { id: string; name: string } | null = null;
+    if (org?.principalEmployeeId) {
+      const e = await this.prisma.employee.findFirst({
+        where: { id: org.principalEmployeeId, deletedAt: null },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      if (e) principal = { id: e.id, name: `${e.firstName} ${e.lastName}`.trim() };
+    }
+    const feeAmount = org?.consultationFeeAmount != null ? Number(org.consultationFeeAmount) : null;
+    return {
+      principal,
+      feeAmount,
+      feeCurrency: org?.consultationFeeCurrency ?? null,
+      bank: {
+        iban: org?.consultationBankIban ?? null,
+        name: org?.consultationBankName ?? null,
+        title: org?.consultationBankTitle ?? null,
+      },
+      configured: !!(org?.principalEmployeeId && feeAmount && feeAmount > 0 && org?.consultationFeeCurrency),
+    };
+  }
+
+  async updateSettings(dto: UpdateReceptionSettingsDto) {
+    const org = await this.orgRow();
+    if (!org) throw new NotFoundException('Organization not configured');
+    if (dto.principalEmployeeId) {
+      const e = await this.prisma.employee.findFirst({ where: { id: dto.principalEmployeeId, deletedAt: null }, select: { id: true } });
+      if (!e) throw new BadRequestException('Selected principal employee not found');
+    }
+    await this.prisma.organization.update({
+      where: { id: org.id },
+      data: {
+        ...(dto.principalEmployeeId !== undefined ? { principalEmployeeId: dto.principalEmployeeId || null } : {}),
+        ...(dto.feeAmount !== undefined ? { consultationFeeAmount: dto.feeAmount ? new Prisma.Decimal(dto.feeAmount) : null } : {}),
+        ...(dto.feeCurrency !== undefined ? { consultationFeeCurrency: dto.feeCurrency?.trim().toUpperCase() || null } : {}),
+        ...(dto.bankIban !== undefined ? { consultationBankIban: dto.bankIban?.trim() || null } : {}),
+        ...(dto.bankName !== undefined ? { consultationBankName: dto.bankName?.trim() || null } : {}),
+        ...(dto.bankTitle !== undefined ? { consultationBankTitle: dto.bankTitle?.trim() || null } : {}),
+      },
+    });
+    return this.getSettings();
+  }
+
+  // ── Paid consultation with the principal (Mr. Tashfeen) ───────────────────
+  async consultAvailability(dateStr: string) {
+    if (!isRealDay(dateStr)) throw new BadRequestException('Invalid date.');
+    const org = await this.orgRow();
+    if (!org?.principalEmployeeId) throw new BadRequestException('Set the principal in Reception settings first.');
+    return this.appointments.getAvailability(org.principalEmployeeId, dateStr);
+  }
+
+  /**
+   * "Pay-to-confirm" the in-person consultation, orchestrated server-side so the
+   * desk needs no finance perms: attach an owner → book the slot → raise a
+   * STANDALONE consultation invoice → record + verify the payment (receipt) →
+   * CONFIRM the slot → notify.
+   *
+   * Double-charge safety: the money steps run only after an ATOMIC claim
+   * (updateMany on feeAmount:null) wins, so concurrent submits and retries after
+   * a partial failure cannot raise a second invoice/payment. The slot is booked
+   * BEFORE the claim (a busy-slot 409 is then recoverable — pick another time),
+   * and invoiceId/paymentId are stamped the instant each is created so a crash
+   * never orphans money the visit can't reference. A claim that wins but then
+   * fails mid-flow blocks re-collection (safe: no double charge) until
+   * finance/admin reconciles the stuck invoice.
+   */
+  async collectConsultation(visitId: string, dto: CollectConsultationDto, actorUserId: string) {
+    const visit = await this.prisma.visit.findUnique({ where: { id: visitId } });
+    if (!visit) throw new NotFoundException('Visit not found');
+    if (visit.visitType !== VisitType.PAID_CONSULT) {
+      throw new BadRequestException('Only paid-consultation visits can collect a consultation fee.');
+    }
+    if (visit.paymentId) throw new BadRequestException('This consultation has already been paid.');
+    if (!visit.appointmentId && !dto.scheduledAt) {
+      throw new BadRequestException('Pick a time for the consultation.');
+    }
+
+    const org = await this.orgRow();
+    const fee = org?.consultationFeeAmount != null ? Number(org.consultationFeeAmount) : 0;
+    const currency = (org?.consultationFeeCurrency || '').toUpperCase();
+    if (!org?.principalEmployeeId || !(fee > 0) || !currency) {
+      throw new BadRequestException('Set the principal, consultation fee and currency in Reception settings first.');
+    }
+
+    // 1. The appointment engine requires a lead/client owner. A fresh paid-consult
+    //    walk-in has neither, so match/create a lead first (needs a phone).
+    const owner = await this.ensureConsultOwner(visit, actorUserId);
+
+    // 2. Book the slot on the principal's calendar (still unpaid). A busy-slot 409
+    //    happens BEFORE any money/claim, so the desk can just pick another time.
+    //    appointmentId is stamped immediately so a retry reuses it (no dup slot).
+    let appointmentId = visit.appointmentId;
+    let scheduledAtIso: string;
+    if (appointmentId) {
+      const existing = await this.prisma.appointment.findUnique({ where: { id: appointmentId }, select: { scheduledAt: true } });
+      scheduledAtIso = (existing?.scheduledAt ?? new Date()).toISOString();
+    } else {
+      const appt = await this.createConsultAppointment(
+        org.principalEmployeeId,
+        { name: visit.name, leadId: owner.leadId, clientId: owner.clientId, purpose: visit.purpose },
+        dto.scheduledAt!,
+        actorUserId,
+      );
+      appointmentId = appt.id;
+      scheduledAtIso = appt.scheduledAt.toISOString();
+      await this.prisma.visit.update({ where: { id: visitId }, data: { appointmentId } });
+    }
+
+    // 3. ATOMIC claim — only the request that flips feeAmount from null proceeds to
+    //    money. Blocks concurrent double-submit AND retry-after-partial-failure.
+    const claim = await this.prisma.visit.updateMany({
+      where: { id: visitId, feeAmount: null, paymentId: null },
+      data: { feeAmount: new Prisma.Decimal(fee), feeCurrency: currency },
+    });
+    if (claim.count === 0) {
+      throw new BadRequestException('This consultation is already paid or being processed. Refresh the desk.');
+    }
+
+    // 4. Money — a STANDALONE consultation invoice (no lead/client link, so it
+    //    bypasses the service-agreement gate at both createInvoice and
+    //    recordPayment); the customer linkage lives on the visit. invoiceId /
+    //    paymentId are stamped the instant each exists so a partial failure never
+    //    orphans money the visit can't reference.
+    const invoice = await this.finance.createInvoice(
+      {
+        isConsultation: true,
+        subtotal: fee.toFixed(2),
+        currency,
+        dueDate: new Date().toISOString(),
+        notes: this.consultInvoiceNote(visit, org),
+      },
+      actorUserId,
+    );
+    await this.prisma.visit.update({ where: { id: visitId }, data: { invoiceId: invoice.id } });
+
+    const payment = await this.finance.recordPayment(
+      {
+        invoiceId: invoice.id,
+        amount: fee.toFixed(2),
+        currency,
+        paymentMethod: dto.paymentMethod?.trim() || 'cash',
+        ...(dto.transactionRef?.trim() ? { transactionRef: dto.transactionRef.trim() } : {}),
+        paidAt: new Date().toISOString(),
+        notes: 'Consultation fee — creditable against a future service fee.',
+      },
+      actorUserId,
+    );
+    await this.prisma.visit.update({ where: { id: visitId }, data: { paymentId: payment.id } });
+
+    const verified = await this.finance.verifyPayment(payment.id, {}, actorUserId);
+
+    // 5. Pay-to-confirm: the slot is only CONFIRMED once paid.
+    await this.appointments.update(appointmentId, { status: AppointmentStatus.CONFIRMED }, actorUserId);
+
+    // 6. Finish stamping the visit's creditable flag (booking already linked).
+    await this.prisma.visit.update({
+      where: { id: visitId },
+      data: { consultFeeCreditable: true },
+    });
+
+    // 7. Notify — best-effort, never breaks the completed payment.
+    try {
+      await this.whatsappNotifier.sendConfirmationFor(appointmentId, actorUserId, { kind: 'booked' });
+    } catch (err) {
+      this.log.warn(`consult WhatsApp confirm failed: ${(err as Error).message}`);
+    }
+    try {
+      const principal = await this.prisma.employee.findFirst({
+        where: { id: org.principalEmployeeId },
+        select: { user: { select: { id: true } } },
+      });
+      if (principal?.user?.id) {
+        await this.notifications.create({
+          userId: principal.user.id,
+          type: 'CONSULTATION_BOOKED',
+          title: 'Paid consultation confirmed',
+          body: `${visit.name} — fee paid (${currency} ${fee.toLocaleString()})`,
+          link: '/sales/appointments',
+        });
+      }
+    } catch (err) {
+      this.log.warn(`consult principal notify failed: ${(err as Error).message}`);
+    }
+
+    return {
+      receiptNumber: verified.receipt?.receiptNumber ?? null,
+      invoiceNumber: invoice.invoiceNumber,
+      appointmentId,
+      scheduledAt: scheduledAtIso,
+      feeAmount: fee,
+      feeCurrency: currency,
+    };
+  }
+
+  /**
+   * The appointment engine requires a lead/client owner. Reuse the visit's link;
+   * else match by phone or create a lead (round-robin). A paid-consult visitor
+   * with no CRM record and no phone can't be booked — surface that clearly.
+   */
+  private async ensureConsultOwner(
+    visit: { id: string; name: string; phone: string | null; leadId: string | null; clientId: string | null; purpose: string | null },
+    actorUserId: string,
+  ): Promise<{ leadId: string | null; clientId: string | null }> {
+    if (visit.leadId || visit.clientId) return { leadId: visit.leadId, clientId: visit.clientId };
+    if (!visit.phone) {
+      throw new BadRequestException('Add a phone number (or link a lead/client) before booking the consultation.');
+    }
+    const matched = await this.matchByPhone(visit.phone);
+    if (matched) {
+      const link = matched.kind === 'client'
+        ? { leadId: null, clientId: matched.id }
+        : { leadId: matched.id, clientId: null };
+      await this.prisma.visit.update({ where: { id: visit.id }, data: link });
+      return link;
+    }
+    const leadId = await this.createWalkInLead(visit.name, visit.phone, visit.purpose, actorUserId);
+    if (!leadId) throw new BadRequestException('Could not create a lead for this consultation.');
+    await this.prisma.visit.update({ where: { id: visit.id }, data: { leadId } });
+    return { leadId, clientId: null };
+  }
+
+  private createConsultAppointment(
+    principalEmployeeId: string,
+    owner: { name: string; leadId: string | null; clientId: string | null; purpose: string | null },
+    scheduledAt: string,
+    actorUserId: string,
+  ) {
+    return this.appointments.create(
+      {
+        assignedEmployeeId: principalEmployeeId,
+        ...(owner.leadId ? { leadId: owner.leadId } : {}),
+        ...(owner.clientId ? { clientId: owner.clientId } : {}),
+        title: `Consultation — ${owner.name}`,
+        appointmentType: 'PRINCIPAL_CONSULTATION',
+        scheduledAt,
+        durationMinutes: 30,
+        location: 'Office',
+        ...(owner.purpose ? { notes: owner.purpose } : {}),
+      },
+      actorUserId,
+    );
+  }
+
+  private consultInvoiceNote(
+    visit: { name: string; phone: string | null },
+    org: { consultationBankIban: string | null; consultationBankName: string | null; consultationBankTitle: string | null },
+  ): string {
+    const lines = [
+      `In-person consultation fee — ${visit.name}${visit.phone ? ` (${visit.phone})` : ''}.`,
+      'Creditable against a future service fee.',
+    ];
+    if (org.consultationBankIban) {
+      const bank = [org.consultationBankName, org.consultationBankTitle, `IBAN ${org.consultationBankIban}`]
+        .filter(Boolean)
+        .join(' · ');
+      lines.push(`Bank transfer: ${bank}`);
+    }
+    return lines.join('\n');
+  }
+
+  private orgRow() {
+    return this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        principalEmployeeId: true,
+        consultationFeeAmount: true,
+        consultationFeeCurrency: true,
+        consultationBankIban: true,
+        consultationBankName: true,
+        consultationBankTitle: true,
+      },
+    });
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────

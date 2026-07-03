@@ -20,9 +20,12 @@ import { RequestUser } from '../../common/types/auth.types';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { ReceptionService } from './reception.service';
 import {
+  CollectConsultationDto,
+  ConsultAvailabilityQueryDto,
   CreateVisitDto,
   ListVisitsQueryDto,
   LookupQueryDto,
+  UpdateReceptionSettingsDto,
   UpdateVisitDto,
 } from './reception.dto';
 
@@ -61,5 +64,37 @@ export class ReceptionController {
   @Audit({ entityType: 'Visit', category: 'MUTATION', severity: 'LOW' })
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateVisitDto) {
     return this.reception.updateVisit(id, dto);
+  }
+
+  // ── Consultation settings (principal, fee, receiving bank) ────────────────
+  @Get('settings')
+  @RequireAnyPermissions('reception.view', 'reception.check_in')
+  getSettings() {
+    return this.reception.getSettings();
+  }
+
+  @Patch('settings')
+  @RequirePermissions('reception.manage_settings')
+  @Audit({ entityType: 'ReceptionSettings', category: 'CONFIG', severity: 'HIGH', action: 'SETTING_CHANGED' })
+  updateSettings(@Body() dto: UpdateReceptionSettingsDto) {
+    return this.reception.updateSettings(dto);
+  }
+
+  // ── Paid consultation with the principal ──────────────────────────────────
+  @Get('consult/availability')
+  @RequireAnyPermissions('reception.view', 'reception.check_in')
+  consultAvailability(@Query() query: ConsultAvailabilityQueryDto) {
+    return this.reception.consultAvailability(query.date);
+  }
+
+  @Post('visits/:id/collect-consultation')
+  @RequirePermissions('reception.check_in')
+  @Audit({ entityType: 'Visit', category: 'MUTATION', severity: 'HIGH', action: 'PAYMENT_RECORDED' })
+  collectConsultation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CollectConsultationDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reception.collectConsultation(id, dto, user.id);
   }
 }

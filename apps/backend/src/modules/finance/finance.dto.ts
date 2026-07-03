@@ -131,6 +131,15 @@ export class CreateInvoiceDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+
+  /**
+   * Standalone consultation-fee invoice (Reception paid-consult flow). When set,
+   * the agreement-readiness gate is skipped — a paid meeting isn't part of the
+   * customer's service-fee ledger, so it must not require an approved agreement.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isConsultation?: boolean;
 }
 
 export class UpdateInvoiceDto {

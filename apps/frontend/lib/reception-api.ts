@@ -37,8 +37,43 @@ export interface VisitRow {
   hostEmployeeId: string | null;
   referenceCode: string | null;
   hostName: string | null;
+  // Paid consultation (phase 2)
+  paid: boolean;
+  feeAmount: number | null;
+  feeCurrency: string | null;
+  appointmentAt: string | null;
   checkedInAt: string;
   checkedOutAt: string | null;
+}
+
+export interface ReceptionSettings {
+  principal: { id: string; name: string } | null;
+  feeAmount: number | null;
+  feeCurrency: string | null;
+  bank: { iban: string | null; name: string | null; title: string | null };
+  configured: boolean;
+}
+
+export interface AvailabilitySlot {
+  start: string;
+  end: string;
+}
+export interface Availability {
+  employeeId: string;
+  date: string;
+  workStart: string;
+  workEnd: string;
+  busy: Array<{ id: string; title: string; start: string; end: string }>;
+  freeSlots: AvailabilitySlot[];
+}
+
+export interface CollectConsultationResult {
+  receiptNumber: string | null;
+  invoiceNumber: string;
+  appointmentId: string;
+  scheduledAt: string;
+  feeAmount: number;
+  feeCurrency: string;
 }
 
 export interface VisitCounts {
@@ -109,5 +144,36 @@ export async function updateVisit(
   return apiFetch<VisitRow>(`/reception/visits/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
+  });
+}
+
+// ── Paid consultation (phase 2) ──────────────────────────────────────────────
+
+export async function getReceptionSettings(): Promise<ReceptionSettings> {
+  return apiFetch<ReceptionSettings>('/reception/settings', { cache: 'no-store' });
+}
+
+export async function updateReceptionSettings(patch: {
+  principalEmployeeId?: string;
+  feeAmount?: string;
+  feeCurrency?: string;
+  bankIban?: string;
+  bankName?: string;
+  bankTitle?: string;
+}): Promise<ReceptionSettings> {
+  return apiFetch<ReceptionSettings>('/reception/settings', { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export async function getConsultAvailability(date: string): Promise<Availability> {
+  return apiFetch<Availability>(`/reception/consult/availability${buildQuery({ date })}`, { cache: 'no-store' });
+}
+
+export async function collectConsultation(
+  visitId: string,
+  input: { scheduledAt?: string; paymentMethod?: string; transactionRef?: string },
+): Promise<CollectConsultationResult> {
+  return apiFetch<CollectConsultationResult>(`/reception/visits/${visitId}/collect-consultation`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }

@@ -733,6 +733,17 @@ model Organization {
   // bot is off regardless of botEnabledAt.
   botMode      String    @default("AUTO")
 
+  // --- Reception: paid in-person consultation with the principal ------------
+  // The principal (Mr. Tashfeen) whose calendar paid consultations book against,
+  // the standard consultation fee, and the receiving bank account printed on the
+  // consultation invoice/receipt for bank-transfer payers.
+  principalEmployeeId     String?
+  consultationFeeAmount   Decimal? @db.Decimal(12, 2)
+  consultationFeeCurrency String?
+  consultationBankIban    String?
+  consultationBankName    String?
+  consultationBankTitle   String?
+
   branches    Branch[]
   departments Department[]
   partners    Partner[]
@@ -1444,6 +1455,13 @@ model Visit {
   appointmentId  String?
   invoiceId      String?
   paymentId      String?
+
+  // --- Paid consultation (phase 2). Populated when the fee is collected. -----
+  feeAmount           Decimal? @db.Decimal(12, 2)
+  feeCurrency         String?
+  /// The consultation fee may be credited against a future service fee — flagged
+  /// here so finance can find + apply it manually.
+  consultFeeCreditable Boolean @default(false)
 
   /// Why they came, free text (e.g. "document pickup", "consultation").
   purpose String?

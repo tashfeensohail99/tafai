@@ -27,16 +27,21 @@ const PERMS = [
     key: 'reception.check_in',
     module: 'reception',
     description:
-      'Check visitors in / out and log walk-ins, existing clients and paid consultations',
+      'Check visitors in / out, log walk-ins / clients / paid consultations, and collect the consultation fee',
+  },
+  {
+    key: 'reception.manage_settings',
+    module: 'reception',
+    description: 'Configure the consultation principal, standard fee and receiving bank account',
   },
 ];
 
-// The new Reception role gets both; admins get them too. Roles that may not
-// exist in this environment are skipped (no error).
+// The reception role handles the desk (view + check_in); admins also manage the
+// consultation settings. Roles that may not exist here are skipped (no error).
 const GRANTS: Record<string, string[]> = {
   reception: ['reception.view', 'reception.check_in'],
-  super_admin: ['reception.view', 'reception.check_in'],
-  admin: ['reception.view', 'reception.check_in'],
+  super_admin: ['reception.view', 'reception.check_in', 'reception.manage_settings'],
+  admin: ['reception.view', 'reception.check_in', 'reception.manage_settings'],
 };
 
 async function main() {

@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { LeadsModule } from '../leads/leads.module';
 import { LeadAssignmentModule } from '../lead-assignment/lead-assignment.module';
+import { FinanceModule } from '../finance/finance.module';
+import { AppointmentsModule } from '../appointments/appointments.module';
+import { WhatsAppNotificationsModule } from '../whatsapp/notifications/notifications.module';
 import { ReceptionController } from './reception.controller';
 import { ReceptionService } from './reception.service';
 
@@ -11,7 +14,7 @@ import { ReceptionService } from './reception.service';
  * round-robin (LeadAssignmentService); PrismaModule is global.
  */
 @Module({
-  imports: [LeadsModule, LeadAssignmentModule],
+  imports: [LeadsModule, LeadAssignmentModule, FinanceModule, AppointmentsModule, WhatsAppNotificationsModule],
   controllers: [ReceptionController],
   providers: [ReceptionService],
 })

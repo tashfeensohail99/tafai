@@ -1,9 +1,12 @@
 import {
+  IsDateString,
   IsEnum,
   IsNotEmpty,
+  IsNumberString,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -115,4 +118,62 @@ export class UpdateVisitDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+}
+
+// ── Phase 2: paid consultation with the principal ──────────────────────────
+
+export class ConsultAvailabilityQueryDto {
+  /** PKT day, YYYY-MM-DD. */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(10)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })
+  date!: string;
+}
+
+export class CollectConsultationDto {
+  /** Required only when no slot is pre-booked (schedule-at-collect / see-now). */
+  @IsOptional()
+  @IsDateString()
+  scheduledAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  paymentMethod?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  transactionRef?: string;
+}
+
+export class UpdateReceptionSettingsDto {
+  @IsOptional()
+  @IsUUID()
+  principalEmployeeId?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  feeAmount?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  feeCurrency?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  bankIban?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bankName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bankTitle?: string;
 }

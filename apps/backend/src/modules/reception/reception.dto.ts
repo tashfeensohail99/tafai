@@ -10,7 +10,12 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { VisitStatus, VisitType } from '@prisma/client';
+import {
+  VisitorPaymentMethod,
+  VisitorPaymentStatus,
+  VisitStatus,
+  VisitType,
+} from '@prisma/client';
 
 /** Front-desk quick lookup — match an existing lead or client by phone or name. */
 export class LookupQueryDto {
@@ -149,6 +154,12 @@ export class ReceptionReportQueryDto {
 }
 
 export class CollectConsultationDto {
+  /** CASH = verified at the counter (instant confirm); BANK_TRANSFER = pending
+   *  finance verification. Defaults to CASH for back-compat. */
+  @IsOptional()
+  @IsEnum(VisitorPaymentMethod)
+  method?: VisitorPaymentMethod;
+
   /** Required only when no slot is pre-booked (schedule-at-collect / see-now). */
   @IsOptional()
   @IsDateString()
@@ -163,6 +174,35 @@ export class CollectConsultationDto {
   @IsString()
   @MaxLength(120)
   transactionRef?: string;
+}
+
+export class VisitorPaymentQueryDto {
+  @IsOptional()
+  @IsEnum(VisitorPaymentStatus)
+  status?: VisitorPaymentStatus;
+
+  @IsOptional()
+  @IsEnum(VisitorPaymentMethod)
+  method?: VisitorPaymentMethod;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD' })
+  from?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'to must be YYYY-MM-DD' })
+  to?: string;
+}
+
+export class RejectVisitorPaymentDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class UpdateReceptionSettingsDto {

@@ -255,6 +255,11 @@ function QueueCard({
               <StatusBadge tone="success" size="sm" dot>Fee paid</StatusBadge>
               {v.appointmentAt ? <span className="sos-text-muted" style={{ fontSize: 12 }}>Consult @ {fmtTime(v.appointmentAt)}</span> : null}
             </>
+          ) : v.pendingPayment ? (
+            <>
+              <StatusBadge tone="warning" size="sm" dot>Payment being verified</StatusBadge>
+              {v.appointmentAt ? <span className="sos-text-muted" style={{ fontSize: 12 }}>Slot held @ {fmtTime(v.appointmentAt)}</span> : null}
+            </>
           ) : canCheckIn ? (
             <button
               type="button"

@@ -89,6 +89,28 @@ enum VisitStatus {
   @@schema("crm")
 }
 
+/// How a paid-consultation fee was tendered at the front desk.
+enum VisitorPaymentMethod {
+  CASH
+  BANK_TRANSFER
+
+  @@schema("crm")
+}
+
+/// Lifecycle of a front-desk consultation payment. CASH is VERIFIED at the
+/// counter immediately; a BANK_TRANSFER starts PENDING_REVIEW (awaiting finance)
+/// and moves to VERIFIED or REJECTED. AWAITING_PROOF is reserved for the later
+/// QR self-upload flow (customer hasn't uploaded the receipt image yet).
+enum VisitorPaymentStatus {
+  AWAITING_PROOF
+  PENDING_REVIEW
+  VERIFYING
+  VERIFIED
+  REJECTED
+
+  @@schema("crm")
+}
+
 enum FollowUpStatus {
   OPEN
   COMPLETED
@@ -1481,6 +1503,58 @@ model Visit {
   @@index([leadId])
   @@index([clientId])
   @@map("visits")
+  @@schema("crm")
+}
+
+/// Front-desk record of a paid-consultation fee. Owns the desk-side reality
+/// (method, proof image, OCR, cash/bank register) while the finance
+/// Invoice/Payment/Receipt stay the ledger of record. For a CASH payment the
+/// finance chain runs immediately (status VERIFIED); a BANK_TRANSFER holds the
+/// slot and stays PENDING_REVIEW until finance verifies (then the invoice +
+/// payment + receipt are created), so revenue is only recognised on verify.
+/// Scalar cross-refs (no FK relations), matching the Visit convention.
+model VisitorPayment {
+  id       String               @id @default(uuid())
+  visitId  String
+  method   VisitorPaymentMethod
+  status   VisitorPaymentStatus @default(PENDING_REVIEW)
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String
+
+  /// Customer-supplied reference for a bank transfer (txn id / slip number),
+  /// keyed by the receptionist in P4a; the uploaded image + OCR arrive later.
+  transactionRef String?
+  /// S3 key of the uploaded receipt/screenshot (QR self-upload — later phase).
+  proofImageKey  String?
+
+  // OCR-extracted fields (later phase; advisory, finance still confirms).
+  ocrAmount     Decimal? @db.Decimal(12, 2)
+  ocrReference  String?
+  ocrBankName   String?
+  ocrPaidAt     DateTime?
+  ocrRawText    String?
+  ocrConfidence Float?
+  ocrStatus     String?
+
+  // Finance ledger links, stamped once the chain runs (on verify / immediately
+  // for cash). receiptNumber is denormalised for the register + desk display.
+  invoiceId     String?
+  paymentId     String?
+  receiptNumber String?
+
+  createdByUserId  String
+  verifiedByUserId String?
+  verifiedAt       DateTime?
+  rejectedReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([visitId])
+  @@index([method, createdAt(sort: Desc)])
+  @@map("visitor_payments")
   @@schema("crm")
 }
 

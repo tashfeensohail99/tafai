@@ -15,6 +15,7 @@ import {
   Receipt,
   Sparkles,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -56,6 +57,7 @@ const FinanceSessionContext = createContext<FinanceSessionContextValue | null>(n
 const WORK_NAV: DrawerMenuItem[] = [
   { label: 'Dashboard', href: '/finance', icon: LayoutDashboard, caption: 'Overview & queues' },
   { label: 'Agreements', href: '/finance/agreements', icon: FileText, caption: 'Review & approve from Sales' },
+  { label: 'Visitor Payments', href: '/finance/visitor-payments', icon: Wallet, caption: 'Verify consultation transfers' },
 ];
 const RECORDS_NAV: DrawerMenuItem[] = [
   { label: 'Customers', href: '/finance/clients', icon: Users, caption: 'Profiles, ledgers & expenses' },
@@ -77,6 +79,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/finance/contracts') return { title: 'Service Contracts', subtitle: 'Signed agreements + installment plans' };
   if (pathname.startsWith('/finance/receipts/')) return { title: 'Receipt Confirmation', subtitle: 'Generate and issue the receipt' };
   if (pathname === '/finance/receipts') return { title: 'Receipts', subtitle: 'Issued payment receipts' };
+  if (pathname === '/finance/visitor-payments') return { title: 'Visitor Payments', subtitle: 'Verify consultation bank transfers taken at reception' };
   if (pathname === '/finance/history') return { title: 'Payment History', subtitle: 'All verified, rejected, and refunded payments' };
   if (pathname === '/finance/reports') return { title: 'Reports', subtitle: 'Revenue, cost & margin across all customers' };
   return { title: 'Finance Workspace', subtitle: '' };

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { BadgeCheck, CalendarClock, Landmark, Loader2, Wallet, X } from 'lucide-react';
+import { BadgeCheck, CalendarClock, Clock, Landmark, Loader2, Wallet, X } from 'lucide-react';
 import {
   Field,
   FormInput,
@@ -23,7 +23,6 @@ import { fmtTime, todayPkt } from './shared';
 
 const METHODS = [
   { value: 'cash', label: 'Cash' },
-  { value: 'card', label: 'Card' },
   { value: 'bank_transfer', label: 'Bank transfer' },
 ];
 
@@ -130,12 +129,17 @@ export function ConsultCollectModal({
   // (and pay to confirm) a consultation timestamped in the past.
   const slots = (avail?.freeSlots ?? []).filter((sl) => !isToday || new Date(sl.start).getTime() >= Date.now());
 
+  // A bank transfer goes to finance for verification (pending); cash / card are
+  // verified at the counter and confirm instantly.
+  const isBankTransfer = method === 'bank_transfer';
+
   async function submit() {
     if (!slot) return;
     setSubmitting(true);
     setError(null);
     try {
       const res = await collectConsultation(visit!.id, {
+        method: method === 'bank_transfer' ? 'BANK_TRANSFER' : 'CASH',
         scheduledAt: slot.start,
         paymentMethod: method,
         transactionRef: ref.trim() || undefined,
@@ -181,15 +185,27 @@ export function ConsultCollectModal({
 
         <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {result ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '10px 0' }}>
-              <BadgeCheck size={40} style={{ color: 'var(--sos-status-success)' }} />
-              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Fee collected · consultation confirmed</div>
-              <div className="sos-text-secondary" style={{ fontSize: 13, textAlign: 'center' }}>
-                {money(result.feeAmount, result.feeCurrency)} paid · {fmtTime(result.scheduledAt)} PKT
-                {result.receiptNumber ? <><br />Receipt <strong>{result.receiptNumber}</strong> · Invoice {result.invoiceNumber}</> : null}
+            result.status === 'pending' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '10px 0' }}>
+                <Clock size={40} style={{ color: 'var(--sos-status-warning)' }} />
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Payment recorded · being verified</div>
+                <div className="sos-text-secondary" style={{ fontSize: 13, textAlign: 'center' }}>
+                  {money(result.feeAmount, result.feeCurrency)} · slot held for {fmtTime(result.scheduledAt)} PKT.
+                  <br />Finance will verify the transfer and confirm the consultation.
+                </div>
+                <PrimaryButton onClick={close}>Done</PrimaryButton>
               </div>
-              <PrimaryButton onClick={close}>Done</PrimaryButton>
-            </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '10px 0' }}>
+                <BadgeCheck size={40} style={{ color: 'var(--sos-status-success)' }} />
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Fee collected · consultation confirmed</div>
+                <div className="sos-text-secondary" style={{ fontSize: 13, textAlign: 'center' }}>
+                  {money(result.feeAmount, result.feeCurrency)} paid · {fmtTime(result.scheduledAt)} PKT
+                  {result.receiptNumber ? <><br />Receipt <strong>{result.receiptNumber}</strong> · Invoice {result.invoiceNumber}</> : null}
+                </div>
+                <PrimaryButton onClick={close}>Done</PrimaryButton>
+              </div>
+            )
           ) : !configured ? (
             <div className="sos-banner sos-banner--warning" style={{ fontSize: 13 }}>
               The consultation principal and fee aren’t set yet. Ask an admin to configure them in <strong>Admin → Reception settings</strong>.
@@ -277,7 +293,9 @@ export function ConsultCollectModal({
               disabled={!slot || submitting}
               iconLeft={submitting ? <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> : <Wallet size={15} />}
             >
-              Collect {money(s!.feeAmount, s!.feeCurrency)} &amp; confirm
+              {isBankTransfer
+                ? `Record ${money(s!.feeAmount, s!.feeCurrency)} · verify later`
+                : `Collect ${money(s!.feeAmount, s!.feeCurrency)} & confirm`}
             </PrimaryButton>
           </footer>
         ) : null}

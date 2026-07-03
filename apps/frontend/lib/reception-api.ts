@@ -37,8 +37,9 @@ export interface VisitRow {
   hostEmployeeId: string | null;
   referenceCode: string | null;
   hostName: string | null;
-  // Paid consultation (phase 2)
+  // Paid consultation (phase 2 / P4a)
   paid: boolean;
+  pendingPayment?: boolean;
   feeAmount: number | null;
   feeCurrency: string | null;
   appointmentAt: string | null;
@@ -67,13 +68,44 @@ export interface Availability {
   freeSlots: AvailabilitySlot[];
 }
 
+export type VisitorPaymentMethod = 'CASH' | 'BANK_TRANSFER';
+export type VisitorPaymentStatus = 'AWAITING_PROOF' | 'PENDING_REVIEW' | 'VERIFIED' | 'REJECTED';
+
 export interface CollectConsultationResult {
+  /** 'confirmed' = cash, verified now; 'pending' = bank transfer, awaiting finance. */
+  status: 'confirmed' | 'pending';
+  method: VisitorPaymentMethod;
   receiptNumber: string | null;
-  invoiceNumber: string;
+  invoiceNumber: string | null;
   appointmentId: string;
   scheduledAt: string;
   feeAmount: number;
   feeCurrency: string;
+  visitorPaymentId?: string;
+}
+
+export interface VisitorPaymentRow {
+  id: string;
+  visitId: string;
+  name: string;
+  phone: string | null;
+  method: VisitorPaymentMethod;
+  status: VisitorPaymentStatus;
+  amount: number;
+  currency: string;
+  transactionRef: string | null;
+  receiptNumber: string | null;
+  createdAt: string;
+  verifiedAt: string | null;
+  rejectedReason: string | null;
+}
+
+export interface VisitorPaymentList {
+  rows: VisitorPaymentRow[];
+  totals: {
+    pendingCount: number;
+    byCurrency: Record<string, { cash: number; bank: number; pending: number }>;
+  };
 }
 
 export interface VisitCounts {
@@ -170,11 +202,37 @@ export async function getConsultAvailability(date: string): Promise<Availability
 
 export async function collectConsultation(
   visitId: string,
-  input: { scheduledAt?: string; paymentMethod?: string; transactionRef?: string },
+  input: {
+    method?: VisitorPaymentMethod;
+    scheduledAt?: string;
+    paymentMethod?: string;
+    transactionRef?: string;
+  },
 ): Promise<CollectConsultationResult> {
   return apiFetch<CollectConsultationResult>(`/reception/visits/${visitId}/collect-consultation`, {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+export async function listVisitorPayments(
+  params: { status?: VisitorPaymentStatus; method?: VisitorPaymentMethod; from?: string; to?: string } = {},
+): Promise<VisitorPaymentList> {
+  return apiFetch<VisitorPaymentList>(`/reception/visitor-payments${buildQuery(params as Record<string, unknown>)}`, {
+    cache: 'no-store',
+  });
+}
+
+export async function verifyVisitorPayment(
+  id: string,
+): Promise<{ alreadyVerified: boolean; receiptNumber: string | null; invoiceNumber?: string; appointmentId?: string }> {
+  return apiFetch(`/reception/visitor-payments/${id}/verify`, { method: 'POST' });
+}
+
+export async function rejectVisitorPayment(id: string, reason: string): Promise<{ status: 'rejected' }> {
+  return apiFetch(`/reception/visitor-payments/${id}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
   });
 }
 

@@ -4,7 +4,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AppointmentStatus, Prisma, VisitStatus, VisitType } from '@prisma/client';
+import {
+  AppointmentStatus,
+  Prisma,
+  VisitStatus,
+  VisitType,
+  VisitorPaymentMethod,
+  VisitorPaymentStatus,
+  WhatsAppThreadStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { LeadsService } from '../leads/leads.service';
 import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
@@ -20,6 +28,7 @@ import {
   ReceptionReportQueryDto,
   UpdateReceptionSettingsDto,
   UpdateVisitDto,
+  VisitorPaymentQueryDto,
 } from './reception.dto';
 
 type LookupHit = {
@@ -221,6 +230,17 @@ export class ReceptionService {
     const empName = new Map(empRows.map((r) => [r.id, `${r.firstName} ${r.lastName}`.trim()]));
     const apptAt = new Map(apptRows.map((r) => [r.id, r.scheduledAt.toISOString()]));
 
+    // A paid-consult visit with a pending bank transfer is neither "paid" nor
+    // collectable again — flag it so the desk shows "awaiting verification".
+    const pcUnpaidIds = visits.filter((v) => v.visitType === VisitType.PAID_CONSULT && !v.paymentId).map((v) => v.id);
+    const pendingVps = pcUnpaidIds.length
+      ? await this.prisma.visitorPayment.findMany({
+          where: { visitId: { in: pcUnpaidIds }, status: VisitorPaymentStatus.PENDING_REVIEW },
+          select: { visitId: true },
+        })
+      : [];
+    const pendingSet = new Set(pendingVps.map((p) => p.visitId));
+
     const rows = visits.map((v) => ({
       id: v.id,
       visitType: v.visitType,
@@ -237,8 +257,9 @@ export class ReceptionService {
         (v.leadId ? leadRef.get(v.leadId) : undefined) ??
         null,
       hostName: v.hostEmployeeId ? empName.get(v.hostEmployeeId) ?? null : null,
-      // Paid consultation (phase 2).
+      // Paid consultation (phase 2 / P4a).
       paid: !!v.paymentId,
+      pendingPayment: pendingSet.has(v.id),
       feeAmount: v.feeAmount != null ? Number(v.feeAmount) : null,
       feeCurrency: v.feeCurrency,
       appointmentAt: v.appointmentId ? apptAt.get(v.appointmentId) ?? null : null,
@@ -412,6 +433,7 @@ export class ReceptionService {
     if (!visit.appointmentId && !dto.scheduledAt) {
       throw new BadRequestException('Pick a time for the consultation.');
     }
+    const method = dto.method ?? VisitorPaymentMethod.CASH;
 
     const org = await this.orgRow();
     const fee = org?.consultationFeeAmount != null ? Number(org.consultationFeeAmount) : 0;
@@ -424,8 +446,8 @@ export class ReceptionService {
     //    walk-in has neither, so match/create a lead first (needs a phone).
     const owner = await this.ensureConsultOwner(visit, actorUserId);
 
-    // 2. Book the slot on the principal's calendar (still unpaid). A busy-slot 409
-    //    happens BEFORE any money/claim, so the desk can just pick another time.
+    // 2. Book / hold the slot on the principal's calendar (still unpaid). A busy-slot
+    //    409 happens BEFORE any money/claim, so the desk can just pick another time.
     //    appointmentId is stamped immediately so a retry reuses it (no dup slot).
     let appointmentId = visit.appointmentId;
     let scheduledAtIso: string;
@@ -444,90 +466,403 @@ export class ReceptionService {
       await this.prisma.visit.update({ where: { id: visitId }, data: { appointmentId } });
     }
 
-    // 3. ATOMIC claim — only the request that flips feeAmount from null proceeds to
-    //    money. Blocks concurrent double-submit AND retry-after-partial-failure.
-    const claim = await this.prisma.visit.updateMany({
-      where: { id: visitId, feeAmount: null, paymentId: null },
-      data: { feeAmount: new Prisma.Decimal(fee), feeCurrency: currency },
+    // 3+4. ATOMIC claim + create the VisitorPayment in ONE transaction — only the
+    //    request that flips feeAmount from null proceeds, and the register/queue row
+    //    is created in the same commit, so a failure can never leave feeAmount set
+    //    with no VisitorPayment (which would wedge re-collection). Released again on
+    //    reject so a rejected bank transfer can be re-collected.
+    const vp = await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.visit.updateMany({
+        where: { id: visitId, feeAmount: null, paymentId: null },
+        data: { feeAmount: new Prisma.Decimal(fee), feeCurrency: currency },
+      });
+      if (claim.count === 0) {
+        throw new BadRequestException('This consultation is already paid or being processed. Refresh the desk.');
+      }
+      return tx.visitorPayment.create({
+        data: {
+          visitId,
+          method,
+          status: VisitorPaymentStatus.PENDING_REVIEW,
+          amount: new Prisma.Decimal(fee),
+          currency,
+          ...(dto.transactionRef?.trim() ? { transactionRef: dto.transactionRef.trim() } : {}),
+          createdByUserId: actorUserId,
+        },
+      });
     });
-    if (claim.count === 0) {
-      throw new BadRequestException('This consultation is already paid or being processed. Refresh the desk.');
+
+    if (method === VisitorPaymentMethod.BANK_TRANSFER) {
+      // Hold the slot; DON'T touch the finance ledger yet — the invoice + payment
+      // + receipt are created only when finance verifies (correct revenue timing).
+      await this.sendVisitText(
+        owner.leadId,
+        owner.clientId,
+        "We've received your payment details — your consultation is being verified and we'll confirm shortly.",
+      );
+      await this.notifyPrincipal(
+        org.principalEmployeeId,
+        `${visit.name} — bank transfer pending verification (${currency} ${fee.toLocaleString()})`,
+      );
+      return {
+        status: 'pending' as const,
+        method: 'BANK_TRANSFER' as const,
+        visitorPaymentId: vp.id,
+        appointmentId,
+        scheduledAt: scheduledAtIso,
+        feeAmount: fee,
+        feeCurrency: currency,
+        receiptNumber: null,
+        invoiceNumber: null,
+      };
     }
 
-    // 4. Money — a STANDALONE consultation invoice (no lead/client link, so it
-    //    bypasses the service-agreement gate at both createInvoice and
-    //    recordPayment); the customer linkage lives on the visit. invoiceId /
-    //    paymentId are stamped the instant each exists so a partial failure never
-    //    orphans money the visit can't reference.
-    const invoice = await this.finance.createInvoice(
-      {
-        isConsultation: true,
-        subtotal: fee.toFixed(2),
-        currency,
-        dueDate: new Date().toISOString(),
-        notes: this.consultInvoiceNote(visit, org),
-      },
-      actorUserId,
-    );
-    await this.prisma.visit.update({ where: { id: visitId }, data: { invoiceId: invoice.id } });
+    // CASH — verified at the counter: run the SAME finalize path immediately.
+    const fin = await this.finalizeVisitorPayment(vp.id, actorUserId);
+    return {
+      status: 'confirmed' as const,
+      method: 'CASH' as const,
+      receiptNumber: fin.receiptNumber,
+      invoiceNumber: fin.invoiceNumber,
+      appointmentId,
+      scheduledAt: scheduledAtIso,
+      feeAmount: fee,
+      feeCurrency: currency,
+    };
+  }
 
-    const payment = await this.finance.recordPayment(
-      {
-        invoiceId: invoice.id,
-        amount: fee.toFixed(2),
-        currency,
-        paymentMethod: dto.paymentMethod?.trim() || 'cash',
-        ...(dto.transactionRef?.trim() ? { transactionRef: dto.transactionRef.trim() } : {}),
-        paidAt: new Date().toISOString(),
-        notes: 'Consultation fee — creditable against a future service fee.',
-      },
-      actorUserId,
-    );
-    await this.prisma.visit.update({ where: { id: visitId }, data: { paymentId: payment.id } });
-
-    const verified = await this.finance.verifyPayment(payment.id, {}, actorUserId);
-
-    // 5. Pay-to-confirm: the slot is only CONFIRMED once paid.
-    await this.appointments.update(appointmentId, { status: AppointmentStatus.CONFIRMED }, actorUserId);
-
-    // 6. Finish stamping the visit's creditable flag (booking already linked).
-    await this.prisma.visit.update({
-      where: { id: visitId },
-      data: { consultFeeCreditable: true },
+  /** Finance verifies a pending consultation payment (or a bank transfer). Thin
+   *  wrapper over the shared finalize path so cash + bank share one state machine. */
+  async verifyVisitorPayment(id: string, actorUserId: string) {
+    const existing = await this.prisma.visitorPayment.findUnique({
+      where: { id },
+      select: { status: true, receiptNumber: true },
     });
+    if (!existing) throw new NotFoundException('Payment not found');
+    if (existing.status === VisitorPaymentStatus.VERIFIED) {
+      return { alreadyVerified: true as const, receiptNumber: existing.receiptNumber };
+    }
+    if (existing.status === VisitorPaymentStatus.REJECTED) {
+      throw new BadRequestException('This payment was rejected.');
+    }
+    const fin = await this.finalizeVisitorPayment(id, actorUserId);
+    return {
+      alreadyVerified: false as const,
+      receiptNumber: fin.receiptNumber,
+      invoiceNumber: fin.invoiceNumber,
+      appointmentId: fin.appointmentId,
+    };
+  }
 
-    // 7. Notify — best-effort, never breaks the completed payment.
+  /**
+   * The shared "recognise the money" path for a consultation payment. An ATOMIC
+   * claim moves PENDING_REVIEW -> VERIFYING (a distinct transient state), so a
+   * concurrent reject or second verify can't touch the row mid-flight. The money
+   * chain is resume-safe (reuses any invoice/payment a prior failed attempt made,
+   * so a retry never double-charges); on failure the claim rolls back to
+   * PENDING_REVIEW so it can be retried.
+   */
+  private async finalizeVisitorPayment(
+    id: string,
+    actorUserId: string,
+  ): Promise<{ invoiceNumber: string | null; receiptNumber: string | null; appointmentId: string }> {
+    // Pre-flight loads BEFORE the claim — so a "no slot"/"no org" throw never
+    // leaves the row stuck in VERIFYING (which the claim, below, would strand).
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id } });
+    if (!vp) throw new NotFoundException('Payment not found');
+    const visit = await this.prisma.visit.findUnique({ where: { id: vp.visitId } });
+    if (!visit) throw new NotFoundException('Visit not found');
+    if (!visit.appointmentId) throw new BadRequestException('This consultation has no booked slot to confirm.');
+    const org = await this.orgRow();
+    if (!org) throw new NotFoundException('Organization not configured');
+
+    // Atomic claim PENDING_REVIEW -> VERIFYING; only now is the row locked, and
+    // everything after runs inside the try so any throw rolls it back.
+    const claim = await this.prisma.visitorPayment.updateMany({
+      where: { id, status: VisitorPaymentStatus.PENDING_REVIEW },
+      data: { status: VisitorPaymentStatus.VERIFYING, verifiedByUserId: actorUserId },
+    });
+    if (claim.count === 0) throw new BadRequestException('This payment is already verified or being verified.');
+
     try {
-      await this.whatsappNotifier.sendConfirmationFor(appointmentId, actorUserId, { kind: 'booked' });
+      const fin = await this.finalizeConsultPayment(
+        { id: vp.id, invoiceId: vp.invoiceId, paymentId: vp.paymentId },
+        { name: visit.name, phone: visit.phone },
+        org,
+        {
+          amount: Number(vp.amount),
+          currency: vp.currency,
+          appointmentId: visit.appointmentId,
+          paymentMethod: vp.method === VisitorPaymentMethod.CASH ? 'cash' : 'bank_transfer',
+          transactionRef: vp.transactionRef ?? undefined,
+        },
+        actorUserId,
+      );
+      // FULL SUCCESS ONLY: now mark the visit paid — this is what getReports counts
+      // as revenue and what the collect guard reads. A rolled-back attempt never
+      // reaches here, so a recorded-but-unverified payment is never counted paid.
+      await this.prisma.visit.update({
+        where: { id: visit.id },
+        data: { invoiceId: fin.invoiceId, paymentId: fin.paymentId, consultFeeCreditable: true },
+      });
+      await this.prisma.visitorPayment.update({
+        where: { id },
+        data: {
+          status: VisitorPaymentStatus.VERIFIED,
+          verifiedAt: new Date(),
+          invoiceId: fin.invoiceId,
+          paymentId: fin.paymentId,
+          receiptNumber: fin.receiptNumber,
+        },
+      });
+      return { invoiceNumber: fin.invoiceNumber, receiptNumber: fin.receiptNumber, appointmentId: visit.appointmentId };
+    } catch (err) {
+      // Roll the claim back so the payment can be retried. finalizeConsultPayment
+      // is resume-safe (invoice/payment anchored on the VisitorPayment), so
+      // re-running it never double-charges, and the visit was never marked paid.
+      await this.prisma.visitorPayment.updateMany({
+        where: { id, status: VisitorPaymentStatus.VERIFYING },
+        data: { status: VisitorPaymentStatus.PENDING_REVIEW },
+      });
+      throw err;
+    }
+  }
+
+  /** Finance rejects a pending payment: release the held slot + the fee claim so
+   *  the desk can re-collect, and let the customer know. The CAS keys on
+   *  PENDING_REVIEW (not a VERIFYING row mid-verify), so verify + reject are
+   *  mutually exclusive. No ledger rows exist for a pending transfer, so there's
+   *  nothing to void. */
+  async rejectVisitorPayment(id: string, reason: string, actorUserId: string) {
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id } });
+    if (!vp) throw new NotFoundException('Payment not found');
+    if (vp.status !== VisitorPaymentStatus.PENDING_REVIEW) {
+      throw new BadRequestException('Only a pending payment can be rejected.');
+    }
+    // Guard: if a prior verify attempt already took the money (payment PAID) but a
+    // later step failed and rolled the row back, don't reject it — that would strand
+    // real money + an issued receipt. Route to the finance refund flow instead.
+    if (vp.paymentId) {
+      const pay = await this.prisma.payment.findUnique({ where: { id: vp.paymentId }, select: { status: true } });
+      if (pay?.status === 'PAID') {
+        throw new BadRequestException('This payment was already taken and receipted — use the finance refund flow, not reject.');
+      }
+    }
+    // Atomic CAS PENDING_REVIEW -> REJECTED. A verify that already claimed the row
+    // moved it to VERIFYING, so this no longer matches — the two never overlap.
+    const claim = await this.prisma.visitorPayment.updateMany({
+      where: { id, status: VisitorPaymentStatus.PENDING_REVIEW },
+      data: {
+        status: VisitorPaymentStatus.REJECTED,
+        rejectedReason: reason?.trim() || 'Payment could not be verified',
+        verifiedByUserId: actorUserId,
+        verifiedAt: new Date(),
+      },
+    });
+    if (claim.count === 0) throw new BadRequestException('This payment is already being verified or was handled.');
+
+    const visit = await this.prisma.visit.findUnique({ where: { id: vp.visitId } });
+    if (visit?.appointmentId) {
+      try {
+        await this.appointments.update(visit.appointmentId, { status: AppointmentStatus.CANCELLED }, actorUserId);
+      } catch (err) {
+        this.log.warn(`consult reject: cancel appointment failed: ${(err as Error).message}`);
+      }
+    }
+    // Release the slot link + fee claim so a fresh collection can be started.
+    await this.prisma.visit.update({
+      where: { id: vp.visitId },
+      data: { appointmentId: null, feeAmount: null, feeCurrency: null },
+    });
+    await this.sendVisitText(
+      visit?.leadId ?? null,
+      visit?.clientId ?? null,
+      "We couldn't verify your consultation payment yet. Please resend the transfer receipt or pay at the front desk.",
+    );
+    return { status: 'rejected' as const };
+  }
+
+  /** Register + finance queue over consultation payments (cash vs bank, pending). */
+  async listVisitorPayments(query: VisitorPaymentQueryDto) {
+    const dayStart = (s: string) => new Date(`${s}T00:00:00.000+05:00`);
+    const plusDay = (dt: Date) => new Date(dt.getTime() + 24 * 60 * 60 * 1000);
+    const where: Prisma.VisitorPaymentWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (query.method) where.method = query.method;
+    if (isRealDay(query.from) || isRealDay(query.to)) {
+      const from = isRealDay(query.from) ? query.from! : query.to!;
+      const to = isRealDay(query.to) ? query.to! : query.from!;
+      const [a, b] = from <= to ? [from, to] : [to, from];
+      where.createdAt = { gte: dayStart(a), lt: plusDay(dayStart(b)) };
+    }
+
+    const rows = await this.prisma.visitorPayment.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    const visitIds = [...new Set(rows.map((r) => r.visitId))];
+    const visits = visitIds.length
+      ? await this.prisma.visit.findMany({ where: { id: { in: visitIds } }, select: { id: true, name: true, phone: true } })
+      : [];
+    const vmap = new Map(visits.map((v) => [v.id, v]));
+
+    const out = rows.map((r) => ({
+      id: r.id,
+      visitId: r.visitId,
+      name: vmap.get(r.visitId)?.name ?? '—',
+      phone: vmap.get(r.visitId)?.phone ?? null,
+      method: r.method,
+      status: r.status,
+      amount: Number(r.amount),
+      currency: r.currency,
+      transactionRef: r.transactionRef,
+      receiptNumber: r.receiptNumber,
+      createdAt: r.createdAt.toISOString(),
+      verifiedAt: r.verifiedAt?.toISOString() ?? null,
+      rejectedReason: r.rejectedReason,
+    }));
+
+    // Register totals per currency: verified cash vs bank, plus pending pool.
+    let pendingCount = 0;
+    const byCurrency: Record<string, { cash: number; bank: number; pending: number }> = {};
+    for (const r of rows) {
+      const bucket = (byCurrency[r.currency] ??= { cash: 0, bank: 0, pending: 0 });
+      if (r.status === VisitorPaymentStatus.VERIFIED) {
+        if (r.method === VisitorPaymentMethod.CASH) bucket.cash += Number(r.amount);
+        else bucket.bank += Number(r.amount);
+      } else if (r.status === VisitorPaymentStatus.PENDING_REVIEW) {
+        bucket.pending += Number(r.amount);
+        pendingCount += 1;
+      }
+    }
+
+    return { rows: out, totals: { pendingCount, byCurrency } };
+  }
+
+  /**
+   * The shared money chain for a confirmed consultation fee (cash-at-desk or a
+   * finance-verified bank transfer): standalone consultation invoice → record +
+   * verify payment (receipt) → CONFIRM the slot → best-effort WhatsApp confirm +
+   * principal bell. Resume-safe: the invoice/payment ids are anchored on the
+   * VisitorPayment (NOT the visit), so a rolled-back attempt is retried without a
+   * second invoice/payment, and the visit is marked paid only by the caller on
+   * full success — a partial failure never counts as revenue or blocks re-collect.
+   */
+  private async finalizeConsultPayment(
+    vp: { id: string; invoiceId: string | null; paymentId: string | null },
+    visit: { name: string; phone: string | null },
+    org: { principalEmployeeId: string | null; consultationBankIban: string | null; consultationBankName: string | null; consultationBankTitle: string | null },
+    params: { amount: number; currency: string; appointmentId: string; paymentMethod: string; transactionRef?: string },
+    actorUserId: string,
+  ): Promise<{ invoiceId: string; invoiceNumber: string; paymentId: string; receiptNumber: string | null }> {
+    let invoiceId = vp.invoiceId;
+    let invoiceNumber: string;
+    if (invoiceId) {
+      const inv = await this.prisma.invoice.findUnique({ where: { id: invoiceId }, select: { invoiceNumber: true } });
+      invoiceNumber = inv?.invoiceNumber ?? '—';
+    } else {
+      const invoice = await this.finance.createInvoice(
+        {
+          isConsultation: true,
+          subtotal: params.amount.toFixed(2),
+          currency: params.currency,
+          dueDate: new Date().toISOString(),
+          notes: this.consultInvoiceNote(visit, org),
+        },
+        actorUserId,
+      );
+      invoiceId = invoice.id;
+      invoiceNumber = invoice.invoiceNumber;
+      await this.prisma.visitorPayment.update({ where: { id: vp.id }, data: { invoiceId } });
+    }
+
+    let paymentId = vp.paymentId;
+    if (!paymentId) {
+      const payment = await this.finance.recordPayment(
+        {
+          invoiceId,
+          amount: params.amount.toFixed(2),
+          currency: params.currency,
+          paymentMethod: params.paymentMethod,
+          ...(params.transactionRef ? { transactionRef: params.transactionRef } : {}),
+          paidAt: new Date().toISOString(),
+          notes: 'Consultation fee — creditable against a future service fee.',
+        },
+        actorUserId,
+      );
+      paymentId = payment.id;
+      await this.prisma.visitorPayment.update({ where: { id: vp.id }, data: { paymentId } });
+    }
+
+    // Verify idempotently: if a prior attempt already set the payment PAID, don't
+    // re-verify (that would throw) — recover the already-issued receipt number.
+    let receiptNumber: string | null = null;
+    const existingPayment = await this.prisma.payment.findUnique({ where: { id: paymentId }, select: { status: true } });
+    if (existingPayment?.status === 'PAID') {
+      const rc = await this.prisma.receipt.findUnique({ where: { paymentId }, select: { receiptNumber: true } });
+      receiptNumber = rc?.receiptNumber ?? null;
+    } else {
+      const verified = await this.finance.verifyPayment(paymentId, {}, actorUserId);
+      receiptNumber = verified.receipt?.receiptNumber ?? null;
+    }
+
+    // Pay-to-confirm: the slot is only CONFIRMED once paid + verified.
+    await this.appointments.update(params.appointmentId, { status: AppointmentStatus.CONFIRMED }, actorUserId);
+
+    try {
+      await this.whatsappNotifier.sendConfirmationFor(params.appointmentId, actorUserId, { kind: 'booked' });
     } catch (err) {
       this.log.warn(`consult WhatsApp confirm failed: ${(err as Error).message}`);
     }
+    await this.notifyPrincipal(
+      org.principalEmployeeId,
+      `${visit.name} — fee paid (${params.currency} ${params.amount.toLocaleString()})`,
+    );
+
+    return { invoiceId, invoiceNumber, paymentId, receiptNumber };
+  }
+
+  /** Bell the principal about a consultation (best-effort). */
+  private async notifyPrincipal(principalEmployeeId: string | null, body: string) {
+    if (!principalEmployeeId) return;
     try {
       const principal = await this.prisma.employee.findFirst({
-        where: { id: org.principalEmployeeId },
+        where: { id: principalEmployeeId },
         select: { user: { select: { id: true } } },
       });
       if (principal?.user?.id) {
         await this.notifications.create({
           userId: principal.user.id,
           type: 'CONSULTATION_BOOKED',
-          title: 'Paid consultation confirmed',
-          body: `${visit.name} — fee paid (${currency} ${fee.toLocaleString()})`,
+          title: 'Paid consultation',
+          body,
           link: '/sales/appointments',
         });
       }
     } catch (err) {
       this.log.warn(`consult principal notify failed: ${(err as Error).message}`);
     }
+  }
 
-    return {
-      receiptNumber: verified.receipt?.receiptNumber ?? null,
-      invoiceNumber: invoice.invoiceNumber,
-      appointmentId,
-      scheduledAt: scheduledAtIso,
-      feeAmount: fee,
-      feeCurrency: currency,
-    };
+  /** Free-text WhatsApp to the visitor's open thread (best-effort, 24h window). */
+  private async sendVisitText(leadId: string | null, clientId: string | null, body: string) {
+    if (!leadId && !clientId) return;
+    try {
+      const thread = await this.prisma.whatsAppThread.findFirst({
+        where: {
+          ...(leadId ? { leadId } : {}),
+          ...(!leadId && clientId ? { clientId } : {}),
+          status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
+          windowExpiresAt: { gt: new Date() },
+        },
+        orderBy: { lastMessageAt: 'desc' },
+        select: { id: true },
+      });
+      if (thread) await this.whatsappNotifier.sendBotText(thread.id, body);
+    } catch (err) {
+      this.log.warn(`consult visit text failed: ${(err as Error).message}`);
+    }
   }
 
   /**

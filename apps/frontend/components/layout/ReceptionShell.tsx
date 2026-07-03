@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Sparkles,
+  Wallet,
   X,
 } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
@@ -60,12 +61,16 @@ const RECEPTION_ROLES = new Set(['reception', 'super_admin', 'admin']);
 const NAV: DrawerMenuItem[] = [
   { label: 'Front Desk', href: '/reception', icon: DoorOpen, caption: 'Live lobby & check-in' },
   { label: 'Visitors', href: '/reception/visitors', icon: ClipboardList, caption: 'Full visit log' },
+  { label: 'Payments', href: '/reception/payments', icon: Wallet, caption: 'Consultation fees — cash & bank' },
   { label: 'Reports', href: '/reception/reports', icon: BarChart3, caption: 'Footfall, conversion & revenue' },
 ];
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/reception/visitors') {
     return { title: 'Visitors', subtitle: 'The full visit log — search, filter and history' };
+  }
+  if (pathname === '/reception/payments') {
+    return { title: 'Payments', subtitle: 'Consultation fees — cash, bank transfer and pending verification' };
   }
   if (pathname === '/reception/reports') {
     return { title: 'Reports', subtitle: 'Footfall, conversion, consultation revenue and no-shows' };

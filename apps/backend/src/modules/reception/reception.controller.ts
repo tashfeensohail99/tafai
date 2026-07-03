@@ -26,8 +26,10 @@ import {
   ListVisitsQueryDto,
   LookupQueryDto,
   ReceptionReportQueryDto,
+  RejectVisitorPaymentDto,
   UpdateReceptionSettingsDto,
   UpdateVisitDto,
+  VisitorPaymentQueryDto,
 } from './reception.dto';
 
 @Controller('reception')
@@ -103,5 +105,30 @@ export class ReceptionController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.reception.collectConsultation(id, dto, user.id);
+  }
+
+  // ── Visitor payments — register (reception) + verification queue (finance) ──
+  @Get('visitor-payments')
+  @RequireAnyPermissions('reception.view', 'reception.check_in', 'finance.verify_payment')
+  visitorPayments(@Query() query: VisitorPaymentQueryDto) {
+    return this.reception.listVisitorPayments(query);
+  }
+
+  @Post('visitor-payments/:id/verify')
+  @RequirePermissions('finance.verify_payment')
+  @Audit({ entityType: 'VisitorPayment', category: 'MUTATION', severity: 'HIGH', action: 'PAYMENT_VERIFIED' })
+  verifyVisitorPayment(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    return this.reception.verifyVisitorPayment(id, user.id);
+  }
+
+  @Post('visitor-payments/:id/reject')
+  @RequirePermissions('finance.verify_payment')
+  @Audit({ entityType: 'VisitorPayment', category: 'MUTATION', severity: 'HIGH', action: 'RECORD_UPDATED' })
+  rejectVisitorPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RejectVisitorPaymentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reception.rejectVisitorPayment(id, dto.reason ?? '', user.id);
   }
 }

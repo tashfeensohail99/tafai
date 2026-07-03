@@ -2,11 +2,12 @@ import { Module } from '@nestjs/common';
 import { StorageModule } from '../../storage/storage.module';
 import { WhatsAppMessagesController } from './messages.controller';
 import { WhatsAppReengageController } from './reengage.controller';
+import { WhatsAppLeadOutreachController } from './lead-outreach.controller';
 import { WhatsAppMessagesService } from './messages.service';
 
 @Module({
   imports: [StorageModule],
-  controllers: [WhatsAppMessagesController, WhatsAppReengageController],
+  controllers: [WhatsAppMessagesController, WhatsAppReengageController, WhatsAppLeadOutreachController],
   providers: [WhatsAppMessagesService],
   exports: [WhatsAppMessagesService],
 })

@@ -22,6 +22,7 @@ import { ServicesModule } from './modules/services/services.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { LeadsModule } from './modules/leads/leads.module';
+import { ReceptionModule } from './modules/reception/reception.module';
 import { LeadImportsModule } from './modules/lead-imports/lead-imports.module';
 import { MetaLeadsModule } from './modules/meta-leads/meta-leads.module';
 import { MetaAdsModule } from './modules/meta-ads/meta-ads.module';
@@ -83,6 +84,7 @@ import { TelephonyModule } from './modules/telephony/telephony.module';
     CountriesModule,
     PartnersModule,
     LeadsModule,
+    ReceptionModule,
     LeadImportsModule,
     MetaLeadsModule,
     MetaAdsModule,

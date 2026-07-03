@@ -63,6 +63,32 @@ enum LeadStatus {
   @@schema("crm")
 }
 
+/// Front-desk / reception visit categories. WALK_IN = a new prospect off the
+/// street (also spun into a Lead + round-robin so Sales picks them up).
+/// EXISTING_CLIENT = already in the CRM, just logging the visit. PAID_CONSULT =
+/// paid an in-person consultation fee to meet the principal (money + booking
+/// wired in a later phase).
+enum VisitType {
+  WALK_IN
+  EXISTING_CLIENT
+  PAID_CONSULT
+
+  @@schema("crm")
+}
+
+/// Reception visit lifecycle. WAITING (checked in, in the lobby) -> IN_MEETING
+/// (with a staff member) -> DONE (checked out). NO_SHOW / CANCELLED are
+/// terminal too.
+enum VisitStatus {
+  WAITING
+  IN_MEETING
+  DONE
+  NO_SHOW
+  CANCELLED
+
+  @@schema("crm")
+}
+
 enum FollowUpStatus {
   OPEN
   COMPLETED
@@ -1384,6 +1410,59 @@ model MetaLeadSubmission {
   @@index([campaignId])
   @@index([formId])
   @@map("lead_meta_submissions")
+  @@schema("crm")
+}
+
+/// Front-desk / reception visit register. One row per person who physically
+/// walks into the office. Three kinds (see VisitType): a new WALK_IN prospect
+/// (also turned into a Lead + round-robin so Sales owns the follow-up), an
+/// EXISTING_CLIENT (already in the CRM — just logging the visit), and a
+/// PAID_CONSULT (came to pay for an in-person meeting with the principal; the
+/// fee + appointment links are populated in a later phase).
+///
+/// leadId / clientId / hostEmployeeId / appointmentId / invoiceId / paymentId
+/// are deliberately SCALAR (no Prisma FK relations) — the same append-only,
+/// point-in-time-log convention as SmartOfficeCallLog + WhatsAppCall + Receipt.
+/// It keeps the register readable even after a referenced row is soft-deleted,
+/// and means this table needs no ALTER on leads / clients / employees.
+model Visit {
+  id        String      @id @default(uuid())
+  visitType VisitType
+  status    VisitStatus @default(WAITING)
+
+  /// Snapshot of who walked in, denormalised so the register still reads
+  /// correctly if the linked lead/client is later renamed or removed.
+  name  String
+  phone String?
+
+  // Cross-links (scalar — see model note). leadId is set for walk-ins (the Lead
+  // we created) and known leads; clientId for converted clients. The rest land
+  // in the paid-consultation phase.
+  leadId         String?
+  clientId       String?
+  hostEmployeeId String?
+  appointmentId  String?
+  invoiceId      String?
+  paymentId      String?
+
+  /// Why they came, free text (e.g. "document pickup", "consultation").
+  purpose String?
+  notes   String?
+
+  checkedInAt  DateTime  @default(now())
+  checkedOutAt DateTime?
+  /// UserAccount id of the receptionist who logged the visit (scalar, audit).
+  checkedInByUserId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, checkedInAt(sort: Desc)])
+  @@index([checkedInAt(sort: Desc)])
+  @@index([visitType])
+  @@index([leadId])
+  @@index([clientId])
+  @@map("visits")
   @@schema("crm")
 }
 

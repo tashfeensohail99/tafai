@@ -9,6 +9,7 @@ import {
   ClipboardList,
   BarChart3,
   Clock,
+  DoorOpen,
   FileSpreadsheet,
   FileText,
   Flag,
@@ -99,6 +100,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
     label: 'CRM',
     items: [
       { label: 'Sales overview', href: '/admin/sales', icon: Users, caption: 'Per-agent KPIs', permissionKey: 'reports.view' },
+      { label: 'Reception', href: '/admin/reception', icon: DoorOpen, caption: 'Front-desk visit register', permissionKey: 'reception.view' },
       { label: 'Leads', href: '/admin/leads', icon: Users, caption: 'All inbound', permissionKey: 'leads.view_all' },
       { label: 'Ads', href: '/admin/ads', icon: Megaphone, caption: 'Meta ad spend → leads', permissionKey: 'leads.view_all' },
       { label: 'Lead Imports', href: '/admin/lead-imports', icon: FileSpreadsheet, caption: 'CSV/Excel bulk upload', permissionKey: 'leads.create' },

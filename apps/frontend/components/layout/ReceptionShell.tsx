@@ -3,6 +3,7 @@
 // A reception-role user logs in and lands here; the front-desk console is the home.
 
 import {
+  ClipboardList,
   DoorOpen,
   LogOut,
   Menu,
@@ -56,12 +57,16 @@ export function useReceptionSession(): ReceptionSessionContextValue {
 const RECEPTION_ROLES = new Set(['reception', 'super_admin', 'admin']);
 
 const NAV: DrawerMenuItem[] = [
-  { label: 'Front Desk', href: '/reception', icon: DoorOpen, caption: 'Visit register' },
+  { label: 'Front Desk', href: '/reception', icon: DoorOpen, caption: 'Live lobby & check-in' },
+  { label: 'Visitors', href: '/reception/visitors', icon: ClipboardList, caption: 'Full visit log' },
 ];
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
+  if (pathname === '/reception/visitors') {
+    return { title: 'Visitors', subtitle: 'The full visit log — search, filter and history' };
+  }
   if (pathname === '/reception') {
-    return { title: 'Front Desk', subtitle: 'Log office visitors, walk-ins and paid consultations' };
+    return { title: 'Front Desk', subtitle: 'Live lobby — check visitors in, out and no-show' };
   }
   return { title: 'Reception', subtitle: '' };
 }

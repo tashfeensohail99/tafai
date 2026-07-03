@@ -1,0 +1,269 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Clock,
+  DoorOpen,
+  Hourglass,
+  Loader2,
+  LogOut,
+  PlayCircle,
+  RefreshCw,
+  Users,
+  UserPlus,
+  XCircle,
+} from 'lucide-react';
+import {
+  EmptyState,
+  GhostButton,
+  GlassCard,
+  MetricCard,
+  PrimaryButton,
+  StatusBadge,
+  type MetricTone,
+} from '@/components/sales-v2/ui';
+import {
+  listHosts,
+  listVisits,
+  updateVisit,
+  type Host,
+  type VisitList,
+  type VisitRow,
+  type VisitStatus,
+} from '@/lib/reception-api';
+import { CheckInModal } from './CheckInModal';
+import { avatarStyle, fmtElapsed, initials, TYPE_META } from './shared';
+
+function fmtMins(mins: number): string {
+  if (mins < 1) return '0m';
+  if (mins < 60) return `${Math.round(mins)}m`;
+  return `${Math.floor(mins / 60)}h ${String(Math.round(mins % 60)).padStart(2, '0')}m`;
+}
+
+export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
+  const [data, setData] = useState<VisitList | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [hosts, setHosts] = useState<Host[]>([]);
+  const [checkInOpen, setCheckInOpen] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const reload = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setLoading(true);
+    setError(null);
+    try {
+      // A generous limit so the live board shows everyone currently in — counts
+      // come from the DB groupBy regardless.
+      setData(await listVisits({ limit: 200 }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load the front desk');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+    listHosts().then((r) => setHosts(r.hosts)).catch(() => setHosts([]));
+  }, [reload]);
+
+  // Keep the board live: refetch every 25s, and tick the clock every 30s so
+  // waiting-time labels advance between fetches.
+  useEffect(() => {
+    const poll = setInterval(() => void reload({ quiet: true }), 25_000);
+    const tick = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => {
+      clearInterval(poll);
+      clearInterval(tick);
+    };
+  }, [reload]);
+
+  const act = async (id: string, status: VisitStatus) => {
+    setBusyId(id);
+    setActionError(null);
+    try {
+      await updateVisit(id, { status });
+      await reload({ quiet: true });
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Failed to update the visit');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const counts = data?.counts;
+  const waiting = useMemo(() => (data?.visits ?? []).filter((v) => v.status === 'WAITING'), [data]);
+  const inMeeting = useMemo(() => (data?.visits ?? []).filter((v) => v.status === 'IN_MEETING'), [data]);
+
+  const avgWaitMins = useMemo(() => {
+    if (waiting.length === 0) return null;
+    const total = waiting.reduce((s, v) => s + Math.max(0, nowMs - new Date(v.checkedInAt).getTime()), 0);
+    return total / waiting.length / 60000;
+  }, [waiting, nowMs]);
+
+  const kpis: Array<{ label: string; value: string; hint: string; tone: MetricTone; Icon: typeof Clock }> = [
+    { label: 'Waiting', value: counts ? `${counts.waiting}` : '—', hint: 'In the lobby right now', tone: counts && counts.waiting > 0 ? 'warning' : 'neutral', Icon: Clock },
+    { label: 'In meeting', value: counts ? `${counts.inMeeting}` : '—', hint: 'With a staff member', tone: 'info', Icon: Users },
+    { label: 'Seen today', value: counts ? `${counts.done}` : '—', hint: 'Checked out today', tone: 'success', Icon: DoorOpen },
+    { label: 'Avg wait', value: avgWaitMins == null ? '—' : fmtMins(avgWaitMins), hint: 'Current lobby wait', tone: avgWaitMins != null && avgWaitMins >= 20 ? 'danger' : 'accent', Icon: Hourglass },
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span className="sos-text-faint" style={{ fontSize: 12.5 }}>
+          Walk-ins become leads assigned to a sales rep automatically. Live view · Pakistan time.
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <GhostButton iconLeft={<RefreshCw size={14} />} onClick={() => void reload()}>Refresh</GhostButton>
+          {canCheckIn ? (
+            <PrimaryButton iconLeft={<UserPlus size={15} />} onClick={() => setCheckInOpen(true)}>Check in visitor</PrimaryButton>
+          ) : null}
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
+        {kpis.map((k) => (
+          <MetricCard key={k.label} label={k.label} value={k.value} hint={k.hint} tone={k.tone} Icon={k.Icon} />
+        ))}
+      </div>
+
+      {actionError ? <div className="sos-banner sos-banner--danger">{actionError}</div> : null}
+      {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}
+
+      {loading ? (
+        <div className="sos-text-muted" style={{ padding: 30, textAlign: 'center' }}>
+          <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', verticalAlign: 'middle' }} /> Loading the lobby…
+        </div>
+      ) : waiting.length === 0 && inMeeting.length === 0 ? (
+        <GlassCard variant="soft" padded="lg">
+          <EmptyState
+            Icon={DoorOpen}
+            title="The lobby is empty"
+            description={canCheckIn ? 'When someone arrives, check them in and they’ll appear here live.' : 'No one is currently waiting or in a meeting.'}
+            action={canCheckIn ? <PrimaryButton iconLeft={<UserPlus size={15} />} onClick={() => setCheckInOpen(true)}>Check in visitor</PrimaryButton> : undefined}
+          />
+        </GlassCard>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+          <QueueColumn title="Waiting" tone="warning" count={waiting.length}>
+            {waiting.map((v) => (
+              <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} />
+            ))}
+          </QueueColumn>
+          <QueueColumn title="In meeting" tone="info" count={inMeeting.length}>
+            {inMeeting.length === 0 ? (
+              <div className="sos-text-faint" style={{ fontSize: 12.5, padding: '10px 2px' }}>Nobody in a meeting.</div>
+            ) : (
+              inMeeting.map((v) => (
+                <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} />
+              ))
+            )}
+          </QueueColumn>
+        </div>
+      )}
+
+      <CheckInModal open={checkInOpen} hosts={hosts} onClose={() => setCheckInOpen(false)} onDone={() => void reload({ quiet: true })} />
+    </div>
+  );
+}
+
+function QueueColumn({
+  title,
+  tone,
+  count,
+  children,
+}: {
+  title: string;
+  tone: MetricTone;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <GlassCard variant="default" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-base)', margin: 0 }}>{title}</h2>
+        <StatusBadge tone={tone} size="sm" dot>{count}</StatusBadge>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
+    </GlassCard>
+  );
+}
+
+function QueueCard({
+  v,
+  nowMs,
+  canCheckIn,
+  busy,
+  onAct,
+}: {
+  v: VisitRow;
+  nowMs: number;
+  canCheckIn: boolean;
+  busy: boolean;
+  onAct: (id: string, status: VisitStatus) => void;
+}) {
+  const type = TYPE_META[v.visitType];
+  const waited = fmtElapsed(v.checkedInAt, nowMs);
+  return (
+    <div style={{ padding: 12, borderRadius: 14, border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-1)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={avatarStyle(38)}>{initials(v.name)}</div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sos-text-primary)' }}>{v.name}</div>
+          <div className="sos-text-faint" style={{ fontSize: 11.5 }}>
+            {v.referenceCode ? `${v.referenceCode} · ` : ''}{v.phone ?? 'no phone'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, fontWeight: 600, color: v.status === 'WAITING' ? 'var(--sos-status-warning)' : 'var(--sos-text-secondary)' }}>
+            <Clock size={12} /> {waited}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <StatusBadge tone={type.tone} size="sm" dot={false}>{type.label}</StatusBadge>
+        {v.hostName ? <span className="sos-text-muted" style={{ fontSize: 12 }}>→ {v.hostName}</span> : null}
+        {v.purpose ? <span className="sos-text-faint" style={{ fontSize: 12 }}>· {v.purpose}</span> : null}
+      </div>
+
+      {canCheckIn ? (
+        <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+          {busy ? (
+            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--sos-text-faint)' }} />
+          ) : (
+            <>
+              {v.status === 'WAITING' ? (
+                <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'IN_MEETING')}><PlayCircle size={13} /> Start</button>
+              ) : null}
+              <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'DONE')}><LogOut size={13} /> Check out</button>
+              {v.status === 'WAITING' ? (
+                <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'NO_SHOW')}><XCircle size={13} /> No-show</button>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const cardBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  padding: '6px 11px',
+  fontSize: 12,
+  fontWeight: 600,
+  borderRadius: 8,
+  border: '1px solid var(--sos-border-subtle)',
+  background: 'var(--sos-surface-2)',
+  color: 'var(--sos-text-secondary)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+};

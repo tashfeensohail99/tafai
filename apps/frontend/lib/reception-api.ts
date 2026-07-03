@@ -18,6 +18,12 @@ export interface LookupHit {
   owner: string | null;
 }
 
+export interface Host {
+  id: string;
+  name: string;
+  department: string | null;
+}
+
 export interface VisitRow {
   id: string;
   visitType: VisitType;
@@ -35,17 +41,24 @@ export interface VisitRow {
   checkedOutAt: string | null;
 }
 
+export interface VisitCounts {
+  total: number;
+  waiting: number;
+  inMeeting: number;
+  done: number;
+  noShow: number;
+  cancelled: number;
+  walkIn: number;
+  existing: number;
+  paid: number;
+}
+
 export interface VisitList {
-  date: string;
-  counts: {
-    total: number;
-    waiting: number;
-    inMeeting: number;
-    done: number;
-    walkIn: number;
-    existing: number;
-    paid: number;
-  };
+  label: string;
+  total: number;
+  limit: number;
+  offset: number;
+  counts: VisitCounts;
   visits: VisitRow[];
 }
 
@@ -60,14 +73,29 @@ export interface CreateVisitInput {
   notes?: string;
 }
 
-export async function receptionLookup(q: string): Promise<{ results: LookupHit[] }> {
-  return apiFetch<{ results: LookupHit[] }>(`/reception/lookup${buildQuery({ q })}`);
+export interface ListVisitsParams {
+  date?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  status?: VisitStatus;
+  type?: VisitType;
+  limit?: number;
+  offset?: number;
 }
 
-export async function listVisits(
-  params: { date?: string; status?: VisitStatus; type?: VisitType } = {},
-): Promise<VisitList> {
-  return apiFetch<VisitList>(`/reception/visits${buildQuery(params)}`, { cache: 'no-store' });
+export async function receptionLookup(q: string): Promise<{ results: LookupHit[] }> {
+  return apiFetch<{ results: LookupHit[] }>(`/reception/lookup${buildQuery({ q })}`, { cache: 'no-store' });
+}
+
+export async function listHosts(): Promise<{ hosts: Host[] }> {
+  return apiFetch<{ hosts: Host[] }>('/reception/hosts');
+}
+
+export async function listVisits(params: ListVisitsParams = {}): Promise<VisitList> {
+  return apiFetch<VisitList>(`/reception/visits${buildQuery(params as Record<string, unknown>)}`, {
+    cache: 'no-store',
+  });
 }
 
 export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {

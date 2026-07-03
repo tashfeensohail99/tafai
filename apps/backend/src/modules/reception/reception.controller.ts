@@ -37,6 +37,12 @@ export class ReceptionController {
     return this.reception.lookup(query);
   }
 
+  @Get('hosts')
+  @RequireAnyPermissions('reception.view', 'reception.check_in')
+  hosts() {
+    return this.reception.getHosts();
+  }
+
   @Get('visits')
   @RequireAnyPermissions('reception.view', 'reception.check_in')
   list(@Query() query: ListVisitsQueryDto) {

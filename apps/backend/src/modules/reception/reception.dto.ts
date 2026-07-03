@@ -25,6 +25,23 @@ export class ListVisitsQueryDto {
   @MaxLength(10)
   date?: string;
 
+  /** Inclusive PKT date range (log view). Both required to take effect. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  from?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  to?: string;
+
+  /** Free-text search over visitor name / phone. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  q?: string;
+
   @IsOptional()
   @IsEnum(VisitStatus)
   status?: VisitStatus;
@@ -32,6 +49,17 @@ export class ListVisitsQueryDto {
   @IsOptional()
   @IsEnum(VisitType)
   type?: VisitType;
+
+  /** Pagination (log view). limit 1–200 (default 50), offset ≥ 0. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(6)
+  limit?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(9)
+  offset?: string;
 }
 
 export class CreateVisitDto {

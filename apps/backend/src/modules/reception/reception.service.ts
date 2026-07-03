@@ -119,24 +119,66 @@ export class ReceptionService {
     return { results };
   }
 
-  // ── Today's register ─────────────────────────────────────────────────────
+  // ── Active staff, for the "who are they here to see?" host picker ─────────
+  async getHosts(): Promise<{ hosts: Array<{ id: string; name: string; department: string | null }> }> {
+    const emps = await this.prisma.employee.findMany({
+      where: { isActive: true, deletedAt: null },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      select: { id: true, firstName: true, lastName: true, department: { select: { name: true } } },
+    });
+    return {
+      hosts: emps.map((e) => ({
+        id: e.id,
+        name: `${e.firstName} ${e.lastName}`.trim(),
+        department: e.department?.name ?? null,
+      })),
+    };
+  }
+
+  // ── Visit register — today's board (default) or a searchable, paginated log ─
   async listVisits(query: ListVisitsQueryDto) {
-    const { start, end, dayStr } = this.pktDayRange(query.date);
-    const where: Prisma.VisitWhereInput = {
+    const { start, end, label } = this.resolveRange(query);
+    const q = query.q?.trim();
+    // The date-range + search window. The status/type breakdown counts are taken
+    // over THIS (not the status/type-filtered set) so the summary always reflects
+    // the whole window even when the user narrows by a status or type.
+    const baseWhere: Prisma.VisitWhereInput = {
       checkedInAt: { gte: start, lt: end },
+      ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } : {}),
+    };
+    const where: Prisma.VisitWhereInput = {
+      ...baseWhere,
       ...(query.status ? { status: query.status } : {}),
       ...(query.type ? { visitType: query.type } : {}),
     };
-    const visits = await this.prisma.visit.findMany({
-      where,
-      orderBy: { checkedInAt: 'desc' },
-      // A single physical front desk won't exceed this in one day; the KPI counts
-      // below are derived from this page, so the cap doubles as their ceiling.
-      take: 1000,
-    });
 
-    // Resolve the scalar cross-refs (reference codes + host names) in batch —
-    // these are point-in-time links, not Prisma relations, so we join by hand.
+    const limit = clampInt(query.limit, 50, 1, 200);
+    const offset = clampInt(query.offset, 0, 0, 1_000_000);
+
+    // Counts come from the DB over the whole window (count/groupBy), not the
+    // paginated page, so KPIs + the breakdown stay accurate regardless of paging.
+    const [total, statusGroups, typeGroups, visits] = await Promise.all([
+      this.prisma.visit.count({ where }),
+      this.prisma.visit.groupBy({ by: ['status'], where: baseWhere, _count: { _all: true } }),
+      this.prisma.visit.groupBy({ by: ['visitType'], where: baseWhere, _count: { _all: true } }),
+      this.prisma.visit.findMany({ where, orderBy: { checkedInAt: 'desc' }, take: limit, skip: offset }),
+    ]);
+    const sc = (s: VisitStatus) => statusGroups.find((g) => g.status === s)?._count._all ?? 0;
+    const tc = (t: VisitType) => typeGroups.find((g) => g.visitType === t)?._count._all ?? 0;
+    const counts = {
+      total,
+      waiting: sc(VisitStatus.WAITING),
+      inMeeting: sc(VisitStatus.IN_MEETING),
+      done: sc(VisitStatus.DONE),
+      noShow: sc(VisitStatus.NO_SHOW),
+      cancelled: sc(VisitStatus.CANCELLED),
+      walkIn: tc(VisitType.WALK_IN),
+      existing: tc(VisitType.EXISTING_CLIENT),
+      paid: tc(VisitType.PAID_CONSULT),
+    };
+
+    // Resolve the scalar cross-refs (reference codes + host names) for the page
+    // in batch — these are point-in-time links, not Prisma relations.
     const leadIds = uniq(visits.map((v) => v.leadId));
     const clientIds = uniq(visits.map((v) => v.clientId));
     const empIds = uniq(visits.map((v) => v.hostEmployeeId));
@@ -176,16 +218,7 @@ export class ReceptionService {
       checkedOutAt: v.checkedOutAt ? v.checkedOutAt.toISOString() : null,
     }));
 
-    const counts = {
-      total: rows.length,
-      waiting: rows.filter((r) => r.status === 'WAITING').length,
-      inMeeting: rows.filter((r) => r.status === 'IN_MEETING').length,
-      done: rows.filter((r) => r.status === 'DONE').length,
-      walkIn: rows.filter((r) => r.visitType === 'WALK_IN').length,
-      existing: rows.filter((r) => r.visitType === 'EXISTING_CLIENT').length,
-      paid: rows.filter((r) => r.visitType === 'PAID_CONSULT').length,
-    };
-    return { date: dayStr, counts, visits: rows };
+    return { label, total, limit, offset, counts, visits: rows };
   }
 
   // ── Check a visitor in ───────────────────────────────────────────────────
@@ -327,11 +360,23 @@ export class ReceptionService {
     }
   }
 
-  private pktDayRange(dateStr?: string): { start: Date; end: Date; dayStr: string } {
-    const day = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : this.todayPkt();
-    const start = new Date(`${day}T00:00:00.000+05:00`);
-    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-    return { start, end, dayStr: day };
+  // Resolve the query window in Pakistan time. A from+to pair gives an
+  // inclusive day range (for the visitor log); otherwise a single day (default
+  // today, for the live board).
+  private resolveRange(query: ListVisitsQueryDto): { start: Date; end: Date; label: string } {
+    const dayStart = (d: string) => new Date(`${d}T00:00:00.000+05:00`);
+    const plusDay = (dt: Date) => new Date(dt.getTime() + 24 * 60 * 60 * 1000);
+    // Well-shaped AND a real calendar day — rejects e.g. 2026-13-45, which would
+    // otherwise build an Invalid Date and crash the Prisma query with a 500.
+    const valid = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(dayStart(s).getTime());
+    if (valid(query.from) && valid(query.to)) {
+      // Normalise a reversed range so a from > to pair still returns that window.
+      const [a, b] = query.from! <= query.to! ? [query.from!, query.to!] : [query.to!, query.from!];
+      return { start: dayStart(a), end: plusDay(dayStart(b)), label: `${a} → ${b}` };
+    }
+    const day = valid(query.date) ? query.date! : this.todayPkt();
+    const start = dayStart(day);
+    return { start, end: plusDay(start), label: day };
   }
 
   private todayPkt(): string {
@@ -346,4 +391,11 @@ export class ReceptionService {
 /** Distinct, non-null ids from a scalar-ref column. */
 function uniq(ids: Array<string | null>): string[] {
   return [...new Set(ids.filter((x): x is string => !!x))];
+}
+
+/** Parse a string query param to a bounded integer, falling back to a default. */
+function clampInt(v: string | undefined, dflt: number, min: number, max: number): number {
+  const n = parseInt(v ?? '', 10);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(max, Math.max(min, n));
 }

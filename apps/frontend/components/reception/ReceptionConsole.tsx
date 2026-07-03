@@ -19,12 +19,9 @@ import {
   GhostButton,
   GlassCard,
   MetricCard,
-  PageHeader,
   StatusBadge,
   type MetricTone,
 } from '@/components/sales-v2/ui';
-import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
-import { useAdminSession } from '@/components/layout/AdminShell';
 import {
   createVisit,
   listVisits,
@@ -130,16 +127,7 @@ function miniBtnStyle(): CSSProperties {
 type QuickForm = { name: string; phone: string; purpose: string };
 const EMPTY_FORM: QuickForm = { name: '', phone: '', purpose: '' };
 
-export default function ReceptionPage() {
-  const { user } = useAdminSession();
-  // Gate on exactly the backend's permissions so the UI never shows a page whose
-  // API calls would 403. Admins receive reception.* via the sync-reception-perms
-  // script (granted to super_admin / admin / reception), matching the
-  // whatsapp.block rollout pattern.
-  const canView =
-    user.permissions.includes('reception.view') || user.permissions.includes('reception.check_in');
-  const canCheckIn = user.permissions.includes('reception.check_in');
-
+export function ReceptionConsole({ canCheckIn }: { canCheckIn: boolean }) {
   const [date, setDate] = useState<string>(() => todayPkt());
   const [data, setData] = useState<VisitList | null>(null);
   const [loading, setLoading] = useState(true);
@@ -172,8 +160,8 @@ export default function ReceptionPage() {
   }, [date]);
 
   useEffect(() => {
-    if (canView) void reload();
-  }, [canView, reload]);
+    void reload();
+  }, [reload]);
 
   // Debounced lookup as the receptionist types.
   useEffect(() => {
@@ -275,27 +263,22 @@ export default function ReceptionPage() {
     [counts],
   );
 
-  if (!canView) {
-    return <PermissionDeniedState message="You need the reception.view or reception.check_in permission to open the front desk." />;
-  }
-
   const isToday = date === todayPkt();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <PageHeader
-        eyebrow="CRM · Front Desk"
-        title="Reception"
-        description="Log everyone who walks into the office — new walk-ins, existing clients, and paid consultations. Walk-ins automatically become leads and are assigned to a sales rep. All times in Pakistan time."
-        actions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input type="date" value={date} max={todayPkt()} onChange={(e) => setDate(e.target.value)} style={{ ...inputStyle, width: 'auto' }} />
-            <GhostButton iconLeft={<RefreshCw size={14} />} onClick={() => void reload()}>
-              Refresh
-            </GhostButton>
-          </div>
-        }
-      />
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span className="sos-text-faint" style={{ fontSize: 12.5 }}>
+          Walk-ins become leads and are assigned to a sales rep automatically. All times Pakistan time.
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="date" value={date} max={todayPkt()} onChange={(e) => setDate(e.target.value)} style={{ ...inputStyle, width: 'auto' }} />
+          <GhostButton iconLeft={<RefreshCw size={14} />} onClick={() => void reload()}>
+            Refresh
+          </GhostButton>
+        </div>
+      </div>
 
       {/* KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>

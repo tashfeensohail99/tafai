@@ -193,7 +193,8 @@ export function logout() {
  *   3. sales → /sales
  *   4. finance → /finance
  *   5. processing / documentation → /processing
- *   6. fallback → /sales (matches existing mock behaviour)
+ *   6. reception → /reception
+ *   7. fallback → /sales (matches existing mock behaviour)
  */
 export function destinationForUser(user: SessionUser): string {
   const roles = new Set(user.roles);
@@ -202,5 +203,6 @@ export function destinationForUser(user: SessionUser): string {
   if (roles.has('sales')) return '/sales';
   if (roles.has('finance')) return '/finance';
   if (roles.has('processing') || roles.has('processing_manager') || roles.has('documentation')) return '/processing';
+  if (roles.has('reception')) return '/reception';
   return '/sales';
 }

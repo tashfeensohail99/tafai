@@ -11,6 +11,7 @@ import {
   Users,
   Wallet,
   ClipboardList,
+  DoorOpen,
   User,
 } from 'lucide-react';
 import type { Route } from 'next';
@@ -18,7 +19,7 @@ import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { destinationForUser, login } from '@/lib/session';
 
-type Role = 'ADMIN' | 'SALES' | 'FINANCE' | 'PROCESSING' | 'CLIENT';
+type Role = 'ADMIN' | 'SALES' | 'FINANCE' | 'PROCESSING' | 'RECEPTION' | 'CLIENT';
 
 const ROLES: Array<{
   key: Role;
@@ -30,6 +31,7 @@ const ROLES: Array<{
   { key: 'SALES', label: 'Sales', caption: 'Manage leads, follow-ups, and handovers', Icon: Users, accent: '#4f46e5' },
   { key: 'FINANCE', label: 'Finance', caption: 'Verify payments and review receipts', Icon: Wallet, accent: '#10b981' },
   { key: 'PROCESSING', label: 'Processing', caption: 'Handle case documents and submissions', Icon: ClipboardList, accent: '#0ea5e9' },
+  { key: 'RECEPTION', label: 'Reception', caption: 'Log office visitors and consultations', Icon: DoorOpen, accent: '#f59e0b' },
   { key: 'ADMIN', label: 'Admin', caption: 'System control & assignments', Icon: ShieldCheck, accent: '#ef4444' },
   { key: 'CLIENT', label: 'Client', caption: 'Track your case, upload documents', Icon: User, accent: '#8b5cf6' },
 ];

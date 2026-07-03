@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
+import { findLeadByNormalizedPhone } from '../../../../common/phone/lead-dedupe';
 import { AuditLogService } from '../../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../../../notifications/notifications.service';
@@ -641,11 +642,16 @@ export class WebhookIngestProcessor extends WorkerHost {
           createdLead: false,
         };
       }
-      const existingLead = await this.prisma.lead.findFirst({
-        where: { phone, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true, blockedAt: true },
-      });
+      // Exact-match first (index-fast for the common case where the lead is
+      // already stored as +E.164), then fall back to a NORMALISED (last-10)
+      // match so a lead stored in another format (local "03xx…") still matches
+      // instead of spawning a duplicate. The seq-scan only runs on exact-miss.
+      const existingLead =
+        (await this.prisma.lead.findFirst({
+          where: { phone, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, blockedAt: true },
+        })) ?? (await findLeadByNormalizedPhone(this.prisma, phone));
       if (existingLead) {
         return {
           leadId: existingLead.id as string | null,
@@ -866,11 +872,16 @@ export class WebhookIngestProcessor extends WorkerHost {
       let blocked = !!existingClient?.blockedAt;
 
       if (!clientId) {
-        const existingLead = await this.prisma.lead.findFirst({
-          where: { phone, deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-          select: { id: true, blockedAt: true },
-        });
+        // Exact-match first (index-fast for the common case where the lead is
+        // already stored as +E.164), then fall back to a NORMALISED (last-10)
+        // match so a lead stored in another format (local "03xx…") still matches
+        // instead of spawning a duplicate. The seq-scan only runs on exact-miss.
+        const existingLead =
+          (await this.prisma.lead.findFirst({
+            where: { phone, deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true, blockedAt: true },
+          })) ?? (await findLeadByNormalizedPhone(this.prisma, phone));
         if (existingLead) {
           leadId = existingLead.id;
           blocked = !!existingLead.blockedAt;

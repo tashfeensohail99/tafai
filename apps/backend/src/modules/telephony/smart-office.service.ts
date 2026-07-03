@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { normalisePhone } from '../../common/phone/phone.util';
+import { findLeadByNormalizedPhone } from '../../common/phone/lead-dedupe';
 import type { ResolveCallDto, SmartOfficeResolveResponse } from './smart-office.dto';
 
 interface ResolveOutcome {
@@ -73,18 +74,21 @@ export class SmartOfficeService {
     }
 
     // Converted customers (Client.phone is unique) take precedence; otherwise
-    // the most recent matching Lead (Lead.phone is indexed but not unique).
+    // the matching Lead. The lead is matched by NORMALISED phone (last-10
+    // digits) not an exact string, so a caller whose lead was stored in a
+    // different format (local "03xx…" vs "+92 3xx…") still resolves to their
+    // existing owner instead of "no lead" → default routing.
     const client = await this.prisma.client.findFirst({
       where: { phone: e164, deletedAt: null },
       select: { id: true, assignedEmployeeId: true, blockedAt: true },
     });
     const lead = client
       ? null
-      : await this.prisma.lead.findFirst({
+      : ((await this.prisma.lead.findFirst({
           where: { phone: e164, deletedAt: null },
           orderBy: { createdAt: 'desc' },
           select: { id: true, assignedEmployeeId: true, blockedAt: true },
-        });
+        })) ?? (await findLeadByNormalizedPhone(this.prisma, e164)));
 
     const owner = client ?? lead;
     const ctx: ResolveOutcome = { ...base, clientId: client?.id ?? null, leadId: lead?.id ?? null };

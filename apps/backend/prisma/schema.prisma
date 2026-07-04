@@ -1495,8 +1495,11 @@ model Visit {
   // --- Paid consultation (phase 2). Populated when the fee is collected. -----
   feeAmount           Decimal? @db.Decimal(12, 2)
   feeCurrency         String?
-  /// The consultation fee may be credited against a future service fee — flagged
-  /// here so finance can find + apply it manually.
+  /// The consultation fee is creditable against a future service fee. Because the
+  /// paid consult Invoice carries the same lead/client, its payment is already
+  /// netted into the customer's finance balance (outstanding + the overpay ceiling
+  /// both sum it in) — so the credit applies automatically once they sign; this
+  /// flag just records that the fee is of the creditable kind.
   consultFeeCreditable Boolean @default(false)
 
   /// Did the customer agree to receive WhatsApp updates about this consultation?
@@ -2016,6 +2019,11 @@ model Invoice {
   discountAmount  Decimal       @default(0) @db.Decimal(12, 2)
   totalAmount     Decimal       @db.Decimal(12, 2)
   paidAmount      Decimal       @default(0) @db.Decimal(12, 2)
+  /// True for a reception paid-consultation fee invoice (bypasses the
+  /// agreement-ready gate). Persisted so the customer profile can tell a consult
+  /// fee apart from a service invoice and so a consult fee is never itself the
+  /// target of a consultation-credit application.
+  isConsultation  Boolean       @default(false)
   dueDate         DateTime?
   notes           String?
   createdByUserId String?

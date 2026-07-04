@@ -75,7 +75,11 @@ export interface FinanceCustomerProfile {
   agreement: FinanceProfileAgreement | null;
   contract: FinanceProfileContract | null;
   installments: Array<{ id: string; sequence: number; dueDate: string; amount: number; status: string; description: string | null; paidAmount: number; paidStatus: string; recognizedAt: string | null }>;
-  invoices: Array<{ id: string; invoiceNumber: string; status: string; currency: string; totalAmount: number; paidAmount: number; dueDate: string | null; createdAt: string }>;
+  invoices: Array<{ id: string; invoiceNumber: string; status: string; currency: string; totalAmount: number; paidAmount: number; isConsultation: boolean; dueDate: string | null; createdAt: string }>;
+  /** Paid consultation fees creditable against the service fee (audit #1). These
+   *  are informational — the credit already applies automatically (the consult
+   *  fee's paid invoice nets into Outstanding), so this just surfaces it. */
+  consultCredits: Array<{ visitId: string; amount: number; currency: string; consultInvoiceNumber: string | null; paidAt: string | null }>;
   payments: Array<{ id: string; amount: number; currency: string; baseAmount: number; baseCurrency: string; fxRate: number; status: string; paymentMethod: string | null; paidAt: string | null; verifiedAt: string | null }>;
   receipts: Array<{ id: string; receiptNumber: string; amount: number; currency: string; issuedAt: string }>;
   handovers: Array<{ id: string; status: string; amount: number; currency: string; verified: boolean; receiptFileName: string | null; submittedAt: string; reviewedAt: string | null }>;
@@ -100,6 +104,7 @@ export interface FinanceCustomerProfile {
 export function fetchFinanceCustomerProfile(leadId: string): Promise<FinanceCustomerProfile> {
   return apiFetch<FinanceCustomerProfile>(`/finance/customer/${leadId}`, { cache: 'no-store' });
 }
+
 
 export interface FinanceCustomerRow {
   leadId: string;

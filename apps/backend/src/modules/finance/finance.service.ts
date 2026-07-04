@@ -632,6 +632,7 @@ export class FinanceService {
         taxAmount: taxAmount.toString(),
         discountAmount: discountAmount.toString(),
         totalAmount: totalAmount.toString(),
+        isConsultation: dto.isConsultation ?? false,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         notes: dto.notes,
         createdByUserId: actorUserId,

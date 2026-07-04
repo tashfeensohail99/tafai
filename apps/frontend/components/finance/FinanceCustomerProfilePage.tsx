@@ -226,6 +226,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     }
   }, [leadId]);
 
+
   useEffect(() => { void load(); }, [load]);
 
   // Live FX rates (1 CAD = rates[ccy]) for the currency pickers + CAD preview.
@@ -634,6 +635,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
 
       {/* OVERVIEW */}
       {tab === 'overview' ? (
+        <>
         <GlassCard variant="default">
           <h3 className="sos-title" style={{ marginTop: 0, fontSize: 'var(--sos-text-base)' }}>Bio</h3>
           <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
@@ -650,6 +652,31 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             {data.processingCase ? idTile('Processing', `${label(data.processingCase.stage)} · ${data.processingCase.service}`) : null}
           </div>
         </GlassCard>
+
+        {/* CONSULTATION CREDIT (audit #1) — informational. A paid consult fee's
+            invoice carries the same customer, so its payment already nets into
+            Outstanding + the overpay ceiling: the fee is credited automatically,
+            not billed twice. This card just makes that visible. */}
+        {data.consultCredits.length > 0 ? (
+          <GlassCard variant="default">
+            <h3 className="sos-title" style={{ marginTop: 0, fontSize: 'var(--sos-text-base)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Coins size={16} /> Consultation credit
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {data.consultCredits.map((c) => (
+                <div key={c.visitId} className="sos-text-secondary" style={{ fontSize: 12.5, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                  <CheckCircle2 size={14} style={{ color: 'var(--sos-status-success)', flexShrink: 0, marginTop: 1 }} />
+                  <span>
+                    <strong style={{ color: 'var(--sos-text-primary)' }}>{money(c.amount, c.currency)}</strong> consultation fee paid
+                    {c.consultInvoiceNumber ? <span className="sos-text-faint"> · {c.consultInvoiceNumber}</span> : null}
+                    {' '}— credited toward the service fee (already reflected in <strong>Outstanding</strong>).
+                  </span>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+        ) : null}
+        </>
       ) : null}
 
       {/* AGREEMENT */}

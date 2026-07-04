@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { AgreementStatus, FinanceHandoverStatus, Prisma } from '@prisma/client';
+import { AgreementStatus, FinanceHandoverStatus, Prisma, VisitType } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { FxService } from '../../common/fx/fx.service';
 
@@ -47,7 +47,7 @@ export class FinanceProfileService {
       ? [{ leadId }, { clientId }]
       : [{ leadId }];
 
-    const [agreement, contract, invoices, payments, receipts, handovers, processingCase, expenses, realProcessingCase] = await Promise.all([
+    const [agreement, contract, invoices, payments, receipts, handovers, processingCase, expenses, realProcessingCase, consultVisits] = await Promise.all([
       this.prisma.agreement.findFirst({
         where: { leadId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -127,7 +127,29 @@ export class FinanceProfileService {
         where: { leadId },
         select: { id: true },
       }),
+      // Paid consultation fees this customer has that are creditable against the
+      // service fee (audit #1). These are INFORMATIONAL: the credit already applies
+      // automatically, because each consult fee's paid Invoice carries the same
+      // lead/client — so its payment is netted into `paid`/`outstanding` (and the
+      // overpay ceiling) below, reducing what they owe by the consult amount. This
+      // list simply lets finance SEE the credit is in effect.
+      this.prisma.visit.findMany({
+        where: { visitType: VisitType.PAID_CONSULT, consultFeeCreditable: true, paymentId: { not: null }, OR: ownerOr },
+        select: { id: true, feeAmount: true, feeCurrency: true, invoiceId: true, checkedInAt: true },
+        orderBy: { checkedInAt: 'desc' },
+      }),
     ]);
+
+    const invById = new Map(invoices.map((i) => [i.id, i]));
+    const consultCredits = consultVisits
+      .filter((v) => num(v.feeAmount) > 0)
+      .map((v) => ({
+        visitId: v.id,
+        amount: num(v.feeAmount),
+        currency: v.feeCurrency ?? 'CAD',
+        consultInvoiceNumber: v.invoiceId ? (invById.get(v.invoiceId)?.invoiceNumber ?? null) : null,
+        paidAt: v.checkedInAt,
+      }));
 
     const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
     const currency = contract?.currency || agreement?.currency || 'CAD';
@@ -272,9 +294,12 @@ export class FinanceProfileService {
         currency: i.currency,
         totalAmount: num(i.totalAmount),
         paidAmount: num(i.paidAmount),
+        isConsultation: i.isConsultation,
         dueDate: i.dueDate,
         createdAt: i.createdAt,
       })),
+      // Paid consult fees creditable against a service invoice (audit #1).
+      consultCredits,
       payments: payments.map((p) => ({
         id: p.id,
         amount: num(p.amount),

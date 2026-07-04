@@ -108,6 +108,9 @@ export interface VisitorPaymentRow {
   createdAt: string;
   verifiedAt: string | null;
   rejectedReason: string | null;
+  // Outcome of the last customer WhatsApp notify (confirmation / released).
+  notifyStatus: 'SENT' | 'SKIPPED' | 'FAILED' | null;
+  notifyAt: string | null;
 }
 
 export interface VisitorPaymentList {
@@ -217,6 +220,7 @@ export async function collectConsultation(
     scheduledAt?: string;
     paymentMethod?: string;
     transactionRef?: string;
+    whatsappConsent?: boolean;
   },
 ): Promise<CollectConsultationResult> {
   return apiFetch<CollectConsultationResult>(`/reception/visits/${visitId}/collect-consultation`, {

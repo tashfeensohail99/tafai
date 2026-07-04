@@ -20,7 +20,9 @@ export type ConsultTemplateName =
   | 'consultation_confirmed'
   | 'consultation_payment_received'
   | 'consultation_no_show'
-  | 'consultation_payment_reminder';
+  | 'consultation_payment_reminder'
+  | 'consultation_reminder'
+  | 'consultation_slot_released';
 
 export type AppointmentConfirmationResult =
   | { sent: true; messageId: string; threadId: string }
@@ -208,22 +210,35 @@ export class WhatsAppAppointmentNotifierService {
     /** Fills the {{1}} of the URL button (consultation_payment_reminder only). */
     buttonUrlToken?: string;
     idempotencyKey?: string;
+    /** Whether the customer opted in to WhatsApp updates. false → skip (Meta
+     *  requires opt-in for business-initiated, out-of-window messages). */
+    consent?: boolean;
   }): Promise<{ sent: boolean; reason?: string }> {
     try {
-      if (!input.phone) return { sent: false, reason: 'no_phone' };
-      const norm = normalisePhone(input.phone);
-      if (!norm.ok || !norm.e164) return { sent: false, reason: 'no_phone' };
-      const waContactId = norm.e164.replace(/\D/g, '');
+      // Opt-in gate — never business-initiate to a customer who didn't agree.
+      if (input.consent === false) return { sent: false, reason: 'no_consent' };
 
-      // Respect a hard block even for transactional sends.
+      // Resolve the contact's STORED (previously-validated) phone + block state.
+      // PREFER the stored number over an ad-hoc desk-typed one: a mistyped digit
+      // must not leak this customer's name/fee/appointment to a stranger or bind
+      // their thread to an unverified number.
+      let storedPhone: string | null = null;
       if (input.leadId) {
-        const lead = await this.prisma.lead.findUnique({ where: { id: input.leadId }, select: { blockedAt: true } });
+        const lead = await this.prisma.lead.findUnique({ where: { id: input.leadId }, select: { blockedAt: true, phone: true } });
         if (lead?.blockedAt) return { sent: false, reason: 'blocked' };
+        storedPhone = lead?.phone ?? null;
       }
       if (input.clientId) {
-        const client = await this.prisma.client.findUnique({ where: { id: input.clientId }, select: { blockedAt: true } });
+        const client = await this.prisma.client.findUnique({ where: { id: input.clientId }, select: { blockedAt: true, phone: true } });
         if (client?.blockedAt) return { sent: false, reason: 'blocked' };
+        if (!storedPhone) storedPhone = client?.phone ?? null;
       }
+
+      const rawPhone = storedPhone ?? input.phone;
+      if (!rawPhone) return { sent: false, reason: 'no_phone' };
+      const norm = normalisePhone(rawPhone);
+      if (!norm.ok || !norm.e164) return { sent: false, reason: 'no_phone' };
+      const waContactId = norm.e164.replace(/\D/g, '');
 
       const channel = await this.prisma.whatsAppChannel.findFirst({
         where: { status: WhatsAppChannelStatus.ACTIVE },

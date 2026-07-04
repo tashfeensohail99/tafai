@@ -220,6 +220,14 @@ export function VisitorPaymentsPage() {
                   {!r.hasProof ? (
                     <div className="sos-text-faint" style={{ fontSize: 11, fontStyle: 'italic', marginTop: 2 }}>Awaiting receipt upload</div>
                   ) : null}
+                  {r.notifyStatus === 'FAILED' ? (
+                    <div
+                      title="The WhatsApp confirmation to the customer did not send — follow up manually."
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 3, fontSize: 10.5, fontWeight: 700, color: 'var(--sos-status-warning)', background: 'var(--sos-status-warning-soft, rgba(180,120,0,0.12))', borderRadius: 6, padding: '1px 6px' }}
+                    >
+                      <AlertTriangle size={11} /> WhatsApp not delivered
+                    </div>
+                  ) : null}
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--sos-text-primary)' }}>{money(r.currency, r.amount)}</div>

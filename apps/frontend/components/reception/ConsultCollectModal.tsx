@@ -52,6 +52,9 @@ export function ConsultCollectModal({
   const [slot, setSlot] = useState<AvailabilitySlot | null>(null);
   const [method, setMethod] = useState('cash');
   const [ref, setRef] = useState('');
+  // Default ON — most walk-ins expect the confirmation/reminder on WhatsApp.
+  // Unchecking records a decline and suppresses the business-initiated templates.
+  const [consent, setConsent] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CollectConsultationResult | null>(null);
@@ -66,6 +69,7 @@ export function ConsultCollectModal({
     setSlot(null);
     setMethod('cash');
     setRef('');
+    setConsent(true);
     setError(null);
     setResult(null);
     setPayQr(null);
@@ -164,6 +168,7 @@ export function ConsultCollectModal({
         scheduledAt: slot.start,
         paymentMethod: method,
         transactionRef: ref.trim() || undefined,
+        whatsappConsent: consent,
       });
       setResult(res);
       onDone();
@@ -310,6 +315,21 @@ export function ConsultCollectModal({
                   </div>
                 </div>
               ) : null}
+
+              {/* WhatsApp consent — gates the confirmation + reminder templates.
+                  Meta requires opt-in even for business-initiated utility sends. */}
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 12.5 }}>
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  onChange={(e) => setConsent(e.target.checked)}
+                  style={{ marginTop: 2, width: 15, height: 15, accentColor: 'var(--sos-brand-primary-strong)', cursor: 'pointer' }}
+                />
+                <span className="sos-text-secondary">
+                  Customer agreed to <strong>WhatsApp updates</strong> for this consultation (confirmation &amp; reminders).
+                  <span className="sos-text-faint"> Leave ticked unless they’ve declined.</span>
+                </span>
+              </label>
 
               {error ? <div className="sos-banner sos-banner--danger" style={{ fontSize: 12.5 }}>{error}</div> : null}
             </>

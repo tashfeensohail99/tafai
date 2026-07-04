@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNotEmpty,
@@ -174,6 +175,12 @@ export class CollectConsultationDto {
   @IsString()
   @MaxLength(120)
   transactionRef?: string;
+
+  /** Did the customer agree to WhatsApp updates for this consultation? Gates the
+   *  business-initiated templates. Defaults to true when omitted (back-compat). */
+  @IsOptional()
+  @IsBoolean()
+  whatsappConsent?: boolean;
 }
 
 export class VisitorPaymentQueryDto {

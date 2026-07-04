@@ -385,6 +385,7 @@ export class ReceptionService {
     leadId: string | null;
     clientId: string | null;
     appointmentId: string | null;
+    whatsappConsent: boolean;
   }): Promise<void> {
     try {
       const appt = visit.appointmentId
@@ -397,6 +398,7 @@ export class ReceptionService {
         templateName: 'consultation_no_show',
         bodyParams: [this.firstNameOf(visit.name), appt ? this.formatSlotPkt(appt.scheduledAt) : 'your booked time'],
         idempotencyKey: `consult-noshow-${visit.id}`,
+        consent: visit.whatsappConsent,
       });
     } catch (err) {
       this.log.warn(`consult no-show notify failed: ${(err as Error).message}`);
@@ -482,6 +484,13 @@ export class ReceptionService {
     if (!visit.appointmentId && !dto.scheduledAt) {
       throw new BadRequestException('Pick a time for the consultation.');
     }
+    // Capture WhatsApp opt-in for this consult before any template fires. Persist
+    // to the row (so the re-loaded visit in the finance chain sees it) and reflect
+    // it locally for the immediate bank-transfer "received" send.
+    if (dto.whatsappConsent !== undefined && dto.whatsappConsent !== visit.whatsappConsent) {
+      await this.prisma.visit.update({ where: { id: visitId }, data: { whatsappConsent: dto.whatsappConsent } });
+      visit.whatsappConsent = dto.whatsappConsent;
+    }
     const method = dto.method ?? VisitorPaymentMethod.CASH;
 
     const org = await this.orgRow();
@@ -546,7 +555,7 @@ export class ReceptionService {
       // + receipt are created only when finance verifies (correct revenue timing).
       // Tell the customer via the approved UTILITY template (works even if there's
       // no open 24h window — a walk-in usually hasn't messaged us). Fire-and-forget.
-      void this.whatsappNotifier.sendConsultTemplate({
+      void this.sendPaymentNotify(vp.id, {
         leadId: owner.leadId,
         clientId: owner.clientId,
         phone: visit.phone,
@@ -557,6 +566,7 @@ export class ReceptionService {
           this.formatSlotPkt(new Date(scheduledAtIso)),
         ],
         idempotencyKey: `consult-received-${vp.id}`,
+        consent: visit.whatsappConsent,
       });
       await this.notifyPrincipal(
         org.principalEmployeeId,
@@ -645,7 +655,7 @@ export class ReceptionService {
     try {
       const fin = await this.finalizeConsultPayment(
         { id: vp.id, invoiceId: vp.invoiceId, paymentId: vp.paymentId },
-        { name: visit.name, phone: visit.phone },
+        { name: visit.name, phone: visit.phone, leadId: visit.leadId, clientId: visit.clientId },
         org,
         {
           amount: Number(vp.amount),
@@ -677,7 +687,7 @@ export class ReceptionService {
       // the 24h window). Fire-and-forget AFTER the writes so a send failure can
       // never roll back the payment. Idempotency-keyed on the visit so a resumed
       // finalize (which can't re-reach this block anyway) never double-sends.
-      void this.notifyConsultConfirmed(visit, Number(vp.amount), vp.currency, org.principalEmployeeId);
+      void this.notifyConsultConfirmed(vp.id, visit, Number(vp.amount), vp.currency, org.principalEmployeeId);
       return { invoiceNumber: fin.invoiceNumber, receiptNumber: fin.receiptNumber, appointmentId: visit.appointmentId };
     } catch (err) {
       // Roll the claim back so the payment can be retried. finalizeConsultPayment
@@ -725,11 +735,26 @@ export class ReceptionService {
     if (claim.count === 0) throw new BadRequestException('This payment is already being verified or was handled.');
 
     const visit = await this.prisma.visit.findUnique({ where: { id: vp.visitId } });
+    // Capture the slot for the customer message BEFORE we release it below.
+    const appt = visit?.appointmentId
+      ? await this.prisma.appointment.findUnique({ where: { id: visit.appointmentId }, select: { scheduledAt: true } })
+      : null;
     if (visit?.appointmentId) {
+      // Free the slot before nulling the link. If the cancel fails, roll the claim
+      // back to PENDING_REVIEW and surface the error so the officer retries — nulling
+      // the link on a failed cancel would strand a CONFIRMED appointment (busy in
+      // availability) with nothing pointing to it, silently blocking the calendar.
       try {
         await this.appointments.update(visit.appointmentId, { status: AppointmentStatus.CANCELLED }, actorUserId);
       } catch (err) {
+        await this.prisma.visitorPayment
+          .updateMany({
+            where: { id, status: VisitorPaymentStatus.REJECTED },
+            data: { status: VisitorPaymentStatus.PENDING_REVIEW, rejectedReason: null, verifiedByUserId: null, verifiedAt: null },
+          })
+          .catch(() => {});
         this.log.warn(`consult reject: cancel appointment failed: ${(err as Error).message}`);
+        throw new BadRequestException('Could not release the appointment slot — please try again.');
       }
     }
     // Release the slot link + fee claim so a fresh collection can be started.
@@ -737,11 +762,18 @@ export class ReceptionService {
       where: { id: vp.visitId },
       data: { appointmentId: null, feeAmount: null, feeCurrency: null },
     });
-    await this.sendVisitText(
-      visit?.leadId ?? null,
-      visit?.clientId ?? null,
-      "We couldn't verify your consultation payment yet. Please resend the transfer receipt or pay at the front desk.",
-    );
+    // Tell the customer via the approved UTILITY template so it reaches them even
+    // with no open 24h window (a walk-in usually never messaged us) — the old
+    // window-gated free text silently dropped for exactly those customers.
+    void this.sendPaymentNotify(id, {
+      leadId: visit?.leadId ?? null,
+      clientId: visit?.clientId ?? null,
+      phone: visit?.phone ?? null,
+      templateName: 'consultation_slot_released',
+      bodyParams: [this.firstNameOf(visit?.name), appt ? this.formatSlotPkt(appt.scheduledAt) : 'your consultation'],
+      idempotencyKey: `consult-released-${id}`,
+      consent: visit?.whatsappConsent ?? true,
+    });
     return { status: 'rejected' as const };
   }
 
@@ -810,6 +842,9 @@ export class ReceptionService {
       createdAt: r.createdAt.toISOString(),
       verifiedAt: r.verifiedAt?.toISOString() ?? null,
       rejectedReason: r.rejectedReason,
+      // Outcome of the last customer WhatsApp notify (SENT / SKIPPED / FAILED).
+      notifyStatus: r.notifyStatus,
+      notifyAt: r.notifyAt?.toISOString() ?? null,
     }));
 
     // Register totals per currency: verified cash vs bank, plus pending pool.
@@ -877,7 +912,163 @@ export class ReceptionService {
         `${vp.currency} ${Number(vp.amount).toLocaleString()}`,
       ],
       buttonUrlToken: token,
+      consent: visit.whatsappConsent,
     });
+  }
+
+  // ── Periodic maintenance (driven by ReceptionSweeperService) ────────────────
+
+  /** How long an unpaid bank transfer may hold the principal's slot before the
+   *  sweeper auto-releases it. */
+  private static readonly STALE_PENDING_HOURS = 48;
+
+  /**
+   * One maintenance pass. Best-effort — each step is independently guarded so one
+   * failure never blocks the others. (a) auto-release a bank transfer that has sat
+   * unpaid too long (frees the held slot + fee-claim so the principal's calendar
+   * doesn't rot and the desk can re-collect); (b) recover a VERIFYING row stranded
+   * by a worker that died mid-verify (the money chain is resume-safe); (c) fire the
+   * ~24h / ~2h customer appointment reminders for confirmed paid consults.
+   */
+  async sweepStaleConsults(): Promise<void> {
+    const now = Date.now();
+
+    // (a) Stale unpaid bank transfers → release.
+    const staleBefore = new Date(now - ReceptionService.STALE_PENDING_HOURS * 3_600_000);
+    const stale = await this.prisma.visitorPayment.findMany({
+      where: {
+        status: VisitorPaymentStatus.PENDING_REVIEW,
+        method: VisitorPaymentMethod.BANK_TRANSFER,
+        // ONLY release genuinely-unpaid holds. A row carrying a proofImageKey means
+        // the customer uploaded a receipt — that is (probably real) money awaiting
+        // finance review, never something to auto-reject with "payment not received".
+        // Those stay pending until a human verifies or rejects them.
+        proofImageKey: null,
+        createdAt: { lt: staleBefore },
+      },
+      select: { id: true },
+      take: 50,
+    });
+    for (const s of stale) {
+      try {
+        await this.systemReleasePendingPayment(s.id);
+      } catch (e) {
+        this.log.warn(`sweep release ${s.id} failed: ${(e as Error).message}`);
+      }
+    }
+
+    // (b) Stuck VERIFYING (worker died mid-verify) → back to PENDING_REVIEW so it's
+    //     retryable + visible in the finance queue again. Money chain is resume-safe.
+    //     15-min TTL (not 5): verifyPayment isn't one transaction and includes an
+    //     inline receipt-PDF render + S3 upload, so a live-but-slow verify can hold
+    //     VERIFYING for minutes; a tighter TTL would resurrect it mid-flight and
+    //     cause a redundant re-verify. A genuinely dead worker is still rescued.
+    await this.prisma.visitorPayment
+      .updateMany({
+        where: { status: VisitorPaymentStatus.VERIFYING, updatedAt: { lt: new Date(now - 15 * 60 * 1000) } },
+        data: { status: VisitorPaymentStatus.PENDING_REVIEW },
+      })
+      .catch((e) => this.log.warn(`sweep verifying reset failed: ${(e as Error).message}`));
+
+    // (c) 24h / 2h reminders for confirmed, paid consults.
+    try {
+      await this.sweepConsultReminders(now);
+    } catch (e) {
+      this.log.warn(`sweep reminders failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** Release a stale unpaid pending bank transfer (system-attributed reject). */
+  private async systemReleasePendingPayment(id: string): Promise<void> {
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id } });
+    if (!vp || vp.status !== VisitorPaymentStatus.PENDING_REVIEW) return;
+    // Never auto-release money that was actually taken + receipted.
+    if (vp.paymentId) {
+      const pay = await this.prisma.payment.findUnique({ where: { id: vp.paymentId }, select: { status: true } });
+      if (pay?.status === 'PAID') return;
+    }
+    const claim = await this.prisma.visitorPayment.updateMany({
+      where: { id, status: VisitorPaymentStatus.PENDING_REVIEW },
+      data: { status: VisitorPaymentStatus.REJECTED, rejectedReason: 'Auto-released: payment not received in time', verifiedAt: new Date() },
+    });
+    if (claim.count === 0) return; // a concurrent verify/reject already handled it
+    const visit = await this.prisma.visit.findUnique({ where: { id: vp.visitId } });
+    const appt = visit?.appointmentId
+      ? await this.prisma.appointment.findUnique({ where: { id: visit.appointmentId }, select: { scheduledAt: true } })
+      : null;
+    if (visit?.appointmentId) {
+      // The slot MUST be freed before we null the visit link. If the cancel fails,
+      // roll the claim back to PENDING_REVIEW and bail — the next sweep retries the
+      // whole release atomically. Nulling the link on a failed cancel would strand
+      // a CONFIRMED appointment that availability treats as busy, with nothing left
+      // pointing to it, silently blocking the principal's calendar forever.
+      try {
+        await this.appointments.update(visit.appointmentId, { status: AppointmentStatus.CANCELLED }, vp.createdByUserId);
+      } catch (e) {
+        await this.prisma.visitorPayment
+          .updateMany({
+            where: { id, status: VisitorPaymentStatus.REJECTED },
+            data: { status: VisitorPaymentStatus.PENDING_REVIEW, rejectedReason: null, verifiedAt: null },
+          })
+          .catch(() => {});
+        this.log.warn(`sweep release ${id}: appt cancel failed, rolled back for retry: ${(e as Error).message}`);
+        return;
+      }
+    }
+    await this.prisma.visit.update({
+      where: { id: vp.visitId },
+      data: { appointmentId: null, feeAmount: null, feeCurrency: null },
+    });
+    void this.sendPaymentNotify(id, {
+      leadId: visit?.leadId ?? null,
+      clientId: visit?.clientId ?? null,
+      phone: visit?.phone ?? null,
+      templateName: 'consultation_slot_released',
+      bodyParams: [this.firstNameOf(visit?.name), appt ? this.formatSlotPkt(appt.scheduledAt) : 'your consultation'],
+      idempotencyKey: `consult-released-${id}`,
+      consent: visit?.whatsappConsent ?? true,
+    });
+  }
+
+  /** Fire the ~24h / ~2h reminder for confirmed, paid consults. Idempotency-keyed
+   *  per appointment+offset so each reminder goes out exactly once. */
+  private async sweepConsultReminders(now: number): Promise<void> {
+    const horizon = new Date(now + 24 * 3_600_000 + 30 * 60_000);
+    const appts = await this.prisma.appointment.findMany({
+      where: { status: AppointmentStatus.CONFIRMED, scheduledAt: { gt: new Date(now), lt: horizon } },
+      select: { id: true, scheduledAt: true },
+      take: 200,
+    });
+    if (appts.length === 0) return;
+    const apptMap = new Map(appts.map((a) => [a.id, a.scheduledAt]));
+    const visits = await this.prisma.visit.findMany({
+      where: {
+        visitType: VisitType.PAID_CONSULT,
+        paymentId: { not: null },
+        whatsappConsent: true,
+        appointmentId: { in: appts.map((a) => a.id) },
+      },
+      select: { name: true, phone: true, leadId: true, clientId: true, appointmentId: true },
+    });
+    for (const v of visits) {
+      const when = v.appointmentId ? apptMap.get(v.appointmentId) : undefined;
+      if (!when) continue;
+      const offset = ReceptionService.reminderOffsetFor((when.getTime() - now) / 60_000);
+      if (!offset) continue;
+      void this.whatsappNotifier.sendConsultTemplate({
+        leadId: v.leadId,
+        clientId: v.clientId,
+        phone: v.phone,
+        templateName: 'consultation_reminder',
+        bodyParams: [this.firstNameOf(v.name), this.formatSlotPkt(when)],
+        // Key on the SLOT TIME, not just the appointment id — a reschedule moves
+        // scheduledAt in place (same appointment id), so a time-less key would let
+        // the old reminder's row dedupe the new time's reminder and the customer
+        // would never be reminded of their moved slot.
+        idempotencyKey: `consult-reminder-${v.appointmentId}-${when.getTime()}-${offset}`,
+        consent: true,
+      });
+    }
   }
 
   /** PUBLIC (token-gated): fee + our receiving-bank details for the pay page.
@@ -919,6 +1110,12 @@ export class ReceptionService {
     if (!/^image\/(jpe?g|png|webp|heic|heif)$/i.test(mimeType)) {
       throw new BadRequestException('Please upload a photo or screenshot of your receipt (JPG/PNG).');
     }
+    // The MIME header is client-supplied and trivially spoofed. Sniff the actual
+    // bytes so a mislabelled (or hostile) upload can't land in our bucket dressed
+    // as an image and later be served back with an image Content-Type.
+    if (!ReceptionService.looksLikeImage(buffer)) {
+      throw new BadRequestException('That file does not look like a photo. Please upload a JPG or PNG image.');
+    }
     // Deterministic, per-payment key: a re-upload (double-tap, retry, or the
     // customer swapping the image) OVERWRITES the same object in place instead
     // of minting a new one, so concurrent/repeated uploads can never orphan
@@ -942,6 +1139,35 @@ export class ReceptionService {
     // customer's upload response, never throws into it.
     void this.runReceiptOcr(vpId, buffer, mimeType);
     return { ok: true as const };
+  }
+
+  /**
+   * Which reminder (if any) fires for an appointment `minutesUntil` away. Narrow
+   * bands around the 2h (≈120 min) and 24h (≈1440 min) marks so a 5-min sweep
+   * catches each once (≤2 overlapping ticks; the idempotency key backstops any
+   * overlap). Returns null outside both bands. Pure — unit-tested.
+   */
+  static reminderOffsetFor(minutesUntil: number): '2h' | '24h' | null {
+    if (minutesUntil <= 125 && minutesUntil > 110) return '2h';
+    if (minutesUntil <= 1445 && minutesUntil > 1420) return '24h';
+    return null;
+  }
+
+  /** Byte-signature sniff for the image formats we accept. Guards against a
+   *  spoofed Content-Type (JPEG / PNG / GIF / WebP-RIFF / HEIC-ISOBMFF-ftyp). */
+  private static looksLikeImage(b: Buffer): boolean {
+    if (!b || b.length < 12) return false;
+    // JPEG: FF D8 FF
+    if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return true;
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return true;
+    // GIF: "GIF8"
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return true;
+    // WebP: "RIFF"...."WEBP"
+    if (b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP') return true;
+    // HEIC/HEIF (ISO-BMFF): bytes 4..8 == "ftyp"
+    if (b.toString('ascii', 4, 8) === 'ftyp') return true;
+    return false;
   }
 
   // ── Receipt OCR (P4c): advisory read of the uploaded proof for finance ──────
@@ -1060,7 +1286,7 @@ export class ReceptionService {
    */
   private async finalizeConsultPayment(
     vp: { id: string; invoiceId: string | null; paymentId: string | null },
-    visit: { name: string; phone: string | null },
+    visit: { name: string; phone: string | null; leadId: string | null; clientId: string | null },
     org: { principalEmployeeId: string | null; consultationBankIban: string | null; consultationBankName: string | null; consultationBankTitle: string | null },
     params: { amount: number; currency: string; appointmentId: string; paymentMethod: string; transactionRef?: string },
     actorUserId: string,
@@ -1074,6 +1300,11 @@ export class ReceptionService {
       const invoice = await this.finance.createInvoice(
         {
           isConsultation: true,
+          // Link the consult invoice to the SAME lead/client so it lands on their
+          // finance customer profile — otherwise the "creditable" fee is orphaned
+          // and can never be found or applied against a later service invoice.
+          ...(visit.leadId ? { leadId: visit.leadId } : {}),
+          ...(visit.clientId ? { clientId: visit.clientId } : {}),
           subtotal: params.amount.toFixed(2),
           currency: params.currency,
           dueDate: new Date().toISOString(),
@@ -1154,26 +1385,6 @@ export class ReceptionService {
     }
   }
 
-  /** Free-text WhatsApp to the visitor's open thread (best-effort, 24h window). */
-  private async sendVisitText(leadId: string | null, clientId: string | null, body: string) {
-    if (!leadId && !clientId) return;
-    try {
-      const thread = await this.prisma.whatsAppThread.findFirst({
-        where: {
-          ...(leadId ? { leadId } : {}),
-          ...(!leadId && clientId ? { clientId } : {}),
-          status: { in: [WhatsAppThreadStatus.OPEN, WhatsAppThreadStatus.PENDING] },
-          windowExpiresAt: { gt: new Date() },
-        },
-        orderBy: { lastMessageAt: 'desc' },
-        select: { id: true },
-      });
-      if (thread) await this.whatsappNotifier.sendBotText(thread.id, body);
-    } catch (err) {
-      this.log.warn(`consult visit text failed: ${(err as Error).message}`);
-    }
-  }
-
   /** First word of a visitor's name, for a WhatsApp greeting ("Hi Ahmed,"). */
   private firstNameOf(name: string | null | undefined): string {
     return (name ?? '').trim().split(/\s+/)[0] || 'there';
@@ -1198,13 +1409,33 @@ export class ReceptionService {
   /** Fire-and-forget consultation_confirmed after a payment is fully recognised
    *  (cash at desk OR a finance-verified transfer). Best-effort; never throws —
    *  a WhatsApp hiccup must not affect the money result that triggered it. */
-  private async notifyConsultConfirmed(visit: {
+  /** Send a payment-related consult template AND persist the delivery outcome on
+   *  the VisitorPayment, so finance sees a "not delivered" flag instead of
+   *  assuming the customer was told. Best-effort; never throws. */
+  private async sendPaymentNotify(
+    visitorPaymentId: string,
+    input: Parameters<WhatsAppAppointmentNotifierService['sendConsultTemplate']>[0],
+  ): Promise<void> {
+    let status = 'FAILED';
+    try {
+      const r = await this.whatsappNotifier.sendConsultTemplate(input);
+      status = r.sent ? 'SENT' : r.reason === 'no_consent' || r.reason === 'blocked' ? 'SKIPPED' : 'FAILED';
+    } catch (err) {
+      this.log.warn(`consult ${input.templateName} notify failed: ${(err as Error).message}`);
+    }
+    await this.prisma.visitorPayment
+      .updateMany({ where: { id: visitorPaymentId }, data: { notifyStatus: status, notifyAt: new Date() } })
+      .catch(() => undefined);
+  }
+
+  private async notifyConsultConfirmed(vpId: string, visit: {
     id: string;
     name: string;
     phone: string | null;
     leadId: string | null;
     clientId: string | null;
     appointmentId: string | null;
+    whatsappConsent: boolean;
   }, amount: number, currency: string, principalEmployeeId: string | null): Promise<void> {
     try {
       const appt = visit.appointmentId
@@ -1216,13 +1447,14 @@ export class ReceptionService {
       const principalName = principal ? `${principal.firstName} ${principal.lastName}`.trim() : null;
       const slot = appt ? this.formatSlotPkt(appt.scheduledAt) : 'your booked time';
       const when = principalName ? `${slot} with ${principalName}` : slot;
-      await this.whatsappNotifier.sendConsultTemplate({
+      await this.sendPaymentNotify(vpId, {
         leadId: visit.leadId,
         clientId: visit.clientId,
         phone: visit.phone,
         templateName: 'consultation_confirmed',
         bodyParams: [this.firstNameOf(visit.name), when, `${currency} ${amount.toLocaleString()}`],
         idempotencyKey: `consult-confirmed-${visit.id}`,
+        consent: visit.whatsappConsent,
       });
     } catch (err) {
       this.log.warn(`consult confirmed notify failed: ${(err as Error).message}`);

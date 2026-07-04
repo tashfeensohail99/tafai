@@ -11,6 +11,8 @@ const NAMES = [
   'consultation_payment_received',
   'consultation_no_show',
   'consultation_payment_reminder',
+  'consultation_reminder',
+  'consultation_slot_released',
 ];
 
 function decryptToken(payload, keyHex) {

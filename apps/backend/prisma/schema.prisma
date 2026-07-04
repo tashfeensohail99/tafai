@@ -1499,6 +1499,12 @@ model Visit {
   /// here so finance can find + apply it manually.
   consultFeeCreditable Boolean @default(false)
 
+  /// Did the customer agree to receive WhatsApp updates about this consultation?
+  /// Business-initiated consult templates are gated on this (Meta requires opt-in
+  /// for out-of-window messages). Defaults true for back-compat; the desk can
+  /// clear it if the customer declines.
+  whatsappConsent Boolean @default(true)
+
   /// Why they came, free text (e.g. "document pickup", "consultation").
   purpose String?
   notes   String?
@@ -1562,6 +1568,12 @@ model VisitorPayment {
   verifiedByUserId String?
   verifiedAt       DateTime?
   rejectedReason   String?
+
+  /// Outcome of the last customer WhatsApp notification for this payment
+  /// (SENT / FAILED / SKIPPED), so finance can see a "not delivered" flag and
+  /// re-send rather than assume the customer was told.
+  notifyStatus String?
+  notifyAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

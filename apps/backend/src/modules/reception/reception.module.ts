@@ -8,6 +8,7 @@ import { StorageModule } from '../storage/storage.module';
 import { ReceptionController } from './reception.controller';
 import { PublicConsultPayController } from './public-consult-pay.controller';
 import { ReceptionService } from './reception.service';
+import { ReceptionSweeperService } from './reception-sweeper.service';
 import { ConsultPayTokenService } from './consult-pay-token.service';
 
 /**
@@ -21,6 +22,6 @@ import { ConsultPayTokenService } from './consult-pay-token.service';
 @Module({
   imports: [LeadsModule, LeadAssignmentModule, FinanceModule, AppointmentsModule, WhatsAppNotificationsModule, StorageModule],
   controllers: [ReceptionController, PublicConsultPayController],
-  providers: [ReceptionService, ConsultPayTokenService],
+  providers: [ReceptionService, ReceptionSweeperService, ConsultPayTokenService],
 })
 export class ReceptionModule {}

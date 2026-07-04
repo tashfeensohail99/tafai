@@ -360,7 +360,47 @@ export class ReceptionService {
     }
     if (dto.notes !== undefined) data.notes = dto.notes || null;
 
-    return this.prisma.visit.update({ where: { id }, data });
+    const updated = await this.prisma.visit.update({ where: { id }, data });
+
+    // A paid consultation marked NO_SHOW → nudge the customer to rebook (approved
+    // UTILITY template; works outside the 24h window). Fire once per transition
+    // (guard on the PRIOR status so re-saving NO_SHOW doesn't re-send), best-effort.
+    if (
+      dto.status === VisitStatus.NO_SHOW &&
+      visit.status !== VisitStatus.NO_SHOW &&
+      visit.visitType === VisitType.PAID_CONSULT &&
+      visit.appointmentId
+    ) {
+      void this.notifyConsultNoShow(visit);
+    }
+
+    return updated;
+  }
+
+  /** Fire-and-forget consultation_no_show nudge for a missed paid consult. */
+  private async notifyConsultNoShow(visit: {
+    id: string;
+    name: string;
+    phone: string | null;
+    leadId: string | null;
+    clientId: string | null;
+    appointmentId: string | null;
+  }): Promise<void> {
+    try {
+      const appt = visit.appointmentId
+        ? await this.prisma.appointment.findUnique({ where: { id: visit.appointmentId }, select: { scheduledAt: true } })
+        : null;
+      await this.whatsappNotifier.sendConsultTemplate({
+        leadId: visit.leadId,
+        clientId: visit.clientId,
+        phone: visit.phone,
+        templateName: 'consultation_no_show',
+        bodyParams: [this.firstNameOf(visit.name), appt ? this.formatSlotPkt(appt.scheduledAt) : 'your booked time'],
+        idempotencyKey: `consult-noshow-${visit.id}`,
+      });
+    } catch (err) {
+      this.log.warn(`consult no-show notify failed: ${(err as Error).message}`);
+    }
   }
 
   // ── Consultation settings (principal, fee, receiving bank) ────────────────
@@ -504,11 +544,20 @@ export class ReceptionService {
     if (method === VisitorPaymentMethod.BANK_TRANSFER) {
       // Hold the slot; DON'T touch the finance ledger yet — the invoice + payment
       // + receipt are created only when finance verifies (correct revenue timing).
-      await this.sendVisitText(
-        owner.leadId,
-        owner.clientId,
-        "We've received your payment details — your consultation is being verified and we'll confirm shortly.",
-      );
+      // Tell the customer via the approved UTILITY template (works even if there's
+      // no open 24h window — a walk-in usually hasn't messaged us). Fire-and-forget.
+      void this.whatsappNotifier.sendConsultTemplate({
+        leadId: owner.leadId,
+        clientId: owner.clientId,
+        phone: visit.phone,
+        templateName: 'consultation_payment_received',
+        bodyParams: [
+          this.firstNameOf(visit.name),
+          `${currency} ${fee.toLocaleString()}`,
+          this.formatSlotPkt(new Date(scheduledAtIso)),
+        ],
+        idempotencyKey: `consult-received-${vp.id}`,
+      });
       await this.notifyPrincipal(
         org.principalEmployeeId,
         `${visit.name} — bank transfer pending verification (${currency} ${fee.toLocaleString()})`,
@@ -624,6 +673,11 @@ export class ReceptionService {
           receiptNumber: fin.receiptNumber,
         },
       });
+      // Money is committed — fire the "confirmed" WhatsApp template (works outside
+      // the 24h window). Fire-and-forget AFTER the writes so a send failure can
+      // never roll back the payment. Idempotency-keyed on the visit so a resumed
+      // finalize (which can't re-reach this block anyway) never double-sends.
+      void this.notifyConsultConfirmed(visit, Number(vp.amount), vp.currency, org.principalEmployeeId);
       return { invoiceNumber: fin.invoiceNumber, receiptNumber: fin.receiptNumber, appointmentId: visit.appointmentId };
     } catch (err) {
       // Roll the claim back so the payment can be retried. finalizeConsultPayment
@@ -790,6 +844,40 @@ export class ReceptionService {
     const payUrl = `${base}/pay/${token}`;
     const qrDataUrl = await QRCode.toDataURL(payUrl, { width: 320, margin: 1 });
     return { token, payUrl, qrDataUrl, expiresAt };
+  }
+
+  /**
+   * Send the customer a WhatsApp reminder to complete a still-unpaid bank
+   * transfer, with a fresh pay-link button (the approved consultation_payment_
+   * reminder template). Manual, staff-triggered — only for a PENDING bank
+   * transfer. The button token is a fresh 1h pay token for the /pay page.
+   */
+  async sendPaymentReminder(visitorPaymentId: string): Promise<{ sent: boolean; reason?: string }> {
+    const vp = await this.prisma.visitorPayment.findUnique({ where: { id: visitorPaymentId } });
+    if (!vp) throw new NotFoundException('Payment not found');
+    if (vp.method !== VisitorPaymentMethod.BANK_TRANSFER || vp.status !== VisitorPaymentStatus.PENDING_REVIEW) {
+      throw new BadRequestException('A reminder can only be sent for a pending bank transfer.');
+    }
+    const visit = await this.prisma.visit.findUnique({ where: { id: vp.visitId } });
+    if (!visit) throw new NotFoundException('Visit not found');
+    if (!visit.phone) throw new BadRequestException('This visitor has no phone number to message.');
+
+    const appt = visit.appointmentId
+      ? await this.prisma.appointment.findUnique({ where: { id: visit.appointmentId }, select: { scheduledAt: true } })
+      : null;
+    const { token } = this.payToken.make(vp.id);
+    return this.whatsappNotifier.sendConsultTemplate({
+      leadId: visit.leadId,
+      clientId: visit.clientId,
+      phone: visit.phone,
+      templateName: 'consultation_payment_reminder',
+      bodyParams: [
+        this.firstNameOf(visit.name),
+        appt ? this.formatSlotPkt(appt.scheduledAt) : 'your consultation',
+        `${vp.currency} ${Number(vp.amount).toLocaleString()}`,
+      ],
+      buttonUrlToken: token,
+    });
   }
 
   /** PUBLIC (token-gated): fee + our receiving-bank details for the pay page.
@@ -1083,6 +1171,61 @@ export class ReceptionService {
       if (thread) await this.whatsappNotifier.sendBotText(thread.id, body);
     } catch (err) {
       this.log.warn(`consult visit text failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** First word of a visitor's name, for a WhatsApp greeting ("Hi Ahmed,"). */
+  private firstNameOf(name: string | null | undefined): string {
+    return (name ?? '').trim().split(/\s+/)[0] || 'there';
+  }
+
+  /** A consultation slot as a template-friendly PKT string, e.g.
+   *  "28 June 2026, 3:00 PM". */
+  private formatSlotPkt(when: Date): string {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Karachi',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+      .format(when)
+      .replace(/\b(am|pm)\b/i, (m) => m.toUpperCase());
+  }
+
+  /** Fire-and-forget consultation_confirmed after a payment is fully recognised
+   *  (cash at desk OR a finance-verified transfer). Best-effort; never throws —
+   *  a WhatsApp hiccup must not affect the money result that triggered it. */
+  private async notifyConsultConfirmed(visit: {
+    id: string;
+    name: string;
+    phone: string | null;
+    leadId: string | null;
+    clientId: string | null;
+    appointmentId: string | null;
+  }, amount: number, currency: string, principalEmployeeId: string | null): Promise<void> {
+    try {
+      const appt = visit.appointmentId
+        ? await this.prisma.appointment.findUnique({ where: { id: visit.appointmentId }, select: { scheduledAt: true } })
+        : null;
+      const principal = principalEmployeeId
+        ? await this.prisma.employee.findFirst({ where: { id: principalEmployeeId, deletedAt: null }, select: { firstName: true, lastName: true } })
+        : null;
+      const principalName = principal ? `${principal.firstName} ${principal.lastName}`.trim() : null;
+      const slot = appt ? this.formatSlotPkt(appt.scheduledAt) : 'your booked time';
+      const when = principalName ? `${slot} with ${principalName}` : slot;
+      await this.whatsappNotifier.sendConsultTemplate({
+        leadId: visit.leadId,
+        clientId: visit.clientId,
+        phone: visit.phone,
+        templateName: 'consultation_confirmed',
+        bodyParams: [this.firstNameOf(visit.name), when, `${currency} ${amount.toLocaleString()}`],
+        idempotencyKey: `consult-confirmed-${visit.id}`,
+      });
+    } catch (err) {
+      this.log.warn(`consult confirmed notify failed: ${(err as Error).message}`);
     }
   }
 

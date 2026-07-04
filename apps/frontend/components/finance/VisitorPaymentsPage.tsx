@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BadgeCheck, Clock, ImageOff, Loader2, RefreshCw, ScanLine, Wallet, X, XCircle } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, Clock, ImageOff, Loader2, RefreshCw, ScanLine, Send, Wallet, X, XCircle } from 'lucide-react';
 import { GlassCard, GhostButton, PageHeader, PrimaryButton } from '@/components/sales-v2/ui';
 import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
 import { useFinanceSession } from '@/components/layout/FinanceShell';
@@ -9,6 +9,7 @@ import {
   listVisitorPayments,
   reReadVisitorPaymentOcr,
   rejectVisitorPayment,
+  remindVisitorPayment,
   verifyVisitorPayment,
   type VisitorPaymentList,
   type VisitorPaymentRow,
@@ -112,6 +113,23 @@ export function VisitorPaymentsPage() {
       setRejectId(null);
       setRejectReason('');
       load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function remind(row: VisitorPaymentRow) {
+    setBusyId(row.id);
+    setError(null);
+    try {
+      const res = await remindVisitorPayment(row.id);
+      setFlash(
+        res.sent
+          ? `Payment reminder sent to ${row.name}.`
+          : `Couldn't send the reminder to ${row.name}${res.reason ? ` (${res.reason})` : ''}.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send the reminder');
     } finally {
       setBusyId(null);
     }
@@ -305,6 +323,14 @@ export function VisitorPaymentsPage() {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+                    <GhostButton
+                      type="button"
+                      onClick={() => void remind(r)}
+                      disabled={busyId != null}
+                      iconLeft={busyId === r.id ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={14} />}
+                    >
+                      Remind
+                    </GhostButton>
                     <GhostButton type="button" onClick={() => { setRejectId(r.id); setRejectReason(''); }} disabled={busyId != null}>
                       Reject
                     </GhostButton>

@@ -127,6 +127,14 @@ export class ReceptionController {
     return this.reception.reReadReceiptOcr(id);
   }
 
+  /** Send the customer a WhatsApp reminder (with pay link) to complete a
+   *  still-unpaid bank transfer. Reception or finance may trigger it. */
+  @Post('visitor-payments/:id/remind')
+  @RequireAnyPermissions('reception.view', 'reception.check_in', 'finance.verify_payment')
+  remindPayment(@Param('id', ParseUUIDPipe) id: string) {
+    return this.reception.sendPaymentReminder(id);
+  }
+
   @Post('visitor-payments/:id/verify')
   @RequirePermissions('finance.verify_payment')
   @Audit({ entityType: 'VisitorPayment', category: 'MUTATION', severity: 'HIGH', action: 'PAYMENT_VERIFIED' })

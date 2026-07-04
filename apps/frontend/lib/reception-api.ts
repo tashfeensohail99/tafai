@@ -251,6 +251,12 @@ export async function reReadVisitorPaymentOcr(id: string): Promise<{ ocrStatus: 
   return apiFetch(`/reception/visitor-payments/${id}/ocr`, { method: 'POST' });
 }
 
+/** Send the customer a WhatsApp reminder (with pay link) to complete a pending
+ *  bank transfer. */
+export async function remindVisitorPayment(id: string): Promise<{ sent: boolean; reason?: string }> {
+  return apiFetch(`/reception/visitor-payments/${id}/remind`, { method: 'POST' });
+}
+
 export interface PayQr {
   token: string;
   payUrl: string;

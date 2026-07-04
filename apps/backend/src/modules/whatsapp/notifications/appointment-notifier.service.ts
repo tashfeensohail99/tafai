@@ -4,6 +4,7 @@ import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import {
   Prisma,
+  WhatsAppChannelStatus,
   WhatsAppMessageDirection,
   WhatsAppMessageStatus,
   WhatsAppMessageType,
@@ -11,7 +12,15 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { OpenAiService } from '../../ai/openai.service';
+import { normalisePhone } from '../../../common/phone/phone.util';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../queues/queue-contracts';
+
+/** The reception paid-consultation UTILITY templates (approved at Meta). */
+export type ConsultTemplateName =
+  | 'consultation_confirmed'
+  | 'consultation_payment_received'
+  | 'consultation_no_show'
+  | 'consultation_payment_reminder';
 
 export type AppointmentConfirmationResult =
   | { sent: true; messageId: string; threadId: string }
@@ -175,6 +184,152 @@ export class WhatsAppAppointmentNotifierService {
     });
     await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
     return { sent: true };
+  }
+
+  /**
+   * Send an approved reception UTILITY template to a lead/client — system
+   * attributed (sentByEmployeeId null, so it never trips the human-takeover
+   * guard) and business-INITIATED, so it works OUTSIDE the 24h window (that is
+   * the whole point of a template). Best-effort: never throws, so a WhatsApp
+   * failure can never roll back the money/booking that triggered it.
+   *
+   * Resolves the lead's existing thread (Lead↔Thread is 1:1) or opens one
+   * outbound-first on the active channel, keyed on the same (channelId,
+   * waContactId) the inbound webhook uses so a later reply reconciles here.
+   * Refuses a hard-blocked contact. These are all UTILITY (transactional), so —
+   * like receipts — they are deliberately NOT gated on the promotional opt-out.
+   */
+  async sendConsultTemplate(input: {
+    leadId?: string | null;
+    clientId?: string | null;
+    phone: string | null;
+    templateName: ConsultTemplateName;
+    bodyParams: string[];
+    /** Fills the {{1}} of the URL button (consultation_payment_reminder only). */
+    buttonUrlToken?: string;
+    idempotencyKey?: string;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    try {
+      if (!input.phone) return { sent: false, reason: 'no_phone' };
+      const norm = normalisePhone(input.phone);
+      if (!norm.ok || !norm.e164) return { sent: false, reason: 'no_phone' };
+      const waContactId = norm.e164.replace(/\D/g, '');
+
+      // Respect a hard block even for transactional sends.
+      if (input.leadId) {
+        const lead = await this.prisma.lead.findUnique({ where: { id: input.leadId }, select: { blockedAt: true } });
+        if (lead?.blockedAt) return { sent: false, reason: 'blocked' };
+      }
+      if (input.clientId) {
+        const client = await this.prisma.client.findUnique({ where: { id: input.clientId }, select: { blockedAt: true } });
+        if (client?.blockedAt) return { sent: false, reason: 'blocked' };
+      }
+
+      const channel = await this.prisma.whatsAppChannel.findFirst({
+        where: { status: WhatsAppChannelStatus.ACTIVE },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      if (!channel) return { sent: false, reason: 'no_channel' };
+
+      // Reuse the lead's 1:1 thread if any (avoids the leadId-unique violation an
+      // upsert-create would hit); else open/reconcile on (channelId, waContactId).
+      let thread: { id: string; channelId: string; leadId: string | null; clientId: string | null } | null = null;
+      if (input.leadId) {
+        thread = await this.prisma.whatsAppThread.findUnique({
+          where: { leadId: input.leadId },
+          select: { id: true, channelId: true, leadId: true, clientId: true },
+        });
+      }
+      if (!thread) {
+        const now = new Date();
+        thread = await this.prisma.whatsAppThread.upsert({
+          where: { channelId_waContactId: { channelId: channel.id, waContactId } },
+          create: {
+            channelId: channel.id,
+            waContactId,
+            leadId: input.leadId ?? null,
+            clientId: input.clientId ?? null,
+            status: WhatsAppThreadStatus.OPEN,
+            lastMessageAt: now,
+            lastHumanActivityAt: now,
+          },
+          update: {
+            ...(input.leadId ? { leadId: input.leadId } : {}),
+            ...(input.clientId ? { clientId: input.clientId } : {}),
+          },
+          select: { id: true, channelId: true, leadId: true, clientId: true },
+        });
+      }
+
+      const components: Array<Record<string, unknown>> = [
+        { type: 'body', parameters: input.bodyParams.map((t) => ({ type: 'text', text: t })) },
+      ];
+      if (input.buttonUrlToken) {
+        // Meta send-time URL-button param shape (NOT the template-definition shape).
+        components.push({
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [{ type: 'text', text: input.buttonUrlToken }],
+        });
+      }
+
+      const renderedBody = await this.renderConsultBody(channel.id, input.templateName, input.bodyParams);
+
+      const message = await this.prisma.whatsAppMessage.create({
+        data: {
+          threadId: thread.id,
+          channelId: thread.channelId,
+          leadId: thread.leadId,
+          clientId: thread.clientId,
+          direction: WhatsAppMessageDirection.OUTBOUND,
+          type: WhatsAppMessageType.TEMPLATE,
+          status: WhatsAppMessageStatus.QUEUED,
+          templateName: input.templateName,
+          templateLanguage: 'en',
+          body: renderedBody,
+          payload: { components, source: 'reception_consult' } as unknown as Prisma.InputJsonValue,
+          sentByEmployeeId: null,
+          idempotencyKey: input.idempotencyKey ?? randomUUID(),
+        },
+        select: { id: true },
+      });
+      await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
+      return { sent: true };
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        // Same idempotencyKey already queued this exact send — treat as sent.
+        return { sent: true };
+      }
+      this.log.warn(`consult template ${input.templateName} send failed: ${(e as Error).message}`);
+      return { sent: false, reason: 'error' };
+    }
+  }
+
+  /** Render an approved template's BODY with the supplied params, for the chat
+   *  bubble / inbox preview. Best-effort — null (bare "Template: name") on any
+   *  miss; never affects what is actually sent to Meta. */
+  private async renderConsultBody(
+    channelId: string,
+    templateName: string,
+    bodyParams: string[],
+  ): Promise<string | null> {
+    try {
+      const tpl = await this.prisma.whatsAppTemplate.findFirst({
+        where: { channelId, name: templateName },
+        select: { components: true },
+      });
+      const comps = (tpl?.components ?? []) as Array<{ type?: string; text?: string }>;
+      const body = comps.find((c) => (c.type ?? '').toUpperCase() === 'BODY')?.text;
+      if (!body) return null;
+      return body.replace(/\{\{(\d+)\}\}/g, (_, n: string) => {
+        const idx = Number(n) - 1;
+        return bodyParams[idx] ?? `{{${n}}}`;
+      });
+    } catch {
+      return null;
+    }
   }
 
   private composeBody(input: {

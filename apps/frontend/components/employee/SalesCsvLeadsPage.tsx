@@ -102,8 +102,16 @@ function dripCell(lead: ApiCsvLead): { label: string; tone: BadgeTone; showFallb
   return { label: 'Auto-message queued', tone: 'neutral', showFallback: false };
 }
 
+interface CsvStats {
+  total: number;
+  contacted: number;
+  remaining: number;
+  deleted: number;
+}
+
 export function SalesCsvLeadsPage() {
   const [leads, setLeads] = useState<ApiCsvLead[]>([]);
+  const [stats, setStats] = useState<CsvStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -113,8 +121,14 @@ export function SalesCsvLeadsPage() {
     setLoading(true);
     setError(null);
     try {
-      const list = await apiFetch<ApiCsvLead[]>('/leads?fromCsv=true');
+      // The list is only the still-cold leads; the stats give the full funnel
+      // (total / contacted / remaining) so the KPIs don't shrink as leads reply.
+      const [list, s] = await Promise.all([
+        apiFetch<ApiCsvLead[]>('/leads?fromCsv=true'),
+        apiFetch<CsvStats>('/leads/csv-stats').catch(() => null),
+      ]);
       setLeads(list);
+      setStats(s);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load leads');
     } finally {
@@ -154,8 +168,12 @@ export function SalesCsvLeadsPage() {
     });
   }, [leads, batchFilter, search]);
 
-  const newCount = useMemo(() => leads.filter((l) => l.status === 'NEW').length, [leads]);
-  const contactedCount = useMemo(() => leads.filter((l) => l.status === 'CONTACTED').length, [leads]);
+  // KPI values from the funnel stats, falling back to list-derived numbers
+  // while the stats request is in flight.
+  const kTotal = stats?.total ?? leads.length;
+  const kContacted = stats?.contacted ?? 0;
+  const kRemaining = stats?.remaining ?? leads.length;
+  const kDeleted = stats?.deleted ?? 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -165,12 +183,30 @@ export function SalesCsvLeadsPage() {
         description="Leads assigned to you from spreadsheet uploads. Each is auto-sent a WhatsApp template on import (and a follow-up ~40h later if they stay quiet). A lead leaves this list once they reply; if both auto-touches go unanswered, use the WhatsApp button to continue on your personal number."
       />
 
-      {/* KPIs */}
+      {/* KPIs — full funnel so the count doesn't "shrink" as leads reply. */}
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-        <MetricCard label="My CSV leads" value={leads.length} tone="info" Icon={FileSpreadsheet} hint="Across all batches" />
-        <MetricCard label="New" value={newCount} tone="accent" Icon={Tag} hint="Awaiting first contact" />
-        <MetricCard label="Contacted" value={contactedCount} tone="warning" Icon={MessageSquare} hint="In conversation" />
-        <MetricCard label="Active batches" value={batches.length} tone="neutral" Icon={FileSpreadsheet} hint="Distinct uploads" />
+        <MetricCard
+          label="Total CSV leads"
+          value={kTotal}
+          tone="info"
+          Icon={FileSpreadsheet}
+          hint={kDeleted > 0 ? `Assigned to you · ${kDeleted} removed earlier` : 'Assigned to you'}
+        />
+        <MetricCard
+          label="Contacted"
+          value={kContacted}
+          tone="success"
+          Icon={MessageSquare}
+          hint="Auto-messaged or replied (in the inbox)"
+        />
+        <MetricCard
+          label="Remaining"
+          value={kRemaining}
+          tone="warning"
+          Icon={Tag}
+          hint="Still to reach — listed below"
+        />
+        <MetricCard label="Active batches" value={batches.length} tone="neutral" Icon={FileSpreadsheet} hint="With leads still to reach" />
       </div>
 
       {/* Filters */}

@@ -82,6 +82,18 @@ export class LeadsController {
   }
 
   /**
+   * Funnel counts for the CSV-leads page KPIs — total / contacted / remaining /
+   * deleted, scoped to the caller. The list view only shows still-cold leads, so
+   * these give the full picture (nothing appears to vanish once a lead replies).
+   * Mounted before @Get(':id') so 'csv-stats' isn't parsed as a UUID.
+   */
+  @Get('csv-stats')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  csvStats(@CurrentUser() user: RequestUser) {
+    return this.leadsService.csvStats(user);
+  }
+
+  /**
    * Per-ad lead leaderboard (Click-to-WhatsApp attribution → funnel). Optional
    * `from`/`to` (YYYY-MM-DD) scope the spend + lead-cohort window; default 30d.
    */

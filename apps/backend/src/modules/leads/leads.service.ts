@@ -135,6 +135,43 @@ export class LeadsService {
     });
   }
 
+  /**
+   * Funnel counts for the CSV-leads page KPIs — the full picture the filtered
+   * list can't show (the list only shows still-cold leads). Scoped to the caller
+   * (their assigned/created CSV leads; admins see the whole org). `contacted` =
+   * we've reached them (a drip template went out) OR they replied; `remaining` =
+   * still cold (what the list shows); `deleted` is surfaced so the record count
+   * reconciles and nothing appears to silently vanish.
+   */
+  async csvStats(
+    user: RequestUser,
+  ): Promise<{ total: number; contacted: number; remaining: number; deleted: number }> {
+    const canViewAll = user.permissions.includes('leads.view_all');
+    const csvOrigin: Prisma.LeadWhereInput = {
+      importRows: { some: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } } },
+    };
+    // Nested inside an AND so the rep-scope OR isn't clobbered by another OR.
+    const repScope: Prisma.LeadWhereInput[] = canViewAll
+      ? []
+      : [{ OR: [{ assignedEmployee: { userId: user.id } }, { createdByUserId: user.id }] }];
+    // Contacted = drip template sent OR customer replied (thread first inbound).
+    const contactedCond: Prisma.LeadWhereInput = {
+      OR: [
+        { dripTouch1At: { not: null } },
+        { whatsappThread: { is: { firstInboundAt: { not: null } } } },
+      ],
+    };
+
+    const [total, contacted, deleted] = await Promise.all([
+      this.prisma.lead.count({ where: { AND: [csvOrigin, { deletedAt: null }, ...repScope] } }),
+      this.prisma.lead.count({
+        where: { AND: [csvOrigin, { deletedAt: null }, ...repScope, contactedCond] },
+      }),
+      this.prisma.lead.count({ where: { AND: [csvOrigin, { deletedAt: { not: null } }, ...repScope] } }),
+    ]);
+    return { total, contacted, remaining: Math.max(total - contacted, 0), deleted };
+  }
+
   private createdRange(query: ListLeadsQueryDto): Prisma.LeadWhereInput {
     if (!query.createdFrom && !query.createdTo) return {};
     const createdAt: Prisma.DateTimeFilter = {};

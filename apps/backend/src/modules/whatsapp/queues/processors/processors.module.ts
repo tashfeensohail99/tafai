@@ -9,6 +9,7 @@ import { TemplateSyncProcessor } from './template-sync.processor';
 import { AiReplyProcessor } from './ai-reply.processor';
 import { CsvDripProcessor } from './csv-drip.processor';
 import { CsvDripService } from '../../drip/csv-drip.service';
+import { CsvDripBackfillRunner } from '../../drip/csv-drip-backfill.runner';
 import { OutboundOrphanDrainerService } from './outbound-orphan-drainer.service';
 
 // StorageModule is imported here so AiReplyProcessor can pull voice-note
@@ -26,6 +27,9 @@ import { OutboundOrphanDrainerService } from './outbound-orphan-drainer.service'
     // CSV auto-drip: 2-touch template outreach for imported leads.
     CsvDripProcessor,
     CsvDripService,
+    // Opt-in one-shot backfill of the drip for pre-existing cold CSV leads
+    // (gated by the CSV_DRIP_BACKFILL env flag).
+    CsvDripBackfillRunner,
     // Boot-time sweep that re-enqueues OUTBOUND messages stuck in QUEUED
     // status without a Redis job (typical when a maintenance script wrote
     // them from outside the VPC and couldn't reach internal Redis).

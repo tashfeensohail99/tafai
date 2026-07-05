@@ -440,6 +440,22 @@ export function unpinThread(
   return apiFetch(`/whatsapp/threads/${threadId}/pin`, { method: 'DELETE' });
 }
 
+/** A content-search hit: a thread row + the matched message snippet. */
+export type MessageSearchResult = ThreadListItem & { searchSnippet: string };
+
+/**
+ * Content search — find chats by what was SAID (message text), not just the
+ * contact name/phone. Returns matching threads with a snippet of the matched
+ * message. Query must be >= 2 chars (server enforces; short queries return []).
+ */
+export function searchThreadMessages(
+  q: string,
+  limit = 30,
+): Promise<{ items: MessageSearchResult[] }> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  return apiFetch(`/whatsapp/threads/search/messages?${params.toString()}`, { cache: 'no-store' });
+}
+
 export interface BlockedNumber {
   contactType: 'lead' | 'client';
   contactId: string;

@@ -27,10 +27,12 @@ import {
   getThreadStats,
   listThreads,
   pinThread,
+  searchThreadMessages,
   threadMatchesSearch,
   unarchiveThread,
   unblockContact,
   unpinThread,
+  type MessageSearchResult,
   type ThreadListItem,
   type ThreadStats,
 } from '@/lib/whatsapp';
@@ -82,6 +84,9 @@ export default function SalesInboxPage() {
   const [followUpDueOnly, setFollowUpDueOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  // #4 content search — chats matched by MESSAGE TEXT (not just name/phone).
+  const [msgResults, setMsgResults] = useState<MessageSearchResult[]>([]);
+  const [msgSearchBusy, setMsgSearchBusy] = useState(false);
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -207,6 +212,26 @@ export default function SalesInboxPage() {
   }, [scopeQuery, debouncedSearch, refreshStats, filter]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  // #4 content search: find chats by what was SAID (message text). Fires on the
+  // same debounced query, only in the working tabs (Archived/Blocked are their
+  // own views). Cleared when the query is too short. Cancels stale responses so
+  // a fast typer never sees an earlier query's results land last.
+  useEffect(() => {
+    const q = debouncedSearch.trim();
+    if (q.length < 2 || filter === 'ARCHIVED' || filter === 'BLOCKED') {
+      setMsgResults([]);
+      setMsgSearchBusy(false);
+      return;
+    }
+    let cancelled = false;
+    setMsgSearchBusy(true);
+    searchThreadMessages(q)
+      .then((res) => { if (!cancelled) setMsgResults(res.items); })
+      .catch(() => { if (!cancelled) setMsgResults([]); })
+      .finally(() => { if (!cancelled) setMsgSearchBusy(false); });
+    return () => { cancelled = true; };
+  }, [debouncedSearch, filter]);
 
   // Load the next page of OLDER chats (cursor pagination). Appends + dedupes,
   // and remembers the new depth so the reconcile keeps it.
@@ -443,6 +468,17 @@ export default function SalesInboxPage() {
     // until a rep replies. Keep the open chat visible even if it isn't engaged.
     return pinnedFirst(active.filter((t) => t.lastHumanReplyAt != null || t.id === activeId));
   }, [items, filter, activeId]);
+
+  // #4 content search — are we in a message-content search? Message matches are
+  // shown in a separate "Messages" section, deduped against the name-match list
+  // above (a chat whose NAME matched shouldn't also repeat under Messages).
+  const isSearching =
+    debouncedSearch.trim().length >= 2 && filter !== 'ARCHIVED' && filter !== 'BLOCKED';
+  const messageMatches = useMemo(() => {
+    if (!isSearching) return [];
+    const shown = new Set(visibleItems.map((t) => t.id));
+    return msgResults.filter((m) => !shown.has(m.id));
+  }, [isSearching, msgResults, visibleItems]);
 
   // Real DB total for the active tab (from stats) — drives the "showing N of M"
   // footer so the loaded list and the tab badge are never confusingly different.
@@ -795,7 +831,7 @@ export default function SalesInboxPage() {
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
               Loading chats…
             </div>
-          ) : visibleItems.length === 0 ? (
+          ) : visibleItems.length === 0 && messageMatches.length === 0 && !msgSearchBusy ? (
             <div
               style={{
                 display: 'flex',
@@ -810,10 +846,17 @@ export default function SalesInboxPage() {
               }}
             >
               <InboxIcon size={40} strokeWidth={1} />
-              <div style={{ fontSize: 14 }}>No chats assigned to you yet</div>
+              <div style={{ fontSize: 14 }}>
+                {isSearching
+                  ? `No chats or messages match “${debouncedSearch.trim()}”`
+                  : 'No chats assigned to you yet'}
+              </div>
             </div>
           ) : (
             <>
+              {visibleItems.length > 0 && isSearching && messageMatches.length > 0 ? (
+                <SearchSectionLabel label="Chats" />
+              ) : null}
               {visibleItems.map((t) => (
                 <ThreadRow
                   key={t.id}
@@ -872,6 +915,28 @@ export default function SalesInboxPage() {
                 >
                   {visibleItems.length} {visibleItems.length === 1 ? 'chat' : 'chats'} loaded
                 </div>
+              ) : null}
+
+              {/* #4 "Messages" section — chats matched by MESSAGE TEXT (deduped
+                  against the name-match list above). WhatsApp-style. */}
+              {isSearching && (messageMatches.length > 0 || msgSearchBusy) ? (
+                <>
+                  <SearchSectionLabel label="Messages" />
+                  {msgSearchBusy && messageMatches.length === 0 ? (
+                    <div style={{ padding: '10px 16px', color: 'var(--sos-text-muted)', fontSize: 12.5 }}>
+                      Searching messages…
+                    </div>
+                  ) : null}
+                  {messageMatches.map((m) => (
+                    <MessageResultRow
+                      key={`msg-${m.id}`}
+                      item={m}
+                      query={debouncedSearch.trim()}
+                      active={activeId === m.id}
+                      onSelect={handleSelect}
+                    />
+                  ))}
+                </>
               ) : null}
             </>
           )}
@@ -1447,6 +1512,147 @@ function RowMenuItem({
       {label}
     </button>
   );
+}
+
+/** Small uppercase header separating "Chats" from "Messages" in search results. */
+function SearchSectionLabel({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        padding: '10px 16px 4px',
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: 'var(--sos-text-muted)',
+        background: 'var(--sos-surface-1)',
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
+/** A content-search result: avatar + name + the matched message snippet with the
+ *  query highlighted. Clicking opens the chat (same handler as a normal row). */
+function MessageResultRow({
+  item,
+  query,
+  active,
+  onSelect,
+}: {
+  item: MessageSearchResult;
+  query: string;
+  active: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const displayName =
+    item.client?.firstName || item.client?.lastName
+      ? `${item.client.firstName} ${item.client.lastName}`.trim()
+      : item.lead
+        ? `${item.lead.firstName} ${item.lead.lastName}`.trim()
+        : item.waContactId;
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(item.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(item.id);
+        }
+      }}
+      style={{ cursor: 'pointer', display: 'block', width: '100%' }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '10px 16px',
+          background: active ? 'var(--wa-composer-input-bg)' : 'transparent',
+          borderBottom: '1px solid var(--sos-border-subtle)',
+        }}
+        onMouseEnter={(e) => {
+          if (!active) (e.currentTarget as HTMLDivElement).style.background = 'var(--wa-panel-header)';
+        }}
+        onMouseLeave={(e) => {
+          if (!active) (e.currentTarget as HTMLDivElement).style.background = 'transparent';
+        }}
+      >
+        <div
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: '50%',
+            background: avatarColor(displayName),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 14,
+            fontWeight: 700,
+            color: '#fff',
+            flexShrink: 0,
+          }}
+        >
+          {initials(displayName)}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 14.5,
+              fontWeight: 500,
+              color: 'var(--sos-text-primary)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {displayName}
+          </div>
+          <div
+            style={{
+              fontSize: 12.5,
+              color: 'var(--sos-text-muted)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              marginTop: 2,
+            }}
+          >
+            {highlightMatch(item.searchSnippet, query)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Render `text` with case-insensitive occurrences of `q` wrapped in an accent
+ *  span — the WhatsApp search-highlight look. */
+function highlightMatch(text: string, q: string): React.ReactNode {
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+  while (i < text.length) {
+    const idx = lower.indexOf(needle, i);
+    if (idx < 0) {
+      out.push(text.slice(i));
+      break;
+    }
+    if (idx > i) out.push(text.slice(i, idx));
+    out.push(
+      <span key={key++} style={{ color: 'var(--wa-accent)', fontWeight: 700 }}>
+        {text.slice(idx, idx + q.length)}
+      </span>,
+    );
+    i = idx + q.length;
+  }
+  return out;
 }
 
 function tone(s: ThreadListItem['status']) {

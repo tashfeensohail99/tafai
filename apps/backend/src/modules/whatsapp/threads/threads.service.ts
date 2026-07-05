@@ -3,6 +3,20 @@ import { WhatsAppAssignmentReason, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 
+/**
+ * A ~120-char window of `text` centered on the first case-insensitive
+ * occurrence of `q`, with ellipses when clipped. Powers the "found in message"
+ * snippet for content search so a rep sees WHY a chat matched. Never throws on
+ * odd input (empty/short/no-match) — falls back to the head of the text.
+ */
+function snippetAround(text: string, q: string, radius = 55): string {
+  const idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return text.length > radius * 2 ? `${text.slice(0, radius * 2)}…` : text;
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(text.length, idx + q.length + radius);
+  return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
+}
+
 interface ThreadListOptions {
   status?: 'OPEN' | 'PENDING' | 'RESOLVED' | 'ARCHIVED';
   assignedToMe?: boolean;
@@ -510,6 +524,97 @@ export class WhatsAppThreadsService {
       orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
       include: THREAD_LIST_INCLUDE,
     });
+  }
+
+  /**
+   * Content search — find chats by what was SAID, not just the contact name.
+   * Searches message BODIES (case-insensitive substring; pg_trgm-indexed) and
+   * returns the matching threads in list-row shape, each with a `searchSnippet`
+   * of the most-recent matching message so the UI can show WHY it matched
+   * ("…we can offer a small discount…"). Applies the caller's scope + the same
+   * working-inbox exclusions the list uses (no soft-deleted leads, no blocked
+   * contacts, no archived threads). Query must be >= 2 chars.
+   */
+  async searchMessages(
+    caller: CallerContext,
+    rawQuery: string,
+    limit = 30,
+  ): Promise<{ items: Array<Record<string, unknown>> }> {
+    const q = (rawQuery ?? '').trim();
+    if (q.length < 2) return { items: [] };
+    const take = Math.min(Math.max(limit, 1), 50);
+
+    // Scope EXACTLY like the inbox LIST (NOT the looser per-thread-open scope):
+    //   admin   → everything
+    //   finance → only leads with a non-DRAFT agreement (pre-agreement Sales
+    //             negotiations stay private — same gate list()/stats() use)
+    //   agent   → only their own assigned leads
+    // Using the per-thread-open scope here would let finance see snippets of
+    // pre-agreement Sales chats they can't actually open.
+    let leadFilter: Prisma.LeadWhereInput | null = null; // null = no constraint (admin)
+    if (caller.canViewAll) {
+      leadFilter = null;
+    } else if (caller.canViewFinanceScope) {
+      const eligible = await this.eligibleLeadIdsForFinance();
+      if (eligible.length === 0) return { items: [] };
+      leadFilter = { id: { in: eligible }, deletedAt: null };
+    } else {
+      if (!caller.employeeId) return { items: [] };
+      leadFilter = { assignedEmployeeId: caller.employeeId, deletedAt: null };
+    }
+
+    // Working-inbox visibility (mirrors list()'s default branch): live chats
+    // only — skip blocked contacts and archived threads.
+    const and: Prisma.WhatsAppThreadWhereInput[] = [
+      { status: { not: 'ARCHIVED' } },
+      { OR: [{ lead: { is: { blockedAt: null } } }, { lead: null }] },
+      { OR: [{ client: { is: { blockedAt: null } } }, { client: null }] },
+    ];
+    const threadWhere: Prisma.WhatsAppThreadWhereInput = { AND: and };
+    if (leadFilter) {
+      // Scoped callers: the lead filter already excludes soft-deleted leads.
+      threadWhere.lead = leadFilter;
+    } else {
+      // Admin: still hide threads of soft-deleted leads (lead-less kept).
+      and.push({ OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] });
+    }
+
+    // Newest matching messages first; cap the scan and dedup to threads below.
+    const matches = await this.prisma.whatsAppMessage.findMany({
+      where: {
+        body: { contains: q, mode: 'insensitive' },
+        thread: { is: threadWhere },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 300,
+      select: { threadId: true, body: true, createdAt: true },
+    });
+
+    // One row per thread — keep the most-recent matching message as the snippet.
+    const byThread = new Map<string, string>();
+    for (const m of matches) {
+      if (byThread.size >= take) break;
+      if (m.body && !byThread.has(m.threadId)) byThread.set(m.threadId, m.body);
+    }
+    const threadIds = [...byThread.keys()];
+    if (threadIds.length === 0) return { items: [] };
+
+    // Fetch the thread rows (already scope-verified via the message filter).
+    const rows = await this.prisma.whatsAppThread.findMany({
+      where: { id: { in: threadIds } },
+      include: THREAD_LIST_INCLUDE,
+    });
+    // Preserve match-recency order (byThread insertion order = createdAt desc).
+    const rank = new Map(threadIds.map((id, i) => [id, i]));
+    rows.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+
+    return {
+      items: rows.map((r) => ({
+        ...r,
+        isPinnedByMe: false,
+        searchSnippet: snippetAround(byThread.get(r.id) ?? '', q),
+      })),
+    };
   }
 
   /**

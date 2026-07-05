@@ -180,6 +180,20 @@ class ReassignThreadDto {
   employeeId!: string;
 }
 
+class SearchMessagesDto {
+  /** The free-text query to find inside message bodies (>= 2 chars). */
+  @IsString()
+  q!: string;
+
+  /** Max threads to return (1–50). Coerced from the query string. */
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === undefined ? undefined : Number(value)))
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number;
+}
+
 class BlockThreadDto {
   /** Optional free-text reason recorded on the contact + in the audit timeline. */
   @IsOptional()
@@ -230,6 +244,19 @@ export class WhatsAppThreadsController {
   async stats(@CurrentUser() user: RequestUser) {
     const caller = await this.buildCallerContext(user);
     return this.threads.stats(caller);
+  }
+
+  /**
+   * Content search — find chats by what was SAID (message text), not just the
+   * contact name/phone. Returns matching threads in list-row shape with a
+   * `searchSnippet`. Mounted BEFORE @Get(':id') so 'search' isn't parsed as a
+   * thread UUID (the extra path segment means it wouldn't collide anyway).
+   */
+  @Get('search/messages')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async searchMessages(@CurrentUser() user: RequestUser, @Query() q: SearchMessagesDto) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.searchMessages(caller, q.q, q.limit);
   }
 
   /**

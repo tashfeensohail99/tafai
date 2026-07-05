@@ -144,6 +144,18 @@ class _CallHostState extends ConsumerState<CallHost>
     // React to login / logout transitions.
     ref.listen<AuthState>(authControllerProvider, (_, next) => _sync(next));
 
+    // Reset the "minimized" call flag when a call ENDS or a new one starts
+    // RINGING, so the next call is shown full-screen (never stuck minimized).
+    // Guarded on prev→next transitions so it doesn't fire on in-call timer ticks.
+    ref.listen<CallState>(callControllerProvider, (prev, next) {
+      final wasActive = prev?.isActive ?? false;
+      final becameRinging =
+          next.phase == CallPhase.ringing && prev?.phase != CallPhase.ringing;
+      if ((wasActive && !next.isActive) || becameRinging) {
+        ref.read(callMinimizedProvider.notifier).state = false;
+      }
+    });
+
     return Stack(
       textDirection: TextDirection.ltr,
       children: [

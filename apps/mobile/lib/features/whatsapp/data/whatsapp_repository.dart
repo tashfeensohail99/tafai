@@ -17,6 +17,13 @@ class ThreadsPage {
   const ThreadsPage(this.items, this.nextCursor);
 }
 
+/// A content-search hit: the matching thread + a snippet of the matched message.
+class MessageSearchResult {
+  final WhatsappThread thread;
+  final String snippet;
+  const MessageSearchResult(this.thread, this.snippet);
+}
+
 class WhatsappRepository {
   final Dio _c;
   WhatsappRepository(this._c);
@@ -309,6 +316,50 @@ class WhatsappRepository {
       await _c.post<Map<String, dynamic>>(
         '/whatsapp/threads/$threadId/unarchive',
       );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  // ── Pin (personal "pin to top", max 6) ──────────────────────────────────────
+
+  /// POST /whatsapp/threads/:id/pin — pin this chat to the top of MY inbox.
+  Future<void> pinThread(String threadId) async {
+    try {
+      await _c.post<Map<String, dynamic>>('/whatsapp/threads/$threadId/pin');
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// DELETE /whatsapp/threads/:id/pin — unpin from MY inbox.
+  Future<void> unpinThread(String threadId) async {
+    try {
+      await _c.delete<dynamic>('/whatsapp/threads/$threadId/pin');
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  // ── Content search (find chats by message text, not just name/phone) ─────────
+
+  /// GET /whatsapp/threads/search/messages — chats whose MESSAGES contain [q],
+  /// each with a snippet of the matched message. Query must be >= 2 chars.
+  Future<List<MessageSearchResult>> searchMessages(String q, {int limit = 30}) async {
+    if (q.trim().length < 2) return const [];
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/whatsapp/threads/search/messages',
+        queryParameters: <String, dynamic>{'q': q, 'limit': limit},
+      );
+      final items = (res.data?['items'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map((j) => MessageSearchResult(
+                WhatsappThread.fromJson(j),
+                (j['searchSnippet'] as String?) ?? '',
+              ))
+          .toList();
+      return items;
     } on DioException catch (e) {
       throw mapDioError(e);
     }

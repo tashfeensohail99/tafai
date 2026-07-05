@@ -47,6 +47,9 @@ class ChatMessage {
   bool get isOutbound => direction == 'OUTBOUND';
   bool get isFailed => status == 'FAILED';
   bool get isText => type == 'TEXT';
+  /// System notice (e.g. "Call ended — Talk time: …") — rendered as a centered
+  /// pill, never a chat bubble. Mirrors the backend WhatsAppMessageType.SYSTEM.
+  bool get isSystem => type == 'SYSTEM';
   bool get isMedia =>
       type == 'IMAGE' ||
       type == 'VIDEO' ||

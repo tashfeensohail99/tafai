@@ -7,6 +7,9 @@ class WaParty {
   final String lastName;
   final String phone;
   final String? status;
+  /// Sales disposition (call-outcome tag; separate from pipeline status).
+  /// Only present on leads. Null = never dispositioned.
+  final String? disposition;
   /// Block lives on the CONTACT (Lead/Client). Non-null = this contact is
   /// currently blocked. May be absent on list payloads; present on detail.
   final DateTime? blockedAt;
@@ -17,6 +20,7 @@ class WaParty {
     required this.lastName,
     required this.phone,
     this.status,
+    this.disposition,
     this.blockedAt,
   });
 
@@ -29,6 +33,18 @@ class WaParty {
         lastName: lastName,
         phone: phone,
         status: status,
+        disposition: disposition,
+      );
+
+  /// A copy with a new disposition (reflects a set-disposition locally).
+  WaParty withDisposition(String d) => WaParty(
+        id: id,
+        firstName: firstName,
+        lastName: lastName,
+        phone: phone,
+        status: status,
+        disposition: d,
+        blockedAt: blockedAt,
       );
 
   factory WaParty.fromJson(Map<String, dynamic> j) => WaParty(
@@ -37,6 +53,7 @@ class WaParty {
         lastName: j['lastName'] as String? ?? '',
         phone: j['phone'] as String? ?? '',
         status: asStringOrNull(j['status']),
+        disposition: asStringOrNull(j['disposition']),
         blockedAt: parseApiDateOrNull(j['blockedAt']),
       );
 }
@@ -63,6 +80,9 @@ class WhatsappThread {
   /// place a business-initiated call.
   final String? callPermissionStatus;
   final DateTime? callPermissionExpiresAt;
+  /// The CALLING rep has pinned this chat (personal, WhatsApp-style, max 6).
+  /// Pinned chats sort to the top of the inbox.
+  final bool isPinnedByMe;
   final WaParty? lead;
   final WaParty? client;
 
@@ -80,12 +100,14 @@ class WhatsappThread {
     this.aiEnabled,
     this.callPermissionStatus,
     this.callPermissionExpiresAt,
+    this.isPinnedByMe = false,
     this.lead,
     this.client,
   });
 
   WhatsappThread copyWith({
     String? status,
+    bool? isPinnedByMe,
     WaParty? lead,
     WaParty? client,
   }) =>
@@ -103,6 +125,7 @@ class WhatsappThread {
         aiEnabled: aiEnabled,
         callPermissionStatus: callPermissionStatus,
         callPermissionExpiresAt: callPermissionExpiresAt,
+        isPinnedByMe: isPinnedByMe ?? this.isPinnedByMe,
         lead: lead ?? this.lead,
         client: client ?? this.client,
       );
@@ -154,6 +177,7 @@ class WhatsappThread {
         aiEnabled: j['aiEnabled'] as bool?,
         callPermissionStatus: asStringOrNull(j['callPermissionStatus']),
         callPermissionExpiresAt: parseApiDateOrNull(j['callPermissionExpiresAt']),
+        isPinnedByMe: j['isPinnedByMe'] as bool? ?? false,
         lead: j['lead'] is Map<String, dynamic>
             ? WaParty.fromJson(j['lead'] as Map<String, dynamic>)
             : null,

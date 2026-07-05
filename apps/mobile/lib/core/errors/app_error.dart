@@ -45,3 +45,18 @@ final class UnknownError extends AppError {
   final Object? cause;
   const UnknownError([this.cause]);
 }
+
+extension AppErrorMessage on AppError {
+  /// A single user-facing message for any AppError (e.g. to show in a SnackBar).
+  String get userMessage => switch (this) {
+        NetworkError(:final message) => message,
+        ServerError(:final message) => message,
+        ConflictError(:final message) => message,
+        NotFoundError(:final message) => message ?? 'Not found.',
+        ValidationError(:final errors) =>
+          errors.values.expand((e) => e).join('\n'),
+        UnauthorizedError() => 'Your session expired. Please sign in again.',
+        ForbiddenError() => "You don't have permission to do that.",
+        UnknownError() => 'Something went wrong. Please try again.',
+      };
+}

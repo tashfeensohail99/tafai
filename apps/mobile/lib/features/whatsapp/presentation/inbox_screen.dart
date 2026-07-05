@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/errors/app_error.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
 import '../../../core/widgets/app_states.dart';
@@ -25,6 +26,11 @@ class InboxScreen extends ConsumerStatefulWidget {
 class _InboxScreenState extends ConsumerState<InboxScreen> {
   final _searchCtrl = TextEditingController();
   Timer? _debounce;
+  // #4 content search — chats matched by MESSAGE TEXT (a "Messages" section
+  // below the name/phone matches). Empty unless the query is >= 2 chars.
+  List<MessageSearchResult> _msgResults = const [];
+  bool _msgBusy = false;
+  String _query = '';
 
   @override
   void dispose() {
@@ -35,8 +41,35 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
 
   void _onSearch(String v) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
+    _debounce = Timer(const Duration(milliseconds: 350), () async {
       ref.read(inboxFilterProvider.notifier).update((f) => f.copyWith(search: v));
+      final q = v.trim();
+      if (mounted) setState(() => _query = q);
+      if (q.length < 2) {
+        if (mounted) setState(() {
+          _msgResults = const [];
+          _msgBusy = false;
+        });
+        return;
+      }
+      if (mounted) setState(() => _msgBusy = true);
+      try {
+        final res = await ref.read(whatsappRepositoryProvider).searchMessages(q);
+        // Ignore a stale response if the box moved on to a different query.
+        if (mounted && _searchCtrl.text.trim() == q) {
+          setState(() {
+            _msgResults = res;
+            _msgBusy = false;
+          });
+        }
+      } catch (_) {
+        if (mounted && _searchCtrl.text.trim() == q) {
+          setState(() {
+            _msgResults = const [];
+            _msgBusy = false;
+          });
+        }
+      }
     });
   }
 
@@ -102,6 +135,14 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
               ),
               const Divider(height: 1),
               ListTile(
+                leading: Icon(t.isPinnedByMe
+                    ? Icons.push_pin
+                    : Icons.push_pin_outlined),
+                title: Text(t.isPinnedByMe ? 'Unpin chat' : 'Pin chat'),
+                onTap: () =>
+                    Navigator.pop(sheetCtx, t.isPinnedByMe ? 'unpin' : 'pin'),
+              ),
+              ListTile(
                 leading: Icon(isArchived
                     ? Icons.unarchive_outlined
                     : Icons.archive_outlined),
@@ -134,6 +175,16 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       switch (action) {
+        case 'pin':
+          await repo.pinThread(t.id);
+          messenger.showSnackBar(
+              const SnackBar(content: Text('Chat pinned to top')));
+          break;
+        case 'unpin':
+          await repo.unpinThread(t.id);
+          messenger.showSnackBar(
+              const SnackBar(content: Text('Chat unpinned')));
+          break;
         case 'archive':
           await repo.archiveThread(t.id);
           messenger.showSnackBar(
@@ -159,9 +210,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       final filter = ref.read(inboxFilterProvider);
       await ref.read(threadsControllerProvider(filter).notifier).refresh();
       ref.invalidate(threadStatsProvider);
-    } catch (_) {
-      messenger.showSnackBar(
-          const SnackBar(content: Text('Action failed. Please try again.')));
+    } catch (e) {
+      // Surface a useful message (e.g. the pin cap "You can pin up to 6 chats").
+      messenger.showSnackBar(SnackBar(
+          content: Text(
+              e is AppError ? e.userMessage : 'Action failed. Please try again.')));
     }
   }
 
@@ -179,7 +232,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
               AppTokens.space4, AppTokens.space3, AppTokens.space4, 0),
           child: PremiumSearchBar(
             controller: _searchCtrl,
-            hint: 'Search name or phone…',
+            hint: 'Search name, phone, or message…',
             onChanged: _onSearch,
           ),
         ),
@@ -241,6 +294,9 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
           child: _ThreadsList(
             state: threads,
             tab: filter.tab,
+            msgResults: _msgResults,
+            msgBusy: _msgBusy,
+            query: _query,
             onRefresh: () => _refreshAll(filter),
             onLoadMore: () =>
                 ref.read(threadsControllerProvider(filter).notifier).loadMore(),
@@ -365,6 +421,9 @@ class _InboxTabItem extends StatelessWidget {
 class _ThreadsList extends StatelessWidget {
   final ThreadsState state;
   final WaTab tab;
+  final List<MessageSearchResult> msgResults;
+  final bool msgBusy;
+  final String query;
   final Future<void> Function() onRefresh;
   final VoidCallback onLoadMore;
   final VoidCallback onRetry;
@@ -374,6 +433,9 @@ class _ThreadsList extends StatelessWidget {
   const _ThreadsList({
     required this.state,
     required this.tab,
+    required this.msgResults,
+    required this.msgBusy,
+    required this.query,
     required this.onRefresh,
     required this.onLoadMore,
     required this.onRetry,
@@ -387,7 +449,29 @@ class _ThreadsList extends StatelessWidget {
     if (state.error != null) {
       return ErrorView(error: state.error!, onRetry: onRetry);
     }
-    if (state.items.isEmpty) {
+    // Pinned chats first (stable partition preserves the server order within
+    // each group), WhatsApp-style. Only meaningful on the live tabs.
+    final pinned = state.items.where((t) => t.isPinnedByMe).toList();
+    final items = pinned.isEmpty
+        ? state.items
+        : [...pinned, ...state.items.where((t) => !t.isPinnedByMe)];
+
+    // #4 content-search "Messages" section — chats matched by MESSAGE TEXT,
+    // deduped against the name/phone matches above.
+    final searching = query.trim().length >= 2;
+    final shownIds = items.map((t) => t.id).toSet();
+    final extraMsgs =
+        msgResults.where((m) => !shownIds.contains(m.thread.id)).toList();
+    final showMessages = searching && (extraMsgs.isNotEmpty || msgBusy);
+
+    if (items.isEmpty && extraMsgs.isEmpty && !msgBusy) {
+      if (searching) {
+        return EmptyView(
+          icon: Icons.search_off,
+          title: 'No matches',
+          message: 'No chats or messages match “$query”.',
+        );
+      }
       final (icon, title, message) = switch (tab) {
         WaTab.archived => (
             Icons.archive_outlined,
@@ -407,15 +491,31 @@ class _ThreadsList extends StatelessWidget {
       };
       return EmptyView(icon: icon, title: title, message: message);
     }
+
+    // Section layout: [threads] [load-more?] [Messages header?] [msg loading?]
+    // [msg rows]. Kept in an itemBuilder (not pre-built) so pagination stays lazy.
+    final loadMore = state.hasMore ? 1 : 0;
+    final msgHeader = showMessages ? 1 : 0;
+    final msgLoadingCell = (showMessages && msgBusy && extraMsgs.isEmpty) ? 1 : 0;
+    final total =
+        items.length + loadMore + msgHeader + msgLoadingCell + extraMsgs.length;
+
     return RefreshIndicator(
       color: AppTokens.brandNavy,
       onRefresh: onRefresh,
       child: ListView.separated(
-        itemCount: state.items.length + (state.hasMore ? 1 : 0),
-        separatorBuilder: (_, __) =>
-            const Divider(height: 1, indent: 78),
-        itemBuilder: (context, i) {
-          if (i >= state.items.length) {
+        itemCount: total,
+        separatorBuilder: (_, __) => const Divider(height: 1, indent: 78),
+        itemBuilder: (context, index) {
+          var i = index;
+          if (i < items.length) {
+            return _ThreadTile(
+                thread: items[i],
+                onTap: () => onOpen(items[i]),
+                onLongPress: () => onActions(items[i]));
+          }
+          i -= items.length;
+          if (loadMore == 1 && i == 0) {
             WidgetsBinding.instance.addPostFrameCallback((_) => onLoadMore());
             return const Padding(
               padding: EdgeInsets.all(AppTokens.space4),
@@ -429,13 +529,152 @@ class _ThreadsList extends StatelessWidget {
               ),
             );
           }
-          return _ThreadTile(
-              thread: state.items[i],
-              onTap: () => onOpen(state.items[i]),
-              onLongPress: () => onActions(state.items[i]));
+          i -= loadMore;
+          if (msgHeader == 1 && i == 0) return const _SectionHeader('Messages');
+          i -= msgHeader;
+          if (msgLoadingCell == 1 && i == 0) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(
+                  horizontal: AppTokens.space4, vertical: 10),
+              child: Text('Searching messages…',
+                  style: TextStyle(
+                      fontSize: 12.5, color: AppTokens.textMutedLight)),
+            );
+          }
+          i -= msgLoadingCell;
+          final m = extraMsgs[i];
+          return _MessageResultTile(
+            result: m,
+            query: query.trim(),
+            onTap: () => onOpen(m.thread),
+          );
         },
       ),
     );
+  }
+}
+
+/// A small uppercase section header ("MESSAGES") separating content-search hits.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader(this.label);
+  final String label;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(
+            AppTokens.space4, AppTokens.space3, AppTokens.space4, 4),
+        child: Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+            color: AppTokens.textMutedLight,
+          ),
+        ),
+      );
+}
+
+/// A content-search result row: avatar + name + the matched message snippet.
+class _MessageResultTile extends StatelessWidget {
+  const _MessageResultTile(
+      {required this.result, required this.query, required this.onTap});
+  final MessageSearchResult result;
+  final String query;
+  final VoidCallback onTap;
+
+  String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return '?';
+    final a = parts.first[0];
+    final b = parts.length > 1 && parts[1].isNotEmpty ? parts[1][0] : '';
+    return (a + b).toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = result.thread.displayName;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppTokens.space4, vertical: 11),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [AppTokens.brandNavy, AppTokens.brandNavyLight],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Text(_initials(name),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13)),
+            ),
+            const SizedBox(width: AppTokens.space3),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppTokens.textPrimaryLight)),
+                  const SizedBox(height: 2),
+                  _HighlightedSnippet(text: result.snippet, query: query),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The matched message snippet with the query term emphasized.
+class _HighlightedSnippet extends StatelessWidget {
+  const _HighlightedSnippet({required this.text, required this.query});
+  final String text;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    const base = TextStyle(fontSize: 12.5, color: AppTokens.textMutedLight);
+    if (query.isEmpty) {
+      return Text(text,
+          maxLines: 1, overflow: TextOverflow.ellipsis, style: base);
+    }
+    final lower = text.toLowerCase();
+    final needle = query.toLowerCase();
+    final spans = <TextSpan>[];
+    var i = 0;
+    while (i < text.length) {
+      final idx = lower.indexOf(needle, i);
+      if (idx < 0) {
+        spans.add(TextSpan(text: text.substring(i)));
+        break;
+      }
+      if (idx > i) spans.add(TextSpan(text: text.substring(i, idx)));
+      spans.add(TextSpan(
+        text: text.substring(idx, idx + query.length),
+        style: const TextStyle(
+            color: AppTokens.statusSuccess, fontWeight: FontWeight.w700),
+      ));
+      i = idx + query.length;
+    }
+    return Text.rich(TextSpan(style: base, children: spans),
+        maxLines: 1, overflow: TextOverflow.ellipsis);
   }
 }
 
@@ -648,6 +887,13 @@ class _ThreadTile extends StatelessWidget {
                               ),
                             ),
                           ),
+                        ],
+
+                        // pinned glyph (WhatsApp-style, personal pin)
+                        if (thread.isPinnedByMe) ...[
+                          const SizedBox(width: AppTokens.space2),
+                          const Icon(Icons.push_pin,
+                              size: 13, color: AppTokens.textMutedLight),
                         ],
 
                         // unread count badge

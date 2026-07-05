@@ -1,14 +1,46 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/router/app_router.dart';
 import '../../../core/theme/tokens.dart';
+import '../../whatsapp/data/whatsapp_repository.dart';
+import '../../whatsapp/domain/wa_thread.dart';
+import '../../whatsapp/presentation/thread_screen.dart';
 import '../application/call_controller.dart';
 import '../domain/call_models.dart';
 
+/// Whether the active-call overlay is minimized to a compact banner so the rep
+/// can use the app — open the chat, reply, send media — while the call keeps
+/// running (#2 "chat during an active call"). Reset on call end / new ring.
+final callMinimizedProvider = StateProvider<bool>((ref) => false);
+
 /// Full-screen call surface shown above everything when a call is active.
 /// Renders an incoming-ring screen or an in-call screen depending on phase.
+/// Can be minimized to a top banner so the underlying app stays interactive.
 class CallOverlay extends ConsumerWidget {
   const CallOverlay({super.key});
+
+  /// Minimize the call and open the caller's WhatsApp chat (resolve by threadId,
+  /// else by leadId). The call keeps running under the minimized banner.
+  Future<void> _openChat(WidgetRef ref, CallState s) async {
+    ref.read(callMinimizedProvider.notifier).state = true;
+    try {
+      WhatsappThread? t;
+      final repo = ref.read(whatsappRepositoryProvider);
+      if (s.threadId != null && s.threadId!.isNotEmpty) {
+        t = await repo.getThread(s.threadId!);
+      } else if (s.leadId != null && s.leadId!.isNotEmpty) {
+        t = await repo.byLead(s.leadId!);
+      }
+      if (t != null) {
+        rootNavigatorKey.currentState
+            ?.push(MaterialPageRoute(builder: (_) => ThreadScreen(thread: t!)));
+      }
+    } catch (_) {
+      // Best-effort — if the thread can't be resolved the rep can still reach
+      // the chat from the inbox (the call stays minimized + running).
+    }
+  }
 
   String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
@@ -25,6 +57,25 @@ class CallOverlay extends ConsumerWidget {
 
     final ctrl = ref.read(callControllerProvider.notifier);
     final isRinging = s.phase == CallPhase.ringing;
+    // Minimized = a compact top banner (an incoming ring is always full-screen).
+    final minimized = ref.watch(callMinimizedProvider) && !isRinging;
+
+    if (minimized) {
+      return Positioned(
+        top: 0,
+        left: 0,
+        right: 0,
+        child: SafeArea(
+          bottom: false,
+          child: _MinimizedCallBar(
+            state: s,
+            onRestore: () =>
+                ref.read(callMinimizedProvider.notifier).state = false,
+            onHangup: ctrl.hangup,
+          ),
+        ),
+      );
+    }
 
     return Positioned.fill(
       child: Material(
@@ -39,7 +90,21 @@ class CallOverlay extends ConsumerWidget {
           child: SafeArea(
             child: Column(
               children: [
-                const SizedBox(height: 48),
+                // Minimize the call → use the app (open the chat, reply) while
+                // it keeps running (#2). Incoming rings stay full-screen.
+                if (!isRinging)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: IconButton(
+                      icon: const Icon(Icons.keyboard_arrow_down,
+                          color: Colors.white, size: 30),
+                      tooltip: 'Minimize',
+                      onPressed: () =>
+                          ref.read(callMinimizedProvider.notifier).state = true,
+                    ),
+                  )
+                else
+                  const SizedBox(height: 48),
                 // ── Caller identity ───────────────────────────────────────
                 Container(
                   width: 116,
@@ -130,6 +195,7 @@ class CallOverlay extends ConsumerWidget {
                     onMute: ctrl.toggleMute,
                     onSpeaker: ctrl.toggleSpeaker,
                     onHangup: ctrl.hangup,
+                    onOpenChat: () => _openChat(ref, s),
                   ),
                 const SizedBox(height: 40),
               ],
@@ -176,11 +242,13 @@ class _InCallControls extends StatelessWidget {
   final VoidCallback onMute;
   final VoidCallback onSpeaker;
   final VoidCallback onHangup;
+  final VoidCallback onOpenChat;
   const _InCallControls({
     required this.state,
     required this.onMute,
     required this.onSpeaker,
     required this.onHangup,
+    required this.onOpenChat,
   });
 
   @override
@@ -200,12 +268,20 @@ class _InCallControls extends StatelessWidget {
               label: 'Mute',
               onTap: canControl ? onMute : null,
             ),
-            const SizedBox(width: 36),
+            const SizedBox(width: 28),
             _SecondaryToggle(
               icon: state.speakerOn ? Icons.volume_up : Icons.volume_down,
               active: state.speakerOn,
               label: 'Speaker',
               onTap: canControl ? onSpeaker : null,
+            ),
+            const SizedBox(width: 28),
+            // Open the caller's chat WITHOUT ending the call (minimizes it).
+            _SecondaryToggle(
+              icon: Icons.chat_bubble_outline,
+              active: false,
+              label: 'Chat',
+              onTap: onOpenChat,
             ),
           ],
         ),
@@ -217,6 +293,84 @@ class _InCallControls extends StatelessWidget {
           onTap: onHangup,
         ),
       ],
+    );
+  }
+}
+
+/// The compact top banner shown when the call is minimized — caller + status +
+/// tap-to-restore + a quick End. Lets the app behind stay interactive so the rep
+/// can open the chat and reply while the call keeps running (#2).
+class _MinimizedCallBar extends StatelessWidget {
+  final CallState state;
+  final VoidCallback onRestore;
+  final VoidCallback onHangup;
+  const _MinimizedCallBar({
+    required this.state,
+    required this.onRestore,
+    required this.onHangup,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+      child: Material(
+        color: AppTokens.brandNavy,
+        borderRadius: BorderRadius.circular(12),
+        elevation: 6,
+        child: InkWell(
+          onTap: onRestore,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.phone_in_talk, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        state.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14),
+                      ),
+                      Text(
+                        'On call · ${state.statusLabel} · tap to return',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.75),
+                            fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Material(
+                  color: AppTokens.statusDanger,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    onTap: onHangup,
+                    customBorder: const CircleBorder(),
+                    child: const SizedBox(
+                        width: 40,
+                        height: 40,
+                        child:
+                            Icon(Icons.call_end, color: Colors.white, size: 20)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

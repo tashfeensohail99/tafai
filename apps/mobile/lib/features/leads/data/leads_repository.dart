@@ -3,8 +3,30 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/errors/error_mapper.dart';
+import '../../../core/util/parsers.dart';
 import '../domain/lead.dart';
 import '../domain/lead_stats.dart';
+
+/// One sales-disposition history entry (who + when) for a lead.
+class DispositionHistoryEntry {
+  final String disposition;
+  final String? note;
+  final String? byName;
+  final DateTime at;
+  const DispositionHistoryEntry({
+    required this.disposition,
+    this.note,
+    this.byName,
+    required this.at,
+  });
+  factory DispositionHistoryEntry.fromJson(Map<String, dynamic> j) =>
+      DispositionHistoryEntry(
+        disposition: j['disposition'] as String? ?? '',
+        note: asStringOrNull(j['note']),
+        byName: asStringOrNull(j['byName']),
+        at: parseApiDate(j['at']),
+      );
+}
 
 class LeadsRepository {
   final Dio _client;
@@ -182,6 +204,43 @@ class LeadsRepository {
         '/leads/$id/convert',
         data: {if (notes != null && notes.isNotEmpty) 'notes': notes},
       );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// POST /leads/:id/disposition — set the sales DISPOSITION (call-outcome tag,
+  /// separate from pipeline status). For FOLLOW_UP / CONTACT_LATER pass
+  /// [reminderAt] to schedule a follow-up reminder.
+  Future<void> setDisposition(
+    String leadId, {
+    required String disposition,
+    String? note,
+    DateTime? reminderAt,
+  }) async {
+    try {
+      await _client.post<Map<String, dynamic>>(
+        '/leads/$leadId/disposition',
+        data: <String, dynamic>{
+          'disposition': disposition,
+          if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+          if (reminderAt != null) 'reminderAt': reminderAt.toUtc().toIso8601String(),
+        },
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// GET /leads/:id/disposition-history — who + when, most recent first.
+  Future<List<DispositionHistoryEntry>> dispositionHistory(String leadId) async {
+    try {
+      final res =
+          await _client.get<List<dynamic>>('/leads/$leadId/disposition-history');
+      return (res.data ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(DispositionHistoryEntry.fromJson)
+          .toList();
     } on DioException catch (e) {
       throw mapDioError(e);
     }

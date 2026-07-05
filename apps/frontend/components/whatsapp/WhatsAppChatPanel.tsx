@@ -93,6 +93,7 @@ import { AddFollowUpModal } from './AddFollowUpModal';
 import { EditLeadModal } from './EditLeadModal';
 import { TemplatePickerModal } from './TemplatePickerModal';
 import { QuickReplyPicker } from './QuickReplyPicker';
+import { AudioPlayer } from './AudioPlayer';
 import { fillQuickReply } from '@/lib/quick-replies';
 import { AiBotStrip } from './AiBotStrip';
 
@@ -3283,14 +3284,7 @@ function MediaBubbleContent({
   }
 
   if (message.type === 'AUDIO') {
-    return (
-      // eslint-disable-next-line jsx-a11y/media-has-caption
-      <audio
-        controls
-        src={blobUrl}
-        style={{ width: '100%', minWidth: 200, maxWidth: 320 }}
-      />
-    );
+    return <AudioPlayer src={blobUrl} style={{ width: '100%' }} />;
   }
 
   if (message.type === 'VIDEO') {

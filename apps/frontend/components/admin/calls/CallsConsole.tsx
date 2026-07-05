@@ -21,6 +21,7 @@ import { apiFetch, buildQuery } from '@/lib/api-client';
 import { useAdminSession } from '@/components/layout/AdminShell';
 import { PageHeader, GhostButton, EmptyState, MetricCard } from '@/components/sales-v2/ui';
 import { LoadingState } from '@/components/shared/LoadingState';
+import { AudioPlayer } from '@/components/whatsapp/AudioPlayer';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
 import { useWhatsAppEvent } from '@/lib/whatsapp-realtime';
@@ -414,8 +415,7 @@ function CallDetailModal({ call, onClose }: { call: CallRow; onClose: () => void
         {err ? (
           <div style={{ color: 'var(--sos-status-danger)', fontSize: 13, marginBottom: 12 }}>{err}</div>
         ) : url ? (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
-          <audio controls autoPlay src={url} style={{ width: '100%' }} />
+          <AudioPlayer src={url} style={{ width: '100%' }} />
         ) : (
           <div style={{ color: 'var(--sos-text-muted)', fontSize: 13 }}>Loading recording…</div>
         )}

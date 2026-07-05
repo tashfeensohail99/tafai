@@ -450,21 +450,19 @@ class _ThreadsList extends StatelessWidget {
       return ErrorView(error: state.error!, onRetry: onRetry);
     }
     // Pinned chats first (stable partition preserves the server order within
-    // each group), WhatsApp-style. Only meaningful on the live tabs.
+    // each group), WhatsApp-style.
     final pinned = state.items.where((t) => t.isPinnedByMe).toList();
-    final items = pinned.isEmpty
-        ? state.items
-        : [...pinned, ...state.items.where((t) => !t.isPinnedByMe)];
+    final others = state.items.where((t) => !t.isPinnedByMe).toList();
 
     // #4 content-search "Messages" section — chats matched by MESSAGE TEXT,
     // deduped against the name/phone matches above.
     final searching = query.trim().length >= 2;
-    final shownIds = items.map((t) => t.id).toSet();
+    final shownIds = state.items.map((t) => t.id).toSet();
     final extraMsgs =
         msgResults.where((m) => !shownIds.contains(m.thread.id)).toList();
     final showMessages = searching && (extraMsgs.isNotEmpty || msgBusy);
 
-    if (items.isEmpty && extraMsgs.isEmpty && !msgBusy) {
+    if (state.items.isEmpty && extraMsgs.isEmpty && !msgBusy) {
       if (searching) {
         return EmptyView(
           icon: Icons.search_off,
@@ -492,66 +490,107 @@ class _ThreadsList extends StatelessWidget {
       return EmptyView(icon: icon, title: title, message: message);
     }
 
-    // Section layout: [threads] [load-more?] [Messages header?] [msg loading?]
-    // [msg rows]. Kept in an itemBuilder (not pre-built) so pagination stays lazy.
-    final loadMore = state.hasMore ? 1 : 0;
-    final msgHeader = showMessages ? 1 : 0;
-    final msgLoadingCell = (showMessages && msgBusy && extraMsgs.isEmpty) ? 1 : 0;
-    final total =
-        items.length + loadMore + msgHeader + msgLoadingCell + extraMsgs.length;
+    // Build a flat list of row descriptors (headers, threads, load-more, and
+    // the content-search "Messages" section). Clearer + safer than juggling
+    // index math, and it lets us surface an explicit "Pinned" / "Other chats"
+    // grouping — so a pinned chat is unmistakable, not just a subtle glyph.
+    // The ListView.builder still builds only the visible rows, so paging stays
+    // lazy. Pins get their own header only on the live list (not while searching).
+    final rows = <_Row>[];
+    final showPinnedSection = pinned.isNotEmpty && !searching;
+    if (showPinnedSection) {
+      rows.add(const _Row.header('Pinned'));
+      rows.addAll(pinned.map(_Row.thread));
+      if (others.isNotEmpty) rows.add(const _Row.header('Other chats'));
+      rows.addAll(others.map(_Row.thread));
+    } else {
+      rows.addAll(state.items.map(_Row.thread));
+    }
+    if (state.hasMore) rows.add(const _Row.loadMore());
+    if (showMessages) {
+      rows.add(const _Row.header('Messages'));
+      if (msgBusy && extraMsgs.isEmpty) rows.add(const _Row.msgLoading());
+      rows.addAll(extraMsgs.map(_Row.msg));
+    }
 
     return RefreshIndicator(
       color: AppTokens.brandNavy,
       onRefresh: onRefresh,
       child: ListView.separated(
-        itemCount: total,
-        separatorBuilder: (_, __) => const Divider(height: 1, indent: 78),
+        itemCount: rows.length,
+        separatorBuilder: (_, i) {
+          // No divider hugging a section header.
+          if (rows[i].kind == _RowKind.header ||
+              (i + 1 < rows.length && rows[i + 1].kind == _RowKind.header)) {
+            return const SizedBox.shrink();
+          }
+          return const Divider(height: 1, indent: 78);
+        },
         itemBuilder: (context, index) {
-          var i = index;
-          if (i < items.length) {
-            return _ThreadTile(
-                thread: items[i],
-                onTap: () => onOpen(items[i]),
-                onLongPress: () => onActions(items[i]));
-          }
-          i -= items.length;
-          if (loadMore == 1 && i == 0) {
-            WidgetsBinding.instance.addPostFrameCallback((_) => onLoadMore());
-            return const Padding(
-              padding: EdgeInsets.all(AppTokens.space4),
-              child: Center(
-                child: SizedBox(
-                  height: 22,
-                  width: 22,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: AppTokens.brandNavy),
+          final row = rows[index];
+          switch (row.kind) {
+            case _RowKind.header:
+              return _SectionHeader(row.label!);
+            case _RowKind.thread:
+              final t = row.thread!;
+              return _ThreadTile(
+                  thread: t,
+                  onTap: () => onOpen(t),
+                  onLongPress: () => onActions(t));
+            case _RowKind.loadMore:
+              WidgetsBinding.instance.addPostFrameCallback((_) => onLoadMore());
+              return const Padding(
+                padding: EdgeInsets.all(AppTokens.space4),
+                child: Center(
+                  child: SizedBox(
+                    height: 22,
+                    width: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppTokens.brandNavy),
+                  ),
                 ),
-              ),
-            );
+              );
+            case _RowKind.msgLoading:
+              return const Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: AppTokens.space4, vertical: 10),
+                child: Text('Searching messages…',
+                    style: TextStyle(
+                        fontSize: 12.5, color: AppTokens.textMutedLight)),
+              );
+            case _RowKind.msgResult:
+              final m = row.msg!;
+              return _MessageResultTile(
+                result: m,
+                query: query.trim(),
+                onTap: () => onOpen(m.thread),
+              );
           }
-          i -= loadMore;
-          if (msgHeader == 1 && i == 0) return const _SectionHeader('Messages');
-          i -= msgHeader;
-          if (msgLoadingCell == 1 && i == 0) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(
-                  horizontal: AppTokens.space4, vertical: 10),
-              child: Text('Searching messages…',
-                  style: TextStyle(
-                      fontSize: 12.5, color: AppTokens.textMutedLight)),
-            );
-          }
-          i -= msgLoadingCell;
-          final m = extraMsgs[i];
-          return _MessageResultTile(
-            result: m,
-            query: query.trim(),
-            onTap: () => onOpen(m.thread),
-          );
         },
       ),
     );
   }
+}
+
+/// The kinds of row the inbox list can render.
+enum _RowKind { header, thread, loadMore, msgLoading, msgResult }
+
+/// A single inbox-list row descriptor. Building a flat `List<_Row>` (instead of
+/// index arithmetic) keeps the section layout — Pinned / Other chats / Messages
+/// — obvious and hard to get wrong.
+class _Row {
+  const _Row._(this.kind, {this.label, this.thread, this.msg});
+  const _Row.header(String label) : this._(_RowKind.header, label: label);
+  const _Row.thread(WhatsappThread thread)
+      : this._(_RowKind.thread, thread: thread);
+  const _Row.loadMore() : this._(_RowKind.loadMore);
+  const _Row.msgLoading() : this._(_RowKind.msgLoading);
+  const _Row.msg(MessageSearchResult msg) : this._(_RowKind.msgResult, msg: msg);
+
+  final _RowKind kind;
+  final String? label;
+  final WhatsappThread? thread;
+  final MessageSearchResult? msg;
 }
 
 /// A small uppercase section header ("MESSAGES") separating content-search hits.
@@ -889,11 +928,16 @@ class _ThreadTile extends StatelessWidget {
                           ),
                         ],
 
-                        // pinned glyph (WhatsApp-style, personal pin)
+                        // pinned glyph (WhatsApp-style, personal pin) — tilted
+                        // + brand-navy so a pinned chat is unmistakable at a
+                        // glance (a faint grey pin was too easy to miss).
                         if (thread.isPinnedByMe) ...[
                           const SizedBox(width: AppTokens.space2),
-                          const Icon(Icons.push_pin,
-                              size: 13, color: AppTokens.textMutedLight),
+                          Transform.rotate(
+                            angle: 0.6,
+                            child: const Icon(Icons.push_pin,
+                                size: 16, color: AppTokens.brandNavy),
+                          ),
                         ],
 
                         // unread count badge

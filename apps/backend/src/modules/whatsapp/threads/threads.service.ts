@@ -477,7 +477,15 @@ export class WhatsAppThreadsService {
       id: threadId,
       // Same soft-delete guard the list uses (hide threads of soft-deleted
       // leads; still allow client-only threads with no lead).
-      AND: [{ OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] }],
+      AND: [
+        { OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] },
+        // Mirror list()/stats(): a JUNK/DEAD-dispositioned lead's row must NOT
+        // resolve here either, or a socket-triggered single-row refetch would
+        // splice the (excluded-from-the-list) chat back into the active inbox
+        // while the counts still omit it. Returning null makes the realtime
+        // patch drop the row, keeping list + stats + rows consistent.
+        { NOT: { lead: { is: { disposition: { in: [LeadDisposition.JUNK, LeadDisposition.DEAD] } } } } },
+      ],
     };
     if (scope !== 'all') where.lead = scope;
     const row = await this.prisma.whatsAppThread.findFirst({ where, include: THREAD_LIST_INCLUDE });
@@ -832,8 +840,12 @@ export class WhatsAppThreadsService {
     // (whatsapp.threads.status; crm.{leads,clients}.blockedAt) scoped to the
     // caller via the same `base` filter the other counts use.
     const [followUpDue, archived, blocked, unreadEngaged] = await Promise.all([
+      // Use andLive (not and) so the "Due (N)" chip excludes ARCHIVED / blocked /
+      // JUNK-DEAD threads — exactly as the Due LIST does (list()'s default
+      // branch). Otherwise a JUNK/DEAD lead with an open due follow-up would be
+      // counted by the badge but hidden from the list (count ≠ rows).
       this.prisma.whatsAppThread.count({
-        where: and({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
+        where: andLive({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
       }),
       this.prisma.whatsAppThread.count({ where: and({ status: 'ARCHIVED' }) }),
       this.prisma.whatsAppThread.count({

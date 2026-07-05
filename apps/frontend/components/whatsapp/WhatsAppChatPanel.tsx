@@ -977,6 +977,9 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               Disposition
             </span>
             <DispositionControl
+              // Key by lead so a thread swap (e.g. a chat-during-call deep-link)
+              // remounts the control, discarding any stale note/reminder state.
+              key={thread.lead.id}
               leadId={thread.lead.id}
               current={thread.lead.disposition ?? null}
               onChanged={(d) =>

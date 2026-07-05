@@ -1610,20 +1610,35 @@ export class LeadsService {
       if (!Number.isNaN(dueAt.getTime())) {
         const assignedEmployeeId =
           updated.assignedEmployeeId ?? (await this.findEmployeeIdByUserId(user.id));
-        const label = disposition === LeadDisposition.CONTACT_LATER ? 'Contact later' : 'Follow up';
-        const fu = await this.prisma.followUp.create({
-          data: {
-            leadId: id,
-            assignedEmployeeId,
-            createdByUserId: user.id,
-            title: note ? `${label}: ${note.slice(0, 140)}` : label,
-            dueAt,
-            status: 'OPEN',
-          },
-          select: { id: true },
-        });
-        followUpId = fu.id;
+        // The ReminderDispatcher only materializes follow-ups that HAVE an
+        // assignee (it filters assignedEmployeeId != null), so a null-assignee
+        // follow-up would be a silent no-op reminder. Only create one we can
+        // actually deliver; otherwise leave followUpId null (no false promise).
+        if (assignedEmployeeId) {
+          const label = disposition === LeadDisposition.CONTACT_LATER ? 'Contact later' : 'Follow up';
+          const fu = await this.prisma.followUp.create({
+            data: {
+              leadId: id,
+              assignedEmployeeId,
+              createdByUserId: user.id,
+              title: note ? `${label}: ${note.slice(0, 140)}` : label,
+              dueAt,
+              status: 'OPEN',
+            },
+            select: { id: true },
+          });
+          followUpId = fu.id;
+        }
       }
+    }
+
+    // A lead marked JUNK / DEAD is out of play — cancel any OPEN follow-ups so a
+    // stale reminder can't fire on a dead lead and so the "Due" surfaces don't
+    // keep counting it. (Best-effort; never blocks the disposition write.)
+    if (disposition === LeadDisposition.JUNK || disposition === LeadDisposition.DEAD) {
+      await this.prisma.followUp
+        .updateMany({ where: { leadId: id, status: 'OPEN' }, data: { status: 'CANCELLED' } })
+        .catch(() => undefined);
     }
 
     // Audit + timeline (reuse LEAD_UPDATED; metadata.kind='disposition' keeps it

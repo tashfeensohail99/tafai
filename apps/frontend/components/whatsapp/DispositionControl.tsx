@@ -76,10 +76,11 @@ export function DispositionControl({
   useEffect(() => setSel(current), [current]);
 
   const needsReminder = sel != null && DISPOSITIONS_WITH_REMINDER.includes(sel);
-  // Seed a default reminder time the first time a reminder-type disposition is picked.
-  useEffect(() => {
-    if (needsReminder && !reminderAt) setReminderAt(defaultReminderLocal());
-  }, [needsReminder, reminderAt]);
+  // A default reminder time is seeded when the rep PICKS a reminder-type
+  // disposition (see the option onClick), NOT via an effect on `reminderAt` —
+  // otherwise clearing the field would instantly re-seed it and the rep could
+  // never choose Follow Up / Contact Later WITHOUT a reminder (the backend
+  // treats reminderAt as optional).
 
   const openSheet = () => {
     setSel(current);
@@ -185,7 +186,14 @@ export function DispositionControl({
                   <button
                     key={d}
                     type="button"
-                    onClick={() => setSel(d)}
+                    onClick={() => {
+                      setSel(d);
+                      // Seed a convenient default only on first pick of a
+                      // reminder-type disposition; leave a cleared field cleared.
+                      if (DISPOSITIONS_WITH_REMINDER.includes(d) && !reminderAt) {
+                        setReminderAt(defaultReminderLocal());
+                      }
+                    }}
                     style={{
                       textAlign: 'left',
                       padding: '9px 12px',

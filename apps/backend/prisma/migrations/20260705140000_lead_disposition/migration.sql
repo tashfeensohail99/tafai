@@ -21,9 +21,11 @@ ALTER TABLE "crm"."leads"
   ADD COLUMN "dispositionAt" TIMESTAMP(3),
   ADD COLUMN "dispositionByUserId" TEXT;
 
--- Partial index for the inbox's JUNK/DEAD exclusion (only the hidden rows).
+-- Small partial index over ONLY the hidden dispositions — the set the inbox
+-- filters on. Keeps the index tiny (JUNK/DEAD leads are a minority) and matches
+-- the actual query intent.
 CREATE INDEX "leads_disposition_idx" ON "crm"."leads" ("disposition")
-  WHERE "disposition" IS NOT NULL;
+  WHERE "disposition" IN ('JUNK', 'DEAD');
 
 -- Append-only who/when history.
 CREATE TABLE "crm"."lead_disposition_history" (

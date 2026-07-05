@@ -308,6 +308,11 @@ export default function SalesInboxPage() {
     socket,
     setItems,
     matches: (row) => {
+      // JUNK / DEAD leads are excluded from every active view (backend list +
+      // stats drop them). Guard the live-patch too so a socket event can't
+      // splice one back in between reconciles. (Backend getListItem also returns
+      // null for these, so this is belt-and-suspenders.)
+      if (row.lead?.disposition === 'JUNK' || row.lead?.disposition === 'DEAD') return false;
       if (filter === 'ARCHIVED') {
         if (row.status !== 'ARCHIVED') return false;
       } else if (filter === 'BLOCKED') {

@@ -139,6 +139,32 @@ const THREAD_LIST_INCLUDE = {
 } satisfies Prisma.WhatsAppThreadInclude;
 
 /**
+ * Null-safe "this thread's lead is NOT dispositioned JUNK/DEAD" filter.
+ *
+ * A plain `NOT { lead: { is: { disposition: { in: [JUNK, DEAD] } } } }` is
+ * WRONG on this NULLABLE to-one relation: against real data Prisma translates
+ * the negated `is` in a way that ALSO excludes every thread whose lead has a
+ * NULL disposition — i.e. virtually the entire inbox (a JUNK/DEAD disposition
+ * is rare; NULL is the norm). That silently emptied the inbox to only the
+ * handful of lead-less (client-only) threads.
+ *
+ * Express the intent positively instead: KEEP a thread when it has no lead, OR
+ * its lead has no disposition, OR its lead's disposition is anything other than
+ * JUNK/DEAD. Each branch is a positive match, so NULLs are handled explicitly.
+ */
+const LEAD_NOT_JUNK_OR_DEAD: Prisma.WhatsAppThreadWhereInput = {
+  OR: [
+    { leadId: null },
+    { lead: { is: { disposition: null } } },
+    {
+      lead: {
+        is: { disposition: { notIn: [LeadDisposition.JUNK, LeadDisposition.DEAD] } },
+      },
+    },
+  ],
+};
+
+/**
  * Read-side API for WhatsApp threads — what the inbox UI calls.
  *
  * Access rules:
@@ -295,9 +321,8 @@ export class WhatsAppThreadsService {
       and.push({ OR: [{ client: { is: { blockedAt: null } } }, { client: null }] });
       // Sales-disposition hygiene: JUNK / DEAD leads drop out of the active
       // inbox views (they stay in the DB + still reachable by direct lookup).
-      // `NOT { lead has disposition in (JUNK,DEAD) }` correctly KEEPS lead-less
-      // threads and null-disposition leads (the common case).
-      and.push({ NOT: { lead: { is: { disposition: { in: [LeadDisposition.JUNK, LeadDisposition.DEAD] } } } } });
+      // Uses the null-safe positive filter — a naive NOT+is emptied the inbox.
+      and.push(LEAD_NOT_JUNK_OR_DEAD);
     }
 
     if (opts.search) {
@@ -483,8 +508,9 @@ export class WhatsAppThreadsService {
         // resolve here either, or a socket-triggered single-row refetch would
         // splice the (excluded-from-the-list) chat back into the active inbox
         // while the counts still omit it. Returning null makes the realtime
-        // patch drop the row, keeping list + stats + rows consistent.
-        { NOT: { lead: { is: { disposition: { in: [LeadDisposition.JUNK, LeadDisposition.DEAD] } } } } },
+        // patch drop the row, keeping list + stats + rows consistent. Uses the
+        // null-safe positive filter — a naive NOT+is emptied the inbox.
+        LEAD_NOT_JUNK_OR_DEAD,
       ],
     };
     if (scope !== 'all') where.lead = scope;
@@ -714,8 +740,9 @@ export class WhatsAppThreadsService {
         { OR: [{ lead: { is: { blockedAt: null } } }, { lead: null }] },
         { OR: [{ client: { is: { blockedAt: null } } }, { client: null }] },
         // Keep JUNK/DEAD-dispositioned leads out of the working-inbox counts so
-        // the badges match the (junk/dead-excluded) rows list() renders.
-        { NOT: { lead: { is: { disposition: { in: [LeadDisposition.JUNK, LeadDisposition.DEAD] } } } } },
+        // the badges match the (junk/dead-excluded) rows list() renders. Uses
+        // the null-safe positive filter — a naive NOT+is zeroed finance counts.
+        LEAD_NOT_JUNK_OR_DEAD,
       ],
     };
     const andLive = (extra: Prisma.WhatsAppThreadWhereInput): Prisma.WhatsAppThreadWhereInput => ({

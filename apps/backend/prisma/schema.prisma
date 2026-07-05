@@ -63,6 +63,27 @@ enum LeadStatus {
   @@schema("crm")
 }
 
+/// Sales DISPOSITION — the rep's call-outcome tag, SEPARATE from the pipeline
+/// `LeadStatus` (which feeds reports/finance/routing and must not be disturbed).
+/// Set from the WhatsApp chat screen; the full history (who + when) lives in
+/// LeadDispositionHistory. JUNK/DEAD drop the chat from the active inbox views;
+/// FOLLOW_UP/CONTACT_LATER can carry a reminder (a FollowUp row); CONVERTED_TO_DEAL
+/// marks a won outcome (the actual lead→client conversion stays its own flow).
+enum LeadDisposition {
+  NO_RESPONSE // contacted, no reply yet
+  FOLLOW_UP // needs a scheduled follow-up
+  REQUESTED_DISCOUNT
+  PRICE_CONCERN
+  NOT_ELIGIBLE
+  QUALIFIED
+  CONVERTED_TO_DEAL // won
+  CONTACT_LATER // revisit later (reminder)
+  JUNK // spam / not a real lead — hide from active views
+  DEAD // lost cause — hide from active views
+
+  @@schema("crm")
+}
+
 /// Front-desk / reception visit categories. WALK_IN = a new prospect off the
 /// street (also spun into a Lead + round-robin so Sales picks them up).
 /// EXISTING_CLIENT = already in the CRM, just logging the visit. PAID_CONSULT =
@@ -1345,6 +1366,14 @@ model Lead {
   dripTouch2At      DateTime?
   dripSkippedReason String?
 
+  // --- Sales disposition (call-outcome tag; SEPARATE from pipeline `status`) --
+  // The rep's latest disposition + when/who set it (denormalized from the
+  // history for fast reads/filters). JUNK/DEAD are excluded from the active
+  // WhatsApp inbox views. NULL = never dispositioned. See LeadDisposition.
+  disposition         LeadDisposition?
+  dispositionAt       DateTime?
+  dispositionByUserId String?
+
   branch            Branch?              @relation(fields: [branchId], references: [id])
   assignedEmployee  Employee?            @relation("LeadEmployee", fields: [assignedEmployeeId], references: [id])
   preferredEmployee Employee?            @relation("LeadPreferredEmployee", fields: [preferredEmployeeId], references: [id])
@@ -1354,6 +1383,7 @@ model Lead {
   invoices          Invoice[]            @relation("LeadInvoices")
   serviceContracts  ServiceContract[]    @relation("LeadServiceContracts")
   followUps         FollowUp[]
+  dispositionHistory LeadDispositionHistory[]
   financeHandovers  FinanceHandover[]
   receipts          Receipt[]
   timelineEvents    ActivityTimeline[]
@@ -1734,6 +1764,25 @@ model FollowUp {
   @@index([status])
   @@index([dueAt])
   @@map("follow_ups")
+  @@schema("crm")
+}
+
+/// Append-only history of every disposition an agent set on a lead — the
+/// "who + when" record behind Lead.disposition. One row per set (never updated).
+/// byUserId is a UserAccount id (no FK, id-only per the schema convention).
+model LeadDispositionHistory {
+  id          String          @id @default(uuid())
+  leadId      String
+  disposition LeadDisposition
+  note        String?
+  byUserId    String
+  createdAt   DateTime        @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  // "Most recent first" history read for one lead.
+  @@index([leadId, createdAt(sort: Desc)])
+  @@map("lead_disposition_history")
   @@schema("crm")
 }
 

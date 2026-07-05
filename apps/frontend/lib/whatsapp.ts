@@ -40,6 +40,66 @@ export type LeadStatus =
   | 'DUPLICATE'
   | 'UNQUALIFIED';
 
+/** Sales DISPOSITION — the rep's call-outcome tag, separate from pipeline
+ *  status. Set from the chat screen; JUNK/DEAD drop the chat from active views;
+ *  FOLLOW_UP/CONTACT_LATER can carry a reminder. Order = the picker order. */
+export const LEAD_DISPOSITIONS = [
+  'NO_RESPONSE',
+  'FOLLOW_UP',
+  'REQUESTED_DISCOUNT',
+  'PRICE_CONCERN',
+  'NOT_ELIGIBLE',
+  'QUALIFIED',
+  'CONVERTED_TO_DEAL',
+  'CONTACT_LATER',
+  'JUNK',
+  'DEAD',
+] as const;
+export type LeadDisposition = (typeof LEAD_DISPOSITIONS)[number];
+
+export const DISPOSITION_LABEL: Record<LeadDisposition, string> = {
+  NO_RESPONSE: 'No Response',
+  FOLLOW_UP: 'Follow Up',
+  REQUESTED_DISCOUNT: 'Requested Discount',
+  PRICE_CONCERN: 'Price Concern',
+  NOT_ELIGIBLE: 'Not Eligible',
+  QUALIFIED: 'Qualified',
+  CONVERTED_TO_DEAL: 'Converted to Deal',
+  CONTACT_LATER: 'Contact Later',
+  JUNK: 'Junk',
+  DEAD: 'Dead',
+};
+
+/** Dispositions that offer a reminder date/time (create a follow-up). */
+export const DISPOSITIONS_WITH_REMINDER: readonly LeadDisposition[] = ['FOLLOW_UP', 'CONTACT_LATER'];
+
+export interface DispositionHistoryItem {
+  id: string;
+  disposition: LeadDisposition;
+  note: string | null;
+  at: string;
+  byName: string | null;
+}
+
+/**
+ * Set the sales disposition on a lead. For FOLLOW_UP / CONTACT_LATER, pass
+ * `reminderAt` (ISO) to schedule a follow-up reminder. Permission: leads.update.
+ */
+export function setLeadDisposition(
+  leadId: string,
+  body: { disposition: LeadDisposition; note?: string; reminderAt?: string },
+): Promise<{ id: string; disposition: LeadDisposition; dispositionAt: string; followUpId: string | null }> {
+  return apiFetch(`/leads/${leadId}/disposition`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** Full disposition history (who + when) for a lead. */
+export function getLeadDispositionHistory(leadId: string): Promise<DispositionHistoryItem[]> {
+  return apiFetch(`/leads/${leadId}/disposition-history`, { cache: 'no-store' });
+}
+
 export interface ThreadListItem {
   id: string;
   status: WhatsAppThreadStatus;
@@ -85,6 +145,9 @@ export interface ThreadListItem {
     lastName: string;
     phone: string;
     status: LeadStatus;
+    /** Sales disposition (call-outcome tag; separate from pipeline status). */
+    disposition?: LeadDisposition | null;
+    dispositionAt?: string | null;
     assignedEmployeeId: string | null;
     assignedEmployee: { id: string; firstName: string; lastName: string } | null;
     /** Most-recent CSV import touch — present when the lead was first

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { WhatsAppAssignmentReason, type Prisma } from '@prisma/client';
+import { LeadDisposition, WhatsAppAssignmentReason, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 
@@ -108,6 +108,10 @@ const THREAD_LIST_INCLUDE = {
       lastName: true,
       phone: true,
       status: true,
+      // Sales disposition (call-outcome tag) — surfaced in the chat panel so the
+      // rep sees + updates the current disposition without leaving the chat.
+      disposition: true,
+      dispositionAt: true,
       assignedEmployeeId: true,
       assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
       // Most-recent CSV import touch — drives the CSV LEAD badge on the
@@ -289,6 +293,11 @@ export class WhatsAppThreadsService {
       and.push({ status: { not: 'ARCHIVED' } });
       and.push({ OR: [{ lead: { is: { blockedAt: null } } }, { lead: null }] });
       and.push({ OR: [{ client: { is: { blockedAt: null } } }, { client: null }] });
+      // Sales-disposition hygiene: JUNK / DEAD leads drop out of the active
+      // inbox views (they stay in the DB + still reachable by direct lookup).
+      // `NOT { lead has disposition in (JUNK,DEAD) }` correctly KEEPS lead-less
+      // threads and null-disposition leads (the common case).
+      and.push({ NOT: { lead: { is: { disposition: { in: [LeadDisposition.JUNK, LeadDisposition.DEAD] } } } } });
     }
 
     if (opts.search) {
@@ -696,6 +705,9 @@ export class WhatsAppThreadsService {
       AND: [
         { OR: [{ lead: { is: { blockedAt: null } } }, { lead: null }] },
         { OR: [{ client: { is: { blockedAt: null } } }, { client: null }] },
+        // Keep JUNK/DEAD-dispositioned leads out of the working-inbox counts so
+        // the badges match the (junk/dead-excluded) rows list() renders.
+        { NOT: { lead: { is: { disposition: { in: [LeadDisposition.JUNK, LeadDisposition.DEAD] } } } } },
       ],
     };
     const andLive = (extra: Prisma.WhatsAppThreadWhereInput): Prisma.WhatsAppThreadWhereInput => ({
@@ -751,7 +763,10 @@ export class WhatsAppThreadsService {
       }
       // Mirror list()'s default working inbox: exclude ARCHIVED threads and
       // BLOCKED contacts so the All/Open/Uncontacted badge counts match the rows.
+      // Also drop JUNK/DEAD-dispositioned leads (null disposition + lead-less
+      // threads stay in — IS DISTINCT FROM handles the NULLs correctly).
       scope += ` AND t.status::text <> 'ARCHIVED' AND l."blockedAt" IS NULL AND (t."clientId" IS NULL OR c."blockedAt" IS NULL)`;
+      scope += ` AND l."disposition"::text IS DISTINCT FROM 'JUNK' AND l."disposition"::text IS DISTINCT FROM 'DEAD'`;
       const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, number | bigint | null>>>(
         `SELECT
            count(*)::int AS total,
@@ -859,6 +874,8 @@ export class WhatsAppThreadsService {
             nationality: true,
             targetCountry: true,
             status: true,
+            disposition: true,
+            dispositionAt: true,
             blockedAt: true,
             assignedEmployeeId: true,
             preferredEmployeeId: true,

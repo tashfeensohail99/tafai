@@ -4,6 +4,7 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEnum,
   IsIn,
   IsNotEmpty,
@@ -14,7 +15,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { LeadPriority, LeadStatus } from '@prisma/client';
+import { LeadDisposition, LeadPriority, LeadStatus } from '@prisma/client';
 import { SERVICE_TYPE_CODES } from '../../common/service-types';
 
 export class ListLeadsQueryDto {
@@ -324,4 +325,23 @@ export class BulkDeleteLeadsDto {
   @ArrayMaxSize(500)
   @IsUUID('4', { each: true })
   ids!: string[];
+}
+/**
+ * Set the sales DISPOSITION on a lead (call-outcome tag; separate from the
+ * pipeline status). For FOLLOW_UP / CONTACT_LATER an optional `reminderAt`
+ * schedules a follow-up reminder. `note` is a short free-text reason.
+ */
+export class SetDispositionDto {
+  @IsEnum(LeadDisposition)
+  disposition!: LeadDisposition;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  /** ISO datetime — only honored for FOLLOW_UP / CONTACT_LATER. */
+  @IsOptional()
+  @IsDateString()
+  reminderAt?: string;
 }

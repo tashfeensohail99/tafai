@@ -8,6 +8,7 @@ import {
 import {
   AuditAction,
   ClientStatus,
+  LeadDisposition,
   LeadStatus,
   PaymentStatus,
   Prisma,
@@ -1568,6 +1569,120 @@ export class LeadsService {
    * the entry point). This closes the gap where the controller permission alone
    * let an agent reach another agent's lead by id.
    */
+  /**
+   * Set the sales DISPOSITION on a lead — the rep's call-outcome tag, SEPARATE
+   * from the pipeline `status` (which reports/finance/routing depend on and this
+   * NEVER touches). Persists the denormalized latest on the lead, appends an
+   * immutable history row (who + when), and — for FOLLOW_UP / CONTACT_LATER with
+   * a `reminderAt` — creates a FollowUp so the existing ReminderDispatcher fires
+   * an on-time reminder. Scoped via assertLeadAccess (rep = own leads).
+   */
+  async setDisposition(
+    id: string,
+    dto: { disposition: LeadDisposition; note?: string; reminderAt?: string },
+    user: RequestUser,
+  ) {
+    await this.assertLeadAccess(id, user);
+    const disposition = dto.disposition;
+    const note = dto.note?.trim() || null;
+    const now = new Date();
+
+    // Denormalized latest + immutable history row, atomically.
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.lead.update({
+        where: { id },
+        data: { disposition, dispositionAt: now, dispositionByUserId: user.id },
+        select: { id: true, disposition: true, dispositionAt: true, assignedEmployeeId: true },
+      }),
+      this.prisma.leadDispositionHistory.create({
+        data: { leadId: id, disposition, note, byUserId: user.id },
+      }),
+    ]);
+
+    // Reminder: only FOLLOW_UP / CONTACT_LATER carry one. Reuse the FollowUp +
+    // ReminderDispatcher path (a FollowUp with dueAt is reconciled into an
+    // on-time notification) rather than a parallel reminder system.
+    let followUpId: string | null = null;
+    const wantsReminder =
+      disposition === LeadDisposition.FOLLOW_UP || disposition === LeadDisposition.CONTACT_LATER;
+    if (dto.reminderAt && wantsReminder) {
+      const dueAt = new Date(dto.reminderAt);
+      if (!Number.isNaN(dueAt.getTime())) {
+        const assignedEmployeeId =
+          updated.assignedEmployeeId ?? (await this.findEmployeeIdByUserId(user.id));
+        const label = disposition === LeadDisposition.CONTACT_LATER ? 'Contact later' : 'Follow up';
+        const fu = await this.prisma.followUp.create({
+          data: {
+            leadId: id,
+            assignedEmployeeId,
+            createdByUserId: user.id,
+            title: note ? `${label}: ${note.slice(0, 140)}` : label,
+            dueAt,
+            status: 'OPEN',
+          },
+          select: { id: true },
+        });
+        followUpId = fu.id;
+      }
+    }
+
+    // Audit + timeline (reuse LEAD_UPDATED; metadata.kind='disposition' keeps it
+    // distinct from a pipeline status change in the activity feed).
+    await this.auditLog.log({
+      actorUserId: user.id,
+      action: AuditAction.LEAD_UPDATED,
+      entityType: 'Lead',
+      entityId: id,
+      newValues: { disposition, reminderAt: dto.reminderAt ?? null },
+    });
+    await this.activityTimeline.record({
+      entityType: 'Lead',
+      entityId: id,
+      leadId: id,
+      eventType: TimelineEventType.LEAD_UPDATED,
+      description: `Disposition set to "${disposition.replace(/_/g, ' ').toLowerCase()}"`,
+      actorUserId: user.id,
+      metadata: { kind: 'disposition', disposition, note, followUpId },
+    });
+
+    return { ...updated, followUpId };
+  }
+
+  /**
+   * Full disposition history for a lead (who + when, most recent first),
+   * actor names resolved. Scoped via assertLeadAccess.
+   */
+  async getDispositionHistory(id: string, user: RequestUser) {
+    await this.assertLeadAccess(id, user);
+    const rows = await this.prisma.leadDispositionHistory.findMany({
+      where: { leadId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { id: true, disposition: true, note: true, byUserId: true, createdAt: true },
+    });
+    // byUserId is a UserAccount id; the display name lives on the linked Employee.
+    const actorIds = Array.from(new Set(rows.map((r) => r.byUserId)));
+    const actors = actorIds.length
+      ? await this.prisma.userAccount.findMany({
+          where: { id: { in: actorIds } },
+          select: { id: true, employee: { select: { firstName: true, lastName: true } } },
+        })
+      : [];
+    const nameById = new Map(
+      actors.map((a) => [
+        a.id,
+        a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() || null : null,
+      ]),
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      disposition: r.disposition,
+      note: r.note,
+      at: r.createdAt,
+      byName: nameById.get(r.byUserId) ?? null,
+    }));
+  }
+
   async assertLeadAccess(leadId: string, user: RequestUser): Promise<void> {
     const canViewAll = user.permissions.includes('leads.view_all');
     const lead = await this.prisma.lead.findFirst({

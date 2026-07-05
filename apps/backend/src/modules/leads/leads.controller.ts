@@ -31,6 +31,7 @@ import {
   ConvertLeadDto,
   CreateLeadDto,
   ListLeadsQueryDto,
+  SetDispositionDto,
   UpdateLeadDto,
 } from './leads.dto';
 import { LeadsService } from './leads.service';
@@ -206,6 +207,31 @@ export class LeadsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.leadsService.update(id, dto, user);
+  }
+
+  /**
+   * Set the sales DISPOSITION (call-outcome tag) on a lead — separate from the
+   * pipeline status. For FOLLOW_UP / CONTACT_LATER an optional reminderAt
+   * schedules a follow-up reminder. Same write permission as an edit.
+   */
+  @Post(':id/disposition')
+  @RequirePermissions('leads.update')
+  setDisposition(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetDispositionDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.leadsService.setDisposition(id, dto, user);
+  }
+
+  /** Full disposition history (who + when) for a lead. Read scope = view lead. */
+  @Get(':id/disposition-history')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  dispositionHistory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.leadsService.getDispositionHistory(id, user);
   }
 
   /**

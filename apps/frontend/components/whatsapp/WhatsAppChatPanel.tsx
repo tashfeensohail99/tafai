@@ -90,6 +90,7 @@ import { ConvertToClientModal } from './ConvertToClientModal';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { BookAppointmentModal, type AppointmentPrefill } from './BookAppointmentModal';
 import { AddFollowUpModal } from './AddFollowUpModal';
+import { DispositionControl } from './DispositionControl';
 import { EditLeadModal } from './EditLeadModal';
 import { TemplatePickerModal } from './TemplatePickerModal';
 import { QuickReplyPicker } from './QuickReplyPicker';
@@ -955,6 +956,34 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               })();
             }}
           />
+        ) : null}
+        {/* Sales disposition (call-outcome tag) — set + view history right from
+            the chat, without leaving the conversation. Lead-backed threads only
+            (disposition is a lead concept). Updates the local chip immediately;
+            JUNK/DEAD drop the chat from active inbox views on the next reload. */}
+        {thread.lead ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 12px',
+              borderBottom: '1px solid var(--sos-border-subtle)',
+              background: 'var(--wa-panel-header)',
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ fontSize: 11.5, color: 'var(--sos-text-muted)', fontWeight: 600 }}>
+              Disposition
+            </span>
+            <DispositionControl
+              leadId={thread.lead.id}
+              current={thread.lead.disposition ?? null}
+              onChanged={(d) =>
+                setThread((p) => (p && p.lead ? { ...p, lead: { ...p.lead, disposition: d } } : p))
+              }
+            />
+          </div>
         ) : null}
         {/* Click-to-WhatsApp ad attribution banner — shows when the thread's
             latest inbound came in via a Facebook / Instagram ad click. Stays

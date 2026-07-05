@@ -68,6 +68,11 @@ export interface ThreadListItem {
   lastHumanActivityAt: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
+  /** True when the CALLING agent has pinned this chat (personal, WhatsApp-style,
+   *  max 6). Pinned rows are returned first and rendered in a "Pinned" section
+   *  at the top of the inbox. Optional so older cached rows without it still
+   *  parse (treated as false). */
+  isPinnedByMe?: boolean;
   /** Click-to-WhatsApp ad attribution — populated when the contact engaged
    *  via a Facebook / Instagram WhatsApp ad. Drives the "AD" chip on the
    *  thread list row so admin can spot ad-driven conversations at a glance. */
@@ -416,6 +421,23 @@ export function unarchiveThread(
   threadId: string,
 ): Promise<{ threadId: string; status: 'OPEN' }> {
   return apiFetch(`/whatsapp/threads/${threadId}/unarchive`, { method: 'POST' });
+}
+
+/**
+ * Pin this chat to the top of MY inbox (personal, WhatsApp-style, capped at 6).
+ * Idempotent. Any inbox member may pin their own chats.
+ */
+export function pinThread(
+  threadId: string,
+): Promise<{ threadId: string; pinned: true }> {
+  return apiFetch(`/whatsapp/threads/${threadId}/pin`, { method: 'POST' });
+}
+
+/** Unpin this chat from MY inbox. Idempotent. */
+export function unpinThread(
+  threadId: string,
+): Promise<{ threadId: string; pinned: false }> {
+  return apiFetch(`/whatsapp/threads/${threadId}/pin`, { method: 'DELETE' });
 }
 
 export interface BlockedNumber {

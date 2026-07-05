@@ -1204,6 +1204,8 @@ model Employee {
   assignedCases        Case[]            @relation("CaseAssignedEmployee")
   assignedFollowUps    FollowUp[]        @relation("FollowUpAssignedEmployee")
   whatsappSentMessages WhatsAppMessage[] @relation("WhatsAppMessageSentBy")
+  // This agent's pinned WhatsApp chats (personal "pin to top", capped at 6).
+  whatsappThreadPins   WhatsAppThreadPin[]
   // Sales rep that originally owned the lead and stays with the client
   // after conversion. Used so processing can ping the original salesperson.
   assignedClients      Client[]          @relation("ClientAssignedEmployee")
@@ -3847,6 +3849,10 @@ model WhatsAppThread {
   lead     Lead?             @relation("LeadWhatsAppThread", fields: [leadId], references: [id], onDelete: SetNull)
   client   Client?           @relation("ClientWhatsAppThreads", fields: [clientId], references: [id], onDelete: SetNull)
   messages WhatsAppMessage[]
+  // Per-employee "pin to top of inbox" markers (WhatsApp-style). Each agent has
+  // their own set of pinned chats (capped at 6), so this is a many-to-many via
+  // WhatsAppThreadPin rather than a boolean on the thread.
+  pins     WhatsAppThreadPin[]
 
   @@unique([channelId, waContactId])
   @@index([leadId])
@@ -3868,6 +3874,29 @@ model WhatsAppThread {
   // Unread counter feeds the stats "unread" count and the inbox badge filter.
   @@index([unreadCount])
   @@map("threads")
+  @@schema("whatsapp")
+}
+
+// Per-employee "pin this chat to the top of my inbox" marker (WhatsApp-style).
+// Pins are PERSONAL — each agent maintains their own set (capped at 6 in the
+// service), so a thread can be pinned by one rep and not another. A row here
+// means "this employee has pinned this thread". Cascades away when either the
+// thread or the employee is deleted.
+model WhatsAppThreadPin {
+  id         String   @id @default(uuid())
+  threadId   String
+  employeeId String
+  createdAt  DateTime @default(now())
+
+  thread   WhatsAppThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  employee Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  // One pin per (thread, employee). The inbox reorder + the pin/unpin toggle
+  // both key off this pair.
+  @@unique([threadId, employeeId])
+  // "My pinned chats" lookup on every inbox list load — filter by employee.
+  @@index([employeeId])
+  @@map("thread_pins")
   @@schema("whatsapp")
 }
 

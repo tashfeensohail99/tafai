@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpException,
@@ -501,6 +502,34 @@ export class WhatsAppThreadsController {
   ) {
     const caller = await this.buildCallerContext(user);
     return this.threads.unarchive(caller, id);
+  }
+
+  /**
+   * Pin this chat to the top of MY inbox (personal, WhatsApp-style, capped at
+   * 6). Idempotent. Any inbox member may pin their own chats — same permission
+   * as viewing the inbox.
+   */
+  @Post(':id/pin')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async pin(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.pin(caller, id);
+  }
+
+  /**
+   * Unpin this chat from MY inbox. Idempotent. Only affects the caller's pin.
+   */
+  @Delete(':id/pin')
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  async unpin(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const caller = await this.buildCallerContext(user);
+    return this.threads.unpin(caller, id);
   }
 
   /**

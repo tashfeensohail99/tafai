@@ -302,6 +302,23 @@ export class WhatsAppThreadsService {
 
     where.AND = and;
 
+    // --- Personal pins (WhatsApp-style "pin to top") -------------------------
+    // Each agent keeps their OWN pinned chats (capped at 6 in pin()). Pinned
+    // threads are lifted to the very top of the FIRST page and removed from the
+    // normal ordered stream on EVERY page, so a pinned chat can never appear
+    // twice (page 1 top section) nor resurface later via the cursor. Pins only
+    // apply when the caller has an employee identity.
+    let pinnedIds: string[] = [];
+    if (caller.employeeId) {
+      const pinRows = await this.prisma.whatsAppThreadPin.findMany({
+        where: { employeeId: caller.employeeId },
+        orderBy: { createdAt: 'desc' },
+        take: 6,
+        select: { threadId: true },
+      });
+      pinnedIds = pinRows.map((p) => p.threadId);
+    }
+
     // Ordering. DEFAULT (today's behavior, flag off): ACTION-REQUIRED FIRST —
     //   awaitingReply pinned to the top, then newest real human activity, so an
     //   unanswered lead can never get buried. WHATSAPP-PARITY (WA_ALL_NEWEST_FIRST
@@ -329,8 +346,12 @@ export class WhatsAppThreadsService {
           { id: 'desc' },
         ];
 
+    // Main stream excludes pinned threads on EVERY page (so they never dupe).
+    const mainWhere: Prisma.WhatsAppThreadWhereInput =
+      pinnedIds.length > 0 ? { ...where, AND: [...and, { id: { notIn: pinnedIds } }] } : where;
+
     const rows = await this.prisma.whatsAppThread.findMany({
-      where,
+      where: mainWhere,
       orderBy,
       take: limit + 1,
       ...(opts.cursor ? { skip: 1, cursor: { id: opts.cursor } } : {}),
@@ -338,8 +359,32 @@ export class WhatsAppThreadsService {
     });
 
     const hasMore = rows.length > limit;
+    const pageRows = rows.slice(0, limit);
+
+    // Pinned section — only on the FIRST page (no cursor). Applies the SAME
+    // tab/visibility filters as the main list (so a pinned chat that the active
+    // tab would hide stays hidden), just restricted to the pinned id set and
+    // without the notIn exclusion. Ordered by pin recency (pinnedIds is already
+    // most-recently-pinned first).
+    let pinnedRows: typeof pageRows = [];
+    if (!opts.cursor && pinnedIds.length > 0) {
+      const fetched = await this.prisma.whatsAppThread.findMany({
+        where: { ...where, AND: [...and, { id: { in: pinnedIds } }] },
+        include: THREAD_LIST_INCLUDE,
+      });
+      const rank = new Map(pinnedIds.map((id, i) => [id, i]));
+      fetched.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+      pinnedRows = fetched;
+    }
+
+    const items = [
+      ...pinnedRows.map((r) => ({ ...r, isPinnedByMe: true })),
+      // Main rows are already pin-excluded, so isPinnedByMe is always false.
+      ...pageRows.map((r) => ({ ...r, isPinnedByMe: false })),
+    ];
+
     return {
-      items: rows.slice(0, limit),
+      items,
       nextCursor: hasMore ? rows[limit - 1]!.id : null,
     };
   }
@@ -412,7 +457,19 @@ export class WhatsAppThreadsService {
       AND: [{ OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] }],
     };
     if (scope !== 'all') where.lead = scope;
-    return this.prisma.whatsAppThread.findFirst({ where, include: THREAD_LIST_INCLUDE });
+    const row = await this.prisma.whatsAppThread.findFirst({ where, include: THREAD_LIST_INCLUDE });
+    if (!row) return null;
+    // Carry the personal pin flag so the realtime "patch one row" path keeps a
+    // pinned chat pinned (the list rows include it too — same shape contract).
+    let isPinnedByMe = false;
+    if (caller.employeeId) {
+      const pin = await this.prisma.whatsAppThreadPin.findUnique({
+        where: { threadId_employeeId: { threadId: row.id, employeeId: caller.employeeId } },
+        select: { id: true },
+      });
+      isPinnedByMe = !!pin;
+    }
+    return { ...row, isPinnedByMe };
   }
 
   /**
@@ -1072,6 +1129,53 @@ export class WhatsAppThreadsService {
     ]);
 
     return { threadId, status: 'OPEN' as const };
+  }
+
+  /**
+   * Pin a thread to the top of the CALLING agent's inbox — personal (each rep
+   * has their own set), WhatsApp-style, capped at 6. Idempotent: pinning an
+   * already-pinned chat is a no-op success. Scoped through getOrFail so an agent
+   * can only pin a chat they're allowed to see. Permission: whatsapp.view_inbox
+   * (viewing/pinning is a personal read-side action).
+   */
+  async pin(caller: CallerContext, threadId: string): Promise<{ threadId: string; pinned: true }> {
+    // getOrFail applies the caller's scope + 404s a thread they can't see.
+    await this.getOrFail(caller, threadId);
+    if (!caller.employeeId) {
+      throw new BadRequestException('Only an employee account can pin chats.');
+    }
+    const existing = await this.prisma.whatsAppThreadPin.findUnique({
+      where: { threadId_employeeId: { threadId, employeeId: caller.employeeId } },
+      select: { id: true },
+    });
+    if (existing) return { threadId, pinned: true };
+    const count = await this.prisma.whatsAppThreadPin.count({
+      where: { employeeId: caller.employeeId },
+    });
+    if (count >= 6) {
+      throw new BadRequestException('You can pin up to 6 chats — unpin one first.');
+    }
+    try {
+      await this.prisma.whatsAppThreadPin.create({
+        data: { threadId, employeeId: caller.employeeId },
+      });
+    } catch (e) {
+      // Unique race (two tabs pin the same chat at once) — treat as success.
+      if ((e as { code?: string }).code !== 'P2002') throw e;
+    }
+    return { threadId, pinned: true };
+  }
+
+  /**
+   * Unpin a thread from the calling agent's inbox. Idempotent — unpinning a
+   * chat that isn't pinned is a no-op success. Only touches THIS agent's pin.
+   */
+  async unpin(caller: CallerContext, threadId: string): Promise<{ threadId: string; pinned: false }> {
+    if (!caller.employeeId) return { threadId, pinned: false };
+    await this.prisma.whatsAppThreadPin.deleteMany({
+      where: { threadId, employeeId: caller.employeeId },
+    });
+    return { threadId, pinned: false };
   }
 
   /**

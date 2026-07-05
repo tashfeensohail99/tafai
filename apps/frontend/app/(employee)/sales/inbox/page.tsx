@@ -12,6 +12,8 @@ import {
   MessageSquare,
   Mic,
   MoreVertical,
+  Pin,
+  PinOff,
   Plus,
   Search,
   ShieldOff,
@@ -24,9 +26,11 @@ import {
   blockContact,
   getThreadStats,
   listThreads,
+  pinThread,
   threadMatchesSearch,
   unarchiveThread,
   unblockContact,
+  unpinThread,
   type ThreadListItem,
   type ThreadStats,
 } from '@/lib/whatsapp';
@@ -102,6 +106,9 @@ export default function SalesInboxPage() {
   // endpoint requires).
   const canArchive =
     session.status === 'authed' && session.user.permissions.includes('whatsapp.send_message');
+  // Pinning is a PERSONAL action — anyone who can see the inbox may pin their
+  // own chats (no extra permission), so it's gated only on being signed in.
+  const canPin = session.status === 'authed';
   // Per-row pending id + transient banner for archive/block actions.
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -323,6 +330,30 @@ export default function SalesInboxPage() {
     [reload],
   );
 
+  // Pin / unpin one of MY chats to the top of the inbox (personal, max 6). On
+  // success reload so the row jumps to (or leaves) the pinned section. A cap
+  // rejection surfaces as a notice ("You can pin up to 6 chats…").
+  const handlePin = useCallback(
+    async (t: ThreadListItem) => {
+      setRowBusyId(t.id);
+      try {
+        if (t.isPinnedByMe) {
+          await unpinThread(t.id);
+          setNotice('Chat unpinned.');
+        } else {
+          await pinThread(t.id);
+          setNotice('Chat pinned to top.');
+        }
+        await reload({ background: true });
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'Pin failed');
+      } finally {
+        setRowBusyId(null);
+      }
+    },
+    [reload],
+  );
+
   // Unblock straight from a row (the safe direction — no confirm needed).
   const handleUnblock = useCallback(
     async (t: ThreadListItem) => {
@@ -386,22 +417,31 @@ export default function SalesInboxPage() {
   // under "Uncontacted", regardless of any cache/refresh timing. Mirrors
   // scopeQuery() and the realtime matches() predicate exactly.
   const visibleItems = useMemo(() => {
+    // Keep MY pinned chats at the very top of the working tabs, preserving their
+    // server order. The server already returns them first, but the realtime
+    // patch can reorder on new activity — this makes "pinned on top" hold
+    // regardless. Only applied to the working tabs (not Archived/Blocked).
+    const pinnedFirst = (rows: ThreadListItem[]): ThreadListItem[] => {
+      const pinned = rows.filter((t) => t.isPinnedByMe);
+      if (pinned.length === 0) return rows;
+      return [...pinned, ...rows.filter((t) => !t.isPinnedByMe)];
+    };
     if (filter === 'ARCHIVED') return items.filter((t) => t.status === 'ARCHIVED');
     // BLOCKED rows arrive pre-filtered from the server; trust the loaded page.
     if (filter === 'BLOCKED') return items;
     const active = items.filter((t) => t.status !== 'ARCHIVED');
-    if (filter === 'UNCONTACTED') return active.filter((t) => t.lastHumanReplyAt == null);
+    if (filter === 'UNCONTACTED') return pinnedFirst(active.filter((t) => t.lastHumanReplyAt == null));
     if (filter === 'UNREAD') {
       // Funnel Unread = engaged (a human replied) AND unread. Keep the currently-
       // open chat visible even after opening it zeroed its badge, so the active
       // row doesn't vanish mid-read.
-      return active.filter(
+      return pinnedFirst(active.filter(
         (t) => (t.unreadCount > 0 && t.lastHumanReplyAt != null) || t.id === activeId,
-      );
+      ));
     }
     // ALL = engaged only (a human has replied). New leads live in Uncontacted
     // until a rep replies. Keep the open chat visible even if it isn't engaged.
-    return active.filter((t) => t.lastHumanReplyAt != null || t.id === activeId);
+    return pinnedFirst(active.filter((t) => t.lastHumanReplyAt != null || t.id === activeId));
   }, [items, filter, activeId]);
 
   // Real DB total for the active tab (from stats) — drives the "showing N of M"
@@ -781,12 +821,14 @@ export default function SalesInboxPage() {
                   active={activeId === t.id}
                   canBlock={canBlock}
                   canArchive={canArchive}
+                  canPin={canPin}
                   blockedView={filter === 'BLOCKED'}
                   busy={rowBusyId === t.id}
                   onSelect={handleSelect}
                   onBlock={openBlock}
                   onUnblock={handleUnblock}
                   onArchive={handleArchive}
+                  onPin={handlePin}
                 />
               ))}
               {nextCursor ? (
@@ -988,17 +1030,20 @@ const ThreadRow = memo(function ThreadRow({
   active,
   canBlock,
   canArchive,
+  canPin,
   blockedView,
   busy,
   onSelect,
   onBlock,
   onUnblock,
   onArchive,
+  onPin,
 }: {
   item: ThreadListItem;
   active: boolean;
   canBlock: boolean;
   canArchive: boolean;
+  canPin: boolean;
   /** True under the BLOCKED tab — the row offers Unblock, not Block. */
   blockedView: boolean;
   busy: boolean;
@@ -1006,6 +1051,7 @@ const ThreadRow = memo(function ThreadRow({
   onBlock: (item: ThreadListItem) => void;
   onUnblock: (item: ThreadListItem) => void;
   onArchive: (item: ThreadListItem) => void;
+  onPin: (item: ThreadListItem) => void;
 }) {
   const displayName =
     item.client?.firstName || item.client?.lastName
@@ -1163,6 +1209,14 @@ const ThreadRow = memo(function ThreadRow({
               {renderPreview(item.lastMessagePreview)}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              {item.isPinnedByMe && (
+                <Pin
+                  size={12}
+                  fill="currentColor"
+                  aria-label="Pinned"
+                  style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }}
+                />
+              )}
               {needsReply && (
                 <span
                   title="The lead replied — you haven't answered yet"
@@ -1208,17 +1262,19 @@ const ThreadRow = memo(function ThreadRow({
         {/* Per-row actions tucked behind a three-dot menu — keeps the row clean
             (the open Archive/Block icons were noisy). The menu stops propagation
             so opening it / picking an action doesn't also open the chat. */}
-        {canArchive || canBlock ? (
+        {canArchive || canBlock || canPin ? (
           <RowActionsMenu
             item={item}
             isArchived={isArchived}
             blockedView={blockedView}
             canArchive={canArchive}
             canBlock={canBlock}
+            canPin={canPin}
             busy={busy}
             onArchive={onArchive}
             onBlock={onBlock}
             onUnblock={onUnblock}
+            onPin={onPin}
           />
         ) : null}
       </div>
@@ -1234,20 +1290,24 @@ function RowActionsMenu({
   blockedView,
   canArchive,
   canBlock,
+  canPin,
   busy,
   onArchive,
   onBlock,
   onUnblock,
+  onPin,
 }: {
   item: ThreadListItem;
   isArchived: boolean;
   blockedView: boolean;
   canArchive: boolean;
   canBlock: boolean;
+  canPin: boolean;
   busy: boolean;
   onArchive: (item: ThreadListItem) => void;
   onBlock: (item: ThreadListItem) => void;
   onUnblock: (item: ThreadListItem) => void;
+  onPin: (item: ThreadListItem) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -1306,6 +1366,13 @@ function RowActionsMenu({
             padding: 4,
           }}
         >
+          {canPin ? (
+            <RowMenuItem
+              icon={item.isPinnedByMe ? <PinOff size={15} /> : <Pin size={15} />}
+              label={item.isPinnedByMe ? 'Unpin chat' : 'Pin chat'}
+              onClick={() => run(() => onPin(item))}
+            />
+          ) : null}
           {canArchive ? (
             <RowMenuItem
               icon={isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}

@@ -6,7 +6,8 @@
 // the caller in-browser. Works on laptop + mobile with the tab open.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Phone, PhoneOff, Mic, MicOff, MessageSquare } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { useWhatsAppEvent } from '@/lib/whatsapp-realtime';
 
@@ -81,6 +82,11 @@ export function CallDock() {
   // Outbound only: a permission-related failure shows a "Request permission"
   // button on the error card so the rep can opt the customer in right there.
   const [showReqPerm, setShowReqPerm] = useState(false);
+  // #2 chat-during-call: the WhatsApp thread for the current caller, resolved so
+  // the dock can offer an "Open chat" deep-link WITHOUT dropping the call (the
+  // dock is global + fixed, so it keeps ringing/talking while the inbox opens).
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
+  const router = useRouter();
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -631,6 +637,60 @@ export function CallDock() {
 
   useEffect(() => () => teardown(), [teardown]);
 
+  // #2 chat-during-call: resolve the caller's WhatsApp thread so the dock can
+  // offer "Open chat". Priority: an OUTBOUND call already knows its thread
+  // (outboundThreadRef); an INBOUND call carries a leadId (→ by-lead lookup) or
+  // at least a phone number (→ scoped thread search). Best-effort + cancellable
+  // so a fast hang-up/re-ring never lands a stale thread on the wrong caller.
+  useEffect(() => {
+    if (!call) {
+      setChatThreadId(null);
+      return;
+    }
+    // Outbound: the thread is known up front (the chat panel passed it).
+    if (outboundThreadRef.current) {
+      setChatThreadId(outboundThreadRef.current);
+      return;
+    }
+    let cancelled = false;
+    setChatThreadId(null);
+    void (async () => {
+      try {
+        if (call.leadId) {
+          const res = await apiFetch<{ item: { id: string } | null }>(
+            `/whatsapp/threads/by-lead/${call.leadId}`,
+          );
+          if (!cancelled && res?.item?.id) {
+            setChatThreadId(res.item.id);
+            return;
+          }
+        }
+        const digits = (call.from || '').replace(/\D/g, '');
+        if (digits.length >= 6) {
+          const res = await apiFetch<{ items: Array<{ id: string }> }>(
+            `/whatsapp/threads?search=${encodeURIComponent(digits)}&limit=1`,
+          );
+          if (!cancelled && res?.items?.[0]?.id) setChatThreadId(res.items[0].id);
+        }
+      } catch {
+        /* best-effort — no chat link if we can't resolve the thread */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [call]);
+
+  // Open the caller's chat WITHOUT ending the call. The dock is global + fixed
+  // (z-2000), so it keeps ringing/talking while the inbox mounts the thread. We
+  // both navigate (fresh mount reads ?thread=) AND fire an event (already-open
+  // inbox swaps the active thread live).
+  const openChat = useCallback(() => {
+    if (!chatThreadId) return;
+    window.dispatchEvent(new CustomEvent('wa:open-chat', { detail: { threadId: chatThreadId } }));
+    router.push(`/sales/inbox?thread=${chatThreadId}`);
+  }, [chatThreadId, router]);
+
   // Start recording + the liveness heartbeat the moment media connects (covers
   // inbound + outbound). The heartbeat (every 15s) lets the backend sweeper free
   // the leg if this tab dies; each tick also re-samples call quality.
@@ -823,6 +883,32 @@ export function CallDock() {
 
         {error ? (
           <div style={{ fontSize: 12, color: 'var(--sos-status-danger)', marginBottom: 10 }}>{error}</div>
+        ) : null}
+
+        {/* #2 Open the caller's chat without dropping the call. Shown for any
+            LIVE call phase once we've resolved the thread — the dock keeps
+            ringing/talking on top of the inbox. */}
+        {chatThreadId &&
+        (phase === 'ringing' ||
+          phase === 'dialing' ||
+          phase === 'connecting' ||
+          phase === 'in-call' ||
+          phase === 'reconnecting') ? (
+          <button
+            type="button"
+            onClick={openChat}
+            className="sos-btn sos-btn--ghost"
+            style={{
+              width: '100%',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              marginBottom: 8,
+            }}
+          >
+            <MessageSquare size={15} /> Open chat
+          </button>
         ) : null}
 
         <div style={{ display: 'flex', gap: 8 }}>

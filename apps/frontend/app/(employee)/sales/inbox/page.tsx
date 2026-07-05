@@ -279,6 +279,26 @@ export default function SalesInboxPage() {
     }
   }, [items, activeId, isMobile]);
 
+  // #2 chat-during-call: open a specific thread when the agent arrives from the
+  // CallDock "Open chat" deep-link (?thread=<id>, fresh mount) OR a live
+  // wa:open-chat event (inbox already mounted — swap the active thread without
+  // dropping the call). Runs once; WhatsAppChatPanel loads the thread by id even
+  // if it isn't in the loaded list yet.
+  useEffect(() => {
+    const fromQuery =
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('thread')
+        : null;
+    if (fromQuery) setActiveId(fromQuery);
+    const onOpenChat = (e: Event) => {
+      const id = (e as CustomEvent).detail?.threadId as string | undefined;
+      if (id) setActiveId(id);
+    };
+    window.addEventListener('wa:open-chat', onOpenChat);
+    return () => window.removeEventListener('wa:open-chat', onOpenChat);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Realtime: patch only the thread(s) a socket event touches instead of
   // refetching all 100 — the touched chat updates in place and jumps to the
   // top, WhatsApp-style. The 30s/focus reconcile is the self-healing net.

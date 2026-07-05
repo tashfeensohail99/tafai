@@ -202,7 +202,74 @@ export class WhatsAppCallsService {
     if (ended.answeredByEmployeeId) {
       await this.publisher.publishToEmployee(ended.answeredByEmployeeId, WHATSAPP_WS_EVENTS.CALL_ENDED, { callId: id });
     }
+    await this.postTalkTimeMessage(id);
     return { ok: true };
+  }
+
+  /** "04 min 32 sec" — matches the sales-team's requested format. */
+  private formatTalkTime(totalSeconds: number): string {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return `${String(m).padStart(2, '0')} min ${String(s).padStart(2, '0')} sec`;
+  }
+
+  /**
+   * Drop a "Call ended — Talk time: MM min SS sec" SYSTEM line into the thread
+   * once a call that was actually answered ends, so the chat shows a call-activity
+   * record (sales-activity tracking). Idempotent per call via the unique
+   * `call-ended-${callId}` idempotencyKey, so every end-path — agent hang-up,
+   * caller `terminate` (webhook), and the zombie sweeper — can call it and only
+   * ONE line is ever written. Best-effort: never throws into the call teardown.
+   */
+  async postTalkTimeMessage(callId: string): Promise<void> {
+    try {
+      const call = await this.prisma.whatsAppCall.findUnique({
+        where: { id: callId },
+        select: { id: true, threadId: true, channelId: true, direction: true, status: true, durationSeconds: true },
+      });
+      // Only for a call that was answered + ended with real talk time. A missed /
+      // rejected / never-connected call has no duration and gets no line here.
+      if (!call || !call.threadId || call.status !== 'ENDED') return;
+      const secs = call.durationSeconds;
+      if (secs == null || secs <= 0) return;
+
+      const message = await this.prisma.whatsAppMessage.create({
+        data: {
+          threadId: call.threadId,
+          channelId: call.channelId,
+          // A SYSTEM notice is a business-side record, never a customer message —
+          // OUTBOUND so it can never be counted as an unread inbound reply.
+          direction: WhatsAppMessageDirection.OUTBOUND,
+          type: WhatsAppMessageType.SYSTEM,
+          body: `Call ended — Talk time: ${this.formatTalkTime(secs)}`,
+          status: WhatsAppMessageStatus.SENT,
+          sentAt: new Date(),
+          idempotencyKey: `call-ended-${call.id}`,
+        },
+        select: { id: true },
+      });
+
+      // Live-update any open chat (same org fanout inbound messages use — the
+      // thread carries no organizationId, so mirror the webhook's first-org lookup).
+      const [thread, org] = await Promise.all([
+        this.prisma.whatsAppThread.findUnique({ where: { id: call.threadId }, select: { leadId: true, clientId: true } }),
+        this.prisma.organization.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } }),
+      ]);
+      if (org) {
+        await this.publisher.publishToOrg(org.id, WHATSAPP_WS_EVENTS.MESSAGE_NEW, {
+          threadId: call.threadId,
+          leadId: thread?.leadId ?? null,
+          clientId: thread?.clientId ?? null,
+          messageId: message.id,
+          direction: 'OUTBOUND',
+        });
+      }
+    } catch (e) {
+      // P2002 = already posted by another end-path (idempotent). Anything else is
+      // logged but never allowed to break the call teardown.
+      if ((e as { code?: string }).code === 'P2002') return;
+      this.log.warn(`talk-time message failed for call ${callId}: ${(e as Error).message}`);
+    }
   }
 
   /**
@@ -335,6 +402,7 @@ export class WhatsAppCallsService {
               .publishToEmployee(z.answeredByEmployeeId, WHATSAPP_WS_EVENTS.CALL_ENDED, { callId: z.id })
               .catch(() => undefined);
           }
+          await this.postTalkTimeMessage(z.id);
         }
       } catch (e) {
         this.log.warn(`sweep: orphan ${z.id} terminate failed: ${(e as Error).message}`);

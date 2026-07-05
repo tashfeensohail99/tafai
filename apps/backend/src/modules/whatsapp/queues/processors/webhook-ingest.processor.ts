@@ -541,6 +541,45 @@ export class WebhookIngestProcessor extends WorkerHost {
               : undefined,
         },
       });
+      // Sales-activity record: drop a "Call ended — Talk time…" SYSTEM line into
+      // the thread for a connected call (the customer-hung-up path). Idempotent
+      // per call via the same `call-ended-${id}` key the CRM-side hang-up uses, so
+      // whichever side ends the call, exactly one line is written.
+      if (answered && existing.threadId && existing.startedAt) {
+        const secs = Math.max(0, Math.round((now.getTime() - existing.startedAt.getTime()) / 1000));
+        if (secs > 0) {
+          const talk = `${String(Math.floor(secs / 60)).padStart(2, '0')} min ${String(secs % 60).padStart(2, '0')} sec`;
+          try {
+            const line = await this.prisma.whatsAppMessage.create({
+              data: {
+                threadId: existing.threadId,
+                channelId: existing.channelId,
+                direction: existing.direction === 'OUTBOUND' ? 'OUTBOUND' : 'INBOUND',
+                type: 'SYSTEM',
+                body: `Call ended — Talk time: ${talk}`,
+                status: 'SENT',
+                sentAt: now,
+                idempotencyKey: `call-ended-${existing.id}`,
+              },
+              select: { id: true },
+            });
+            const org = await this.prisma.organization.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+            if (org) {
+              await this.publisher.publishToOrg(org.id, WHATSAPP_WS_EVENTS.MESSAGE_NEW, {
+                threadId: existing.threadId,
+                leadId: existing.leadId,
+                clientId: existing.clientId,
+                messageId: line.id,
+                direction: existing.direction === 'OUTBOUND' ? 'OUTBOUND' : 'INBOUND',
+              });
+            }
+          } catch (e) {
+            if ((e as { code?: string }).code !== 'P2002') {
+              this.log.warn(`talk-time message failed for call ${existing.id}: ${(e as Error).message}`);
+            }
+          }
+        }
+      }
       if (existing.assignedEmployeeId) {
         await this.publisher.publishToEmployee(
           existing.assignedEmployeeId,

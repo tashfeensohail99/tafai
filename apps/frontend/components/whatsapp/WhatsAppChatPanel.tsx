@@ -1038,6 +1038,32 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               {messages.map((m, i) => {
                 const prev = i > 0 ? messages[i - 1] : null;
                 const showDay = !prev || chatDayKey(prev.createdAt) !== chatDayKey(m.createdAt);
+                // SYSTEM notices (e.g. "Call ended — Talk time: 04 min 32 sec") render
+                // as a centered pill, not a left/right chat bubble.
+                if (m.type === 'SYSTEM') {
+                  const notice = (
+                    <div key={m.id} style={{ display: 'flex', justifyContent: 'center', margin: '10px 0' }}>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: 12,
+                          color: 'var(--sos-text-muted)',
+                          background: 'var(--wa-system-pill, rgba(0,0,0,0.06))',
+                          borderRadius: 10,
+                          padding: '4px 12px',
+                          maxWidth: '85%',
+                          textAlign: 'center',
+                        }}
+                      >
+                        {(m.body || '').startsWith('Call ended') ? '📞 ' : ''}{m.body}
+                      </span>
+                    </div>
+                  );
+                  if (!showDay) return notice;
+                  return [<DateSeparator key={`day-${m.id}`} label={formatDaySeparator(m.createdAt)} />, notice];
+                }
                 const bubble = (
                   <MessageBubble
                     key={m.id}

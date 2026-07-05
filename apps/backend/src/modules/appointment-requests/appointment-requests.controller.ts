@@ -1,4 +1,5 @@
 import { Controller, Get, Param, ParseUUIDPipe, Patch, Query, UseGuards } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { IsIn, IsOptional, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
@@ -36,36 +37,52 @@ export class AppointmentRequestsController {
     @Query() q: ListQueryDto,
   ) {
     const status = q.status ?? 'PENDING';
-    const where: {
-      status: string;
-      lead?: {
-        OR?: Array<Record<string, unknown>>;
-        assignedEmployeeId?: string;
-      };
-    } = { status };
+    // AppointmentRequest carries only a `leadId` scalar — it has NO Prisma
+    // `lead` relation (kept decoupled by design, like Agreement.leadId). Any
+    // constraint on the lead (assigned-scope, name/phone search) must therefore
+    // be resolved to a set of lead ids FIRST and applied as `leadId: { in }`.
+    // (The previous code filtered on a non-existent `lead` relation, which threw
+    // PrismaClientValidationError → 500 for every view_assigned rep.) Using the
+    // real Prisma type here so a stray relation filter is a compile error.
+    const where: Prisma.AppointmentRequestWhereInput = { status };
 
-    // Permission gate: if the caller has only "view_assigned" (not
-    // "view_all"), they should see only requests on leads assigned to
-    // their employee. Mirrors how /appointments enforces scope.
+    // Permission gate: "view_assigned" (not "view_all") sees only requests on
+    // leads assigned to their employee. Mirrors how /appointments enforces scope.
     const canViewAll = (user.permissions ?? []).includes('appointments.view_all');
+    let leadScope: string[] | null = null;
     if (!canViewAll) {
       const employee = await this.prisma.employee.findUnique({
         where: { userId: user.id },
         select: { id: true },
       });
       if (!employee) return [];
-      where.lead = { assignedEmployeeId: employee.id };
+      const assigned = await this.prisma.lead.findMany({
+        where: { assignedEmployeeId: employee.id },
+        select: { id: true },
+      });
+      leadScope = assigned.map((l) => l.id);
+      if (leadScope.length === 0) return [];
     }
 
     if (q.search) {
       const s = q.search.trim();
-      const orFilters: Array<Record<string, unknown>> = [
-        { firstName: { contains: s, mode: 'insensitive' } },
-        { lastName: { contains: s, mode: 'insensitive' } },
-        { phone: { contains: s.replace(/\D/g, '') } },
-      ];
-      where.lead = { ...(where.lead ?? {}), OR: orFilters };
+      const matched = await this.prisma.lead.findMany({
+        where: {
+          OR: [
+            { firstName: { contains: s, mode: 'insensitive' } },
+            { lastName: { contains: s, mode: 'insensitive' } },
+            { phone: { contains: s.replace(/\D/g, '') } },
+          ],
+          // Keep the search within the caller's assigned scope when present.
+          ...(leadScope ? { id: { in: leadScope } } : {}),
+        },
+        select: { id: true },
+      });
+      leadScope = matched.map((l) => l.id);
+      if (leadScope.length === 0) return [];
     }
+
+    if (leadScope) where.leadId = { in: leadScope };
 
     return this.prisma.appointmentRequest.findMany({
       where,

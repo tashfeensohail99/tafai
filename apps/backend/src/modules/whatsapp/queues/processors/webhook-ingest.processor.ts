@@ -94,6 +94,11 @@ interface MetaCall {
   timestamp?: string;
   direction?: string; // 'USER_INITIATED' for inbound
   session?: { sdp?: string; sdp_type?: string };
+  // On 'terminate': Meta's own view of the call outcome + CONNECTED duration in
+  // seconds. Meta's duration is the authoritative talk time (excludes ring),
+  // so prefer it over our locally computed value when present.
+  status?: string;
+  duration?: number;
 }
 interface MetaValue {
   messaging_product: 'whatsapp';
@@ -505,8 +510,10 @@ export class WebhookIngestProcessor extends WorkerHost {
           id: true,
           status: true,
           startedAt: true,
+          answeredAt: true,
           assignedEmployeeId: true,
           answeredByEmployeeId: true,
+          answeredByUserId: true,
           direction: true,
           threadId: true,
           channelId: true,
@@ -524,29 +531,42 @@ export class WebhookIngestProcessor extends WorkerHost {
       // actually connected. If the row is already terminal, the first terminate
       // handled everything (teardown + status + any invite); stop here.
       if (existing.status === 'ENDED' || existing.status === 'MISSED') return;
-      // A call a rep actually answered is never "missed" — key off
-      // answeredByEmployeeId as well as status, so a status race can't
-      // mislabel a connected call.
+      // A call a rep actually answered is never "missed" — key off the answerer
+      // stamps as well as status, so a status race can't mislabel a connected
+      // call. answeredByUserId covers the employee-less admin console.
       const answered =
-        existing.status === 'ANSWERED' || existing.answeredByEmployeeId != null;
+        existing.status === 'ANSWERED' ||
+        existing.answeredByEmployeeId != null ||
+        existing.answeredByUserId != null;
+      // Talk time: prefer Meta's own connected-call duration from the terminate
+      // payload (authoritative, excludes ring); else compute from answeredAt
+      // (pick-up). startedAt is the RING start on inbound rows, so it's only the
+      // legacy fallback — durations computed from it include ring time.
+      const metaDuration =
+        typeof call.duration === 'number' && Number.isFinite(call.duration) && call.duration > 0
+          ? Math.round(call.duration)
+          : null;
+      const talkAnchor = existing.answeredAt ?? existing.startedAt;
+      const computedSecs =
+        answered && talkAnchor
+          ? Math.max(0, Math.round((now.getTime() - talkAnchor.getTime()) / 1000))
+          : null;
+      const talkSecs = answered ? (metaDuration ?? computedSecs) : null;
       await this.prisma.whatsAppCall.update({
         where: { id: existing.id },
         data: {
           status: answered ? 'ENDED' : 'MISSED',
           event: 'terminate',
           endedAt: now,
-          durationSeconds:
-            answered && existing.startedAt
-              ? Math.max(0, Math.round((now.getTime() - existing.startedAt.getTime()) / 1000))
-              : undefined,
+          durationSeconds: talkSecs ?? undefined,
         },
       });
       // Sales-activity record: drop a "Call ended — Talk time…" SYSTEM line into
       // the thread for a connected call (the customer-hung-up path). Idempotent
       // per call via the same `call-ended-${id}` key the CRM-side hang-up uses, so
       // whichever side ends the call, exactly one line is written.
-      if (answered && existing.threadId && existing.startedAt) {
-        const secs = Math.max(0, Math.round((now.getTime() - existing.startedAt.getTime()) / 1000));
+      if (answered && existing.threadId && talkSecs != null) {
+        const secs = talkSecs;
         if (secs > 0) {
           const talk = `${String(Math.floor(secs / 60)).padStart(2, '0')} min ${String(secs % 60).padStart(2, '0')} sec`;
           try {
@@ -637,6 +657,9 @@ export class WebhookIngestProcessor extends WorkerHost {
           status: 'ANSWERED',
           sdpAnswer: answerSdp ?? undefined,
           event: 'connect',
+          // For OUTBOUND, this webhook IS the customer picking up — stamp both
+          // (talk time anchors on answeredAt everywhere).
+          answeredAt: new Date(),
           startedAt: new Date(),
         },
       });

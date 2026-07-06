@@ -128,6 +128,14 @@ export class WhatsAppCallsService {
         status: 'ANSWERED',
         sdpAnswer,
         answeredByEmployeeId: emp?.id ?? null,
+        // Always record the answering USER too — the admin console has no
+        // Employee row, and keying heartbeat/CDR only off answeredByEmployeeId
+        // silently disabled telemetry + zombie-protection on those calls
+        // (~half of all answered inbound).
+        answeredByUserId: userId,
+        // Talk time anchors HERE. startedAt is the RING start for inbound, so
+        // durations computed from it include ring time.
+        answeredAt: new Date(),
         startedAt: call.startedAt ?? new Date(),
       },
     });
@@ -188,14 +196,17 @@ export class WhatsAppCallsService {
   async hangup(id: string) {
     const { call, client } = await this.clientForCall(id);
     await client.respondToCall({ callId: call.waCallId, action: 'terminate' });
+    // Talk time = end − pick-up. answeredAt is the pick-up moment; startedAt is
+    // the RING start on inbound rows (legacy fallback only).
+    const talkAnchor = call.answeredAt ?? call.startedAt;
     const ended = await this.prisma.whatsAppCall.update({
       where: { id },
       data: {
         status: 'ENDED',
         event: 'terminate',
         endedAt: new Date(),
-        durationSeconds: call.startedAt
-          ? Math.max(0, Math.round((Date.now() - call.startedAt.getTime()) / 1000))
+        durationSeconds: talkAnchor
+          ? Math.max(0, Math.round((Date.now() - talkAnchor.getTime()) / 1000))
           : null,
       },
     });
@@ -279,16 +290,27 @@ export class WhatsAppCallsService {
    * and updateMany makes an unknown/ended id a harmless no-op.
    */
   async heartbeat(id: string, userId: string): Promise<{ ok: boolean }> {
-    // Scoped to the rep ON the call (answeredByEmployeeId is set for inbound AND
-    // outbound). Otherwise any authed employee who knew a call UUID could keep a
-    // zombie alive. Fail-silent best-effort: a mismatch is a harmless no-op.
-    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
-    if (!emp) return { ok: true };
+    // Scoped to the person ON the call. Otherwise any authed employee who knew a
+    // call UUID could keep a zombie alive. Matches by answeredByUserId (always
+    // stamped at answer — covers the admin console, which has no Employee row and
+    // previously no-opped here, leaving its calls without zombie-protection) OR
+    // by answeredByEmployeeId (legacy rows answered before answeredByUserId
+    // existed). Fail-silent best-effort: a mismatch is a harmless no-op.
+    const scope = await this.answererScope(userId);
     await this.prisma.whatsAppCall.updateMany({
-      where: { id, status: 'ANSWERED', answeredByEmployeeId: emp.id },
+      where: { id, status: 'ANSWERED', ...scope },
       data: { lastHeartbeatAt: new Date() },
     });
     return { ok: true };
+  }
+
+  /** Where-clause matching calls answered by this user — via the userId stamp
+   *  (new rows, incl. the employee-less admin) or the Employee id (legacy rows). */
+  private async answererScope(userId: string): Promise<Prisma.WhatsAppCallWhereInput> {
+    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
+    return emp
+      ? { OR: [{ answeredByUserId: userId }, { answeredByEmployeeId: emp.id }] }
+      : { answeredByUserId: userId };
   }
 
   /**
@@ -309,14 +331,14 @@ export class WhatsAppCallsService {
     },
     userId: string,
   ): Promise<{ ok: boolean }> {
-    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
-    if (!emp) return { ok: true };
     const clampInt = (v: unknown, max: number) =>
       typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(Math.round(v), max)) : null;
     const data: Prisma.WhatsAppCallUpdateManyMutationInput = {};
     // Whitelist endReason to the documented set so a client can't inject junk
-    // into outcome analytics.
-    const VALID_REASONS = ['hangup', 'caller-hangup', 'failed', 'reconnect-timeout', 'connect-timeout', 'ring-timeout', 'orphan-timeout'];
+    // into outcome analytics. 'answered-elsewhere' is what a still-ringing device
+    // reports when the rep picked up on another device (multi-device ring) — it
+    // was sent by the web dock but silently dropped here before.
+    const VALID_REASONS = ['hangup', 'caller-hangup', 'failed', 'reconnect-timeout', 'connect-timeout', 'ring-timeout', 'orphan-timeout', 'answered-elsewhere'];
     if (typeof dto.endReason === 'string' && VALID_REASONS.includes(dto.endReason)) data.endReason = dto.endReason;
     if (['host', 'srflx', 'prflx', 'relay'].includes(String(dto.iceCandidateType))) {
       data.iceCandidateType = String(dto.iceCandidateType);
@@ -333,9 +355,20 @@ export class WhatsAppCallsService {
       data.packetLossPct = Math.max(0, Math.min(dto.packetLossPct, 100));
     }
     if (Object.keys(data).length === 0) return { ok: true };
-    // Scoped to the rep on the call so one employee can't pollute another
-    // call's CDR. A non-match is a harmless no-op.
-    await this.prisma.whatsAppCall.updateMany({ where: { id, answeredByEmployeeId: emp.id }, data });
+    // Scoped to the person on the call so one employee can't pollute another
+    // call's CDR (userId stamp covers the employee-less admin console, whose
+    // CDR previously no-opped — losing telemetry on ~half of answered calls).
+    // A non-match is a harmless no-op.
+    const scope = await this.answererScope(userId);
+    // 'answered-elsewhere' comes from a still-ringing OTHER device of the SAME
+    // rep (multi-device ring) for a row the winning device is answering — it is
+    // NOT that row's real outcome. Gate it to a still-RINGING row so it can
+    // never overwrite the connected call's true endReason (hangup/caller-hangup).
+    const where =
+      data.endReason === 'answered-elsewhere'
+        ? { id, status: 'RINGING', ...scope }
+        : { id, ...scope };
+    await this.prisma.whatsAppCall.updateMany({ where, data });
     return { ok: true };
   }
 
@@ -370,7 +403,7 @@ export class WhatsAppCallsService {
           { lastHeartbeatAt: null, startedAt: { lt: new Date(now - HARD_TTL_MS) } },
         ],
       },
-      select: { id: true, waCallId: true, channelId: true, answeredByEmployeeId: true, startedAt: true },
+      select: { id: true, waCallId: true, channelId: true, answeredByEmployeeId: true, answeredAt: true, startedAt: true },
       take: 50,
     });
 
@@ -385,6 +418,9 @@ export class WhatsAppCallsService {
             .catch(() => undefined); // Meta may already consider it ended — fine
         }
         // Guarded on status=ANSWERED so a concurrent real hangup wins the race.
+        // Talk time anchors on answeredAt (pick-up); startedAt = ring start is
+        // the legacy fallback only.
+        const zAnchor = z.answeredAt ?? z.startedAt;
         const res = await this.prisma.whatsAppCall.updateMany({
           where: { id: z.id, status: 'ANSWERED' },
           data: {
@@ -392,7 +428,7 @@ export class WhatsAppCallsService {
             event: 'terminate',
             endReason: 'orphan-timeout',
             endedAt: new Date(),
-            durationSeconds: z.startedAt ? Math.max(0, Math.round((now - z.startedAt.getTime()) / 1000)) : null,
+            durationSeconds: zAnchor ? Math.max(0, Math.round((now - zAnchor.getTime()) / 1000)) : null,
           },
         });
         if (res.count > 0) {
@@ -543,7 +579,27 @@ export class WhatsAppCallsService {
     const [total, missed, answered, durAgg] = await Promise.all([
       this.prisma.whatsAppCall.count(),
       this.prisma.whatsAppCall.count({ where: { status: 'MISSED' } }),
-      this.prisma.whatsAppCall.count({ where: { answeredByEmployeeId: { not: null } } }),
+      // Answered = the call actually CONNECTED. answeredAt is stamped on pickup
+      // for both directions (inbound answer + outbound-connect webhook), incl.
+      // the employee-less admin console — so it counts admin answers that the
+      // old answeredByEmployeeId-only predicate dropped. The second branch is
+      // ONLY for legacy rows predating answeredAt, and it must EXCLUDE never-
+      // connected rows: answeredByEmployeeId is stamped at OUTBOUND DIAL time
+      // (still RINGING, answeredAt null), so an unanswered outbound ring-out
+      // that the sweeper flips to MISSED would otherwise be counted as
+      // "answered" (and double-counted against "missed"). Gate it to connected
+      // statuses so ring-outs never leak in.
+      this.prisma.whatsAppCall.count({
+        where: {
+          OR: [
+            { answeredAt: { not: null } },
+            {
+              answeredByEmployeeId: { not: null },
+              status: { notIn: ['MISSED', 'RINGING', 'FAILED'] },
+            },
+          ],
+        },
+      }),
       this.prisma.whatsAppCall.aggregate({
         _avg: { durationSeconds: true },
         where: { durationSeconds: { gt: 0 } },
@@ -691,6 +747,10 @@ export class WhatsAppCallsService {
         sdpOffer,
         assignedEmployeeId: senderEmployeeId,
         answeredByEmployeeId: senderEmployeeId,
+        // The dialing rep is on the call from the start — stamp the user id so
+        // heartbeat/CDR scoping works even for the employee-less admin console.
+        // answeredAt is stamped by the outbound-connect webhook (customer pickup).
+        answeredByUserId: userId,
         startedAt: now,
       },
       select: { id: true },
@@ -698,16 +758,24 @@ export class WhatsAppCallsService {
 
     // A successful initiate means permission IS granted — reflect the hint
     // (valid ~7 days per Meta). Best-effort; never block the call on this.
-    await this.prisma.whatsAppThread
-      .update({
-        where: { id: thread.id },
-        data: {
-          callPermissionStatus: 'GRANTED',
-          callPermissionUpdatedAt: now,
-          callPermissionExpiresAt: new Date(now.getTime() + 7 * 24 * 3600 * 1000),
-        },
-      })
-      .catch(() => undefined);
+    // BUT never DOWNGRADE a PERMANENT grant (GRANTED with a null expiry) to a
+    // 7-day one: that grant never expires, and stamping +7d here would make the
+    // contact uncallable a week later (chip shows "expired", and re-requesting
+    // needs an open 24h window) — the exact callback population we want to keep.
+    const alreadyPermanent =
+      thread.callPermissionStatus === 'GRANTED' && thread.callPermissionExpiresAt == null;
+    if (!alreadyPermanent) {
+      await this.prisma.whatsAppThread
+        .update({
+          where: { id: thread.id },
+          data: {
+            callPermissionStatus: 'GRANTED',
+            callPermissionUpdatedAt: now,
+            callPermissionExpiresAt: new Date(now.getTime() + 7 * 24 * 3600 * 1000),
+          },
+        })
+        .catch(() => undefined);
+    }
 
     this.log.log(`outbound call ${callRow.id} (waCallId ${callId}) initiated for thread ${thread.id}`);
     return { callId: callRow.id };

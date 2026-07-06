@@ -3746,8 +3746,15 @@ model WhatsAppCall {
   sdpOffer             String?
   sdpAnswer            String?
   answeredByEmployeeId String?
+  // The answering USER account — set even when they have no Employee row (the
+  // admin console answers a large share of inbound; keying telemetry only off
+  // answeredByEmployeeId silently dropped heartbeat/CDR for those calls).
+  answeredByUserId     String?
   // When the ring times out and we cascade/terminate (Phase 1b).
   ringExpiresAt        DateTime?
+  // For INBOUND calls startedAt is the RING start (row creation); answeredAt is
+  // when a rep actually picked up. Talk time = endedAt - (answeredAt ?? startedAt).
+  answeredAt           DateTime?
   startedAt            DateTime?
   endedAt              DateTime?
   durationSeconds      Int?

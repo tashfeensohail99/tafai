@@ -128,6 +128,16 @@ export class MetaApiError extends Error {
  * No retries here — the BullMQ worker layer owns retry policy.
  */
 export class MetaCloudClient {
+  /** All 7 day_of_week values (Meta calling call_hours), for the 24/7 form. */
+  private static readonly ALL_WEEK = [
+    'MONDAY',
+    'TUESDAY',
+    'WEDNESDAY',
+    'THURSDAY',
+    'FRIDAY',
+    'SATURDAY',
+    'SUNDAY',
+  ];
   private readonly http: AxiosInstance;
   private readonly phoneNumberId: string;
   // Stored explicitly so multipart paths (uploadMedia) don't have to
@@ -460,6 +470,81 @@ export class MetaCloudClient {
       const res = await this.http.post<Record<string, unknown>>(`/${this.phoneNumberId}/settings`, {
         calling: { status: 'ENABLED', call_icon_visibility: 'DEFAULT' },
       });
+      return res.data;
+    } catch (err) {
+      throw this.normalizeError(err);
+    }
+  }
+
+  /**
+   * Apply the FULL WhatsApp calling configuration on this number in one POST —
+   * everything a call needs, idempotently. Sending the complete `calling` block
+   * (not a partial patch) makes the result deterministic regardless of prior
+   * state, so it's safe to run on every boot as a self-heal. Covers:
+   *   • status=ENABLED + call_icon_visibility=DEFAULT (calling on, button shown);
+   *   • callback_permission_status (ENABLED = Meta prompts the customer for
+   *     callback permission after a missed/ended call → grants arrive on the
+   *     call_permission_reply webhook we already ingest);
+   *   • call_hours — when enabled, Meta hides the call button outside the given
+   *     business hours so off-hours callers are steered to message rather than
+   *     producing an unanswerable missed call; callHours.enabled=false sends a
+   *     full 24/7 form (see below).
+   */
+  async applyCallingSettings(cfg: {
+    // Meta documents only ENABLED / DISABLED for POST (NOT_SET is a GET-only
+    // state you can't set back to) — so the type is limited to those two.
+    callbackPermissionStatus?: 'ENABLED' | 'DISABLED';
+    callHours: {
+      enabled: boolean; // false = 24/7
+      timezoneId: string;
+      days: string[]; // 'MONDAY'..'SUNDAY'
+      openTime: string; // 'HHMM' 24h, e.g. '0900'
+      closeTime: string; // 'HHMM'
+    };
+  }): Promise<Record<string, unknown>> {
+    const calling: Record<string, unknown> = {
+      status: 'ENABLED',
+      call_icon_visibility: 'DEFAULT',
+    };
+    if (cfg.callbackPermissionStatus) {
+      calling.callback_permission_status = cfg.callbackPermissionStatus;
+    }
+    const ch = cfg.callHours;
+    if (ch.enabled) {
+      calling.call_hours = {
+        status: 'ENABLED',
+        timezone_id: ch.timezoneId,
+        weekly_operating_hours: ch.days.map((day) => ({
+          day_of_week: day,
+          open_time: ch.openTime,
+          close_time: ch.closeTime,
+        })),
+        holiday_schedule: [],
+      };
+    } else {
+      // 24/7. Meta marks timezone_id + weekly_operating_hours as REQUIRED even
+      // when disabling, and no doc example shows a status-only body — a minimal
+      // { status:'DISABLED' } risks a 400 that (atomic POST) would sink the
+      // WHOLE calling apply for the boot. So send the full object: status
+      // DISABLED + a valid timezone + an all-day, all-week schedule (which is
+      // itself "open 24/7"), so it's accepted regardless of how Meta reads the
+      // status, and any previously-set hours are replaced.
+      calling.call_hours = {
+        status: 'DISABLED',
+        timezone_id: ch.timezoneId,
+        weekly_operating_hours: MetaCloudClient.ALL_WEEK.map((day) => ({
+          day_of_week: day,
+          open_time: '0000',
+          close_time: '2359',
+        })),
+        holiday_schedule: [],
+      };
+    }
+    try {
+      const res = await this.http.post<Record<string, unknown>>(
+        `/${this.phoneNumberId}/settings`,
+        { calling },
+      );
       return res.data;
     } catch (err) {
       throw this.normalizeError(err);

@@ -72,16 +72,15 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
       <GlassCard variant="strong" padded="lg">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
         <div>
-          <div className="sos-eyebrow">Service agreement</div>
+          <div className="sos-eyebrow">Service agreements</div>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--sos-text-primary)', marginTop: 4 }}>
-            Agreement for this lead
+            Agreements for this lead
           </h3>
         </div>
         <PrimaryButton
           size="sm"
           iconLeft={<FilePlus2 size={14} />}
           onClick={() => setModalOpen(true)}
-          disabled={rows.length > 0}
         >
           Create Agreement
         </PrimaryButton>
@@ -89,7 +88,8 @@ export function LeadAgreementsTab({ leadId }: { leadId: string }) {
 
       {rows.length > 0 ? (
         <div className="sos-text-faint" style={{ fontSize: 12, marginBottom: 10 }}>
-          Only one agreement per lead. Delete the current one to start a different category.
+          A lead can hold multiple agreements — one per program they apply for. Each bills
+          and tracks its own fee, payments and outstanding balance.
         </div>
       ) : null}
 

@@ -47,8 +47,11 @@ export class FinanceProfileService {
       ? [{ leadId }, { clientId }]
       : [{ leadId }];
 
-    const [agreement, contract, invoices, payments, receipts, handovers, processingCase, expenses, realProcessingCase, consultVisits] = await Promise.all([
-      this.prisma.agreement.findFirst({
+    const [agreementRows, contractRows, invoices, payments, receipts, handovers, processingCase, expenses, realProcessingCase, consultVisits] = await Promise.all([
+      // ALL non-deleted agreements (programs) for this person, newest first — a
+      // person can now hold more than one. Index 0 is the "primary" and backs the
+      // flat top-level fields for backward compatibility.
+      this.prisma.agreement.findMany({
         where: { leadId, deletedAt: null },
         orderBy: { createdAt: 'desc' },
         select: {
@@ -61,12 +64,13 @@ export class FinanceProfileService {
           discountAmount: true,
           generatedPdfKey: true,
           serviceContractId: true,
+          categoryKey: true,
           bioData: true,
           sentAt: true,
           signedAt: true,
         },
       }),
-      this.prisma.serviceContract.findFirst({
+      this.prisma.serviceContract.findMany({
         where: { OR: ownerOr, deletedAt: null },
         orderBy: { createdAt: 'desc' },
         include: { installments: { orderBy: { sequence: 'asc' } } },
@@ -151,43 +155,148 @@ export class FinanceProfileService {
         paidAt: v.checkedInAt,
       }));
 
-    const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
-    const currency = contract?.currency || agreement?.currency || 'CAD';
-    // Sum paid ONLY over invoices in the displayed agreement's currency. The
-    // ledger is native per agreement (paidAmount is now stored native), so if
-    // this customer happens to hold a second agreement in a DIFFERENT currency,
-    // its invoices must not be folded into this figure — that would add e.g.
-    // PKR + CAD into one number, then mislabel the sum with a single currency.
-    // fee / installments below already describe the single (latest) agreement.
-    const paid = invoices
-      .filter((i) => (i.currency || currency) === currency)
-      .reduce((s, i) => s + num(i.paidAmount), 0);
+    // ── Per-agreement ledgers ────────────────────────────────────────────────
+    // Attribute each invoice's PAID to its own agreement (Invoice.agreementId) so
+    // every program shows its OWN fee / paid / outstanding, instead of one
+    // agreement's fee with the whole person's payments folded in. Consult and
+    // legacy unattributed invoices (agreementId = null) net into the newest
+    // program OF THE MATCHING CURRENCY — that preserves audit-#1 (the consult
+    // fee still credits against the service fee, no double-charge, even when the
+    // consult currency differs from the primary program's) AND keeps
+    // single-agreement numbers byte-identical to before.
+    const paidByAgreement = new Map<string, number>();
+    const unattributedPaidByCurrency = new Map<string, number>();
+    for (const i of invoices) {
+      const amt = num(i.paidAmount);
+      if (amt === 0) continue;
+      if (i.agreementId) {
+        paidByAgreement.set(i.agreementId, (paidByAgreement.get(i.agreementId) ?? 0) + amt);
+      } else {
+        const c = i.currency || 'CAD';
+        unattributedPaidByCurrency.set(c, (unattributedPaidByCurrency.get(c) ?? 0) + amt);
+      }
+    }
 
-    // Allocate total verified payments across the installment schedule in
-    // order (AR waterfall) so the ledger shows precise "paid X of Y" without
-    // touching the payment pipeline. Installments arrive ordered by sequence.
-    let remaining = paid;
     const now = Date.now();
-    const installmentsView = (contract?.installments ?? []).map((i) => {
-      const amount = num(i.amount);
-      const covered = Math.max(0, Math.min(remaining, amount));
-      remaining -= covered;
-      const fullyPaid = amount > 0 && covered >= amount - 0.005;
-      const overdue = !fullyPaid && i.dueDate ? new Date(i.dueDate).getTime() < now : false;
+    // AR waterfall: allocate an agreement's paid across its installment schedule
+    // (ordered by sequence) so the ledger shows precise "paid X of Y".
+    const buildInstallmentView = (
+      insts: (typeof contractRows)[number]['installments'],
+      paidPool: number,
+    ) => {
+      let remaining = paidPool;
+      return insts.map((i) => {
+        const amount = num(i.amount);
+        const covered = Math.max(0, Math.min(remaining, amount));
+        remaining -= covered;
+        const fullyPaid = amount > 0 && covered >= amount - 0.005;
+        const overdue = !fullyPaid && i.dueDate ? new Date(i.dueDate).getTime() < now : false;
+        return {
+          id: i.id,
+          sequence: i.sequence,
+          dueDate: i.dueDate,
+          amount,
+          description: i.description,
+          status: i.status,
+          paidAmount: covered,
+          paidStatus: fullyPaid ? 'PAID' : covered > 0 ? 'PARTIALLY_PAID' : overdue ? 'OVERDUE' : 'DUE',
+          recognizedAt: i.recognizedAt,
+        };
+      });
+    };
+
+    // Which ledger absorbs each currency's unattributed (consult/legacy) paid:
+    // the FIRST (newest, since agreementRows is createdAt-desc) agreement of that
+    // currency. This keeps a consult netting against a SAME-currency program even
+    // when it isn't the primary — without it a PKR consult on a customer whose
+    // newest agreement is CAD would be dropped, re-opening the audit-#1
+    // double-charge for that PKR program.
+    const currencyOfAgreement = (a: (typeof agreementRows)[number]) => {
+      const c = contractRows.find((ct) => ct.id === a.serviceContractId) ?? null;
+      return c?.currency || a.currency || 'CAD';
+    };
+    const unattributedAbsorberIdx = new Map<string, number>();
+    agreementRows.forEach((a, idx) => {
+      const cur = currencyOfAgreement(a);
+      if (!unattributedAbsorberIdx.has(cur)) unattributedAbsorberIdx.set(cur, idx);
+    });
+
+    const agreementLedgers = agreementRows.map((a, idx) => {
+      const c = contractRows.find((ct) => ct.id === a.serviceContractId) ?? null;
+      const ledgerCurrency = c?.currency || a.currency || 'CAD';
+      const ledgerFee = num(c?.totalAmount) || num(a.totalAmount);
+      const extra =
+        unattributedAbsorberIdx.get(ledgerCurrency) === idx
+          ? (unattributedPaidByCurrency.get(ledgerCurrency) ?? 0)
+          : 0;
+      const ledgerPaid = (paidByAgreement.get(a.id) ?? 0) + extra;
+      const insts = buildInstallmentView(c?.installments ?? [], ledgerPaid);
       return {
-        id: i.id,
-        sequence: i.sequence,
-        dueDate: i.dueDate,
-        amount,
-        description: i.description,
-        status: i.status,
-        paidAmount: covered,
-        paidStatus: fullyPaid ? 'PAID' : covered > 0 ? 'PARTIALLY_PAID' : overdue ? 'OVERDUE' : 'DUE',
-        // Revenue recognition (accrual): when this milestone was delivered.
-        recognizedAt: i.recognizedAt,
+        agreement: {
+          id: a.id,
+          agreementNumber: a.agreementNumber,
+          status: a.status,
+          currency: a.currency,
+          totalAmount: num(a.totalAmount),
+          grossAmount: num(a.grossAmount),
+          discountAmount: num(a.discountAmount),
+          hasPdf: !!a.generatedPdfKey,
+          serviceContractId: a.serviceContractId,
+          categoryKey: a.categoryKey,
+          bioData: a.bioData,
+          sentAt: a.sentAt,
+          signedAt: a.signedAt,
+        },
+        contract: c
+          ? {
+              id: c.id,
+              contractNumber: c.contractNumber,
+              status: c.status,
+              totalAmount: num(c.totalAmount),
+              currency: c.currency,
+              signedDate: c.signedDate,
+              hasSignedAgreement: !!c.agreementKey,
+              agreementFileName: c.agreementFileName,
+            }
+          : null,
+        installments: insts,
+        totals: {
+          fee: ledgerFee,
+          paid: ledgerPaid,
+          outstanding: Math.max(0, ledgerFee - ledgerPaid),
+          currency: ledgerCurrency,
+          installmentsPaid: insts.filter((i) => i.paidStatus === 'PAID').length,
+          installmentsTotal: insts.length,
+        },
       };
     });
-    const installmentsPaid = installmentsView.filter((i) => i.paidStatus === 'PAID').length;
+
+    // Primary = newest agreement; it backs the flat top-level fields so existing
+    // callers (and single-agreement customers) are unchanged.
+    const primary = agreementLedgers[0] ?? null;
+    const fee = primary?.totals.fee ?? 0;
+    // Consult-only customer (no service agreement yet): surface the consult /
+    // unattributed paid in the flat Paid/currency so the money strip isn't a
+    // bare "Paid 0" (the pre-multi-agreement behaviour summed those invoices).
+    // fee stays 0 → outstanding 0; this only restores visibility of what was paid.
+    const consultOnlyFallback =
+      !primary && unattributedPaidByCurrency.size > 0
+        ? Array.from(unattributedPaidByCurrency.entries()).sort((a, b) => b[1] - a[1])[0]
+        : null;
+    const paid = primary?.totals.paid ?? consultOnlyFallback?.[1] ?? 0;
+    const currency = primary?.totals.currency ?? consultOnlyFallback?.[0] ?? 'CAD';
+    const installmentsView = primary?.installments ?? [];
+    const installmentsPaid = primary?.totals.installmentsPaid ?? 0;
+    const perCurrencySummary = Array.from(
+      agreementLedgers.reduce((m, l) => {
+        const s = m.get(l.totals.currency) ?? { currency: l.totals.currency, fee: 0, paid: 0, outstanding: 0 };
+        s.fee += l.totals.fee;
+        s.paid += l.totals.paid;
+        s.outstanding += l.totals.outstanding;
+        m.set(l.totals.currency, s);
+        return m;
+      }, new Map<string, { currency: string; fee: number; paid: number; outstanding: number }>()).values(),
+    );
     // Express expenses in the AGREEMENT's own currency so the whole ledger is
     // native and internally consistent — a PKR agreement's margin is PKR fee −
     // PKR cost, never PKR − CAD. An expense already in that currency contributes
@@ -258,34 +367,15 @@ export class FinanceProfileService {
         assignedEmployee: lead.assignedEmployee,
       },
       clientId,
-      agreement: agreement
-        ? {
-            id: agreement.id,
-            agreementNumber: agreement.agreementNumber,
-            status: agreement.status,
-            currency: agreement.currency,
-            totalAmount: num(agreement.totalAmount),
-            grossAmount: num(agreement.grossAmount),
-            discountAmount: num(agreement.discountAmount),
-            hasPdf: !!agreement.generatedPdfKey,
-            serviceContractId: agreement.serviceContractId,
-            bioData: agreement.bioData,
-            sentAt: agreement.sentAt,
-            signedAt: agreement.signedAt,
-          }
-        : null,
-      contract: contract
-        ? {
-            id: contract.id,
-            contractNumber: contract.contractNumber,
-            status: contract.status,
-            totalAmount: num(contract.totalAmount),
-            currency: contract.currency,
-            signedDate: contract.signedDate,
-            hasSignedAgreement: !!contract.agreementKey,
-            agreementFileName: contract.agreementFileName,
-          }
-        : null,
+      // One ledger per agreement (program), newest first. Each carries its own
+      // agreement + contract + installments + { fee, paid, outstanding }.
+      agreements: agreementLedgers,
+      // Per-currency roll-up across all programs (avoids mixing PKR + CAD).
+      summary: { byCurrency: perCurrencySummary, agreementCount: agreementLedgers.length },
+      // ── Backward-compat: flat fields mirror the PRIMARY (newest) program so
+      //    existing single-agreement callers are unchanged. ──
+      agreement: primary?.agreement ?? null,
+      contract: primary?.contract ?? null,
       installments: installmentsView,
       invoices: invoices.map((i) => ({
         id: i.id,
@@ -437,16 +527,16 @@ export class FinanceProfileService {
       this.prisma.serviceContract.findMany({
         where: { OR: ownerOr, deletedAt: null },
         orderBy: { createdAt: 'desc' },
-        select: { leadId: true, clientId: true, totalAmount: true, currency: true, status: true },
+        select: { id: true, leadId: true, clientId: true, totalAmount: true, currency: true, status: true },
       }),
       this.prisma.agreement.findMany({
         where: { leadId: { in: ids }, deletedAt: null },
         orderBy: { createdAt: 'desc' },
-        select: { leadId: true, totalAmount: true, currency: true, status: true },
+        select: { id: true, leadId: true, totalAmount: true, currency: true, status: true, serviceContractId: true },
       }),
       this.prisma.invoice.findMany({
         where: { OR: ownerOr, deletedAt: null },
-        select: { leadId: true, clientId: true, paidAmount: true },
+        select: { leadId: true, clientId: true, paidAmount: true, agreementId: true, currency: true },
       }),
       this.prisma.processingCase.findMany({
         where: { leadId: { in: ids } },
@@ -470,11 +560,26 @@ export class FinanceProfileService {
       row.leadId === lead.id || (!!lead.convertedClientId && row.clientId === lead.convertedClientId);
 
     return leads.map((lead) => {
-      const contract = contracts.find((c) => matchesOwner(c, lead));
-      const agreement = agreements.find((a) => a.leadId === lead.id);
+      const agreement = agreements.find((a) => a.leadId === lead.id); // newest = primary
+      // Anchor the contract to the PRIMARY agreement's own contract (not just the
+      // newest contract of any program) so fee, paid and currency all describe the
+      // same program — otherwise a multi-agreement customer's fee (program B's
+      // contract) and paid (program A's invoices) would describe different deals.
+      const contract =
+        (agreement?.serviceContractId
+          ? contracts.find((c) => c.id === agreement.serviceContractId)
+          : undefined) ?? undefined;
+      const rowCurrency = contract?.currency || agreement?.currency || 'CAD';
+      // Paid for the PRIMARY agreement only (matches the profile's primary program
+      // + fee below), plus consult/legacy unattributed invoices in that currency.
+      // The old sum-all-invoices mixed currencies AND folded in other programs'
+      // payments, inflating `paid` and breaking outstanding for multi-agreement.
       const paid = invoices
         .filter((i) => matchesOwner(i, lead))
-        .reduce((sum, i) => sum + num(i.paidAmount), 0);
+        .reduce((sum, i) => {
+          if (i.agreementId) return i.agreementId === agreement?.id ? sum + num(i.paidAmount) : sum;
+          return (i.currency || rowCurrency) === rowCurrency ? sum + num(i.paidAmount) : sum;
+        }, 0);
       const fee = num(contract?.totalAmount) || num(agreement?.totalAmount);
       const stage = cases.find((c) => c.leadId === lead.id)?.stage ?? null;
       return {

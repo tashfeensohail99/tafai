@@ -222,25 +222,15 @@ export class AgreementsService {
         targetCountry: true,
         serviceFeeAmount: true,
         serviceFeeCurrency: true,
+        convertedClientId: true,
       },
     });
     if (!lead) throw new NotFoundException('Lead not found');
 
-    // One agreement per lead. A lead may have at most one non-deleted
-    // agreement; to start over, the existing one must be deleted first.
-    // Approved/finalised agreements can't be deleted, which correctly blocks
-    // a second agreement once a deal is locked.
-    const existingAgreement = await this.prisma.agreement.findFirst({
-      where: { leadId: dto.leadId, deletedAt: null },
-      select: { agreementNumber: true, status: true },
-    });
-    if (existingAgreement) {
-      throw new ConflictException(
-        `This lead already has an agreement (${existingAgreement.agreementNumber} — ` +
-          `${existingAgreement.status.replace(/_/g, ' ').toLowerCase()}). ` +
-          'Open or delete it before creating a new one.',
-      );
-    }
+    // A lead/client can hold MULTIPLE agreements (one per program/service they
+    // apply for). No one-per-lead lock — the finance ledger attributes each
+    // invoice/payment to its agreement (Invoice.agreementId) so every program
+    // shows its own fee/paid/outstanding.
 
     const bioData: AgreementBioData = {
       applicantName: `${lead.firstName} ${lead.lastName}`.trim(),
@@ -286,6 +276,10 @@ export class AgreementsService {
       data: {
         agreementNumber,
         leadId: lead.id,
+        // Stamp the converted client (if the lead has become one) so the
+        // finance ledger can attribute this agreement's invoices by clientId
+        // too — multi-agreement people are often already clients.
+        clientId: lead.convertedClientId ?? null,
         templateId: template.id,
         categoryKey: template.categoryKey,
         status: AgreementStatus.DRAFT,

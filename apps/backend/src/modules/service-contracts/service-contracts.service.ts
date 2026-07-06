@@ -394,12 +394,25 @@ export class ServiceContractsService {
     const invoiceNumber = await this.generateInvoiceNumber();
     const amount = installment.amount.toString();
 
+    // Attribute the invoice to the agreement that owns this contract, so the
+    // per-agreement finance ledger sums its payments under the right program.
+    // (Agreement→contract is one-way via Agreement.serviceContractId, minted 1:1
+    // at approval — de-facto unique. `serviceContractId` carries no DB unique
+    // constraint, so order by createdAt for a deterministic pick if a data
+    // anomaly ever pointed two agreements at one contract.)
+    const owningAgreement = await this.prisma.agreement.findFirst({
+      where: { serviceContractId: installment.contractId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+
     return this.prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.create({
         data: {
           installmentId: installment.id,
           leadId: installment.contract.leadId,
           clientId: installment.contract.clientId,
+          agreementId: owningAgreement?.id ?? null,
           invoiceNumber,
           status: InvoiceStatus.SENT,
           currency: installment.contract.currency,

@@ -27,6 +27,17 @@ class CallController extends StateNotifier<CallState> {
   MediaStream? _localStream;
   MediaStream? _remoteStream;
 
+  // Pre-accept warm-up (Meta early media): started when the ring shows so the
+  // peer + SDP are built (mic muted) and Meta runs ICE/DTLS DURING the ring —
+  // acceptIncoming() then just unmutes + answers with the same SDP. The future
+  // resolves true when the warmed _pc is reusable; false = it self-cleaned and
+  // accept must run the classic build.
+  String? _preWarmCallId;
+  Future<bool>? _preWarmFuture;
+  // Last connection state of the CURRENT peer — lets the warmed accept path
+  // detect "media already connected during the ring" without an async getter.
+  RTCPeerConnectionState? _lastPcState;
+
   Timer? _ringTimeout; // inbound: auto-dismiss if unanswered
   Timer? _dialTimeout; // outbound: give up if no answer
   Timer? _tick; // 1s call timer
@@ -125,6 +136,104 @@ class CallController extends StateNotifier<CallState> {
         _safeReject();
       }
     });
+    // Warm the media pipeline + pre-accept while the ring plays, so Accept is
+    // just unmute + answer. Self-cleaning on failure → classic accept path.
+    _preWarmCallId = e.callId;
+    _preWarmFuture = _preWarmIncoming(e.callId);
+  }
+
+  /// Pre-accept warm-up (Meta-recommended early media). During the ring:
+  /// ICE config + offer are fetched, the mic is captured MUTED, the peer +
+  /// SDP answer are built, candidates gathered, and /pre-accept POSTed so
+  /// Meta establishes ICE/DTLS while the phone is still ringing. The customer
+  /// keeps hearing ringing (audio only flows after the real accept).
+  ///
+  /// Resolves true when the warmed `_pc` is reusable by acceptIncoming().
+  /// On ANY failure it disposes only its own artifacts and resolves false —
+  /// accept then runs the classic build exactly as before.
+  Future<bool> _preWarmIncoming(String callId) async {
+    bool stillRinging() =>
+        state.callId == callId && state.phase == CallPhase.ringing;
+    try {
+      // Never pop a permission prompt over the ringing/CallKit UI — if mic
+      // isn't already granted, skip; acceptIncoming's _ensureMic prompts then.
+      final mic = await Permission.microphone.status;
+      if (!mic.isGranted) {
+        _log('preWarm: mic not yet granted — skipping');
+        return false;
+      }
+
+      final t0 = DateTime.now();
+      final results = await Future.wait<dynamic>([
+        _api.getIceServers(),
+        _api.getInboundOffer(callId),
+      ]);
+      if (!stillRinging()) return false;
+      final ice = results[0] as List<Map<String, dynamic>>;
+      final offer = results[1] as String;
+
+      await _openLocalMedia();
+      if (!stillRinging()) return false;
+      // Muted until Accept — the rep hasn't answered; nothing may be sent.
+      final local = _localStream;
+      if (local != null) {
+        for (final t in local.getAudioTracks()) {
+          t.enabled = false;
+        }
+      }
+
+      final pc = await _createPeer(ice);
+      await pc.setRemoteDescription(RTCSessionDescription(offer, 'offer'));
+      final answer = await pc.createAnswer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': false,
+      });
+      await pc.setLocalDescription(answer);
+      await _waitForIce(pc);
+      if (!identical(pc, _pc)) return false; // torn down / replaced mid-warm
+      final localSdp = (await pc.getLocalDescription())?.sdp;
+      if (localSdp == null) return false;
+      _log('preWarm: pipeline ready in '
+          '${DateTime.now().difference(t0).inMilliseconds}ms');
+
+      // Rep already tapped Accept mid-warm: peer is usable; skip the
+      // pre-accept POST — the real answer is being sent by acceptIncoming.
+      if (!stillRinging()) return identical(pc, _pc);
+
+      // Tell Meta to start ICE/DTLS now. Best-effort: the warmed peer is
+      // reusable even if this POST fails (accept still saves the build time).
+      try {
+        await _api.preAccept(callId, localSdp);
+        _log('preWarm: pre-accept sent — media warming during ring');
+      } catch (e) {
+        _log('preWarm: pre-accept POST failed (soft): $e');
+      }
+      return true;
+    } catch (e) {
+      _log('preWarm FAILED (soft): $e');
+      // Dispose only our own artifacts; a concurrent teardown already nulled
+      // the fields, and identical() keeps us off someone else's peer.
+      final pc = _pc;
+      if (pc != null && state.callId == callId && state.phase == CallPhase.ringing) {
+        _pc = null;
+        try {
+          await pc.close();
+        } catch (_) {}
+        final local = _localStream;
+        _localStream = null;
+        if (local != null) {
+          for (final t in local.getTracks()) {
+            try {
+              t.stop();
+            } catch (_) {}
+          }
+          try {
+            await local.dispose();
+          } catch (_) {}
+        }
+      }
+      return false;
+    }
   }
 
   Future<void> _onRemoteAnswer(CallAnswered e) async {
@@ -231,6 +340,38 @@ class CallController extends StateNotifier<CallState> {
     unawaited(_acquireLocks()); // fire-and-forget — don't serialize on it
 
     try {
+      // Pre-warmed path: the peer + SDP were built (and Meta pre-accepted)
+      // during the ring — Accept is just unmute + answer with the SAME SDP,
+      // so audio starts near-instantly.
+      final warmed = (_preWarmCallId == callId && _preWarmFuture != null) &&
+          await _preWarmFuture!.catchError((_) => false);
+      if (warmed && _pc != null) {
+        final pc = _pc!;
+        final local = _localStream;
+        if (local != null) {
+          for (final t in local.getAudioTracks()) {
+            t.enabled = true; // unmute — the rep has now actually answered
+          }
+        }
+        final localSdp = (await pc.getLocalDescription())?.sdp;
+        if (localSdp != null) {
+          final tPost = DateTime.now();
+          await _api.answer(callId, localSdp);
+          _log('accept(warm): answer POSTed in '
+              '${DateTime.now().difference(tPost).inMilliseconds}ms');
+          if (_lastPcState ==
+              RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+            // Media already came up during the ring — _onConnected skipped it
+            // while ringing, so flip to in-call now.
+            _onConnected();
+          }
+          // else: onConnectionState → inCall flips when media connects.
+          return;
+        }
+        // No SDP on the warmed peer (shouldn't happen) → classic rebuild below.
+        _log('accept(warm): no local SDP — falling back to classic build');
+      }
+
       final t0 = DateTime.now();
       // Network fetches and mic capture have no ordering dependency — run
       // them concurrently to shave ~1s off connect time.
@@ -373,6 +514,7 @@ class CallController extends StateNotifier<CallState> {
         await leftover.close();
       } catch (_) {}
     }
+    _lastPcState = null; // fresh peer — forget the previous peer's state
     final pc = await createPeerConnection({
       'iceServers': ice,
       'sdpSemantics': 'unified-plan',
@@ -404,6 +546,7 @@ class CallController extends StateNotifier<CallState> {
         _log('connectionState(STALE peer): $s — ignored');
         return;
       }
+      _lastPcState = s;
       _log('connectionState: $s (phase=${state.phase.name})');
       switch (s) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
@@ -424,7 +567,13 @@ class CallController extends StateNotifier<CallState> {
           }
         case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
         case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          if (state.phase == CallPhase.inCall ||
+          if (state.phase == CallPhase.ringing) {
+            // A pre-accept WARM-UP peer failed before the rep answered — must
+            // NOT tear down the still-live ring. Discard the dead warm peer
+            // (frees the captured mic) so acceptIncoming runs the classic
+            // build; keep ringing.
+            _discardWarmPeer(pc);
+          } else if (state.phase == CallPhase.inCall ||
               state.phase == CallPhase.reconnecting ||
               state.phase == CallPhase.connecting) {
             _teardown(reason: 'Call ended');
@@ -436,6 +585,33 @@ class CallController extends StateNotifier<CallState> {
 
     _pc = pc;
     return pc;
+  }
+
+  /// Discard a pre-accept warm-up peer that died during the ring, freeing the
+  /// captured (muted) mic, so acceptIncoming falls back to the classic build.
+  /// Only touches the peer if it's still the current one — never a live call's.
+  void _discardWarmPeer(RTCPeerConnection pc) {
+    if (!identical(pc, _pc)) return;
+    _log('discarding dead warm-up peer (ring still live)');
+    _pc = null;
+    _lastPcState = null;
+    _preWarmCallId = null;
+    _preWarmFuture = null;
+    try {
+      pc.close();
+    } catch (_) {}
+    final local = _localStream;
+    _localStream = null;
+    if (local != null) {
+      for (final t in local.getTracks()) {
+        try {
+          t.stop();
+        } catch (_) {}
+      }
+      try {
+        local.dispose();
+      } catch (_) {}
+    }
   }
 
   /// Non-trickle: the SDP we send must already carry usable candidates, so we
@@ -480,6 +656,11 @@ class CallController extends StateNotifier<CallState> {
   }
 
   void _onConnected() {
+    // Pre-accept warm-up: media can reach 'connected' while the phone is STILL
+    // RINGING (Meta ran ICE/DTLS during the ring — by design, no audio flows
+    // until the real accept). Stay on the ringing UI; acceptIncoming() flips
+    // to in-call after the answer POST.
+    if (state.phase == CallPhase.ringing) return;
     _disconnectGrace?.cancel();
     _disconnectGrace = null;
     if (state.phase == CallPhase.inCall) return;
@@ -612,6 +793,10 @@ class CallController extends StateNotifier<CallState> {
     _disconnectGrace = null;
     _heartbeat = null;
     _heartbeatCallId = null;
+    // Any warmed peer is disposed right below; forget the warm-up handle.
+    _preWarmCallId = null;
+    _preWarmFuture = null;
+    _lastPcState = null;
 
     // Fire-and-forget the recording flush before tearing media down.
     unawaited(_stopAndUploadRecording());

@@ -65,6 +65,22 @@ class CallApi {
     }
   }
 
+  /// POST /whatsapp/calls/{id}/pre-accept { sdpAnswer } — Meta-recommended
+  /// early media: sent while the call is still RINGING so ICE/DTLS warm up
+  /// during the ring; the real answer() then carries the SAME SDP and audio
+  /// starts near-instantly. Best-effort — a failure just means the classic
+  /// (slower) accept path.
+  Future<void> preAccept(String callId, String sdpAnswer) async {
+    try {
+      await _c.post<dynamic>(
+        '/whatsapp/calls/$callId/pre-accept',
+        data: {'sdpAnswer': sdpAnswer},
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   /// POST /whatsapp/calls/{id}/answer { sdpAnswer }
   Future<void> answer(String callId, String sdpAnswer) async {
     try {

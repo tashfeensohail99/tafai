@@ -110,6 +110,40 @@ export class WhatsAppCallsService {
     return { call, client: this.metaFactory.forChannel(channel) };
   }
 
+  /**
+   * Meta-recommended PRE-ACCEPT (early media): relay the dock's SDP answer via
+   * action=pre_accept while the call is still RINGING, so Meta establishes
+   * ICE/DTLS during the ring. Audio still only flows after the real accept —
+   * the customer keeps hearing ringing — but the pipe is already built, so the
+   * post-answer silence (previously 3-8s of setup exactly when callers hang
+   * up) collapses to ~nothing and first words aren't clipped.
+   *
+   * Deliberately NON-authoritative: status stays RINGING (the rep has NOT
+   * answered), nothing is attributed, and every failure is soft — the dock
+   * falls back to the classic accept flow untouched. answer() must then carry
+   * the SAME SDP (Meta requires pre_accept and accept SDPs to match), which it
+   * does because the dock reuses the warmed peer's local description.
+   */
+  async preAccept(id: string, sdpAnswer: string) {
+    if (!sdpAnswer) throw new BadRequestException('Missing sdpAnswer');
+    const { call, client } = await this.clientForCall(id);
+    // Only a still-ringing call can be pre-accepted; anything else is a soft
+    // no-op (the ring may have been answered/ended while the dock was warming).
+    if (call.status !== 'RINGING') return { ok: false, reason: 'not-ringing' };
+    // Already pre-accepted (another tab / duplicate event): don't re-send a
+    // second SDP to Meta — it would poison the warming session.
+    if (call.sdpAnswer) return { ok: true, already: true };
+    await client.respondToCall({ callId: call.waCallId, action: 'pre_accept', sdpAnswer });
+    // Guarded on RINGING so a concurrent answer() (which writes the same SDP +
+    // ANSWERED) always wins the race.
+    await this.prisma.whatsAppCall.updateMany({
+      where: { id, status: 'RINGING' },
+      data: { sdpAnswer },
+    });
+    this.log.log(`call ${id} pre-accepted — media warming during ring`);
+    return { ok: true };
+  }
+
   /** Accept the call with the browser's SDP answer. */
   async answer(id: string, sdpAnswer: string, userId: string) {
     if (!sdpAnswer) throw new NotFoundException('Missing sdpAnswer');

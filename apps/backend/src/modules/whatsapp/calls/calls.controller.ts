@@ -84,6 +84,16 @@ export class WhatsAppCallsController {
     return this.calls.getForDock(id);
   }
 
+  // Meta-recommended pre-accept: the dock builds its SDP answer DURING the
+  // ring and posts it here so Meta warms ICE/DTLS before the rep even taps
+  // Accept — audio then starts near-instantly after answer (no 3-8s of
+  // post-answer silence, no clipped first words). Best-effort: any failure
+  // leaves the normal answer path fully intact.
+  @Post(':id/pre-accept')
+  preAccept(@Param('id', ParseUUIDPipe) id: string, @Body() body: { sdpAnswer: string }) {
+    return this.calls.preAccept(id, body?.sdpAnswer);
+  }
+
   @Post(':id/answer')
   answer(
     @Param('id', ParseUUIDPipe) id: string,

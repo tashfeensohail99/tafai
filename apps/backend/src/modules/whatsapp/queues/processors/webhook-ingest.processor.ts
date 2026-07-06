@@ -330,16 +330,31 @@ export class WebhookIngestProcessor extends WorkerHost {
     if (already) return;
 
     const it = msg.interactive as
-      | { call_permission_reply?: { response?: string; expiration_timestamp?: number | string } }
+      | {
+          call_permission_reply?: {
+            response?: string;
+            expiration_timestamp?: number | string;
+            // Permanent grant (no expiry — valid until the customer revokes).
+            is_permanent?: boolean;
+            // 'user_action' = tapped Allow on our request message;
+            // 'automatic'  = granted via Meta's own callback prompt after a
+            //                missed/ended call (callback_permission_status).
+            response_source?: string;
+          };
+        }
       | undefined;
     const reply = it?.call_permission_reply;
     const granted = String(reply?.response ?? '').toLowerCase() === 'accept';
+    const isPermanent = reply?.is_permanent === true;
+    const viaCallbackPrompt = String(reply?.response_source ?? '') === 'automatic';
     const now = new Date();
 
     // expiration_timestamp is seconds in Meta's raw payload (some BSPs send ms).
-    // Normalise; default to Meta's 7-day grant if absent on an accept.
+    // Normalise; default to Meta's 7-day grant if absent on an accept. A
+    // PERMANENT grant carries no expiry — null (both the web chip and mobile
+    // canCall already treat a null expiry as non-expiring).
     let expiresAt: Date | null = null;
-    if (granted) {
+    if (granted && !isPermanent) {
       const rawTs = reply?.expiration_timestamp;
       const n = typeof rawTs === 'string' ? Number(rawTs) : rawTs;
       expiresAt =
@@ -376,7 +391,12 @@ export class WebhookIngestProcessor extends WorkerHost {
       },
     });
 
-    const expiryNote = expiresAt ? ` (until ${expiresAt.toISOString().slice(0, 10)})` : '';
+    const expiryNote = isPermanent
+      ? ' (permanent)'
+      : expiresAt
+        ? ` (until ${expiresAt.toISOString().slice(0, 10)})`
+        : '';
+    const sourceNote = viaCallbackPrompt ? ' — via Meta’s callback prompt after their call' : '';
     await this.prisma.whatsAppMessage.create({
       data: {
         threadId: thread.id,
@@ -388,8 +408,15 @@ export class WebhookIngestProcessor extends WorkerHost {
         type: WhatsAppMessageType.TEXT,
         status: WhatsAppMessageStatus.RECEIVED,
         body: granted
-          ? `🔔 Customer ALLOWED WhatsApp calls${expiryNote}. You can call them now.`
+          ? `🔔 Customer ALLOWED WhatsApp calls${expiryNote}${sourceNote}. You can call them now.`
           : '🔔 Customer DECLINED WhatsApp calls.',
+        // Keep the raw grant facts queryable (permanent vs temporary, and
+        // whether Meta's automatic callback prompt — not our request — earned it).
+        payload: {
+          callPermissionReply: true,
+          isPermanent,
+          responseSource: reply?.response_source ?? null,
+        } as unknown as Prisma.InputJsonValue,
         createdAt: msg.timestamp ? new Date(Number(msg.timestamp) * 1000) : now,
       },
     });
@@ -406,7 +433,10 @@ export class WebhookIngestProcessor extends WorkerHost {
         leadId: thread.leadId,
         clientId: thread.clientId,
         status: granted ? 'GRANTED' : 'REJECTED',
+        // null = permanent grant (clients already render a missing expiry as
+        // non-expiring "Calls allowed").
         expiresAt: expiresAt?.toISOString() ?? null,
+        isPermanent,
       });
     }
 
@@ -1376,10 +1406,12 @@ export class WebhookIngestProcessor extends WorkerHost {
    * bot — otherwise the bot couldn't pick up the caller's reply.
    *
    * Guard rails:
-   *  - Free-form text needs an OPEN 24h customer-service window. A call does
-   *    NOT open that window (only an inbound message does), so a contact who
-   *    only ever called is skipped here — reaching them needs an approved
-   *    template (tracked as a follow-up enhancement).
+   *  - An OPEN 24h window ⇒ free-form text (below). A CLOSED window (a call
+   *    does NOT open the window — only an inbound message does) ⇒ the approved
+   *    `missed_call_callback` UTILITY template instead, so callers who only
+   *    ever called (43% of misses previously got NOTHING) are still invited.
+   *    If the template isn't approved/synced yet, the closed-window case
+   *    degrades to the old skip.
    *  - De-duped to at most one invite per thread per hour so a burst of missed
    *    calls doesn't spam the customer. The per-call idempotency key is a
    *    second layer against Meta webhook retries.
@@ -1394,17 +1426,17 @@ export class WebhookIngestProcessor extends WorkerHost {
     const now = new Date();
     const thread = await this.prisma.whatsAppThread.findUnique({
       where: { id: args.threadId },
-      select: { id: true, windowExpiresAt: true },
+      select: {
+        id: true,
+        windowExpiresAt: true,
+        lead: { select: { firstName: true } },
+        client: { select: { firstName: true } },
+      },
     });
     if (!thread) return;
 
-    // No open 24h window ⇒ we can't free-form message; skip (template TODO).
-    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
-      this.log.debug(`missed-call invite skipped for thread ${args.threadId} (window closed)`);
-      return;
-    }
-
-    // At most one invite per thread per hour.
+    // At most one invite per thread per hour (both free-form + template paths
+    // stamp payload.missedCallInvite, so the dedupe covers either).
     const recent = await this.prisma.whatsAppMessage.findFirst({
       where: {
         threadId: args.threadId,
@@ -1419,30 +1451,138 @@ export class WebhookIngestProcessor extends WorkerHost {
       return;
     }
 
+    const windowOpen =
+      !!thread.windowExpiresAt && thread.windowExpiresAt.getTime() > now.getTime();
+
+    // Closed window ⇒ template path. Meta only accepts approved templates
+    // outside the 24h window.
+    if (!windowOpen) {
+      await this.sendMissedCallTemplate(args, thread.lead?.firstName ?? thread.client?.firstName);
+      return;
+    }
+
     const body =
       'Hi 👋 Sorry we missed your call just now! If you’d like, simply reply here ' +
       'with a day and time that suits you and we’ll arrange a callback/appointment ' +
       'for you. We’re available Monday–Saturday, 9 AM–6 PM (Pakistan time). 🙏';
 
-    const msg = await this.prisma.whatsAppMessage.create({
-      data: {
-        threadId: args.threadId,
-        channelId: args.channelId,
-        leadId: args.leadId,
-        clientId: args.clientId,
-        direction: WhatsAppMessageDirection.OUTBOUND,
-        type: WhatsAppMessageType.TEXT,
-        status: WhatsAppMessageStatus.QUEUED,
-        body,
-        // System message (no sentByEmployeeId) → keeps the AI bot active so it
-        // can handle the caller's reply. The flag drives the per-hour dedupe.
-        payload: { missedCallInvite: true } as unknown as Prisma.InputJsonValue,
-        idempotencyKey: `missedcall-${args.waCallId}`,
-      },
-      select: { id: true },
+    try {
+      const msg = await this.prisma.whatsAppMessage.create({
+        data: {
+          threadId: args.threadId,
+          channelId: args.channelId,
+          leadId: args.leadId,
+          clientId: args.clientId,
+          direction: WhatsAppMessageDirection.OUTBOUND,
+          type: WhatsAppMessageType.TEXT,
+          status: WhatsAppMessageStatus.QUEUED,
+          body,
+          // System message (no sentByEmployeeId) → keeps the AI bot active so it
+          // can handle the caller's reply. The flag drives the per-hour dedupe.
+          payload: { missedCallInvite: true } as unknown as Prisma.InputJsonValue,
+          idempotencyKey: `missedcall-${args.waCallId}`,
+        },
+        select: { id: true },
+      });
+      await this.outboundQueue.add('send', { messageId: msg.id }, { jobId: msg.id });
+      this.log.log(`missed-call invite queued for thread ${args.threadId}`);
+    } catch (e) {
+      // P2002 = a concurrent duplicate-terminate redelivery already created this
+      // call's invite (idempotencyKey unique) — fine, exactly one send. Same
+      // swallow as the template path, so no ERROR-level log noise.
+      if ((e as { code?: string }).code === 'P2002') return;
+      throw e;
+    }
+  }
+
+  /**
+   * Closed-window missed-call invite: send the approved `missed_call_callback`
+   * UTILITY template (a template is the only thing Meta accepts outside the 24h
+   * window; a call does not open one). Degrades to a debug-skip when the
+   * template isn't approved/synced on the channel yet, so this is safe to ship
+   * before the template clears Meta review. Same payload.missedCallInvite flag
+   * as the free-form path so the caller's per-hour dedupe covers both.
+   */
+  private async sendMissedCallTemplate(
+    args: {
+      threadId: string;
+      channelId: string;
+      leadId: string | null;
+      clientId: string | null;
+      waCallId: string;
+    },
+    rawFirstName: string | null | undefined,
+  ): Promise<void> {
+    const tpl = await this.prisma.whatsAppTemplate.findFirst({
+      where: { channelId: args.channelId, name: 'missed_call_callback', status: 'APPROVED' },
+      select: { name: true, language: true, components: true },
     });
-    await this.outboundQueue.add('send', { messageId: msg.id }, { jobId: msg.id });
-    this.log.log(`missed-call invite queued for thread ${args.threadId}`);
+    if (!tpl) {
+      this.log.debug(
+        `missed-call invite skipped for thread ${args.threadId} (window closed, missed_call_callback template not approved/synced)`,
+      );
+      return;
+    }
+
+    // Greeting name: drop placeholder junk so the template never greets a phone
+    // number or a system placeholder. Falls back to a neutral "there". Note
+    // "WhatsApp": caller-only leads (this template's PRIMARY audience) are
+    // auto-named "WhatsApp <digits>", so without this filter the customer would
+    // literally receive "Hi WhatsApp, sorry we just missed your call…".
+    const v = (rawFirstName ?? '').trim();
+    const name =
+      v.length >= 2 &&
+      !/^[+\d]/.test(v) &&
+      !/^customer\b/i.test(v) &&
+      !/^whatsapp\b/i.test(v)
+        ? v
+        : 'there';
+
+    // Rendered body for the chat panel (what the customer will see).
+    const bodyComponent = (Array.isArray(tpl.components) ? tpl.components : []).find(
+      (c): c is { type: string; text?: string } =>
+        !!c && typeof c === 'object' && String((c as { type?: unknown }).type).toUpperCase() === 'BODY',
+    );
+    const rendered =
+      typeof bodyComponent?.text === 'string'
+        ? bodyComponent.text.replace(/\{\{1\}\}/g, name)
+        : null;
+
+    try {
+      const msg = await this.prisma.whatsAppMessage.create({
+        data: {
+          threadId: args.threadId,
+          channelId: args.channelId,
+          leadId: args.leadId,
+          clientId: args.clientId,
+          direction: WhatsAppMessageDirection.OUTBOUND,
+          type: WhatsAppMessageType.TEMPLATE,
+          status: WhatsAppMessageStatus.QUEUED,
+          templateName: tpl.name,
+          templateLanguage: tpl.language,
+          body: rendered,
+          // Bot-attributed (no sentByEmployeeId) → the AI bot stays active for
+          // the caller's reply. missedCallInvite drives the per-hour dedupe.
+          payload: {
+            components: [
+              { type: 'body', parameters: [{ type: 'text', text: name }] },
+            ],
+            missedCallInvite: true,
+            source: 'missed_call_template',
+          } as unknown as Prisma.InputJsonValue,
+          idempotencyKey: `missedcall-${args.waCallId}`,
+        },
+        select: { id: true },
+      });
+      await this.outboundQueue.add('send', { messageId: msg.id }, { jobId: msg.id });
+      this.log.log(`missed-call TEMPLATE invite queued for thread ${args.threadId}`);
+    } catch (e) {
+      // P2002 = this call already produced an invite (webhook redelivery) — fine.
+      if ((e as { code?: string }).code === 'P2002') return;
+      this.log.warn(
+        `missed-call template invite failed for thread ${args.threadId}: ${(e as Error).message}`,
+      );
+    }
   }
 
   private async ingestStatus(st: MetaStatus): Promise<void> {

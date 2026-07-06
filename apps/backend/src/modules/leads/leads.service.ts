@@ -17,6 +17,7 @@ import {
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
+import { normalisePhone } from '../../common/phone/phone.util';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
@@ -762,7 +763,17 @@ export class LeadsService {
   }
 
   async create(dto: CreateLeadDto, actorUserId: string) {
-    await this.ensureUniqueLead(dto.phone, dto.email);
+    // Canonicalise the phone to E.164 so a manually-entered local number
+    // (e.g. 03xx…) is stored in the SAME format inbound WhatsApp/calls arrive in
+    // (+92 3xx…). Without this, an inbound from the customer fails to exact-match
+    // the manual lead, spawns a duplicate, and round-robins it to another rep —
+    // silently stealing the lead from its creator. International numbers keep
+    // their own country code (+1/+44/+971 → their E.164); a bare number defaults
+    // to PK (as everywhere else in the system); unparseable input is stored as
+    // typed so a create is never blocked.
+    const norm = normalisePhone(dto.phone, 'PK');
+    const phone = norm.ok && norm.e164 ? norm.e164 : dto.phone;
+    await this.ensureUniqueLead(phone, dto.email);
     const fallbackAssignedEmployeeId = dto.assignedEmployeeId ?? await this.findEmployeeIdByUserId(actorUserId);
     const referenceCode = await generateLeadReferenceCode(this.prisma);
 
@@ -775,7 +786,7 @@ export class LeadsService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         email: dto.email,
-        phone: dto.phone,
+        phone,
         alternatePhone: dto.alternatePhone,
         nationality: dto.nationality,
         targetCountry: dto.targetCountry,

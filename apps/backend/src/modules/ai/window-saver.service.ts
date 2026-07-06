@@ -46,7 +46,11 @@ import { OrchestratorService } from './orchestrator.service';
  *   • WINDOW_SAVER_ENABLED is not 'false' (kill-switch);
  *   • org botMode === 'AUTO' and the bot is enabled (never SHADOW_ONLY /
  *     DISABLED — a shadow bot must never auto-send);
- *   • current time is within sending hours (no 3am sends);
+ *   • (deliberately NO business-hours gate — timing is driven purely by
+ *     window-close proximity below. Unlike the window-keeper's cold nudge,
+ *     the saver answers the customer's OWN pending question, which is
+ *     legitimate at any hour; a daytime-only gate would forfeit exactly the
+ *     windows that close overnight — the case this feature exists to save.);
  *   • thread OPEN, aiEnabled, NOT handed off (booked / opted-out / media-parked
  *     are left alone), lead still a lead (not converted / deleted);
  *   • the window closes within {@link CLOSE_WITHIN_MS} but is still open
@@ -78,9 +82,6 @@ export class WhatsAppWindowSaverService implements OnModuleInit, OnModuleDestroy
    *  window. Override with WINDOW_SAVER_CLOSE_WITHIN_HOURS. */
   private static readonly CLOSE_WITHIN_MS =
     (Number(process.env.WINDOW_SAVER_CLOSE_WITHIN_HOURS) || 4) * 60 * 60 * 1000;
-  /** Sending hours in org-local time (PKT). No sends outside [START, END). */
-  private static readonly SEND_HOUR_START = 8; // 8am
-  private static readonly SEND_HOUR_END = 22; // 10pm
   /** Per-sweep cap so a backlog can't burst outbound sends. */
   private static readonly MAX_PER_SWEEP = 50;
 
@@ -137,16 +138,11 @@ export class WhatsAppWindowSaverService implements OnModuleInit, OnModuleDestroy
     if (!org || org.botMode !== 'AUTO') return;
     if (!org.botEnabledAt || org.botEnabledAt.getTime() > Date.now()) return;
 
-    // ── Sending-hours gate (org-local PKT) — never send in the middle of the
-    // night. A window that lapses off-hours is better lost than answered at 3am.
-    const hour = this.pktHour();
-    if (
-      hour < WhatsAppWindowSaverService.SEND_HOUR_START ||
-      hour >= WhatsAppWindowSaverService.SEND_HOUR_END
-    ) {
-      return;
-    }
-
+    // NOTE: deliberately NO business-hours gate (contrast the window-keeper).
+    // The saver answers the customer's OWN pending question to keep the 24h
+    // window open — legitimate at any hour — and skipping overnight would
+    // forfeit exactly the windows that close overnight. Timing is governed
+    // solely by window-close proximity (windowExpiresAt filter below).
     const now = new Date();
     const closeBy = new Date(now.getTime() + WhatsAppWindowSaverService.CLOSE_WITHIN_MS);
 
@@ -260,14 +256,4 @@ export class WhatsAppWindowSaverService implements OnModuleInit, OnModuleDestroy
     await this.outboundQueue.add('send', { messageId: msg.id }, { jobId: msg.id });
   }
 
-  /** Current hour (0–23) in the org's PKT timezone. */
-  private pktHour(): number {
-    const s = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Karachi',
-      hour: '2-digit',
-      hour12: false,
-    }).format(new Date());
-    const h = parseInt(s, 10);
-    return Number.isFinite(h) ? h % 24 : 12; // default to midday if parse fails
-  }
 }

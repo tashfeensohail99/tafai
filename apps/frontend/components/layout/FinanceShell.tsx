@@ -5,6 +5,7 @@
 
 import {
   BarChart3,
+  CalendarCheck,
   ChevronRight,
   FileSignature,
   FileText,
@@ -67,6 +68,7 @@ const RECORDS_NAV: DrawerMenuItem[] = [
 ];
 const INSIGHT_NAV: DrawerMenuItem[] = [
   { label: 'Reports', href: '/finance/reports', icon: BarChart3, caption: 'Revenue, cost & margin' },
+  { label: 'Consultations', href: '/finance/consultations', icon: CalendarCheck, caption: 'Consultation payments & revenue' },
 ];
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
@@ -82,6 +84,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/finance/visitor-payments') return { title: 'Visitor Payments', subtitle: 'Verify consultation bank transfers taken at reception' };
   if (pathname === '/finance/history') return { title: 'Payment History', subtitle: 'All verified, rejected, and refunded payments' };
   if (pathname === '/finance/reports') return { title: 'Reports', subtitle: 'Revenue, cost & margin across all customers' };
+  if (pathname === '/finance/consultations') return { title: 'Consultation Report', subtitle: 'Consultation payments taken at reception' };
   return { title: 'Finance Workspace', subtitle: '' };
 }
 

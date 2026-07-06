@@ -369,12 +369,82 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
 
   bool _waOpening = false;
 
-  /// Open the CRM WhatsApp conversation for this lead IN-APP so the rep can
-  /// reply from the business number without hunting through the inbox. Falls
-  /// back to launching WhatsApp directly only when the lead has no CRM chat yet.
+  /// Open the CRM WhatsApp conversation for this lead IN-APP so the rep replies
+  /// from the business number without hunting through the inbox. When the lead
+  /// has no CRM conversation yet, offer to start one by sending an approved
+  /// template from the business number (Meta requires a template for the first
+  /// message), then land in the freshly-created chat.
   Future<void> _whatsapp(Lead lead) async {
     if (_waOpening) return;
     _waOpening = true;
+    try {
+      // 1) Resolve the lead's CRM thread.
+      WhatsappThread? thread;
+      _showWaSpinner();
+      try {
+        thread =
+            await ref.read(whatsappRepositoryProvider).byLead(widget.leadId);
+      } catch (_) {
+        // ignore — the no-thread path below handles it
+      }
+      _dismissWaSpinner();
+      if (!mounted) return;
+
+      // 2) Existing conversation → open it in-app.
+      if (thread != null) {
+        final t = thread;
+        await Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => ThreadScreen(thread: t)));
+        return;
+      }
+
+      // 3) No conversation yet → offer to start one on the CRM number.
+      final start = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Start WhatsApp chat'),
+          content: Text(
+            'No CRM WhatsApp conversation with ${lead.firstName} yet. Send the '
+            'welcome template from the business number to start one?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Send template'),
+            ),
+          ],
+        ),
+      );
+      if (start != true || !mounted) return;
+
+      // 4) Send the template (creates the thread), then open the new chat.
+      _showWaSpinner();
+      try {
+        final repo = ref.read(whatsappRepositoryProvider);
+        final threadId = await repo.sendTemplateToLead(widget.leadId);
+        final started = await repo.getThread(threadId);
+        _dismissWaSpinner();
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => ThreadScreen(thread: started)),
+        );
+      } on AppError catch (e) {
+        _dismissWaSpinner();
+        if (mounted) _toast(messageForError(e));
+      } catch (_) {
+        _dismissWaSpinner();
+        if (mounted) _toast('Could not start the WhatsApp chat.');
+      }
+    } finally {
+      _waOpening = false;
+    }
+  }
+
+  void _showWaSpinner() {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -383,31 +453,10 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
         child: Center(child: CircularProgressIndicator()),
       ),
     );
-    WhatsappThread? thread;
-    try {
-      thread = await ref.read(whatsappRepositoryProvider).byLead(widget.leadId);
-    } catch (_) {
-      // Lookup failed — fall through to the direct-WhatsApp last resort below.
-    }
-    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // spinner off
-    _waOpening = false;
-    if (!mounted) return;
+  }
 
-    if (thread != null) {
-      final t = thread;
-      await Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => ThreadScreen(thread: t)));
-      return;
-    }
-
-    // No CRM conversation yet — last resort so the rep can still reach out.
-    try {
-      final ok =
-          await openWhatsApp(lead.phone, text: 'Hello ${lead.firstName},');
-      if (!ok && mounted) _toast('WhatsApp is not available.');
-    } catch (_) {
-      if (mounted) _toast('Could not open WhatsApp.');
-    }
+  void _dismissWaSpinner() {
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
   }
 
   Future<void> _emailLead(String email) async {

@@ -98,6 +98,34 @@ class WhatsappRepository {
     }
   }
 
+  /// POST /whatsapp/leads/:leadId/send-template — first-contact outreach. Sends
+  /// an approved CRM template to a lead FROM the business number, creating the
+  /// WhatsApp thread server-side, and returns the resolved/created threadId.
+  /// Body is empty by default so the backend picks its welcome template and
+  /// fills the name params (mirrors the web "Send message" button).
+  Future<String> sendTemplateToLead(
+    String leadId, {
+    String? templateName,
+    String? language,
+    String? idempotencyKey,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/whatsapp/leads/$leadId/send-template',
+        data: {
+          if (templateName != null) 'templateName': templateName,
+          if (language != null) 'language': language,
+          if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
+        },
+      );
+      final threadId = res.data?['threadId'];
+      if (threadId is String && threadId.isNotEmpty) return threadId;
+      throw Exception('send-template returned no threadId');
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   /// GET /whatsapp/threads/:id — thread detail (fresher window + ai state).
   Future<WhatsappThread> getThread(String id) async {
     try {

@@ -660,7 +660,12 @@ export class AppointmentsService {
    * reminderSentAt and dropping any pending reminder job so the dispatcher
    * re-materialises it.
    */
-  async reschedule(id: string, dto: RescheduleAppointmentDto, actorUserId: string) {
+  async reschedule(
+    id: string,
+    dto: RescheduleAppointmentDto,
+    actorUserId: string,
+    opts?: { suppressWhatsApp?: boolean },
+  ) {
     const existing = await this.findById(id);
     const reschedulable: AppointmentStatus[] = [
       AppointmentStatus.SCHEDULED,
@@ -722,22 +727,26 @@ export class AppointmentsService {
     // Tell the customer about the new time on WhatsApp — automatically, every
     // reschedule. The notifier itself enforces the 24h customer-service
     // window (skips silently when it's closed) and never throws, so a
-    // WhatsApp hiccup can never break the reschedule.
-    try {
-      const result = await this.whatsappNotifier.sendConfirmationFor(id, actorUserId, {
-        kind: 'rescheduled',
-      });
-      if (!result.sent) {
-        this.log.debug(
-          { appointmentId: id, reason: result.reason },
-          'reschedule WhatsApp notice skipped',
+    // WhatsApp hiccup can never break the reschedule. Callers can suppress it
+    // (e.g. a reception consult where the customer declined WhatsApp updates —
+    // Visit.whatsappConsent === false) so we honour that recorded decline.
+    if (!opts?.suppressWhatsApp) {
+      try {
+        const result = await this.whatsappNotifier.sendConfirmationFor(id, actorUserId, {
+          kind: 'rescheduled',
+        });
+        if (!result.sent) {
+          this.log.debug(
+            { appointmentId: id, reason: result.reason },
+            'reschedule WhatsApp notice skipped',
+          );
+        }
+      } catch (err) {
+        this.log.warn(
+          { appointmentId: id, err: (err as Error).message },
+          'reschedule WhatsApp notice failed',
         );
       }
-    } catch (err) {
-      this.log.warn(
-        { appointmentId: id, err: (err as Error).message },
-        'reschedule WhatsApp notice failed',
-      );
     }
 
     return this.findById(id);

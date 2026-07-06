@@ -183,6 +183,12 @@ export class CollectConsultationDto {
   whatsappConsent?: boolean;
 }
 
+export class RescheduleConsultDto {
+  /** New slot start on the principal's calendar (ISO 8601). Date/time only. */
+  @IsDateString()
+  scheduledAt!: string;
+}
+
 export class VisitorPaymentQueryDto {
   @IsOptional()
   @IsEnum(VisitorPaymentStatus)

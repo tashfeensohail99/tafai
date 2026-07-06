@@ -32,6 +32,7 @@ import {
   ListVisitsQueryDto,
   LookupQueryDto,
   ReceptionReportQueryDto,
+  RescheduleConsultDto,
   UpdateReceptionSettingsDto,
   UpdateVisitDto,
   VisitorPaymentQueryDto,
@@ -614,6 +615,69 @@ export class ReceptionService {
       scheduledAt: scheduledAtIso,
       feeAmount: fee,
       feeCurrency: currency,
+    };
+  }
+
+  /**
+   * Move a booked paid consult to a new date/time on the principal's calendar.
+   * Date/time only — no fee/status/detail changes. Delegates the time change to
+   * the appointments engine, which owns the double-book / office-hours check
+   * (409 + suggested slot), re-arms the durable reminder, audits, timelines and
+   * best-effort WhatsApps the new time.
+   */
+  async rescheduleConsult(visitId: string, dto: RescheduleConsultDto, actorUserId: string) {
+    const visit = await this.prisma.visit.findUnique({ where: { id: visitId } });
+    if (!visit) throw new NotFoundException('Visit not found');
+    if (visit.visitType !== VisitType.PAID_CONSULT) {
+      throw new BadRequestException('Only paid-consultation visits can be rescheduled.');
+    }
+    if (!visit.appointmentId) {
+      throw new BadRequestException('This consultation has no booked slot to reschedule yet.');
+    }
+
+    // Is the consult already PAID (verified)? Gate the re-CONFIRM on the DURABLE
+    // payment status, NOT the appointment's transient status: reschedule() resets
+    // the appointment to SCHEDULED, so if the follow-up re-CONFIRM ever fails, a
+    // retry must still re-derive "should be confirmed" from the (untouched)
+    // payment — otherwise a paid consult could strand in SCHEDULED and silently
+    // lose its 24h/2h reminders (sweepConsultReminders is CONFIRMED-only).
+    const payment = visit.paymentId
+      ? await this.prisma.visitorPayment.findUnique({
+          where: { id: visit.paymentId },
+          select: { status: true },
+        })
+      : null;
+    const isPaid = payment?.status === VisitorPaymentStatus.VERIFIED;
+
+    // Move the slot (conflict-checked). A CANCELLED / COMPLETED / NO_SHOW
+    // appointment is rejected by appointments.reschedule's own status gate.
+    // Honour the customer's recorded WhatsApp decline (whatsappConsent === false)
+    // by suppressing the reschedule notice, matching every other consult send.
+    await this.appointments.reschedule(
+      visit.appointmentId,
+      { scheduledAt: dto.scheduledAt },
+      actorUserId,
+      { suppressWhatsApp: visit.whatsappConsent === false },
+    );
+    // reschedule() resets a CONFIRMED appt to SCHEDULED. A PAID consult must stay
+    // CONFIRMED (so sweepConsultReminders, CONFIRMED-only + keyed on the slot
+    // time, re-fires the 24h/2h reminders for the moved slot); an unpaid held slot
+    // stays SCHEDULED until finance verifies. update() sends no WhatsApp, and the
+    // re-CONFIRM is idempotent + retry-safe (gated on the payment, not the appt).
+    if (isPaid) {
+      await this.appointments.update(
+        visit.appointmentId,
+        { status: AppointmentStatus.CONFIRMED },
+        actorUserId,
+      );
+    }
+    const after = await this.prisma.appointment.findUnique({
+      where: { id: visit.appointmentId },
+      select: { scheduledAt: true },
+    });
+    return {
+      appointmentId: visit.appointmentId,
+      scheduledAt: (after?.scheduledAt ?? new Date(dto.scheduledAt)).toISOString(),
     };
   }
 

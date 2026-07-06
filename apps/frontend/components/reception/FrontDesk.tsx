@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  CalendarClock,
   CheckCircle2,
   Clock,
   DoorOpen,
@@ -38,6 +39,7 @@ import {
 } from '@/lib/reception-api';
 import { CheckInModal } from './CheckInModal';
 import { ConsultCollectModal } from './ConsultCollectModal';
+import { RescheduleConsultModal } from './RescheduleConsultModal';
 import { avatarStyle, fmtElapsed, fmtTime, initials, TYPE_META } from './shared';
 
 function fmtMins(mins: number): string {
@@ -57,6 +59,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [paidOpen, setPaidOpen] = useState(false);
   const [consultVisit, setConsultVisit] = useState<VisitRow | null>(null);
+  const [rescheduleVisit, setRescheduleVisit] = useState<VisitRow | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   // Desk "payment verified" pop — fires when a paid consult we'd already seen as
   // unpaid flips to paid between polls (i.e. finance just verified it).
@@ -191,7 +194,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
           <QueueColumn title="Waiting" tone="warning" count={waiting.length}>
             {waiting.map((v) => (
-              <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} onCollect={setConsultVisit} />
+              <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} onCollect={setConsultVisit} onReschedule={setRescheduleVisit} />
             ))}
           </QueueColumn>
           <QueueColumn title="In meeting" tone="info" count={inMeeting.length}>
@@ -199,7 +202,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
               <div className="sos-text-faint" style={{ fontSize: 12.5, padding: '10px 2px' }}>Nobody in a meeting.</div>
             ) : (
               inMeeting.map((v) => (
-                <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} onCollect={setConsultVisit} />
+                <QueueCard key={v.id} v={v} nowMs={nowMs} canCheckIn={canCheckIn} busy={busyId === v.id} onAct={act} onCollect={setConsultVisit} onReschedule={setRescheduleVisit} />
               ))
             )}
           </QueueColumn>
@@ -223,6 +226,13 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
         visit={consultVisit}
         settings={settings}
         onClose={() => setConsultVisit(null)}
+        onDone={() => void reload({ quiet: true })}
+      />
+      {/* Move a booked consult to a new date/time (date/time only). */}
+      <RescheduleConsultModal
+        open={!!rescheduleVisit}
+        visit={rescheduleVisit}
+        onClose={() => setRescheduleVisit(null)}
         onDone={() => void reload({ quiet: true })}
       />
     </div>
@@ -258,6 +268,7 @@ function QueueCard({
   busy,
   onAct,
   onCollect,
+  onReschedule,
 }: {
   v: VisitRow;
   nowMs: number;
@@ -265,6 +276,7 @@ function QueueCard({
   busy: boolean;
   onAct: (id: string, status: VisitStatus) => void;
   onCollect: (v: VisitRow) => void;
+  onReschedule: (v: VisitRow) => void;
 }) {
   const type = TYPE_META[v.visitType];
   const waited = fmtElapsed(v.checkedInAt, nowMs);
@@ -297,6 +309,11 @@ function QueueCard({
             <>
               <StatusBadge tone="success" size="sm" dot>Fee paid</StatusBadge>
               {v.appointmentAt ? <span className="sos-text-muted" style={{ fontSize: 12 }}>Consult @ {fmtTime(v.appointmentAt)}</span> : null}
+              {canCheckIn && v.appointmentAt ? (
+                <button type="button" style={cardBtn} onClick={() => onReschedule(v)}>
+                  <CalendarClock size={13} /> Reschedule
+                </button>
+              ) : null}
             </>
           ) : v.pendingPayment ? (
             <>

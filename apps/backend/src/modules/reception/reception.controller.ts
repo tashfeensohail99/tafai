@@ -27,6 +27,7 @@ import {
   LookupQueryDto,
   ReceptionReportQueryDto,
   RejectVisitorPaymentDto,
+  RescheduleConsultDto,
   UpdateReceptionSettingsDto,
   UpdateVisitDto,
   VisitorPaymentQueryDto,
@@ -105,6 +106,17 @@ export class ReceptionController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.reception.collectConsultation(id, dto, user.id);
+  }
+
+  @Post('visits/:id/reschedule-consultation')
+  @RequirePermissions('reception.check_in')
+  @Audit({ entityType: 'Visit', category: 'MUTATION', severity: 'MEDIUM', action: 'APPOINTMENT_RESCHEDULED' })
+  rescheduleConsult(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RescheduleConsultDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reception.rescheduleConsult(id, dto, user.id);
   }
 
   // ── Visitor payments — register (reception) + verification queue (finance) ──

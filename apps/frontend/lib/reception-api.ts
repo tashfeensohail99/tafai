@@ -229,6 +229,16 @@ export async function collectConsultation(
   });
 }
 
+export async function rescheduleConsult(
+  visitId: string,
+  input: { scheduledAt: string },
+): Promise<{ appointmentId: string; scheduledAt: string }> {
+  return apiFetch<{ appointmentId: string; scheduledAt: string }>(
+    `/reception/visits/${visitId}/reschedule-consultation`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
 export async function listVisitorPayments(
   params: { status?: VisitorPaymentStatus; method?: VisitorPaymentMethod; from?: string; to?: string } = {},
 ): Promise<VisitorPaymentList> {

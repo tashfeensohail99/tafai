@@ -160,6 +160,13 @@ export interface OrchestratorInput {
   inboundMessageId: string;
   inboundText: string;
   language?: string;
+  /**
+   * Window-save pass: bypass the human-reply lockout so the bot may send ONE
+   * context-aware re-engagement on a rep-handled thread whose 24h window is
+   * about to close on an unanswered customer question. Set ONLY by
+   * {@link WhatsAppWindowSaverService}; never on the real-time / backlog path.
+   */
+  windowSave?: boolean;
 }
 
 export interface OrchestratorDecision {
@@ -258,26 +265,49 @@ export class OrchestratorService {
       return { mode: 'SKIPPED', skipReason: 'contact-blocked' };
     }
 
-    // Per-inbound human-reply check: did a real agent already respond to
-    // (or after) the message we're about to answer? If yes, sales has it
-    // covered — stay out. This replaces the old multi-hour "human lockout"
-    // window: that was too coarse, locking the bot out long after sales
-    // had drifted away. Now every new inbound earns its own 1-minute grace
-    // (via the webhook's 60s delay) and the bot fills in only when sales
-    // really didn't reply.
-    const inboundAt = await this.inboundMessageCreatedAt(input.inboundMessageId);
-    if (inboundAt) {
-      const humanReplied = await this.prisma.whatsAppMessage.findFirst({
+    // ── Human-reply lockout ────────────────────────────────────────────────
+    // Once a real agent has replied ANYWHERE on this thread, sales owns the
+    // conversation — the bot must stay silent so it never talks over the rep
+    // or drifts out of context. A rep answering a live chat does not want the
+    // bot chiming in two messages later on the customer's follow-up. This is
+    // deliberately broader than the old "human replied AFTER this inbound"
+    // check, which still let the bot answer a later question even while a rep
+    // was clearly handling the chat (the exact "bot talks over Saqib" bug).
+    //
+    // The single exception is a window-save pass: when the 24h service window
+    // is about to close on a customer question the rep never got to, the
+    // window-saver sets `windowSave` so the bot may send ONE context-aware
+    // re-engagement — keeping the conversation (and the free window) alive.
+    // See {@link WhatsAppWindowSaverService}.
+    if (!input.windowSave) {
+      // Not every employee-ATTRIBUTED outbound is a human REPLY. The call-
+      // permission request is a system/bot-initiated interactive card that
+      // still carries the assigned rep's id for attribution
+      // (calls.service.ts:630, payload.callPermissionRequest) — and it is
+      // auto-fired by the window-keeper on live, un-booked leads. Counting it
+      // would let one automated card permanently silence the bot on a lead
+      // nobody actually replied to. So exclude it.
+      //
+      // This must be filtered in JS, not the query: a genuine typed reply
+      // stores payload = NULL, and a Prisma `NOT { payload path equals }`
+      // filter drops null-payload rows via SQL three-valued logic — which
+      // would silently miss the human reply and reintroduce the very bug.
+      const employeeSends = await this.prisma.whatsAppMessage.findMany({
         where: {
           threadId: thread.id,
           direction: 'OUTBOUND',
-          sentByEmployeeId: { not: null },  // human send (bot is null)
-          createdAt: { gte: inboundAt },
+          sentByEmployeeId: { not: null }, // bot/system base-sends are null
         },
-        select: { id: true },
+        select: { payload: true },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      });
+      const humanReplied = employeeSends.some((m) => {
+        const p = m.payload as { callPermissionRequest?: unknown } | null;
+        return !(p && p.callPermissionRequest === true);
       });
       if (humanReplied) {
-        return { mode: 'SKIPPED', skipReason: 'human-replied-after-inbound' };
+        return { mode: 'SKIPPED', skipReason: 'human-replied-on-thread' };
       }
     }
 
@@ -401,9 +431,15 @@ export class OrchestratorService {
     // Immigration Solutions Associate…"). We treat "no prior OUTBOUND bot
     // message in history" as the trigger — works for new leads AND for
     // existing-lead threads that just got bot-enabled.
-    const isFirstBotReply = !history.some(
-      (m) => m.direction === 'OUTBOUND' && m.sentByEmployeeId === null,
-    );
+    // "First bot reply" gates the deterministic house-welcome prepend. On a
+    // window-save the conversation is already well underway with a human rep
+    // (the bot simply never spoke), so it is NOT a first contact — forcing this
+    // false stops the saver from greeting "Welcome to Tashfeen…" 20h into a
+    // live chat, which would read as exactly the out-of-context noise the
+    // lockout exists to prevent.
+    const isFirstBotReply =
+      !input.windowSave &&
+      !history.some((m) => m.direction === 'OUTBOUND' && m.sentByEmployeeId === null);
     // Bare greeting detection: customer said "hi" / "hello" / "salam" / etc.
     // with no actual question attached. Drives the "how can we assist you
     // today?" branch of the welcome.
@@ -539,7 +575,18 @@ export class OrchestratorService {
     // appointment intent from the customer's message and write a row to
     // crm.appointment_requests. Sales picks it up from the chat panel banner
     // and uses it to pre-fill the existing "Book Appointment" modal.
-    if (nextAiState === 'HANDED_OFF' && thread.aiState !== 'HANDED_OFF' && thread.lead?.id) {
+    //
+    // NEVER on a window-save pass: that runs from a cron 20h later on a
+    // rep-OWNED thread, and this branch can auto-book a real appointment +
+    // email staff (extractAndSaveAppointmentRequest -> tryAutoBookFromRequest,
+    // non-idempotent). A window-save must only compose ONE re-engagement, never
+    // mutate CRM/calendar state behind the rep's back.
+    if (
+      !input.windowSave &&
+      nextAiState === 'HANDED_OFF' &&
+      thread.aiState !== 'HANDED_OFF' &&
+      thread.lead?.id
+    ) {
       // Fire-and-forget: a failure to extract should NOT block the reply.
       void this.extractAndSaveAppointmentRequest({
         leadId: thread.lead.id,

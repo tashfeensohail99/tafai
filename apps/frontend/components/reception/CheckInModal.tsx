@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Check, Loader2, Search, Star, UserPlus, Users, X } from 'lucide-react';
+import { Check, Loader2, Search, UserPlus, Users, X } from 'lucide-react';
 import {
   Field,
   FormInput,
@@ -15,35 +15,29 @@ import {
   receptionLookup,
   type Host,
   type LookupHit,
-  type ReceptionSettings,
 } from '@/lib/reception-api';
 import { avatarStyle, initials } from './shared';
 
-type Tab = 'existing' | 'walkin' | 'paid';
+// Paid consultations have their own one-step modal (name + time + fee); this
+// check-in modal is for regular walk-ins and existing clients only.
+type Tab = 'existing' | 'walkin';
 
 const TABS: Array<{ key: Tab; label: string; Icon: typeof Users }> = [
   { key: 'existing', label: 'Existing', Icon: Users },
   { key: 'walkin', label: 'Walk-in', Icon: UserPlus },
-  { key: 'paid', label: 'Paid consult', Icon: Star },
 ];
 
 export function CheckInModal({
   open,
   hosts,
-  settings,
   onClose,
   onDone,
 }: {
   open: boolean;
   hosts: Host[];
-  settings: ReceptionSettings | null;
   onClose: () => void;
   onDone: () => void;
 }) {
-  // Paid consultations are ALWAYS with the principal (the one configured
-  // consultant, e.g. Mr. Tashfeen) — not a rep the desk picks. If none is set,
-  // the paid tab is blocked with a hint to configure it in Reception Settings.
-  const principal = settings?.principal ?? null;
   const [tab, setTab] = useState<Tab>('existing');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<LookupHit[]>([]);
@@ -125,11 +119,9 @@ export function CheckInModal({
     !submitting &&
     (tab === 'existing'
       ? !!selected
-      : tab === 'walkin'
-        ? name.trim().length > 0 && phone.trim().length > 0
-        : name.trim().length > 0 && !!principal); // paid needs a configured principal
+      : name.trim().length > 0 && phone.trim().length > 0);
 
-  const cta = tab === 'existing' ? 'Check in' : tab === 'walkin' ? 'Add walk-in' : 'Log paid visit';
+  const cta = tab === 'existing' ? 'Check in' : 'Add walk-in';
 
   async function submit() {
     setSubmitting(true);
@@ -149,10 +141,8 @@ export function CheckInModal({
           clientId: selected.kind === 'client' ? selected.id : undefined,
           ...common,
         });
-      } else if (tab === 'walkin') {
-        await createVisit({ visitType: 'WALK_IN', name: name.trim(), phone: phone.trim() || undefined, ...common });
       } else {
-        await createVisit({ visitType: 'PAID_CONSULT', name: name.trim(), phone: phone.trim() || undefined, ...common });
+        await createVisit({ visitType: 'WALK_IN', name: name.trim(), phone: phone.trim() || undefined, ...common });
       }
       onDone();
       close();
@@ -298,12 +288,12 @@ export function CheckInModal({
               </div>
             </div>
           ) : (
-            /* Manual entry (walk-in / paid) */
+            /* Manual entry (walk-in) */
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <FormInput label="Full name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="Visitor name" />
               <FormInput
-                label={tab === 'walkin' ? 'Phone (required)' : 'Phone'}
-                required={tab === 'walkin'}
+                label="Phone (required)"
+                required
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="03xx xxxxxxx"
@@ -311,50 +301,14 @@ export function CheckInModal({
             </div>
           )}
 
-          {tab === 'paid' ? (
-            principal ? (
-              <div className="sos-banner" style={{ fontSize: 12 }}>
-                Paid consultation is with <strong>{principal.name}</strong>
-                {settings?.feeAmount
-                  ? ` · fee ${settings.feeCurrency ?? ''} ${settings.feeAmount.toLocaleString()}`
-                  : ''}
-                . Collect the fee from the lobby once they’re logged in.
-              </div>
-            ) : (
-              <div className="sos-banner sos-banner--danger" style={{ fontSize: 12 }}>
-                No paid-consultation consultant is set. Configure one in Admin → Reception Settings
-                before logging a paid consult.
-              </div>
-            )
-          ) : null}
-
-          {/* Common: host + reason. A PAID consult is always with the principal,
-              so the host is fixed on that tab (not a free pick). */}
+          {/* Common: host + reason */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {tab === 'paid' ? (
-              <Field label="Consultation with">
-                <div
-                  style={{
-                    padding: '9px 12px',
-                    borderRadius: 10,
-                    border: '1px solid var(--sos-border-subtle)',
-                    background: 'var(--sos-surface-2)',
-                    color: 'var(--sos-text-secondary)',
-                    fontSize: 13,
-                    minHeight: 20,
-                  }}
-                >
-                  {principal ? principal.name : '—'}
-                </div>
-              </Field>
-            ) : (
-              <FormSelect
-                label="Here to see"
-                value={hostId}
-                onChange={(e) => setHostId(e.target.value)}
-                options={hostOptions}
-              />
-            )}
+            <FormSelect
+              label="Here to see"
+              value={hostId}
+              onChange={(e) => setHostId(e.target.value)}
+              options={hostOptions}
+            />
             <Field label="Reason">
               <FormInput value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. document pickup" />
             </Field>

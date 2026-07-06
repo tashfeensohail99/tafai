@@ -55,6 +55,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [settings, setSettings] = useState<ReceptionSettings | null>(null);
   const [checkInOpen, setCheckInOpen] = useState(false);
+  const [paidOpen, setPaidOpen] = useState(false);
   const [consultVisit, setConsultVisit] = useState<VisitRow | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   // Desk "payment verified" pop — fires when a paid consult we'd already seen as
@@ -150,7 +151,10 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <GhostButton iconLeft={<RefreshCw size={14} />} onClick={() => void reload()}>Refresh</GhostButton>
           {canCheckIn ? (
-            <PrimaryButton iconLeft={<UserPlus size={15} />} onClick={() => setCheckInOpen(true)}>Check in visitor</PrimaryButton>
+            <>
+              <GhostButton iconLeft={<Wallet size={15} />} onClick={() => setPaidOpen(true)}>Paid consultation</GhostButton>
+              <PrimaryButton iconLeft={<UserPlus size={15} />} onClick={() => setCheckInOpen(true)}>Check in visitor</PrimaryButton>
+            </>
           ) : null}
         </div>
       </div>
@@ -175,7 +179,12 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
             Icon={DoorOpen}
             title="The lobby is empty"
             description={canCheckIn ? 'When someone arrives, check them in and they’ll appear here live.' : 'No one is currently waiting or in a meeting.'}
-            action={canCheckIn ? <PrimaryButton iconLeft={<UserPlus size={15} />} onClick={() => setCheckInOpen(true)}>Check in visitor</PrimaryButton> : undefined}
+            action={canCheckIn ? (
+              <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <GhostButton iconLeft={<Wallet size={15} />} onClick={() => setPaidOpen(true)}>Paid consultation</GhostButton>
+                <PrimaryButton iconLeft={<UserPlus size={15} />} onClick={() => setCheckInOpen(true)}>Check in visitor</PrimaryButton>
+              </span>
+            ) : undefined}
           />
         </GlassCard>
       ) : (
@@ -197,7 +206,18 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
         </div>
       )}
 
-      <CheckInModal open={checkInOpen} hosts={hosts} settings={settings} onClose={() => setCheckInOpen(false)} onDone={() => void reload({ quiet: true })} />
+      <CheckInModal open={checkInOpen} hosts={hosts} onClose={() => setCheckInOpen(false)} onDone={() => void reload({ quiet: true })} />
+      {/* One-step paid consultation: name/phone + time + fee in a single modal. */}
+      <ConsultCollectModal
+        open={paidOpen}
+        visit={null}
+        createNew
+        settings={settings}
+        onClose={() => setPaidOpen(false)}
+        onDone={() => void reload({ quiet: true })}
+      />
+      {/* Collect the fee on a paid consult that was logged without paying (legacy
+          / bank-transfer follow-up), opened from a queue card. */}
       <ConsultCollectModal
         open={!!consultVisit}
         visit={consultVisit}
@@ -301,16 +321,15 @@ function QueueCard({
         <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
           {busy ? (
             <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--sos-text-faint)' }} />
-          ) : (
+          ) : v.status === 'WAITING' ? (
+            // Waiting in the lobby → either start the meeting or mark no-show.
             <>
-              {v.status === 'WAITING' ? (
-                <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'IN_MEETING')}><PlayCircle size={13} /> Start</button>
-              ) : null}
-              <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'DONE')}><LogOut size={13} /> Check out</button>
-              {v.status === 'WAITING' ? (
-                <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'NO_SHOW')}><XCircle size={13} /> No-show</button>
-              ) : null}
+              <button type="button" style={cardBtnPrimary} onClick={() => onAct(v.id, 'IN_MEETING')}><PlayCircle size={13} /> Start meeting</button>
+              <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'NO_SHOW')}><XCircle size={13} /> No-show</button>
             </>
+          ) : (
+            // In a meeting → the only next step is checking them out.
+            <button type="button" style={cardBtn} onClick={() => onAct(v.id, 'DONE')}><LogOut size={13} /> Check out</button>
           )}
         </div>
       ) : null}
@@ -383,4 +402,13 @@ const cardBtn: React.CSSProperties = {
   color: 'var(--sos-text-secondary)',
   cursor: 'pointer',
   whiteSpace: 'nowrap',
+};
+
+// The clear primary next-step (e.g. "Start meeting") — brand-tinted so it reads
+// as the obvious action versus the secondary No-show / Check-out.
+const cardBtnPrimary: React.CSSProperties = {
+  ...cardBtn,
+  border: '1px solid var(--sos-brand-primary-border)',
+  background: 'var(--sos-brand-primary-soft)',
+  color: 'var(--sos-brand-primary-strong)',
 };

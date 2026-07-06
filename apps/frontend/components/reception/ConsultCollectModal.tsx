@@ -11,6 +11,7 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   collectConsultation,
+  createVisit,
   getConsultAvailability,
   getPayQr,
   getReceptionSettings,
@@ -37,15 +38,24 @@ export function ConsultCollectModal({
   open,
   visit,
   settings,
+  createNew = false,
   onClose,
   onDone,
 }: {
   open: boolean;
   visit: VisitRow | null;
   settings: ReceptionSettings | null;
+  // When true the modal has no existing visit — it logs a fresh paid consult
+  // (name/phone shown at the top) AND collects the fee in one step.
+  createNew?: boolean;
   onClose: () => void;
   onDone: () => void;
 }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  // Created once on first submit and reused on a retry, so a failed collect
+  // never spawns duplicate visits.
+  const [createdVisitId, setCreatedVisitId] = useState<string | null>(null);
   const [date, setDate] = useState<string>(() => todayPkt());
   const [avail, setAvail] = useState<Availability | null>(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -74,6 +84,9 @@ export function ConsultCollectModal({
     setResult(null);
     setPayQr(null);
     setSubmitting(false);
+    setName('');
+    setPhone('');
+    setCreatedVisitId(null);
   }, []);
 
   const close = useCallback(() => {
@@ -145,7 +158,8 @@ export function ConsultCollectModal({
     };
   }, [result]);
 
-  if (!open || !visit) return null;
+  if (!open) return null;
+  if (!visit && !createNew) return null;
 
   const s = liveSettings ?? settings;
   const configured = !!s?.configured;
@@ -160,10 +174,27 @@ export function ConsultCollectModal({
 
   async function submit() {
     if (!slot) return;
+    if (createNew && !name.trim()) {
+      setError('Enter the visitor’s name.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const res = await collectConsultation(visit!.id, {
+      // One step: log the paid-consult visit first (only if this modal created
+      // it — reuse the id on a retry so a failed collect can't duplicate it),
+      // then collect the fee. The backend forces the host to the principal.
+      let visitId = visit?.id ?? createdVisitId;
+      if (!visitId) {
+        const created = await createVisit({
+          visitType: 'PAID_CONSULT',
+          name: name.trim(),
+          phone: phone.trim() || undefined,
+        });
+        visitId = created.id;
+        setCreatedVisitId(created.id);
+      }
+      const res = await collectConsultation(visitId, {
         method: method === 'bank_transfer' ? 'BANK_TRANSFER' : 'CASH',
         scheduledAt: slot.start,
         paymentMethod: method,
@@ -204,7 +235,7 @@ export function ConsultCollectModal({
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '15px 18px', borderBottom: '1px solid var(--sos-border-subtle)' }}>
           <div>
             <div className="sos-title" style={{ fontSize: 'var(--sos-text-md)' }}>Paid consultation</div>
-            <div className="sos-text-faint" style={{ fontSize: 12 }}>{visit.name}{s?.principal ? ` · with ${s.principal.name}` : ''}</div>
+            <div className="sos-text-faint" style={{ fontSize: 12 }}>{(visit?.name ?? name.trim()) || 'New visitor'}{s?.principal ? ` · with ${s.principal.name}` : ''}</div>
           </div>
           <button type="button" onClick={close} aria-label="Close" className="sos-btn sos-btn--ghost sos-btn--sm"><X size={16} /></button>
         </header>
@@ -249,6 +280,14 @@ export function ConsultCollectModal({
             </div>
           ) : (
             <>
+              {/* Visitor (only when logging a fresh paid consult in one step) */}
+              {createNew ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <Field label="Visitor name"><FormInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" /></Field>
+                  <Field label="Phone (optional)"><FormInput value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="03xx xxxxxxx" /></Field>
+                </div>
+              ) : null}
+
               {/* Fee */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--sos-brand-primary-soft)', border: '1px solid var(--sos-brand-primary-border)' }}>
                 <Wallet size={18} style={{ color: 'var(--sos-brand-primary-strong)' }} />
@@ -342,7 +381,7 @@ export function ConsultCollectModal({
             <PrimaryButton
               type="button"
               onClick={() => void submit()}
-              disabled={!slot || submitting}
+              disabled={!slot || submitting || (createNew && !name.trim())}
               iconLeft={submitting ? <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> : <Wallet size={15} />}
             >
               {isBankTransfer

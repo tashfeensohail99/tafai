@@ -319,6 +319,23 @@ export class ReceptionService {
       if (!emp) throw new NotFoundException('Host employee not found');
     }
 
+    // A PAID consultation is ALWAYS with the principal (the one configured
+    // consultant — e.g. Mr. Tashfeen), never an arbitrary rep. The desk cannot
+    // log one against anyone else: force the host to the principal and refuse
+    // until one is configured. The whole fee/booking chain (availability,
+    // appointment, reminders, bell) already runs on the principal's calendar,
+    // so this also stops the "with <other rep>" label mismatch.
+    let hostEmployeeId = dto.hostEmployeeId ?? null;
+    if (dto.visitType === VisitType.PAID_CONSULT) {
+      const org = await this.orgRow();
+      if (!org?.principalEmployeeId) {
+        throw new BadRequestException(
+          'Set the paid-consultation consultant in Admin → Reception Settings before logging a paid consult.',
+        );
+      }
+      hostEmployeeId = org.principalEmployeeId;
+    }
+
     return this.prisma.visit.create({
       data: {
         visitType: dto.visitType,
@@ -326,7 +343,7 @@ export class ReceptionService {
         phone,
         leadId,
         clientId,
-        hostEmployeeId: dto.hostEmployeeId ?? null,
+        hostEmployeeId,
         purpose: dto.purpose ?? null,
         notes: dto.notes ?? null,
         checkedInByUserId: actorUserId,

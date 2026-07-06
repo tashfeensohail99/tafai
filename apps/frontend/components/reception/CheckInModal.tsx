@@ -15,6 +15,7 @@ import {
   receptionLookup,
   type Host,
   type LookupHit,
+  type ReceptionSettings,
 } from '@/lib/reception-api';
 import { avatarStyle, initials } from './shared';
 
@@ -29,14 +30,20 @@ const TABS: Array<{ key: Tab; label: string; Icon: typeof Users }> = [
 export function CheckInModal({
   open,
   hosts,
+  settings,
   onClose,
   onDone,
 }: {
   open: boolean;
   hosts: Host[];
+  settings: ReceptionSettings | null;
   onClose: () => void;
   onDone: () => void;
 }) {
+  // Paid consultations are ALWAYS with the principal (the one configured
+  // consultant, e.g. Mr. Tashfeen) — not a rep the desk picks. If none is set,
+  // the paid tab is blocked with a hint to configure it in Reception Settings.
+  const principal = settings?.principal ?? null;
   const [tab, setTab] = useState<Tab>('existing');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<LookupHit[]>([]);
@@ -120,7 +127,7 @@ export function CheckInModal({
       ? !!selected
       : tab === 'walkin'
         ? name.trim().length > 0 && phone.trim().length > 0
-        : name.trim().length > 0);
+        : name.trim().length > 0 && !!principal); // paid needs a configured principal
 
   const cta = tab === 'existing' ? 'Check in' : tab === 'walkin' ? 'Add walk-in' : 'Log paid visit';
 
@@ -305,19 +312,49 @@ export function CheckInModal({
           )}
 
           {tab === 'paid' ? (
-            <div className="sos-banner" style={{ fontSize: 12 }}>
-              Logs the visit now — collecting the consultation fee arrives in the next phase.
-            </div>
+            principal ? (
+              <div className="sos-banner" style={{ fontSize: 12 }}>
+                Paid consultation is with <strong>{principal.name}</strong>
+                {settings?.feeAmount
+                  ? ` · fee ${settings.feeCurrency ?? ''} ${settings.feeAmount.toLocaleString()}`
+                  : ''}
+                . Collect the fee from the lobby once they’re logged in.
+              </div>
+            ) : (
+              <div className="sos-banner sos-banner--danger" style={{ fontSize: 12 }}>
+                No paid-consultation consultant is set. Configure one in Admin → Reception Settings
+                before logging a paid consult.
+              </div>
+            )
           ) : null}
 
-          {/* Common: host + reason */}
+          {/* Common: host + reason. A PAID consult is always with the principal,
+              so the host is fixed on that tab (not a free pick). */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <FormSelect
-              label="Here to see"
-              value={hostId}
-              onChange={(e) => setHostId(e.target.value)}
-              options={hostOptions}
-            />
+            {tab === 'paid' ? (
+              <Field label="Consultation with">
+                <div
+                  style={{
+                    padding: '9px 12px',
+                    borderRadius: 10,
+                    border: '1px solid var(--sos-border-subtle)',
+                    background: 'var(--sos-surface-2)',
+                    color: 'var(--sos-text-secondary)',
+                    fontSize: 13,
+                    minHeight: 20,
+                  }}
+                >
+                  {principal ? principal.name : '—'}
+                </div>
+              </Field>
+            ) : (
+              <FormSelect
+                label="Here to see"
+                value={hostId}
+                onChange={(e) => setHostId(e.target.value)}
+                options={hostOptions}
+              />
+            )}
             <Field label="Reason">
               <FormInput value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. document pickup" />
             </Field>

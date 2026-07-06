@@ -158,7 +158,6 @@ export default function ConsultPayPage() {
                       ref={fileRef}
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                       style={{ display: 'none' }}
                     />

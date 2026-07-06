@@ -174,7 +174,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
         </div>
       )}
 
-      <CheckInModal open={checkInOpen} hosts={hosts} onClose={() => setCheckInOpen(false)} onDone={() => void reload({ quiet: true })} />
+      <CheckInModal open={checkInOpen} hosts={hosts} settings={settings} onClose={() => setCheckInOpen(false)} onDone={() => void reload({ quiet: true })} />
       <ConsultCollectModal
         open={!!consultVisit}
         visit={consultVisit}

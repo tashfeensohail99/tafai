@@ -185,6 +185,10 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>('overview');
+  // Which program (agreement ledger) is in focus. A customer can hold several;
+  // the money strip + installments + agreement actions all follow this index.
+  // 0 = primary (newest) — matches the flat backward-compat fields.
+  const [programIdx, setProgramIdx] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const payFileRef = useRef<HTMLInputElement>(null);
@@ -229,6 +233,15 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Keep the selected program in range. If a refetch returns fewer agreements
+  // (e.g. one was deleted in another tab/portal), snap back to the primary so
+  // the handlers never act on a stale index — otherwise Record-payment could
+  // read data.agreements[staleIdx] === undefined and silently book the money
+  // against the fallback (primary) program instead of the one on screen.
+  useEffect(() => {
+    if (data && programIdx >= (data.agreements?.length ?? 0)) setProgramIdx(0);
+  }, [data, programIdx]);
+
   // Live FX rates (1 CAD = rates[ccy]) for the currency pickers + CAD preview.
   useEffect(() => { fetchFxRates().then((r) => setFxRates(r.rates)).catch(() => {}); }, []);
 
@@ -241,14 +254,17 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
 
   const openUrl = async (kind: 'agreement-pdf' | 'signed') => {
     if (!data) return;
+    const prog = data.agreements?.[programIdx];
+    const activeAg = prog?.agreement ?? data.agreement;
+    const activeCt = prog?.contract ?? data.contract;
     setBusy(kind);
     setError(null);
     try {
-      if (kind === 'agreement-pdf' && data.agreement) {
-        const { url } = await getAgreementPdfUrl(data.agreement.id);
+      if (kind === 'agreement-pdf' && activeAg) {
+        const { url } = await getAgreementPdfUrl(activeAg.id);
         window.open(url, '_blank', 'noopener');
-      } else if (kind === 'signed' && data.contract) {
-        const { url } = await getContractAgreementUrl(data.contract.id);
+      } else if (kind === 'signed' && activeCt) {
+        const { url } = await getContractAgreementUrl(activeCt.id);
         window.open(url, '_blank', 'noopener');
       }
     } catch (e) {
@@ -262,11 +278,12 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     // Keyed by **agreement** id, not contract id — the ServiceContract +
     // Installments only get materialised the moment the signed copy lands
     // (per the finance team's rule: no ledger before signing).
-    if (!data?.agreement) { setError('No agreement yet — Sales needs to draft one first.'); return; }
+    const activeAg = data?.agreements?.[programIdx]?.agreement ?? data?.agreement;
+    if (!activeAg) { setError('No agreement yet — Sales needs to draft one first.'); return; }
     setBusy('upload');
     setError(null);
     try {
-      await uploadSignedAgreement(data.agreement.id, file);
+      await uploadSignedAgreement(activeAg.id, file);
       setNotice('Signed agreement uploaded — ledger materialised; agreement marked signed.');
       await load();
     } catch (e) {
@@ -278,11 +295,12 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   };
 
   const handleSend = async () => {
-    if (!data?.agreement) return;
+    const activeAg = data?.agreements?.[programIdx]?.agreement ?? data?.agreement;
+    if (!activeAg) return;
     setBusy('send');
     setError(null);
     try {
-      await sendAgreementToClient(data.agreement.id);
+      await sendAgreementToClient(activeAg.id);
       setNotice('Agreement emailed to the client.');
       await load();
     } catch (e) {
@@ -305,7 +323,8 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   // Open the form, prefilling the amount with the next unpaid installment.
   const openPayForm = () => {
     if (!data) return;
-    const nextDue = data.installments.find((i) => i.paidStatus !== 'PAID');
+    const insts = data.agreements?.[programIdx]?.installments ?? data.installments;
+    const nextDue = insts.find((i) => i.paidStatus !== 'PAID');
     setPayAmount(nextDue ? String(nextDue.amount) : '');
     setPayOpen(true);
   };
@@ -318,8 +337,12 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     setError(null);
     try {
       const base64 = fileToBase64(await payFile.arrayBuffer());
+      // Pin the payment to the program in focus so it credits the right ledger
+      // when the customer holds more than one agreement.
+      const targetAgreementId = data.agreements?.[programIdx]?.agreement.id;
       await recordCustomerPayment({
         leadId: data.lead.id,
+        agreementId: targetAgreementId,
         submittedAmount: String(amount),
         currency: payCurrency,
         paymentMethod: payMethod,
@@ -549,7 +572,26 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
   if (loading) return <div className="sos-text-muted" style={{ padding: 40, textAlign: 'center' }}>Loading customer…</div>;
   if (!data) return <div className="sos-banner sos-banner--danger" style={{ margin: 16 }}>{error ?? 'Not found'}</div>;
 
-  const { lead, agreement, contract, totals } = data;
+  const { lead, totals } = data;
+  // A customer can hold several agreements (programs). The money strip,
+  // installment schedule and agreement actions all follow the selected one;
+  // "Spent on client" + "Margin" (from `totals`) stay customer-wide because
+  // expenses aren't attributed per agreement. Index 0 = primary (newest) and
+  // matches the flat backward-compat fields.
+  const programs = data.agreements ?? [];
+  const activeIdx = programIdx < programs.length ? programIdx : 0;
+  const activeProgram = programs[activeIdx] ?? null;
+  const agreement = activeProgram?.agreement ?? data.agreement;
+  const contract = activeProgram?.contract ?? data.contract;
+  const installments = activeProgram?.installments ?? data.installments;
+  const ptotals = activeProgram?.totals ?? {
+    fee: totals.fee,
+    paid: totals.paid,
+    outstanding: totals.outstanding,
+    currency: totals.currency,
+    installmentsPaid: totals.installmentsPaid,
+    installmentsTotal: totals.installmentsTotal,
+  };
   const name = `${lead.firstName} ${lead.lastName}`.trim();
   const agent = lead.assignedEmployee ? `${lead.assignedEmployee.firstName ?? ''} ${lead.assignedEmployee.lastName ?? ''}`.trim() : '—';
   const reviewable = agreement && ['SUBMITTED', 'FINANCE_REVIEW', 'CHANGES_REQUESTED'].includes(agreement.status);
@@ -605,13 +647,49 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
       {error ? <div className="sos-banner sos-banner--danger" style={{ display: 'flex', gap: 8, alignItems: 'center' }}><AlertTriangle size={16} /> {error}</div> : null}
       {notice && !error ? <div className="sos-banner sos-banner--success" style={{ display: 'flex', gap: 8, alignItems: 'center' }}><CheckCircle2 size={16} /> {notice}</div> : null}
 
+      {/* Program selector — only when the customer holds more than one
+          agreement. Switches the fee/paid/outstanding strip + installments +
+          agreement actions to the chosen program. */}
+      {programs.length > 1 ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="sos-text-faint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', marginRight: 2 }}>
+            Program
+          </span>
+          {programs.map((p, i) => {
+            const active = i === activeIdx;
+            const label = p.agreement.categoryKey || p.agreement.agreementNumber;
+            return (
+              <button
+                key={p.agreement.id}
+                type="button"
+                onClick={() => setProgramIdx(i)}
+                style={{
+                  padding: '6px 12px', borderRadius: 999, cursor: 'pointer', fontSize: 12.5,
+                  fontWeight: active ? 700 : 500,
+                  border: `1px solid ${active ? 'var(--sos-brand-primary)' : 'var(--sos-border-subtle)'}`,
+                  background: active ? 'var(--sos-brand-primary)' : 'transparent',
+                  color: active ? '#fff' : 'var(--sos-text-secondary)',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+                title={`${p.agreement.agreementNumber} · ${money(p.totals.outstanding, p.totals.currency)} outstanding`}
+              >
+                {label}
+                <span style={{ opacity: 0.8, fontWeight: 500, fontSize: 11 }}>
+                  {p.agreement.status.replace(/_/g, ' ').toLowerCase()}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {/* Money strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
-        <MetricCard label="Total fee" value={money(totals.fee, totals.currency)} tone="accent" Icon={Wallet} />
-        <MetricCard label="Paid" value={money(totals.paid, totals.currency)} tone="success" Icon={CheckCircle2} hint={totals.installmentsTotal > 0 ? `${totals.installmentsPaid} of ${totals.installmentsTotal} installments paid` : `${data.receipts.length} receipt(s)`} />
-        <MetricCard label="Outstanding" value={money(totals.outstanding, totals.currency)} tone={totals.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
+        <MetricCard label="Total fee" value={money(ptotals.fee, ptotals.currency)} tone="accent" Icon={Wallet} hint={programs.length > 1 ? `Program ${activeIdx + 1} of ${programs.length}` : undefined} />
+        <MetricCard label="Paid" value={money(ptotals.paid, ptotals.currency)} tone="success" Icon={CheckCircle2} hint={ptotals.installmentsTotal > 0 ? `${ptotals.installmentsPaid} of ${ptotals.installmentsTotal} installments paid` : `${data.receipts.length} receipt(s)`} />
+        <MetricCard label="Outstanding" value={money(ptotals.outstanding, ptotals.currency)} tone={ptotals.outstanding > 0 ? 'warning' : 'success'} Icon={AlertTriangle} />
         <MetricCard label="Spent on client" value={money(totals.expenses, totals.currency)} tone={totals.expenses > 0 ? 'warning' : 'neutral'} Icon={Coins} hint={totals.billableExpenses > 0 ? `${money(totals.absorbedExpenses, totals.currency)} absorbed · ${money(totals.billableExpenses, totals.currency)} billable` : `${data.expenses.length} expense(s)`} />
-        <MetricCard label="Margin" value={money(totals.margin, totals.currency)} tone={totals.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint="fee − absorbed costs" />
+        <MetricCard label="Margin" value={money(totals.margin, totals.currency)} tone={totals.margin >= 0 ? 'success' : 'danger'} Icon={TrendingUp} hint={programs.length > 1 ? 'all programs · fee − absorbed costs' : 'fee − absorbed costs'} />
       </div>
 
       {/* Tabs */}
@@ -749,7 +827,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             <FileText size={15} className="sos-text-faint" />
             <h3 className="sos-title" style={{ margin: 0, fontSize: 'var(--sos-text-base)' }}>
               Installment ledger {contract ? `· ${contract.contractNumber}` : ''}
-              {totals.installmentsTotal > 0 ? <span className="sos-text-faint" style={{ fontWeight: 400 }}> · paid {totals.installmentsPaid}/{totals.installmentsTotal}</span> : null}
+              {ptotals.installmentsTotal > 0 ? <span className="sos-text-faint" style={{ fontWeight: 400 }}> · paid {ptotals.installmentsPaid}/{ptotals.installmentsTotal}</span> : null}
             </h3>
           </div>
           <Table
@@ -761,11 +839,11 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                   ? 'Awaiting client signature — the ledger materialises once the signed agreement is uploaded.'
                   : 'No agreement yet.'
             }
-            rows={data.installments.map((i) => [
+            rows={installments.map((i) => [
               i.sequence,
               i.description ?? '—',
-              money(i.amount, totals.currency),
-              money(i.paidAmount, totals.currency),
+              money(i.amount, ptotals.currency),
+              money(i.paidAmount, ptotals.currency),
               fmtDate(i.dueDate),
               <StatusBadge key="s" tone={tone(i.paidStatus)} size="sm" dot={false}>{label(i.paidStatus)}</StatusBadge>,
               i.recognizedAt ? (
@@ -829,7 +907,7 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                     inputMode="decimal"
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
-                    hint={totals.installmentsTotal > 0 ? `Next due prefilled · paid ${totals.installmentsPaid}/${totals.installmentsTotal}` : 'Amount received (as on the bank slip)'}
+                    hint={ptotals.installmentsTotal > 0 ? `Next due prefilled · paid ${ptotals.installmentsPaid}/${ptotals.installmentsTotal}` : 'Amount received (as on the bank slip)'}
                     required
                   />
                   <FormSelect

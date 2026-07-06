@@ -28,6 +28,9 @@ export interface FinanceProfileAgreement {
   discountAmount: number;
   hasPdf: boolean;
   serviceContractId: string | null;
+  /** The program/category this agreement is for (e.g. "C11", "EB2_NIW"). Names
+   *  the program in the multi-agreement selector. */
+  categoryKey: string;
   bioData: Record<string, unknown> | null;
   sentAt: string | null;
   signedAt: string | null;
@@ -42,6 +45,40 @@ export interface FinanceProfileContract {
   signedDate: string | null;
   hasSignedAgreement: boolean;
   agreementFileName: string | null;
+}
+
+export interface FinanceProfileInstallment {
+  id: string;
+  sequence: number;
+  dueDate: string;
+  amount: number;
+  status: string;
+  description: string | null;
+  paidAmount: number;
+  paidStatus: string;
+  recognizedAt: string | null;
+}
+
+export interface FinanceProfileProgramTotals {
+  fee: number;
+  paid: number;
+  outstanding: number;
+  currency: string;
+  installmentsPaid: number;
+  installmentsTotal: number;
+}
+
+/**
+ * One agreement's self-contained ledger (a "program" the customer applied for).
+ * A customer can hold several — each bills and tracks its own fee, paid amount,
+ * outstanding balance and installment schedule. The backend attributes every
+ * invoice/payment to its agreement (Invoice.agreementId) so these never mix.
+ */
+export interface FinanceProfileProgram {
+  agreement: FinanceProfileAgreement;
+  contract: FinanceProfileContract | null;
+  installments: FinanceProfileInstallment[];
+  totals: FinanceProfileProgramTotals;
 }
 
 export type ExpenseCategory =
@@ -72,9 +109,17 @@ export interface FinanceProfileExpense {
 export interface FinanceCustomerProfile {
   lead: FinanceProfileLead;
   clientId: string | null;
+  /**
+   * One ledger per agreement (program), newest first. A customer can hold
+   * several. The flat `agreement`/`contract`/`installments`/`totals` fields
+   * below mirror the PRIMARY (newest) program for backward-compat.
+   */
+  agreements: FinanceProfileProgram[];
+  /** Per-currency roll-up across all programs (avoids mixing PKR + CAD). */
+  summary: { byCurrency: Array<{ currency: string; fee: number; paid: number; outstanding: number }>; agreementCount: number };
   agreement: FinanceProfileAgreement | null;
   contract: FinanceProfileContract | null;
-  installments: Array<{ id: string; sequence: number; dueDate: string; amount: number; status: string; description: string | null; paidAmount: number; paidStatus: string; recognizedAt: string | null }>;
+  installments: FinanceProfileInstallment[];
   invoices: Array<{ id: string; invoiceNumber: string; status: string; currency: string; totalAmount: number; paidAmount: number; isConsultation: boolean; dueDate: string | null; createdAt: string }>;
   /** Paid consultation fees creditable against the service fee (audit #1). These
    *  are informational — the credit already applies automatically (the consult
@@ -165,6 +210,9 @@ export function getContractAgreementUrl(contractId: string): Promise<{ url: stri
  */
 export function recordCustomerPayment(payload: {
   leadId: string;
+  /** Which program (agreement) this payment is for — pins it to that ledger
+   *  when the customer holds more than one agreement. */
+  agreementId?: string;
   submittedAmount: string;
   currency?: string;
   paymentMethod?: string;

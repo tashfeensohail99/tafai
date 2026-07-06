@@ -604,7 +604,7 @@ export class FinanceService {
     // A consultation fee is a standalone charge, not part of the service-fee
     // ledger, so it skips the "agreement must be approved" gate.
     if (!dto.isConsultation) {
-      await this.assertAgreementReadyForMoney(dto.leadId, dto.clientId);
+      await this.assertAgreementReadyForMoney(dto.leadId, dto.clientId, dto.agreementId);
     }
 
     if (dto.leadId) {
@@ -625,6 +625,7 @@ export class FinanceService {
         leadId: dto.leadId,
         clientId: dto.clientId,
         caseId: dto.caseId,
+        agreementId: dto.agreementId ?? null,
         invoiceNumber: await this.generateInvoiceNumber(),
         status: dto.status ?? InvoiceStatus.SENT,
         currency: dto.currency ?? 'CAD',
@@ -727,7 +728,7 @@ export class FinanceService {
 
   async recordPayment(dto: CreatePaymentDto, actorUserId: string) {
     const invoice = await this.findInvoiceById(dto.invoiceId);
-    await this.assertAgreementReadyForMoney(invoice.leadId, invoice.clientId);
+    await this.assertAgreementReadyForMoney(invoice.leadId, invoice.clientId, invoice.agreementId);
 
     // Period lock: can't book a payment dated into a closed accounting period.
     await this.assertPeriodOpen(dto.paidAt ? new Date(dto.paidAt) : new Date());
@@ -790,6 +791,18 @@ export class FinanceService {
       await this.ensureInvoiceBelongsToLead(dto.invoiceId, dto.leadId);
     }
 
+    // If a specific program (agreement) was named, it must belong to this lead —
+    // otherwise the payment would be pinned to another customer's ledger.
+    if (dto.agreementId) {
+      const owned = await this.prisma.agreement.findFirst({
+        where: { id: dto.agreementId, leadId: dto.leadId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!owned) {
+        throw new BadRequestException('Selected agreement does not belong to this lead');
+      }
+    }
+
     const receiptBuffer = this.decodeBase64(dto.receiptContentBase64);
     const upload = await this.storage.upload(
       receiptBuffer,
@@ -802,6 +815,7 @@ export class FinanceService {
       data: {
         leadId: dto.leadId,
         invoiceId: dto.invoiceId,
+        agreementId: dto.agreementId ?? null,
         createdByUserId: user.id,
         submittedAmount: dto.submittedAmount,
         currency: dto.currency ?? 'CAD',
@@ -1158,8 +1172,10 @@ export class FinanceService {
 
     // RECORD_PAYMENT: gate BEFORE we resolve/create any invoice, so an
     // unapproved-agreement handover can't leave an orphan invoice behind.
-    // (Handovers are lead-scoped — no clientId column — so gate on the lead.)
-    await this.assertAgreementReadyForMoney(existing.leadId);
+    // When the handover names a program, gate on THAT agreement so a payment
+    // can't be booked against an unapproved program just because the lead has
+    // another approved one. Otherwise (legacy) fall back to the lead-level gate.
+    await this.assertAgreementReadyForMoney(existing.leadId, null, existing.agreementId);
 
     // Invoice resolution — pick in priority order:
     //   1. The handover already has its own invoiceId from a prior
@@ -1537,6 +1553,7 @@ export class FinanceService {
         paidAmount: payment.invoice.paidAmount,
         currency: payment.invoice.currency,
       },
+      payment.invoice.agreementId,
     );
     // CA-friendly footer: real verifier name + a short, stable audit reference
     // derived from the receipt id.
@@ -1672,6 +1689,7 @@ export class FinanceService {
     leadId: string | null,
     clientId: string | null,
     fallback: { totalAmount: Prisma.Decimal | string; paidAmount: Prisma.Decimal | string; currency: string },
+    agreementId?: string | null,
   ): Promise<{
     account: {
       totalFee: number;
@@ -1711,18 +1729,38 @@ export class FinanceService {
       return { account: fallbackAccount(num(fallback.paidAmount)), upcomingInstallments: [] };
     }
 
-    const [contract, invoices] = await Promise.all([
-      this.prisma.serviceContract.findFirst({
+    // When the receipted invoice is attributed to a specific agreement, scope the
+    // whole engagement view to THAT agreement (its contract, its paid, its plan)
+    // so a person holding multiple agreements gets the correct receipt balance —
+    // not the newest agreement's figures with everyone's payments folded in.
+    const invoices = await this.prisma.invoice.findMany({
+      where: { OR: ownerOr, deletedAt: null },
+      select: { paidAmount: true, currency: true, agreementId: true },
+    });
+    let contract: Prisma.ServiceContractGetPayload<{ include: { installments: true } }> | null = null;
+    if (agreementId) {
+      const ag = await this.prisma.agreement.findFirst({
+        where: { id: agreementId, deletedAt: null },
+        select: { serviceContractId: true },
+      });
+      if (ag?.serviceContractId) {
+        contract = await this.prisma.serviceContract.findFirst({
+          where: { id: ag.serviceContractId, deletedAt: null },
+          include: { installments: { orderBy: { sequence: 'asc' } } },
+        });
+      }
+    } else {
+      contract = await this.prisma.serviceContract.findFirst({
         where: { OR: ownerOr, deletedAt: null },
         include: { installments: { orderBy: { sequence: 'asc' } } },
-      }),
-      this.prisma.invoice.findMany({
-        where: { OR: ownerOr, deletedAt: null },
-        select: { paidAmount: true, currency: true },
-      }),
-    ]);
+      });
+    }
 
-    const totalPaid = invoices.reduce((s, i) => s + num(i.paidAmount), 0);
+    // Paid scoped to the specific agreement when known, else all owner invoices.
+    const scopedInvoices = agreementId
+      ? invoices.filter((i) => i.agreementId === agreementId)
+      : invoices;
+    const totalPaid = scopedInvoices.reduce((s, i) => s + num(i.paidAmount), 0);
 
     // No signed ServiceContract yet? Fall back to the sales AGREEMENT the client
     // actually signed up under. A payment can be taken against an agreement's
@@ -1733,22 +1771,30 @@ export class FinanceService {
     // the customer profile, which already falls back to agreement.totalAmount,
     // so the receipt and the profile show the SAME engagement figures.
     if (!contract) {
-      const agreement = await this.prisma.agreement.findFirst({
-        where: { OR: ownerOr, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-        select: { totalAmount: true, currency: true, paymentPlan: true },
-      });
+      const agreement = agreementId
+        ? await this.prisma.agreement.findFirst({
+            where: { id: agreementId, deletedAt: null },
+            select: { totalAmount: true, currency: true, paymentPlan: true },
+          })
+        : await this.prisma.agreement.findFirst({
+            where: { OR: ownerOr, deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            select: { totalAmount: true, currency: true, paymentPlan: true },
+          });
       if (!agreement) {
         return { account: fallbackAccount(totalPaid), upcomingInstallments: [] };
       }
 
-      // Fold in only payments made in the agreement's own currency — the ledger
-      // is native per engagement, so a second agreement in another currency must
-      // not pollute this figure (same rule the customer profile applies).
+      // Paid for THIS agreement. When the agreementId is known it's already
+      // scoped (scopedInvoices → totalPaid). Otherwise fall back to summing only
+      // payments in the agreement's own currency, so a second agreement in
+      // another currency doesn't pollute the figure (native-per-engagement ledger).
       const agrCurrency = agreement.currency || fallback.currency;
-      const agrPaid = invoices
-        .filter((i) => (i.currency ?? agrCurrency) === agrCurrency)
-        .reduce((s, i) => s + num(i.paidAmount), 0);
+      const agrPaid = agreementId
+        ? totalPaid
+        : scopedInvoices
+            .filter((i) => (i.currency ?? agrCurrency) === agrCurrency)
+            .reduce((s, i) => s + num(i.paidAmount), 0);
 
       // The installment schedule lives on the agreement as JSON:
       // { installments: [{ sequence, stage, trigger, amount, dueDate }] }.
@@ -1896,6 +1942,7 @@ export class FinanceService {
         paidAmount: receipt.payment.invoice.paidAmount,
         currency: receipt.payment.invoice.currency,
       },
+      receipt.payment.invoice.agreementId,
     );
     const verifierName = await this.resolveVerifierName(receipt.issuedByUserId);
     const upload = await this.receiptPdfService.renderAndStore({
@@ -2667,6 +2714,7 @@ export class FinanceService {
       id: string;
       leadId: string;
       invoiceId: string | null;
+      agreementId?: string | null;
       submittedAmount: Prisma.Decimal;
       currency: string;
     },
@@ -2685,15 +2733,17 @@ export class FinanceService {
       return this.findInvoiceById(explicitInvoiceId);
     }
 
-    // 3. The lead already has an active Invoice — reuse it. Filter out
+    // 3. Reuse the lead's active Invoice for THIS program — filter out
     //    CANCELLED so a previously-voided invoice doesn't claim future
-    //    payments. Pick the most recent one if somehow multiple are
-    //    active (shouldn't happen post-fix, but a safety net for
-    //    legacy data that pre-dates this refactor).
+    //    payments. When the handover names a program (agreementId), scope
+    //    the reuse to that program's invoice so a payment for program A
+    //    never lands on program B's ledger; without one (legacy /
+    //    single-agreement) fall back to the lead's newest active invoice.
     const existingActive = await this.prisma.invoice.findFirst({
       where: {
         leadId: handover.leadId,
         status: { not: InvoiceStatus.CANCELLED },
+        ...(handover.agreementId ? { agreementId: handover.agreementId } : {}),
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -2701,16 +2751,44 @@ export class FinanceService {
       return this.findInvoiceById(existingActive.id);
     }
 
-    // 4. No invoice yet — create one anchored to the agreed service
-    //    fee if Sales captured it. Otherwise the handover's amount
-    //    becomes the implicit total (existing behaviour, just now
-    //    guarded by "did we already make one?").
+    // 4. No invoice yet — create one anchored to the agreed service fee.
+    //    When the handover names a program (agreementId), anchor to THAT
+    //    agreement's own total + currency, so a second program bills its own
+    //    fee rather than the lead's single serviceFeeAmount. Fall back to the
+    //    lead's captured fee (legacy / single-agreement), then the handover
+    //    amount as the implicit total.
+    const targetAgreement = handover.agreementId
+      ? await this.prisma.agreement.findFirst({
+          where: { id: handover.agreementId, leadId: handover.leadId, deletedAt: null },
+          select: { id: true, totalAmount: true, currency: true },
+        })
+      : // Legacy (no program named): anchor to the newest APPROVED/SENT/SIGNED
+        // agreement — NOT merely the newest, which could be an unapproved DRAFT.
+        // The gate above (assertAgreementReadyForMoney with a null agreementId)
+        // already required ≥1 ready agreement to exist; this pins the money to a
+        // ready one so it can't land on a program whose plan/ledger isn't locked.
+        await this.prisma.agreement.findFirst({
+          where: {
+            leadId: handover.leadId,
+            deletedAt: null,
+            status: { in: [AgreementStatus.APPROVED, AgreementStatus.SENT, AgreementStatus.SIGNED] },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, totalAmount: true, currency: true },
+        });
+
     const lead = await this.prisma.lead.findUnique({
       where: { id: handover.leadId },
       select: { serviceFeeAmount: true, serviceFeeCurrency: true },
     });
-    const agreedAmount = lead?.serviceFeeAmount ? lead.serviceFeeAmount.toString() : null;
-    const agreedCurrency = lead?.serviceFeeCurrency ?? null;
+    // Prefer the specific program's fee; else the lead's captured fee.
+    const agreedAmount =
+      targetAgreement?.totalAmount != null
+        ? targetAgreement.totalAmount.toString()
+        : lead?.serviceFeeAmount
+          ? lead.serviceFeeAmount.toString()
+          : null;
+    const agreedCurrency = targetAgreement?.currency ?? lead?.serviceFeeCurrency ?? null;
 
     // Tax: treat the figure as tax-INCLUSIVE so the invoice total still equals
     // the agreed fee / cash received, and break out the tax portion when the
@@ -2729,6 +2807,7 @@ export class FinanceService {
     return this.createInvoice(
       {
         leadId: handover.leadId,
+        agreementId: targetAgreement?.id,
         subtotal: net.toFixed(2),
         taxAmount: tax.toFixed(2),
         discountAmount: '0',
@@ -2817,30 +2896,58 @@ export class FinanceService {
    * installments). No agreement on file → allowed (direct/legacy invoicing
    * is unaffected).
    */
-  private async assertAgreementReadyForMoney(leadId?: string | null, clientId?: string | null) {
-    const or: Array<{ leadId?: string; clientId?: string }> = [];
-    if (leadId) or.push({ leadId });
-    if (clientId) or.push({ clientId });
-    if (or.length === 0) return;
-
-    const agreement = await this.prisma.agreement.findFirst({
-      where: { OR: or, deletedAt: null, status: { not: AgreementStatus.CANCELLED } },
-      orderBy: { createdAt: 'desc' },
-      select: { status: true, agreementNumber: true },
-    });
-    if (!agreement) return;
-
+  private async assertAgreementReadyForMoney(
+    leadId?: string | null,
+    clientId?: string | null,
+    agreementId?: string | null,
+  ) {
     const ready: AgreementStatus[] = [
       AgreementStatus.APPROVED,
       AgreementStatus.SENT,
       AgreementStatus.SIGNED,
     ];
-    if (!ready.includes(agreement.status)) {
-      const human = agreement.status.replace(/_/g, ' ').toLowerCase();
-      throw new BadRequestException(
-        `Agreement ${agreement.agreementNumber} hasn't been approved yet (it's ${human}). Finance must approve the agreement — which locks the payment plan and creates the ledger — before any invoice, payment or receipt can be recorded. Approve it first, then record the payment.`,
-      );
+
+    // Specific engagement known (installment- / handover-linked invoice) → gate
+    // on THAT agreement. With multiple agreements per person this stops a newer
+    // unapproved program from false-blocking a payment against an approved one,
+    // and stops money being booked against an unapproved program merely because
+    // a different one is approved.
+    if (agreementId) {
+      const agreement = await this.prisma.agreement.findFirst({
+        where: { id: agreementId, deletedAt: null },
+        select: { status: true, agreementNumber: true },
+      });
+      if (!agreement) return; // stale link on a legacy/direct invoice
+      if (!ready.includes(agreement.status)) {
+        const human = agreement.status.replace(/_/g, ' ').toLowerCase();
+        throw new BadRequestException(
+          `Agreement ${agreement.agreementNumber} hasn't been approved yet (it's ${human}). Finance must approve the agreement — which locks the payment plan and creates the ledger — before any invoice, payment or receipt can be recorded. Approve it first, then record the payment.`,
+        );
+      }
+      return;
     }
+
+    // No specific link (direct/legacy invoicing): require that the person has AT
+    // LEAST ONE approved agreement. Safer than the old "newest" pick — with 2+
+    // agreements it never blocks a valid payment just because a newer unrelated
+    // draft exists, while still refusing money when nothing is approved.
+    const or: Array<{ leadId?: string; clientId?: string }> = [];
+    if (leadId) or.push({ leadId });
+    if (clientId) or.push({ clientId });
+    if (or.length === 0) return;
+
+    const agreements = await this.prisma.agreement.findMany({
+      where: { OR: or, deletedAt: null, status: { not: AgreementStatus.CANCELLED } },
+      select: { status: true, agreementNumber: true },
+    });
+    if (agreements.length === 0) return; // no agreement on file → direct/legacy allowed
+    if (agreements.some((a) => ready.includes(a.status))) return; // ≥1 approved → allowed
+
+    const first = agreements[0];
+    const human = first.status.replace(/_/g, ' ').toLowerCase();
+    throw new BadRequestException(
+      `Agreement ${first.agreementNumber} hasn't been approved yet (it's ${human}). Finance must approve the agreement — which locks the payment plan and creates the ledger — before any invoice, payment or receipt can be recorded. Approve it first, then record the payment.`,
+    );
   }
 
   /**

@@ -99,6 +99,16 @@ export class CreateInvoiceDto {
   @IsUUID()
   caseId?: string;
 
+  /**
+   * The service agreement this invoice bills against. Set by internal callers
+   * (installment-linked invoicing, handover billing) so the finance ledger can
+   * attribute the invoice + its payments to a specific agreement now that a
+   * person can hold multiple. NULL for consult / ad-hoc invoices.
+   */
+  @IsOptional()
+  @IsUUID()
+  agreementId?: string;
+
   @IsOptional()
   @IsEnum(InvoiceStatus)
   status?: InvoiceStatus;
@@ -231,6 +241,15 @@ export class CreateFinanceHandoverDto {
   @IsOptional()
   @IsUUID()
   invoiceId?: string;
+
+  /**
+   * The agreement (program) this payment is for. Set by the customer profile
+   * when the customer holds more than one agreement, so review-time invoice
+   * resolution credits the right program's ledger instead of the newest one.
+   */
+  @IsOptional()
+  @IsUUID()
+  agreementId?: string;
 
   @IsNumberString()
   submittedAmount!: string;

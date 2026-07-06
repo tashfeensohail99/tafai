@@ -2062,6 +2062,14 @@ model Invoice {
   /// for invoices created directly (the original pattern, predates
   /// service contracts).
   installmentId   String?       @unique
+  /// The service agreement this invoice bills against. A person can now hold
+  /// more than one agreement (multiple programs), so leadId/clientId alone no
+  /// longer identifies the deal — this attributes the invoice (and its payments)
+  /// to a specific agreement for the per-agreement finance ledger. NULL for
+  /// consult-fee invoices (isConsultation) and legacy direct invoices that
+  /// couldn't be back-derived. Decoupled by id (no FK), like the rest of the
+  /// agreement model.
+  agreementId     String?
   invoiceNumber   String        @unique
   status          InvoiceStatus @default(DRAFT)
   currency        String        @default("CAD")
@@ -2095,6 +2103,7 @@ model Invoice {
   @@index([leadId])
   @@index([clientId])
   @@index([status])
+  @@index([agreementId])
   @@map("invoices")
   @@schema("finance")
 }
@@ -2291,6 +2300,11 @@ model FinanceHandover {
   id               String                @id @default(uuid())
   leadId           String
   invoiceId        String?
+  /// The agreement (program) this payment is for. A lead can hold several
+  /// agreements; this pins the handover's invoice resolution to the right
+  /// program's ledger. NULL for legacy / single-agreement handovers, which
+  /// fall back to the lead's only active invoice. Decoupled by id (no FK).
+  agreementId      String?
   paymentId        String?               @unique
   createdByUserId  String
   reviewedByUserId String?
@@ -2317,6 +2331,7 @@ model FinanceHandover {
 
   @@index([leadId])
   @@index([invoiceId])
+  @@index([agreementId])
   @@index([status])
   @@index([createdByUserId])
   @@map("finance_handovers")

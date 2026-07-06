@@ -115,6 +115,13 @@ export function CallDock() {
   // True once media connected — so we play the "call ended" cue only when a
   // real call finishes, not on a missed ring or a decline.
   const wasConnectedRef = useRef(false);
+  // Pre-accept warm-up started when the ring arrives: the peer + SDP are built
+  // (mic muted) and POSTed to /pre-accept so Meta runs ICE/DTLS DURING the
+  // ring. accept() then just unmutes + answers with the same SDP — killing the
+  // 3-8s of post-answer silence. `promise` resolves true when the warmed peer
+  // in pcRef is ready for reuse; false means it cleaned itself up and accept()
+  // must run the classic path.
+  const preWarmRef = useRef<{ callId: string; promise: Promise<boolean> } | null>(null);
   // Holds the card on a brief "Call ended" state before clearing it.
   const endedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Liveness heartbeat (so the backend sweeper can free a leg if this tab dies)
@@ -384,6 +391,7 @@ export function CallDock() {
     localStreamRef.current = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
     activeIdRef.current = null;
+    preWarmRef.current = null; // the warmed peer (if any) was closed above
     outboundThreadRef.current = null;
     setMuted(false);
     if (endedTimerRef.current) {
@@ -426,6 +434,11 @@ export function CallDock() {
         if (pc !== pcRef.current) return; // stale peer from a previous call
         const st = pc.connectionState;
         if (st === 'connected') {
+          // Pre-accept warm-up: media can reach 'connected' while we're still
+          // RINGING (Meta ran ICE/DTLS during the ring — by design, no audio
+          // flows until the real accept). Stay on the ringing UI; accept()
+          // flips to in-call. Not marking wasConnected keeps a decline silent.
+          if (phaseRef.current === 'ringing') return;
           wasConnectedRef.current = true;
           if (reconnectTimerRef.current) {
             clearTimeout(reconnectTimerRef.current);
@@ -436,6 +449,12 @@ export function CallDock() {
             timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
           }
         } else if (st === 'disconnected') {
+          // While still RINGING this is a pre-accept WARM-UP peer, not a live
+          // call — a blip here must NOT show "Reconnecting…" or arm a teardown
+          // on the ring. Leave the ring alone; accept() will reuse the peer if
+          // it recovers, or fall back to the classic path if the warm peer is
+          // unusable.
+          if (phaseRef.current === 'ringing') return;
           setPhase('reconnecting');
           if (!reconnectTimerRef.current) {
             reconnectTimerRef.current = setTimeout(() => {
@@ -444,6 +463,25 @@ export function CallDock() {
             }, 20000);
           }
         } else if (st === 'failed' || st === 'closed') {
+          // A warm-up peer that FAILS during the ring (e.g. Meta never engaged
+          // pre-accept, so ICE checks lead nowhere with nobody answering) must
+          // NOT tear down the still-live ring — that would turn an answerable
+          // call into a miss. Discard the dead warm peer so accept() runs the
+          // classic build; keep the ring.
+          if (phaseRef.current === 'ringing') {
+            if (pc === pcRef.current) {
+              try {
+                pc.close();
+              } catch {
+                /* ignore */
+              }
+              pcRef.current = null;
+              localStreamRef.current?.getTracks().forEach((t) => t.stop());
+              localStreamRef.current = null;
+              preWarmRef.current = null; // force accept() down the classic path
+            }
+            return;
+          }
           teardown('failed');
         }
       };
@@ -455,6 +493,85 @@ export function CallDock() {
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+
+  // Pre-accept warm-up (Meta-recommended): the moment the ring arrives, quietly
+  // build the whole media pipeline — ICE config, mic (muted), peer, SDP answer,
+  // candidate gathering — and POST /pre-accept so Meta establishes ICE/DTLS
+  // DURING the ring. The customer keeps hearing ringing (audio only flows after
+  // the real accept); when the rep taps Accept, accept() just unmutes + answers
+  // with the SAME SDP, so audio starts near-instantly instead of after 3-8s of
+  // setup silence (exactly the window in which callers hang up).
+  //
+  // Resolves true when the warmed peer in pcRef is reusable. On ANY failure it
+  // cleans up its own artifacts and resolves false — accept() then runs the
+  // classic path exactly as before this feature existed.
+  const preWarm = useCallback(
+    async (callId: string): Promise<boolean> => {
+      const stillRinging = () => activeIdRef.current === callId && phaseRef.current === 'ringing';
+      let stream: MediaStream | null = null;
+      let pc: RTCPeerConnection | null = null;
+      try {
+        const [{ iceServers }, detail] = await Promise.all([
+          apiFetch<{ iceServers: RTCIceServer[] }>('/whatsapp/calls/ice'),
+          apiFetch<{ id: string; status: string; sdpOffer: string | null }>(
+            `/whatsapp/calls/${callId}`,
+          ),
+        ]);
+        if (!stillRinging() || !detail.sdpOffer) return false;
+
+        // Mic permission is requested here, during the visible ring — the same
+        // prompt the classic accept path shows, just earlier. Muted until Accept.
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!stillRinging()) {
+          stream.getTracks().forEach((t) => t.stop());
+          return false;
+        }
+        stream.getAudioTracks().forEach((t) => (t.enabled = false));
+        localStreamRef.current = stream;
+
+        pc = new RTCPeerConnection({ iceServers: iceServers ?? [] });
+        pcRef.current = pc;
+        stream.getTracks().forEach((t) => pc!.addTrack(t, stream!));
+        pc.ontrack = (e) => {
+          if (remoteAudioRef.current) remoteAudioRef.current.srcObject = e.streams[0] ?? null;
+        };
+        monitorConnection(pc); // its 'connected' handler ignores the ringing phase
+
+        await pc.setRemoteDescription({ type: 'offer', sdp: detail.sdpOffer });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await waitForIce(pc);
+        if (!stillRinging()) return pcRef.current === pc; // answered mid-warm: peer still usable
+
+        // Tell Meta to start ICE/DTLS now. Best-effort: even if this POST fails,
+        // the locally-built peer is still reusable (accept saves the gather time).
+        await apiFetch(`/whatsapp/calls/${callId}/pre-accept`, {
+          method: 'POST',
+          body: JSON.stringify({ sdpAnswer: pc.localDescription?.sdp ?? '' }),
+        }).catch(() => undefined);
+        return true;
+      } catch {
+        // Clean up ONLY our own artifacts (a concurrent teardown may already
+        // have swapped/cleared the refs — never touch someone else's peer).
+        try {
+          if (pc && pcRef.current === pc) {
+            pc.close();
+            pcRef.current = null;
+          }
+          if (stream && localStreamRef.current === stream) {
+            stream.getTracks().forEach((t) => t.stop());
+            localStreamRef.current = null;
+          } else if (stream && !localStreamRef.current) {
+            stream.getTracks().forEach((t) => t.stop());
+          }
+        } catch {
+          /* ignore */
+        }
+        return false;
+      }
+    },
+    [monitorConnection],
+  );
 
   // Another of this rep's OWN devices (e.g. their phone) answered this call.
   // Stop ringing here — but ONLY if we're still 'ringing'. The device that
@@ -491,6 +608,7 @@ export function CallDock() {
         setError(null);
         setCall(data);
         setPhase('ringing');
+        phaseRef.current = 'ringing'; // sync NOW — preWarm checks it before React re-renders
         playRingTone();
         stopRing();
         ringRef.current = setInterval(playRingTone, 3000);
@@ -500,8 +618,11 @@ export function CallDock() {
         ringTimeoutRef.current = setTimeout(() => {
           if (activeIdRef.current === data.callId) teardown();
         }, 45000);
+        // Warm the media pipeline + pre-accept while the ring plays, so Accept
+        // is just unmute + answer (see preWarm). Failures self-clean → classic path.
+        preWarmRef.current = { callId: data.callId, promise: preWarm(data.callId) };
       },
-      [playRingTone, stopRing, teardown],
+      [playRingTone, stopRing, teardown, preWarm],
     ),
   );
 
@@ -734,8 +855,36 @@ export function CallDock() {
       ringTimeoutRef.current = null;
     }
     setPhase('connecting');
+    phaseRef.current = 'connecting'; // sync NOW so an in-flight preWarm stops treating this as a ring
     setError(null);
     try {
+      // Pre-warmed path: the peer + SDP were built (and Meta pre-accepted)
+      // while the phone was still ringing — Accept is just unmute + answer
+      // with the SAME SDP, so audio starts near-instantly.
+      const warm = preWarmRef.current;
+      const warmed =
+        warm && warm.callId === call.callId ? await warm.promise.catch(() => false) : false;
+      if (warmed && pcRef.current) {
+        const pc = pcRef.current;
+        localStreamRef.current?.getAudioTracks().forEach((t) => (t.enabled = true));
+        await apiFetch(`/whatsapp/calls/${call.callId}/answer`, {
+          method: 'POST',
+          body: JSON.stringify({ sdpAnswer: pc.localDescription?.sdp ?? '' }),
+        });
+        if (pc.connectionState === 'connected') {
+          // Media already came up during the ring (pre-accept did its job) —
+          // the state-change handler skipped it while ringing, so flip here.
+          wasConnectedRef.current = true;
+          if (!timerRef.current) {
+            timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+          }
+          setPhase('in-call');
+        }
+        // else: connectionstatechange flips us to 'in-call' once media connects.
+        return;
+      }
+
+      // Classic path (no/failed warm-up): build everything post-accept.
       const [{ iceServers }, detail] = await Promise.all([
         apiFetch<{ iceServers: RTCIceServer[] }>('/whatsapp/calls/ice'),
         apiFetch<{ id: string; status: string; sdpOffer: string | null }>(`/whatsapp/calls/${call.callId}`),

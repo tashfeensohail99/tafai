@@ -13,12 +13,22 @@ import {
 import {
   listVisits,
   type VisitList,
+  type VisitRow,
   type VisitStatus,
   type VisitType,
 } from '@/lib/reception-api';
 import { fmtDuration, fmtTime, STATUS_LABEL, STATUS_TONE, td, th, TYPE_META } from './shared';
 
 const PAGE = 25;
+
+/** Consultation-fee status for the log's Payment column. Only paid consults
+ *  carry a fee; other visit types show a dash. */
+function paymentBadge(v: VisitRow) {
+  if (v.visitType !== 'PAID_CONSULT') return <span className="sos-text-faint" style={{ fontSize: 12 }}>—</span>;
+  if (v.paid) return <StatusBadge tone="success" size="sm" dot>Fee paid</StatusBadge>;
+  if (v.pendingPayment) return <StatusBadge tone="warning" size="sm" dot>Verifying</StatusBadge>;
+  return <StatusBadge tone="neutral" size="sm" dot>Fee due</StatusBadge>;
+}
 
 function pktDateMinus(days: number): string {
   const p = new Date(Date.now() + 5 * 60 * 60 * 1000 - days * 24 * 60 * 60 * 1000);
@@ -161,7 +171,7 @@ export function VisitorsLog() {
           <div className="sos-text-faint" style={{ padding: 28, textAlign: 'center', fontSize: 13 }}>No visitors match these filters.</div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
               <thead>
                 <tr>
                   <th style={th}>Date</th>
@@ -171,6 +181,7 @@ export function VisitorsLog() {
                   <th style={th}>Purpose</th>
                   <th style={th}>Host</th>
                   <th style={th}>Status</th>
+                  <th style={th}>Payment</th>
                   <th style={th}>Duration</th>
                 </tr>
               </thead>
@@ -187,6 +198,7 @@ export function VisitorsLog() {
                     <td style={{ ...td, maxWidth: 200, whiteSpace: 'normal' }}>{v.purpose ?? '—'}</td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>{v.hostName ?? '—'}</td>
                     <td style={td}><StatusBadge tone={STATUS_TONE[v.status]} size="sm" dot>{STATUS_LABEL[v.status]}</StatusBadge></td>
+                    <td style={td}>{paymentBadge(v)}</td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>{v.checkedOutAt ? fmtDuration(v.checkedInAt, v.checkedOutAt) : '—'}</td>
                   </tr>
                 ))}

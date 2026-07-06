@@ -24,9 +24,12 @@ import {
 } from '@/lib/reception-api';
 import { fmtTime, todayPkt } from './shared';
 
+// Bank transfer is the DEFAULT — it routes through the customer-uploads-receipt
+// + finance-verifies flow before the consultation is confirmed. Cash is an
+// explicit choice for someone paying at the desk right now (confirms instantly).
 const METHODS = [
-  { value: 'cash', label: 'Cash' },
   { value: 'bank_transfer', label: 'Bank transfer' },
+  { value: 'cash', label: 'Cash (paid at desk now)' },
 ];
 
 function money(amount: number | null, currency: string | null): string {
@@ -60,7 +63,7 @@ export function ConsultCollectModal({
   const [avail, setAvail] = useState<Availability | null>(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slot, setSlot] = useState<AvailabilitySlot | null>(null);
-  const [method, setMethod] = useState('cash');
+  const [method, setMethod] = useState('bank_transfer');
   const [ref, setRef] = useState('');
   // Default ON — most walk-ins expect the confirmation/reminder on WhatsApp.
   // Unchecking records a decline and suppresses the business-initiated templates.
@@ -77,7 +80,7 @@ export function ConsultCollectModal({
     setDate(todayPkt());
     setAvail(null);
     setSlot(null);
-    setMethod('cash');
+    setMethod('bank_transfer');
     setRef('');
     setConsent(true);
     setError(null);

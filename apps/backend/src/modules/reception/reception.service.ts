@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { normalisePhone } from '../../common/phone/phone.util';
 import { LeadsService } from '../leads/leads.service';
 import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
 import { FinanceService } from '../finance/finance.service';
@@ -1742,10 +1743,25 @@ export class ReceptionService {
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
+  /**
+   * Phone strings to match an existing Lead/Client on: the raw input AND its
+   * canonical E.164 form. LeadsService.create stores the normalised E.164
+   * (+92…) while the desk types the local 03… form, so matching only the raw
+   * string would miss an existing lead — then createWalkInLead would call
+   * leads.create, hit the "same phone already exists" guard, and fail. Matching
+   * both forms lets a paid consult (or walk-in) REUSE the existing lead.
+   */
+  private phoneCandidates(phone: string): string[] {
+    const norm = normalisePhone(phone, 'PK');
+    const canonical = norm.ok && norm.e164 ? norm.e164 : null;
+    return canonical && canonical !== phone ? [phone, canonical] : [phone];
+  }
+
   private async matchByPhone(phone: string): Promise<{ kind: 'lead' | 'client'; id: string } | null> {
-    const client = await this.prisma.client.findFirst({ where: { phone, deletedAt: null }, select: { id: true } });
+    const phones = this.phoneCandidates(phone);
+    const client = await this.prisma.client.findFirst({ where: { phone: { in: phones }, deletedAt: null }, select: { id: true } });
     if (client) return { kind: 'client', id: client.id };
-    const lead = await this.prisma.lead.findFirst({ where: { phone, deletedAt: null }, select: { id: true } });
+    const lead = await this.prisma.lead.findFirst({ where: { phone: { in: phones }, deletedAt: null }, select: { id: true } });
     if (lead) return { kind: 'lead', id: lead.id };
     return null;
   }
@@ -1783,11 +1799,13 @@ export class ReceptionService {
       }
       return lead.id;
     } catch (err) {
-      // The only recoverable failure is a raced duplicate phone (a concurrent
-      // create beat us and ensureUniqueLead threw) — link the now-existing lead.
-      // Any other error means NO lead was persisted, so rethrow rather than
-      // silently logging a walk-in with no lead (the "always a lead" rule).
-      const existing = await this.prisma.lead.findFirst({ where: { phone, deletedAt: null }, select: { id: true } });
+      // The only recoverable failure is a duplicate phone — either a concurrent
+      // create raced us, or the lead already existed under its canonical E.164
+      // form (leads.create normalises 03… → +92…, so the pre-check missed it).
+      // Match both forms and link the existing lead. Any other error means NO
+      // lead was persisted, so rethrow rather than silently logging a walk-in
+      // with no lead (the "always a lead" rule).
+      const existing = await this.prisma.lead.findFirst({ where: { phone: { in: this.phoneCandidates(phone) }, deletedAt: null }, select: { id: true } });
       if (existing) {
         this.log.warn(`walk-in lead create raced a duplicate; linked existing ${existing.id}`);
         return existing.id;

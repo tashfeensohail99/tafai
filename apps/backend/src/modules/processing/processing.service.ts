@@ -238,6 +238,157 @@ export class ProcessingService {
   ) {}
 
   // -------------------------------------------------------------------------
+  // INTAKE NOTIFICATIONS
+  // Wajiha (Processing manager) asked to be alerted the moment a case arrives
+  // from Finance, and for both the assigned officer AND the manager(s) to be
+  // emailed when a case is assigned. Every send here is fire-and-forget +
+  // non-fatal so a mail/notification outage never disturbs the committed
+  // intake. Kill-switch: PROCESSING_EMAIL_NOTIFY_ENABLED=false.
+  // -------------------------------------------------------------------------
+
+  private processingNotifyEnabled(): boolean {
+    return process.env.PROCESSING_EMAIL_NOTIFY_ENABLED !== 'false';
+  }
+
+  /** Active Processing managers (email + display name + userId for the bell). */
+  private async getActiveProcessingManagers(): Promise<
+    Array<{ userId: string; email: string; name: string }>
+  > {
+    const managers = await this.prisma.userAccount.findMany({
+      where: {
+        status: 'ACTIVE',
+        deletedAt: null,
+        userRoles: { some: { role: { name: 'processing_manager' } } },
+      },
+      select: {
+        id: true,
+        email: true,
+        employee: { select: { firstName: true, lastName: true } },
+      },
+    });
+    return managers.map((u) => ({
+      userId: u.id,
+      email: u.email,
+      name: u.employee
+        ? `${u.employee.firstName} ${u.employee.lastName}`.trim() || u.email
+        : u.email,
+    }));
+  }
+
+  /**
+   * Finance → Processing: email + in-app bell every active Processing manager so
+   * they can acknowledge and assign the newly-arrived case.
+   */
+  private async notifyManagersCaseFromFinance(pc: {
+    id: string;
+    service: string;
+    targetCountry: string;
+    priority: string;
+    client: { firstName: string; lastName: string; referenceCode: string } | null;
+  }): Promise<void> {
+    const applicantName = pc.client
+      ? `${pc.client.firstName} ${pc.client.lastName}`.trim() || 'the applicant'
+      : 'the applicant';
+    const referenceCode = pc.client?.referenceCode ?? null;
+    const priority = pc.priority && pc.priority !== 'NORMAL' ? pc.priority : null;
+    const managers = await this.getActiveProcessingManagers();
+    if (managers.length === 0) {
+      // No manager to route the case to — surface it rather than fail silent.
+      // A missing / renamed processing_manager role would otherwise leave cases
+      // sitting unacknowledged in the intake queue with nobody alerted.
+      this.logger.warn(
+        `New case ${pc.id} arrived from Finance but no active processing_manager exists to notify — check the processing_manager role assignment.`,
+      );
+      return;
+    }
+    await Promise.all(
+      managers.flatMap((m) => [
+        this.email.sendProcessingCaseFromFinance({
+          to: m.email,
+          managerName: m.name,
+          applicantName,
+          referenceCode,
+          service: pc.service,
+          targetCountry: pc.targetCountry,
+          priority,
+          caseId: pc.id,
+        }),
+        this.notifications.create({
+          userId: m.userId,
+          type: 'PROCESSING_CASE_NEW',
+          title: 'New case from Finance',
+          body: `${applicantName} — ${pc.service} / ${pc.targetCountry}. Acknowledge & assign.`,
+          link: `/processing/cases/${pc.id}`,
+        }),
+      ]),
+    );
+  }
+
+  /**
+   * Case assigned to an officer: email + bell the officer, and email every
+   * active Processing manager a record copy so managers stay in the loop.
+   */
+  private async notifyCaseAssigned(input: {
+    caseId: string;
+    service: string;
+    targetCountry: string;
+    applicant: { firstName: string; lastName: string; referenceCode: string } | null;
+    officer: {
+      userId: string;
+      email: string;
+      employee: { firstName: string; lastName: string } | null;
+    };
+  }): Promise<void> {
+    const applicantName = input.applicant
+      ? `${input.applicant.firstName} ${input.applicant.lastName}`.trim() || 'the applicant'
+      : 'the applicant';
+    const officerName = input.officer.employee
+      ? `${input.officer.employee.firstName} ${input.officer.employee.lastName}`.trim() ||
+        input.officer.email
+      : input.officer.email;
+    const referenceCode = input.applicant?.referenceCode ?? null;
+
+    const tasks: Array<Promise<unknown>> = [
+      this.email.sendProcessingCaseAssigned({
+        to: input.officer.email,
+        officerName,
+        applicantName,
+        referenceCode,
+        service: input.service,
+        targetCountry: input.targetCountry,
+        caseId: input.caseId,
+      }),
+      this.notifications.create({
+        userId: input.officer.userId,
+        type: 'PROCESSING_CASE_ASSIGNED',
+        title: 'New case assigned to you',
+        body: `${applicantName} — ${input.service} / ${input.targetCountry}.`,
+        link: `/processing/cases/${input.caseId}`,
+      }),
+    ];
+
+    const managers = await this.getActiveProcessingManagers();
+    for (const m of managers) {
+      // The officer may themselves be a manager — they already got the officer
+      // email above, so skip the redundant manager record copy.
+      if (m.email === input.officer.email) continue;
+      tasks.push(
+        this.email.sendProcessingCaseAssignedManager({
+          to: m.email,
+          managerName: m.name,
+          applicantName,
+          officerName,
+          referenceCode,
+          service: input.service,
+          targetCountry: input.targetCountry,
+          caseId: input.caseId,
+        }),
+      );
+    }
+    await Promise.all(tasks);
+  }
+
+  // -------------------------------------------------------------------------
   // INTAKE
   // -------------------------------------------------------------------------
 
@@ -356,6 +507,13 @@ export class ProcessingService {
       actorUserId: user.id,
       metadata: { handoverId: dto.financeHandoverId, priority: processingCase.priority },
     }).catch(() => { /* timeline is non-fatal — processing_audit_log is the source of truth */ });
+
+    // Alert Processing manager(s) — email + in-app bell — that Finance handed a
+    // new case over, so they can acknowledge and assign it. Fire-and-forget +
+    // non-fatal; a notification failure must never disturb the committed intake.
+    if (this.processingNotifyEnabled()) {
+      void this.notifyManagersCaseFromFinance(processingCase).catch(() => {});
+    }
 
     return processingCase;
   }
@@ -848,6 +1006,10 @@ export class ProcessingService {
   ) {
     const processingCase = await this.prisma.processingCase.findUnique({
       where: { id: caseId },
+      include: {
+        // Applicant name for the assignment notification emails.
+        client: { select: { firstName: true, lastName: true, referenceCode: true } },
+      },
     });
     if (!processingCase) throw new NotFoundException('Processing case not found');
     if (processingCase.stage !== ProcessingCaseStage.INTAKE_PENDING) {
@@ -863,6 +1025,8 @@ export class ProcessingService {
       select: {
         id: true,
         email: true,
+        // Officer display name for the assignment notification email.
+        employee: { select: { firstName: true, lastName: true } },
         userRoles: {
           select: { role: { select: { name: true } } },
         },
@@ -974,6 +1138,22 @@ export class ProcessingService {
         assignedOfficerId: officerId,
       },
     }).catch(() => { /* non-fatal */ });
+
+    // Notify the newly-assigned officer (email + in-app bell) and email the
+    // Processing manager(s) a record copy. Fire-and-forget + non-fatal.
+    if (this.processingNotifyEnabled()) {
+      void this.notifyCaseAssigned({
+        caseId,
+        service: effectiveService,
+        targetCountry: processingCase.targetCountry,
+        applicant: processingCase.client,
+        officer: {
+          userId: assignee.id,
+          email: assignee.email,
+          employee: assignee.employee,
+        },
+      }).catch(() => {});
+    }
 
     return updated;
   }

@@ -601,6 +601,114 @@ export class EmailService {
       ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
     });
   }
+
+  /**
+   * Finance handed a verified case over to Processing — alert the Processing
+   * manager(s) so they can acknowledge it and assign an associate. Internal
+   * staff notification (not customer-facing). Fired once per manager so the
+   * greeting is personalised. Gated in the caller by
+   * PROCESSING_EMAIL_NOTIFY_ENABLED.
+   */
+  async sendProcessingCaseFromFinance(opts: {
+    to: string;
+    managerName?: string | null;
+    applicantName: string;
+    referenceCode?: string | null;
+    service?: string | null;
+    targetCountry?: string | null;
+    priority?: string | null;
+    caseId: string;
+  }): Promise<boolean> {
+    const greeting = opts.managerName ? `Hi ${escHtml(opts.managerName)}, ` : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">New case sent to Processing</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">${greeting}Finance has handed a new case over to Processing for <b>${escHtml(opts.applicantName)}</b>. Please acknowledge it and assign an associate.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Applicant', opts.applicantName)}
+          ${infoRow('Reference', opts.referenceCode)}
+          ${infoRow('Service', opts.service)}
+          ${infoRow('Target country', opts.targetCountry)}
+          ${infoRow('Priority', opts.priority)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/processing/cases/${encodeURIComponent(opts.caseId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open the case &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `New case sent to Processing — ${opts.applicantName}`,
+      html: baseTemplate('New case sent to Processing', content),
+    });
+  }
+
+  /**
+   * A Processing manager assigned a case to an officer — nudge the officer so
+   * they pick it up in their /processing/cases workspace. Gated in the caller
+   * by PROCESSING_EMAIL_NOTIFY_ENABLED.
+   */
+  async sendProcessingCaseAssigned(opts: {
+    to: string;
+    officerName?: string | null;
+    applicantName: string;
+    referenceCode?: string | null;
+    service?: string | null;
+    targetCountry?: string | null;
+    caseId: string;
+  }): Promise<boolean> {
+    const greeting = opts.officerName ? `Hi ${escHtml(opts.officerName)}, ` : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">New case assigned to you</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">${greeting}a processing case for <b>${escHtml(opts.applicantName)}</b> has been assigned to you. Please review the document checklist and start the next steps.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Applicant', opts.applicantName)}
+          ${infoRow('Reference', opts.referenceCode)}
+          ${infoRow('Service', opts.service)}
+          ${infoRow('Target country', opts.targetCountry)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/processing/cases/${encodeURIComponent(opts.caseId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open the case &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `Case assigned to you — ${opts.applicantName}`,
+      html: baseTemplate('New case assigned to you', content),
+    });
+  }
+
+  /**
+   * Record copy to the Processing manager(s) that a case was assigned to an
+   * associate, so managers stay in the loop on routing decisions. Gated in the
+   * caller by PROCESSING_EMAIL_NOTIFY_ENABLED.
+   */
+  async sendProcessingCaseAssignedManager(opts: {
+    to: string;
+    managerName?: string | null;
+    applicantName: string;
+    officerName: string;
+    referenceCode?: string | null;
+    service?: string | null;
+    targetCountry?: string | null;
+    caseId: string;
+  }): Promise<boolean> {
+    const greeting = opts.managerName ? `Hi ${escHtml(opts.managerName)}, ` : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Case assigned to an associate</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">${greeting}<b>${escHtml(opts.applicantName)}</b>&#39;s processing case has been assigned to <b>${escHtml(opts.officerName)}</b>.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Applicant', opts.applicantName)}
+          ${infoRow('Reference', opts.referenceCode)}
+          ${infoRow('Assigned to', opts.officerName)}
+          ${infoRow('Service', opts.service)}
+          ${infoRow('Target country', opts.targetCountry)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/processing/cases/${encodeURIComponent(opts.caseId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open the case &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `Case assigned — ${opts.applicantName} → ${opts.officerName}`,
+      html: baseTemplate('Case assigned to an associate', content),
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

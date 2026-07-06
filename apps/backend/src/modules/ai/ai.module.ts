@@ -5,6 +5,7 @@ import { OrchestratorService } from './orchestrator.service';
 import { AiAdminController } from './ai-admin.controller';
 import { AiBacklogSweeperService } from './ai-backlog-sweeper.service';
 import { WhatsAppWindowKeeperService } from './window-keeper.service';
+import { WhatsAppWindowSaverService } from './window-saver.service';
 import { WhatsAppReengageBlastService } from './reengage-blast.service';
 import { WhatsAppNotificationsModule } from '../whatsapp/notifications/notifications.module';
 import { AppointmentBookingModule } from '../appointments/appointment-booking.module';
@@ -31,6 +32,7 @@ import { WhatsAppCallsModule } from '../whatsapp/calls/calls.module';
     OrchestratorService,
     AiBacklogSweeperService,
     WhatsAppWindowKeeperService,
+    WhatsAppWindowSaverService,
     WhatsAppReengageBlastService,
   ],
   exports: [OpenAiService, KnowledgeService, OrchestratorService],

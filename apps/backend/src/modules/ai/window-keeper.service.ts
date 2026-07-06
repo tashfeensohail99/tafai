@@ -17,6 +17,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { WHATSAPP_QUEUE, type OutboundMessageJob } from '../whatsapp/queues/queue-contracts';
 import { WhatsAppCallsService } from '../whatsapp/calls/calls.service';
+import { OrchestratorService } from './orchestrator.service';
 
 /**
  * Window-keeper: a gentle re-engagement nudge fired a few hours before the
@@ -69,6 +70,7 @@ export class WhatsAppWindowKeeperService implements OnModuleInit, OnModuleDestro
     @InjectQueue(WHATSAPP_QUEUE.OUTBOUND_MESSAGE)
     private readonly outboundQueue: Queue<OutboundMessageJob>,
     private readonly calls: WhatsAppCallsService,
+    private readonly orchestrator: OrchestratorService,
   ) {}
 
   onModuleInit(): void {
@@ -220,7 +222,19 @@ export class WhatsAppWindowKeeperService implements OnModuleInit, OnModuleDestro
       } else if (permStatus === 'PENDING') {
         continue; // already requested this window — don't nag
       } else {
-        await this.sendKeeperText(t, composeNudge(firstName));
+        // Context-aware re-engagement: read the actual conversation (+ KB) and
+        // write an ON-TOPIC follow-up instead of the generic canned nudge that
+        // "says something totally out of context". Falls back to the canned line
+        // on any failure/safety-veto (null return) or when the kill-switch
+        // WINDOW_KEEPER_SMART_NUDGE=false is set.
+        const smart =
+          process.env.WINDOW_KEEPER_SMART_NUDGE === 'false'
+            ? null
+            : await this.orchestrator.composeReengagement({
+                threadId: t.id,
+                leadFirstName: t.lead?.firstName ?? null,
+              });
+        await this.sendKeeperText(t, smart ?? composeNudge(firstName));
         sent++;
       }
     }

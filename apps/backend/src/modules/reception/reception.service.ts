@@ -585,7 +585,7 @@ export class ReceptionService {
         idempotencyKey: `consult-received-${vp.id}`,
         consent: visit.whatsappConsent,
       });
-      await this.notifyPrincipal(
+      void this.notifyPrincipal(
         org.principalEmployeeId,
         `${visit.name} — bank transfer pending verification (${currency} ${fee.toLocaleString()})`,
       );
@@ -1371,12 +1371,13 @@ export class ReceptionService {
     // Pay-to-confirm: the slot is only CONFIRMED once paid + verified.
     await this.appointments.update(params.appointmentId, { status: AppointmentStatus.CONFIRMED }, actorUserId);
 
-    try {
-      await this.whatsappNotifier.sendConfirmationFor(params.appointmentId, actorUserId, { kind: 'booked' });
-    } catch (err) {
-      this.log.warn(`consult WhatsApp confirm failed: ${(err as Error).message}`);
-    }
-    await this.notifyPrincipal(
+    // The customer WhatsApp confirm + the principal bell are best-effort — fire
+    // them in the background so the Meta round-trip doesn't hold up the desk's
+    // "confirm" response (the fee/receipt/appointment are already committed above).
+    void this.whatsappNotifier
+      .sendConfirmationFor(params.appointmentId, actorUserId, { kind: 'booked' })
+      .catch((err) => this.log.warn(`consult WhatsApp confirm failed: ${(err as Error).message}`));
+    void this.notifyPrincipal(
       org.principalEmployeeId,
       `${visit.name} — fee paid (${params.currency} ${params.amount.toLocaleString()})`,
     );

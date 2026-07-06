@@ -631,6 +631,10 @@ export class ReceptionService {
       throw new BadRequestException('This payment was rejected.');
     }
     const fin = await this.finalizeVisitorPayment(id, actorUserId);
+    // Tell the front desk the wait is over — a bell for the receptionist who
+    // checked this visitor in, so they can send them through. Fire-and-forget so
+    // it never blocks or fails the finance verify.
+    void this.notifyReceptionPaymentVerified(id);
     return {
       alreadyVerified: false as const,
       receiptNumber: fin.receiptNumber,
@@ -1399,6 +1403,43 @@ export class ReceptionService {
       }
     } catch (err) {
       this.log.warn(`consult principal notify failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Bell the front desk when a consultation payment clears — targeted at the
+   * receptionist who checked this visitor in (the desk that's waiting on it), so
+   * they know to send the visitor through. Best-effort; a notify failure must
+   * never break the finance verify.
+   */
+  private async notifyReceptionPaymentVerified(paymentId: string) {
+    try {
+      const vp = await this.prisma.visitorPayment.findUnique({
+        where: { id: paymentId },
+        select: { visitId: true },
+      });
+      if (!vp) return;
+      const visit = await this.prisma.visit.findUnique({
+        where: { id: vp.visitId },
+        select: { name: true, checkedInByUserId: true, appointmentId: true },
+      });
+      if (!visit?.checkedInByUserId) return;
+      const appt = visit.appointmentId
+        ? await this.prisma.appointment.findUnique({
+            where: { id: visit.appointmentId },
+            select: { scheduledAt: true },
+          })
+        : null;
+      const when = appt ? ` — consultation confirmed for ${this.formatSlotPkt(appt.scheduledAt)}` : ' — consultation confirmed';
+      await this.notifications.create({
+        userId: visit.checkedInByUserId,
+        type: 'CONSULTATION_BOOKED',
+        title: 'Payment verified ✓',
+        body: `${visit.name}'s consultation fee is verified${when}.`,
+        link: '/reception',
+      });
+    } catch (err) {
+      this.log.warn(`reception payment-verified notify failed: ${(err as Error).message}`);
     }
   }
 

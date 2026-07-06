@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  CheckCircle2,
   Clock,
   DoorOpen,
   Hourglass,
@@ -12,6 +13,7 @@ import {
   Users,
   UserPlus,
   Wallet,
+  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -55,6 +57,11 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [consultVisit, setConsultVisit] = useState<VisitRow | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // Desk "payment verified" pop — fires when a paid consult we'd already seen as
+  // unpaid flips to paid between polls (i.e. finance just verified it).
+  const [verifiedToast, setVerifiedToast] = useState<{ name: string; at: string | null } | null>(null);
+  const seenRef = useRef<Set<string>>(new Set());
+  const paidRef = useRef<Set<string>>(new Set());
 
   const reload = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts?.quiet) setLoading(true);
@@ -62,7 +69,19 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
     try {
       // A generous limit so the live board shows everyone currently in — counts
       // come from the DB groupBy regardless.
-      setData(await listVisits({ limit: 200 }));
+      const next = await listVisits({ limit: 200 });
+      // A consult we'd already seen (not first load) as unpaid is now verified.
+      const justVerified = next.visits.find(
+        (v) =>
+          v.visitType === 'PAID_CONSULT' &&
+          v.paid &&
+          seenRef.current.has(v.id) &&
+          !paidRef.current.has(v.id),
+      );
+      if (justVerified) setVerifiedToast({ name: justVerified.name, at: justVerified.appointmentAt });
+      next.visits.forEach((v) => seenRef.current.add(v.id));
+      paidRef.current = new Set(next.visits.filter((v) => v.paid).map((v) => v.id));
+      setData(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load the front desk');
     } finally {
@@ -119,6 +138,10 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {verifiedToast ? (
+        <PaymentVerifiedToast toast={verifiedToast} onClose={() => setVerifiedToast(null)} />
+      ) : null}
+
       {/* Toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span className="sos-text-faint" style={{ fontSize: 12.5 }}>
@@ -291,6 +314,58 @@ function QueueCard({
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** A "payment verified" pop that appears at the front desk when finance clears a
+ *  pending consult fee. Auto-dismisses; also click-to-dismiss. */
+function PaymentVerifiedToast({
+  toast,
+  onClose,
+}: {
+  toast: { name: string; at: string | null };
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 8000);
+    return () => clearTimeout(t);
+  }, [toast, onClose]);
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'fixed',
+        top: 18,
+        right: 18,
+        zIndex: 1200,
+        maxWidth: 340,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 10,
+        padding: '13px 14px',
+        borderRadius: 14,
+        border: '1px solid var(--sos-status-success-border, #9fe0b8)',
+        background: 'var(--sos-status-success-soft, #eafaf0)',
+        boxShadow: '0 12px 32px rgba(15,42,74,0.18)',
+      }}
+    >
+      <CheckCircle2 size={20} style={{ color: 'var(--sos-status-success, #16a34a)', flexShrink: 0, marginTop: 1 }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Payment verified</div>
+        <div style={{ fontSize: 12.5, color: 'var(--sos-text-secondary)', marginTop: 2 }}>
+          {toast.name}&rsquo;s consultation is confirmed{toast.at ? ` · ${fmtTime(toast.at)}` : ''}. You can send them through.
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Dismiss"
+        style={{ background: 'transparent', border: 'none', color: 'var(--sos-text-faint)', cursor: 'pointer', padding: 2, flexShrink: 0 }}
+      >
+        <X size={14} />
+      </button>
     </div>
   );
 }

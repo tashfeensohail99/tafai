@@ -10,6 +10,9 @@ import '../../../core/widgets/app_states.dart';
 import '../../../core/widgets/badges.dart';
 import '../../agreements/presentation/agreements_screen.dart';
 import '../../followups/presentation/followup_form_sheet.dart';
+import '../../whatsapp/data/whatsapp_repository.dart';
+import '../../whatsapp/domain/wa_thread.dart';
+import '../../whatsapp/presentation/thread_screen.dart';
 import '../data/employees_repository.dart';
 import '../data/leads_providers.dart';
 import '../data/leads_repository.dart';
@@ -364,13 +367,46 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
     }
   }
 
+  bool _waOpening = false;
+
+  /// Open the CRM WhatsApp conversation for this lead IN-APP so the rep can
+  /// reply from the business number without hunting through the inbox. Falls
+  /// back to launching WhatsApp directly only when the lead has no CRM chat yet.
   Future<void> _whatsapp(Lead lead) async {
+    if (_waOpening) return;
+    _waOpening = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+    );
+    WhatsappThread? thread;
+    try {
+      thread = await ref.read(whatsappRepositoryProvider).byLead(widget.leadId);
+    } catch (_) {
+      // Lookup failed — fall through to the direct-WhatsApp last resort below.
+    }
+    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // spinner off
+    _waOpening = false;
+    if (!mounted) return;
+
+    if (thread != null) {
+      final t = thread;
+      await Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => ThreadScreen(thread: t)));
+      return;
+    }
+
+    // No CRM conversation yet — last resort so the rep can still reach out.
     try {
       final ok =
           await openWhatsApp(lead.phone, text: 'Hello ${lead.firstName},');
-      if (!ok) _toast('WhatsApp is not available.');
+      if (!ok && mounted) _toast('WhatsApp is not available.');
     } catch (_) {
-      _toast('Could not open WhatsApp.');
+      if (mounted) _toast('Could not open WhatsApp.');
     }
   }
 

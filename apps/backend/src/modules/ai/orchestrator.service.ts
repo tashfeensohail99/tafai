@@ -614,6 +614,109 @@ export class OrchestratorService {
   }
 
   /**
+   * Compose a CONTEXT-AWARE re-engagement nudge for a lead who went quiet — the
+   * window-keeper's "we spoke last" lane. Reads the recent conversation (+ top
+   * KB matches for grounding) and writes ONE short, on-topic follow-up, instead
+   * of the old canned "just checking in, are you still considering your
+   * immigration options?" that ignored what was actually discussed (the
+   * "out-of-context" complaint).
+   *
+   * Deliberately conservative — it returns null (→ caller falls back to the
+   * canned nudge) on ANY failure OR safety veto (bot disabled, no history,
+   * empty/guarantee/leaked-specifics reply, or too similar to our last message).
+   * So it NEVER crashes the keeper and NEVER sends nothing. Unlike decide() it
+   * has NO side effects: pure reads + one LLM call, returns a string.
+   */
+  async composeReengagement(opts: {
+    threadId: string;
+    leadFirstName?: string | null;
+  }): Promise<string | null> {
+    try {
+      // Org enable gate (mirror decide) — never compose when the bot is off.
+      const org = await this.prisma.organization.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { botMode: true, botEnabledAt: true },
+      });
+      if (!org || org.botMode === 'DISABLED') return null;
+      if (!org.botEnabledAt || org.botEnabledAt.getTime() > Date.now()) return null;
+
+      const history = await this.prisma.whatsAppMessage.findMany({
+        where: { threadId: opts.threadId },
+        orderBy: { createdAt: 'desc' },
+        take: HISTORY_TURNS,
+        select: { direction: true, body: true, sentByEmployeeId: true, createdAt: true },
+      });
+      history.reverse();
+      const meaningful = history.filter((m) => (m.body ?? '').trim().length > 0);
+      if (meaningful.length === 0) return null; // nothing to be contextual about
+
+      // Language from the lead's most recent inbound (how THEY wrote).
+      const lastInboundBody = [...meaningful]
+        .reverse()
+        .find((m) => m.direction === 'INBOUND')?.body;
+      const language = this.detectLanguage(lastInboundBody ?? meaningful[meaningful.length - 1].body ?? '');
+
+      // RAG over the recent conversation so any topic reference stays grounded.
+      // History-only is an acceptable fallback if retrieval fails.
+      const topicQuery = meaningful
+        .slice(-4)
+        .map((m) => (m.body ?? '').trim())
+        .join(' ')
+        .slice(0, 500);
+      let retrieved: KnowledgeMatch[] = [];
+      try {
+        retrieved = await this.knowledge.search(topicQuery, 3);
+      } catch (e) {
+        this.log.warn(`reengage retrieval failed (history-only): ${(e as Error).message}`);
+      }
+
+      const leadFirstName = this.sanitizedFirstName(opts.leadFirstName ?? null);
+      const systemPrompt = this.reengagementSystemPrompt({ language, leadFirstName });
+      const contextBlock = this.formatContext(retrieved);
+      const historyBlock = this.formatReengageHistory(meaningful);
+
+      let res;
+      try {
+        res = await this.openai.chat([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `${contextBlock}\n\n${historyBlock}` },
+        ]);
+      } catch (e) {
+        this.log.warn(`reengage compose failed: ${(e as Error).message}`);
+        return null;
+      }
+
+      const reply = res.reply.trim();
+      if (!reply) return null;
+
+      // Safety backstops — a re-engagement must never promise, leak specifics,
+      // or imply a PAID consultation (the model has invented a "consultation
+      // fee" 54× to 42 leads — the initial consult is FREE; this prompt even
+      // invites "book a consultation", so it's a live risk here). On a trip we
+      // fall back to the canned nudge rather than send a guess.
+      if (
+        this.looksLikeGuarantee(reply) ||
+        this.leaksSpecifics(reply) ||
+        this.impliesPaidConsultation(reply)
+      ) {
+        this.log.warn(`reengage backstop tripped → canned fallback: "${reply.slice(0, 80)}…"`);
+        return null;
+      }
+
+      // Don't repeat our own last bot message near-verbatim.
+      const lastBot = [...meaningful]
+        .reverse()
+        .find((m) => m.direction === 'OUTBOUND' && m.sentByEmployeeId === null)?.body;
+      if (lastBot && this.tooSimilar(lastBot, reply)) return null;
+
+      return reply;
+    } catch (e) {
+      this.log.warn(`composeReengagement error: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
    * Deterministic post-booking sub-flow (no LLM). Runs when the thread is in
    * ASK_EMAIL (set right after an auto-booked appointment). Takes the client's
    * reply: if it contains an email, save it + fire the verification link (so
@@ -1186,6 +1289,50 @@ export class OrchestratorService {
       return 'APPOINTMENT_AVAILABILITY';
     }
     return current;
+  }
+
+  /** System prompt for a context-aware re-engagement nudge (window-keeper's
+   *  "we spoke last / lead went quiet" lane). Strict no-promise framing. */
+  private reengagementSystemPrompt(opts: {
+    language: string;
+    leadFirstName: string | null;
+  }): string {
+    const isUrdu = opts.language === 'ur_roman';
+    const nameLine = opts.leadFirstName
+      ? `You may address them as ${opts.leadFirstName} (only if natural).`
+      : `Do NOT invent or guess a name — no "Hi Customer", no phone numbers.`;
+    const langLine = isUrdu
+      ? `Write in roman-Urdu, the same way they wrote to you.`
+      : `Write in English.`;
+    return [
+      `You are the WhatsApp assistant for Tashfeen Immigration Solutions. A lead you were chatting with has gone quiet, and their 24-hour WhatsApp window is about to close. Write ONE brief, warm follow-up to gently re-open the conversation.`,
+      ``,
+      `RULES:`,
+      `- 1–2 short lines, at most ~2 sentences. WhatsApp-natural, not a formal letter.`,
+      `- Make it PERSONAL: reference what you were actually discussing in the conversation below (their situation / the program / the question they had), so it never reads as a generic "just checking in".`,
+      `- Gently invite them to continue or to book a quick consultation with our team.`,
+      `- Do NOT make ANY promise or claim about visa approval, eligibility, fees, timelines, or outcomes. Do NOT invent facts. Use ONLY what is in the conversation and the CONTEXT block.`,
+      `- If there is nothing specific to reference, keep it a simple warm check-in — do not fabricate details.`,
+      `- ${nameLine}`,
+      `- ${langLine}`,
+      ``,
+      `Output ONLY the message text — no quotes, no preamble, no sign-off line unless it flows naturally.`,
+    ].join('\n');
+  }
+
+  /** Format history for a re-engagement compose. Unlike formatHistory it does
+   *  NOT frame a "reply to this last message" — the lead simply went quiet. */
+  private formatReengageHistory(
+    history: Array<{ direction: string; body: string | null; sentByEmployeeId: string | null }>,
+  ): string {
+    const lines = history
+      .filter((m) => (m.body ?? '').trim().length > 0)
+      .map((m) => {
+        if (m.direction === 'INBOUND') return `Client: ${m.body}`;
+        const who = m.sentByEmployeeId ? 'Agent' : 'Bot';
+        return `${who}: ${m.body}`;
+      });
+    return `Conversation so far (oldest first), then it went quiet:\n${lines.join('\n')}`;
   }
 
   private systemPrompt(opts: {

@@ -2094,8 +2094,11 @@ const Map<String, String> _kDispositions = {
 };
 const Set<String> _kReminderDispositions = {'FOLLOW_UP', 'CONTACT_LATER'};
 
-String _fmtWhen(DateTime d) =>
-    '${d.day}/${d.month}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+// Reminder / disposition-history timestamps: use the shared formatter so they
+// read with AM/PM (e.g. "6 Jul 2026, 4:36 PM") like the message bubbles — and
+// in the device's local time (the old inline format skipped .toLocal(), so it
+// showed UTC).
+String _fmtWhen(DateTime d) => formatDateTime(d);
 
 class _DispositionSheet extends ConsumerStatefulWidget {
   const _DispositionSheet({required this.leadId, required this.current});

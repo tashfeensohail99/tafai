@@ -214,6 +214,28 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     void reload();
   }, [reload]);
 
+  // Keep the 24h-window state fresh so a LEFT-OPEN chat can't show a stale
+  // "closed". The composer lock is driven by a cached copy of windowExpiresAt;
+  // if the customer replies (which reopens the window server-side) while the
+  // tab is backgrounded, that cached copy goes stale and the box stays wrongly
+  // locked. Re-pull the thread whenever the tab/window regains focus and on a
+  // light 60s heartbeat so the window heals itself. (Root-cause fix.)
+  useEffect(() => {
+    if (!threadId) return;
+    const refresh = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      getThread(threadId).then(setThread).catch(() => {});
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    const iv = setInterval(refresh, 60_000);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+      clearInterval(iv);
+    };
+  }, [threadId]);
+
   // Infinite scroll: when the user scrolls within ~80px of the top of the
   // message list, automatically fetch the next page of older messages.
   // Same feel as WhatsApp Web — no button to click.
@@ -1231,6 +1253,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           </div>
         ) : null}
 
+        <WindowStatusBanner withinWindow={withinWindow} windowExpiresAt={thread?.windowExpiresAt ?? null} />
         <ChatComposer
           value={draft}
           onChange={setDraft}
@@ -1243,6 +1266,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           onOpenLocation={() => setLocationOpen(true)}
           onOpenContact={() => setContactOpen(true)}
           disabled={!withinWindow}
+          windowExpiresAt={thread?.windowExpiresAt ?? null}
           sending={sending}
         />
       </div>
@@ -3829,6 +3853,61 @@ function newIdemKey(): string {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/**
+ * Thin strip above the composer that states the 24-hour window in plain words,
+ * with the exact expiry in Pakistan time + AM/PM — so a rep never has to guess
+ * whether they can free-form message or must send a template.
+ *   open   → "Window open until 9:26 PM (PKT)"
+ *   closed → "24-hour window closed 9:26 PM (PKT) — send a template to reopen"
+ */
+function WindowStatusBanner({
+  withinWindow,
+  windowExpiresAt,
+}: {
+  withinWindow: boolean;
+  windowExpiresAt: string | null;
+}) {
+  const at = windowExpiresAt ? `${formatWindowClock(windowExpiresAt)} (PKT)` : null;
+  const open = withinWindow;
+  // Nothing meaningful to say if the window was never opened AND is closed.
+  if (!open && !at) {
+    return (
+      <div style={windowBannerStyle(false)}>
+        <span style={windowDotStyle('#e0a800')} />
+        24-hour window closed — send a template to reopen the chat.
+      </div>
+    );
+  }
+  return (
+    <div style={windowBannerStyle(open)}>
+      <span style={windowDotStyle(open ? '#25d366' : '#e0a800')} />
+      {open ? (
+        <>Window open{at ? <> until <strong>{at}</strong></> : null}</>
+      ) : (
+        <>24-hour window closed{at ? <> at <strong>{at}</strong></> : null} — send a template to reopen.</>
+      )}
+    </div>
+  );
+}
+
+function windowBannerStyle(open: boolean): CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 7,
+    padding: '5px 14px',
+    fontSize: 12,
+    fontWeight: 600,
+    borderTop: '1px solid var(--sos-border-subtle)',
+    background: open ? 'var(--sos-status-success-soft)' : 'var(--sos-status-warning-soft)',
+    color: open ? 'var(--sos-status-success)' : 'var(--sos-status-warning)',
+  };
+}
+
+function windowDotStyle(color: string): React.CSSProperties {
+  return { width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 };
+}
+
 function ChatComposer(props: {
   value: string;
   onChange: (v: string) => void;
@@ -3841,6 +3920,9 @@ function ChatComposer(props: {
   onOpenLocation: () => void;
   onOpenContact: () => void;
   disabled: boolean;
+  /** ISO expiry of the 24h customer-service window (null = never opened).
+   *  Drives the exact "Open until … / Closed …" banner above the input. */
+  windowExpiresAt: string | null;
   sending: boolean;
 }) {
   const [recording, setRecording] = useState(false);
@@ -4221,7 +4303,13 @@ function ChatComposer(props: {
                   if (!props.sending && props.value.trim()) props.onSend();
                 }
               }}
-              placeholder={props.disabled ? 'Window closed — use template to reopen' : 'Type a message'}
+              placeholder={
+                props.disabled
+                  ? props.windowExpiresAt
+                    ? `Window closed ${formatWindowClock(props.windowExpiresAt)} (PKT) — use a template`
+                    : 'Window closed — use a template to reopen'
+                  : 'Type a message'
+              }
               rows={1}
               style={{
                 flex: 1,
@@ -4490,7 +4578,22 @@ function initialsOf(name: string): string {
 }
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  // hour12 → show AM/PM (a bare 24h clock was being misread as morning vs
+  // evening, e.g. a 4:36 PM message read as 4:36 AM). Viewer's local timezone,
+  // like the real WhatsApp app (PKT for the Pakistan team).
+  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+/** The 24h-window expiry as an explicit Pakistan-time clock with AM/PM (e.g.
+ *  "9:26 PM"). Forced to Asia/Karachi so the operational deadline reads the same
+ *  for every rep regardless of their device's timezone. */
+function formatWindowClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Karachi',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 /** Local-day key (viewer's timezone) for grouping messages by calendar day —

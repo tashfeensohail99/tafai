@@ -61,6 +61,13 @@ android {
                 storeFile = file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
             }
+            // Budget OEM ROMs (Infinix / Tecno / itel — Transsion) reject v2-only
+            // APKs with "package appears to be invalid". AGP silently drops the
+            // v1 (JAR) signature once minSdk >= 24, so force BOTH schemes on for
+            // maximum sideload compatibility across the low-end Android fleet the
+            // reps carry. Costs a few KB; strictly increases what can install.
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 

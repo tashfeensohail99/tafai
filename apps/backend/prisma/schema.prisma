@@ -3797,6 +3797,12 @@ model WhatsAppCall {
   packetLossPct        Float?
   bytesSent            Int?
   bytesReceived        Int?
+  // The rep's network at call time, reported by the client on the CDR — so we
+  // can tell whether bad calls cluster on wifi vs mobile data (the real
+  // culprit). networkType ∈ wifi|cellular|ethernet|vpn|other|none|unknown;
+  // clientPlatform ∈ web|android|ios (also splits app vs browser calls).
+  networkType          String?
+  clientPlatform       String?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

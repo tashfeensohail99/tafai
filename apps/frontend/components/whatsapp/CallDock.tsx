@@ -25,6 +25,24 @@ function fmt(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+// The rep's network for the call CDR, so bad calls can be split by wifi vs
+// mobile data. On the web this is a browser (desktop, usually wifi/ethernet);
+// navigator.connection.type is only exposed on some engines, so networkType is
+// best-effort and falls back to 'unknown' — the reliable wifi/cellular signal
+// comes from the mobile app. clientPlatform='web' always distinguishes browser
+// calls from app calls in the data.
+function clientNetwork(): { networkType: string; clientPlatform: 'web' } {
+  const conn = (
+    navigator as unknown as { connection?: { type?: string } }
+  ).connection;
+  const t = conn?.type;
+  const known = ['wifi', 'cellular', 'ethernet', 'bluetooth', 'vpn', 'none'];
+  return {
+    networkType: t && known.includes(t) ? t : 'unknown',
+    clientPlatform: 'web',
+  };
+}
+
 /** Resolve once we can safely answer with a non-trickle SDP. Meta's call-control
  *  bakes all ICE candidates into ONE answer (no trickle path), so we must not
  *  answer before the TURN **relay** candidate is gathered — otherwise the answer
@@ -354,7 +372,7 @@ export function CallDock() {
     if (cdrId && cdrId !== 'pending') {
       void apiFetch(`/whatsapp/calls/${cdrId}/stats`, {
         method: 'POST',
-        body: JSON.stringify({ endReason: reason, ...(statsRef.current ?? {}) }),
+        body: JSON.stringify({ endReason: reason, ...clientNetwork(), ...(statsRef.current ?? {}) }),
       }).catch(() => undefined);
     }
     if (heartbeatRef.current) {
@@ -831,7 +849,7 @@ export function CallDock() {
       if (statsRef.current && Object.keys(statsRef.current).length > 0) {
         void apiFetch(`/whatsapp/calls/${id}/stats`, {
           method: 'POST',
-          body: JSON.stringify({ ...statsRef.current }),
+          body: JSON.stringify({ ...clientNetwork(), ...statsRef.current }),
         }).catch(() => undefined);
       }
     };

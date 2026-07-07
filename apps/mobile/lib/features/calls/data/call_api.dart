@@ -103,6 +103,17 @@ class CallApi {
     }
   }
 
+  /// POST /whatsapp/calls/{id}/stats — per-call quality CDR (ICE path, RTT,
+  /// jitter, loss, bytes) + the rep's networkType (wifi/cellular) + platform.
+  /// Best-effort telemetry; a failure must never surface to the call.
+  Future<void> recordStats(String callId, Map<String, dynamic> stats) async {
+    try {
+      await _c.post<dynamic>('/whatsapp/calls/$callId/stats', data: stats);
+    } on DioException catch (_) {
+      // best-effort; losing a CDR sample is fine, never surface
+    }
+  }
+
   /// POST /whatsapp/calls/{id}/reject
   Future<void> reject(String callId) async {
     try {

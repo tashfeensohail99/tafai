@@ -134,6 +134,8 @@ export class WhatsAppCallsController {
       packetLossPct?: number;
       bytesSent?: number;
       bytesReceived?: number;
+      networkType?: string;
+      clientPlatform?: string;
     },
     @CurrentUser() user: RequestUser,
   ) {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -37,6 +38,11 @@ class CallController extends StateNotifier<CallState> {
   // Last connection state of the CURRENT peer — lets the warmed accept path
   // detect "media already connected during the ring" without an async getter.
   RTCPeerConnectionState? _lastPcState;
+
+  // Last quality-CDR sample (ICE path, RTT, jitter, loss, bytes, networkType),
+  // cached so teardown can post final metrics + an end reason without needing
+  // the live peer (which is being closed).
+  Map<String, dynamic>? _lastCdr;
 
   Timer? _ringTimeout; // inbound: auto-dismiss if unanswered
   Timer? _dialTimeout; // outbound: give up if no answer
@@ -691,9 +697,155 @@ class CallController extends StateNotifier<CallState> {
           cid == state.callId &&
           (state.phase == CallPhase.inCall || state.phase == CallPhase.reconnecting)) {
         unawaited(_api.heartbeat(cid));
+        unawaited(_postStats()); // quality CDR sample (path + network + metrics)
       }
     });
+    // Capture the candidate path + network the moment media connects — the web
+    // dock does the same; mobile posted NO CDR before this, so app calls were
+    // invisible in the quality data (exactly the reps we most need to see).
+    unawaited(_postStats());
     _beginRecording();
+  }
+
+  // ── Quality CDR (best-effort, never affects the call) ────────────────────────
+
+  String _platform() => Platform.isIOS ? 'ios' : 'android';
+
+  /// The rep's current network medium, for the wifi-vs-mobile-data breakdown.
+  Future<String> _networkType() async {
+    try {
+      // connectivity_plus ≥6 returns a List (a device can be on several at once);
+      // pick the most call-relevant. Never throws into the caller.
+      final results = await Connectivity().checkConnectivity();
+      String map(ConnectivityResult r) {
+        switch (r) {
+          case ConnectivityResult.wifi:
+            return 'wifi';
+          case ConnectivityResult.mobile:
+            return 'cellular';
+          case ConnectivityResult.ethernet:
+            return 'ethernet';
+          case ConnectivityResult.vpn:
+            return 'vpn';
+          case ConnectivityResult.bluetooth:
+            return 'bluetooth';
+          case ConnectivityResult.none:
+            return 'none';
+          default:
+            return 'other';
+        }
+      }
+
+      if (results.isEmpty) return 'none';
+      // Prefer a real medium over vpn/other when several are reported.
+      const pref = [
+        ConnectivityResult.wifi,
+        ConnectivityResult.mobile,
+        ConnectivityResult.ethernet,
+      ];
+      for (final p in pref) {
+        if (results.contains(p)) return map(p);
+      }
+      return map(results.first);
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
+  /// Read a compact quality snapshot from the live peer (selected ICE path, RTT,
+  /// jitter, loss, bytes) — mirrors the web dock's sampleStats — cache it, and
+  /// POST it with the rep's network + platform. Fully guarded.
+  Future<void> _postStats() async {
+    final pc = _pc;
+    final cid = state.callId;
+    if (pc == null || cid == null) return;
+    try {
+      final snap = <String, dynamic>{};
+      final reports = await pc.getStats();
+      String? pairId;
+      var sawTransport = false;
+      for (final r in reports) {
+        if (r.type == 'transport') {
+          sawTransport = true;
+          final sel = r.values['selectedCandidatePairId'];
+          if (sel is String) pairId = sel;
+        }
+      }
+      String? selectedLocalId;
+      for (final r in reports) {
+        final v = r.values;
+        final isSelectedPair = r.type == 'candidate-pair' &&
+            ((pairId != null && r.id == pairId) ||
+                (!sawTransport &&
+                    (v['nominated'] == true || v['selected'] == true) &&
+                    v['state'] == 'succeeded'));
+        if (isSelectedPair) {
+          final rtt = v['currentRoundTripTime'];
+          if (rtt is num) snap['rttMs'] = (rtt * 1000).round();
+          final lc = v['localCandidateId'];
+          if (lc is String) selectedLocalId = lc;
+        }
+        if (r.type == 'inbound-rtp' && v['kind'] == 'audio') {
+          final j = v['jitter'];
+          if (j is num) snap['jitterMs'] = (j * 1000).round();
+          final br = v['bytesReceived'];
+          if (br is num) snap['bytesReceived'] = br.round();
+          final recv = (v['packetsReceived'] is num) ? (v['packetsReceived'] as num) : 0;
+          final lost = (v['packetsLost'] is num) ? (v['packetsLost'] as num) : 0;
+          if (recv + lost > 0) {
+            snap['packetLossPct'] = ((lost / (recv + lost)) * 1000).round() / 10;
+          }
+        }
+        if (r.type == 'outbound-rtp' && v['kind'] == 'audio') {
+          final bs = v['bytesSent'];
+          if (bs is num) snap['bytesSent'] = bs.round();
+        }
+      }
+      if (selectedLocalId != null) {
+        for (final r in reports) {
+          if (r.type == 'local-candidate' && r.id == selectedLocalId) {
+            final ct = r.values['candidateType'];
+            if (ct is String) snap['iceCandidateType'] = ct;
+          }
+        }
+      }
+      snap['networkType'] = await _networkType();
+      snap['clientPlatform'] = _platform();
+      _lastCdr = snap; // cache for the teardown CDR
+      await _api.recordStats(cid, snap);
+    } catch (e) {
+      _log('postStats failed (soft): $e');
+    }
+  }
+
+  /// Final CDR on teardown: the last in-call metrics + freshly-sampled network +
+  /// an end reason. Uses the cached sample (not the live peer, which is closing).
+  void _postFinalStats(String reason) {
+    final cid = state.callId;
+    if (cid == null) return;
+    final mapped = _mapEndReason(reason);
+    // Snapshot the cached metrics SYNCHRONOUSLY — teardown nulls _lastCdr right
+    // after this returns, before the async closure below resumes.
+    final cached = _lastCdr;
+    unawaited(() async {
+      final net = await _networkType();
+      await _api.recordStats(cid, {
+        ...?cached,
+        'networkType': net,
+        'clientPlatform': _platform(),
+        if (mapped != null) 'endReason': mapped,
+      });
+    }());
+  }
+
+  /// Map a mobile teardown reason to the backend's whitelisted endReason set;
+  /// null when there's no confident match (the backend drops unknown values).
+  String? _mapEndReason(String reason) {
+    final r = reason.toLowerCase();
+    if (r.contains('lost')) return 'reconnect-timeout';
+    if (r.contains('could not') || r.contains('answer')) return 'connect-timeout';
+    if (r.contains('ended')) return 'hangup';
+    return null;
   }
 
   // ── Recording (best-effort) ──────────────────────────────────────────────────
@@ -776,6 +928,9 @@ class CallController extends StateNotifier<CallState> {
     bool error = false,
   }) {
     _log('teardown: "$reason" (phase=${state.phase.name}, call=${state.callId})');
+    // Final quality CDR (last metrics + fresh networkType + end reason) before
+    // we tear media down. Uses the cached sample, so it doesn't need the peer.
+    _postFinalStats(reason);
     _accepting = false;
     unawaited(_releaseLocks());
     // Dismiss any native CallKit incoming/ongoing screen for this call.
@@ -797,6 +952,7 @@ class CallController extends StateNotifier<CallState> {
     _preWarmCallId = null;
     _preWarmFuture = null;
     _lastPcState = null;
+    _lastCdr = null; // _postFinalStats above already snapshotted it
 
     // Fire-and-forget the recording flush before tearing media down.
     unawaited(_stopAndUploadRecording());

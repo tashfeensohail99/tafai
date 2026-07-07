@@ -60,6 +60,9 @@ dependencies:
   socket_io_client: ^2.0.3+1
   # Runtime microphone permission.
   permission_handler: ^11.3.1
+  # Network type (wifi vs mobile data) for the per-call quality CDR — so we can
+  # see whether bad calls cluster on one network.
+  connectivity_plus: ^6.1.0
   # Native incoming-call UI (Android Telecom/ConnectionService) so a call rings
   # over the lock screen when the app is backgrounded.
   flutter_callkit_incoming: ^2.5.2

@@ -52,6 +52,8 @@ interface CallRow {
   rttMs?: number | null;
   jitterMs?: number | null;
   packetLossPct?: number | null;
+  networkType?: string | null; // wifi | cellular | ethernet | vpn | ... (rep's network)
+  clientPlatform?: string | null; // web | android | ios
 }
 interface CallsResponse {
   items: CallRow[];
@@ -446,11 +448,23 @@ function QualityCell({ c }: { c: CallRow }) {
   const path = c.iceCandidateType ? (relay ? 'Relay' : 'Direct') : null;
   const loss = c.packetLossPct ?? null;
   const hasMetrics = c.rttMs != null || loss != null;
-  if (!path && !hasMetrics && !c.endReason) {
+  // Rep's network — the "is it wifi or mobile data" signal. cellular in amber so
+  // a cluster of bad calls on mobile data jumps out at a glance.
+  const net = netLabel(c.networkType);
+  const plat = c.clientPlatform === 'android' || c.clientPlatform === 'ios' ? 'App' : c.clientPlatform === 'web' ? 'Web' : null;
+  if (!path && !hasMetrics && !c.endReason && !net && !plat) {
     return <span style={{ color: 'var(--sos-text-faint)' }}>—</span>;
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
+      {net || plat ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+          {net ? (
+            <span style={{ color: net.tone, fontWeight: 600 }}>{net.icon} {net.text}</span>
+          ) : null}
+          {plat ? <span style={{ color: 'var(--sos-text-faint)' }}>· {plat}</span> : null}
+        </span>
+      ) : null}
       {path ? (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span
@@ -475,6 +489,27 @@ function QualityCell({ c }: { c: CallRow }) {
       {c.endReason ? <span style={{ color: 'var(--sos-text-faint)' }}>{c.endReason}</span> : null}
     </div>
   );
+}
+
+/** Human label + colour for the rep's network type. */
+function netLabel(n?: string | null): { text: string; icon: string; tone: string } | null {
+  switch (n) {
+    case 'wifi':
+      return { text: 'WiFi', icon: '📶', tone: 'var(--sos-status-success, #16a34a)' };
+    case 'cellular':
+      return { text: 'Mobile data', icon: '📱', tone: 'var(--sos-status-warning, #d97706)' };
+    case 'ethernet':
+      return { text: 'Ethernet', icon: '🔌', tone: 'var(--sos-status-success, #16a34a)' };
+    case 'vpn':
+      return { text: 'VPN', icon: '🛡️', tone: 'var(--sos-status-warning, #d97706)' };
+    case 'none':
+      return { text: 'No network', icon: '🚫', tone: 'var(--sos-status-danger, #dc2626)' };
+    case 'bluetooth':
+    case 'other':
+      return { text: n, icon: '🔗', tone: 'var(--sos-text-muted)' };
+    default:
+      return null; // 'unknown' / null → show nothing
+  }
 }
 
 function Th({ children }: { children: ReactNode }) {

@@ -362,6 +362,8 @@ export class WhatsAppCallsService {
       packetLossPct?: number;
       bytesSent?: number;
       bytesReceived?: number;
+      networkType?: string;
+      clientPlatform?: string;
     },
     userId: string,
   ): Promise<{ ok: boolean }> {
@@ -387,6 +389,16 @@ export class WhatsAppCallsService {
     if (recv !== null) data.bytesReceived = recv;
     if (typeof dto.packetLossPct === 'number' && Number.isFinite(dto.packetLossPct)) {
       data.packetLossPct = Math.max(0, Math.min(dto.packetLossPct, 100));
+    }
+    // Network diagnostics — whitelisted so a client can't inject junk into the
+    // wifi-vs-mobile-data analysis.
+    const VALID_NETWORKS = ['wifi', 'cellular', 'ethernet', 'vpn', 'bluetooth', 'other', 'none', 'unknown'];
+    if (typeof dto.networkType === 'string' && VALID_NETWORKS.includes(dto.networkType)) {
+      data.networkType = dto.networkType;
+    }
+    const VALID_PLATFORMS = ['web', 'android', 'ios'];
+    if (typeof dto.clientPlatform === 'string' && VALID_PLATFORMS.includes(dto.clientPlatform)) {
+      data.clientPlatform = dto.clientPlatform;
     }
     if (Object.keys(data).length === 0) return { ok: true };
     // Scoped to the person on the call so one employee can't pollute another
@@ -528,6 +540,8 @@ export class WhatsAppCallsService {
         rttMs: true,
         jitterMs: true,
         packetLossPct: true,
+        networkType: true,
+        clientPlatform: true,
       },
     });
 
@@ -601,6 +615,8 @@ export class WhatsAppCallsService {
         rttMs: r.rttMs,
         jitterMs: r.jitterMs,
         packetLossPct: r.packetLossPct,
+        networkType: r.networkType,
+        clientPlatform: r.clientPlatform,
       };
     });
 

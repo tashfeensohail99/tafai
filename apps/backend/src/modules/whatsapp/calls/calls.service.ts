@@ -125,6 +125,17 @@ export class WhatsAppCallsService {
    * does because the dock reuses the warmed peer's local description.
    */
   async preAccept(id: string, sdpAnswer: string) {
+    // KILL-SWITCH — DISABLED BY DEFAULT after a live incident (2026-07-07):
+    // pre-accept warms the media session during the ring, but if the rep takes
+    // longer than the ~5-6s ICE consent-freshness window (RFC 7675) to answer,
+    // that warmed session dies and the answered call DROPS IMMEDIATELY. The
+    // dock's pre-accept POST is best-effort, so this no-op cleanly reverts to
+    // the classic flow (media established fresh on accept — no stale session,
+    // no drop), for BOTH web and mobile, with no client/app change. Re-enable
+    // only after the staleness is fixed: set CALL_PRE_ACCEPT_ENABLED=true.
+    if (process.env.CALL_PRE_ACCEPT_ENABLED !== 'true') {
+      return { ok: false, reason: 'disabled' };
+    }
     if (!sdpAnswer) throw new BadRequestException('Missing sdpAnswer');
     const { call, client } = await this.clientForCall(id);
     // Only a still-ringing call can be pre-accepted; anything else is a soft

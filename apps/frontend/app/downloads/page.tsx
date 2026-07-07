@@ -14,7 +14,7 @@ interface AppInfo {
 const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 function fmtSize(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
 }
 
 /** The Tashfeen "T" brand mark (mirrors the app's logo + launcher icon). */
@@ -52,7 +52,7 @@ function DownloadArrow({ className = '' }: { className?: string }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2.2"
+      strokeWidth="2.4"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -62,12 +62,22 @@ function DownloadArrow({ className = '' }: { className?: string }) {
   );
 }
 
+function CheckIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  );
+}
+
 const STEPS = [
-  'Tap the Download button for your phone — 64-bit suits almost all phones.',
-  'If the browser warns about the file type, choose “Download anyway”.',
+  'Tap the big Download button — one file, works on every Android phone.',
+  'If the browser warns about the file, choose “Download anyway”.',
   'Open the downloaded file; if asked, allow installing from this source.',
   'Open Tashfeen CRM and sign in with your staff account.',
 ];
+
+const TRUST = ['Works on all Android phones', 'Official Tashfeen build', 'Free · staff login required'];
 
 export default function DownloadsPage() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -83,35 +93,41 @@ export default function DownloadsPage() {
       .catch(() => setUnavailable(true));
   }, []);
 
+  const downloadHref = `${apiBase}/public/app/android`;
+
   return (
-    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#0D1B3A] px-4 py-12">
+    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#0A1631] px-4 py-14">
       {/* ambient brand glows */}
-      <div className="pointer-events-none absolute -left-24 -top-32 h-72 w-72 rounded-full bg-blue-500/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-32 -right-24 h-80 w-80 rounded-full bg-indigo-600/20 blur-3xl" />
+      <div className="pointer-events-none absolute -left-32 -top-40 h-96 w-96 rounded-full bg-blue-500/20 blur-[110px]" />
+      <div className="pointer-events-none absolute -bottom-40 -right-28 h-[26rem] w-[26rem] rounded-full bg-indigo-600/20 blur-[120px]" />
+      <div className="pointer-events-none absolute left-1/2 top-1/3 h-72 w-72 -translate-x-1/2 rounded-full bg-emerald-500/10 blur-[130px]" />
 
       <div className="relative z-10 w-full max-w-md">
         {/* logo + heading */}
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-5 flex h-[88px] w-[88px] items-center justify-center rounded-[24px] bg-[#16294f] shadow-2xl ring-1 ring-white/10">
-            <TMark className="h-10 w-[30px]" />
+        <div className="mb-9 flex flex-col items-center text-center">
+          <div className="mb-5 flex h-24 w-24 items-center justify-center rounded-[26px] bg-gradient-to-b from-[#1b3160] to-[#12244a] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.7)] ring-1 ring-white/15">
+            <TMark className="h-11 w-[33px] drop-shadow" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-white">Tashfeen CRM</h1>
-          <p className="mt-2 text-sm text-slate-400">Immigration Solutions · Android app</p>
+          <h1 className="text-[32px] font-extrabold leading-tight tracking-tight text-white">
+            Tashfeen CRM
+          </h1>
+          <p className="mt-1.5 text-sm text-slate-400">Immigration Solutions · Android app</p>
         </div>
 
         {/* card */}
-        <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl">
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.055] p-6 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] backdrop-blur-2xl sm:p-7">
+          {/* meta row */}
           {info ? (
-            <div className="mb-5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[13px] font-medium text-slate-300">
-              <span className="rounded-full bg-white/10 px-3 py-1 font-semibold text-white">
+            <div className="mb-5 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-[13px] font-medium text-slate-300">
+              <span className="rounded-full bg-emerald-400/15 px-3 py-1 font-bold text-emerald-300 ring-1 ring-emerald-400/25">
                 v{info.version}
               </span>
               <span>{fmtSize(info.sizeBytes)}</span>
-              <span className="text-slate-500">·</span>
+              <span className="text-slate-600">·</span>
               <span>updated {new Date(info.uploadedAt).toLocaleDateString('en-GB')}</span>
             </div>
           ) : !unavailable ? (
-            <div className="mx-auto mb-5 h-7 w-48 animate-pulse rounded-full bg-white/10" />
+            <div className="mx-auto mb-5 h-7 w-52 animate-pulse rounded-full bg-white/10" />
           ) : null}
 
           {unavailable ? (
@@ -120,56 +136,45 @@ export default function DownloadsPage() {
             </p>
           ) : (
             <>
-              <div className="space-y-3">
-                {/* 64-bit — recommended, for the vast majority of phones */}
-                <a
-                  href={`${apiBase}/public/app/android`}
-                  className="flex items-center gap-3.5 rounded-2xl bg-white px-5 py-4 shadow-lg transition hover:bg-slate-100 active:scale-[0.99]"
-                >
-                  <AndroidIcon className="h-8 w-8 flex-none text-[#3DDC84]" />
-                  <span className="flex-1 text-left">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-base font-bold text-[#0D1B3A]">Download · 64-bit</span>
-                      <span className="rounded-full bg-[#3DDC84]/20 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-[#1c7a48]">
-                        Recommended
-                      </span>
-                    </span>
-                    <span className="mt-0.5 block text-xs font-medium text-slate-500">
-                      Latest phones (most people){info ? ` · ${fmtSize(info.sizeBytes)}` : ''}
-                    </span>
+              {/* ── THE one big download button ── */}
+              <a
+                href={downloadHref}
+                download
+                className="group relative flex items-center gap-4 overflow-hidden rounded-[22px] bg-gradient-to-br from-[#3DDC84] to-[#12B76A] px-5 py-4 shadow-[0_16px_40px_-10px_rgba(61,220,132,0.55)] transition-all duration-200 hover:shadow-[0_20px_50px_-8px_rgba(61,220,132,0.7)] hover:brightness-[1.04] active:scale-[0.985]"
+              >
+                {/* sheen */}
+                <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+                <span className="relative flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-white/25 ring-1 ring-white/40">
+                  <AndroidIcon className="h-7 w-7 text-white" />
+                </span>
+                <span className="relative flex-1 text-left">
+                  <span className="block text-[19px] font-extrabold leading-tight text-[#062616]">
+                    Download the app
                   </span>
-                  <DownloadArrow className="h-5 w-5 flex-none text-[#0D1B3A]" />
-                </a>
-
-                {/* 32-bit — older / low-end phones */}
-                <a
-                  href={`${apiBase}/public/app/android/v7a`}
-                  className="flex items-center gap-3.5 rounded-2xl border border-white/25 bg-white/[0.04] px-5 py-4 transition hover:bg-white/10 active:scale-[0.99]"
-                >
-                  <AndroidIcon className="h-8 w-8 flex-none text-[#3DDC84]" />
-                  <span className="flex-1 text-left">
-                    <span className="block text-base font-bold text-white">Download · 32-bit</span>
-                    <span className="mt-0.5 block text-xs font-medium text-slate-400">
-                      Older phones{info?.v7aSizeBytes ? ` · ${fmtSize(info.v7aSizeBytes)}` : ''}
-                    </span>
+                  <span className="mt-0.5 block text-[12.5px] font-semibold text-[#0b3d24]/80">
+                    Android · {info ? fmtSize(info.sizeBytes) : '—'} · works on all phones
                   </span>
-                  <DownloadArrow className="h-5 w-5 flex-none text-white" />
-                </a>
-              </div>
+                </span>
+                <DownloadArrow className="relative h-6 w-6 flex-none text-[#062616] transition-transform duration-200 group-hover:translate-y-0.5" />
+              </a>
 
-              <p className="mt-4 rounded-xl bg-white/[0.04] px-3.5 py-2.5 text-center text-[11.5px] leading-5 text-slate-400">
-                Not sure which one? Pick <span className="font-semibold text-slate-200">64-bit</span> — it works on
-                almost every phone. Only if it says <span className="text-slate-200">“App not installed”</span> use
-                32-bit instead.
-              </p>
+              {/* trust cues */}
+              <ul className="mt-4 space-y-1.5">
+                {TRUST.map((t) => (
+                  <li key={t} className="flex items-center gap-2 text-[12.5px] font-medium text-slate-300">
+                    <CheckIcon className="h-3.5 w-3.5 flex-none text-emerald-400" />
+                    {t}
+                  </li>
+                ))}
+              </ul>
 
-              <div className="my-6 h-px bg-white/10" />
+              <div className="my-6 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
 
-              <h2 className="mb-3.5 text-sm font-semibold text-white">How to install</h2>
-              <ol className="space-y-3">
+              <h2 className="mb-4 text-sm font-semibold text-white">How to install</h2>
+              <ol className="space-y-3.5">
                 {STEPS.map((step, i) => (
                   <li key={i} className="flex gap-3 text-[13px] leading-6 text-slate-300">
-                    <span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full bg-white/10 text-[11px] font-bold text-white">
+                    <span className="mt-0.5 flex h-[22px] w-[22px] flex-none items-center justify-center rounded-full bg-gradient-to-br from-blue-500/40 to-indigo-500/30 text-[11px] font-bold text-white ring-1 ring-white/15">
                       {i + 1}
                     </span>
                     <span>{step}</span>
@@ -181,7 +186,7 @@ export default function DownloadsPage() {
         </div>
 
         <p className="mt-8 text-center text-xs leading-5 text-slate-500">
-          Android only · a staff login is required after installing.
+          Android only · one app for every phone · a staff login is required after installing.
           <br />
           Tashfeen Immigration Solutions · tashfeengroup.com
         </p>

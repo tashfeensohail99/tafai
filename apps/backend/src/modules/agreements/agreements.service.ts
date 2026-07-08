@@ -712,10 +712,6 @@ export class AgreementsService {
     if (!sendable.includes(a.status)) {
       throw new ConflictException(`Cannot send from status ${a.status}. Approve the agreement first.`);
     }
-    if (!a.generatedPdfKey) {
-      throw new ConflictException('No generated PDF to send — re-approve to regenerate it.');
-    }
-
     const bio = (a.bioData as { email?: string; applicantName?: string }) ?? {};
     const lead = a.leadId
       ? await this.prisma.lead.findUnique({
@@ -729,12 +725,27 @@ export class AgreementsService {
     }
     const clientName = lead ? `${lead.firstName} ${lead.lastName}`.trim() : bio.applicantName ?? 'Client';
 
-    const file = await this.storage.download(a.generatedPdfKey);
+    // Use the cached PDF when present; otherwise regenerate fresh — the cache
+    // may have been cleared (e.g. by the layout-fix backfill), and a send must
+    // never hard-fail. Regenerating also means the client always receives the
+    // current, correctly-paginated document.
+    let pdfBytes: Buffer;
+    if (a.generatedPdfKey) {
+      pdfBytes = (await this.storage.download(a.generatedPdfKey)).bytes;
+    } else {
+      pdfBytes = await this.previewPdf(id);
+      const key = `agreements/preview/${id}.pdf`;
+      await this.storage.uploadAt(key, pdfBytes, 'application/pdf');
+      await this.prisma.agreement.update({
+        where: { id },
+        data: { generatedPdfKey: key, generatedPdfAt: new Date() },
+      });
+    }
     const ok = await this.email.sendAgreementToClient({
       to,
       clientName,
       agreementNumber: a.agreementNumber,
-      pdf: file.bytes,
+      pdf: pdfBytes,
       fileName: `${a.agreementNumber}.pdf`,
     });
     if (!ok) {

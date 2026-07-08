@@ -60,12 +60,25 @@ async function main() {
   await storage.uploadAt(APP_APK_KEY, primary, APK_MIME);
   if (v7a) await storage.uploadAt(APP_APK_V7A_KEY, v7a, APK_MIME);
 
+  // Preserve any runtime behavior flag (e.g. leadWhatsappMode) already set on
+  // the live manifest, so republishing a build doesn't silently reset a
+  // server-toggled behavior. The flag itself is flipped by scripts/set-mobile-flag.ts.
+  let carried: Record<string, unknown> = {};
+  try {
+    const existing = await storage.download(APP_INFO_KEY);
+    const prev = JSON.parse(existing.bytes.toString('utf-8')) as Record<string, unknown>;
+    if (prev.leadWhatsappMode) carried = { leadWhatsappMode: prev.leadWhatsappMode };
+  } catch {
+    // no prior manifest — nothing to carry
+  }
+
   const info = {
     version,
     abi: universal ? 'universal' : 'arm64-v8a',
     sizeBytes: primary.length,
     v7aSizeBytes: v7a ? v7a.length : null,
     uploadedAt: new Date().toISOString(),
+    ...carried,
   };
   await storage.uploadAt(
     APP_INFO_KEY,

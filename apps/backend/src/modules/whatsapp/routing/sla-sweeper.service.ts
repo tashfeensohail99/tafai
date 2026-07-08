@@ -42,6 +42,15 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
   private running = false;
   private static readonly INTERVAL_MS = 60_000;
 
+  // Per-thread recovery backoff (in-memory; reset on restart — that's fine, a
+  // restart just re-tries everything once). Stops the recovery loop from
+  // re-running the SAME doomed assignment transaction every 60s, which floods
+  // the logs and competes for the scarce DB pool. Never abandons a lead: the
+  // backoff caps the RETRY FREQUENCY, not the total number of attempts.
+  private readonly recoveryBackoff = new Map<string, { fails: number; nextAt: number }>();
+  private static readonly RECOVERY_MAX_BACKOFF_MS = 30 * 60_000; // cap at 30 min
+  private static readonly RECOVERY_ALERT_AFTER = 5; // WARN a human after N straight fails
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly publisher: WhatsAppRealtimePublisher,
@@ -204,6 +213,31 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
    * a few minutes instead of hammering the DB in one burst.
    */
   private async recoverUnassignedThreads(): Promise<void> {
+    // GATE: an inbound message only auto-assigns to an ONLINE agent. If NOBODY
+    // is online, running ensureAssigned is pointless — every call does the full
+    // ~10-round-trip transaction just to find an empty pool and return
+    // unassigned, hammering the scarce DB pool for nothing. When reps aren't
+    // marking themselves online this fired 50 useless transactions EVERY 60s
+    // (the pool-starvation incident). One cheap COUNT gates the whole sweep;
+    // the moment an agent comes online the next tick drains the backlog.
+    const onlineAgents = await this.prisma.employee.count({
+      where: {
+        isActive: true,
+        whatsappInboxMember: true,
+        deletedAt: null,
+        presenceStatus: PresenceStatus.ONLINE,
+        user: {
+          status: 'ACTIVE',
+          userRoles: { none: { role: { name: { in: ['finance', 'finance_manager'] } } } },
+        },
+      },
+    });
+    if (onlineAgents === 0) {
+      this.recoveryBackoff.clear(); // reset per-thread counters; not their fault
+      this.log.debug('assignment recovery skipped: no ONLINE agent to receive leads');
+      return;
+    }
+
     const stuck = await this.prisma.whatsAppThread.findMany({
       where: {
         status: { not: 'ARCHIVED' },
@@ -213,25 +247,69 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
       orderBy: { createdAt: 'asc' },
       take: 50,
     });
-    if (stuck.length === 0) return;
+    if (stuck.length === 0) {
+      this.recoveryBackoff.clear();
+      return;
+    }
+
+    const now = Date.now();
+    const liveIds = new Set(stuck.map((t) => t.id));
+    // Drop backoff entries for threads that are no longer stuck (assigned or
+    // archived) so the map can't grow without bound.
+    for (const id of this.recoveryBackoff.keys()) {
+      if (!liveIds.has(id)) this.recoveryBackoff.delete(id);
+    }
 
     let recovered = 0;
+    let skipped = 0;
     for (const t of stuck) {
+      const bo = this.recoveryBackoff.get(t.id);
+      if (bo && bo.nextAt > now) {
+        skipped++; // still backing off — don't re-hammer this doomed thread yet
+        continue;
+      }
       try {
         const outcome = await this.assignment.ensureAssigned(t.id);
-        if (outcome.assignedEmployeeId) recovered++;
+        if (outcome.assignedEmployeeId) {
+          recovered++;
+          this.recoveryBackoff.delete(t.id); // success — clear its backoff
+        } else {
+          // Agents ARE online yet this thread still can't be placed — a real
+          // edge (missing org/branch, etc.). Back it off; NEVER give up.
+          this.registerRecoveryFailure(t.id, `unassigned (online agents present)`);
+        }
       } catch (err) {
-        // Surface loudly — if recovery itself fails the engine is broken and
-        // we WANT it in the logs, not swallowed like the webhook path.
-        this.log.error(
-          `assignment recovery failed for thread ${t.id}: ${(err as Error).message}`,
-        );
+        this.registerRecoveryFailure(t.id, (err as Error).message);
       }
     }
     if (recovered > 0) {
       this.log.warn(
-        `assignment recovery: re-assigned ${recovered} thread(s) the webhook left unassigned`,
+        `assignment recovery: re-assigned ${recovered} thread(s) the webhook left unassigned` +
+          (skipped ? ` (${skipped} in backoff)` : ''),
       );
+    }
+  }
+
+  /**
+   * Record a recovery failure for a thread and schedule its next attempt with
+   * exponential backoff (capped). After a run of straight failures WHILE agents
+   * are online, surface it LOUDLY so a human investigates a genuinely-wedged
+   * thread — but keep retrying forever so a lead is never silently dropped.
+   */
+  private registerRecoveryFailure(threadId: string, reason: string): void {
+    const prev = this.recoveryBackoff.get(threadId);
+    const fails = (prev?.fails ?? 0) + 1;
+    const delay = Math.min(
+      WhatsAppSlaSweeperService.RECOVERY_MAX_BACKOFF_MS,
+      60_000 * Math.pow(2, fails - 1), // 1m, 2m, 4m, 8m, 16m, 30m(cap)
+    );
+    this.recoveryBackoff.set(threadId, { fails, nextAt: Date.now() + delay });
+    if (fails === WhatsAppSlaSweeperService.RECOVERY_ALERT_AFTER) {
+      this.log.error(
+        `assignment recovery: thread ${threadId} still unassigned after ${fails} attempts with agents online — needs manual assignment. Last: ${reason}`,
+      );
+    } else {
+      this.log.debug(`assignment recovery deferred for thread ${threadId} (fail #${fails}): ${reason}`);
     }
   }
 

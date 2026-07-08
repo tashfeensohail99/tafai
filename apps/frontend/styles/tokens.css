@@ -13,6 +13,12 @@
    =================================================== */
 
 :root {
+  /* Tell the browser to render native controls (select popups, date/time
+     pickers, scrollbars, spinners) in the matching scheme — otherwise a native
+     <select> dropdown opens with the OS default (white) on our dark pages.
+     Light is the base; the dark theme flips it below. */
+  color-scheme: light;
+
   /* --- Brand Colors --- */
   --color-primary-50: #eff6ff;
   --color-primary-100: #dbeafe;
@@ -162,6 +168,8 @@
 
 /* --- Dark Theme Overrides --- */
 [data-theme='dark'] {
+  /* Native controls (select popups, date pickers, scrollbars) render dark. */
+  color-scheme: dark;
   --color-surface: #0f172a;
   --color-surface-muted: #1e293b;
   --color-surface-subtle: #334155;

@@ -1080,6 +1080,7 @@ model UserAccount {
   updatedProcessingCases     ProcessingCase[]              @relation("ProcessingCaseUpdatedBy")
   processingStageChanges     ProcessingCaseStageHistory[]  @relation("StageChangedBy")
   createdDocTemplates        DocumentRequirementTemplate[] @relation("DocTemplateCreatedBy")
+  createdEmailTemplates      ProcessingEmailTemplate[]     @relation("ProcessingEmailTemplateCreatedBy")
   waivedDocItems             CaseDocumentItem[]            @relation("DocItemWaivedBy")
   uploadedDocVersions        ClientDocumentVersion[]       @relation("DocVersionUploadedBy")
   reviewedDocDecisions       DocumentReviewDecision[]      @relation("DocReviewedBy")
@@ -3064,6 +3065,39 @@ model DocumentRequirementTemplate {
   @@schema("processing")
 }
 
+/// Manager-editable client-email templates for the automated processing nudges
+/// (missing docs, re-submit, expiring, attestation). One row per
+/// (reminderType, service, programCode); programCode "" = the service-level
+/// default, a non-empty code (e.g. C11) overrides it for that program. When no
+/// active row matches, the nudge sender falls back to a hardcoded default so
+/// email always sends. `subject` is used for email; `body` is the shared
+/// message text rendered on WhatsApp AND email. Both support {{clientName}},
+/// {{service}}, {{country}} and {{documentList}} placeholders.
+model ProcessingEmailTemplate {
+  id           String   @id @default(uuid())
+  /// ReminderType value this template renders (DOCS_REQUEST, DOC_REJECTED,
+  /// EXPIRY_7D, EXPIRY_30D, ATTESTATION_REMINDER). Plain string, app-validated.
+  reminderType String
+  /// Broad service category (one of the coded SERVICE_TYPE_CODES).
+  service      String
+  /// "" = applies to the whole service; a program code overrides it. Non-null
+  /// sentinel (not NULL) so the unique index treats the service-level row as one.
+  programCode  String   @default("")
+  subject      String
+  body         String   @db.Text
+  isActive     Boolean  @default(true)
+  createdByUserId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdBy UserAccount? @relation("ProcessingEmailTemplateCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([reminderType, service, programCode])
+  @@index([service])
+  @@map("processing_email_templates")
+  @@schema("processing")
+}
+
 // Phase F — catalog of program-specific requirement sets so a manager can see
 // and maintain "C11 · Canada — last verified 2026-05-31" (immigration rules
 // change constantly). Templates reference a (programCode, targetCountry) pair;
@@ -3106,6 +3140,11 @@ model ProcessingCase {
   slaDueAt                     DateTime?
   service                      String
   targetCountry                String
+  /// Fine-grained program within the service (C11 / ICT / LMIA / VISIT …). Set
+  /// at intake acknowledge from the finance handover; NULL => whole-service.
+  /// Persisted (previously used only transiently for checklist seeding) so
+  /// per-program client-email templates can resolve the right variant at send.
+  programCode                  String?
   financeHandoverNote          String?
   processingNote               String?
   estimatedSubmissionDate      DateTime?              @db.Date

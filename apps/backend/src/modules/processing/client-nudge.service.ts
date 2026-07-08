@@ -34,6 +34,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ProcessingService } from './processing.service';
+import { NUDGE_DEFAULTS } from './nudge-defaults';
 
 // ---------- Constants --------------------------------------------------------
 
@@ -65,6 +66,39 @@ const COOLDOWN: Record<ReminderType, number> = {
 
 /** Max cases processed per sweep to keep each tick fast. */
 const BATCH = 100;
+
+/** Placeholders a manager may use in a subject/body, filled at send time. */
+interface NudgeVars {
+  clientName: string;
+  service: string;
+  country: string;
+  documentList: string;
+}
+
+/** Substitute {{key}} tokens; an unknown token is left untouched. */
+function renderTemplate(str: string, vars: NudgeVars): string {
+  return str.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, key: string) =>
+    key in vars ? String(vars[key as keyof NudgeVars]) : m,
+  );
+}
+
+/** De-duplicate identical bullet lines, preserving order — the checklist can
+ *  carry the same document name more than once (per applicant / overlapping
+ *  requirement rows), which read as ugly repeats in the client email. */
+function uniqueLines(lines: string[]): string[] {
+  return [...new Set(lines)];
+}
+
+/** Per-case context passed to each nudge builder. */
+interface NudgeCtx {
+  caseId: string;
+  firstName: string;
+  service: string;
+  programCode: string;
+  country: string;
+  actorId: string;
+  now: Date;
+}
 
 // ---------- Service ----------------------------------------------------------
 
@@ -114,6 +148,8 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
         select: {
           id: true,
           service: true,
+          programCode: true,
+          targetCountry: true,
           assignedOfficerId: true,
           lead: { select: { id: true, firstName: true } },
           client: { select: { id: true, firstName: true } },
@@ -137,15 +173,20 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
 
       let nudgesSent = 0;
       for (const c of cases) {
-        const actorId = c.assignedOfficerId ?? '';
-        const firstName =
-          c.client?.firstName ?? c.lead?.firstName ?? 'there';
-        const service = c.service;
+        const ctx: NudgeCtx = {
+          caseId: c.id,
+          firstName: c.client?.firstName ?? c.lead?.firstName ?? 'there',
+          service: c.service,
+          programCode: c.programCode ?? '',
+          country: c.targetCountry,
+          actorId: c.assignedOfficerId ?? '',
+          now,
+        };
 
-        nudgesSent += await this.nudgeMissingDocs(c.id, firstName, service, actorId, now, c.documentItems);
-        nudgesSent += await this.nudgeRejectedDocs(c.id, firstName, service, actorId, now, c.documentItems);
-        nudgesSent += await this.nudgeExpiringDocs(c.id, firstName, service, actorId, now, c.documentItems);
-        nudgesSent += await this.nudgeAttestationPending(c.id, firstName, service, actorId, now, c.documentItems);
+        nudgesSent += await this.nudgeMissingDocs(ctx, c.documentItems);
+        nudgesSent += await this.nudgeRejectedDocs(ctx, c.documentItems);
+        nudgesSent += await this.nudgeExpiringDocs(ctx, c.documentItems);
+        nudgesSent += await this.nudgeAttestationPending(ctx, c.documentItems);
       }
 
       if (nudgesSent > 0) {
@@ -158,69 +199,32 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
 
   // ---------- Nudge: missing docs -------------------------------------------
 
-  private async nudgeMissingDocs(
-    caseId: string,
-    firstName: string,
-    service: string,
-    actorId: string,
-    now: Date,
-    items: DocItem[],
-  ): Promise<number> {
+  private async nudgeMissingDocs(ctx: NudgeCtx, items: DocItem[]): Promise<number> {
     const missing = items.filter((i) => i.status === DocumentItemStatus.NOT_SUBMITTED);
     if (missing.length === 0) return 0;
+    if (await this.recentlySent(ctx.caseId, ReminderType.DOCS_REQUEST, ctx.now)) return 0;
 
-    const alreadySent = await this.recentlySent(caseId, ReminderType.DOCS_REQUEST, now);
-    if (alreadySent) return 0;
-
-    const list = missing.map((i) => `• ${i.documentName}`).join('\n');
-    const body =
-      `Hi ${firstName}! This is a reminder from Tashfeen Immigration regarding your ` +
-      `${service} case.\n\n` +
-      `The following documents are still pending:\n${list}\n\n` +
-      `Please upload them via your client portal as soon as possible. ` +
-      `Reply here if you need any help.`;
-
-    const subject = `Documents still needed — your ${service} application`;
-    return this.send(caseId, body, ReminderType.DOCS_REQUEST, actorId, now, missing.map((i) => i.documentName), subject);
+    const list = uniqueLines(missing.map((i) => `• ${i.documentName}`)).join('\n');
+    const { subject, body } = await this.resolveNudge(ReminderType.DOCS_REQUEST, ctx, list);
+    return this.send(ctx.caseId, body, ReminderType.DOCS_REQUEST, ctx.actorId, ctx.now, missing.map((i) => i.documentName), subject);
   }
 
   // ---------- Nudge: rejected docs ------------------------------------------
 
-  private async nudgeRejectedDocs(
-    caseId: string,
-    firstName: string,
-    service: string,
-    actorId: string,
-    now: Date,
-    items: DocItem[],
-  ): Promise<number> {
+  private async nudgeRejectedDocs(ctx: NudgeCtx, items: DocItem[]): Promise<number> {
     const rejected = items.filter((i) => i.status === DocumentItemStatus.REJECTED);
     if (rejected.length === 0) return 0;
+    if (await this.recentlySent(ctx.caseId, ReminderType.DOC_REJECTED, ctx.now)) return 0;
 
-    const alreadySent = await this.recentlySent(caseId, ReminderType.DOC_REJECTED, now);
-    if (alreadySent) return 0;
-
-    const list = rejected.map((i) => `• ${i.documentName}`).join('\n');
-    const body =
-      `Hi ${firstName}! Some documents in your ${service} case require your attention.\n\n` +
-      `Documents that need to be re-submitted:\n${list}\n\n` +
-      `Please check the notes in your client portal and re-upload. ` +
-      `Reply here if you have any questions.`;
-
-    const subject = `Action needed: documents to re-submit — ${service}`;
-    return this.send(caseId, body, ReminderType.DOC_REJECTED, actorId, now, rejected.map((i) => i.documentName), subject);
+    const list = uniqueLines(rejected.map((i) => `• ${i.documentName}`)).join('\n');
+    const { subject, body } = await this.resolveNudge(ReminderType.DOC_REJECTED, ctx, list);
+    return this.send(ctx.caseId, body, ReminderType.DOC_REJECTED, ctx.actorId, ctx.now, rejected.map((i) => i.documentName), subject);
   }
 
   // ---------- Nudge: expiring docs ------------------------------------------
 
-  private async nudgeExpiringDocs(
-    caseId: string,
-    firstName: string,
-    service: string,
-    actorId: string,
-    now: Date,
-    items: DocItem[],
-  ): Promise<number> {
+  private async nudgeExpiringDocs(ctx: NudgeCtx, items: DocItem[]): Promise<number> {
+    const now = ctx.now;
     const today = new Date(now);
     today.setUTCHours(0, 0, 0, 0);
     const in30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -252,16 +256,11 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
     let sent = 0;
 
     if (urgentDocs.length > 0) {
-      const list = urgentDocs
-        .map((i) => `• ${i.documentName} (expires ${fmtDate(i.validityExpiryDate!)})`)
-        .join('\n');
-      const body =
-        `⚠️ URGENT: Hi ${firstName}! The following documents in your ${service} case ` +
-        `expire within 7 days:\n\n${list}\n\n` +
-        `Please renew them and upload updated copies immediately to avoid a delay in your application.`;
-
-      const subject = `Urgent: documents expiring within 7 days — ${service}`;
-      sent += await this.send(caseId, body, ReminderType.EXPIRY_7D, actorId, now, urgentDocs.map((i) => i.documentName), subject);
+      const list = uniqueLines(
+        urgentDocs.map((i) => `• ${i.documentName} (expires ${fmtDate(i.validityExpiryDate!)})`),
+      ).join('\n');
+      const { subject, body } = await this.resolveNudge(ReminderType.EXPIRY_7D, ctx, list);
+      sent += await this.send(ctx.caseId, body, ReminderType.EXPIRY_7D, ctx.actorId, now, urgentDocs.map((i) => i.documentName), subject);
       if (sent > 0) {
         // Mark expiryAlertSentAt on each doc
         await this.prisma.caseDocumentItem
@@ -274,16 +273,11 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (soonDocs.length > 0) {
-      const list = soonDocs
-        .map((i) => `• ${i.documentName} (expires ${fmtDate(i.validityExpiryDate!)})`)
-        .join('\n');
-      const body =
-        `Hi ${firstName}! A reminder that the following documents in your ${service} case ` +
-        `will expire within 30 days:\n\n${list}\n\n` +
-        `Please arrange renewal in advance to avoid any disruption to your application.`;
-
-      const subject = `Reminder: documents expiring within 30 days — ${service}`;
-      const s = await this.send(caseId, body, ReminderType.EXPIRY_30D, actorId, now, soonDocs.map((i) => i.documentName), subject);
+      const list = uniqueLines(
+        soonDocs.map((i) => `• ${i.documentName} (expires ${fmtDate(i.validityExpiryDate!)})`),
+      ).join('\n');
+      const { subject, body } = await this.resolveNudge(ReminderType.EXPIRY_30D, ctx, list);
+      const s = await this.send(ctx.caseId, body, ReminderType.EXPIRY_30D, ctx.actorId, now, soonDocs.map((i) => i.documentName), subject);
       sent += s;
       if (s > 0) {
         await this.prisma.caseDocumentItem
@@ -300,31 +294,66 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
 
   // ---------- Nudge: attestation pending ------------------------------------
 
-  private async nudgeAttestationPending(
-    caseId: string,
-    firstName: string,
-    service: string,
-    actorId: string,
-    now: Date,
-    items: DocItem[],
-  ): Promise<number> {
+  private async nudgeAttestationPending(ctx: NudgeCtx, items: DocItem[]): Promise<number> {
     const pending = items.filter(
       (i) => i.attestationStatus === DocumentAttestationStatus.REQUIRED_PENDING,
     );
     if (pending.length === 0) return 0;
+    if (await this.recentlySent(ctx.caseId, ReminderType.ATTESTATION_REMINDER, ctx.now)) return 0;
 
-    const alreadySent = await this.recentlySent(caseId, ReminderType.ATTESTATION_REMINDER, now);
-    if (alreadySent) return 0;
+    const list = uniqueLines(pending.map((i) => `• ${i.documentName}`)).join('\n');
+    const { subject, body } = await this.resolveNudge(ReminderType.ATTESTATION_REMINDER, ctx, list);
+    return this.send(ctx.caseId, body, ReminderType.ATTESTATION_REMINDER, ctx.actorId, ctx.now, pending.map((i) => i.documentName), subject);
+  }
 
-    const list = pending.map((i) => `• ${i.documentName}`).join('\n');
-    const body =
-      `Hi ${firstName}! The following documents in your ${service} case require ` +
-      `attestation before they can be accepted:\n\n${list}\n\n` +
-      `Please arrange attestation by the relevant authority (HEC, MOFA, IBCC, etc.) ` +
-      `and upload the attested copies. Reply here if you need guidance on which authority to contact.`;
+  // ---------- Template resolution -------------------------------------------
 
-    const subject = `Attestation required — your ${service} documents`;
-    return this.send(caseId, body, ReminderType.ATTESTATION_REMINDER, actorId, now, pending.map((i) => i.documentName), subject);
+  /**
+   * Resolve the (subject, body) for a nudge: the manager's active
+   * ProcessingEmailTemplate for (type, service, program) if any, else the
+   * service-level ('') template, else the hardcoded default — then substitute
+   * placeholders. A DB lookup failure degrades to the default so the reminder
+   * always sends.
+   */
+  private async resolveNudge(
+    type: ReminderType,
+    ctx: NudgeCtx,
+    documentList: string,
+  ): Promise<{ subject: string; body: string }> {
+    const vars: NudgeVars = {
+      clientName: ctx.firstName,
+      service: ctx.service,
+      country: ctx.country,
+      documentList,
+    };
+    const fallback = NUDGE_DEFAULTS[type] ?? { subject: '', body: '' };
+    let tpl: { subject: string; body: string } | null = null;
+    try {
+      // Canonicalise to match how templates are stored (trim + upper), so a
+      // free-text program on the case still resolves its override.
+      const prog = (ctx.programCode || '').trim().toUpperCase();
+      const programCodes = prog ? [prog, ''] : [''];
+      const rows = await this.prisma.processingEmailTemplate.findMany({
+        where: {
+          reminderType: type,
+          service: ctx.service,
+          programCode: { in: programCodes },
+          isActive: true,
+        },
+        select: { subject: true, body: true, programCode: true },
+      });
+      // Prefer a program-specific row over the service-level ('') row.
+      tpl = rows.sort((a, b) => (b.programCode ? 1 : 0) - (a.programCode ? 1 : 0))[0] ?? null;
+    } catch (e) {
+      this.log.warn(
+        `email-template lookup failed for ${type}/${ctx.service}: ${(e as Error).message}`,
+      );
+    }
+    const base = tpl ?? fallback;
+    return {
+      subject: renderTemplate(base.subject, vars),
+      body: renderTemplate(base.body, vars),
+    };
   }
 
   // ---------- Helpers -------------------------------------------------------

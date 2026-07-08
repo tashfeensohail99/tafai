@@ -40,6 +40,7 @@ import {
   CreateCaseMilestoneDto,
   CreateCorrectionRequestDto,
   CreateDocumentTemplateDto,
+  CreateEmailTemplateDto,
   CreateManualClientCaseDto,
   CreateProcessingCaseDto,
   CreateProcessingNoteDto,
@@ -923,6 +924,34 @@ export class ProcessingController {
   @RequirePermissions('processing.checklist.manage')
   deactivateTemplate(@Param('id', ParseUUIDPipe) id: string) {
     return this.processingService.deactivateTemplate(id);
+  }
+
+  // -------------------------------------------------------------------------
+  // CLIENT-EMAIL TEMPLATES (manager-editable nudge wording, per category)
+  // -------------------------------------------------------------------------
+
+  @Get('email-templates')
+  @RequirePermissions('processing.checklist.manage')
+  listEmailTemplates(
+    @Query('service') service?: string,
+    @Query('reminderType') reminderType?: string,
+  ) {
+    return this.processingService.listEmailTemplates(service, reminderType);
+  }
+
+  @Post('email-templates')
+  @RequirePermissions('processing.checklist.manage')
+  saveEmailTemplate(
+    @Body() dto: CreateEmailTemplateDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.saveEmailTemplate(dto, user);
+  }
+
+  @Delete('email-templates/:id')
+  @RequirePermissions('processing.checklist.manage')
+  deleteEmailTemplate(@Param('id', ParseUUIDPipe) id: string) {
+    return this.processingService.deleteEmailTemplate(id);
   }
 
   // -------------------------------------------------------------------------

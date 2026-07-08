@@ -44,3 +44,18 @@ a:hover {
   outline: 2px solid var(--color-primary-500);
   outline-offset: 2px;
 }
+
+/* Native <select> dropdown popups on dark pages.
+   `color-scheme: dark` (see tokens.css) fixes most native controls, but on
+   Chromium/Windows a <select> that carries an author background still opens its
+   OPTION list with a white popup — leaving our light option text unreadable on
+   white. Style the option/optgroup list explicitly (Chromium + Firefox honor
+   this on the popup) and pin color-scheme on the control itself. */
+[data-theme='dark'] select {
+  color-scheme: dark;
+}
+[data-theme='dark'] select option,
+[data-theme='dark'] select optgroup {
+  background-color: #1e293b; /* --color-surface-muted (dark) */
+  color: #e2e8f0;
+}

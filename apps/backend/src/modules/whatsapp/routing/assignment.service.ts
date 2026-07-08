@@ -40,7 +40,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   PresenceStatus,
   WhatsAppAssignmentReason,
-  type Lead,
   type Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -75,179 +74,181 @@ export class WhatsAppAssignmentService {
     threadId: string,
     opts?: { forLiveCall?: boolean },
   ): Promise<AssignmentOutcome> {
-    return this.prisma.$transaction(async (tx) => {
-      const thread = await tx.whatsAppThread.findUnique({
-        where: { id: threadId },
-        include: {
-          lead: { select: { id: true, assignedEmployeeId: true, preferredEmployeeId: true, branchId: true } },
+    // ── Phase 1 — READ + DECIDE (no transaction). Assignment used to run the
+    //    whole ~10-round-trip computation inside one interactive $transaction,
+    //    pinning a scarce pooled connection BEGIN→COMMIT across every network
+    //    round-trip to the (cross-region) DB — the pool-starvation incident.
+    //    Now ONLY the "lock + write" critical section (Phase 2) is in a
+    //    transaction; everything else is ordinary short queries.
+    const unassigned = (leadId: string): AssignmentOutcome => ({
+      leadId,
+      threadId,
+      assignedEmployeeId: null,
+      reason: null,
+      retryAt: null,
+    });
+
+    const thread = await this.prisma.whatsAppThread.findUnique({
+      where: { id: threadId },
+      select: {
+        id: true,
+        slaDeadlineAt: true,
+        firstInboundAt: true,
+        lead: {
+          select: { id: true, assignedEmployeeId: true, preferredEmployeeId: true, branchId: true },
         },
-      });
-      if (!thread?.lead) {
-        this.log.warn({ threadId }, 'assignment: thread or lead missing');
-        return {
-          leadId: '',
-          threadId,
-          assignedEmployeeId: null,
-          reason: null,
-          retryAt: null,
-        };
-      }
-      const lead = thread.lead;
+      },
+    });
+    if (!thread?.lead) {
+      this.log.warn({ threadId }, 'assignment: thread or lead missing');
+      return unassigned('');
+    }
+    const lead = thread.lead;
 
-      // Serialize concurrent assignment of the SAME lead. The webhook worker
-      // runs at concurrency 8, so two inbound messages arriving together would
-      // otherwise both read assignedEmployeeId=null and assign DIFFERENT agents
-      // (and double-advance the round-robin cursor). A row-level lock makes the
-      // second transaction wait for the first to commit; the re-read below then
-      // sees the committed assignment and honors it. Read Committed (Prisma's
-      // default) does not prevent this on its own — the explicit FOR UPDATE
-      // does.
-      //
-      // CRITICAL #1: this is a SELECT, so it MUST use $queryRaw, not $executeRaw.
-      // $executeRaw is for statements that return a row COUNT (INSERT/UPDATE/
-      // DELETE); handing it a SELECT makes Prisma throw "Execute returned
-      // results, which is not allowed in SQL", which aborts the whole
-      // transaction and leaves EVERY lead unassigned.
-      //
-      // CRITICAL #2: do NOT cast the parameter to ::uuid. `crm.leads.id` is a
-      // TEXT column (Prisma `String @id` with no `@db.Uuid`), so `id = $1::uuid`
-      // asks Postgres for a `text = uuid` operator that doesn't exist → error
-      // 42883, which also aborts the transaction and leaves every lead
-      // unassigned. Compare text-to-text: `id = ${lead.id}` (lead.id is already
-      // a string). Both of these bugs took assignment down for hours — the lock
-      // throwing is silently swallowed by the webhook's catch.
-      await tx.$queryRaw`SELECT 1 FROM crm.leads WHERE id = ${lead.id} FOR UPDATE`;
-      const locked = await tx.lead.findUnique({
-        where: { id: lead.id },
-        select: { assignedEmployeeId: true, preferredEmployeeId: true },
-      });
-      // Use the post-lock values for the assignment decision.
-      lead.assignedEmployeeId = locked?.assignedEmployeeId ?? null;
-      lead.preferredEmployeeId = locked?.preferredEmployeeId ?? null;
+    const org = await this.loadOrgFor(this.prisma, lead.branchId);
+    if (!org) {
+      this.log.error({ threadId }, 'assignment: organization not found via branch');
+      return unassigned(lead.id);
+    }
 
-      // Load org for business-hours + SLA + round-robin cursor.
-      const org = await this.loadOrgFor(tx, lead.branchId);
-      if (!org) {
-        this.log.error({ threadId }, 'assignment: organization not found via branch');
-        return { leadId: lead.id, threadId, assignedEmployeeId: null, reason: null, retryAt: null };
-      }
-
+    // Stamp the first-response SLA deadline if missing — idempotent and
+    // independent of the assignment decision, so it runs here (no tx).
+    if (!thread.slaDeadlineAt && thread.firstInboundAt) {
       const hours: BusinessHours = {
         timezone: org.timezone,
         hoursOpen: org.hoursOpen,
         hoursClose: org.hoursClose,
         workingDays: org.workingDays,
       };
-      const now = new Date();
-
-      // Stamp SLA deadline if missing and we have a firstInboundAt.
-      if (!thread.slaDeadlineAt && thread.firstInboundAt) {
-        const deadline = computeSlaDeadline(
-          hours,
-          thread.firstInboundAt,
-          org.slaFirstResponseSeconds,
+      const deadline = computeSlaDeadline(hours, thread.firstInboundAt, org.slaFirstResponseSeconds);
+      await this.prisma.whatsAppThread
+        .update({ where: { id: threadId }, data: { slaDeadlineAt: deadline } })
+        .catch((err) =>
+          this.log.warn(
+            { threadId, err: (err as Error).message },
+            'assignment: SLA-deadline stamp failed (non-fatal)',
+          ),
         );
-        await tx.whatsAppThread.update({
-          where: { id: threadId },
-          data: { slaDeadlineAt: deadline },
-        });
-      }
+    }
 
-      // Per Tashfeen policy: assignment runs 24/7 including weekends.
-      // Threads received after 6 PM, on Saturday, or on Sunday are still
-      // distributed to the team; agents pick them up the next working morning
-      // where they left off. Business hours + working-days are used ONLY for
-      // SLA-clock math (already applied above) and for the after-hours
-      // auto-ack template (separate worker, not gated here). NO business-
-      // Business hours / weekend are NOT a routing gate (24/7 distribution).
-      // Presence IS now a gate for NEW leads: only ONLINE agents receive new
-      // round-robin/sticky assignments. Away/Offline agents are skipped for new
-      // leads but KEEP their existing chats (handled by the base-pool check
-      // below) so they can resume with their clients when they're back.
+    const eligible = await this.loadEligibleEmployees(this.prisma, org.organizationId);
+    const eligibleIds = new Set(eligible.map((e) => e.id));
 
-      // Base pool: everyone who CAN own a WhatsApp chat (active, in the inbox
-      // pool, account active) — presence-agnostic. Used to decide whether an
-      // EXISTING assignment is still valid.
-      const eligible = await this.loadEligibleEmployees(tx, org.organizationId);
-
-      // Already assigned — keep it as long as the assignee is still in the BASE
-      // pool. Presence (Away/Offline) does NOT drop an existing chat: the agent
-      // keeps their clients and picks them up when back online. We only re-route
-      // if they were deactivated, removed from the inbox pool, or suspended.
-      if (lead.assignedEmployeeId) {
-        const stillEligible = eligible.some((e) => e.id === lead.assignedEmployeeId);
-        if (stillEligible) {
-          return {
-            leadId: lead.id,
-            threadId,
-            assignedEmployeeId: lead.assignedEmployeeId,
-            reason: null,
-            retryAt: null,
-          };
-        }
-        this.log.log(
-          { leadId: lead.id, previousAssignee: lead.assignedEmployeeId },
-          'assignment: previous assignee no longer eligible, re-routing',
-        );
-        // Fall through to re-route. preferredEmployeeId is left as-is; the
-        // sticky check below also requires the agent to be online.
-      }
-
-      // NEW-lead pool: base pool restricted to ONLINE agents. Away/Offline
-      // agents do not receive new leads.
-      const onlinePool = eligible.filter((e) => e.presenceStatus === PresenceStatus.ONLINE);
-
-      // A live inbound call can't wait for the sweeper: if nobody is ONLINE,
-      // fall back to the full eligible pool so it still rings the next available
-      // rep (round-robin picks ONE — never the whole team). Messages keep the
-      // ONLINE-only pool and wait for the sweeper.
-      const pool =
-        onlinePool.length > 0 ? onlinePool : opts?.forLiveCall ? eligible : [];
-
-      if (pool.length === 0) {
-        this.log.log(
-          { leadId: lead.id, basePool: eligible.length, forLiveCall: !!opts?.forLiveCall },
-          'assignment: no eligible agent to receive this lead — leaving unassigned (sweeper will pick up)',
-        );
-        return { leadId: lead.id, threadId, assignedEmployeeId: null, reason: null, retryAt: null };
-      }
-
-      // 1. Sticky — preferred employee, but only if they're in the pool.
-      const sticky = lead.preferredEmployeeId
-        ? pool.find((e) => e.id === lead.preferredEmployeeId)
-        : undefined;
-      if (sticky) {
-        await this.applyAssignment(tx, threadId, lead, sticky.id, WhatsAppAssignmentReason.STICKY);
-        return {
-          leadId: lead.id,
-          threadId,
-          assignedEmployeeId: sticky.id,
-          reason: WhatsAppAssignmentReason.STICKY,
-          retryAt: null,
-        };
-      }
-
-      // 2. Strict round-robin among the pool (next available rep).
-      const pick = pickRoundRobin(pool, org.rrCursorEmployeeId);
-      await this.applyAssignment(
-        tx,
-        threadId,
-        lead,
-        pick.id,
-        WhatsAppAssignmentReason.ROUND_ROBIN,
-      );
-      await tx.organization.update({
-        where: { id: org.organizationId },
-        data: { rrCursorEmployeeId: pick.id },
-      });
+    // Already assigned to a still-eligible agent → keep it. Presence (Away/
+    // Offline) does NOT drop an existing chat; we only re-route if the assignee
+    // was deactivated / removed from the inbox pool / suspended.
+    if (lead.assignedEmployeeId && eligibleIds.has(lead.assignedEmployeeId)) {
       return {
         leadId: lead.id,
         threadId,
-        assignedEmployeeId: pick.id,
-        reason: WhatsAppAssignmentReason.ROUND_ROBIN,
+        assignedEmployeeId: lead.assignedEmployeeId,
+        reason: null,
         retryAt: null,
       };
+    }
+    if (lead.assignedEmployeeId) {
+      this.log.log(
+        { leadId: lead.id, previousAssignee: lead.assignedEmployeeId },
+        'assignment: previous assignee no longer eligible, re-routing',
+      );
+    }
+
+    // NEW-lead pool = eligible restricted to ONLINE (Away/Offline agents don't
+    // receive new leads). A live inbound call can't wait for the sweeper, so if
+    // nobody is ONLINE it falls back to the full eligible pool (still ONE rep).
+    const onlinePool = eligible.filter((e) => e.presenceStatus === PresenceStatus.ONLINE);
+    const pool = onlinePool.length > 0 ? onlinePool : opts?.forLiveCall ? eligible : [];
+    if (pool.length === 0) {
+      this.log.log(
+        { leadId: lead.id, basePool: eligible.length, forLiveCall: !!opts?.forLiveCall },
+        'assignment: no eligible agent to receive this lead — leaving unassigned (sweeper will pick up)',
+      );
+      return unassigned(lead.id);
+    }
+
+    // Candidate: sticky (preferred, if in the pool) else strict round-robin.
+    const sticky = lead.preferredEmployeeId
+      ? pool.find((e) => e.id === lead.preferredEmployeeId)
+      : undefined;
+    const candidateId = sticky ? sticky.id : pickRoundRobin(pool, org.rrCursorEmployeeId).id;
+    const reason = sticky ? WhatsAppAssignmentReason.STICKY : WhatsAppAssignmentReason.ROUND_ROBIN;
+
+    // ── Phase 2 — COMMIT under a short lock (the ONLY critical section).
+    //    Lock the lead row, re-read under the lock, write the assignment. The
+    //    lock is what prevents double-assignment when two inbound messages for
+    //    the SAME lead race (webhook worker concurrency 8): the loser blocks on
+    //    the row lock, then re-reads the winner's assignment and honors it.
+    //    ($queryRaw not $executeRaw — a SELECT via $executeRaw aborts the tx;
+    //    and NO ::uuid cast — crm.leads.id is TEXT. Both once took routing down.)
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM crm.leads WHERE id = ${lead.id} FOR UPDATE`;
+      const locked = await tx.lead.findUnique({
+        where: { id: lead.id },
+        select: { assignedEmployeeId: true, preferredEmployeeId: true },
+      });
+      const current = locked?.assignedEmployeeId ?? null;
+      // Someone assigned it to a still-eligible agent while we were computing →
+      // honor that, don't overwrite (idempotent, no double-assign).
+      if (current && eligibleIds.has(current)) {
+        return { assigned: current, committed: false };
+      }
+      // Unassigned, or assigned to a now-ineligible agent → write our candidate.
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: {
+          assignedEmployeeId: candidateId,
+          // First time this lead is routed, set preferred = sticky.
+          ...(locked?.preferredEmployeeId ? {} : { preferredEmployeeId: candidateId }),
+          // NOTE: assignment does NOT touch lead.status (stays NEW until the
+          // agent actually replies — the outbound worker flips NEW→CONTACTED).
+        },
+      });
+      return { assigned: candidateId, committed: true };
     });
+
+    // ── Phase 3 — BEST-EFFORT side writes (outside the tx). The assignment is
+    //    already durably committed above; if these fail we lose only the audit
+    //    trail / an un-advanced cursor (a rep picked once more), never the lead.
+    if (result.committed) {
+      try {
+        await this.prisma.whatsAppThread.update({
+          where: { id: threadId },
+          data: { lastAssignmentReason: reason },
+        });
+        await this.prisma.activityTimeline.create({
+          data: {
+            entityType: 'Lead',
+            entityId: lead.id,
+            leadId: lead.id,
+            eventType: 'WHATSAPP_ASSIGNED',
+            description: `WhatsApp lead auto-assigned (${reason.toLowerCase()})`,
+            metadata: { reason, threadId, assignedEmployeeId: result.assigned },
+          },
+        });
+        // Advance the round-robin cursor (RR only). No longer inside the
+        // assignment tx, so it no longer pins the shared Organization row for
+        // the whole transaction — that shared-row convoy was a pool amplifier.
+        if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
+          await this.prisma.organization.update({
+            where: { id: org.organizationId },
+            data: { rrCursorEmployeeId: result.assigned },
+          });
+        }
+      } catch (err) {
+        this.log.warn(
+          { leadId: lead.id, err: (err as Error).message },
+          'assignment: post-commit side-writes failed (lead IS assigned)',
+        );
+      }
+    }
+
+    return {
+      leadId: lead.id,
+      threadId,
+      assignedEmployeeId: result.assigned,
+      reason: result.committed ? reason : null,
+      retryAt: null,
+    };
   }
 
   /**
@@ -343,44 +344,6 @@ export class WhatsAppAssignmentService {
       select: { id: true, presenceStatus: true },
     });
     return rows;
-  }
-
-  private async applyAssignment(
-    tx: Prisma.TransactionClient,
-    threadId: string,
-    lead: Pick<Lead, 'id' | 'preferredEmployeeId'>,
-    assignedEmployeeId: string,
-    reason: WhatsAppAssignmentReason,
-  ): Promise<void> {
-    const now = new Date();
-    await tx.lead.update({
-      where: { id: lead.id },
-      data: {
-        assignedEmployeeId,
-        // First time this lead is routed, set preferred = sticky.
-        ...(lead.preferredEmployeeId ? {} : { preferredEmployeeId: assignedEmployeeId }),
-        // NOTE: assignment does NOT touch lead.status. A lead being routed to
-        // an agent is NOT the same as the agent having contacted them — it
-        // stays NEW ("Pending") until the agent actually sends a message, at
-        // which point the outbound worker flips NEW → CONTACTED. Previously
-        // this set CONTACTED on assignment, which made every assigned lead
-        // falsely read "Contacted" before anyone reached out.
-      },
-    });
-    await tx.whatsAppThread.update({
-      where: { id: threadId },
-      data: { lastAssignmentReason: reason },
-    });
-    await tx.activityTimeline.create({
-      data: {
-        entityType: 'Lead',
-        entityId: lead.id,
-        leadId: lead.id,
-        eventType: 'WHATSAPP_ASSIGNED',
-        description: `WhatsApp lead auto-assigned (${reason.toLowerCase()})`,
-        metadata: { reason, threadId, assignedEmployeeId },
-      },
-    });
   }
 }
 

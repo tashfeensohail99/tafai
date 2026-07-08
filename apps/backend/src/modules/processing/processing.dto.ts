@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsEnum,
@@ -939,4 +940,47 @@ export class CreateCaseMilestoneDto {
   @IsInt()
   @Min(0)
   sortOrder?: number;
+}
+
+// ---------------------------------------------------------------------------
+// CLIENT-EMAIL TEMPLATES (manager-editable nudge wording, per category)
+// ---------------------------------------------------------------------------
+
+/** The nudge types a manager may customise. Mirrors the ReminderType values the
+ *  ClientNudgeService actually sends; kept as a plain list so it's decoupled
+ *  from the (larger) Prisma enum. */
+export const NUDGE_EMAIL_TYPES = [
+  'DOCS_REQUEST',
+  'DOC_REJECTED',
+  'EXPIRY_7D',
+  'EXPIRY_30D',
+  'ATTESTATION_REMINDER',
+] as const;
+
+export class CreateEmailTemplateDto {
+  @IsIn(NUDGE_EMAIL_TYPES, { message: 'reminderType must be a supported nudge type' })
+  reminderType!: string;
+
+  @IsIn(SERVICE_TYPE_CODES, { message: 'service must be one of the canonical service codes' })
+  service!: string;
+
+  /** '' (or omitted) = whole-service default; a program code overrides it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  programCode?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  subject!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(6000)
+  body!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

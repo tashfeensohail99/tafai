@@ -62,6 +62,7 @@ import {
   CreateAuthoritySubmissionDto,
   CreateCorrectionRequestDto,
   CreateDocumentTemplateDto,
+  CreateEmailTemplateDto,
   CreateManualClientCaseDto,
   CreateProcessingCaseDto,
   CreateProcessingNoteDto,
@@ -85,6 +86,8 @@ import {
   UpdateProcessingTaskDto,
   WaiveDocumentItemDto,
 } from './processing.dto';
+import { NUDGE_DEFAULTS, NUDGE_TYPE_LABELS } from './nudge-defaults';
+import { NUDGE_EMAIL_TYPES } from './processing.dto';
 
 /**
  * Resolve a human display name for a UserAccount. UserAccount has NO name
@@ -1065,6 +1068,10 @@ export class ProcessingService {
           assignedOfficerId: officerId,
           updatedByUserId: user.id,
           ...(serviceChanged ? { service: dto.service } : {}),
+          // Persist the program so per-program client-email templates (and any
+          // future program-aware logic) can resolve it after seeding. NULL when
+          // the handover didn't specify one — the whole-service template applies.
+          programCode: effectiveProgramCode,
         },
       });
 
@@ -3042,6 +3049,73 @@ export class ProcessingService {
       where: { id },
       data: { isActive: false },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // CLIENT-EMAIL TEMPLATES (manager-editable nudge wording, per category)
+  // -------------------------------------------------------------------------
+
+  /** List saved templates (optionally filtered) plus the built-in defaults +
+   *  labels the manager UI needs to show which categories are customised and to
+   *  prefill the editor. */
+  async listEmailTemplates(service?: string, reminderType?: string) {
+    const templates = await this.prisma.processingEmailTemplate.findMany({
+      where: {
+        ...(service ? { service } : {}),
+        ...(reminderType ? { reminderType } : {}),
+      },
+      orderBy: [{ service: 'asc' }, { reminderType: 'asc' }, { programCode: 'asc' }],
+    });
+    return {
+      templates,
+      defaults: NUDGE_DEFAULTS,
+      typeLabels: NUDGE_TYPE_LABELS,
+      types: NUDGE_EMAIL_TYPES,
+    };
+  }
+
+  /** Create OR update the template for a (reminderType, service, programCode) —
+   *  the tuple is the identity, so "save" is an upsert (no duplicate-key error,
+   *  and editing an existing one is the same call). */
+  async saveEmailTemplate(dto: CreateEmailTemplateDto, user: RequestUser) {
+    // Canonicalise the program code (trim + upper) so a casing/spacing variant
+    // from the free-text picker can't create a "different" row that never
+    // matches the case's stored program at send time. '' = whole-service.
+    const programCode = (dto.programCode ?? '').trim().toUpperCase();
+    const fields = {
+      subject: dto.subject.trim(),
+      body: dto.body,
+      isActive: dto.isActive ?? true,
+    };
+    return this.prisma.processingEmailTemplate.upsert({
+      where: {
+        reminderType_service_programCode: {
+          reminderType: dto.reminderType,
+          service: dto.service,
+          programCode,
+        },
+      },
+      create: {
+        reminderType: dto.reminderType,
+        service: dto.service,
+        programCode,
+        ...fields,
+        createdByUserId: user.id,
+      },
+      update: fields,
+    });
+  }
+
+  /** Hard-delete a custom template → that category reverts to the default
+   *  wording (the sender falls back automatically). */
+  async deleteEmailTemplate(id: string) {
+    const existing = await this.prisma.processingEmailTemplate.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Email template not found');
+    await this.prisma.processingEmailTemplate.delete({ where: { id } });
+    return { deleted: true };
   }
 
   // -------------------------------------------------------------------------

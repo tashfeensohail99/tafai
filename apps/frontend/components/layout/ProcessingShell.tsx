@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   LogOut,
+  Mail,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -104,6 +105,7 @@ function buildProcessingNav(intakePending: number, isManager: boolean): DrawerMe
 const ADMIN_NAV: DrawerMenuItem[] = [
   { label: 'Manager Dashboard', href: '/processing/manager', icon: LayoutGrid, caption: 'Team & SLA overview' },
   { label: 'Checklist Templates', href: '/processing/admin/templates', icon: Settings2, caption: 'Document requirements' },
+  { label: 'Email Templates', href: '/processing/admin/email-templates', icon: Mail, caption: 'Client reminder wording' },
 ];
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
@@ -118,6 +120,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/processing/reports') return { title: 'Processing Reports', subtitle: 'Metrics & analytics' };
   if (pathname === '/processing/manager') return { title: 'Manager Dashboard', subtitle: 'Team workload & SLA overview' };
   if (pathname === '/processing/admin/templates') return { title: 'Checklist Templates', subtitle: 'Document requirement templates' };
+  if (pathname === '/processing/admin/email-templates') return { title: 'Client Email Templates', subtitle: 'Editable reminder wording per service' };
   return { title: 'Processing Workspace', subtitle: '' };
 }
 

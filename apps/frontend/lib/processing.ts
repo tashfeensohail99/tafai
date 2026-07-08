@@ -1790,3 +1790,62 @@ export function deactivateDocumentTemplate(id: string): Promise<ApiDocumentTempl
     cache: 'no-store',
   });
 }
+
+// ---------- Client-email templates (manager-editable nudge wording) ----------
+
+export interface ApiEmailTemplate {
+  id: string;
+  reminderType: string;
+  service: string;
+  programCode: string;
+  subject: string;
+  body: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailTemplatesResponse {
+  templates: ApiEmailTemplate[];
+  /** Built-in fallback wording per reminderType (subject/body with placeholders). */
+  defaults: Record<string, { subject: string; body: string }>;
+  /** Human labels per reminderType for the UI. */
+  typeLabels: Record<string, string>;
+  /** The reminderTypes a manager may customise. */
+  types: string[];
+}
+
+export function fetchEmailTemplates(
+  query: { service?: string; reminderType?: string } = {},
+): Promise<EmailTemplatesResponse> {
+  const qs = new URLSearchParams();
+  if (query.service) qs.set('service', query.service);
+  if (query.reminderType) qs.set('reminderType', query.reminderType);
+  const tail = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<EmailTemplatesResponse>(`/processing/email-templates${tail}`, { cache: 'no-store' });
+}
+
+/** Create-or-update the template for a (reminderType, service, programCode). */
+export function saveEmailTemplate(payload: {
+  reminderType: string;
+  service: string;
+  programCode?: string;
+  subject: string;
+  body: string;
+  isActive?: boolean;
+}): Promise<ApiEmailTemplate> {
+  return apiFetch<ApiEmailTemplate>('/processing/email-templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}
+
+/** Hard delete — reverts that category to the built-in default wording. */
+export function deleteEmailTemplate(id: string): Promise<{ deleted: boolean }> {
+  return apiFetch<{ deleted: boolean }>(`/processing/email-templates/${id}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}

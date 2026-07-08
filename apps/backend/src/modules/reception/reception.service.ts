@@ -172,6 +172,17 @@ export class ReceptionService {
     };
   }
 
+  /** Eligible sales agents for the "referred by" picker on the paid-consult form
+   *  — the SAME pool leads are round-robined to (via LeadAssignmentService), so a
+   *  referred lead always lands with someone who can actually work it. Distinct
+   *  from getHosts(), which is every staff member the visitor might come to see. */
+  async getSalesAgents(): Promise<{ agents: Array<{ id: string; name: string }> }> {
+    const agents = await this.assignment.listEligibleAgents();
+    return {
+      agents: agents.map((a) => ({ id: a.id, name: `${a.firstName} ${a.lastName}`.trim() })),
+    };
+  }
+
   // ── Visit register — today's board (default) or a searchable, paginated log ─
   async listVisits(query: ListVisitsQueryDto) {
     const { start, end, label } = this.resolveRange(query);
@@ -294,16 +305,27 @@ export class ReceptionService {
       throw new BadRequestException('A walk-in needs a phone number so we can create their lead.');
     }
 
+    // An optional referring sales rep takes ownership of any lead we create for
+    // this visit (instead of the round-robin). It must be an ELIGIBLE agent —
+    // the SAME pool the round-robin draws from — so the lead never lands with
+    // someone outside the sales inbox (finance/processing/suspended login) who
+    // would never work it. An ineligible or stale pick is dropped (→ round-robin)
+    // rather than blocking the desk from logging the visit.
+    let referrerEmployeeId = dto.referrerEmployeeId ?? null;
+    if (referrerEmployeeId && !(await this.assignment.isEligibleAgent(referrerEmployeeId))) {
+      referrerEmployeeId = null;
+    }
+
     // No link supplied: try to match an existing record by phone (avoid a
-    // duplicate lead); otherwise, for a walk-in, create a fresh Lead through
-    // the shared round-robin so Sales owns the follow-up.
+    // duplicate lead); otherwise, for a walk-in, create a fresh Lead — assigned
+    // to the referring rep when given, else through the shared round-robin.
     if (!leadId && !clientId) {
       const matched = phone ? await this.matchByPhone(phone) : null;
       if (matched) {
         if (matched.kind === 'client') clientId = matched.id;
         else leadId = matched.id;
       } else if (dto.visitType === VisitType.WALK_IN) {
-        leadId = await this.createWalkInLead(name, phone, dto.purpose ?? null, actorUserId);
+        leadId = await this.createWalkInLead(name, phone, dto.purpose ?? null, actorUserId, referrerEmployeeId);
       }
     }
 
@@ -346,6 +368,7 @@ export class ReceptionService {
         leadId,
         clientId,
         hostEmployeeId,
+        referrerEmployeeId,
         purpose: dto.purpose ?? null,
         notes: dto.notes ?? null,
         checkedInByUserId: actorUserId,
@@ -1591,7 +1614,7 @@ export class ReceptionService {
    * with no CRM record and no phone can't be booked — surface that clearly.
    */
   private async ensureConsultOwner(
-    visit: { id: string; name: string; phone: string | null; leadId: string | null; clientId: string | null; purpose: string | null },
+    visit: { id: string; name: string; phone: string | null; leadId: string | null; clientId: string | null; purpose: string | null; referrerEmployeeId: string | null },
     actorUserId: string,
   ): Promise<{ leadId: string | null; clientId: string | null }> {
     if (visit.leadId || visit.clientId) return { leadId: visit.leadId, clientId: visit.clientId };
@@ -1606,7 +1629,7 @@ export class ReceptionService {
       await this.prisma.visit.update({ where: { id: visit.id }, data: link });
       return link;
     }
-    const leadId = await this.createWalkInLead(visit.name, visit.phone, visit.purpose, actorUserId);
+    const leadId = await this.createWalkInLead(visit.name, visit.phone, visit.purpose, actorUserId, visit.referrerEmployeeId);
     if (!leadId) throw new BadRequestException('Could not create a lead for this consultation.');
     await this.prisma.visit.update({ where: { id: visit.id }, data: { leadId } });
     return { leadId, clientId: null };
@@ -1835,11 +1858,21 @@ export class ReceptionService {
     phone: string | null,
     purpose: string | null,
     actorUserId: string,
+    referrerEmployeeId?: string | null,
   ): Promise<string | null> {
     if (!phone) return null; // guarded earlier for walk-ins; belt-and-braces
     const { firstName, lastName } = splitName(name);
-    // Round-robin to a sales rep (shared cursor, same pool as CSV / Meta leads).
-    const pickedAgentId = await this.assignment.pickNextAgent();
+    // A referring sales rep (front-desk paid consult) takes the lead directly —
+    // but ONLY if they're still an eligible agent at assignment time. For a paid
+    // consult the lead is created at fee-collection, which can be days after
+    // check-in, so the referrer may have been deactivated in the gap; if so we
+    // fall back to the round-robin rather than orphan the lead on an inactive
+    // owner (or crash on a hard-deleted one). A referred lead deliberately does
+    // NOT advance the shared round-robin cursor.
+    const assigneeId =
+      referrerEmployeeId && (await this.assignment.isEligibleAgent(referrerEmployeeId))
+        ? referrerEmployeeId
+        : await this.assignment.pickNextAgent();
     try {
       const lead = await this.leads.create(
         {
@@ -1847,7 +1880,7 @@ export class ReceptionService {
           lastName,
           phone,
           sourceChannel: 'walk-in',
-          ...(pickedAgentId ? { assignedEmployeeId: pickedAgentId } : {}),
+          ...(assigneeId ? { assignedEmployeeId: assigneeId } : {}),
           ...(purpose ? { notes: `Walk-in: ${purpose}` } : {}),
         },
         actorUserId,
@@ -1858,7 +1891,7 @@ export class ReceptionService {
       // unassigned for a later assignment to pick up, exactly like an empty-pool
       // CSV / Meta lead. (Passing assignedEmployeeId:null wouldn't help — `??`
       // treats null and undefined alike — so we correct it after the create.)
-      if (!pickedAgentId && lead.assignedEmployeeId) {
+      if (!assigneeId && lead.assignedEmployeeId) {
         await this.prisma.lead.update({ where: { id: lead.id }, data: { assignedEmployeeId: null } });
       }
       return lead.id;

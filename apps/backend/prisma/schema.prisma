@@ -1520,6 +1520,11 @@ model Visit {
   leadId         String?
   clientId       String?
   hostEmployeeId String?
+  /// Sales rep who referred this visitor (front-desk paid consult). When set, the
+  /// Lead we spin up for the visit is assigned to THIS rep instead of the shared
+  /// round-robin, so a referred walk-in lands with the rep who brought them in.
+  /// Scalar (see model note); only ever drives assignment of a NEWLY created lead.
+  referrerEmployeeId String?
   appointmentId  String?
   invoiceId      String?
   paymentId      String?

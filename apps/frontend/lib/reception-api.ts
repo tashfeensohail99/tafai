@@ -149,6 +149,8 @@ export interface CreateVisitInput {
   leadId?: string;
   clientId?: string;
   hostEmployeeId?: string;
+  /** Sales rep who referred the visitor — the created lead is assigned to them. */
+  referrerEmployeeId?: string;
   purpose?: string;
   notes?: string;
 }
@@ -170,6 +172,18 @@ export async function receptionLookup(q: string): Promise<{ results: LookupHit[]
 
 export async function listHosts(): Promise<{ hosts: Host[] }> {
   return apiFetch<{ hosts: Host[] }>('/reception/hosts');
+}
+
+export interface SalesAgent {
+  id: string;
+  name: string;
+}
+
+/** Eligible sales agents (the assignable pool) for the paid-consult "referred
+ *  by" picker — a subset of hosts, so a referred lead always lands with someone
+ *  who can actually work it. */
+export async function listSalesAgents(): Promise<{ agents: SalesAgent[] }> {
+  return apiFetch<{ agents: SalesAgent[] }>('/reception/sales-agents');
 }
 
 export async function listVisits(params: ListVisitsParams = {}): Promise<VisitList> {

@@ -50,6 +50,13 @@ export class ReceptionController {
     return this.reception.getHosts();
   }
 
+  /** Eligible sales agents for the paid-consult "referred by" picker. */
+  @Get('sales-agents')
+  @RequireAnyPermissions('reception.view', 'reception.check_in')
+  salesAgents() {
+    return this.reception.getSalesAgents();
+  }
+
   @Get('visits')
   @RequireAnyPermissions('reception.view', 'reception.check_in')
   list(@Query() query: ListVisitsQueryDto) {

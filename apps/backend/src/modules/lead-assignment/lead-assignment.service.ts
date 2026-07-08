@@ -32,14 +32,46 @@ export class LeadAssignmentService {
    * @param selectedAgentIds optional allow-list restricting the pool to a
    *   specific sub-team (used by targeted CSV imports). Empty = whole pool.
    */
+  /** The eligibility predicate for "can be assigned a lead" — the ONE definition
+   *  reused by the round-robin, the "list agents" picker, and the single-agent
+   *  eligibility check, so a human-chosen agent can never fall outside the pool
+   *  the round-robin would use. */
+  private static readonly ELIGIBLE_WHERE = {
+    isActive: true,
+    whatsappInboxMember: true,
+    deletedAt: null,
+    user: { status: 'ACTIVE' as const },
+  };
+
+  /**
+   * The eligible sales-agent pool (identical criteria to pickNextAgent), for UIs
+   * that let a human pick an agent — e.g. the reception "referred by" selector.
+   * Ordered by name for display. Never returns finance/processing/suspended staff.
+   */
+  async listEligibleAgents(): Promise<Array<{ id: string; firstName: string; lastName: string }>> {
+    return this.prisma.employee.findMany({
+      where: LeadAssignmentService.ELIGIBLE_WHERE,
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      select: { id: true, firstName: true, lastName: true },
+    });
+  }
+
+  /** Is this employee CURRENTLY an eligible sales agent (assignable a lead)?
+   *  Used to validate a human-chosen referrer at assignment time so a stale /
+   *  deactivated pick falls back to the round-robin instead of orphaning a lead. */
+  async isEligibleAgent(employeeId: string): Promise<boolean> {
+    const hit = await this.prisma.employee.findFirst({
+      where: { id: employeeId, ...LeadAssignmentService.ELIGIBLE_WHERE },
+      select: { id: true },
+    });
+    return !!hit;
+  }
+
   async pickNextAgent(selectedAgentIds: string[] = []): Promise<string | null> {
     return this.prisma.$transaction(async (tx) => {
       const eligible = await tx.employee.findMany({
         where: {
-          isActive: true,
-          whatsappInboxMember: true,
-          deletedAt: null,
-          user: { status: 'ACTIVE' },
+          ...LeadAssignmentService.ELIGIBLE_WHERE,
           ...(selectedAgentIds.length > 0 ? { id: { in: selectedAgentIds } } : {}),
         },
         orderBy: { id: 'asc' },

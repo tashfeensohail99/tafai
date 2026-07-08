@@ -100,6 +100,13 @@ export class CreateVisitDto {
   @IsUUID()
   hostEmployeeId?: string;
 
+  /** Sales rep who referred this visitor — the lead we create is assigned to
+   *  them (instead of the round-robin) so referred walk-ins land with the rep
+   *  who brought them in. Optional; ignored when it matches an existing record. */
+  @IsOptional()
+  @IsUUID()
+  referrerEmployeeId?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(200)

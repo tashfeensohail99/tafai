@@ -19,6 +19,7 @@ import {
   type AvailabilitySlot,
   type CollectConsultationResult,
   type PayQr,
+  type SalesAgent,
   type ReceptionSettings,
   type VisitRow,
 } from '@/lib/reception-api';
@@ -42,6 +43,7 @@ export function ConsultCollectModal({
   visit,
   settings,
   createNew = false,
+  agents = [],
   onClose,
   onDone,
 }: {
@@ -51,11 +53,16 @@ export function ConsultCollectModal({
   // When true the modal has no existing visit — it logs a fresh paid consult
   // (name/phone shown at the top) AND collects the fee in one step.
   createNew?: boolean;
+  // Eligible sales agents for the "referred by" picker (createNew mode only).
+  agents?: SalesAgent[];
   onClose: () => void;
   onDone: () => void;
 }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  // Sales rep who referred this visitor — the new lead is assigned to them
+  // instead of the round-robin. '' = none (auto-assign).
+  const [referrerId, setReferrerId] = useState('');
   // Created once on first submit and reused on a retry, so a failed collect
   // never spawns duplicate visits.
   const [createdVisitId, setCreatedVisitId] = useState<string | null>(null);
@@ -89,6 +96,7 @@ export function ConsultCollectModal({
     setSubmitting(false);
     setName('');
     setPhone('');
+    setReferrerId('');
     setCreatedVisitId(null);
   }, []);
 
@@ -171,6 +179,12 @@ export function ConsultCollectModal({
   // (and pay to confirm) a consultation timestamped in the past.
   const slots = (avail?.freeSlots ?? []).filter((sl) => !isToday || new Date(sl.start).getTime() >= Date.now());
 
+  // "Referred by" picker — '' keeps the default round-robin; a rep takes the lead.
+  const referrerOptions = [
+    { value: '', label: '— None (auto-assign to next rep) —' },
+    ...agents.map((a) => ({ value: a.id, label: a.name })),
+  ];
+
   // A bank transfer goes to finance for verification (pending); cash / card are
   // verified at the counter and confirm instantly.
   const isBankTransfer = method === 'bank_transfer';
@@ -193,6 +207,7 @@ export function ConsultCollectModal({
           visitType: 'PAID_CONSULT',
           name: name.trim(),
           phone: phone.trim() || undefined,
+          referrerEmployeeId: referrerId || undefined,
         });
         visitId = created.id;
         setCreatedVisitId(created.id);
@@ -285,10 +300,19 @@ export function ConsultCollectModal({
             <>
               {/* Visitor (only when logging a fresh paid consult in one step) */}
               {createNew ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <Field label="Visitor name"><FormInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" /></Field>
-                  <Field label="Phone (optional)"><FormInput value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="03xx xxxxxxx" /></Field>
-                </div>
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <Field label="Visitor name"><FormInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" /></Field>
+                    <Field label="Phone (optional)"><FormInput value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="03xx xxxxxxx" /></Field>
+                  </div>
+                  <FormSelect
+                    label="Referred by (sales rep)"
+                    hint="Optional — a new client is assigned to this rep for follow-up. An existing client keeps their current owner."
+                    value={referrerId}
+                    onChange={(e) => setReferrerId(e.target.value)}
+                    options={referrerOptions}
+                  />
+                </>
               ) : null}
 
               {/* Fee */}

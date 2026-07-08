@@ -29,10 +29,12 @@ import {
 import {
   getReceptionSettings,
   listHosts,
+  listSalesAgents,
   listVisits,
   updateVisit,
   type Host,
   type ReceptionSettings,
+  type SalesAgent,
   type VisitList,
   type VisitRow,
   type VisitStatus,
@@ -55,6 +57,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [hosts, setHosts] = useState<Host[]>([]);
+  const [agents, setAgents] = useState<SalesAgent[]>([]);
   const [settings, setSettings] = useState<ReceptionSettings | null>(null);
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [paidOpen, setPaidOpen] = useState(false);
@@ -96,6 +99,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
   useEffect(() => {
     void reload();
     listHosts().then((r) => setHosts(r.hosts)).catch(() => setHosts([]));
+    listSalesAgents().then((r) => setAgents(r.agents)).catch(() => setAgents([]));
     getReceptionSettings().then(setSettings).catch(() => setSettings(null));
   }, [reload]);
 
@@ -215,6 +219,7 @@ export function FrontDesk({ canCheckIn }: { canCheckIn: boolean }) {
         open={paidOpen}
         visit={null}
         createNew
+        agents={agents}
         settings={settings}
         onClose={() => setPaidOpen(false)}
         onDone={() => void reload({ quiet: true })}

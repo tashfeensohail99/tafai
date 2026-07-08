@@ -304,9 +304,9 @@ export class AgreementRenderService {
                  text-transform: uppercase; letter-spacing: .5px; }
   h2 { font-size: 12pt; margin: 16px 0 6px; }
   h3 { font-size: 11pt; margin: 13px 0 4px; }
-  p { margin: 6px 0; }
+  p { margin: 6px 0; orphans: 2; widows: 2; }
   ul, ol { margin: 6px 0 6px 18px; }
-  li { margin: 3px 0; }
+  li { margin: 3px 0; orphans: 2; widows: 2; }
   table.payplan { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 10pt; }
   table.payplan th, table.payplan td { border: 1px solid #c9cee0; padding: 7px 9px;
                                        text-align: left; vertical-align: top; }
@@ -314,12 +314,18 @@ export class AgreementRenderService {
   table.payplan tr.total td { font-weight: 700; background: #f1f3f9; }
   .token-missing { background: #fde68a; color: #92400e; padding: 0 3px; border-radius: 2px;
                    font-size: 9.5pt; }
-  .sig { margin-top: 36px; display: flex; justify-content: space-between; gap: 48px; }
-  .sig .box { flex: 1; }
-  .sig .line { border-top: 1px solid #1a1d29; margin-top: 42px; padding-top: 4px;
+  .sig { margin-top: 22px; display: flex; justify-content: space-between; gap: 48px; }
+  .sig .box { flex: 1; page-break-inside: avoid; }
+  .sig .line { border-top: 1px solid #1a1d29; margin-top: 32px; padding-top: 4px;
                font-size: 9pt; color: #5a6080; }
   .page-break { page-break-before: always; }
-  table, tr, td, th, .sig { page-break-inside: avoid; }
+  /* Pagination: never split a table ROW or the signature block, but DO let a
+     long table flow across a page boundary instead of jumping the whole table
+     to a fresh page (which left a near-empty last page). Keep every heading
+     with the content that follows it so a heading can't dangle alone at a page
+     bottom. Together these stop the "signatures alone on a blank last page". */
+  tr, td, th, .sig { page-break-inside: avoid; }
+  h1, h2, h3 { page-break-after: avoid; }
 </style>
 </head>
 <body>

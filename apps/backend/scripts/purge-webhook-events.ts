@@ -66,9 +66,29 @@ async function main(): Promise<void> {
 
     // Reclaim space for reuse + refresh planner statistics (they were badly
     // stale: pg_stat_user_tables reported 1,392 live rows for a 363k table).
-    console.log('running VACUUM (ANALYZE) on webhook_events…');
-    await prisma.$executeRawUnsafe('VACUUM (ANALYZE) whatsapp.webhook_events');
-    console.log('done.');
+    //
+    // VACUUM cannot run inside a transaction block, and DATABASE_URL points at
+    // the Supavisor TRANSACTION pooler (6543) which wraps every statement in
+    // one — so it must go over DIRECT_URL (5432, session mode). Best-effort:
+    // if it can't run, autovacuum reclaims the dead tuples on its own.
+    // Plain VACUUM (never FULL) — no exclusive lock.
+    console.log('running VACUUM (ANALYZE) on webhook_events via DIRECT_URL…');
+    const direct = process.env.DIRECT_URL;
+    if (!direct) {
+      console.log('DIRECT_URL unset — skipping VACUUM (autovacuum will reclaim).');
+      return;
+    }
+    const session = new PrismaClient({ datasources: { db: { url: direct } } });
+    try {
+      await session.$executeRawUnsafe('VACUUM (ANALYZE) whatsapp.webhook_events');
+      console.log('done.');
+    } catch (e) {
+      console.log(
+        `VACUUM skipped (${(e as Error).message.slice(0, 120)}) — autovacuum will reclaim.`,
+      );
+    } finally {
+      await session.$disconnect();
+    }
   } finally {
     await prisma.$disconnect();
   }

@@ -26,9 +26,13 @@ import type { PrismaService } from '../prisma/prisma.service';
  * exact-string index instead of re-running this scan. Best-effort; a failure
  * here never breaks resolution.
  *
- * NOTE: the match predicate (`regexp_replace(phone,'\D','','g')`) is a table scan
- * until a matching expression index is added (deferred — needs a migration). It
- * runs only on an exact-match MISS at the call sites, so the hot path stays fast.
+ * NOTE: the match predicate is served by the expression index
+ * `leads_phone_digits_idx` — CREATE INDEX ON crm.leads
+ * ((regexp_replace(phone,'[^0-9]','','g'))) WHERE "deletedAt" IS NULL — added in
+ * migration 20260709120000. Keep the predicate here byte-identical to that
+ * index expression or Postgres silently falls back to a ~21s Seq Scan over
+ * every live lead (this ran on the WhatsApp webhook hot path and was ~11% of
+ * all DB CPU).
  */
 export async function findLeadByNormalizedPhone(
   prisma: PrismaService,
@@ -52,7 +56,7 @@ export async function findLeadByNormalizedPhone(
      FROM crm.leads
      WHERE "deletedAt" IS NULL
        AND phone !~ '[A-Za-z]'
-       AND regexp_replace(phone, '\\D', '', 'g') = ANY($1::text[])
+       AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($1::text[])
      ORDER BY "createdAt" ASC
      LIMIT 1`,
     [...variants],

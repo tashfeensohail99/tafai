@@ -216,21 +216,32 @@ export class ReminderDispatcherService implements OnModuleInit, OnModuleDestroy 
   private async reconcileOverdueDigests(now: Date): Promise<void> {
     if (pktHour(now) < OVERDUE_DIGEST_HOUR_PKT) return;
     const startOfToday = startOfPktDayUtc(now);
-    const overdue = await this.prisma.followUp.findMany({
+
+    // Tally per employee IN THE DATABASE. This previously did
+    // `findMany({ select: { assignedEmployeeId }, take: 5000 })` and counted the
+    // rows in JS — shipping up to 5,000 rows across the wire on EVERY 60s tick
+    // from the digest hour until midnight (~360-480 times a day) purely to
+    // produce a count.
+    //
+    // The `take: 5000` was also a silent CORRECTNESS bug: once the open-overdue
+    // backlog passed 5,000, the cap truncated the set before the per-employee
+    // tally, so digests under-counted and some reps were dropped entirely.
+    // A grouped aggregate has no cap and transfers one row per employee.
+    const grouped = await this.prisma.followUp.groupBy({
+      by: ['assignedEmployeeId'],
       where: {
         status: 'OPEN',
         assignedEmployeeId: { not: null },
         dueAt: { lt: startOfToday },
       },
-      select: { assignedEmployeeId: true },
-      take: 5000,
+      _count: { _all: true },
     });
-    if (overdue.length === 0) return;
+    if (grouped.length === 0) return;
 
     const countByEmp = new Map<string, number>();
-    for (const o of overdue) {
-      if (!o.assignedEmployeeId) continue;
-      countByEmp.set(o.assignedEmployeeId, (countByEmp.get(o.assignedEmployeeId) ?? 0) + 1);
+    for (const g of grouped) {
+      if (!g.assignedEmployeeId) continue;
+      countByEmp.set(g.assignedEmployeeId, g._count._all);
     }
     const userByEmp = await this.resolveUserIds([...countByEmp.keys()]);
     const pktDate = pktDateString(now);

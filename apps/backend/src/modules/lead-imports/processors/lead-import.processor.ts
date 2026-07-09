@@ -7,6 +7,7 @@ import { StorageService } from '../../storage/storage.service';
 import { LeadAssignmentService } from '../../lead-assignment/lead-assignment.service';
 import { generateLeadReferenceCode } from '../../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../../common/phone/phone.util';
+import { findLeadByNormalizedPhone } from '../../../common/phone/lead-dedupe';
 import { parseSpreadsheet } from '../parsers/spreadsheet-parser';
 import { LEAD_IMPORT_QUEUE, type LeadImportJob } from '../queue-contracts';
 import {
@@ -258,28 +259,25 @@ export class LeadImportProcessor extends WorkerHost {
       return;
     }
 
-    // 2. Dedupe by the last 10 significant digits, so we catch an existing lead
-    //    no matter how ITS number is stored — local "03xx…", "+92 3xx…", with
-    //    spaces, etc. The old exact-e164 string match missed those format
-    //    variants, re-created the lead, and it got assigned to a random rep
-    //    instead of staying with whoever already owns/works it (e.g. a live
-    //    WhatsApp chat). On a match we keep the existing lead + its current
-    //    owner (recorded as DUPLICATE below). Match the oldest row so the
-    //    original owner wins if there are somehow several.
-    const dedupeDigits = normalised.e164.replace(/\D/g, '');
-    const dedupeKey = dedupeDigits.length >= 10 ? dedupeDigits.slice(-10) : dedupeDigits;
-    const existingRows = await this.prisma.$queryRawUnsafe<
-      Array<{ id: string; assignedEmployeeId: string | null }>
-    >(
-      `SELECT id, "assignedEmployeeId" FROM crm.leads
-       WHERE "deletedAt" IS NULL
-         AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), $2::int) = $1
-       ORDER BY "createdAt" ASC
-       LIMIT 1`,
-      dedupeKey,
-      dedupeKey.length,
-    );
-    const existing = existingRows[0] ?? null;
+    // 2. Dedupe by normalised phone, so we catch an existing lead no matter how
+    //    ITS number is stored — local "03xx…", "+92 3xx…", with spaces, etc. The
+    //    old exact-e164 string match missed those format variants, re-created
+    //    the lead, and it got assigned to a random rep instead of staying with
+    //    whoever already owns/works it (e.g. a live WhatsApp chat). On a match we
+    //    keep the existing lead + its current owner (recorded as DUPLICATE
+    //    below); the helper returns the OLDEST match so the original owner wins.
+    //
+    //    This previously ran its own raw
+    //    `RIGHT(regexp_replace(phone,'\D','','g'), $2::int) = $1` query. That can
+    //    NEVER use an index (the length is a bind parameter, so it cannot match
+    //    an expression index), so it did a full table scan with a regex per row —
+    //    once PER IMPORTED ROW. A 500-row CSV meant 500 scans of every lead.
+    //
+    //    The shared helper is backed by `leads_phone_digits_idx` (~0.8ms) and is
+    //    also SAFER: it matches explicit digit variants (92…/3…/03…) rather than
+    //    "same last 10 digits", which stops a +1-333-678-7075 US lead being
+    //    falsely merged with a PK number that shares those ten digits.
+    const existing = await findLeadByNormalizedPhone(this.prisma, normalised.e164);
     if (existing) {
       await this.prisma.leadImportRow.create({
         data: {

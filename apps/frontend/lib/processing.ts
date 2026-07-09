@@ -48,7 +48,10 @@ export interface ApiProcessingCaseListItem {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  lead: { id: string; referenceCode: string; firstName: string; lastName: string; phone: string; email: string | null; sourceChannel: string | null };
+  /** `assignedEmployee` is the originating SALES rep (distinct from
+   *  `assignedOfficer`, who is the processing officer). Null when the lead
+   *  was never assigned (e.g. a manually-created processing client). */
+  lead: { id: string; referenceCode: string; firstName: string; lastName: string; phone: string; email: string | null; sourceChannel: string | null; assignedEmployee: { id: string; firstName: string; lastName: string } | null };
   client: { id: string; firstName: string; lastName: string; phone: string; email: string | null };
   assignedOfficer: { id: string; email: string } | null;
   _count: { documentItems: number };
@@ -108,6 +111,8 @@ export interface ApiProcessingCaseDetail {
     phone: string;
     serviceInterest: string | null;
     targetCountry: string | null;
+    /** Originating SALES rep (null when the lead was never assigned). */
+    assignedEmployee: { id: string; firstName: string; lastName: string } | null;
   };
   client: {
     id: string;

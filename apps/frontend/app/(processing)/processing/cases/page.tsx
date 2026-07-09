@@ -837,6 +837,15 @@ export default function CasesPage() {
                           {c.lead.referenceCode} · {labelForServiceCode(c.service)}
                         </div>
                         <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>Pakistan → {c.targetCountry}</div>
+                        {/* Originating sales rep — who owned the lead before handover. */}
+                        <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+                          Sales:{' '}
+                          <span style={{ fontWeight: 600, color: 'var(--sos-text-secondary)' }}>
+                            {c.lead.assignedEmployee
+                              ? `${c.lead.assignedEmployee.firstName} ${c.lead.assignedEmployee.lastName}`
+                              : 'Unassigned'}
+                          </span>
+                        </div>
                         {c.history && (c.history.hasSalesNotes || c.history.hasFinanceNotes || c.history.callCount > 0) ? (
                           <Link
                             href={`/processing/cases/${c.id}?tab=history` as Route}

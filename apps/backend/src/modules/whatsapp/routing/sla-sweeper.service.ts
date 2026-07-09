@@ -8,7 +8,7 @@ import { PresenceStatus, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { EmailService } from '../../email/email.service';
 import { WhatsAppRealtimePublisher } from '../realtime/publisher.service';
-import { WhatsAppAssignmentService } from './assignment.service';
+import { WhatsAppAssignmentService, createAssignmentCache } from './assignment.service';
 import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 import { WHATSAPP_WS_EVENTS } from '../queues/queue-contracts';
 
@@ -41,6 +41,10 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private static readonly INTERVAL_MS = 60_000;
+  /** Max stuck threads actually ASSIGNED per recovery pass. */
+  private static readonly RECOVERY_LIMIT = 10;
+  /** Hard ceiling on the over-fetched page (LIMIT + threads currently in backoff). */
+  private static readonly RECOVERY_MAX_PAGE = 50;
 
   // Per-thread recovery backoff (in-memory; reset on restart — that's fine, a
   // restart just re-tries everything once). Stops the recovery loop from
@@ -238,6 +242,21 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
       return;
     }
 
+    const now = Date.now();
+    // Process at most 10 threads per tick (was 50). Each still costs a read + a
+    // locked write + audit rows, so a 50-thread batch was a hundreds-of-round-trip
+    // burst every 60s against the same scarce pool. 10/tick = 600/hr — ample for
+    // a lane that only catches what the webhook missed, and it drains a backlog
+    // over minutes instead of in one storm.
+    //
+    // Backed-off threads are the OLDEST rows and stay unassigned, so they keep
+    // reappearing at the head of this `createdAt asc` page. With a small page
+    // they could wedge the lane entirely: every tick returns the same N
+    // backed-off rows, processes none, and newer stuck threads never get in.
+    // Over-fetch past them so we always have room for LIMIT actionable threads.
+    const inBackoff = [...this.recoveryBackoff.values()].filter(
+      (b) => b.nextAt > now,
+    ).length;
     const stuck = await this.prisma.whatsAppThread.findMany({
       where: {
         status: { not: 'ARCHIVED' },
@@ -245,14 +264,16 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
       },
       select: { id: true },
       orderBy: { createdAt: 'asc' },
-      take: 50,
+      take: Math.min(
+        WhatsAppSlaSweeperService.RECOVERY_LIMIT + inBackoff,
+        WhatsAppSlaSweeperService.RECOVERY_MAX_PAGE,
+      ),
     });
     if (stuck.length === 0) {
       this.recoveryBackoff.clear();
       return;
     }
 
-    const now = Date.now();
     const liveIds = new Set(stuck.map((t) => t.id));
     // Drop backoff entries for threads that are no longer stuck (assigned or
     // archived) so the map can't grow without bound.
@@ -262,14 +283,25 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
 
     let recovered = 0;
     let skipped = 0;
+    let processed = 0;
+    // ONE org memo for the whole batch: ensureAssigned() re-read the org (a
+    // branch→organization join) once PER THREAD even though every stuck thread
+    // resolves to the same org — needless cross-region round-trips every 60s on
+    // the pool that starved (P2028). The memo advances the round-robin cursor
+    // in-memory as it assigns, so the batch still spreads across reps rather
+    // than piling onto one. Eligibility is deliberately NOT memoised (see
+    // createAssignmentCache) — it gates lead-ownership overwrites.
+    const cache = createAssignmentCache();
     for (const t of stuck) {
+      if (processed >= WhatsAppSlaSweeperService.RECOVERY_LIMIT) break;
       const bo = this.recoveryBackoff.get(t.id);
       if (bo && bo.nextAt > now) {
         skipped++; // still backing off — don't re-hammer this doomed thread yet
         continue;
       }
+      processed++;
       try {
-        const outcome = await this.assignment.ensureAssigned(t.id);
+        const outcome = await this.assignment.ensureAssigned(t.id, { cache });
         if (outcome.assignedEmployeeId) {
           recovered++;
           this.recoveryBackoff.delete(t.id); // success — clear its backoff

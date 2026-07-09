@@ -53,6 +53,61 @@ export interface AssignmentOutcome {
   retryAt: Date | null;
 }
 
+/** Org config `ensureAssigned` needs. `rrCursorEmployeeId` is the ONLY mutable
+ *  field — it advances with each round-robin assignment. */
+export interface OrgAssignmentConfig {
+  organizationId: string;
+  timezone: string;
+  hoursOpen: string;
+  hoursClose: string;
+  workingDays: number[];
+  slaFirstResponseSeconds: number;
+  rrCursorEmployeeId: string | null;
+}
+
+/**
+ * Per-sweep memo so a BATCH of ensureAssigned() calls doesn't re-read the same
+ * invariants once per thread. The assignment-recovery sweeper used to call
+ * ensureAssigned() in a loop over up to 50 stuck threads, and each call
+ * re-issued `loadOrgFor` + `loadEligibleEmployees` — identical results every
+ * time. At ~70ms of cross-region round-trip each, that was ~100 needless
+ * pooled-connection holds per 60s tick, on the pool that starved (P2028).
+ *
+ * IMPORTANT: the cached org's `rrCursorEmployeeId` is advanced in-memory as we
+ * assign (mirroring the DB write), so round-robin still spreads a batch across
+ * reps. Caching it naively would hand every stuck thread to the SAME rep.
+ *
+ * Create one per sweep and throw it away — presence/eligibility is a snapshot,
+ * which is fine for the seconds a sweep lasts. Pass NOTHING on the hot single
+ * -thread webhook path so it always reads fresh.
+ */
+export interface AssignmentCache {
+  /** branchId ('' for a null branch) → the org object. Several branches may map
+   *  to the SAME organizationId; they all point at the SAME object below so the
+   *  round-robin cursor advances exactly once per org, never once per branch. */
+  orgByBranch: Map<string, OrgAssignmentConfig | null>;
+  /** organizationId → the single shared, mutable org object (the cursor lives here). */
+  orgById: Map<string, OrgAssignmentConfig>;
+}
+
+/**
+ * NOTE — eligibility is deliberately NOT cached.
+ *
+ * Org config is static (only the cursor moves, and we own that). The eligible
+ * agent pool is not: a rep can be deactivated, dropped from the inbox pool or
+ * suspended at any moment, and `eligibleIds` is what Phase 2 uses to decide
+ * whether to OVERWRITE a lead's current owner. Freezing that snapshot for a
+ * whole sweep would (a) keep routing new leads to a rep who just became
+ * ineligible, and (b) widen — from ~1 query to the entire sweep — the window in
+ * which the sweeper could yank a lead away from a rep the webhook had just
+ * validly assigned it to. Re-reading it per thread costs one indexed query;
+ * lead ownership is worth far more than that.
+ */
+export const createAssignmentCache = (): AssignmentCache => ({
+  orgByBranch: new Map(),
+  orgById: new Map(),
+});
+
 @Injectable()
 export class WhatsAppAssignmentService {
   private readonly log = new Logger(WhatsAppAssignmentService.name);
@@ -72,7 +127,7 @@ export class WhatsAppAssignmentService {
    */
   async ensureAssigned(
     threadId: string,
-    opts?: { forLiveCall?: boolean },
+    opts?: { forLiveCall?: boolean; cache?: AssignmentCache },
   ): Promise<AssignmentOutcome> {
     // ── Phase 1 — READ + DECIDE (no transaction). Assignment used to run the
     //    whole ~10-round-trip computation inside one interactive $transaction,
@@ -105,7 +160,7 @@ export class WhatsAppAssignmentService {
     }
     const lead = thread.lead;
 
-    const org = await this.loadOrgFor(this.prisma, lead.branchId);
+    const org = await this.loadOrgForCached(lead.branchId, opts?.cache);
     if (!org) {
       this.log.error({ threadId }, 'assignment: organization not found via branch');
       return unassigned(lead.id);
@@ -131,6 +186,8 @@ export class WhatsAppAssignmentService {
         );
     }
 
+    // ALWAYS fresh — never cached. See the note on createAssignmentCache: this
+    // set decides whether Phase 2 may overwrite an existing owner.
     const eligible = await this.loadEligibleEmployees(this.prisma, org.organizationId);
     const eligibleIds = new Set(eligible.map((e) => e.id));
 
@@ -210,6 +267,16 @@ export class WhatsAppAssignmentService {
     //    already durably committed above; if these fail we lose only the audit
     //    trail / an un-advanced cursor (a rep picked once more), never the lead.
     if (result.committed) {
+      // Advance the cursor on the (possibly CACHED) org object BEFORE the
+      // best-effort writes below. When a sweep assigns a batch of threads it
+      // reuses this org, so without this every thread would re-read the same
+      // stale cursor and pickRoundRobin would hand them all to the SAME rep.
+      // Done outside the try so a failed side-write still spreads this batch;
+      // the DB cursor then simply resumes one behind on the next sweep, which
+      // is the already-documented "a rep gets picked once more" tolerance.
+      if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
+        org.rrCursorEmployeeId = result.assigned;
+      }
       try {
         await this.prisma.whatsAppThread.update({
           where: { id: threadId },
@@ -249,6 +316,31 @@ export class WhatsAppAssignmentService {
       reason: result.committed ? reason : null,
       retryAt: null,
     };
+  }
+
+  /** loadOrgFor, memoised per branch for the lifetime of one sweep's cache.
+   *  No cache (the webhook hot path) → always a fresh read. */
+  private async loadOrgForCached(
+    branchId: string | null,
+    cache?: AssignmentCache,
+  ): Promise<OrgAssignmentConfig | null> {
+    if (!cache) return this.loadOrgFor(this.prisma, branchId);
+    const key = branchId ?? '';
+    const hit = cache.orgByBranch.get(key);
+    if (hit !== undefined) return hit; // `undefined` = miss; a cached `null` is a real "no org"
+
+    const loaded = await this.loadOrgFor(this.prisma, branchId);
+    // Collapse onto ONE object per organizationId. Two branches of the same org
+    // would otherwise each hold their own copy of `rrCursorEmployeeId`, so
+    // advancing one wouldn't advance the other and the SAME rep could be picked
+    // twice within a single sweep.
+    let shared: OrgAssignmentConfig | null = null;
+    if (loaded) {
+      shared = cache.orgById.get(loaded.organizationId) ?? loaded;
+      cache.orgById.set(loaded.organizationId, shared);
+    }
+    cache.orgByBranch.set(key, shared);
+    return shared;
   }
 
   /**

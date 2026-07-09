@@ -22,6 +22,7 @@ import {
   Phone,
   ShieldAlert,
   User,
+  UserCheck,
   Wallet,
   X,
 } from 'lucide-react';
@@ -178,6 +179,12 @@ function AcknowledgeModal({
           <div>
             <div style={{ color: 'var(--sos-text-muted)', fontSize: 11, marginBottom: 2 }}>Received</div>
             <div style={{ fontWeight: 500, color: 'var(--sos-text-primary)' }}>{fmtRelative(c.createdAt)}</div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--sos-text-muted)', fontSize: 11, marginBottom: 2 }}>Sales rep</div>
+            <div style={{ fontWeight: 500, color: 'var(--sos-text-primary)' }}>
+              {c.lead.assignedEmployee ? `${c.lead.assignedEmployee.firstName} ${c.lead.assignedEmployee.lastName}` : 'Unassigned'}
+            </div>
           </div>
         </div>
 
@@ -421,6 +428,9 @@ export function ProcessingIntakePage() {
                       ) : null}
                       <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                         <CalendarClock size={12} /> Received {fmtRelative(c.createdAt)}
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <UserCheck size={12} /> Sales: {c.lead.assignedEmployee ? `${c.lead.assignedEmployee.firstName} ${c.lead.assignedEmployee.lastName}` : 'Unassigned'}
                       </span>
                     </div>
 

@@ -889,6 +889,9 @@ export class ProcessingService {
             phone: true,
             serviceInterest: true,
             targetCountry: true,
+            // Originating sales rep — Processing needs to know who owned the
+            // lead to chase context on an incoming case.
+            assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
           },
         },
         client: {
@@ -1254,7 +1257,9 @@ export class ProcessingService {
           // email + sourceChannel power the roster's email shortcut + the
           // "Manual" tag; documentItems (status/criticality only) feed the
           // per-row doc-progress summary computed below.
-          lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true, notes: true } },
+          // assignedEmployee = the originating SALES rep (not the processing
+          // officer) — the roster surfaces it so Processing knows who to ask.
+          lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true, notes: true, assignedEmployee: { select: { id: true, firstName: true, lastName: true } } } },
           client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
           assignedOfficer: { select: { id: true, email: true } },
           documentItems: { select: { documentName: true, status: true, criticality: true }, orderBy: { documentName: 'asc' } },

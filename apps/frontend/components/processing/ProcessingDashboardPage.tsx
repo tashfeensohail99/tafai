@@ -21,6 +21,7 @@ import {
   Send,
   User,
   UserCheck,
+  UserCog,
   XCircle,
 } from 'lucide-react';
 import {
@@ -240,6 +241,9 @@ export function ProcessingDashboardPage() {
                   >
                     <StatusBadge tone={priorityTone(c.priority)} size="sm">{c.priority}</StatusBadge>
                     {casePersonName(c)} — {labelForServiceCode(c.service)} / {c.targetCountry}
+                    <span style={{ color: 'var(--sos-text-muted)', fontWeight: 400 }}>
+                      · Sales: {c.lead.assignedEmployee ? `${c.lead.assignedEmployee.firstName} ${c.lead.assignedEmployee.lastName}` : 'Unassigned'}
+                    </span>
                     <ArrowRight size={13} style={{ color: 'var(--sos-text-muted)' }} />
                   </Link>
                 ))}
@@ -300,6 +304,10 @@ export function ProcessingDashboardPage() {
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 2 }}>
                     {labelForServiceCode(c.service)} · {c.targetCountry}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <UserCog size={11} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+                    Sales: {c.lead.assignedEmployee ? `${c.lead.assignedEmployee.firstName} ${c.lead.assignedEmployee.lastName}` : 'Unassigned'}
                   </div>
                 </div>
                 <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>

@@ -194,7 +194,7 @@ class CallController extends StateNotifier<CallState> {
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': false,
       });
-      await pc.setLocalDescription(answer);
+      await pc.setLocalDescription(RTCSessionDescription(_tuneOpus(answer.sdp), answer.type));
       await _waitForIce(pc);
       if (!identical(pc, _pc)) return false; // torn down / replaced mid-warm
       final localSdp = (await pc.getLocalDescription())?.sdp;
@@ -292,7 +292,7 @@ class CallController extends StateNotifier<CallState> {
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': false,
       });
-      await pc.setLocalDescription(offer);
+      await pc.setLocalDescription(RTCSessionDescription(_tuneOpus(offer.sdp), offer.type));
       await _waitForIce(pc);
       final localSdp = (await pc.getLocalDescription())?.sdp;
       if (localSdp == null) throw Exception('No local SDP');
@@ -398,7 +398,7 @@ class CallController extends StateNotifier<CallState> {
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': false,
       });
-      await pc.setLocalDescription(answer);
+      await pc.setLocalDescription(RTCSessionDescription(_tuneOpus(answer.sdp), answer.type));
       final tIce = DateTime.now();
       await _waitForIce(pc);
       _log('accept: ICE gathered in '
@@ -508,6 +508,56 @@ class CallController extends StateNotifier<CallState> {
       'audio': true,
       'video': false,
     });
+  }
+
+  /// Nudge the negotiated Opus params toward loss-resilient telephony before we
+  /// publish our SDP: request in-band FEC (the remote re-sends recoverable data
+  /// so a lost packet doesn't garble the audio), disable DTX, and cap the
+  /// average bitrate so a marginal link (esp. Android on office Wi-Fi, where the
+  /// CDR shows the packet loss that distorts calls) sends fewer/smaller packets.
+  /// BEST-EFFORT: only ADDS params that are absent (never overrides the stack),
+  /// and on ANYTHING unexpected returns the SDP UNCHANGED — a call is never
+  /// broken by munging.
+  String _tuneOpus(String? sdp) {
+    if (sdp == null || sdp.isEmpty) return sdp ?? '';
+    try {
+      final rtpmap = RegExp(r'a=rtpmap:(\d+)\s+opus/48000', caseSensitive: false).firstMatch(sdp);
+      if (rtpmap == null) return sdp; // no Opus → nothing to tune
+      final pt = rtpmap.group(1)!;
+      const want = {'useinbandfec': '1', 'usedtx': '0', 'maxaveragebitrate': '32000'};
+      final eol = sdp.contains('\r\n') ? '\r\n' : '\n';
+      final lines = sdp.split(RegExp(r'\r\n|\n'));
+      var touched = false;
+      for (var i = 0; i < lines.length; i++) {
+        if (!lines[i].startsWith('a=fmtp:$pt ')) continue;
+        touched = true;
+        final params = <String, String>{};
+        for (final kv in lines[i].substring('a=fmtp:$pt '.length).split(';')) {
+          final t = kv.trim();
+          if (t.isEmpty) continue;
+          final eq = t.indexOf('=');
+          if (eq > 0) {
+            params[t.substring(0, eq)] = t.substring(eq + 1);
+          } else {
+            params[t] = '';
+          }
+        }
+        want.forEach((k, v) => params.putIfAbsent(k, () => v)); // add, never override
+        final fmtp = params.entries
+            .map((e) => e.value.isEmpty ? e.key : '${e.key}=${e.value}')
+            .join(';');
+        lines[i] = 'a=fmtp:$pt $fmtp';
+      }
+      if (!touched) {
+        final idx = lines.indexWhere((l) => l.startsWith('a=rtpmap:$pt '));
+        if (idx < 0) return sdp;
+        final fmtp = want.entries.map((e) => '${e.key}=${e.value}').join(';');
+        lines.insert(idx + 1, 'a=fmtp:$pt $fmtp');
+      }
+      return lines.join(eol);
+    } catch (_) {
+      return sdp; // never let tuning break a call
+    }
   }
 
   Future<RTCPeerConnection> _createPeer(List<Map<String, dynamic>> ice) async {

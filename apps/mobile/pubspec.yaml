@@ -99,6 +99,8 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.1
 
 flutter:
+  assets:
+    - shorebird.yaml
   uses-material-design: true
 
 # Launcher icon — run `dart run flutter_launcher_icons` after changing the

@@ -134,6 +134,11 @@ const THREAD_LIST_INCLUDE = {
       lastName: true,
       phone: true,
       status: true,
+      // A converted contact's thread has no lead, so the inbox row's "assigned
+      // to" must fall back to the client's owner (set by a client-thread
+      // reassign) — otherwise it shows "Unassigned" despite having an owner.
+      assignedEmployeeId: true,
+      assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
     },
   },
 } satisfies Prisma.WhatsAppThreadInclude;
@@ -245,7 +250,11 @@ export class WhatsAppThreadsService {
       and.push({
         OR: [
           { lead: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
-          { client: { assignedEmployeeId: caller.employeeId } },
+          // Lead-less client thread assigned to this rep. `leadId: null` keeps a
+          // dual-linked thread scoped by its lead alone (matches getOrFail +
+          // reassign); `deletedAt: null` drops soft-deleted clients like the
+          // lead guard above.
+          { leadId: null, client: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
         ],
       });
     } else if (caller.canViewFinanceScope) {
@@ -977,14 +986,14 @@ export class WhatsAppThreadsService {
         const inScope = await this.threadInProcessingScope(t.lead?.id ?? null, t.client?.id ?? null);
         if (!inScope) throw new ForbiddenException('Thread not in your processing scope');
       } else {
-        // Sales rep: may open a thread assigned to them — via the lead OR
-        // (for a converted contact) via the client. Reassigning a client thread
-        // to a rep is what makes it visible/openable here.
-        const ownsLead =
-          !!caller.employeeId && t.lead?.assignedEmployeeId === caller.employeeId;
-        const ownsClient =
-          !!caller.employeeId && t.client?.assignedEmployeeId === caller.employeeId;
-        if (!ownsLead && !ownsClient) {
+        // A thread with a lead is scoped by the LEAD's owner (unchanged). A
+        // converted contact's lead-less thread is scoped by the CLIENT's owner
+        // (set by a client-thread reassign). When both exist the lead wins, so
+        // client ownership never overrides lead scoping.
+        const owner = t.leadId
+          ? t.lead?.assignedEmployeeId
+          : t.client?.assignedEmployeeId;
+        if (!caller.employeeId || owner !== caller.employeeId) {
           throw new ForbiddenException('Thread not assigned to you');
         }
       }
@@ -1088,9 +1097,13 @@ export class WhatsAppThreadsService {
       );
     }
 
-    const previousAssignee =
-      t.lead?.assignedEmployeeId ?? t.client?.assignedEmployeeId ?? null;
+    // A thread with a lead is owned via the LEAD (unchanged); a converted
+    // contact's lead-less thread is owned via the CLIENT. When both exist the
+    // lead wins — reassign, list() and getOrFail() all key off this same rule so
+    // a dual-linked thread's two owners can never diverge.
     const onLead = !!(t.leadId && t.lead);
+    const previousAssignee =
+      (onLead ? t.lead?.assignedEmployeeId : t.client?.assignedEmployeeId) ?? null;
 
     await this.prisma.$transaction([
       // Reassign the owner on whichever contact backs the thread. A lead also

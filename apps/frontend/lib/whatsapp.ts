@@ -164,6 +164,10 @@ export interface ThreadListItem {
     lastName: string;
     phone: string;
     status: string;
+    /** A converted contact's thread has no lead, so its "assigned to" comes
+     *  from the client's owner (set by a client-thread reassign). */
+    assignedEmployeeId?: string | null;
+    assignedEmployee?: { id: string; firstName: string; lastName: string } | null;
   } | null;
 }
 

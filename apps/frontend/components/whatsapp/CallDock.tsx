@@ -111,6 +111,14 @@ export function CallDock() {
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const ringRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Outbound-only: media reaches 'connected' during ringback (Meta warms the
+  // media path before the customer accepts), so we must NOT start the duration
+  // timer until their audio actually flows. outboundRef marks the direction;
+  // answeredRef latches once the timer has started; audioWaitRef polls getStats
+  // for the first inbound audio (the real "answered" moment).
+  const outboundRef = useRef(false);
+  const answeredRef = useRef(false);
+  const audioWaitRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Grace timer for a transient ICE drop ('disconnected'): we wait for native
   // recovery instead of killing the call. Mirrors the mobile 20s grace.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -405,6 +413,10 @@ export function CallDock() {
       /* ignore */
     }
     pcRef.current = null;
+    if (audioWaitRef.current) {
+      clearInterval(audioWaitRef.current);
+      audioWaitRef.current = null;
+    }
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
@@ -457,14 +469,94 @@ export function CallDock() {
           // flows until the real accept). Stay on the ringing UI; accept()
           // flips to in-call. Not marking wasConnected keeps a decline silent.
           if (phaseRef.current === 'ringing') return;
-          wasConnectedRef.current = true;
           if (reconnectTimerRef.current) {
             clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = null;
           }
-          setPhase('in-call'); // first connect OR recovery from a transient drop
-          if (!timerRef.current) {
-            timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+          if (timerRef.current) {
+            // Recovery from a transient drop — the timer is already running, so
+            // just return to the in-call UI without restarting/duplicating it.
+            wasConnectedRef.current = true;
+            setPhase('in-call');
+          } else if (outboundRef.current && !answeredRef.current) {
+            // OUTBOUND: media can be 'connected' while the customer's phone is
+            // STILL RINGING (Meta warms the media path before they accept). Do
+            // NOT start the timer — or mark the call "connected" — yet: poll
+            // getStats until their audio actually flows (the real "answered"
+            // moment). A decline/no-answer here must clear silently, so we hold
+            // wasConnected until then too. The audio poll has no time fallback,
+            // but the warm-up 'answered' SDP already cleared the dial timeout —
+            // so re-arm a 60s no-answer giveup that tears the call down if the
+            // customer never picks up. Inbound is gated by the rep's Accept.
+            setPhase('connecting');
+            if (!audioWaitRef.current) {
+              if (!dialTimeoutRef.current) {
+                const cid = activeIdRef.current;
+                dialTimeoutRef.current = setTimeout(() => {
+                  dialTimeoutRef.current = null;
+                  if (pc === pcRef.current && !answeredRef.current) {
+                    if (cid) {
+                      void apiFetch(`/whatsapp/calls/${cid}/hangup`, {
+                        method: 'POST',
+                      }).catch(() => undefined);
+                    }
+                    teardown('no-answer');
+                  }
+                }, 60000);
+              }
+              audioWaitRef.current = setInterval(() => {
+                if (pc !== pcRef.current) {
+                  if (audioWaitRef.current) {
+                    clearInterval(audioWaitRef.current);
+                    audioWaitRef.current = null;
+                  }
+                  return;
+                }
+                void pc
+                  .getStats()
+                  .then((stats) => {
+                    if (pc !== pcRef.current || !audioWaitRef.current) return;
+                    let bytes = 0;
+                    stats.forEach((r) => {
+                      if (
+                        r.type === 'inbound-rtp' &&
+                        r.kind === 'audio' &&
+                        typeof r.bytesReceived === 'number'
+                      ) {
+                        bytes = r.bytesReceived;
+                      }
+                    });
+                    if (bytes > 3000) {
+                      // Real remote audio ⇒ they answered.
+                      if (audioWaitRef.current) {
+                        clearInterval(audioWaitRef.current);
+                        audioWaitRef.current = null;
+                      }
+                      if (dialTimeoutRef.current) {
+                        clearTimeout(dialTimeoutRef.current);
+                        dialTimeoutRef.current = null;
+                      }
+                      wasConnectedRef.current = true;
+                      answeredRef.current = true;
+                      setPhase('in-call');
+                      if (!timerRef.current) {
+                        timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+                      }
+                    }
+                  })
+                  .catch(() => {
+                    /* best-effort */
+                  });
+              }, 500);
+            }
+          } else {
+            // Inbound (rep already accepted) — start the timer now.
+            wasConnectedRef.current = true;
+            answeredRef.current = true;
+            setPhase('in-call');
+            if (!timerRef.current) {
+              timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+            }
           }
         } else if (st === 'disconnected') {
           // While still RINGING this is a pre-accept WARM-UP peer, not a live
@@ -627,6 +719,8 @@ export function CallDock() {
         setCall(data);
         setPhase('ringing');
         phaseRef.current = 'ringing'; // sync NOW — preWarm checks it before React re-renders
+        outboundRef.current = false; // inbound: timer gated by the rep's Accept, not audio
+        answeredRef.current = false;
         playRingTone();
         stopRing();
         ringRef.current = setInterval(playRingTone, 3000);
@@ -692,6 +786,8 @@ export function CallDock() {
       setShowReqPerm(false);
       setCall({ callId: '', from: detail.phone ?? '', leadName: detail.name ?? null, leadId: null });
       setPhase('dialing');
+      outboundRef.current = true; // gate the timer on real audio (see monitorConnection)
+      answeredRef.current = false;
       try {
         const { iceServers } = await apiFetch<{ iceServers: RTCIceServer[] }>('/whatsapp/calls/ice');
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

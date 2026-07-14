@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Mail, Pencil, RotateCcw, X } from 'lucide-react';
-import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
 import {
   EmptyState,
   GlassCard,
@@ -71,7 +71,7 @@ export function EmailTemplatesPage() {
   const [data, setData] = useState<EmailTemplatesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [service, setService] = useState(SERVICE_TYPES[0]?.code ?? '');
+  const [service, setService] = useState(PICKABLE_SERVICE_TYPES[0]?.code ?? '');
   const [program, setProgram] = useState('');
   const [edit, setEdit] = useState<RowModel | null>(null);
   const [busyType, setBusyType] = useState<string | null>(null);
@@ -174,7 +174,7 @@ export function EmailTemplatesPage() {
             <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: '12.5px', color: 'var(--sos-text-muted)', fontWeight: 500 }}>
               Service (category)
               <select style={{ ...inputStyle, cursor: 'pointer', width: 'auto', minWidth: 200 }} value={service} onChange={(e) => setService(e.target.value)}>
-                {SERVICE_TYPES.map((s) => (
+                {PICKABLE_SERVICE_TYPES.map((s) => (
                   <option key={s.code} value={s.code}>{s.label}</option>
                 ))}
               </select>

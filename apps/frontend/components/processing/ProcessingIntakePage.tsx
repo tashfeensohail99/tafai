@@ -50,7 +50,7 @@ import {
   type ApiIntakeCaseItem,
   type ApiProcessingOfficer,
 } from '@/lib/processing';
-import { SERVICE_TYPES, labelForServiceCode, isCanonicalServiceCode } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES, labelForServiceCode, isCanonicalServiceCode } from '@/lib/service-types';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Acknowledge modal ----------------------------------------------
@@ -207,7 +207,7 @@ function AcknowledgeModal({
             style={{ width: '100%' }}
           >
             <option value="" disabled>Choose a case category…</option>
-            {SERVICE_TYPES.map((s) => (
+            {PICKABLE_SERVICE_TYPES.map((s) => (
               <option key={s.code} value={s.code}>{s.label}</option>
             ))}
           </select>

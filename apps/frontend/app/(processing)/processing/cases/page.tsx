@@ -56,7 +56,7 @@ import {
   type ProcessingPriority,
   type ListCasesQuery,
 } from '@/lib/processing';
-import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 /**
@@ -717,7 +717,7 @@ export default function CasesPage() {
             </select>
             <select className="sos-input" value={service} onChange={(e) => setService(e.target.value)}>
               <option value="">All service types</option>
-              {SERVICE_TYPES.map((s) => (
+              {PICKABLE_SERVICE_TYPES.map((s) => (
                 <option key={s.code} value={s.code}>{s.label}</option>
               ))}
             </select>

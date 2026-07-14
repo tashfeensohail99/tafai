@@ -28,7 +28,7 @@ import {
   Field,
 } from '@/components/sales-v2/ui';
 import { CountrySelect } from '@/components/shared/CountrySelect';
-import { SERVICE_TYPES } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES } from '@/lib/service-types';
 import {
   createManualClientCase,
   type ProcessingPriority,
@@ -314,7 +314,7 @@ export function ProcessingCreateClientPage() {
           {/* Service */}
           <Field label="Service" required>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8, marginTop: 4 }}>
-              {SERVICE_TYPES.map((s) => {
+              {PICKABLE_SERVICE_TYPES.map((s) => {
                 const active = service === s.code;
                 return (
                   <button

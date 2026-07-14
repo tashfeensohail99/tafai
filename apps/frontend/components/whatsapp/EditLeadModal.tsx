@@ -9,7 +9,7 @@ import {
   PrimaryButton,
 } from '@/components/sales-v2/ui';
 import { patchLead } from '@/lib/sales-api';
-import { SERVICE_TYPES } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES } from '@/lib/service-types';
 import { CountrySelect } from '@/components/shared/CountrySelect';
 import { Modal } from './Modal';
 
@@ -216,14 +216,14 @@ export function EditLeadModal(props: {
           <select
             className="sos-input"
             value={
-              service && SERVICE_TYPES.some((s) => s.code === service) ? service : ''
+              service && PICKABLE_SERVICE_TYPES.some((s) => s.code === service) ? service : ''
             }
             onChange={(e) => setService(e.target.value)}
           >
             <option value="" disabled>
               Select a service…
             </option>
-            {SERVICE_TYPES.map((s) => (
+            {PICKABLE_SERVICE_TYPES.map((s) => (
               <option key={s.code} value={s.code}>
                 {s.label}
               </option>
@@ -231,7 +231,7 @@ export function EditLeadModal(props: {
           </select>
           {/* Show the legacy free-text value when it doesn't match any code
               so sales knows what was there before and can reclassify. */}
-          {service && !SERVICE_TYPES.some((s) => s.code === service) ? (
+          {service && !PICKABLE_SERVICE_TYPES.some((s) => s.code === service) ? (
             <div
               style={{
                 marginTop: 8,

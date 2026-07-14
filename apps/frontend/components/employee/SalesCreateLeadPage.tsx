@@ -80,8 +80,8 @@ const initial: FormState = {
 // look up per-service requirements without fuzzy-matching free text.
 // Labels are what the agent sees on the chip. Empty by default — sales
 // MUST pick one before submitting.
-import { SERVICE_TYPES } from '@/lib/service-types';
-const SERVICES = SERVICE_TYPES;
+import { PICKABLE_SERVICE_TYPES } from '@/lib/service-types';
+const SERVICES = PICKABLE_SERVICE_TYPES;
 // Quick-pick chips for the destinations we see most; the searchable
 // CountrySelect below covers every other country (Schengen states, etc.).
 const COUNTRIES = POPULAR_COUNTRIES;

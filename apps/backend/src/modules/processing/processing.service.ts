@@ -37,6 +37,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { getMilestonesForService } from './milestone-templates';
+import { isValidSubStage } from './substage-templates';
 import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocumentIntakeService } from './document-ai/document-intake.service';
 import { reconcileIdentity } from './identity-reconciliation';
@@ -82,6 +83,7 @@ import {
   UpdateEmailSignatureDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
+  UpdateCaseSubStageDto,
   UpdateDocumentTemplateDto,
   UpdateProcessingTaskDto,
   WaiveDocumentItemDto,
@@ -172,6 +174,7 @@ const BLOCKING_CRITICALITIES = new Set<DocumentCriticality>([
 const TERMINAL_STAGES = new Set<ProcessingCaseStage>([
   ProcessingCaseStage.COMPLETED,
   ProcessingCaseStage.CANCELLED,
+  ProcessingCaseStage.JUNK,
 ]);
 
 /**
@@ -200,6 +203,9 @@ const STAGE_TO_CLIENT_STATUS: Partial<Record<ProcessingCaseStage, string>> = {
   [ProcessingCaseStage.APPEAL_IN_PROGRESS]: 'SUBMITTED',
   [ProcessingCaseStage.COMPLETED]: 'COMPLETED',
   [ProcessingCaseStage.CANCELLED]: 'CANCELLED',
+  // A junked case is, from the client's summary POV, a cancelled one — there is
+  // no distinct ClientStatus.JUNK, so it folds into CANCELLED.
+  [ProcessingCaseStage.JUNK]: 'CANCELLED',
 };
 
 @Injectable()
@@ -1585,6 +1591,35 @@ export class ProcessingService {
     });
   }
 
+  /**
+   * Set or clear the case's lightweight sub-stage tracking label (feedback F3).
+   * Purely informational — does NOT touch the stage machine, gates, SLA, or
+   * reporting. A null/blank value clears it; a non-null value must be a member
+   * of the per-service picklist (CATEGORY_SUBSTAGE[case.service]).
+   */
+  async updateCaseSubStage(caseId: string, dto: UpdateCaseSubStageDto, user: RequestUser) {
+    const processingCase = await this.findCaseOrThrow(caseId);
+    this.assertCaseAccess(processingCase, user);
+
+    let next: string | null = null;
+    if (dto.subStage != null) {
+      const value = dto.subStage.trim();
+      if (value !== '') {
+        if (!isValidSubStage(processingCase.service, value)) {
+          throw new BadRequestException(
+            `Invalid sub-stage "${value}" for service ${processingCase.service}`,
+          );
+        }
+        next = value;
+      }
+    }
+
+    return this.prisma.processingCase.update({
+      where: { id: caseId },
+      data: { subStage: next, updatedByUserId: user.id },
+    });
+  }
+
   // -------------------------------------------------------------------------
   // OFFICER ROSTER
   //
@@ -1670,9 +1705,9 @@ export class ProcessingService {
           ProcessingTaskStatus.BLOCKED,
         ]},
         case: {
-          // Non-terminal cases only — once a case is COMPLETED/CANCELLED its
-          // tasks shouldn't clutter the queue.
-          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          // Non-terminal cases only — once a case is COMPLETED/CANCELLED/JUNK
+          // its tasks shouldn't clutter the queue.
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.JUNK] },
           ...(canViewAll ? {} : { assignedOfficerId: user.id }),
         },
       },
@@ -1715,7 +1750,7 @@ export class ProcessingService {
           DocumentItemStatus.EXPIRED,
         ]},
         case: {
-          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.JUNK] },
           ...(canViewAll ? {} : { assignedOfficerId: user.id }),
         },
       },
@@ -1875,16 +1910,23 @@ export class ProcessingService {
     const fromStage = processingCase.stage;
     const toStage = dto.toStage;
 
-    // CANCELLED is a special path — manager only, from any active stage
-    if (toStage === ProcessingCaseStage.CANCELLED) {
+    // CANCELLED and JUNK are special paths — manager only, from any active
+    // stage (they bypass ALLOWED_TRANSITIONS). JUNK ("not a real case") mirrors
+    // CANCELLED exactly and reuses cancelledAt / cancellationReason.
+    if (toStage === ProcessingCaseStage.CANCELLED || toStage === ProcessingCaseStage.JUNK) {
+      const verb = toStage === ProcessingCaseStage.JUNK ? 'junk' : 'cancel';
       if (!user.permissions.includes('processing.case.view_all')) {
-        throw new ForbiddenException('Only a processing manager can cancel a case');
+        throw new ForbiddenException(`Only a processing manager can ${verb} a case`);
       }
       if (TERMINAL_STAGES.has(fromStage)) {
-        throw new BadRequestException(`Cannot cancel a case that is already ${fromStage}`);
+        throw new BadRequestException(`Cannot ${verb} a case that is already ${fromStage}`);
       }
       if (!dto.cancellationReason) {
-        throw new BadRequestException('Cancellation reason is required');
+        throw new BadRequestException(
+          toStage === ProcessingCaseStage.JUNK
+            ? 'A reason is required to mark a case as junk'
+            : 'Cancellation reason is required',
+        );
       }
     } else {
       // Verify the transition is in the allowed map
@@ -1962,7 +2004,14 @@ export class ProcessingService {
         updateData.completedAt = new Date();
         updateData.processingNote = dto.completionNotes ?? undefined;
       }
-      if (toStage === ProcessingCaseStage.CANCELLED) {
+      // JUNK reuses the same terminal columns as CANCELLED. This write is
+      // load-bearing: every "active" count in getAdminOverview filters on
+      // `cancelledAt: null`, so a junked case is only excluded once cancelledAt
+      // is stamped here.
+      if (
+        toStage === ProcessingCaseStage.CANCELLED ||
+        toStage === ProcessingCaseStage.JUNK
+      ) {
         updateData.cancelledAt = new Date();
         updateData.cancellationReason = dto.cancellationReason ?? undefined;
       }
@@ -4432,8 +4481,9 @@ export class ProcessingService {
     this.assertCaseAccess(processingCase, user);
 
     if (processingCase.stage === ProcessingCaseStage.COMPLETED ||
-        processingCase.stage === ProcessingCaseStage.CANCELLED) {
-      throw new BadRequestException('Cannot raise a correction request on a completed or cancelled case');
+        processingCase.stage === ProcessingCaseStage.CANCELLED ||
+        processingCase.stage === ProcessingCaseStage.JUNK) {
+      throw new BadRequestException('Cannot raise a correction request on a completed, cancelled, or junk case');
     }
 
     // If DOCUMENT type, validate the document item belongs to this case
@@ -4853,7 +4903,7 @@ export class ProcessingService {
         where: {
           ...officerFilter,
           stage: {
-            notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.REJECTED],
+            notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.REJECTED, ProcessingCaseStage.JUNK],
           },
           createdAt: { lt: new Date(now.getTime() - 30 * 86_400_000) },
         },

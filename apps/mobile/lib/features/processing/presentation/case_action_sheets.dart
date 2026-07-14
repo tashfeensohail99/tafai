@@ -455,9 +455,25 @@ Future<bool?> showCancelSheet(
   );
 }
 
+/// Manager "Mark as junk" — same sheet as cancel, different copy. JUNK reuses
+/// the cancellationReason field, so only the wording differs.
+Future<bool?> showJunkSheet(
+  BuildContext context,
+  WidgetRef ref, {
+  required ProcessingCaseDetail caseRecord,
+}) {
+  return showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _CancelSheet(caseRecord: caseRecord, isJunk: true),
+  );
+}
+
 class _CancelSheet extends ConsumerStatefulWidget {
   final ProcessingCaseDetail caseRecord;
-  const _CancelSheet({required this.caseRecord});
+  final bool isJunk;
+  const _CancelSheet({required this.caseRecord, this.isJunk = false});
 
   @override
   ConsumerState<_CancelSheet> createState() => _CancelSheetState();
@@ -487,7 +503,7 @@ class _CancelSheetState extends ConsumerState<_CancelSheet> {
     try {
       await ref.read(processingRepositoryProvider).changeStage(
             widget.caseRecord.id,
-            toStage: 'CANCELLED',
+            toStage: widget.isJunk ? 'JUNK' : 'CANCELLED',
             cancellationReason: _reason.text.trim(),
           );
       if (mounted) Navigator.of(context).pop(true);
@@ -501,8 +517,9 @@ class _CancelSheetState extends ConsumerState<_CancelSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final isJunk = widget.isJunk;
     return _SheetShell(
-      title: 'Cancel case',
+      title: isJunk ? 'Mark as junk' : 'Cancel case',
       children: [
         Container(
           padding: const EdgeInsets.all(AppTokens.space3),
@@ -512,14 +529,16 @@ class _CancelSheetState extends ConsumerState<_CancelSheet> {
             border: Border.all(
                 color: AppTokens.statusDanger.withValues(alpha: 0.35)),
           ),
-          child: const Row(children: [
-            Icon(Icons.warning_amber_rounded,
+          child: Row(children: [
+            const Icon(Icons.warning_amber_rounded,
                 size: 18, color: AppTokens.statusDanger),
-            SizedBox(width: AppTokens.space2),
+            const SizedBox(width: AppTokens.space2),
             Expanded(
               child: Text(
-                'This is irreversible. Cancelling locks the case permanently.',
-                style: TextStyle(
+                isJunk
+                    ? 'Removes the case from active queues and reports. Use for spam, duplicates, or dead leads.'
+                    : 'This is irreversible. Cancelling locks the case permanently.',
+                style: const TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     color: AppTokens.statusDanger),
@@ -533,9 +552,11 @@ class _CancelSheetState extends ConsumerState<_CancelSheet> {
           maxLines: 3,
           onChanged: (_) => setState(() {}),
           textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            labelText: 'Cancellation reason * (min 10 chars)',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: isJunk
+                ? 'Reason for junking * (min 10 chars)'
+                : 'Cancellation reason * (min 10 chars)',
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: AppTokens.space2),
@@ -545,9 +566,11 @@ class _CancelSheetState extends ConsumerState<_CancelSheet> {
           contentPadding: EdgeInsets.zero,
           controlAffinity: ListTileControlAffinity.leading,
           activeColor: AppTokens.statusDanger,
-          title: const Text(
-            'I confirm this cancellation has been reviewed and cannot be undone.',
-            style: TextStyle(fontSize: 12.5),
+          title: Text(
+            isJunk
+                ? 'I confirm this case is not real work and should be removed from active queues.'
+                : 'I confirm this cancellation has been reviewed and cannot be undone.',
+            style: const TextStyle(fontSize: 12.5),
           ),
           onChanged: (v) => setState(() => _confirmed = v ?? false),
         ),
@@ -572,7 +595,9 @@ class _CancelSheetState extends ConsumerState<_CancelSheet> {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 onPressed: _canSubmit ? _submit : null,
-                child: _saving ? const ButtonSpinner() : const Text('Cancel case'),
+                child: _saving
+                    ? const ButtonSpinner()
+                    : Text(isJunk ? 'Mark as junk' : 'Cancel case'),
               ),
             ),
           ],

@@ -2718,6 +2718,11 @@ enum ProcessingCaseStage {
   APPEAL_IN_PROGRESS
   COMPLETED
   CANCELLED
+  // Terminal "not a real case" bucket (spam / duplicate / dead lead). Behaves
+  // like CANCELLED for active-list exclusion (reuses cancelledAt /
+  // cancellationReason) but is surfaced as its own Junk bucket, kept out of the
+  // Closed/History set. Manager-only transition.
+  JUNK
 
   @@schema("processing")
 }
@@ -3145,6 +3150,11 @@ model ProcessingCase {
   /// Persisted (previously used only transiently for checklist seeding) so
   /// per-program client-email templates can resolve the right variant at send.
   programCode                  String?
+  /// Lightweight, per-service display/tracking label chosen from
+  /// CATEGORY_SUBSTAGE[service] (e.g. "Doc collection", "Final submission").
+  /// PURELY informational — never drives the ProcessingCaseStage machine,
+  /// document gates, SLA, or reporting. NULL until an officer sets it.
+  subStage                     String?
   financeHandoverNote          String?
   processingNote               String?
   estimatedSubmissionDate      DateTime?              @db.Date

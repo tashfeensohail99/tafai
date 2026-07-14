@@ -69,6 +69,7 @@ export function stageTone(stage: ProcessingStage): BadgeTone {
     case 'APPEAL_IN_PROGRESS': return 'warm';
     case 'COMPLETED': return 'success';
     case 'CANCELLED': return 'neutral';
+    case 'JUNK': return 'neutral';
     default: return 'neutral';
   }
 }
@@ -113,7 +114,7 @@ export function ProcessingDashboardPage() {
       .then(([m, casesRes, intake]) => {
         if (cancelled) return;
         setMetrics(m);
-        setMyCases(casesRes.cases.filter((c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED'));
+        setMyCases(casesRes.cases.filter((c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED' && c.stage !== 'JUNK'));
         setIntakePending(intake);
       })
       .catch((err: unknown) => {

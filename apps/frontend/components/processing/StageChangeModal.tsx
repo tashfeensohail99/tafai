@@ -48,6 +48,9 @@ const ALLOWED_TRANSITIONS: Record<ProcessingStage, ProcessingStage[]> = {
   APPEAL_IN_PROGRESS: ['SUBMITTED', 'CANCELLED'],
   COMPLETED: [],
   CANCELLED: [],
+  // JUNK is terminal and set only via the manager-only "Mark as junk" action,
+  // never as a target in this general officer stage-change modal.
+  JUNK: [],
 };
 
 // Stages that require all CRITICAL+REQUIRED docs to be accepted (frontend mirror)

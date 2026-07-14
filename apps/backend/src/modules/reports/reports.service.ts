@@ -68,7 +68,9 @@ export class ReportsService {
       }),
       this.prisma.processingCase.count({
         where: {
-          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          // JUNK is already excluded by cancelledAt:null (it reuses that
+          // column), but keep the stage list explicit for clarity.
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.JUNK] },
           cancelledAt: null,
         },
       }),

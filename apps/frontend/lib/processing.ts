@@ -31,7 +31,8 @@ export type ProcessingStage =
   | 'REJECTED'
   | 'APPEAL_IN_PROGRESS'
   | 'COMPLETED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'JUNK';
 
 export type ProcessingPriority = 'LOW' | 'NORMAL' | 'URGENT' | 'CRITICAL';
 export type AuthorityDecision = 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -42,6 +43,8 @@ export interface ApiProcessingCaseListItem {
   service: string;
   targetCountry: string;
   stage: ProcessingStage;
+  /** Lightweight per-service tracking label (feedback F3); null until set. */
+  subStage: string | null;
   priority: ProcessingPriority;
   authorityDecision: AuthorityDecision;
   slaDueAt: string | null;
@@ -92,6 +95,8 @@ export interface ApiProcessingCaseDetail {
   slaDueAt: string | null;
   service: string;
   targetCountry: string;
+  /** Lightweight per-service tracking label (feedback F3); null until set. */
+  subStage: string | null;
   financeHandoverNote: string | null;
   processingNote: string | null;
   estimatedSubmissionDate: string | null;
@@ -677,6 +682,19 @@ export function updateCasePriority(
   body: { priority: ProcessingPriority },
 ): Promise<ApiProcessingCaseDetail> {
   return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}/priority`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/** Set (or clear, with null) the case's lightweight sub-stage label (F3). */
+export function updateCaseSubStage(
+  caseId: string,
+  body: { subStage: string | null },
+): Promise<ApiProcessingCaseDetail> {
+  return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}/substage`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

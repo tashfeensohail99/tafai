@@ -28,6 +28,7 @@ const Map<String, String> kStageLabel = {
   'APPEAL_IN_PROGRESS': 'Appeal Filed',
   'COMPLETED': 'Completed',
   'CANCELLED': 'Cancelled',
+  'JUNK': 'Junk',
 };
 
 String stageLabel(String code) => kStageLabel[code] ?? code.replaceAll('_', ' ');
@@ -59,6 +60,8 @@ const Map<String, List<String>> kAllowedTransitions = {
   'APPEAL_IN_PROGRESS': ['SUBMITTED', 'CANCELLED'],
   'COMPLETED': <String>[],
   'CANCELLED': <String>[],
+  // Terminal — JUNK is set only via the manager "Mark as junk" action.
+  'JUNK': <String>[],
 };
 
 /// Target stages that trigger the server-side submission-readiness quality gate.
@@ -282,7 +285,7 @@ class ProcessingCaseListItem {
       ? client!.phone
       : (lead?.phone ?? '');
 
-  bool get isTerminal => stage == 'COMPLETED' || stage == 'CANCELLED';
+  bool get isTerminal => stage == 'COMPLETED' || stage == 'CANCELLED' || stage == 'JUNK';
 
   factory ProcessingCaseListItem.fromJson(Map<String, dynamic> j) {
     final count = j['_count'];
@@ -449,7 +452,7 @@ class ProcessingCaseDetail {
     return ms < 0 ? 0 : (ms ~/ const Duration(days: 1).inMilliseconds);
   }
 
-  bool get isTerminal => stage == 'COMPLETED' || stage == 'CANCELLED';
+  bool get isTerminal => stage == 'COMPLETED' || stage == 'CANCELLED' || stage == 'JUNK';
 
   factory ProcessingCaseDetail.fromJson(Map<String, dynamic> j) {
     final count = j['_count'];

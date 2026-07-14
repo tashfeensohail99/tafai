@@ -63,6 +63,7 @@ import {
   UpdateEmailSignatureDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
+  UpdateCaseSubStageDto,
   UpdateDocumentTemplateDto,
   UpdateProcessingTaskDto,
   UpdateAttestationDto,
@@ -229,6 +230,19 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.updateCasePriority(caseId, dto, user);
+  }
+
+  // Set/clear the lightweight sub-stage tracking label (feedback F3). Officer-
+  // editable (same gate as stage changes); assertCaseAccess scopes an associate
+  // to their own case.
+  @Patch('cases/:caseId/substage')
+  @RequirePermissions('processing.case.update_stage')
+  updateCaseSubStage(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: UpdateCaseSubStageDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.updateCaseSubStage(caseId, dto, user);
   }
 
   // -------------------------------------------------------------------------

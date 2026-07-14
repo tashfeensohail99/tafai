@@ -14,6 +14,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { SERVICE_TYPE_CODES } from '../../common/service-types';
@@ -306,6 +307,19 @@ export class ListProcessingCasesQueryDto {
 export class UpdateCasePriorityDto {
   @IsEnum(ProcessingCasePriority)
   priority!: ProcessingCasePriority;
+}
+
+/**
+ * Set (or clear) a case's lightweight sub-stage label (feedback F3). `null`
+ * clears it. Membership in the per-service picklist is enforced in the service
+ * (which knows the case's service) — the DTO only bounds the string, so it
+ * uses ValidateIf to let an explicit null through.
+ */
+export class UpdateCaseSubStageDto {
+  @ValidateIf((o) => o.subStage !== null && o.subStage !== undefined)
+  @IsString()
+  @MaxLength(120)
+  subStage!: string | null;
 }
 
 export class AssignCaseDto {

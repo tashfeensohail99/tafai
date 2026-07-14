@@ -426,7 +426,9 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             {canAssign ? (
-              <SecondaryButton iconLeft={<User size={14} />} onClick={() => setShowAssignModal(true)}>Reassign</SecondaryButton>
+              <SecondaryButton iconLeft={<User size={14} />} onClick={() => setShowAssignModal(true)}>
+                {c.assignedOfficer ? 'Reassign' : 'Assign'}
+              </SecondaryButton>
             ) : null}
             <SecondaryButton iconLeft={<ClipboardEdit size={14} />} onClick={() => setShowCorrectionModal(true)}>Request correction</SecondaryButton>
             {isManager && c.stage !== 'CANCELLED' && c.stage !== 'COMPLETED' ? (

@@ -1589,7 +1589,12 @@ export class ProcessingService {
         userRoles: {
           some: {
             role: {
-              name: { in: ['processing', 'processing_manager', 'documentation', 'super_admin', 'admin'] },
+              // Processing-team roles ONLY. super_admin/admin were dropped so the
+              // assign-case picker + officer filter + @-mentions list only real
+              // processing members (team feedback). An admin who genuinely works
+              // a caseload should be granted the `processing` role instead of
+              // being surfaced here by virtue of being an admin.
+              name: { in: ['processing', 'processing_manager', 'documentation'] },
             },
           },
         },

@@ -152,7 +152,10 @@ export function CountrySelect({
             left: 0,
             right: 0,
             zIndex: 60,
-            background: 'var(--sos-surface-2, #1b2c34)',
+            // OPAQUE popover surface. --sos-surface-2 is only ~4% opacity, so
+            // the dropdown was see-through and the Priority pills / "Add finance
+            // details" behind it bled through (looked like overlapping content).
+            background: 'var(--sos-bg-elevated, #0a1530)',
             border: '1px solid var(--sos-border-subtle, rgba(255,255,255,0.10))',
             borderRadius: 10,
             boxShadow: '0 12px 32px rgba(0,0,0,0.45)',

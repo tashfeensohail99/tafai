@@ -46,6 +46,8 @@ class CallController extends StateNotifier<CallState> {
 
   Timer? _ringTimeout; // inbound: auto-dismiss if unanswered
   Timer? _dialTimeout; // outbound: give up if no answer
+  Timer? _audioWait; // outbound: poll for first remote audio before the timer starts
+  bool _outboundAnswered = false; // latched once the outbound duration timer has begun
   Timer? _tick; // 1s call timer
   Timer? _endReset; // brief "ended" → idle
   Timer? _disconnectGrace; // transient media drop — give ICE time to recover
@@ -265,6 +267,7 @@ class CallController extends StateNotifier<CallState> {
     required String phone,
   }) async {
     if (state.isActive) return;
+    _outboundAnswered = false; // gate the timer on real audio (see _onConnected)
     state = CallState(
       phase: CallPhase.dialing,
       direction: CallDirection.outbound,
@@ -726,6 +729,29 @@ class CallController extends StateNotifier<CallState> {
       state = state.copyWith(phase: CallPhase.inCall);
       return;
     }
+    // OUTBOUND: media can reach 'connected' while the customer's phone is STILL
+    // RINGING (Meta warms the media path before they accept). Don't start the
+    // timer yet — poll for their audio actually flowing (the real "answered"
+    // moment). Inbound is gated by the rep's Accept tap, so it starts the timer
+    // immediately below.
+    if (state.isOutbound && !_outboundAnswered) {
+      _log('media connected (outbound) — holding timer until customer audio');
+      final oid = state.callId;
+      if (oid != null) {
+        unawaited(markCallkitConnected(oid)); // hold native priority through the ring
+      }
+      state = state.copyWith(phase: CallPhase.connecting);
+      // The warm-up answer SDP already cancelled the dial timeout, but the
+      // customer hasn't truly picked up. Re-arm a no-answer giveup so an
+      // unanswered ring can't leave us polling in 'connecting' forever.
+      _dialTimeout?.cancel();
+      _dialTimeout = Timer(const Duration(seconds: 60), () {
+        if (state.phase == CallPhase.connecting && !_outboundAnswered) hangup();
+      });
+      _beginTimerWhenAudible();
+      return;
+    }
+    _outboundAnswered = true;
     _log('media CONNECTED');
     state = state.copyWith(phase: CallPhase.inCall, durationSeconds: 0);
     // Keep the native Telecom call marked CONNECTED for the whole call so
@@ -755,6 +781,48 @@ class CallController extends StateNotifier<CallState> {
     // invisible in the quality data (exactly the reps we most need to see).
     unawaited(_postStats());
     _beginRecording();
+  }
+
+  /// OUTBOUND only: media reached 'connected' but the customer may still be
+  /// RINGING. Poll getStats until their audio actually flows (the real answer),
+  /// then re-enter _onConnected to start the duration timer. No time fallback:
+  /// if they answered, audio flows; if it never does, there's no live call to
+  /// time. The call itself is unaffected either way.
+  void _beginTimerWhenAudible() {
+    if (_audioWait != null) return;
+    _audioWait = Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      final pc = _pc;
+      if (pc == null || !state.isActive) {
+        _audioWait?.cancel();
+        _audioWait = null;
+        return;
+      }
+      void promote() {
+        _audioWait?.cancel();
+        _audioWait = null;
+        _dialTimeout?.cancel(); // customer answered — cancel the no-answer giveup
+        _outboundAnswered = true; // break the outbound gate before re-entering
+        _onConnected(); // → starts in-call + timer now
+      }
+      try {
+        final reports = await pc.getStats();
+        // Teardown (or a newer call) may have run during the await — Timer.cancel()
+        // can't abort an already-suspended async callback, so re-check the peer is
+        // still current before promoting (mirrors the web dock's post-getStats guard).
+        if (!identical(pc, _pc) || _audioWait == null || _outboundAnswered) return;
+        var bytes = 0;
+        for (final r in reports) {
+          final kind = r.values['kind'] ?? r.values['mediaType'];
+          if (r.type == 'inbound-rtp' && kind == 'audio') {
+            final b = r.values['bytesReceived'];
+            if (b is num) bytes = b.toInt();
+          }
+        }
+        if (bytes > 3000) promote(); // real remote audio ⇒ customer answered
+      } catch (_) {
+        /* best-effort */
+      }
+    });
   }
 
   // ── Quality CDR (best-effort, never affects the call) ────────────────────────
@@ -989,6 +1057,9 @@ class CallController extends StateNotifier<CallState> {
 
     _ringTimeout?.cancel();
     _dialTimeout?.cancel();
+    _audioWait?.cancel();
+    _audioWait = null;
+    _outboundAnswered = false;
     _tick?.cancel();
     _disconnectGrace?.cancel();
     _heartbeat?.cancel();

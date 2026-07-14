@@ -1464,6 +1464,9 @@ export class ProcessingService {
             phone: true,
             serviceInterest: true,
             targetCountry: true,
+            // The SALES rep who owns the lead (closed the deal) — processing
+            // wants this visible on the case, distinct from the processing officer.
+            assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
           },
         },
         client: {

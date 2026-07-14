@@ -121,6 +121,9 @@ export interface MockProcessingCase {
   clientName: string;
   clientPhone: string;
   assignedOfficer: MockOfficer | null;
+  /** Originating SALES rep (who closed the deal) — distinct from the processing
+   *  officer. Optional so the mock fixtures need no update. */
+  salesRep?: { name: string } | null;
   financeAmount: number;
   financeCurrency: string;
   financeHandoverNote: string | null;

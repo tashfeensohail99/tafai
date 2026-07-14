@@ -349,6 +349,9 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           role: 'Processing Officer',
         }
       : null,
+    salesRep: api.lead?.assignedEmployee
+      ? { name: `${api.lead.assignedEmployee.firstName} ${api.lead.assignedEmployee.lastName}`.trim() }
+      : null,
     financeAmount: api.financeHandover ? Number(api.financeHandover.submittedAmount) : 0,
     financeCurrency: api.financeHandover?.currency ?? 'CAD',
     financeHandoverNote: api.financeHandoverNote,
@@ -422,6 +425,9 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
             <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <User size={12} />
               {c.assignedOfficer ? `${c.assignedOfficer.name} · ${c.assignedOfficer.role}` : 'Unassigned'}
+              {c.salesRep ? (
+                <span style={{ color: 'var(--sos-text-faint)' }}>· Sales: {c.salesRep.name}</span>
+              ) : null}
             </div>
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>

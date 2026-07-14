@@ -617,6 +617,9 @@ export class EmailService {
     service?: string | null;
     targetCountry?: string | null;
     priority?: string | null;
+    /** Originating sales rep on the lead — so processing knows who to chase for
+     *  context. Omitted from the email when the lead had no assigned rep. */
+    salesRepName?: string | null;
     caseId: string;
   }): Promise<boolean> {
     const greeting = opts.managerName ? `Hi ${escHtml(opts.managerName)}, ` : '';
@@ -630,6 +633,7 @@ export class EmailService {
           ${infoRow('Service', opts.service)}
           ${infoRow('Target country', opts.targetCountry)}
           ${infoRow('Priority', opts.priority)}
+          ${infoRow('Sales rep', opts.salesRepName)}
         </table>
       </div>
       <a href="https://tashfeengroup.com/processing/cases/${encodeURIComponent(opts.caseId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open the case &rarr;</a>`;

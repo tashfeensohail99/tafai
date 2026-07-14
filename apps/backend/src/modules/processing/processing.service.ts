@@ -288,12 +288,16 @@ export class ProcessingService {
     targetCountry: string;
     priority: string;
     client: { firstName: string; lastName: string; referenceCode: string } | null;
+    lead?: { assignedEmployee?: { firstName: string; lastName: string } | null } | null;
   }): Promise<void> {
     const applicantName = pc.client
       ? `${pc.client.firstName} ${pc.client.lastName}`.trim() || 'the applicant'
       : 'the applicant';
     const referenceCode = pc.client?.referenceCode ?? null;
     const priority = pc.priority && pc.priority !== 'NORMAL' ? pc.priority : null;
+    const salesRepName = pc.lead?.assignedEmployee
+      ? `${pc.lead.assignedEmployee.firstName} ${pc.lead.assignedEmployee.lastName}`.trim() || null
+      : null;
     const managers = await this.getActiveProcessingManagers();
     if (managers.length === 0) {
       // No manager to route the case to — surface it rather than fail silent.
@@ -314,6 +318,7 @@ export class ProcessingService {
           service: pc.service,
           targetCountry: pc.targetCountry,
           priority,
+          salesRepName,
           caseId: pc.id,
         }),
         this.notifications.create({
@@ -466,7 +471,13 @@ export class ProcessingService {
           financeHandoverNote: dto.financeHandoverNote ?? handover.financeNotes ?? undefined,
           createdByUserId: user.id,
         },
-        include: { financeHandover: true, lead: true, client: true },
+        include: {
+          financeHandover: true,
+          // assignedEmployee = the originating sales rep — surfaced in the
+          // "New case sent to Processing" manager email (feedback F5a).
+          lead: { include: { assignedEmployee: { select: { firstName: true, lastName: true } } } },
+          client: true,
+        },
       });
 
       // Mark handover as sent to processing
@@ -1261,7 +1272,9 @@ export class ProcessingService {
           // officer) — the roster surfaces it so Processing knows who to ask.
           lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true, notes: true, assignedEmployee: { select: { id: true, firstName: true, lastName: true } } } },
           client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
-          assignedOfficer: { select: { id: true, email: true } },
+          // employee resolves the officer's real name for the roster/dashboard
+          // (feedback F9) — falls back to the email local-part client-side.
+          assignedOfficer: { select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } } },
           documentItems: { select: { documentName: true, status: true, criticality: true }, orderBy: { documentName: 'asc' } },
           _count: { select: { documentItems: true } },
         },

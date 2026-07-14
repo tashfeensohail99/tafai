@@ -14,6 +14,7 @@ import {
   FileSearch,
   Filter,
   Loader2,
+  Search,
   XCircle,
 } from 'lucide-react';
 import {
@@ -33,6 +34,7 @@ import {
 } from '@/components/processing/mockData';
 import { priorityTone } from './ProcessingDashboardPage';
 import {
+  casePersonName,
   fetchAggregatedDocuments,
   type ApiAggregatedDocument,
 } from '@/lib/processing';
@@ -150,6 +152,7 @@ function DocQueueRow({ doc }: { doc: ApiAggregatedDocument }) {
 export function ProcessingDocumentsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [critFilter, setCritFilter]     = useState<CriticalityFilter>('ALL');
+  const [search, setSearch] = useState('');
   const [docs, setDocs] = useState<ApiAggregatedDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -170,12 +173,19 @@ export function ProcessingDocumentsPage() {
   const expiringSoon = docs.filter((d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED').length;
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return docs.filter((d) => {
       const statusOk = statusFilter === 'ALL' || d.status === statusFilter;
       const critOk   = critFilter === 'ALL'   || d.criticality === critFilter;
-      return statusOk && critOk;
+      const qOk =
+        !q ||
+        [d.documentName, casePersonName(d.case), labelForServiceCode(d.case.service), d.case.targetCountry]
+          .join(' ')
+          .toLowerCase()
+          .includes(q);
+      return statusOk && critOk && qOk;
     });
-  }, [docs, statusFilter, critFilter]);
+  }, [docs, statusFilter, critFilter, search]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -251,6 +261,17 @@ export function ProcessingDocumentsPage() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', minWidth: 200 }}>
+            <Search size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+            <input
+              type="search"
+              placeholder="Search document, client, service…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 12.5 }}
+            />
           </div>
 
           <div style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--sos-text-muted)' }}>

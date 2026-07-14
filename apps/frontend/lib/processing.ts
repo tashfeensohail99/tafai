@@ -53,7 +53,11 @@ export interface ApiProcessingCaseListItem {
    *  was never assigned (e.g. a manually-created processing client). */
   lead: { id: string; referenceCode: string; firstName: string; lastName: string; phone: string; email: string | null; sourceChannel: string | null; assignedEmployee: { id: string; firstName: string; lastName: string } | null };
   client: { id: string; firstName: string; lastName: string; phone: string; email: string | null };
-  assignedOfficer: { id: string; email: string } | null;
+  /** The PROCESSING officer who owns the case. `employee` (the officer's real
+   *  name) is only populated by the main cases-list select — other endpoints
+   *  that reuse this type may omit it, so it's optional; use
+   *  {@link officerDisplayName} which falls back to the email local-part. */
+  assignedOfficer: { id: string; email: string; employee?: { firstName: string; lastName: string } | null } | null;
   _count: { documentItems: number };
   /** Per-row checklist progress for the roster view (verified/total, with a
    *  blocking-gap flag). NOT_APPLICABLE items are excluded from `total`. */
@@ -1702,6 +1706,24 @@ export function casePersonName(c: {
   }
   if (c.lead) return `${c.lead.firstName} ${c.lead.lastName}`.trim();
   return 'Unknown';
+}
+
+/**
+ * Display name for a processing officer — prefers the linked employee's real
+ * name, falls back to the email local-part (mirrors the backend
+ * `officerDisplayName`). Returns null for an unassigned case.
+ */
+export function officerDisplayName(
+  officer:
+    | { email: string; employee?: { firstName: string; lastName: string } | null }
+    | null
+    | undefined,
+): string | null {
+  if (!officer) return null;
+  const name = officer.employee
+    ? `${officer.employee.firstName} ${officer.employee.lastName}`.trim()
+    : '';
+  return name || officer.email.split('@')[0];
 }
 
 /** Phone display — client first, lead fallback. */

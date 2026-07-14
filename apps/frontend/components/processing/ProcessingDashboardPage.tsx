@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import {
   casePersonName,
+  officerDisplayName,
   fetchProcessingCases,
   fetchProcessingDashboard,
   fetchIntakeQueue,
@@ -302,6 +303,12 @@ export function ProcessingDashboardPage() {
                     <UserCog size={11} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
                     Sales: {c.lead.assignedEmployee ? `${c.lead.assignedEmployee.firstName} ${c.lead.assignedEmployee.lastName}` : 'Unassigned'}
                   </div>
+                  {isManager ? (
+                    <div style={{ fontSize: 11, color: 'var(--sos-text-muted)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <UserCheck size={11} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+                      Officer: {officerDisplayName(c.assignedOfficer) ?? 'Unassigned'}
+                    </div>
+                  ) : null}
                 </div>
                 <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
                 <StatusBadge tone={priorityTone(c.priority)} size="sm" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>

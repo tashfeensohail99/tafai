@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Filter,
   Loader2,
+  Search,
   ShieldAlert,
   User,
   XCircle,
@@ -31,6 +32,7 @@ import {
 import { PRIORITY_LABEL, fmtDate } from '@/components/processing/mockData';
 import { priorityTone } from './ProcessingDashboardPage';
 import {
+  casePersonName,
   fetchAggregatedTasks,
   updateCaseTask,
   type ApiAggregatedTask,
@@ -189,6 +191,7 @@ function TaskRow({
 export function ProcessingTasksPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('ALL');
+  const [search, setSearch] = useState('');
   const [tasks, setTasks] = useState<ApiAggregatedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -232,12 +235,19 @@ export function ProcessingTasksPage() {
   const urgentCount  = tasks.filter((t) => t.priority === 'URGENT').length;
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return tasks.filter((t) => {
       const sOk = statusFilter === 'ALL' || t.status === statusFilter;
       const pOk = priorityFilter === 'ALL' || t.priority === priorityFilter;
-      return sOk && pOk;
+      const qOk =
+        !q ||
+        [t.title, t.description ?? '', casePersonName(t.case), labelForServiceCode(t.case.service), t.case.targetCountry]
+          .join(' ')
+          .toLowerCase()
+          .includes(q);
+      return sOk && pOk && qOk;
     });
-  }, [tasks, statusFilter, priorityFilter]);
+  }, [tasks, statusFilter, priorityFilter, search]);
 
   const overdue = filtered.filter((t) => !!t.dueDate && t.dueDate < todayIso);
   const onTime  = filtered.filter((t) => !t.dueDate || t.dueDate >= todayIso);
@@ -316,6 +326,17 @@ export function ProcessingTasksPage() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', minWidth: 200 }}>
+            <Search size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+            <input
+              type="search"
+              placeholder="Search task, client, service…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 12.5 }}
+            />
           </div>
 
           <div style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--sos-text-muted)' }}>

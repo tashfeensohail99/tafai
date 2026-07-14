@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowUpRight, CheckCircle2, Loader2, Wallet } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, CheckCircle2, Loader2, Search, Wallet } from 'lucide-react';
 import { PRIORITY_LABEL, fmtRelative } from '@/components/processing/mockData';
 import { priorityTone } from '@/components/processing/ProcessingDashboardPage';
 import { StatusBadge, GlassCard } from '@/components/sales-v2/ui';
@@ -26,6 +26,7 @@ import { labelForServiceCode } from '@/lib/service-types';
  */
 export default function RefundLanePage() {
   const [cases, setCases] = useState<ApiRefundLaneCase[]>([]);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +63,17 @@ export default function RefundLanePage() {
     ).length;
     return { total, refundInitiated, inAppeal, needsAction };
   }, [cases]);
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return cases;
+    return cases.filter((c) =>
+      [casePersonName(c), labelForServiceCode(c.service), c.targetCountry]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [cases, search]);
 
   function startAction(caseId: string, kind: 'refund' | 'escalate') {
     setOpenAction({ caseId, kind });
@@ -125,6 +137,17 @@ export default function RefundLanePage() {
         (moves the case into <code>APPEAL_IN_PROGRESS</code>; manager permission required).
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', maxWidth: 340 }}>
+        <Search size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+        <input
+          type="search"
+          placeholder="Search client, service, country…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 12.5 }}
+        />
+      </div>
+
       <GlassCard variant="panel" padded={false}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1.2fr 1.2fr', gap: 12, padding: '9px 14px', fontSize: 11, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
           <span>Client / Service</span>
@@ -143,8 +166,12 @@ export default function RefundLanePage() {
           <div style={{ padding: 32, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
             No rejected cases — nothing in the refund or escalation lane.
           </div>
+        ) : visible.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
+            No cases match “{search.trim()}”.
+          </div>
         ) : (
-          cases.map((c) => {
+          visible.map((c) => {
             const refunded = !!c.refundInitiatedAt;
             const inAppeal = c.stage === 'APPEAL_IN_PROGRESS';
             const open = openAction?.caseId === c.id;

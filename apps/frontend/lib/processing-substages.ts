@@ -3,29 +3,24 @@
  * backend `substage-templates.ts`. Keep the two in sync by hand (same pattern
  * as lib/service-types.ts). Sub-stages are display/tracking labels only; they
  * never affect the case stage, gates, SLA, or reporting.
+ *
+ * Only the two flows the feedback specified (Visit Visa + LMIA-exempt Work
+ * Permit) get a fixed dropdown. Every other service is free-text — the officer
+ * types the label manually or leaves it blank.
  */
 
-export const DEFAULT_SUBSTAGES: string[] = [
-  'Doc collection',
-  'Hold',
-  'Final submission under process',
-  'Submission done',
-  'Decision',
-];
-
 export const CATEGORY_SUBSTAGE: Record<string, string[]> = {
-  STUDY_VISA: ['Profile assessment', 'Admission / offer', 'Doc collection', 'Final submission under process', 'Submission done', 'Decision'],
-  WORK_PERMIT: ['Business meeting & profile assessment', 'Business establishment', 'Exemption', 'Doc collection', 'Final submission', 'Decision'],
-  PR_CASE: ['Profile assessment', 'Pool / EOI entry', 'Doc collection', 'Final submission under process', 'Submission done', 'Decision'],
   VISIT_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision'],
-  TOURIST_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision'],
-  SPOUSE_VISA: ['Relationship evidence', 'Doc collection', 'Sponsor verification', 'Final submission under process', 'Submission done', 'Decision'],
-  E2_VISA: ['Business meeting & profile assessment', 'Business plan', 'Business establishment', 'Source of funds', 'Doc collection', 'Final submission', 'Decision'],
-  CBI: ['Profile assessment', 'Due diligence', 'Source of funds', 'Investment / SPA signed', 'Doc collection', 'Final submission', 'Decision'],
-  JR_RESUBMISSION: ['Refusal analysis', 'New evidence', 'Legal submissions', 'Final submission under process', 'Submission done', 'Decision'],
+  WORK_PERMIT: ['Business meeting & profile assessment', 'Business establishment', 'Exemption', 'Doc collection', 'Final submission', 'Decision'],
 };
 
-/** The sub-stage picklist for a service code, falling back to the default. */
+/** The sub-stage picklist for a service code, or [] when it is free-text. */
 export function subStagesForService(service: string): string[] {
-  return CATEGORY_SUBSTAGE[service] ?? DEFAULT_SUBSTAGES;
+  return CATEGORY_SUBSTAGE[service] ?? [];
+}
+
+/** True when the service has a fixed picklist (render a dropdown); false =
+ *  free-text manual entry. */
+export function hasSubStageList(service: string): boolean {
+  return (CATEGORY_SUBSTAGE[service]?.length ?? 0) > 0;
 }

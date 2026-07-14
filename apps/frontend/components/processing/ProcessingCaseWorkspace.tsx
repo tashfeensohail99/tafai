@@ -63,7 +63,7 @@ import {
   type ApiProcessingCaseDetail,
   type CaseFinanceSummary,
 } from '@/lib/processing';
-import { subStagesForService } from '@/lib/processing-substages';
+import { subStagesForService, hasSubStageList } from '@/lib/processing-substages';
 import { labelForServiceCode } from '@/lib/service-types';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
 import { DocumentChecklistTab } from './tabs/DocumentChecklistTab';
@@ -140,45 +140,73 @@ function SubStagePicker({
   onChanged: () => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const hasList = hasSubStageList(service);
   const options = subStagesForService(service);
+  // Local text buffer for the free-text (manual-entry) mode. Kept in sync when
+  // the case reloads with a new value.
+  const [text, setText] = useState(value ?? '');
+  useEffect(() => {
+    setText(value ?? '');
+  }, [value]);
 
-  async function handle(next: string) {
+  async function save(next: string) {
+    const trimmed = next.trim();
+    if (trimmed === (value ?? '')) return; // no-op — nothing changed
     setSaving(true);
     try {
-      await updateCaseSubStage(caseId, { subStage: next || null });
+      await updateCaseSubStage(caseId, { subStage: trimmed || null });
       onChanged();
     } catch {
-      // Non-fatal — the parent refetch restores the true value on next load.
+      setText(value ?? ''); // revert on failure
     } finally {
       setSaving(false);
     }
   }
 
+  const controlStyle: React.CSSProperties = {
+    padding: '3px 8px',
+    borderRadius: 'var(--sos-radius-sm)',
+    border: '1px solid var(--sos-border-default)',
+    background: 'var(--sos-bg-surface)',
+    color: 'var(--sos-text-primary)',
+    fontSize: 12.5,
+    fontWeight: 600,
+    outline: 'none',
+    maxWidth: 220,
+  };
+
   return (
     <MetaItem label="Sub-stage">
-      <select
-        value={value ?? ''}
-        disabled={saving}
-        onChange={(e) => handle(e.target.value)}
-        aria-label="Sub-stage"
-        style={{
-          padding: '3px 8px',
-          borderRadius: 'var(--sos-radius-sm)',
-          border: '1px solid var(--sos-border-default)',
-          background: 'var(--sos-bg-surface)',
-          color: 'var(--sos-text-primary)',
-          fontSize: 12.5,
-          fontWeight: 600,
-          cursor: saving ? 'wait' : 'pointer',
-          outline: 'none',
-          maxWidth: 200,
-        }}
-      >
-        <option value="">— none —</option>
-        {options.map((o) => (
-          <option key={o} value={o}>{o}</option>
-        ))}
-      </select>
+      {hasList ? (
+        <select
+          value={value ?? ''}
+          disabled={saving}
+          onChange={(e) => save(e.target.value)}
+          aria-label="Sub-stage"
+          style={{ ...controlStyle, cursor: saving ? 'wait' : 'pointer' }}
+        >
+          <option value="">— none —</option>
+          {options.map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+      ) : (
+        // Free-text (manual entry) for services without a fixed picklist.
+        <input
+          type="text"
+          value={text}
+          disabled={saving}
+          aria-label="Sub-stage"
+          placeholder="Add a label…"
+          maxLength={120}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => save(text)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+          style={controlStyle}
+        />
+      )}
     </MetaItem>
   );
 }

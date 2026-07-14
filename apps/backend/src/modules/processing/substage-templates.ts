@@ -7,41 +7,38 @@
  * drives the ProcessingCaseStage state machine, document gates, SLA, or
  * reporting — those are all owned by `stage`.
  *
- * Keyed by canonical service code (see common/service-types.ts). A code without
- * a specific list falls back to DEFAULT_SUBSTAGES. Mirror of the frontend
- * `lib/processing-substages.ts` — keep the two in sync by hand, exactly like
- * service-types.ts is mirrored.
+ * The feedback specified picklists for exactly two flows (Visit Visa and the
+ * LMIA-exempt Work Permit). For EVERY OTHER service the field is free-text —
+ * the officer types the label manually (or leaves it blank), per the doc's
+ * "leave it blank or leave space for manual entry". Mirror of the frontend
+ * `lib/processing-substages.ts` — keep the two in sync by hand.
  */
 
-export const DEFAULT_SUBSTAGES: readonly string[] = [
-  'Doc collection',
-  'Hold',
-  'Final submission under process',
-  'Submission done',
-  'Decision',
-];
-
 export const CATEGORY_SUBSTAGE: Readonly<Record<string, readonly string[]>> = {
-  STUDY_VISA: ['Profile assessment', 'Admission / offer', 'Doc collection', 'Final submission under process', 'Submission done', 'Decision'],
+  VISIT_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision'],
   // The "LMIA-exempt work permit" flow the processing team described.
   WORK_PERMIT: ['Business meeting & profile assessment', 'Business establishment', 'Exemption', 'Doc collection', 'Final submission', 'Decision'],
-  PR_CASE: ['Profile assessment', 'Pool / EOI entry', 'Doc collection', 'Final submission under process', 'Submission done', 'Decision'],
-  VISIT_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision'],
-  // TOURIST_VISA is hidden from new-case pickers but still a valid stored code,
-  // so a legacy tourist-visa case still renders + validates a sub-stage.
-  TOURIST_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision'],
-  SPOUSE_VISA: ['Relationship evidence', 'Doc collection', 'Sponsor verification', 'Final submission under process', 'Submission done', 'Decision'],
-  E2_VISA: ['Business meeting & profile assessment', 'Business plan', 'Business establishment', 'Source of funds', 'Doc collection', 'Final submission', 'Decision'],
-  CBI: ['Profile assessment', 'Due diligence', 'Source of funds', 'Investment / SPA signed', 'Doc collection', 'Final submission', 'Decision'],
-  JR_RESUBMISSION: ['Refusal analysis', 'New evidence', 'Legal submissions', 'Final submission under process', 'Submission done', 'Decision'],
 };
 
-/** The sub-stage picklist for a service code, falling back to the default. */
+/** The sub-stage picklist for a service code, or [] when the service is
+ *  free-text (manual entry). */
 export function subStagesForService(service: string): readonly string[] {
-  return CATEGORY_SUBSTAGE[service] ?? DEFAULT_SUBSTAGES;
+  return CATEGORY_SUBSTAGE[service] ?? [];
 }
 
-/** True if `value` is a member of the picklist for `service`. */
+/** True when the service has a fixed picklist (dropdown), false when it is
+ *  free-text / manual entry. */
+export function hasSubStageList(service: string): boolean {
+  return (CATEGORY_SUBSTAGE[service]?.length ?? 0) > 0;
+}
+
+/**
+ * Validate a proposed sub-stage value for a service. Services WITH a picklist
+ * must pick a member; services WITHOUT one accept any string (manual entry —
+ * the DTO already bounds the length).
+ */
 export function isValidSubStage(service: string, value: string): boolean {
-  return subStagesForService(service).includes(value);
+  const list = CATEGORY_SUBSTAGE[service];
+  if (list && list.length > 0) return list.includes(value);
+  return true;
 }

@@ -604,6 +604,7 @@ export default function CasesPage() {
   const [priority, setPriority] = useState<ProcessingPriority | ''>('');
   const [service, setService] = useState('');
   const [officer, setOfficer] = useState('');
+  const [salesPerson, setSalesPerson] = useState('');
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
   const [updatedFrom, setUpdatedFrom] = useState('');
@@ -681,7 +682,23 @@ export default function CasesPage() {
     };
   }, [query]);
 
-  const hasActiveFilters = !!(statusGroup || priority || service || officer || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
+  // Sales-person filter is derived + applied client-side from the loaded roster
+  // (each row carries its lead's sales rep), so it needs no extra endpoint.
+  const salesPersonOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of cases) {
+      const e = c.lead.assignedEmployee;
+      if (e) m.set(e.id, `${e.firstName} ${e.lastName}`.trim());
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [cases]);
+
+  const displayed = useMemo(
+    () => (salesPerson ? cases.filter((c) => c.lead.assignedEmployee?.id === salesPerson) : cases),
+    [cases, salesPerson],
+  );
+
+  const hasActiveFilters = !!(statusGroup || priority || service || officer || salesPerson || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
   const dateFilterActive = !!(createdFrom || createdTo || updatedFrom || updatedTo);
 
   function clearAll() {
@@ -691,6 +708,7 @@ export default function CasesPage() {
     setPriority('');
     setService('');
     setOfficer('');
+    setSalesPerson('');
     setCreatedFrom('');
     setCreatedTo('');
     setUpdatedFrom('');
@@ -783,6 +801,14 @@ export default function CasesPage() {
                 ))}
               </select>
             ) : null}
+            {salesPersonOptions.length > 0 ? (
+              <select className="sos-input" value={salesPerson} onChange={(e) => setSalesPerson(e.target.value)} aria-label="Sales person">
+                <option value="">All sales people</option>
+                {salesPersonOptions.map(([id, name]) => (
+                  <option key={id} value={id}>{name}</option>
+                ))}
+              </select>
+            ) : null}
           </div>
 
           {/* Date filters live behind a disclosure — collapsed by default so the
@@ -833,7 +859,7 @@ export default function CasesPage() {
       </GlassCard>
 
       <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>
-        Active cases ({cases.length}){hasActiveFilters ? ' · filtered' : ''}
+        {bucket === 'closed' ? 'Closed cases' : bucket === 'junk' ? 'Junk cases' : 'Active cases'} ({displayed.length}){hasActiveFilters ? ' · filtered' : ''}
       </div>
 
       <GlassCard variant="panel" padded={false}>
@@ -854,12 +880,12 @@ export default function CasesPage() {
               </div>
             ) : error ? (
               <div style={{ padding: 24, color: 'var(--sos-status-danger)' }}>Failed to load cases: {error}</div>
-            ) : cases.length === 0 ? (
+            ) : displayed.length === 0 ? (
               <div style={{ padding: 32, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
                 {hasActiveFilters ? 'No cases match these filters.' : 'No active processing cases yet. Cases appear here once Finance hands them off.'}
               </div>
             ) : (
-              cases.map((c) => {
+              displayed.map((c) => {
                 const name = casePersonName(c);
                 const phone = c.client.phone || c.lead.phone || '';
                 const email = c.client.email ?? c.lead.email ?? '';

@@ -55,6 +55,13 @@ android {
 
     signingConfigs {
         create("release") {
+            // Max-compatibility signing: keep the v1 (JAR) signature ON. Shorebird's
+            // newer AGP/Gradle toolchain otherwise signs v2-only, and some Android/OEM
+            // installers (MIUI/XOS on Xiaomi/Infinix) then reject an in-place UPDATE
+            // over a v1-signed build with "App not installed as package". Forcing
+            // v1+v2 matches every prior release so updates apply without a reinstall.
+            enableV1Signing = true
+            enableV2Signing = true
             if (keystorePropertiesFile.exists()) {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String

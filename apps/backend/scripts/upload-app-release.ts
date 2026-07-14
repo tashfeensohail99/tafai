@@ -60,12 +60,27 @@ async function main() {
   await storage.uploadAt(APP_APK_KEY, primary, APK_MIME);
   if (v7a) await storage.uploadAt(APP_APK_V7A_KEY, v7a, APK_MIME);
 
+  // Preserve any runtime behavior flag (e.g. leadWhatsappMode) already set on
+  // the live manifest, so republishing a build doesn't silently reset a
+  // server-toggled behavior. The flag is flipped by scripts/set-mobile-flag.ts
+  // or the admin portal (Admin → Settings → Mobile App). We gate on exists() so
+  // a genuine first publish carries nothing, but a transient read/parse failure
+  // on an EXISTING manifest aborts the publish loudly (throws) rather than
+  // silently dropping a live flag.
+  let carried: Record<string, unknown> = {};
+  if (await storage.exists(APP_INFO_KEY)) {
+    const existing = await storage.download(APP_INFO_KEY);
+    const prev = JSON.parse(existing.bytes.toString('utf-8')) as Record<string, unknown>;
+    if (prev.leadWhatsappMode) carried = { leadWhatsappMode: prev.leadWhatsappMode };
+  }
+
   const info = {
     version,
     abi: universal ? 'universal' : 'arm64-v8a',
     sizeBytes: primary.length,
     v7aSizeBytes: v7a ? v7a.length : null,
     uploadedAt: new Date().toISOString(),
+    ...carried,
   };
   await storage.uploadAt(
     APP_INFO_KEY,

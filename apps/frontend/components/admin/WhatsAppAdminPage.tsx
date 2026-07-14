@@ -326,8 +326,9 @@ export function WhatsAppAdminPage() {
     socket,
     setItems,
     matches: (row) => {
-      if (unassignedOnly && row.lead?.assignedEmployeeId) return false;
-      if (agentFilter && row.lead?.assignedEmployeeId !== agentFilter) return false;
+      const ownerId = row.lead?.assignedEmployeeId ?? row.client?.assignedEmployeeId ?? null;
+      if (unassignedOnly && ownerId) return false;
+      if (agentFilter && ownerId !== agentFilter) return false;
       // Archived / Blocked are exclusive views; the default tabs exclude
       // archived threads. We can identify archived rows by status; blocked
       // rows aren't distinguishable from a list-item alone, so the periodic
@@ -380,7 +381,9 @@ export function WhatsAppAdminPage() {
   // the loaded page only while stats are still loading, so the chips never
   // show a blank.
   const activeCount = stats?.active ?? items.length;
-  const unassignedCount = stats?.unassigned ?? items.filter((t) => !t.lead?.assignedEmployeeId).length;
+  const unassignedCount =
+    stats?.unassigned ??
+    items.filter((t) => !t.lead?.assignedEmployeeId && !t.client?.assignedEmployeeId).length;
   // Response-SLA numbers (the source of truth). The legacy first-response
   // "SLA breached" KPI was retired — it only scored the conversation's first
   // reply and disagreed with these rolling figures, which confused the team.
@@ -1286,8 +1289,12 @@ const ThreadRow = memo(function ThreadRow({
         ? `${item.lead.firstName} ${item.lead.lastName}`.trim()
         : item.waContactId;
 
-  const assignedName = item.lead?.assignedEmployee
-    ? `${item.lead.assignedEmployee.firstName} ${item.lead.assignedEmployee.lastName}`.trim()
+  // Prefer the lead's owner; for a converted contact's lead-less thread fall
+  // back to the CLIENT's owner (set by a client-thread reassign) so the row
+  // shows "→ <rep>" instead of "Unassigned".
+  const assignee = item.lead?.assignedEmployee ?? item.client?.assignedEmployee;
+  const assignedName = assignee
+    ? `${assignee.firstName} ${assignee.lastName}`.trim()
     : null;
 
   // Mirror the sales inbox: show the time of the last REAL activity (customer

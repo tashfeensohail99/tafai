@@ -7,6 +7,7 @@ import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
 import '../../../core/util/launchers.dart';
 import '../../../core/widgets/app_states.dart';
+import '../../../core/update/app_update.dart';
 import '../../../core/widgets/badges.dart';
 import '../../agreements/presentation/agreements_screen.dart';
 import '../../followups/presentation/followup_form_sheet.dart';
@@ -369,6 +370,27 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
 
   bool _waOpening = false;
 
+  /// Dispatch the WhatsApp quick-action based on the server-controlled mode
+  /// ([leadWhatsappModeProvider]). `personal` (an admin campaign switch, flipped
+  /// server-side with no app update) opens the rep's own WhatsApp with the lead's
+  /// number; `crm` (default) opens the in-app CRM conversation.
+  Future<void> _whatsappButton(Lead lead) async {
+    var mode = LeadWhatsappMode.crm;
+    try {
+      // refresh (not read) so an admin flip is picked up on the very next tap,
+      // instead of a value cached for the whole app-process lifetime.
+      mode = await ref.refresh(leadWhatsappModeProvider.future);
+    } catch (_) {
+      // fall through on the CRM default
+    }
+    if (mode == LeadWhatsappMode.personal) {
+      final ok = await openWhatsApp(lead.phone);
+      if (!ok && mounted) _toast('WhatsApp is not installed on this device.');
+      return;
+    }
+    await _whatsapp(lead);
+  }
+
   /// Open the CRM WhatsApp conversation for this lead IN-APP so the rep replies
   /// from the business number without hunting through the inbox. When the lead
   /// has no CRM conversation yet, offer to start one by sending an approved
@@ -568,7 +590,7 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
               child: _QuickAction(
                 icon: Icons.chat_outlined,
                 label: 'WhatsApp',
-                onTap: lead.phone.isNotEmpty ? () => _whatsapp(lead) : null,
+                onTap: lead.phone.isNotEmpty ? () => _whatsappButton(lead) : null,
               ),
             ),
             const SizedBox(width: AppTokens.space2),

@@ -71,6 +71,34 @@ final appUpdateProvider = FutureProvider<AppUpdateStatus>((ref) async {
   }
 });
 
+/// How the lead-detail WhatsApp button should behave. `crm` (default) opens the
+/// in-app CRM conversation; `personal` opens the rep's own WhatsApp (wa.me) with
+/// the lead's number — a temporary campaign mode.
+enum LeadWhatsappMode { crm, personal }
+
+/// Server-controlled behavior switch read from the SAME published manifest the
+/// update-check already fetches (`/public/app/info` → `app/latest.json`). Lets
+/// ops flip the lead WhatsApp button between CRM-inbox and personal-WhatsApp by
+/// re-uploading that JSON — no app rebuild / forced update needed. Any network
+/// or parse failure falls back to `crm` (the permanent, intended behavior), so a
+/// flaky check never silently sends reps to their personal WhatsApp.
+final leadWhatsappModeProvider =
+    FutureProvider.autoDispose<LeadWhatsappMode>((ref) async {
+  try {
+    final res = await Dio().get<Map<String, dynamic>>(
+      '$apiBaseUrl/public/app/info',
+      options: Options(
+        receiveTimeout: const Duration(seconds: 8),
+        sendTimeout: const Duration(seconds: 8),
+      ),
+    );
+    final mode = res.data?['leadWhatsappMode']?.toString().toLowerCase();
+    return mode == 'personal' ? LeadWhatsappMode.personal : LeadWhatsappMode.crm;
+  } catch (_) {
+    return LeadWhatsappMode.crm;
+  }
+});
+
 /// Compare two "major.minor.patch+build" strings numerically, segment by
 /// segment. Returns true when [latest] is strictly greater than [current].
 /// Tolerant of missing segments and non-numeric noise.

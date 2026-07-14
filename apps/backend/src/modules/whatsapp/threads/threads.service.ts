@@ -134,6 +134,11 @@ const THREAD_LIST_INCLUDE = {
       lastName: true,
       phone: true,
       status: true,
+      // A converted contact's thread has no lead, so the inbox row's "assigned
+      // to" must fall back to the client's owner (set by a client-thread
+      // reassign) — otherwise it shows "Unassigned" despite having an owner.
+      assignedEmployeeId: true,
+      assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
     },
   },
 } satisfies Prisma.WhatsAppThreadInclude;
@@ -237,7 +242,21 @@ export class WhatsAppThreadsService {
         // rather than throw, so the UI doesn't break.
         return { items: [], nextCursor: null };
       }
-      where.lead = { assignedEmployeeId: caller.employeeId, deletedAt: null };
+      // Rep inbox: their assigned LEADS, plus (for converted contacts) their
+      // assigned CLIENTS — a client thread can now be routed to a rep via
+      // reassign, so it must surface here too. Pushed as AND-of-OR so it
+      // composes with the other filters (the client branch can't be expressed
+      // by the single `where.lead` the lead-only path used).
+      and.push({
+        OR: [
+          { lead: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
+          // Lead-less client thread assigned to this rep. `leadId: null` keeps a
+          // dual-linked thread scoped by its lead alone (matches getOrFail +
+          // reassign); `deletedAt: null` drops soft-deleted clients like the
+          // lead guard above.
+          { leadId: null, client: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
+        ],
+      });
     } else if (caller.canViewFinanceScope) {
       // Finance closed-loop scope — only threads whose lead has a
       // non-DRAFT agreement on file (i.e., Sales has sent it to Finance).
@@ -942,6 +961,7 @@ export class WhatsAppThreadsService {
             nationality: true,
             status: true,
             blockedAt: true,
+            assignedEmployeeId: true,
           },
         },
       },
@@ -965,8 +985,17 @@ export class WhatsAppThreadsService {
         // (lead/client has a ProcessingCase).
         const inScope = await this.threadInProcessingScope(t.lead?.id ?? null, t.client?.id ?? null);
         if (!inScope) throw new ForbiddenException('Thread not in your processing scope');
-      } else if (!caller.employeeId || t.lead?.assignedEmployeeId !== caller.employeeId) {
-        throw new ForbiddenException('Thread not assigned to you');
+      } else {
+        // A thread with a lead is scoped by the LEAD's owner (unchanged). A
+        // converted contact's lead-less thread is scoped by the CLIENT's owner
+        // (set by a client-thread reassign). When both exist the lead wins, so
+        // client ownership never overrides lead scoping.
+        const owner = t.leadId
+          ? t.lead?.assignedEmployeeId
+          : t.client?.assignedEmployeeId;
+        if (!caller.employeeId || owner !== caller.employeeId) {
+          throw new ForbiddenException('Thread not assigned to you');
+        }
       }
     }
     return t;
@@ -1041,9 +1070,14 @@ export class WhatsAppThreadsService {
         id: true,
         leadId: true,
         lead: { select: { id: true, assignedEmployeeId: true } },
+        // A converted contact's thread has a client (leadId null) instead of a
+        // lead. Reassigning it moves the CLIENT's owner so the same picker works
+        // for post-conversion chats, not just leads.
+        clientId: true,
+        client: { select: { id: true, assignedEmployeeId: true } },
       },
     });
-    if (!t || !t.leadId || !t.lead) throw new NotFoundException('Thread not found');
+    if (!t || (!t.lead && !t.client)) throw new NotFoundException('Thread not found');
 
     const target = await this.prisma.employee.findFirst({
       where: {
@@ -1063,25 +1097,40 @@ export class WhatsAppThreadsService {
       );
     }
 
-    const previousAssignee = t.lead.assignedEmployeeId;
+    // A thread with a lead is owned via the LEAD (unchanged); a converted
+    // contact's lead-less thread is owned via the CLIENT. When both exist the
+    // lead wins — reassign, list() and getOrFail() all key off this same rule so
+    // a dual-linked thread's two owners can never diverge.
+    const onLead = !!(t.leadId && t.lead);
+    const previousAssignee =
+      (onLead ? t.lead?.assignedEmployeeId : t.client?.assignedEmployeeId) ?? null;
 
     await this.prisma.$transaction([
-      this.prisma.lead.update({
-        where: { id: t.leadId },
-        data: {
-          assignedEmployeeId: employeeId,
-          preferredEmployeeId: employeeId,
-        },
-      }),
+      // Reassign the owner on whichever contact backs the thread. A lead also
+      // gets preferredEmployeeId (the round-robin sticky preference); a client
+      // has no round-robin so we only move assignedEmployeeId.
+      onLead
+        ? this.prisma.lead.update({
+            where: { id: t.leadId! },
+            data: {
+              assignedEmployeeId: employeeId,
+              preferredEmployeeId: employeeId,
+            },
+          })
+        : this.prisma.client.update({
+            where: { id: t.clientId! },
+            data: { assignedEmployeeId: employeeId },
+          }),
       this.prisma.whatsAppThread.update({
         where: { id: threadId },
         data: { lastAssignmentReason: WhatsAppAssignmentReason.REASSIGN },
       }),
       this.prisma.activityTimeline.create({
         data: {
-          entityType: 'Lead',
-          entityId: t.leadId,
-          leadId: t.leadId,
+          entityType: onLead ? 'Lead' : 'Client',
+          entityId: (onLead ? t.leadId : t.clientId)!,
+          leadId: onLead ? t.leadId : null,
+          clientId: onLead ? null : t.clientId,
           // Existing WHATSAPP_ASSIGNED enum covers both initial assignment
           // and admin overrides; metadata.via='admin_override' is how we
           // tell them apart in audit views.
@@ -1100,7 +1149,8 @@ export class WhatsAppThreadsService {
 
     return {
       threadId,
-      leadId: t.leadId,
+      leadId: t.leadId ?? null,
+      clientId: t.clientId ?? null,
       assignedEmployeeId: employeeId,
       assignedEmployeeName: `${target.firstName} ${target.lastName}`.trim(),
       previousAssignee,

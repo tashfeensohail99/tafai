@@ -623,6 +623,7 @@ export interface ImportRowResult {
   serviceCode: string | null;
   programCode: string | null;
   salesPerson: string | null;
+  salesPersonEmail: string | null;
   salesPersonMatched: boolean;
   officer: string | null;
   officerMatched: boolean;

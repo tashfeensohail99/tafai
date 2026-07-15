@@ -248,7 +248,7 @@ interface CreateClientCaseInput {
   isImport?: boolean;
 }
 
-/** The 9 logical columns of the client-import sheet. */
+/** The logical columns of the client-import sheet. */
 type ImportField =
   | 'externalRef'
   | 'clientName'
@@ -256,8 +256,10 @@ type ImportField =
   | 'email'
   | 'program'
   | 'salesPerson'
+  | 'salesPersonEmail'
   | 'signupDate'
   | 'officer'
+  | 'officerEmail'
   | 'caseStatus';
 
 /** Per-row resolution outcome for the client-import preview/commit. */
@@ -271,6 +273,8 @@ export interface ImportRowResult {
   serviceCode: string | null;
   programCode: string | null;
   salesPerson: string | null;
+  salesPersonEmail: string | null;
+  /** How the sales rep resolved: 'email' | 'name' | null (unmatched). */
   salesPersonMatched: boolean;
   officer: string | null;
   officerMatched: boolean;
@@ -960,9 +964,11 @@ export class ProcessingService {
     // Build the two name→id indexes ONCE (officers = UserAccount ids;
     // sales reps = Employee ids — different identity spaces).
     const officerIndex = new Map<string, string[]>();
+    const officerByEmail = new Map<string, string>(); // lower(email) → UserAccount.id
     const officersById = new Map<string, { email: string; name: string }>();
     for (const o of await this.listProcessingOfficers()) {
       officersById.set(o.id, { email: o.email, name: o.name });
+      if (o.email) officerByEmail.set(o.email.toLowerCase(), o.id);
       const key = this.normNameKey(o.name);
       if (!key) continue;
       const arr = officerIndex.get(key);
@@ -970,11 +976,13 @@ export class ProcessingService {
       else officerIndex.set(key, [o.id]);
     }
     const employeeIndex = new Map<string, string[]>();
+    const employeeByEmail = new Map<string, string>(); // lower(email) → Employee.id
     const employees = await this.prisma.employee.findMany({
       where: { isActive: true, deletedAt: null },
-      select: { id: true, firstName: true, lastName: true },
+      select: { id: true, firstName: true, lastName: true, user: { select: { email: true } } },
     });
     for (const e of employees) {
+      if (e.user?.email) employeeByEmail.set(e.user.email.toLowerCase(), e.id);
       const key = this.normNameKey(`${e.firstName} ${e.lastName}`);
       if (!key) continue;
       const arr = employeeIndex.get(key);
@@ -993,7 +1001,14 @@ export class ProcessingService {
     for (const row of rows) {
       rowNumber += 1;
       resolved.push(
-        await this.resolveImportRow(row, rowNumber, cell, officerIndex, employeeIndex, seenKeys, seenPersons),
+        await this.resolveImportRow(
+          row,
+          rowNumber,
+          cell,
+          { officerIndex, officerByEmail, employeeIndex, employeeByEmail },
+          seenKeys,
+          seenPersons,
+        ),
       );
     }
 
@@ -1132,8 +1147,12 @@ export class ProcessingService {
     row: Record<string, string>,
     rowNumber: number,
     cell: (row: Record<string, string>, field: ImportField) => string,
-    officerIndex: Map<string, string[]>,
-    employeeIndex: Map<string, string[]>,
+    indexes: {
+      officerIndex: Map<string, string[]>;
+      officerByEmail: Map<string, string>;
+      employeeIndex: Map<string, string[]>;
+      employeeByEmail: Map<string, string>;
+    },
     seenKeys: Set<string>,
     seenPersons: Set<string>,
   ): Promise<{ result: ImportRowResult; createInput: CreateClientCaseInput | null }> {
@@ -1143,7 +1162,9 @@ export class ProcessingService {
     const rawPhone = cell(row, 'phone');
     const rawProgram = cell(row, 'program');
     const rawSales = cell(row, 'salesPerson');
+    const salesEmail = cell(row, 'salesPersonEmail').toLowerCase();
     const rawOfficer = cell(row, 'officer');
+    const officerEmail = cell(row, 'officerEmail').toLowerCase();
     const caseStatus = cell(row, 'caseStatus') || null;
     const externalRef = cell(row, 'externalRef') || null;
     const signupRaw = cell(row, 'signupDate') || null;
@@ -1167,6 +1188,7 @@ export class ProcessingService {
       serviceCode: prog?.service ?? null,
       programCode: prog?.programCode ?? null,
       salesPerson: rawSales || null,
+      salesPersonEmail: salesEmail || null,
       salesPersonMatched: false,
       officer: rawOfficer || null,
       officerMatched: false,
@@ -1247,30 +1269,51 @@ export class ProcessingService {
     if (rowKey) seenKeys.add(rowKey);
     if (identity) seenPersons.add(identity);
 
-    // --- Officer (name → UserAccount.id) ---
+    // --- Officer → UserAccount.id (email first — unique + reliable — then name) ---
     let assignedOfficerId: string | null = null;
-    if (rawOfficer) {
-      const ids = officerIndex.get(this.normNameKey(rawOfficer));
+    if (officerEmail) {
+      const byEmail = indexes.officerByEmail.get(officerEmail);
+      if (byEmail) {
+        assignedOfficerId = byEmail;
+        result.officerMatched = true;
+      } else {
+        warnings.push(`Officer email "${officerEmail}" didn't match a processing user`);
+      }
+    }
+    if (!assignedOfficerId && rawOfficer) {
+      const ids = indexes.officerIndex.get(this.normNameKey(rawOfficer));
       if (!ids || ids.length === 0) {
-        warnings.push(`Processing officer "${rawOfficer}" not found — imported unassigned`);
+        if (!officerEmail) warnings.push(`Processing officer "${rawOfficer}" not found — imported unassigned`);
       } else if (ids.length > 1) {
         warnings.push(`Processing officer "${rawOfficer}" is ambiguous (${ids.length} matches) — imported unassigned`);
       } else {
         assignedOfficerId = ids[0];
         result.officerMatched = true;
       }
-    } else {
+    }
+    if (!assignedOfficerId && !rawOfficer && !officerEmail) {
       warnings.push('No processing officer named — case goes to the intake queue');
     }
 
-    // --- Sales rep (name → Employee.id) ---
+    // --- Sales rep → Employee.id (email first — unique + reliable — then name).
+    // Email is what lets "Rushna" (first name only) still resolve when the
+    // sheet also carries rushna@…; the name index needs the FULL name. ---
     let assignedEmployeeId: string | null = null;
-    if (rawSales) {
-      const ids = employeeIndex.get(this.normNameKey(rawSales));
+    if (salesEmail) {
+      const byEmail = indexes.employeeByEmail.get(salesEmail);
+      if (byEmail) {
+        assignedEmployeeId = byEmail;
+        result.salesPersonMatched = true;
+      } else {
+        warnings.push(`Sales person email "${salesEmail}" didn't match an employee`);
+      }
+    }
+    if (!assignedEmployeeId && rawSales) {
+      const ids = indexes.employeeIndex.get(this.normNameKey(rawSales));
       if (!ids || ids.length === 0) {
-        warnings.push(`Sales person "${rawSales}" not found`);
+        if (!salesEmail) warnings.push(`Sales person "${rawSales}" not found (try adding a Sale Person Email column)`);
       } else if (ids.length > 1) {
-        warnings.push(`Sales person "${rawSales}" is ambiguous — left unset`);
+        warnings.push(`Sales person "${rawSales}" is ambiguous — left unset (add a Sale Person Email column)`);
       } else {
         assignedEmployeeId = ids[0];
         result.salesPersonMatched = true;
@@ -1310,6 +1353,10 @@ export class ProcessingService {
    *  header matching each field's pattern wins). */
   private mapImportHeaders(headers: string[]): Record<ImportField, string | null> {
     const patterns: Array<[ImportField, RegExp]> = [
+      // Email-specific columns must bind BEFORE the generic officer/sale/email
+      // patterns (the `used` set then keeps them from double-binding).
+      ['officerEmail', /officer.*e-?mail|e-?mail.*officer/i],
+      ['salesPersonEmail', /(sale|agent).*e-?mail|e-?mail.*(sale|agent)/i],
       ['officer', /officer/i],
       ['caseStatus', /status/i],
       ['externalRef', /case\s*id|caseid/i],
@@ -1327,8 +1374,10 @@ export class ProcessingService {
       email: null,
       program: null,
       salesPerson: null,
+      salesPersonEmail: null,
       signupDate: null,
       officer: null,
+      officerEmail: null,
       caseStatus: null,
     };
     const used = new Set<string>();

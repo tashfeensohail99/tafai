@@ -184,6 +184,7 @@ export function ProcessingClientImportPage() {
               ) : (
                 <span style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>
                   Columns: Case ID, Client Name, Contact Number, Email, Program, Sale Person, Signup date, Processing officer, Case Status
+                  <span style={{ color: 'var(--sos-text-faint)' }}> · optional: Sale Person Email, Officer Email (matched first — more reliable than name)</span>
                 </span>
               )}
               <div style={{ marginLeft: 'auto' }}>
@@ -245,8 +246,10 @@ export function ProcessingClientImportPage() {
                       <span style={{ color: r.officer ? (r.officerMatched ? 'var(--sos-text-primary)' : 'var(--sos-status-warning)') : 'var(--sos-text-faint)' }}>
                         {r.officer ? `${r.officer}${r.officerMatched ? '' : ' ⚠'}` : '—'}
                       </span>
-                      <span style={{ color: r.salesPerson ? (r.salesPersonMatched ? 'var(--sos-text-primary)' : 'var(--sos-status-warning)') : 'var(--sos-text-faint)' }}>
-                        {r.salesPerson ? `${r.salesPerson}${r.salesPersonMatched ? '' : ' ⚠'}` : '—'}
+                      <span style={{ color: (r.salesPerson || r.salesPersonEmail) ? (r.salesPersonMatched ? 'var(--sos-text-primary)' : 'var(--sos-status-warning)') : 'var(--sos-text-faint)' }}>
+                        {r.salesPerson || r.salesPersonEmail
+                          ? `${r.salesPerson || r.salesPersonEmail}${r.salesPersonMatched ? '' : ' ⚠'}`
+                          : '—'}
                       </span>
                       <span style={{ color: 'var(--sos-text-secondary)' }}>{r.caseStatus || '—'}</span>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

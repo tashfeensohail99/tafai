@@ -47,6 +47,11 @@ export async function findLeadByNormalizedPhone(
     const national = digits.slice(2); // 3XXXXXXXXX
     variants.add(national); // bare national
     variants.add(`0${national}`); // local with trunk 0
+    // Legacy malformed form "+92"+local-with-0 (= "920"+national, 13 digits),
+    // written by the WhatsApp webhook before it normalised inbound phones. Match
+    // it so a clean inbound reconciles to (and self-heals) the malformed lead
+    // instead of spawning yet another duplicate.
+    variants.add(`920${national}`);
   }
 
   const rows = await prisma.$queryRawUnsafe<
@@ -65,9 +70,20 @@ export async function findLeadByNormalizedPhone(
   if (!row) return null;
 
   if (row.phone !== e164) {
-    await prisma.lead
-      .update({ where: { id: row.id }, data: { phone: e164 } })
-      .catch(() => undefined);
+    // Canonicalise the stored phone so future lookups hit the fast exact-string
+    // index — but ONLY if no other live lead already holds this E.164, otherwise
+    // the rewrite would silently manufacture a duplicate on the same number
+    // (Lead.phone is indexed, not unique). That collision case (e.g. a malformed
+    // lead older than its clean twin) is left untouched for the backfill's
+    // manual-merge queue. Best-effort; a failure here never breaks resolution.
+    const clash = await prisma.lead
+      .count({ where: { phone: e164, deletedAt: null, id: { not: row.id } } })
+      .catch(() => 1);
+    if (clash === 0) {
+      await prisma.lead
+        .update({ where: { id: row.id }, data: { phone: e164 } })
+        .catch(() => undefined);
+    }
   }
   return { id: row.id, assignedEmployeeId: row.assignedEmployeeId, blockedAt: row.blockedAt };
 }

@@ -6,6 +6,7 @@ import {
 import { AuditAction } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateOrphanClientReferenceCode } from '../../common/reference-codes/reference-codes';
+import { normalisePhone } from '../../common/phone/phone.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateClientDto, ListClientsQueryDto, UpdateClientDto } from './clients.dto';
 
@@ -60,7 +61,13 @@ export class ClientsService {
   }
 
   async create(dto: CreateClientDto, actorUserId: string) {
-    await this.ensureUniqueClient(dto.phone, dto.email);
+    // Canonicalise to E.164 so Client.phone is stored the same way every other
+    // channel stores it — the @unique constraint and cross-entity phone lookups
+    // only dedupe correctly against a canonical form. Keep the raw input if it
+    // can't be parsed (rather than reject a valid-but-foreign number).
+    const norm = normalisePhone(dto.phone, 'PK');
+    const phone = norm.ok && norm.e164 ? norm.e164 : dto.phone;
+    await this.ensureUniqueClient(phone, dto.email);
     // Direct client create (not from a lead). Generate an orphan-series
     // reference code (TIS-YYYY-01000+) so the customer has the same
     // identifier shape as lead-derived clients but in a distinct range.
@@ -74,7 +81,7 @@ export class ClientsService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         email: dto.email,
-        phone: dto.phone,
+        phone,
         alternatePhone: dto.alternatePhone,
         nationality: dto.nationality,
         dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
@@ -106,14 +113,20 @@ export class ClientsService {
 
   async update(id: string, dto: UpdateClientDto, actorUserId: string) {
     const existing = await this.findById(id);
-    if (dto.phone || dto.email) {
-      await this.ensureUniqueClient(dto.phone, dto.email, id);
+    // Canonicalise an updated phone to E.164 (same reason as create). undefined
+    // when the update doesn't touch phone → Prisma leaves the column untouched.
+    const phone = dto.phone
+      ? (normalisePhone(dto.phone, 'PK').e164 ?? dto.phone)
+      : dto.phone;
+    if (phone || dto.email) {
+      await this.ensureUniqueClient(phone, dto.email, id);
     }
 
     const updated = await this.prisma.client.update({
       where: { id },
       data: {
         ...dto,
+        phone,
         dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
         passportExpiry: dto.passportExpiry ? new Date(dto.passportExpiry) : undefined,
       },

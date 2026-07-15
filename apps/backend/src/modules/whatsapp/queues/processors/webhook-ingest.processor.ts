@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { findLeadByNormalizedPhone } from '../../../../common/phone/lead-dedupe';
+import { normalisePhone } from '../../../../common/phone/phone.util';
 import { AuditLogService } from '../../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../../../notifications/notifications.service';
@@ -708,7 +709,7 @@ export class WebhookIngestProcessor extends WorkerHost {
 
     const waContactId = call.from;
     if (!waContactId) return;
-    const phone = waContactId.startsWith('+') ? waContactId : `+${waContactId}`;
+    const phone = canonicaliseWaId(waContactId);
 
     // Dedupe — Meta retries webhooks; one Call row per waCallId.
     if (existingRow) {
@@ -937,7 +938,7 @@ export class WebhookIngestProcessor extends WorkerHost {
     profileName: string | null,
   ): Promise<void> {
     const waContactId = msg.from;
-    const phone = waContactId.startsWith('+') ? waContactId : `+${waContactId}`;
+    const phone = canonicaliseWaId(waContactId);
     const now = new Date();
     const windowExpiresAt = new Date(now.getTime() + WINDOW_DURATION_MS);
 
@@ -1656,6 +1657,32 @@ export class WebhookIngestProcessor extends WorkerHost {
 }
 
 // ---- helpers --------------------------------------------------------------
+
+/**
+ * Turn a Meta WhatsApp `wa_id` / call `from` into a canonical E.164 phone that
+ * becomes a Lead/Client identity.
+ *
+ * A wa_id is the customer's full international number (country code included)
+ * WITHOUT the leading '+', e.g. PK "923189155405", Saudi "966507470862". We
+ * therefore prepend '+' FIRST, then normalise — so libphonenumber reads the
+ * number's OWN country code and only strips a retained trunk-0 (some Android
+ * WhatsApp installs register the number as "92" + "03…", which Meta then echoes
+ * as "9203189155405" → without this it lands as the malformed "+9203…" that
+ * splits one caller across duplicate leads).
+ *
+ * CRITICAL: never pass the bare wa_id to normalisePhone(x,'PK'). Without the
+ * '+', libphonenumber treats the digits as a PK *national* number and prepends
+ * "+92" — which mangles every overseas diaspora contact (Gulf/Saudi/UAE, a core
+ * segment) into "+92966…". Prepending '+' first avoids that entirely.
+ *
+ * NB: this is only for the phone identity. The thread key (waContactId) always
+ * stays Meta's raw `from` — it's Meta's resend key for the upsert, not a phone.
+ */
+function canonicaliseWaId(waId: string): string {
+  const withPlus = waId.startsWith('+') ? waId : `+${waId}`;
+  const norm = normalisePhone(withPlus, 'PK');
+  return norm.ok && norm.e164 ? norm.e164 : withPlus;
+}
 
 function splitProfileName(name: string | null, phone: string): { firstName: string; lastName: string } {
   if (!name || !name.trim()) {

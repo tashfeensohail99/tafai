@@ -227,10 +227,34 @@ export class AgreementsService {
     });
     if (!lead) throw new NotFoundException('Lead not found');
 
-    // A lead/client can hold MULTIPLE agreements (one per program/service they
-    // apply for). No one-per-lead lock — the finance ledger attributes each
-    // invoice/payment to its agreement (Invoice.agreementId) so every program
-    // shows its own fee/paid/outstanding.
+    // A lead/client can hold multiple agreements ACROSS DIFFERENT services (one
+    // per program they apply for) — the finance ledger attributes each
+    // invoice/payment to its agreement (Invoice.agreementId). But a SECOND
+    // agreement for the SAME service on the same lead is almost always an
+    // accidental duplicate — a rep re-creating instead of editing the existing
+    // one, or a double-click. Block it (force "edit the existing") unless the
+    // rep explicitly confirms (allowDuplicate) — e.g. a genuinely different
+    // applicant under one lead. A CANCELLED prior agreement doesn't block a redo.
+    if (!dto.allowDuplicate) {
+      const dup = await this.prisma.agreement.findFirst({
+        where: {
+          leadId: lead.id,
+          categoryKey: template.categoryKey,
+          deletedAt: null,
+          status: { not: AgreementStatus.CANCELLED },
+        },
+        select: { agreementNumber: true, status: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (dup) {
+        throw new ConflictException(
+          `This lead already has a ${template.categoryKey} agreement ` +
+            `(${dup.agreementNumber}, ${dup.status}). Open and edit that agreement ` +
+            `instead of creating a new one. Create a separate agreement only if it is ` +
+            `for a different service or a genuinely different applicant.`,
+        );
+      }
+    }
 
     const bioData: AgreementBioData = {
       applicantName: `${lead.firstName} ${lead.lastName}`.trim(),

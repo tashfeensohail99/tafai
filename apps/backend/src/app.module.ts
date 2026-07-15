@@ -53,6 +53,7 @@ import { RemindersModule } from './modules/reminders/reminders.module';
 import { PushModule } from './modules/push/push.module';
 import { DevicesModule } from './modules/devices/devices.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
+import { FaceAttendanceModule } from './modules/face-attendance/face-attendance.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
 import { TelephonyModule } from './modules/telephony/telephony.module';
 
@@ -118,6 +119,7 @@ import { TelephonyModule } from './modules/telephony/telephony.module';
     PushModule,
     DevicesModule,
     AttendanceModule,
+    FaceAttendanceModule,
     PayrollModule,
     TelephonyModule,
   ],

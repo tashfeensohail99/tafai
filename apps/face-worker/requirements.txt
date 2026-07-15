@@ -1,0 +1,16 @@
+# intag face-worker — pinned to match the on-prem Summit box's embedding space.
+# Same insightface + buffalo_l pack => byte-identical 512-d embeddings; only the
+# ONNX runtime differs (CPU here vs DirectML on the Windows box), which does not
+# change model outputs.
+
+fastapi==0.136.3
+uvicorn[standard]==0.47.0
+python-multipart==0.0.20
+
+# Recognition pipeline (versions matched to Summit)
+numpy==1.26.4
+opencv-python-headless==4.11.0.86   # headless: no GUI libs on the server
+onnxruntime==1.20.1                  # CPU build for Linux/Railway
+insightface==1.0.1
+scikit-image==0.26.0                 # insightface face-alignment warp
+scipy==1.17.1

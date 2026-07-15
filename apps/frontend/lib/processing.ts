@@ -607,6 +607,58 @@ export function createManualClientCase(body: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Bulk client import (spreadsheet → clients + cases + auto-assign)
+// ---------------------------------------------------------------------------
+
+/** Per-row resolution result from the import preview/commit. Mirrors the
+ *  backend ImportRowResult. */
+export interface ImportRowResult {
+  rowNumber: number;
+  externalRef: string | null;
+  clientName: string;
+  phone: string | null;
+  email: string | null;
+  program: string | null;
+  serviceCode: string | null;
+  programCode: string | null;
+  salesPerson: string | null;
+  salesPersonMatched: boolean;
+  officer: string | null;
+  officerMatched: boolean;
+  caseStatus: string | null;
+  signupDate: string | null;
+  outcome: 'READY' | 'READY_UNASSIGNED' | 'DUPLICATE' | 'BLOCKED';
+  warnings: string[];
+}
+
+export interface ImportResult {
+  totalRows: number;
+  sourceFormat: string;
+  dryRun: boolean;
+  rows: ImportRowResult[];
+  counts: { ready: number; unassigned: number; duplicates: number; blocked: number };
+  committed?: { created: number; skipped: number; failed: number };
+}
+
+/** Multipart upload routed through apiFetch (so it gets 401 token-refresh +
+ *  retry; apiFetch leaves Content-Type unset for FormData). */
+async function uploadProcessingMultipart<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append('file', file);
+  return apiFetch<T>(path, { method: 'POST', body: form, cache: 'no-store' });
+}
+
+/** Dry-run: resolve every row (officer/sales-rep/program/dupe), write nothing. */
+export function previewProcessingImport(file: File): Promise<ImportResult> {
+  return uploadProcessingMultipart<ImportResult>('/processing/client-imports/preview', file);
+}
+
+/** Commit: create + assign each importable row. Idempotent by Case ID. */
+export function commitProcessingImport(file: File): Promise<ImportResult> {
+  return uploadProcessingMultipart<ImportResult>('/processing/client-imports', file);
+}
+
 /**
  * P4d — Submission-quality gate.
  * Returns whether a case is clear to move to READY_FOR_SUBMISSION / SUBMITTED,

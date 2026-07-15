@@ -186,7 +186,8 @@ function SubStagePicker({
           style={{ ...controlStyle, cursor: saving ? 'wait' : 'pointer' }}
         >
           <option value="">— none —</option>
-          {options.map((o) => (
+          {/* Keep an imported / off-list value selectable so it still renders. */}
+          {(value && !options.includes(value) ? [value, ...options] : options).map((o) => (
             <option key={o} value={o}>{o}</option>
           ))}
         </select>

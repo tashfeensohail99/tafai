@@ -3155,6 +3155,14 @@ model ProcessingCase {
   /// PURELY informational — never drives the ProcessingCaseStage machine,
   /// document gates, SLA, or reporting. NULL until an officer sets it.
   subStage                     String?
+  /// Import provenance (bulk client import): the source system's "Case ID"
+  /// (e.g. "0001"). Preserved for cross-reference; used as an idempotency hint
+  /// on re-import. Not unique — IDs can repeat across batches.
+  externalRef                  String?
+  /// Import provenance: the client's original signup date from the source
+  /// sheet. Purely descriptive — kept SEPARATE from createdAt so it never
+  /// feeds SLA / aging (those derive from createdAt / handover).
+  signupDate                   DateTime?              @db.Date
   financeHandoverNote          String?
   processingNote               String?
   estimatedSubmissionDate      DateTime?              @db.Date
@@ -3198,6 +3206,7 @@ model ProcessingCase {
   @@index([clientId])
   @@index([leadId])
   @@index([priority, stage])
+  @@index([externalRef])
   @@map("processing_cases")
   @@schema("processing")
 }

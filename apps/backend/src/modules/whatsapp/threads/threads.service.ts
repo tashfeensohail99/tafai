@@ -360,9 +360,19 @@ export class WhatsAppThreadsService {
       // everything (the "search not working" bug). Require >= 3 digits so a
       // stray digit in a name doesn't broaden the match either.
       if (digits.length >= 3) {
-        or.push({ waContactId: { contains: digits } });
-        or.push({ lead: { phone: { contains: digits } } });
-        or.push({ client: { phone: { contains: digits } } });
+        // Local vs international format: numbers are stored international
+        // (923008641218 / +923008641218), but reps type the local 0-prefixed
+        // form (03008641218). A raw substring match then fails because the
+        // stored "92" is where the typed "0" is. Strip leading zero(s) and match
+        // on BOTH forms so either "03008641218" or "923008641218" resolves.
+        const variants = new Set<string>([digits]);
+        const bare = digits.replace(/^0+/, '');
+        if (bare.length >= 3) variants.add(bare);
+        for (const d of variants) {
+          or.push({ waContactId: { contains: d } });
+          or.push({ lead: { phone: { contains: d } } });
+          or.push({ client: { phone: { contains: d } } });
+        }
       }
       and.push({ OR: or });
     }

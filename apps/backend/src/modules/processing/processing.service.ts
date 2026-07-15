@@ -960,7 +960,9 @@ export class ProcessingService {
     // Build the two name→id indexes ONCE (officers = UserAccount ids;
     // sales reps = Employee ids — different identity spaces).
     const officerIndex = new Map<string, string[]>();
+    const officersById = new Map<string, { email: string; name: string }>();
     for (const o of await this.listProcessingOfficers()) {
+      officersById.set(o.id, { email: o.email, name: o.name });
       const key = this.normNameKey(o.name);
       if (!key) continue;
       const arr = officerIndex.get(key);
@@ -1015,6 +1017,7 @@ export class ProcessingService {
     let created = 0;
     let skipped = 0;
     let failed = 0;
+    const createdRows: Array<{ clientName: string; service: string; officerId: string | null }> = [];
     for (const r of resolved) {
       if (!r.createInput) {
         skipped += 1;
@@ -1023,6 +1026,11 @@ export class ProcessingService {
       try {
         await this.createClientCaseInternal(r.createInput, user);
         created += 1;
+        createdRows.push({
+          clientName: r.result.clientName,
+          service: r.result.serviceCode ?? r.createInput.service,
+          officerId: r.createInput.assignedOfficerId ?? null,
+        });
       } catch (e) {
         failed += 1;
         r.result.outcome = 'BLOCKED';
@@ -1032,7 +1040,90 @@ export class ProcessingService {
       }
     }
     out.committed = { created, skipped, failed };
+
+    // Tell the assigned officers + the manager(s) what landed — ONE summary
+    // each, not one email per case. Fire-and-forget + gated + non-fatal.
+    if (created > 0 && this.processingNotifyEnabled()) {
+      void this.notifyImportAssignments(createdRows, officersById, user.email).catch(() => {});
+    }
+
     return out;
+  }
+
+  /** Post-import: email + bell each assigned officer ONE summary of their new
+   *  cases, and each active processing manager ONE overall summary. */
+  private async notifyImportAssignments(
+    createdRows: Array<{ clientName: string; service: string; officerId: string | null }>,
+    officersById: Map<string, { email: string; name: string }>,
+    importedBy: string | null,
+  ): Promise<void> {
+    const byOfficer = new Map<string, Array<{ clientName: string; service: string }>>();
+    let unassigned = 0;
+    for (const r of createdRows) {
+      if (!r.officerId) {
+        unassigned += 1;
+        continue;
+      }
+      const arr = byOfficer.get(r.officerId);
+      if (arr) arr.push({ clientName: r.clientName, service: r.service });
+      else byOfficer.set(r.officerId, [{ clientName: r.clientName, service: r.service }]);
+    }
+
+    const tasks: Array<Promise<unknown>> = [];
+
+    // (a) One summary per assigned officer (e.g. Waseem).
+    for (const [officerId, cases] of byOfficer) {
+      const officer = officersById.get(officerId);
+      if (!officer) continue;
+      tasks.push(
+        this.email.sendProcessingImportAssigned({ to: officer.email, officerName: officer.name, cases }),
+      );
+      tasks.push(
+        this.notifications.create({
+          userId: officerId,
+          type: 'PROCESSING_CASE_ASSIGNED',
+          title: `${cases.length} new case${cases.length !== 1 ? 's' : ''} assigned to you`,
+          body: 'Imported from a spreadsheet — now in your queue.',
+          link: '/processing/cases',
+        }),
+      );
+    }
+
+    // (b) One overall summary per active processing manager.
+    const managers = await this.getActiveProcessingManagers();
+    if (managers.length > 0) {
+      const byOfficerSummary = [...byOfficer.entries()].map(([id, cs]) => ({
+        name: officersById.get(id)?.name ?? 'Officer',
+        count: cs.length,
+      }));
+      const total = createdRows.length;
+      for (const m of managers) {
+        tasks.push(
+          this.email.sendProcessingImportManagerSummary({
+            to: m.email,
+            managerName: m.name,
+            total,
+            unassigned,
+            byOfficer: byOfficerSummary,
+            importedBy,
+          }),
+        );
+        tasks.push(
+          this.notifications.create({
+            userId: m.userId,
+            type: 'PROCESSING_CASE_NEW',
+            title: `${total} client${total !== 1 ? 's' : ''} imported into Processing`,
+            body:
+              unassigned > 0
+                ? `${unassigned} unassigned — check the intake queue.`
+                : 'All assigned to officers.',
+            link: '/processing/cases',
+          }),
+        );
+      }
+    }
+
+    await Promise.all(tasks);
   }
 
   /** Resolve one import row into a preview verdict + (when creatable) the exact

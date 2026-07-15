@@ -713,6 +713,77 @@ export class EmailService {
       html: baseTemplate('Case assigned to an associate', content),
     });
   }
+
+  /**
+   * Bulk client import — ONE summary email to a processing officer listing the
+   * cases newly imported + assigned to them (instead of one email per case).
+   */
+  async sendProcessingImportAssigned(opts: {
+    to: string;
+    officerName?: string | null;
+    cases: Array<{ clientName: string; service: string }>;
+  }): Promise<boolean> {
+    const greeting = opts.officerName ? `Hi ${escHtml(opts.officerName)}, ` : '';
+    const n = opts.cases.length;
+    const rows = opts.cases
+      .slice(0, 50)
+      .map(
+        (c) =>
+          `<tr><td style="padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#0f172a;">${escHtml(c.clientName)}</td><td style="padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#64748b;text-align:right;">${escHtml(c.service.replace(/_/g, ' '))}</td></tr>`,
+      )
+      .join('');
+    const more = n > 50 ? `<p style="margin:10px 0 0;font-size:12px;color:#94a3b8;">…and ${n - 50} more.</p>` : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">${n} new case${n !== 1 ? 's' : ''} assigned to you</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">${greeting}${n} processing case${n !== 1 ? 's were' : ' was'} imported from a spreadsheet and assigned to you. Please review each checklist and start the next steps.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>${more}
+      </div>
+      <a href="https://tashfeengroup.com/processing/cases" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open My Cases &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `${n} new case${n !== 1 ? 's' : ''} assigned to you`,
+      html: baseTemplate('New cases assigned to you', content),
+    });
+  }
+
+  /**
+   * Bulk client import — ONE summary email to a processing manager: total
+   * imported + per-officer distribution + unassigned count.
+   */
+  async sendProcessingImportManagerSummary(opts: {
+    to: string;
+    managerName?: string | null;
+    total: number;
+    unassigned: number;
+    byOfficer: Array<{ name: string; count: number }>;
+    importedBy?: string | null;
+  }): Promise<boolean> {
+    const greeting = opts.managerName ? `Hi ${escHtml(opts.managerName)}, ` : '';
+    const rows = opts.byOfficer
+      .map(
+        (o) =>
+          `<tr><td style="padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#0f172a;">${escHtml(o.name)}</td><td style="padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#64748b;text-align:right;">${o.count}</td></tr>`,
+      )
+      .join('');
+    const unassignedRow =
+      opts.unassigned > 0
+        ? `<tr><td style="padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#b45309;">Unassigned (intake queue)</td><td style="padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#b45309;text-align:right;">${opts.unassigned}</td></tr>`
+        : '';
+    const by = opts.importedBy ? ` by ${escHtml(opts.importedBy)}` : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">${opts.total} client${opts.total !== 1 ? 's' : ''} imported into Processing</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">${greeting}a bulk client import${by} just completed. Here&#39;s how the ${opts.total} new case${opts.total !== 1 ? 's were' : ' was'} distributed:</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">${rows}${unassignedRow}</table>
+      </div>
+      <a href="https://tashfeengroup.com/processing/cases" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open Processing &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `${opts.total} client${opts.total !== 1 ? 's' : ''} imported into Processing`,
+      html: baseTemplate('Clients imported into Processing', content),
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
-import { findLeadByNormalizedPhone } from '../../../../common/phone/lead-dedupe';
+import { findLeadByNormalizedPhone, findClientByNormalizedPhone } from '../../../../common/phone/lead-dedupe';
 import { normalisePhone } from '../../../../common/phone/phone.util';
 import { AuditLogService } from '../../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
@@ -721,12 +721,17 @@ export class WebhookIngestProcessor extends WorkerHost {
     // messages), serialized per-phone so a simultaneous first message + call
     // can't both create a lead.
     const { leadId, clientId, blocked, createdLead } = await this.withPhoneLock(phone, async () => {
-      const existingClient = await this.prisma.client.findFirst({
-        where: { phone, deletedAt: null },
-        // blockedAt folded in so a blocked contact's call is dropped BEFORE any
-        // thread upsert / call-row create / ring / push.
-        select: { id: true, blockedAt: true },
-      });
+      // Exact-match first (index-fast), then a NORMALISED fallback so a client
+      // stored in a legacy non-canonical shape (e.g. malformed "+9203…") is still
+      // matched instead of being missed once inbound phones are canonicalised —
+      // which would skip block enforcement and spawn a duplicate lead.
+      const existingClient =
+        (await this.prisma.client.findFirst({
+          where: { phone, deletedAt: null },
+          // blockedAt folded in so a blocked contact's call is dropped BEFORE any
+          // thread upsert / call-row create / ring / push.
+          select: { id: true, blockedAt: true },
+        })) ?? (await findClientByNormalizedPhone(this.prisma, phone));
       if (existingClient) {
         return {
           leadId: null as string | null,
@@ -951,12 +956,17 @@ export class WebhookIngestProcessor extends WorkerHost {
     // orphan-lead race). The second job waits, then finds the lead the first
     // one just created. Different phones lock on different keys and don't wait.
     const { leadId, clientId, createdLead, blocked } = await this.withPhoneLock(phone, async () => {
-      const existingClient = await this.prisma.client.findFirst({
-        where: { phone, deletedAt: null },
-        // blockedAt folded into the phone-lock select so we can drop a blocked
-        // contact's inbound BEFORE creating any thread/message/AI job.
-        select: { id: true, blockedAt: true },
-      });
+      // Exact-match first (index-fast), then a NORMALISED fallback so a client
+      // stored in a legacy non-canonical shape is still matched instead of being
+      // missed once inbound phones are canonicalised (which would skip block
+      // enforcement and spawn a duplicate lead for an existing client).
+      const existingClient =
+        (await this.prisma.client.findFirst({
+          where: { phone, deletedAt: null },
+          // blockedAt folded into the phone-lock select so we can drop a blocked
+          // contact's inbound BEFORE creating any thread/message/AI job.
+          select: { id: true, blockedAt: true },
+        })) ?? (await findClientByNormalizedPhone(this.prisma, phone));
       let leadId: string | null = null;
       const clientId: string | null = existingClient?.id ?? null;
       let createdLead = false;

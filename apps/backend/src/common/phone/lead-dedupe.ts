@@ -87,3 +87,57 @@ export async function findLeadByNormalizedPhone(
   }
   return { id: row.id, assignedEmployeeId: row.assignedEmployeeId, blockedAt: row.blockedAt };
 }
+
+/**
+ * Client counterpart of {@link findLeadByNormalizedPhone}. The WhatsApp webhook
+ * resolves a contact as client > lead; the client step was an exact-string match
+ * only, so a client stored in a non-canonical shape (e.g. a legacy malformed
+ * "+9203…" inherited from a converted lead) would be MISSED once inbound phones
+ * are canonicalised — silently dropping block enforcement and spawning a
+ * duplicate lead for an existing client. This reconciles across the same digit
+ * variants so the client is still found.
+ *
+ * Client.phone is @unique, so the self-heal rewrites to the canonical E.164 only
+ * when no other live client already holds it (else the update would hit the
+ * unique constraint) — a collision is left for manual merge. Best-effort.
+ */
+export async function findClientByNormalizedPhone(
+  prisma: PrismaService,
+  e164: string,
+): Promise<{ id: string; blockedAt: Date | null } | null> {
+  const digits = String(e164 ?? '').replace(/\D/g, '');
+  if (digits.length < 10) return null;
+
+  const variants = new Set<string>([digits]);
+  if (digits.startsWith('92') && digits.length === 12) {
+    const national = digits.slice(2);
+    variants.add(national);
+    variants.add(`0${national}`);
+    variants.add(`920${national}`); // legacy "+92"+local-with-0 malformed form
+  }
+
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: string; blockedAt: Date | null; phone: string }>>(
+    `SELECT id, "blockedAt", phone
+     FROM crm.clients
+     WHERE "deletedAt" IS NULL
+       AND phone !~ '[A-Za-z]'
+       AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($1::text[])
+     ORDER BY "createdAt" ASC
+     LIMIT 1`,
+    [...variants],
+  );
+  const row = rows[0];
+  if (!row) return null;
+
+  if (row.phone !== e164) {
+    const clash = await prisma.client
+      .count({ where: { phone: e164, deletedAt: null, id: { not: row.id } } })
+      .catch(() => 1);
+    if (clash === 0) {
+      await prisma.client
+        .update({ where: { id: row.id }, data: { phone: e164 } })
+        .catch(() => undefined);
+    }
+  }
+  return { id: row.id, blockedAt: row.blockedAt };
+}

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Edit2, FileText, Globe, Loader2, ToggleLeft, Plus } from 'lucide-react';
-import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
 import {
   GlassCard,
   PageHeader,
@@ -229,7 +229,7 @@ export function ChecklistTemplatesPage() {
             </div>
             <select style={selectStyle} value={filterService} onChange={(e) => setFilterService(e.target.value)}>
               <option value="">All services</option>
-              {SERVICE_TYPES.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+              {PICKABLE_SERVICE_TYPES.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>
             <select style={selectStyle} value={filterCountry} onChange={(e) => setFilterCountry(e.target.value)}>
               <option value="">All countries</option>

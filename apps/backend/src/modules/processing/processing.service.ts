@@ -36,7 +36,10 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
+import { normalisePhone } from '../../common/phone/phone.util';
+import { resolveProgram } from '../../common/program-alias';
 import { getMilestonesForService } from './milestone-templates';
+import { isValidSubStage } from './substage-templates';
 import { DocumentAiService } from './document-ai/document-ai.service';
 import { DocumentIntakeService } from './document-ai/document-intake.service';
 import { reconcileIdentity } from './identity-reconciliation';
@@ -82,6 +85,7 @@ import {
   UpdateEmailSignatureDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
+  UpdateCaseSubStageDto,
   UpdateDocumentTemplateDto,
   UpdateProcessingTaskDto,
   WaiveDocumentItemDto,
@@ -172,6 +176,7 @@ const BLOCKING_CRITICALITIES = new Set<DocumentCriticality>([
 const TERMINAL_STAGES = new Set<ProcessingCaseStage>([
   ProcessingCaseStage.COMPLETED,
   ProcessingCaseStage.CANCELLED,
+  ProcessingCaseStage.JUNK,
 ]);
 
 /**
@@ -200,7 +205,92 @@ const STAGE_TO_CLIENT_STATUS: Partial<Record<ProcessingCaseStage, string>> = {
   [ProcessingCaseStage.APPEAL_IN_PROGRESS]: 'SUBMITTED',
   [ProcessingCaseStage.COMPLETED]: 'COMPLETED',
   [ProcessingCaseStage.CANCELLED]: 'CANCELLED',
+  // A junked case is, from the client's summary POV, a cancelled one — there is
+  // no distinct ClientStatus.JUNK, so it folds into CANCELLED.
+  [ProcessingCaseStage.JUNK]: 'CANCELLED',
 };
+
+/**
+ * Input to the shared client+case create engine (createClientCaseInternal),
+ * used by both the single manual-create form and the bulk spreadsheet import.
+ * The single-create path leaves all the import extras undefined.
+ */
+interface CreateClientCaseInput {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  service: string;
+  targetCountry: string;
+  nationality?: string;
+  priority?: ProcessingCasePriority;
+  finance?: CreateManualClientCaseDto['finance'];
+  // Bulk-import extras — all optional.
+  /** Sales rep (Employee.id) — set on the lead so a NEW client inherits it. */
+  assignedEmployeeId?: string | null;
+  /** Processing officer (UserAccount.id) — assigns the case on create. */
+  assignedOfficerId?: string | null;
+  /** Program sub-type (e.g. "C11") for the program-specific checklist. */
+  programCode?: string | null;
+  /** Sub-stage / imported "Case Status" label. */
+  subStage?: string | null;
+  /** Imported "Case ID" for cross-reference + idempotency. */
+  externalRef?: string | null;
+  /** Imported original signup date. */
+  signupDate?: Date | null;
+  /** Skip the portal welcome email (bulk imports would blast credentials). */
+  suppressWelcomeEmail?: boolean;
+  /** Skip portal-login provisioning entirely — no bcrypt, no UserAccount. Bulk
+   *  imports of existing clients don't each need an instant login (and the
+   *  per-row bcrypt would dominate the commit time). */
+  suppressPortalLogin?: boolean;
+  /** Tags the audit/timeline/note as an import rather than a manual create. */
+  isImport?: boolean;
+}
+
+/** The 9 logical columns of the client-import sheet. */
+type ImportField =
+  | 'externalRef'
+  | 'clientName'
+  | 'phone'
+  | 'email'
+  | 'program'
+  | 'salesPerson'
+  | 'signupDate'
+  | 'officer'
+  | 'caseStatus';
+
+/** Per-row resolution outcome for the client-import preview/commit. */
+export interface ImportRowResult {
+  rowNumber: number;
+  externalRef: string | null;
+  clientName: string;
+  phone: string | null;
+  email: string | null;
+  program: string | null;
+  serviceCode: string | null;
+  programCode: string | null;
+  salesPerson: string | null;
+  salesPersonMatched: boolean;
+  officer: string | null;
+  officerMatched: boolean;
+  caseStatus: string | null;
+  signupDate: string | null;
+  /** READY = will create + assign; READY_UNASSIGNED = create, no officer;
+   *  DUPLICATE = already imported (skipped); BLOCKED = can't create. */
+  outcome: 'READY' | 'READY_UNASSIGNED' | 'DUPLICATE' | 'BLOCKED';
+  warnings: string[];
+}
+
+export interface ImportResult {
+  totalRows: number;
+  sourceFormat: string;
+  dryRun: boolean;
+  rows: ImportRowResult[];
+  counts: { ready: number; unassigned: number; duplicates: number; blocked: number };
+  /** Present only on a commit (dryRun=false). */
+  committed?: { created: number; skipped: number; failed: number };
+}
 
 @Injectable()
 export class ProcessingService {
@@ -288,12 +378,16 @@ export class ProcessingService {
     targetCountry: string;
     priority: string;
     client: { firstName: string; lastName: string; referenceCode: string } | null;
+    lead?: { assignedEmployee?: { firstName: string; lastName: string } | null } | null;
   }): Promise<void> {
     const applicantName = pc.client
       ? `${pc.client.firstName} ${pc.client.lastName}`.trim() || 'the applicant'
       : 'the applicant';
     const referenceCode = pc.client?.referenceCode ?? null;
     const priority = pc.priority && pc.priority !== 'NORMAL' ? pc.priority : null;
+    const salesRepName = pc.lead?.assignedEmployee
+      ? `${pc.lead.assignedEmployee.firstName} ${pc.lead.assignedEmployee.lastName}`.trim() || null
+      : null;
     const managers = await this.getActiveProcessingManagers();
     if (managers.length === 0) {
       // No manager to route the case to — surface it rather than fail silent.
@@ -314,6 +408,7 @@ export class ProcessingService {
           service: pc.service,
           targetCountry: pc.targetCountry,
           priority,
+          salesRepName,
           caseId: pc.id,
         }),
         this.notifications.create({
@@ -466,7 +561,13 @@ export class ProcessingService {
           financeHandoverNote: dto.financeHandoverNote ?? handover.financeNotes ?? undefined,
           createdByUserId: user.id,
         },
-        include: { financeHandover: true, lead: true, client: true },
+        include: {
+          financeHandover: true,
+          // assignedEmployee = the originating sales rep — surfaced in the
+          // "New case sent to Processing" manager email (feedback F5a).
+          lead: { include: { assignedEmployee: { select: { firstName: true, lastName: true } } } },
+          client: true,
+        },
       });
 
       // Mark handover as sent to processing
@@ -535,6 +636,29 @@ export class ProcessingService {
    * never surfaces as an assignable sales lead.
    */
   async createManualClientCase(dto: CreateManualClientCaseDto, user: RequestUser) {
+    return this.createClientCaseInternal(
+      {
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        email: dto.email,
+        phone: dto.phone,
+        service: dto.service,
+        targetCountry: dto.targetCountry,
+        nationality: dto.nationality,
+        priority: dto.priority,
+        finance: dto.finance,
+      },
+      user,
+    );
+  }
+
+  /**
+   * Shared create engine for a processing Client + INTAKE case. Powers both the
+   * single manual-create form and the bulk spreadsheet import. Import extras
+   * (sales rep, officer, sub-stage, external ref, signup date, program code,
+   * email suppression) are all optional so single-create is a thin wrapper.
+   */
+  private async createClientCaseInternal(dto: CreateClientCaseInput, user: RequestUser) {
     const service = dto.service.trim();
     if (!isCanonicalServiceCode(service)) {
       throw new BadRequestException(`Unknown service code: ${service}`);
@@ -575,15 +699,23 @@ export class ProcessingService {
     // number later (WhatsApp stays inactive until then).
     const phone = dto.phone?.trim() || `MANUAL-${referenceCode}`;
 
-    // Pre-compute portal-login material OUTSIDE the tx — bcrypt is CPU-heavy
-    // (~200ms) and shouldn't hold the transaction open. Only consumed if the
-    // client doesn't already have a login.
-    const clientRole = await this.prisma.role.findUnique({ where: { name: 'client' } });
-    if (!clientRole) {
+    // Portal login. Skipped ENTIRELY for bulk imports (suppressPortalLogin) and
+    // when the client already has a UserAccount — this avoids the ~200ms bcrypt
+    // (which would otherwise dominate a bulk commit) and an unneeded account.
+    // bcrypt is computed OUTSIDE the tx so it never holds the transaction open.
+    const clientRole = dto.suppressPortalLogin
+      ? null
+      : await this.prisma.role.findUnique({ where: { name: 'client' } });
+    if (!clientRole && !dto.suppressPortalLogin) {
       this.logger.warn('No "client" role found — manual client will be created without a portal login.');
     }
-    const tempPassword = generateTempPassword();
-    const passwordHash = await bcrypt.hash(tempPassword, 12);
+    const preExistingLogin =
+      clientRole
+        ? await this.prisma.userAccount.findUnique({ where: { email }, select: { id: true } })
+        : null;
+    const willProvisionLogin = !!clientRole && !preExistingLogin;
+    const tempPassword = willProvisionLogin ? generateTempPassword() : '';
+    const passwordHash = willProvisionLogin ? await bcrypt.hash(tempPassword, 12) : '';
 
     let loginProvisioned = false;
     let alreadyHadLogin = false;
@@ -605,8 +737,10 @@ export class ProcessingService {
         nationality: dto.nationality?.trim() || null,
         targetCountry,
         serviceInterest: service,
-        sourceChannel: 'PROCESSING_MANUAL',
+        sourceChannel: dto.isImport ? 'PROCESSING_IMPORT' : 'PROCESSING_MANUAL',
         createdByUserId: user.id,
+        // Sales rep — set here so convertToClient copies it onto a NEW client.
+        assignedEmployeeId: dto.assignedEmployeeId ?? undefined,
       },
     });
     const conversion = await this.leadsService.convertToClient(
@@ -625,13 +759,14 @@ export class ProcessingService {
       // requires Client.status ACTIVE + portalAccessEnabled. Idempotent: if a
       // login already exists for this email we keep it (and don't re-email a
       // fresh password). convertToClient set NEW_CLIENT, so flip to ACTIVE.
-      const existingUser = await tx.userAccount.findUnique({
-        where: { email },
-        select: { id: true },
-      });
+      const existingUser = clientRole
+        ? await tx.userAccount.findUnique({ where: { email }, select: { id: true } })
+        : null;
       if (existingUser) {
         alreadyHadLogin = true;
-      } else if (clientRole) {
+      } else if (clientRole && passwordHash) {
+        // `passwordHash` guard: only create a login when we actually hashed one
+        // (never persist an empty hash if the pre-check raced).
         await tx.userAccount.create({
           data: {
             email,
@@ -646,7 +781,12 @@ export class ProcessingService {
       }
       await tx.client.update({
         where: { id: clientId },
-        data: { status: ClientStatus.ACTIVE, portalAccessEnabled: true },
+        data: {
+          status: ClientStatus.ACTIVE,
+          // Don't advertise portal access for an imported client that has no
+          // login; a manual create always provisions one, so stays true.
+          portalAccessEnabled: dto.suppressPortalLogin ? alreadyHadLogin : true,
+        },
       });
 
       // The case — financeHandoverId null (no finance origin).
@@ -658,7 +798,18 @@ export class ProcessingService {
           service,
           targetCountry,
           priority: dto.priority ?? ProcessingCasePriority.NORMAL,
-          processingNote: 'Manually created by Processing Manager',
+          // An import that already names an officer skips the intake queue —
+          // start at DOCUMENTS_COLLECTION, exactly like acknowledgeIntake does.
+          stage: dto.assignedOfficerId
+            ? ProcessingCaseStage.DOCUMENTS_COLLECTION
+            : undefined,
+          assignedOfficerId: dto.assignedOfficerId ?? undefined,
+          subStage: dto.subStage ?? undefined,
+          externalRef: dto.externalRef ?? undefined,
+          signupDate: dto.signupDate ?? undefined,
+          processingNote: dto.isImport
+            ? 'Imported from spreadsheet'
+            : 'Manually created by Processing Manager',
           createdByUserId: user.id,
         },
         include: { lead: true, client: true },
@@ -673,7 +824,7 @@ export class ProcessingService {
         caseId: created.id,
         service,
         targetCountry,
-        programCode: null,
+        programCode: dto.programCode ?? null,
         actorUserId: user.id,
       });
 
@@ -681,7 +832,7 @@ export class ProcessingService {
         data: {
           caseId: created.id,
           actorUserId: user.id,
-          action: 'manual_client_created',
+          action: dto.isImport ? 'imported_client_created' : 'manual_client_created',
           entityType: 'processing_case',
           entityId: created.id,
           newValues: {
@@ -702,8 +853,9 @@ export class ProcessingService {
     // --- Post-commit side effects. None of these unwind the client/case;
     //     they're best-effort and reported back in the response. ---
 
-    // (a) Welcome email with portal credentials — fire-and-forget.
-    if (loginProvisioned) {
+    // (a) Welcome email with portal credentials — fire-and-forget. Suppressed
+    //     for bulk imports (they would otherwise blast credential emails).
+    if (loginProvisioned && !dto.suppressWelcomeEmail) {
       void this.email
         .sendWelcomeClient({
           to: email,
@@ -761,6 +913,445 @@ export class ProcessingService {
       portalLogin: { provisioned: loginProvisioned, alreadyHadLogin, email },
       finance,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // BULK CLIENT IMPORT (spreadsheet → Client + INTAKE case + auto-assign)
+  //
+  // Two-phase: preview (dryRun=true) resolves every row's officer / sales rep /
+  // program / dupe status and writes NOTHING; commit (dryRun=false) creates +
+  // assigns sequentially. Idempotent via the imported "Case ID" (externalRef).
+  // -------------------------------------------------------------------------
+
+  /** Max rows per import — bounds the synchronous commit so a valid batch can't
+   *  approach the HTTP timeout. Larger backlogs are split into files; re-running
+   *  is idempotent so a timed-out batch is safely resumable. */
+  private static readonly IMPORT_ROW_CAP = 200;
+
+  async bulkImportClients(
+    parsed: { rows: Record<string, string>[]; headers: string[]; sourceFormat: string },
+    user: RequestUser,
+    dryRun: boolean,
+  ): Promise<ImportResult> {
+    const headerMap = this.mapImportHeaders(parsed.headers);
+    if (!headerMap.clientName && !headerMap.email && !headerMap.phone) {
+      throw new BadRequestException(
+        'Could not find a Client Name / Email / Contact column in the sheet.',
+      );
+    }
+    const cell = (row: Record<string, string>, field: ImportField): string => {
+      const key = headerMap[field];
+      return key ? (row[key] ?? '').trim() : '';
+    };
+
+    // Real data rows only — skip blank template rows (e.g. a lone Case ID).
+    const rows = parsed.rows.filter(
+      (r) => cell(r, 'clientName') || cell(r, 'email') || cell(r, 'phone'),
+    );
+    if (rows.length === 0) {
+      throw new BadRequestException('No data rows found in the sheet.');
+    }
+    if (rows.length > ProcessingService.IMPORT_ROW_CAP) {
+      throw new BadRequestException(
+        `Import is limited to ${ProcessingService.IMPORT_ROW_CAP} rows at a time (found ${rows.length}). Split the file into smaller batches.`,
+      );
+    }
+
+    // Build the two name→id indexes ONCE (officers = UserAccount ids;
+    // sales reps = Employee ids — different identity spaces).
+    const officerIndex = new Map<string, string[]>();
+    const officersById = new Map<string, { email: string; name: string }>();
+    for (const o of await this.listProcessingOfficers()) {
+      officersById.set(o.id, { email: o.email, name: o.name });
+      const key = this.normNameKey(o.name);
+      if (!key) continue;
+      const arr = officerIndex.get(key);
+      if (arr) arr.push(o.id);
+      else officerIndex.set(key, [o.id]);
+    }
+    const employeeIndex = new Map<string, string[]>();
+    const employees = await this.prisma.employee.findMany({
+      where: { isActive: true, deletedAt: null },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    for (const e of employees) {
+      const key = this.normNameKey(`${e.firstName} ${e.lastName}`);
+      if (!key) continue;
+      const arr = employeeIndex.get(key);
+      if (arr) arr.push(e.id);
+      else employeeIndex.set(key, [e.id]);
+    }
+
+    // Resolve every row (sequential — the dedupe lookups + reference-code
+    // generator on commit are race-prone in parallel). seenKeys/seenPersons
+    // catch same-client duplicates WITHIN the file (the DB check alone can't,
+    // since no row is written until the commit loop below).
+    const resolved: Array<{ result: ImportRowResult; createInput: CreateClientCaseInput | null }> = [];
+    const seenKeys = new Set<string>(); // client+case-id/service — exact dup
+    const seenPersons = new Set<string>(); // client identity — rep-drop note
+    let rowNumber = 0;
+    for (const row of rows) {
+      rowNumber += 1;
+      resolved.push(
+        await this.resolveImportRow(row, rowNumber, cell, officerIndex, employeeIndex, seenKeys, seenPersons),
+      );
+    }
+
+    const out: ImportResult = {
+      totalRows: rows.length,
+      sourceFormat: parsed.sourceFormat,
+      dryRun,
+      rows: resolved.map((r) => r.result),
+      counts: {
+        ready: resolved.filter((r) => r.result.outcome === 'READY').length,
+        unassigned: resolved.filter((r) => r.result.outcome === 'READY_UNASSIGNED').length,
+        duplicates: resolved.filter((r) => r.result.outcome === 'DUPLICATE').length,
+        blocked: resolved.filter((r) => r.result.outcome === 'BLOCKED').length,
+      },
+    };
+
+    if (dryRun) return out;
+
+    // COMMIT — sequential, per-row, best-effort. A row that throws is marked
+    // failed but never rolls back earlier rows (idempotency makes re-runs safe).
+    let created = 0;
+    let skipped = 0;
+    let failed = 0;
+    const createdRows: Array<{ clientName: string; service: string; officerId: string | null }> = [];
+    for (const r of resolved) {
+      if (!r.createInput) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        await this.createClientCaseInternal(r.createInput, user);
+        created += 1;
+        createdRows.push({
+          clientName: r.result.clientName,
+          service: r.result.serviceCode ?? r.createInput.service,
+          officerId: r.createInput.assignedOfficerId ?? null,
+        });
+      } catch (e) {
+        failed += 1;
+        r.result.outcome = 'BLOCKED';
+        r.result.warnings.push(
+          `Create failed: ${e instanceof Error ? e.message : 'unknown error'}`,
+        );
+      }
+    }
+    out.committed = { created, skipped, failed };
+
+    // Tell the assigned officers + the manager(s) what landed — ONE summary
+    // each, not one email per case. Fire-and-forget + gated + non-fatal.
+    if (created > 0 && this.processingNotifyEnabled()) {
+      void this.notifyImportAssignments(createdRows, officersById, user.email).catch(() => {});
+    }
+
+    return out;
+  }
+
+  /** Post-import: email + bell each assigned officer ONE summary of their new
+   *  cases, and each active processing manager ONE overall summary. */
+  private async notifyImportAssignments(
+    createdRows: Array<{ clientName: string; service: string; officerId: string | null }>,
+    officersById: Map<string, { email: string; name: string }>,
+    importedBy: string | null,
+  ): Promise<void> {
+    const byOfficer = new Map<string, Array<{ clientName: string; service: string }>>();
+    let unassigned = 0;
+    for (const r of createdRows) {
+      if (!r.officerId) {
+        unassigned += 1;
+        continue;
+      }
+      const arr = byOfficer.get(r.officerId);
+      if (arr) arr.push({ clientName: r.clientName, service: r.service });
+      else byOfficer.set(r.officerId, [{ clientName: r.clientName, service: r.service }]);
+    }
+
+    const tasks: Array<Promise<unknown>> = [];
+
+    // (a) One summary per assigned officer (e.g. Waseem).
+    for (const [officerId, cases] of byOfficer) {
+      const officer = officersById.get(officerId);
+      if (!officer) continue;
+      tasks.push(
+        this.email.sendProcessingImportAssigned({ to: officer.email, officerName: officer.name, cases }),
+      );
+      tasks.push(
+        this.notifications.create({
+          userId: officerId,
+          type: 'PROCESSING_CASE_ASSIGNED',
+          title: `${cases.length} new case${cases.length !== 1 ? 's' : ''} assigned to you`,
+          body: 'Imported from a spreadsheet — now in your queue.',
+          link: '/processing/cases',
+        }),
+      );
+    }
+
+    // (b) One overall summary per active processing manager.
+    const managers = await this.getActiveProcessingManagers();
+    if (managers.length > 0) {
+      const byOfficerSummary = [...byOfficer.entries()].map(([id, cs]) => ({
+        name: officersById.get(id)?.name ?? 'Officer',
+        count: cs.length,
+      }));
+      const total = createdRows.length;
+      for (const m of managers) {
+        tasks.push(
+          this.email.sendProcessingImportManagerSummary({
+            to: m.email,
+            managerName: m.name,
+            total,
+            unassigned,
+            byOfficer: byOfficerSummary,
+            importedBy,
+          }),
+        );
+        tasks.push(
+          this.notifications.create({
+            userId: m.userId,
+            type: 'PROCESSING_CASE_NEW',
+            title: `${total} client${total !== 1 ? 's' : ''} imported into Processing`,
+            body:
+              unassigned > 0
+                ? `${unassigned} unassigned — check the intake queue.`
+                : 'All assigned to officers.',
+            link: '/processing/cases',
+          }),
+        );
+      }
+    }
+
+    await Promise.all(tasks);
+  }
+
+  /** Resolve one import row into a preview verdict + (when creatable) the exact
+   *  createClientCaseInternal input. Writes nothing. */
+  private async resolveImportRow(
+    row: Record<string, string>,
+    rowNumber: number,
+    cell: (row: Record<string, string>, field: ImportField) => string,
+    officerIndex: Map<string, string[]>,
+    employeeIndex: Map<string, string[]>,
+    seenKeys: Set<string>,
+    seenPersons: Set<string>,
+  ): Promise<{ result: ImportRowResult; createInput: CreateClientCaseInput | null }> {
+    const warnings: string[] = [];
+    const rawName = cell(row, 'clientName');
+    const email = cell(row, 'email').toLowerCase();
+    const rawPhone = cell(row, 'phone');
+    const rawProgram = cell(row, 'program');
+    const rawSales = cell(row, 'salesPerson');
+    const rawOfficer = cell(row, 'officer');
+    const caseStatus = cell(row, 'caseStatus') || null;
+    const externalRef = cell(row, 'externalRef') || null;
+    const signupRaw = cell(row, 'signupDate') || null;
+
+    const parts = rawName.split(/\s+/).filter(Boolean);
+    const firstName = parts[0] ?? '';
+    const lastName = parts.slice(1).join(' ');
+
+    const phoneNorm = normalisePhone(rawPhone, 'PK');
+    const phone: string | null = (phoneNorm.ok ? phoneNorm.e164 : rawPhone) || null;
+    const prog = resolveProgram(rawProgram);
+    const signupDate = this.parseImportDate(signupRaw);
+
+    const result: ImportRowResult = {
+      rowNumber,
+      externalRef,
+      clientName: rawName,
+      phone,
+      email: email || null,
+      program: rawProgram || null,
+      serviceCode: prog?.service ?? null,
+      programCode: prog?.programCode ?? null,
+      salesPerson: rawSales || null,
+      salesPersonMatched: false,
+      officer: rawOfficer || null,
+      officerMatched: false,
+      caseStatus,
+      signupDate: signupDate ? signupDate.toISOString().slice(0, 10) : signupRaw,
+      outcome: 'READY',
+      warnings,
+    };
+
+    // --- Blockers (can't create) ---
+    if (!firstName) {
+      warnings.push('Missing client name');
+      result.outcome = 'BLOCKED';
+      return { result, createInput: null };
+    }
+    if (!email) {
+      warnings.push('Missing email (required for the client portal login)');
+      result.outcome = 'BLOCKED';
+      return { result, createInput: null };
+    }
+    if (!prog) {
+      warnings.push(`Program "${rawProgram}" not recognized — fix the sheet or add an alias`);
+      result.outcome = 'BLOCKED';
+      return { result, createInput: null };
+    }
+
+    // --- Idempotency (CLIENT-scoped) ---
+    // A row is a duplicate only when the SAME client already has a case matching
+    // this row (its Case ID when present, else its service). Case IDs like
+    // "0001" repeat across sheets, so a bare externalRef match would wrongly
+    // drop a DIFFERENT client that reused the number. Covers re-runs (DB check)
+    // and repeats within one file (seenKeys, since nothing is written yet).
+    const orClauses: Array<{ phone: string } | { email: string }> = [];
+    if (phone) orClauses.push({ phone });
+    if (email) orClauses.push({ email });
+    const identity = (email || phone || '').toLowerCase();
+    const rowKey = identity ? `${identity}::${externalRef ?? `svc:${prog.service}`}` : '';
+
+    if (rowKey && seenKeys.has(rowKey)) {
+      warnings.push('Duplicate of an earlier row in this file — skipped');
+      result.outcome = 'DUPLICATE';
+      return { result, createInput: null };
+    }
+
+    const existingClient = orClauses.length
+      ? await this.prisma.client.findFirst({
+          where: { deletedAt: null, OR: orClauses },
+          select: { id: true },
+        })
+      : null;
+
+    if (existingClient) {
+      const dupCase = await this.prisma.processingCase.findFirst({
+        where: {
+          clientId: existingClient.id,
+          ...(externalRef ? { externalRef } : { service: prog.service }),
+        },
+        select: { id: true },
+      });
+      if (dupCase) {
+        warnings.push(
+          externalRef
+            ? `A case "${externalRef}" already exists for this client — skipped`
+            : `A ${prog.service} case already exists for this client — skipped`,
+        );
+        result.outcome = 'DUPLICATE';
+        return { result, createInput: null };
+      }
+    }
+
+    // An existing client (in the DB, or seen earlier in THIS file) keeps its
+    // current sales rep — convertToClient won't overwrite it with the imported
+    // one. Surface that so the manager isn't surprised.
+    if ((existingClient || (identity && seenPersons.has(identity))) && rawSales) {
+      warnings.push('Existing client — its current sales rep is kept (imported one ignored)');
+    }
+
+    if (rowKey) seenKeys.add(rowKey);
+    if (identity) seenPersons.add(identity);
+
+    // --- Officer (name → UserAccount.id) ---
+    let assignedOfficerId: string | null = null;
+    if (rawOfficer) {
+      const ids = officerIndex.get(this.normNameKey(rawOfficer));
+      if (!ids || ids.length === 0) {
+        warnings.push(`Processing officer "${rawOfficer}" not found — imported unassigned`);
+      } else if (ids.length > 1) {
+        warnings.push(`Processing officer "${rawOfficer}" is ambiguous (${ids.length} matches) — imported unassigned`);
+      } else {
+        assignedOfficerId = ids[0];
+        result.officerMatched = true;
+      }
+    } else {
+      warnings.push('No processing officer named — case goes to the intake queue');
+    }
+
+    // --- Sales rep (name → Employee.id) ---
+    let assignedEmployeeId: string | null = null;
+    if (rawSales) {
+      const ids = employeeIndex.get(this.normNameKey(rawSales));
+      if (!ids || ids.length === 0) {
+        warnings.push(`Sales person "${rawSales}" not found`);
+      } else if (ids.length > 1) {
+        warnings.push(`Sales person "${rawSales}" is ambiguous — left unset`);
+      } else {
+        assignedEmployeeId = ids[0];
+        result.salesPersonMatched = true;
+      }
+    }
+
+    // --- Case Status → sub-stage (kept even if off the service's picklist) ---
+    if (caseStatus && !isValidSubStage(prog.service, caseStatus)) {
+      warnings.push(`Case Status "${caseStatus}" isn't in the ${prog.service} sub-stage list — stored as a custom label`);
+    }
+
+    result.outcome = assignedOfficerId ? 'READY' : 'READY_UNASSIGNED';
+
+    const createInput: CreateClientCaseInput = {
+      firstName,
+      lastName,
+      email,
+      phone: phone ?? undefined,
+      // The sheet has no country column; this firm's programs (C11/JR/LMIA) are
+      // Canada immigration, so default to Canada for checklist seeding.
+      service: prog.service,
+      targetCountry: 'Canada',
+      assignedEmployeeId,
+      assignedOfficerId,
+      programCode: prog.programCode ?? null,
+      subStage: caseStatus,
+      externalRef,
+      signupDate,
+      suppressWelcomeEmail: true,
+      suppressPortalLogin: true,
+      isImport: true,
+    };
+    return { result, createInput };
+  }
+
+  /** Map arbitrary sheet headers to the 9 logical import fields (first unused
+   *  header matching each field's pattern wins). */
+  private mapImportHeaders(headers: string[]): Record<ImportField, string | null> {
+    const patterns: Array<[ImportField, RegExp]> = [
+      ['officer', /officer/i],
+      ['caseStatus', /status/i],
+      ['externalRef', /case\s*id|caseid/i],
+      ['program', /program|service|case\s*type/i],
+      ['email', /e-?mail/i],
+      ['phone', /contact|phone|mobile|cell|number/i],
+      ['salesPerson', /sale|agent/i],
+      ['signupDate', /sign\s*-?up|signup|date/i],
+      ['clientName', /client|full\s*name|name/i],
+    ];
+    const map: Record<ImportField, string | null> = {
+      externalRef: null,
+      clientName: null,
+      phone: null,
+      email: null,
+      program: null,
+      salesPerson: null,
+      signupDate: null,
+      officer: null,
+      caseStatus: null,
+    };
+    const used = new Set<string>();
+    for (const [field, re] of patterns) {
+      const header = headers.find((h) => !used.has(h) && re.test(h));
+      if (header) {
+        map[field] = header;
+        used.add(header);
+      }
+    }
+    return map;
+  }
+
+  private normNameKey(s: string): string {
+    return s.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  /** Lenient date parse for the "Signup date" cell. Returns null when it can't
+   *  be understood (the raw text is still shown in the preview). */
+  private parseImportDate(raw: string | null): Date | null {
+    if (!raw) return null;
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
   }
 
   /**
@@ -1261,7 +1852,9 @@ export class ProcessingService {
           // officer) — the roster surfaces it so Processing knows who to ask.
           lead: { select: { id: true, referenceCode: true, firstName: true, lastName: true, phone: true, email: true, sourceChannel: true, notes: true, assignedEmployee: { select: { id: true, firstName: true, lastName: true } } } },
           client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
-          assignedOfficer: { select: { id: true, email: true } },
+          // employee resolves the officer's real name for the roster/dashboard
+          // (feedback F9) — falls back to the email local-part client-side.
+          assignedOfficer: { select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } } },
           documentItems: { select: { documentName: true, status: true, criticality: true }, orderBy: { documentName: 'asc' } },
           _count: { select: { documentItems: true } },
         },
@@ -1464,6 +2057,9 @@ export class ProcessingService {
             phone: true,
             serviceInterest: true,
             targetCountry: true,
+            // The SALES rep who owns the lead (closed the deal) — processing
+            // wants this visible on the case, distinct from the processing officer.
+            assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
           },
         },
         client: {
@@ -1569,6 +2165,35 @@ export class ProcessingService {
     });
   }
 
+  /**
+   * Set or clear the case's lightweight sub-stage tracking label (feedback F3).
+   * Purely informational — does NOT touch the stage machine, gates, SLA, or
+   * reporting. A null/blank value clears it; a non-null value must be a member
+   * of the per-service picklist (CATEGORY_SUBSTAGE[case.service]).
+   */
+  async updateCaseSubStage(caseId: string, dto: UpdateCaseSubStageDto, user: RequestUser) {
+    const processingCase = await this.findCaseOrThrow(caseId);
+    this.assertCaseAccess(processingCase, user);
+
+    let next: string | null = null;
+    if (dto.subStage != null) {
+      const value = dto.subStage.trim();
+      if (value !== '') {
+        if (!isValidSubStage(processingCase.service, value)) {
+          throw new BadRequestException(
+            `Invalid sub-stage "${value}" for service ${processingCase.service}`,
+          );
+        }
+        next = value;
+      }
+    }
+
+    return this.prisma.processingCase.update({
+      where: { id: caseId },
+      data: { subStage: next, updatedByUserId: user.id },
+    });
+  }
+
   // -------------------------------------------------------------------------
   // OFFICER ROSTER
   //
@@ -1589,7 +2214,12 @@ export class ProcessingService {
         userRoles: {
           some: {
             role: {
-              name: { in: ['processing', 'processing_manager', 'documentation', 'super_admin', 'admin'] },
+              // Processing-team roles ONLY. super_admin/admin were dropped so the
+              // assign-case picker + officer filter + @-mentions list only real
+              // processing members (team feedback). An admin who genuinely works
+              // a caseload should be granted the `processing` role instead of
+              // being surfaced here by virtue of being an admin.
+              name: { in: ['processing', 'processing_manager', 'documentation'] },
             },
           },
         },
@@ -1649,9 +2279,9 @@ export class ProcessingService {
           ProcessingTaskStatus.BLOCKED,
         ]},
         case: {
-          // Non-terminal cases only — once a case is COMPLETED/CANCELLED its
-          // tasks shouldn't clutter the queue.
-          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          // Non-terminal cases only — once a case is COMPLETED/CANCELLED/JUNK
+          // its tasks shouldn't clutter the queue.
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.JUNK] },
           ...(canViewAll ? {} : { assignedOfficerId: user.id }),
         },
       },
@@ -1694,7 +2324,7 @@ export class ProcessingService {
           DocumentItemStatus.EXPIRED,
         ]},
         case: {
-          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+          stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.JUNK] },
           ...(canViewAll ? {} : { assignedOfficerId: user.id }),
         },
       },
@@ -1854,16 +2484,23 @@ export class ProcessingService {
     const fromStage = processingCase.stage;
     const toStage = dto.toStage;
 
-    // CANCELLED is a special path — manager only, from any active stage
-    if (toStage === ProcessingCaseStage.CANCELLED) {
+    // CANCELLED and JUNK are special paths — manager only, from any active
+    // stage (they bypass ALLOWED_TRANSITIONS). JUNK ("not a real case") mirrors
+    // CANCELLED exactly and reuses cancelledAt / cancellationReason.
+    if (toStage === ProcessingCaseStage.CANCELLED || toStage === ProcessingCaseStage.JUNK) {
+      const verb = toStage === ProcessingCaseStage.JUNK ? 'junk' : 'cancel';
       if (!user.permissions.includes('processing.case.view_all')) {
-        throw new ForbiddenException('Only a processing manager can cancel a case');
+        throw new ForbiddenException(`Only a processing manager can ${verb} a case`);
       }
       if (TERMINAL_STAGES.has(fromStage)) {
-        throw new BadRequestException(`Cannot cancel a case that is already ${fromStage}`);
+        throw new BadRequestException(`Cannot ${verb} a case that is already ${fromStage}`);
       }
       if (!dto.cancellationReason) {
-        throw new BadRequestException('Cancellation reason is required');
+        throw new BadRequestException(
+          toStage === ProcessingCaseStage.JUNK
+            ? 'A reason is required to mark a case as junk'
+            : 'Cancellation reason is required',
+        );
       }
     } else {
       // Verify the transition is in the allowed map
@@ -1941,7 +2578,14 @@ export class ProcessingService {
         updateData.completedAt = new Date();
         updateData.processingNote = dto.completionNotes ?? undefined;
       }
-      if (toStage === ProcessingCaseStage.CANCELLED) {
+      // JUNK reuses the same terminal columns as CANCELLED. This write is
+      // load-bearing: every "active" count in getAdminOverview filters on
+      // `cancelledAt: null`, so a junked case is only excluded once cancelledAt
+      // is stamped here.
+      if (
+        toStage === ProcessingCaseStage.CANCELLED ||
+        toStage === ProcessingCaseStage.JUNK
+      ) {
         updateData.cancelledAt = new Date();
         updateData.cancellationReason = dto.cancellationReason ?? undefined;
       }
@@ -4411,8 +5055,9 @@ export class ProcessingService {
     this.assertCaseAccess(processingCase, user);
 
     if (processingCase.stage === ProcessingCaseStage.COMPLETED ||
-        processingCase.stage === ProcessingCaseStage.CANCELLED) {
-      throw new BadRequestException('Cannot raise a correction request on a completed or cancelled case');
+        processingCase.stage === ProcessingCaseStage.CANCELLED ||
+        processingCase.stage === ProcessingCaseStage.JUNK) {
+      throw new BadRequestException('Cannot raise a correction request on a completed, cancelled, or junk case');
     }
 
     // If DOCUMENT type, validate the document item belongs to this case
@@ -4832,7 +5477,7 @@ export class ProcessingService {
         where: {
           ...officerFilter,
           stage: {
-            notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.REJECTED],
+            notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.REJECTED, ProcessingCaseStage.JUNK],
           },
           createdAt: { lt: new Date(now.getTime() - 30 * 86_400_000) },
         },

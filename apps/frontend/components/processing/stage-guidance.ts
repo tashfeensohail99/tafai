@@ -34,6 +34,7 @@ export const STAGE_NEXT_STEP: Record<ProcessingStage, string | null> = {
     'Appeal filed — monitor it like an authority review. Re-submit or close the case depending on the outcome.',
   COMPLETED: null,
   CANCELLED: null,
+  JUNK: null,
 };
 
 /**

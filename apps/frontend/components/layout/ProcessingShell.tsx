@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Clock,
   FileSearch,
+  FileSpreadsheet,
   FolderKanban,
   History,
   Inbox,
@@ -90,6 +91,7 @@ function buildProcessingNav(intakePending: number, isManager: boolean): DrawerMe
   if (isManager) {
     items.push({ label: 'Manager Queue', href: '/processing/intake', icon: Inbox, caption: 'New from Finance — assign', badge: intakePending || undefined });
     items.push({ label: 'New Client', href: '/processing/new-client', icon: UserPlus, caption: 'Manually add a client' });
+    items.push({ label: 'Import Clients', href: '/processing/import', icon: FileSpreadsheet, caption: 'Bulk upload from spreadsheet' });
   }
   items.push(
     { label: 'My Cases', href: '/processing/cases', icon: FolderKanban, caption: 'Your active caseload' },
@@ -113,6 +115,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/processing/intake') return { title: 'Manager Queue', subtitle: 'Cases from Finance awaiting review and assignment' };
   if (pathname.startsWith('/processing/cases/')) return { title: 'Case Workspace', subtitle: 'Full case view' };
   if (pathname === '/processing/cases') return { title: 'My Cases', subtitle: 'Your active cases' };
+  if (pathname === '/processing/import') return { title: 'Import Clients', subtitle: 'Bulk-create processing clients from a spreadsheet' };
   if (pathname === '/processing/documents') return { title: 'Document Reviews', subtitle: 'Documents awaiting your review' };
   if (pathname === '/processing/tasks') return { title: 'My Tasks', subtitle: 'Open tasks across all cases' };
   if (pathname === '/processing/refunds') return { title: 'Refunds & Appeals', subtitle: 'Rejected cases — initiate refund or escalate to appeal' };

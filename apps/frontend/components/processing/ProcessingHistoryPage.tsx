@@ -14,6 +14,7 @@ import {
   Globe,
   History,
   Loader2,
+  Search,
   XCircle,
 } from 'lucide-react';
 import {
@@ -107,6 +108,7 @@ function HistoryRow({ c }: { c: ApiProcessingCaseListItem }) {
 export function ProcessingHistoryPage() {
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('ALL');
   const [serviceFilter, setServiceFilter] = useState<ServiceFilter>('ALL');
+  const [search, setSearch] = useState('');
   const [cases, setCases] = useState<ApiProcessingCaseListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,12 +139,19 @@ export function ProcessingHistoryPage() {
   const rejectedCount  = cases.filter((c) => c.stage === 'REJECTED').length;
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return cases.filter((c) => {
       const oOk = outcomeFilter === 'ALL' || c.stage === outcomeFilter;
       const sOk = serviceFilter === 'ALL' || c.service === serviceFilter;
-      return oOk && sOk;
+      const qOk =
+        !q ||
+        [casePersonName(c), labelForServiceCode(c.service), c.targetCountry, c.lead?.referenceCode ?? '', c.id]
+          .join(' ')
+          .toLowerCase()
+          .includes(q);
+      return oOk && sOk && qOk;
     });
-  }, [cases, outcomeFilter, serviceFilter]);
+  }, [cases, outcomeFilter, serviceFilter, search]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -194,6 +203,17 @@ export function ProcessingHistoryPage() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', minWidth: 200 }}>
+            <Search size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+            <input
+              type="search"
+              placeholder="Search name, service, country…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 12.5 }}
+            />
           </div>
 
           <div style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--sos-text-muted)' }}>

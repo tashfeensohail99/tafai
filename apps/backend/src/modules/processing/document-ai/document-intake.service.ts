@@ -86,7 +86,10 @@ export class DocumentIntakeService {
     const activeCase = await this.prisma.processingCase.findFirst({
       where: {
         OR: orFilters,
-        stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED] },
+        // Never attach inbound docs to a terminal case (JUNK included, else an
+        // AI-parsed doc could latch onto a junked case — this findFirst has no
+        // cancelledAt guard, so JUNK must be excluded by stage here).
+        stage: { notIn: [ProcessingCaseStage.COMPLETED, ProcessingCaseStage.CANCELLED, ProcessingCaseStage.JUNK] },
       },
       orderBy: { createdAt: 'desc' },
       select: {

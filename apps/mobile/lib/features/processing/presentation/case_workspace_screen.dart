@@ -163,6 +163,16 @@ class _Workspace extends ConsumerWidget {
                     if (isManager && !c.isTerminal) ...[
                       const SizedBox(width: AppTokens.space2),
                       _IconAction(
+                        icon: Icons.delete_sweep_outlined,
+                        tooltip: 'Mark as junk',
+                        onPressed: () async {
+                          final ok = await showJunkSheet(context, ref,
+                              caseRecord: c);
+                          if (ok == true) await _afterMutation(ref);
+                        },
+                      ),
+                      const SizedBox(width: AppTokens.space2),
+                      _IconAction(
                         icon: Icons.cancel_outlined,
                         tooltip: 'Cancel case',
                         danger: true,

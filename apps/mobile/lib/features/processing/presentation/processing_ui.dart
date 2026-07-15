@@ -36,6 +36,7 @@ ToneColors stageTone(String stage) {
       return const ToneColors(AppTokens.statusDanger, AppTokens.statusDangerBg);
     case 'INTAKE_PENDING':
     case 'CANCELLED':
+    case 'JUNK':
     default:
       return const ToneColors(AppTokens.statusNeutral, AppTokens.statusNeutralBg);
   }

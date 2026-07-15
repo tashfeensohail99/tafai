@@ -31,7 +31,8 @@ export type ProcessingStage =
   | 'REJECTED'
   | 'APPEAL_IN_PROGRESS'
   | 'COMPLETED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'JUNK';
 
 export type ProcessingPriority = 'LOW' | 'NORMAL' | 'URGENT' | 'CRITICAL';
 export type AuthorityDecision = 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -42,6 +43,8 @@ export interface ApiProcessingCaseListItem {
   service: string;
   targetCountry: string;
   stage: ProcessingStage;
+  /** Lightweight per-service tracking label (feedback F3); null until set. */
+  subStage: string | null;
   priority: ProcessingPriority;
   authorityDecision: AuthorityDecision;
   slaDueAt: string | null;
@@ -53,7 +56,11 @@ export interface ApiProcessingCaseListItem {
    *  was never assigned (e.g. a manually-created processing client). */
   lead: { id: string; referenceCode: string; firstName: string; lastName: string; phone: string; email: string | null; sourceChannel: string | null; assignedEmployee: { id: string; firstName: string; lastName: string } | null };
   client: { id: string; firstName: string; lastName: string; phone: string; email: string | null };
-  assignedOfficer: { id: string; email: string } | null;
+  /** The PROCESSING officer who owns the case. `employee` (the officer's real
+   *  name) is only populated by the main cases-list select — other endpoints
+   *  that reuse this type may omit it, so it's optional; use
+   *  {@link officerDisplayName} which falls back to the email local-part. */
+  assignedOfficer: { id: string; email: string; employee?: { firstName: string; lastName: string } | null } | null;
   _count: { documentItems: number };
   /** Per-row checklist progress for the roster view (verified/total, with a
    *  blocking-gap flag). NOT_APPLICABLE items are excluded from `total`. */
@@ -88,6 +95,8 @@ export interface ApiProcessingCaseDetail {
   slaDueAt: string | null;
   service: string;
   targetCountry: string;
+  /** Lightweight per-service tracking label (feedback F3); null until set. */
+  subStage: string | null;
   financeHandoverNote: string | null;
   processingNote: string | null;
   estimatedSubmissionDate: string | null;
@@ -598,6 +607,58 @@ export function createManualClientCase(body: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Bulk client import (spreadsheet → clients + cases + auto-assign)
+// ---------------------------------------------------------------------------
+
+/** Per-row resolution result from the import preview/commit. Mirrors the
+ *  backend ImportRowResult. */
+export interface ImportRowResult {
+  rowNumber: number;
+  externalRef: string | null;
+  clientName: string;
+  phone: string | null;
+  email: string | null;
+  program: string | null;
+  serviceCode: string | null;
+  programCode: string | null;
+  salesPerson: string | null;
+  salesPersonMatched: boolean;
+  officer: string | null;
+  officerMatched: boolean;
+  caseStatus: string | null;
+  signupDate: string | null;
+  outcome: 'READY' | 'READY_UNASSIGNED' | 'DUPLICATE' | 'BLOCKED';
+  warnings: string[];
+}
+
+export interface ImportResult {
+  totalRows: number;
+  sourceFormat: string;
+  dryRun: boolean;
+  rows: ImportRowResult[];
+  counts: { ready: number; unassigned: number; duplicates: number; blocked: number };
+  committed?: { created: number; skipped: number; failed: number };
+}
+
+/** Multipart upload routed through apiFetch (so it gets 401 token-refresh +
+ *  retry; apiFetch leaves Content-Type unset for FormData). */
+async function uploadProcessingMultipart<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append('file', file);
+  return apiFetch<T>(path, { method: 'POST', body: form, cache: 'no-store' });
+}
+
+/** Dry-run: resolve every row (officer/sales-rep/program/dupe), write nothing. */
+export function previewProcessingImport(file: File): Promise<ImportResult> {
+  return uploadProcessingMultipart<ImportResult>('/processing/client-imports/preview', file);
+}
+
+/** Commit: create + assign each importable row. Idempotent by Case ID. */
+export function commitProcessingImport(file: File): Promise<ImportResult> {
+  return uploadProcessingMultipart<ImportResult>('/processing/client-imports', file);
+}
+
 /**
  * P4d — Submission-quality gate.
  * Returns whether a case is clear to move to READY_FOR_SUBMISSION / SUBMITTED,
@@ -673,6 +734,19 @@ export function updateCasePriority(
   body: { priority: ProcessingPriority },
 ): Promise<ApiProcessingCaseDetail> {
   return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}/priority`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/** Set (or clear, with null) the case's lightweight sub-stage label (F3). */
+export function updateCaseSubStage(
+  caseId: string,
+  body: { subStage: string | null },
+): Promise<ApiProcessingCaseDetail> {
+  return apiFetch<ApiProcessingCaseDetail>(`/processing/cases/${caseId}/substage`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1702,6 +1776,24 @@ export function casePersonName(c: {
   }
   if (c.lead) return `${c.lead.firstName} ${c.lead.lastName}`.trim();
   return 'Unknown';
+}
+
+/**
+ * Display name for a processing officer — prefers the linked employee's real
+ * name, falls back to the email local-part (mirrors the backend
+ * `officerDisplayName`). Returns null for an unassigned case.
+ */
+export function officerDisplayName(
+  officer:
+    | { email: string; employee?: { firstName: string; lastName: string } | null }
+    | null
+    | undefined,
+): string | null {
+  if (!officer) return null;
+  const name = officer.employee
+    ? `${officer.employee.firstName} ${officer.employee.lastName}`.trim()
+    : '';
+  return name || officer.email.split('@')[0];
 }
 
 /** Phone display — client first, lead fallback. */

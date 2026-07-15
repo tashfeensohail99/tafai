@@ -391,6 +391,42 @@ describe('ProcessingService — Rule 2: Stage transition gate checks', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it('requires manager permission to junk a case', async () => {
+    const { service, prismaMock } = buildService();
+    prismaMock.processingCase.findUnique.mockResolvedValue(
+      makeProcessingCase({
+        stage: ProcessingCaseStage.DOCUMENTS_COLLECTION,
+        assignedOfficerId: 'user-officer-1',
+      }),
+    );
+
+    await expect(
+      service.changeCaseStage(
+        'case-1',
+        { toStage: ProcessingCaseStage.JUNK, cancellationReason: 'Spam lead' },
+        makeUser({ permissions: ['processing.case.view_assigned'] }), // not a manager
+      ),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('requires a reason when junking a case', async () => {
+    const { service, prismaMock } = buildService();
+    prismaMock.processingCase.findUnique.mockResolvedValue(
+      makeProcessingCase({
+        stage: ProcessingCaseStage.DOCUMENTS_COLLECTION,
+        assignedOfficerId: 'user-officer-1',
+      }),
+    );
+
+    await expect(
+      service.changeCaseStage(
+        'case-1',
+        { toStage: ProcessingCaseStage.JUNK }, // no reason
+        makeUser({ permissions: ['processing.case.view_all', 'processing.case.update_stage'] }),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
   it('requires submissionReference when moving to SUBMITTED', async () => {
     const { service, prismaMock } = buildService();
     prismaMock.processingCase.findUnique.mockResolvedValue(

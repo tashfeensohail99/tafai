@@ -16,7 +16,8 @@ export type ProcessingStage =
   | 'REJECTED'
   | 'APPEAL_IN_PROGRESS'
   | 'COMPLETED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'JUNK';
 
 export type ProcessingPriority = 'LOW' | 'NORMAL' | 'URGENT' | 'CRITICAL';
 
@@ -117,10 +118,16 @@ export interface MockProcessingCase {
   service: string;
   targetCountry: string;
   stage: ProcessingStage;
+  /** Lightweight per-service tracking label (feedback F3). Optional so mock
+   *  fixtures need no update; surfaced by the workspace adapter. */
+  subStage?: string | null;
   priority: ProcessingPriority;
   clientName: string;
   clientPhone: string;
   assignedOfficer: MockOfficer | null;
+  /** Originating SALES rep (who closed the deal) — distinct from the processing
+   *  officer. Optional so the mock fixtures need no update. */
+  salesRep?: { name: string } | null;
   financeAmount: number;
   financeCurrency: string;
   financeHandoverNote: string | null;
@@ -541,6 +548,7 @@ export const STAGE_LABEL: Record<ProcessingStage, string> = {
   APPEAL_IN_PROGRESS: 'Appeal Filed',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
+  JUNK: 'Junk',
 };
 
 export const PRIORITY_LABEL: Record<ProcessingPriority, string> = {

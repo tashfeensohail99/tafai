@@ -1,8 +1,9 @@
 'use client';
-// Cancel Case Modal — Phase 2C-1.
-// Manager-only action. Calls PATCH /processing/cases/:id/stage
-// with { toStage: 'CANCELLED', cancellationReason }.
-// Backend already enforces processing.case.view_all + reason required.
+// Cancel / Junk Case Modal — Phase 2C-1 (+ feedback F12).
+// Manager-only action. Calls PATCH /processing/cases/:id/stage with
+// { toStage: 'CANCELLED' | 'JUNK', cancellationReason }. JUNK reuses the same
+// terminal columns as CANCELLED, so the payload shape is identical — only the
+// copy differs (mode prop). Backend enforces processing.case.view_all + reason.
 
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, X, XCircle } from 'lucide-react';
@@ -35,11 +36,15 @@ const overlayStyle: React.CSSProperties = {
 interface CancelCaseModalProps {
   caseRecord: MockProcessingCase;
   onClose: () => void;
-  /** Called after a successful cancel so the parent can refetch. */
+  /** Called after a successful cancel/junk so the parent can refetch. */
   onCancelled?: () => void;
+  /** 'cancel' (default) locks the case as CANCELLED; 'junk' moves it to the
+   *  JUNK bucket (spam / duplicate / dead lead). Same payload, different copy. */
+  mode?: 'cancel' | 'junk';
 }
 
-export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelCaseModalProps) {
+export function CancelCaseModal({ caseRecord: c, onClose, onCancelled, mode = 'cancel' }: CancelCaseModalProps) {
+  const isJunk = mode === 'junk';
   const [reason, setReason] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -53,17 +58,17 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelC
     setLoading(true);
     setError(null);
     try {
-      // Backend ChangeCaseStageDto: when toStage=CANCELLED the
-      // cancellationReason field is required (server returns 400 otherwise).
-      // The reason textarea here is the source of truth.
+      // Backend ChangeCaseStageDto: CANCELLED/JUNK both require a
+      // cancellationReason (server returns 400 otherwise). The reason textarea
+      // here is the source of truth.
       await changeCaseStage(c.id, {
-        toStage: 'CANCELLED',
+        toStage: isJunk ? 'JUNK' : 'CANCELLED',
         cancellationReason: reason.trim(),
       });
       setDone(true);
       onCancelled?.();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to cancel case');
+      setError(e instanceof Error ? e.message : isJunk ? 'Failed to mark case as junk' : 'Failed to cancel case');
     } finally {
       setLoading(false);
     }
@@ -79,10 +84,12 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelC
         >
           <CheckCircle2 size={40} style={{ color: 'var(--sos-status-success)', marginBottom: '12px' }} />
           <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: '8px' }}>
-            Case Cancelled
+            {isJunk ? 'Case marked as junk' : 'Case Cancelled'}
           </div>
           <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', marginBottom: '20px' }}>
-            {c.clientName}&apos;s case has been cancelled and locked. No further actions can be taken.
+            {isJunk
+              ? `${c.clientName}'s case has been moved to Junk and locked. It won't appear in active queues or history.`
+              : `${c.clientName}'s case has been cancelled and locked. No further actions can be taken.`}
           </div>
           <SecondaryButton onClick={onClose}>Close</SecondaryButton>
         </div>
@@ -139,7 +146,7 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelC
               gap: '5px',
             }}
           >
-            <XCircle size={13} /> Cancel case
+            <XCircle size={13} /> {isJunk ? 'Mark as junk' : 'Cancel case'}
           </div>
           <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>
             {c.clientName}
@@ -156,10 +163,12 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelC
             <AlertTriangle size={18} style={{ color: 'var(--sos-status-danger)', flexShrink: 0, marginTop: '1px' }} />
             <div>
               <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sos-status-danger)', marginBottom: '4px' }}>
-                This action is irreversible
+                {isJunk ? 'This removes the case from active work' : 'This action is irreversible'}
               </div>
               <div style={{ fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: '1.5' }}>
-                Cancelling this case will lock it permanently. All assigned documents, tasks, and submissions will be archived. The client will need a new case to proceed.
+                {isJunk
+                  ? 'Marking this case as junk locks it and removes it from active queues and reports (it won’t appear in history either). Use this for spam, duplicates, or dead leads.'
+                  : 'Cancelling this case will lock it permanently. All assigned documents, tasks, and submissions will be archived. The client will need a new case to proceed.'}
               </div>
             </div>
           </div>
@@ -171,13 +180,13 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelC
             htmlFor="cancelReason"
             style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}
           >
-            Cancellation reason <span style={{ color: 'var(--sos-status-danger)' }}>*</span>
+            {isJunk ? 'Reason for junking' : 'Cancellation reason'} <span style={{ color: 'var(--sos-status-danger)' }}>*</span>
           </label>
           <textarea
             id="cancelReason"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Describe why this case is being cancelled (min 10 characters)…"
+            placeholder={isJunk ? 'Why is this case junk — spam, duplicate, dead lead? (min 10 characters)…' : 'Describe why this case is being cancelled (min 10 characters)…'}
             rows={3}
             style={{
               width: '100%',
@@ -222,7 +231,9 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelC
             style={{ marginTop: '2px', accentColor: 'var(--sos-status-danger)', flexShrink: 0 }}
           />
           <span style={{ fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: '1.5' }}>
-            I confirm that this cancellation has been reviewed and cannot be undone. I take responsibility for this action.
+            {isJunk
+              ? 'I confirm this case is not real work and should be removed from active queues. I take responsibility for this action.'
+              : 'I confirm that this cancellation has been reviewed and cannot be undone. I take responsibility for this action.'}
           </span>
         </label>
 
@@ -260,7 +271,7 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled }: CancelC
             }}
           >
             <XCircle size={14} />
-            {loading ? 'Cancelling…' : 'Cancel case'}
+            {loading ? (isJunk ? 'Marking…' : 'Cancelling…') : (isJunk ? 'Mark as junk' : 'Cancel case')}
           </button>
         </div>
       </div>

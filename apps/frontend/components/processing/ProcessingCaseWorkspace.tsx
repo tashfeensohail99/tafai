@@ -27,6 +27,7 @@ import {
   Send,
   Sparkles,
   StickyNote,
+  Trash2,
   User,
   Wallet,
   XCircle,
@@ -56,11 +57,13 @@ import {
   fetchCaseFinance,
   fetchCaseTabActivity,
   markCaseTabSeen,
+  updateCaseSubStage,
   casePersonName,
   casePersonPhone,
   type ApiProcessingCaseDetail,
   type CaseFinanceSummary,
 } from '@/lib/processing';
+import { subStagesForService, hasSubStageList } from '@/lib/processing-substages';
 import { labelForServiceCode } from '@/lib/service-types';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
 import { DocumentChecklistTab } from './tabs/DocumentChecklistTab';
@@ -120,13 +123,106 @@ function MetaDivider() {
 // name + assignee now live in the page header, so this keeps just the
 // at-a-glance state (stage, priority, time-in-stage) plus a clickable finance
 // KPI that opens the Finance tab. Wraps gracefully on narrow widths.
+/**
+ * Editable sub-stage label (feedback F3) — a compact per-service picklist that
+ * sits beside the Stage badge. Purely a tracking label; it does not change the
+ * case stage. Clearing (the "—" option) sends null.
+ */
+function SubStagePicker({
+  caseId,
+  service,
+  value,
+  onChanged,
+}: {
+  caseId: string;
+  service: string;
+  value: string | null | undefined;
+  onChanged: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const hasList = hasSubStageList(service);
+  const options = subStagesForService(service);
+  // Local text buffer for the free-text (manual-entry) mode. Kept in sync when
+  // the case reloads with a new value.
+  const [text, setText] = useState(value ?? '');
+  useEffect(() => {
+    setText(value ?? '');
+  }, [value]);
+
+  async function save(next: string) {
+    const trimmed = next.trim();
+    if (trimmed === (value ?? '')) return; // no-op — nothing changed
+    setSaving(true);
+    try {
+      await updateCaseSubStage(caseId, { subStage: trimmed || null });
+      onChanged();
+    } catch {
+      setText(value ?? ''); // revert on failure
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const controlStyle: React.CSSProperties = {
+    padding: '3px 8px',
+    borderRadius: 'var(--sos-radius-sm)',
+    border: '1px solid var(--sos-border-default)',
+    background: 'var(--sos-bg-surface)',
+    color: 'var(--sos-text-primary)',
+    fontSize: 12.5,
+    fontWeight: 600,
+    outline: 'none',
+    maxWidth: 220,
+  };
+
+  return (
+    <MetaItem label="Sub-stage">
+      {hasList ? (
+        <select
+          value={value ?? ''}
+          disabled={saving}
+          onChange={(e) => save(e.target.value)}
+          aria-label="Sub-stage"
+          style={{ ...controlStyle, cursor: saving ? 'wait' : 'pointer' }}
+        >
+          <option value="">— none —</option>
+          {/* Keep an imported / off-list value selectable so it still renders. */}
+          {(value && !options.includes(value) ? [value, ...options] : options).map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+      ) : (
+        // Free-text (manual entry) for services without a fixed picklist.
+        <input
+          type="text"
+          value={text}
+          disabled={saving}
+          aria-label="Sub-stage"
+          placeholder="Add a label…"
+          maxLength={120}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => save(text)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+          style={controlStyle}
+        />
+      )}
+    </MetaItem>
+  );
+}
+
 function CaseMetaBar({
   c,
+  service,
+  onSubStageChanged,
   finance,
   financeLoading,
   onOpenFinance,
 }: {
   c: MockProcessingCase;
+  service: string;
+  onSubStageChanged: () => void;
   finance: CaseFinanceSummary | null;
   financeLoading: boolean;
   onOpenFinance: () => void;
@@ -139,6 +235,8 @@ function CaseMetaBar({
         <MetaItem label="Stage">
           <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
         </MetaItem>
+        <MetaDivider />
+        <SubStagePicker caseId={c.id} service={service} value={c.subStage} onChanged={onSubStageChanged} />
         <MetaDivider />
         <MetaItem label="Priority">
           <StatusBadge tone={priorityTone(c.priority)} size="sm" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>
@@ -230,6 +328,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showJunkModal, setShowJunkModal] = useState(false);
   const isManager = user.permissions.includes('processing.case.view_all');
   const canAssign = user.permissions.includes('processing.case.assign');
 
@@ -337,6 +436,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
     service: api.service,
     targetCountry: api.targetCountry,
     stage: api.stage as MockProcessingCase['stage'],
+    subStage: api.subStage,
     priority: api.priority as MockProcessingCase['priority'],
     clientName: casePersonName(api),
     clientPhone: casePersonPhone(api),
@@ -348,6 +448,9 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           initials: (api.assignedOfficer.email.slice(0, 2) ?? 'U').toUpperCase(),
           role: 'Processing Officer',
         }
+      : null,
+    salesRep: api.lead?.assignedEmployee
+      ? { name: `${api.lead.assignedEmployee.firstName} ${api.lead.assignedEmployee.lastName}`.trim() }
       : null,
     financeAmount: api.financeHandover ? Number(api.financeHandover.submittedAmount) : 0,
     financeCurrency: api.financeHandover?.currency ?? 'CAD',
@@ -400,6 +503,14 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           onCancelled={() => setRefetchTick((n) => n + 1)}
         />
       ) : null}
+      {showJunkModal ? (
+        <CancelCaseModal
+          mode="junk"
+          caseRecord={c}
+          onClose={() => setShowJunkModal(false)}
+          onCancelled={() => setRefetchTick((n) => n + 1)}
+        />
+      ) : null}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {/* Back to My Cases */}
@@ -422,28 +533,43 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
             <div style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <User size={12} />
               {c.assignedOfficer ? `${c.assignedOfficer.name} · ${c.assignedOfficer.role}` : 'Unassigned'}
+              {c.salesRep ? (
+                <span style={{ color: 'var(--sos-text-faint)' }}>· Sales: {c.salesRep.name}</span>
+              ) : null}
             </div>
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             {canAssign ? (
-              <SecondaryButton iconLeft={<User size={14} />} onClick={() => setShowAssignModal(true)}>Reassign</SecondaryButton>
+              <SecondaryButton iconLeft={<User size={14} />} onClick={() => setShowAssignModal(true)}>
+                {c.assignedOfficer ? 'Reassign' : 'Assign'}
+              </SecondaryButton>
             ) : null}
             <SecondaryButton iconLeft={<ClipboardEdit size={14} />} onClick={() => setShowCorrectionModal(true)}>Request correction</SecondaryButton>
-            {isManager && c.stage !== 'CANCELLED' && c.stage !== 'COMPLETED' ? (
-              <button
-                type="button"
-                onClick={() => setShowCancelModal(true)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-status-danger-border)', background: 'var(--sos-status-danger-soft)', color: 'var(--sos-status-danger)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 150ms' }}
-              >
-                <XCircle size={13} /> Cancel case
-              </button>
+            {isManager && c.stage !== 'CANCELLED' && c.stage !== 'COMPLETED' && c.stage !== 'JUNK' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowJunkModal(true)}
+                  title="Mark this case as junk (spam / duplicate / dead lead)"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-default)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-secondary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 150ms' }}
+                >
+                  <Trash2 size={13} /> Mark as junk
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-status-danger-border)', background: 'var(--sos-status-danger-soft)', color: 'var(--sos-status-danger)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 150ms' }}
+                >
+                  <XCircle size={13} /> Cancel case
+                </button>
+              </>
             ) : null}
             <PrimaryButton iconLeft={<Layers size={14} />} onClick={() => setShowStageModal(true)}>Change stage</PrimaryButton>
           </div>
         </div>
 
         {/* Compact horizontal meta bar (replaces the tall vertical rail) */}
-        <CaseMetaBar c={c} finance={finance} financeLoading={financeLoading} onOpenFinance={() => setActiveTab('finance')} />
+        <CaseMetaBar c={c} service={api.service} onSubStageChanged={() => setRefetchTick((n) => n + 1)} finance={finance} financeLoading={financeLoading} onOpenFinance={() => setActiveTab('finance')} />
 
         {/* Stage-driven "what to do now" guidance for the officer */}
         <NextStepBanner c={c} />

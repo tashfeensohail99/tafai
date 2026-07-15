@@ -56,7 +56,7 @@ import {
   type ProcessingPriority,
   type ListCasesQuery,
 } from '@/lib/processing';
-import { SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES, labelForServiceCode } from '@/lib/service-types';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 /**
@@ -595,12 +595,16 @@ export default function CasesPage() {
   const [officers, setOfficers] = useState<ApiProcessingOfficer[]>([]);
 
   // Filter state
+  // F11 — top-level bucket. Active = the working roster (terminal cases hidden);
+  // Closed = the completed/cancelled/rejected archive; Junk = the junked bucket.
+  const [bucket, setBucket] = useState<'active' | 'closed' | 'junk'>('active');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusGroup, setStatusGroup] = useState('');
   const [priority, setPriority] = useState<ProcessingPriority | ''>('');
   const [service, setService] = useState('');
   const [officer, setOfficer] = useState('');
+  const [salesPerson, setSalesPerson] = useState('');
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
   const [updatedFrom, setUpdatedFrom] = useState('');
@@ -627,13 +631,24 @@ export default function CasesPage() {
   }, [isManager]);
 
   const query: ListCasesQuery = useMemo(() => {
-    const statusStages = statusGroup
-      ? STATUS_GROUPS.find((g) => g.key === statusGroup)?.stages ?? []
-      : [];
+    // Closed / Junk buckets pin the server-side stage set. The Active bucket
+    // uses the STATUS_GROUPS sub-filter (when one is chosen) and strips any
+    // terminal rows client-side below.
+    const bucketStages: ProcessingStage[] | null =
+      bucket === 'closed'
+        ? ['COMPLETED', 'CANCELLED', 'REJECTED']
+        : bucket === 'junk'
+          ? ['JUNK']
+          : null;
+    const statusStages =
+      bucket === 'active' && statusGroup
+        ? STATUS_GROUPS.find((g) => g.key === statusGroup)?.stages ?? []
+        : [];
+    const stages = bucketStages ?? (statusStages.length ? statusStages : undefined);
     return {
       limit: 200,
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
-      ...(statusStages.length ? { stages: statusStages } : {}),
+      ...(stages ? { stages } : {}),
       ...(priority ? { priority } : {}),
       ...(service ? { service } : {}),
       ...(officer ? { assignedOfficerId: officer } : {}),
@@ -642,7 +657,7 @@ export default function CasesPage() {
       ...(updatedFrom ? { updatedFrom } : {}),
       ...(updatedTo ? { updatedTo } : {}),
     };
-  }, [debouncedSearch, statusGroup, priority, service, officer, createdFrom, createdTo, updatedFrom, updatedTo]);
+  }, [bucket, debouncedSearch, statusGroup, priority, service, officer, createdFrom, createdTo, updatedFrom, updatedTo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -650,7 +665,13 @@ export default function CasesPage() {
     fetchProcessingCases(query)
       .then((res) => {
         if (cancelled) return;
-        setCases(res.cases.filter((c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED'));
+        // Only the Active bucket hides terminal cases; Closed/Junk show exactly
+        // what the pinned server-side stage set returned.
+        setCases(
+          bucket === 'active'
+            ? res.cases.filter((c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED' && c.stage !== 'JUNK')
+            : res.cases,
+        );
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load cases');
@@ -661,15 +682,33 @@ export default function CasesPage() {
     };
   }, [query]);
 
-  const hasActiveFilters = !!(statusGroup || priority || service || officer || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
+  // Sales-person filter is derived + applied client-side from the loaded roster
+  // (each row carries its lead's sales rep), so it needs no extra endpoint.
+  const salesPersonOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of cases) {
+      const e = c.lead.assignedEmployee;
+      if (e) m.set(e.id, `${e.firstName} ${e.lastName}`.trim());
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [cases]);
+
+  const displayed = useMemo(
+    () => (salesPerson ? cases.filter((c) => c.lead.assignedEmployee?.id === salesPerson) : cases),
+    [cases, salesPerson],
+  );
+
+  const hasActiveFilters = !!(statusGroup || priority || service || officer || salesPerson || createdFrom || createdTo || updatedFrom || updatedTo || debouncedSearch);
   const dateFilterActive = !!(createdFrom || createdTo || updatedFrom || updatedTo);
 
   function clearAll() {
     setSearch('');
+    setBucket('active');
     setStatusGroup('');
     setPriority('');
     setService('');
     setOfficer('');
+    setSalesPerson('');
     setCreatedFrom('');
     setCreatedTo('');
     setUpdatedFrom('');
@@ -702,13 +741,46 @@ export default function CasesPage() {
             ) : null}
           </div>
 
+          {/* F11 — Active / Closed / Junk bucket toggle */}
+          <div style={{ display: 'flex', gap: 4, background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-md)', padding: 3, alignSelf: 'flex-start' }}>
+            {([
+              { key: 'active', label: 'Active' },
+              { key: 'closed', label: 'Closed' },
+              { key: 'junk', label: 'Junk' },
+            ] as const).map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setBucket(key);
+                  if (key !== 'active') setStatusGroup('');
+                }}
+                style={{
+                  padding: '5px 14px',
+                  borderRadius: 'var(--sos-radius-sm)',
+                  border: 'none',
+                  background: bucket === key ? 'var(--sos-brand-primary-strong)' : 'transparent',
+                  color: bucket === key ? '#fff' : 'var(--sos-text-secondary)',
+                  fontSize: 12.5,
+                  fontWeight: bucket === key ? 600 : 400,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
-            <select className="sos-input" value={statusGroup} onChange={(e) => setStatusGroup(e.target.value)} aria-label="Status">
-              <option value="">All statuses</option>
-              {STATUS_GROUPS.map((g) => (
-                <option key={g.key} value={g.key}>{g.label}</option>
-              ))}
-            </select>
+            {bucket === 'active' ? (
+              <select className="sos-input" value={statusGroup} onChange={(e) => setStatusGroup(e.target.value)} aria-label="Status">
+                <option value="">All statuses</option>
+                {STATUS_GROUPS.map((g) => (
+                  <option key={g.key} value={g.key}>{g.label}</option>
+                ))}
+              </select>
+            ) : null}
             <select className="sos-input" value={priority} onChange={(e) => setPriority(e.target.value as ProcessingPriority | '')}>
               <option value="">All priorities</option>
               {PRIORITIES.map((p) => (
@@ -717,7 +789,7 @@ export default function CasesPage() {
             </select>
             <select className="sos-input" value={service} onChange={(e) => setService(e.target.value)}>
               <option value="">All service types</option>
-              {SERVICE_TYPES.map((s) => (
+              {PICKABLE_SERVICE_TYPES.map((s) => (
                 <option key={s.code} value={s.code}>{s.label}</option>
               ))}
             </select>
@@ -726,6 +798,14 @@ export default function CasesPage() {
                 <option value="">All officers</option>
                 {officers.map((o) => (
                   <option key={o.id} value={o.id}>{o.name || o.email}</option>
+                ))}
+              </select>
+            ) : null}
+            {salesPersonOptions.length > 0 ? (
+              <select className="sos-input" value={salesPerson} onChange={(e) => setSalesPerson(e.target.value)} aria-label="Sales person">
+                <option value="">All sales people</option>
+                {salesPersonOptions.map(([id, name]) => (
+                  <option key={id} value={id}>{name}</option>
                 ))}
               </select>
             ) : null}
@@ -779,7 +859,7 @@ export default function CasesPage() {
       </GlassCard>
 
       <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--sos-text-primary)' }}>
-        Active cases ({cases.length}){hasActiveFilters ? ' · filtered' : ''}
+        {bucket === 'closed' ? 'Closed cases' : bucket === 'junk' ? 'Junk cases' : 'Active cases'} ({displayed.length}){hasActiveFilters ? ' · filtered' : ''}
       </div>
 
       <GlassCard variant="panel" padded={false}>
@@ -800,12 +880,12 @@ export default function CasesPage() {
               </div>
             ) : error ? (
               <div style={{ padding: 24, color: 'var(--sos-status-danger)' }}>Failed to load cases: {error}</div>
-            ) : cases.length === 0 ? (
+            ) : displayed.length === 0 ? (
               <div style={{ padding: 32, textAlign: 'center', color: 'var(--sos-text-muted)', fontSize: 13 }}>
                 {hasActiveFilters ? 'No cases match these filters.' : 'No active processing cases yet. Cases appear here once Finance hands them off.'}
               </div>
             ) : (
-              cases.map((c) => {
+              displayed.map((c) => {
                 const name = casePersonName(c);
                 const phone = c.client.phone || c.lead.phone || '';
                 const email = c.client.email ?? c.lead.email ?? '';

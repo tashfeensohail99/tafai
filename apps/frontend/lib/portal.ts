@@ -19,7 +19,8 @@ export type ProcessingCaseStage =
   | 'REJECTED'
   | 'APPEAL_IN_PROGRESS'
   | 'COMPLETED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'JUNK';
 
 export type DocumentItemStatus =
   | 'NOT_SUBMITTED'
@@ -367,6 +368,8 @@ export const CLIENT_STAGE_LABEL: Record<ProcessingCaseStage, string> = {
   APPEAL_IN_PROGRESS: 'Appeal In Progress',
   COMPLETED: 'Case Complete',
   CANCELLED: 'Case Cancelled',
+  // Client-facing: a junked case reads as closed, never "junk".
+  JUNK: 'Case Closed',
 };
 
 export const CLIENT_STAGE_TONE: Record<ProcessingCaseStage, string> = {
@@ -385,6 +388,7 @@ export const CLIENT_STAGE_TONE: Record<ProcessingCaseStage, string> = {
   APPEAL_IN_PROGRESS: 'warm',
   COMPLETED: 'success',
   CANCELLED: 'neutral',
+  JUNK: 'neutral',
 };
 
 export const CLIENT_NEXT_ACTION: Record<ProcessingCaseStage, string | null> = {
@@ -408,6 +412,7 @@ export const CLIENT_NEXT_ACTION: Record<ProcessingCaseStage, string | null> = {
   APPEAL_IN_PROGRESS: 'An appeal has been filed on your behalf. We will keep you informed.',
   COMPLETED: 'Your case is complete. Thank you for trusting Tafsheen Immigration.',
   CANCELLED: null,
+  JUNK: null,
 };
 
 // High-level journey the client sees as a 5-step progress stepper. The 15
@@ -437,6 +442,7 @@ const CLIENT_PHASE_BY_STAGE: Record<ProcessingCaseStage, number> = {
   REJECTED: 4,
   COMPLETED: 4,
   CANCELLED: -1,
+  JUNK: -1,
 };
 
 /** Index (0–4) of the client's current journey phase, or -1 if cancelled. */

@@ -2718,6 +2718,11 @@ enum ProcessingCaseStage {
   APPEAL_IN_PROGRESS
   COMPLETED
   CANCELLED
+  // Terminal "not a real case" bucket (spam / duplicate / dead lead). Behaves
+  // like CANCELLED for active-list exclusion (reuses cancelledAt /
+  // cancellationReason) but is surfaced as its own Junk bucket, kept out of the
+  // Closed/History set. Manager-only transition.
+  JUNK
 
   @@schema("processing")
 }
@@ -3145,6 +3150,19 @@ model ProcessingCase {
   /// Persisted (previously used only transiently for checklist seeding) so
   /// per-program client-email templates can resolve the right variant at send.
   programCode                  String?
+  /// Lightweight, per-service display/tracking label chosen from
+  /// CATEGORY_SUBSTAGE[service] (e.g. "Doc collection", "Final submission").
+  /// PURELY informational — never drives the ProcessingCaseStage machine,
+  /// document gates, SLA, or reporting. NULL until an officer sets it.
+  subStage                     String?
+  /// Import provenance (bulk client import): the source system's "Case ID"
+  /// (e.g. "0001"). Preserved for cross-reference; used as an idempotency hint
+  /// on re-import. Not unique — IDs can repeat across batches.
+  externalRef                  String?
+  /// Import provenance: the client's original signup date from the source
+  /// sheet. Purely descriptive — kept SEPARATE from createdAt so it never
+  /// feeds SLA / aging (those derive from createdAt / handover).
+  signupDate                   DateTime?              @db.Date
   financeHandoverNote          String?
   processingNote               String?
   estimatedSubmissionDate      DateTime?              @db.Date
@@ -3188,6 +3206,7 @@ model ProcessingCase {
   @@index([clientId])
   @@index([leadId])
   @@index([priority, stage])
+  @@index([externalRef])
   @@map("processing_cases")
   @@schema("processing")
 }

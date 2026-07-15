@@ -10,7 +10,7 @@
 //
 // Sales never randomly assigns; associates never self-pick from this queue.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -20,6 +20,7 @@ import {
   Globe,
   Loader2,
   Phone,
+  Search,
   ShieldAlert,
   User,
   UserCheck,
@@ -50,7 +51,7 @@ import {
   type ApiIntakeCaseItem,
   type ApiProcessingOfficer,
 } from '@/lib/processing';
-import { SERVICE_TYPES, labelForServiceCode, isCanonicalServiceCode } from '@/lib/service-types';
+import { PICKABLE_SERVICE_TYPES, labelForServiceCode, isCanonicalServiceCode } from '@/lib/service-types';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Acknowledge modal ----------------------------------------------
@@ -207,7 +208,7 @@ function AcknowledgeModal({
             style={{ width: '100%' }}
           >
             <option value="" disabled>Choose a case category…</option>
-            {SERVICE_TYPES.map((s) => (
+            {PICKABLE_SERVICE_TYPES.map((s) => (
               <option key={s.code} value={s.code}>{s.label}</option>
             ))}
           </select>
@@ -303,6 +304,18 @@ export function ProcessingIntakePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<ApiIntakeCaseItem | null>(null);
   const [assignedCount, setAssignedCount] = useState(0);
+  const [search, setSearch] = useState('');
+
+  const visibleQueue = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return queue;
+    return queue.filter((c) =>
+      [casePersonName(c), casePersonPhone(c), labelForServiceCode(c.service), c.targetCountry, c.lead?.referenceCode ?? '']
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [queue, search]);
 
   // Per the Processing workflow only managers can acknowledge. Associates
   // visiting this URL get a clear access-required state instead of a 403
@@ -389,7 +402,22 @@ export function ProcessingIntakePage() {
           </GlassCard>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {queue.map((c) => (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', maxWidth: 340 }}>
+              <Search size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+              <input
+                type="search"
+                placeholder="Search client, phone, service…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 12.5 }}
+              />
+            </div>
+            {visibleQueue.length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--sos-text-muted)', padding: '12px 4px' }}>
+                No cases match “{search.trim()}”.
+              </div>
+            ) : null}
+            {visibleQueue.map((c) => (
               <GlassCard
                 key={c.id}
                 variant="default"

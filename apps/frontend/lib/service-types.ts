@@ -21,6 +21,10 @@ export interface ServiceTypeOption {
   label: string;
   /** Short tagline shown under the label on the chip picker. */
   caption?: string;
+  /** Legacy/retired: still a valid stored code (so existing rows keep rendering
+   *  and pass @IsIn validation) but hidden from NEW pickers. See
+   *  PICKABLE_SERVICE_TYPES. */
+  hidden?: boolean;
 }
 
 export const SERVICE_TYPES: ServiceTypeOption[] = [
@@ -28,12 +32,21 @@ export const SERVICE_TYPES: ServiceTypeOption[] = [
   { code: 'WORK_PERMIT',     label: 'Work Permit (WP)',           caption: 'LMIA / exemption based' },
   { code: 'PR_CASE',         label: 'Permanent Residency (PR)',   caption: 'Federal / provincial' },
   { code: 'VISIT_VISA',      label: 'Visit Visa',                 caption: 'Family / business visit' },
-  { code: 'TOURIST_VISA',    label: 'Tourist Visa',               caption: 'Short stay leisure' },
+  // Tourist Visa retired from the pickers per processing-team feedback; kept
+  // here as a valid legacy code so any existing lead/case still renders + validates.
+  { code: 'TOURIST_VISA',    label: 'Tourist Visa',               caption: 'Short stay leisure', hidden: true },
   { code: 'SPOUSE_VISA',     label: 'Spouse Visa',                caption: 'Family sponsorship' },
   { code: 'E2_VISA',         label: 'E2 Visa',                    caption: 'Investor / treaty' },
   { code: 'CBI',             label: 'Citizenship by Investment',  caption: 'CBI programs' },
   { code: 'JR_RESUBMISSION', label: 'JR Resubmission',            caption: 'Refused case rework' },
 ];
+
+/** Service types offered in NEW pickers/dropdowns (excludes hidden/legacy ones
+ *  like Tourist Visa). Use this for any "choose a service" UI; use SERVICE_TYPES
+ *  only for label lookup / validation over historical data. */
+export const PICKABLE_SERVICE_TYPES: ServiceTypeOption[] = SERVICE_TYPES.filter(
+  (s) => !s.hidden,
+);
 
 /** Just the codes — useful for class-validator @IsIn() on the backend. */
 export const SERVICE_TYPE_CODES: string[] = SERVICE_TYPES.map((s) => s.code);

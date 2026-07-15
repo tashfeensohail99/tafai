@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -31,6 +32,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { ProcessingService } from './processing.service';
 import { SubmissionPackageService } from './submission-package.service';
+import { parseSpreadsheet } from '../lead-imports/parsers/spreadsheet-parser';
 import {
   AcknowledgeIntakeDto,
   AddDocumentItemDto,
@@ -63,6 +65,7 @@ import {
   UpdateEmailSignatureDto,
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
+  UpdateCaseSubStageDto,
   UpdateDocumentTemplateDto,
   UpdateProcessingTaskDto,
   UpdateAttestationDto,
@@ -103,6 +106,50 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.createManualClientCase(dto, user);
+  }
+
+  /**
+   * Bulk client import — DRY RUN. Parses the uploaded xlsx/csv and resolves
+   * every row (officer / sales rep / program / dupe status) WITHOUT writing.
+   * Manager-only (same gate as manual create).
+   */
+  @Post('client-imports/preview')
+  @RequirePermissions('processing.intake.acknowledge')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    }),
+  )
+  previewClientImport(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (!file) throw new BadRequestException('A CSV or Excel file is required.');
+    const parsed = parseSpreadsheet(file.buffer, file.mimetype, file.originalname);
+    return this.processingService.bulkImportClients(parsed, user, true);
+  }
+
+  /**
+   * Bulk client import — COMMIT. Creates each client + INTAKE case and assigns
+   * the named processing officer. Idempotent (skips already-imported Case IDs).
+   */
+  @Audit({ action: 'CLIENTS_IMPORTED', entityType: 'ProcessingImport', category: 'MUTATION', severity: 'HIGH' })
+  @Post('client-imports')
+  @RequirePermissions('processing.intake.acknowledge')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 20 * 1024 * 1024 },
+    }),
+  )
+  commitClientImport(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (!file) throw new BadRequestException('A CSV or Excel file is required.');
+    const parsed = parseSpreadsheet(file.buffer, file.mimetype, file.originalname);
+    return this.processingService.bulkImportClients(parsed, user, false);
   }
 
   @Get('intake')
@@ -229,6 +276,19 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.updateCasePriority(caseId, dto, user);
+  }
+
+  // Set/clear the lightweight sub-stage tracking label (feedback F3). Officer-
+  // editable (same gate as stage changes); assertCaseAccess scopes an associate
+  // to their own case.
+  @Patch('cases/:caseId/substage')
+  @RequirePermissions('processing.case.update_stage')
+  updateCaseSubStage(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: UpdateCaseSubStageDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.updateCaseSubStage(caseId, dto, user);
   }
 
   // -------------------------------------------------------------------------

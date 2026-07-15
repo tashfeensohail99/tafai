@@ -216,6 +216,10 @@ export class PaymentPlanDto {
 export class CreateAgreementDto {
   @IsString() @IsNotEmpty() leadId!: string;
   @IsString() @IsNotEmpty() templateId!: string;
+  /** Bypass the "one active agreement per lead + service" guard. Set ONLY when
+   *  the rep deliberately confirms a second agreement for the SAME service on
+   *  the same lead (e.g. a genuinely different applicant). Defaults false. */
+  @IsOptional() @IsBoolean() allowDuplicate?: boolean;
 }
 
 /** Update a draft agreement's bio / payment plan / sales notes. */

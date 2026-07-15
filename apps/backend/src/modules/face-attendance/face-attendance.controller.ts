@@ -54,6 +54,13 @@ export class FaceAttendanceAdminController {
     return this.svc.listEnrolled();
   }
 
+  /** Auto-detected NVR channels (cameras) pushing + their role — for camera setup. */
+  @Get('channels')
+  @RequirePermissions('employees.view_all')
+  channels() {
+    return this.svc.listChannels();
+  }
+
   /** Remove all of an employee's face samples (to re-enroll). */
   @Delete('enrollments/:employeeId')
   @RequirePermissions('employees.create')

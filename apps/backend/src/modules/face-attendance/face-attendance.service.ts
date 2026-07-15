@@ -72,6 +72,12 @@ export class FaceAttendanceService implements OnModuleInit, OnModuleDestroy {
   // and each channel can pin the branch. JSON keyed by channelId, e.g.
   //   {"1":{"direction":"IN","branchId":"<id>"},"2":{"direction":"OUT","branchId":"<id>"}}
   private channelMap: Record<string, { direction?: 'IN' | 'OUT'; branchId?: string }> = {};
+  // When true, ONLY channels present in channelMap produce attendance — the
+  // "choose N cameras out of the NVR's many" guard. Other channels are still
+  // counted (so they show up in the pick-list) but never create a punch.
+  private readonly onlyMappedChannels = process.env.FACE_ONLY_MAPPED_CHANNELS === 'true';
+  // Live registry of every NVR channel seen pushing (auto-detect, for setup).
+  private readonly channelSeen = new Map<string, { count: number; lastSeen: Date }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -92,6 +98,33 @@ export class FaceAttendanceService implements OnModuleInit, OnModuleDestroy {
     const direction =
       c.direction === 'IN' ? PunchDirection.IN : c.direction === 'OUT' ? PunchDirection.OUT : undefined;
     return { direction, branchId: c.branchId };
+  }
+
+  private noteChannel(channelId: string | null | undefined, at: Date): void {
+    if (!channelId) return;
+    const s = this.channelSeen.get(channelId) ?? { count: 0, lastSeen: at };
+    s.count += 1;
+    s.lastSeen = at;
+    this.channelSeen.set(channelId, s);
+  }
+
+  /** NVR channels (cameras) seen pushing + their configured role — for setup. */
+  listChannels() {
+    const channels = [...this.channelSeen.entries()]
+      .map(([channelId, s]) => {
+        const cfg = this.channelMap[channelId];
+        return {
+          channelId,
+          captures: s.count,
+          lastSeen: s.lastSeen,
+          chosen: Boolean(cfg),
+          direction: cfg?.direction ?? null,
+          branchId: cfg?.branchId ?? null,
+          producesAttendance: !this.onlyMappedChannels || Boolean(cfg),
+        };
+      })
+      .sort((a, b) => b.captures - a.captures);
+    return { onlyMappedChannels: this.onlyMappedChannels, channels };
   }
 
   onModuleInit(): void {
@@ -233,6 +266,14 @@ export class FaceAttendanceService implements OnModuleInit, OnModuleDestroy {
       return { status: 'ignored' };
     }
     const capturedAt = this.clampCaptureTime(ev.capturedAt);
+
+    // Auto-detect: remember every channel we see, so the admin can pick cameras.
+    this.noteChannel(ev.channelId, capturedAt);
+    // Camera allowlist: when locked to chosen cameras, drop every other channel
+    // (they're still counted above so they appear in the pick-list).
+    if (this.onlyMappedChannels && !(ev.channelId && this.channelMap[ev.channelId])) {
+      return { status: 'ignored' };
+    }
 
     // Dedup on the NVR's event uuid (the unique index also guards races).
     if (ev.eventUuid) {

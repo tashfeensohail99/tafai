@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -29,6 +30,8 @@ import { assertConvertibleEmail } from './leads-conversion.util';
 
 @Injectable()
 export class LeadsService {
+  private readonly logger = new Logger(LeadsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
@@ -930,6 +933,51 @@ export class LeadsService {
         },
       },
     });
+
+    // A converted lead has already been COPIED into a Client, and downstream
+    // (Processing) renders the CLIENT — so a rename here would otherwise never
+    // surface there (the lead read "Muhammad Shahbaz" while the case still said
+    // "Ak Khan"). Propagate the corrected name to that client.
+    //
+    // GUARDED: only when the client still carries the lead's OLD name, i.e. it
+    // is an untouched copy from conversion. If the client was corrected
+    // independently — via clients.update, or the passport auto-fill in
+    // crm-auto-fill.helper which writes firstName/lastName off the real
+    // document — that name is more authoritative than a sales-entered lead, so
+    // leave it alone. Best-effort: the lead update has already committed, so a
+    // sync failure must never fail the request.
+    if (
+      existing.convertedClientId &&
+      (updated.firstName !== existing.firstName || updated.lastName !== existing.lastName)
+    ) {
+      try {
+        const client = await this.prisma.client.findUnique({
+          where: { id: existing.convertedClientId },
+          select: { id: true, firstName: true, lastName: true },
+        });
+        if (
+          client &&
+          client.firstName === existing.firstName &&
+          client.lastName === existing.lastName
+        ) {
+          await this.prisma.client.update({
+            where: { id: client.id },
+            data: { firstName: updated.firstName, lastName: updated.lastName },
+          });
+          this.logger.log(
+            `Lead ${id} renamed — synced client ${client.id}: "${existing.firstName} ${existing.lastName}" → "${updated.firstName} ${updated.lastName}"`,
+          );
+        } else if (client) {
+          this.logger.log(
+            `Lead ${id} renamed but client ${client.id} keeps its own name ("${client.firstName} ${client.lastName}") — not overwritten.`,
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Client name sync failed for lead ${id}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
 
     await this.auditLog.log({
       actorUserId,

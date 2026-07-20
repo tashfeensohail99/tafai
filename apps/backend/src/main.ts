@@ -1,14 +1,31 @@
 // build-stamp: 2026-05-12T10:26:52.442Z
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { json, raw } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log', 'debug'],
   });
+
+  // We run behind Railway's edge proxy, so the socket peer is the proxy, not
+  // the caller. Without this, `req.ip` is a Railway address that CHANGES from
+  // request to request — which silently defeated the rate limiter on
+  // POST /public/leads/website: every request got its own bucket, so the
+  // 5/min cap never tripped (verified in production: 7 rapid posts, 7×201,
+  // with x-ratelimit-remaining stuck at 4).
+  //
+  // The hop count matters. `1` means "one trusted proxy in front of us", so
+  // Express walks back exactly one entry of X-Forwarded-For. That yields the
+  // address Railway itself observed, which a caller cannot forge. Trusting the
+  // whole chain (`true`) would take the LEFTMOST, caller-supplied entry and
+  // hand any script a free throttle bypass — worse than no limiter, because it
+  // would look like one is working. Revisit this number if another proxy (e.g.
+  // Cloudflare) is ever put in front; it must equal the number of hops.
+  app.set('trust proxy', 1);
 
   // Meta WhatsApp webhook signature verification requires the RAW request
   // body. We mount a raw body parser for that path only; everything else

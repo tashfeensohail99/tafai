@@ -131,7 +131,7 @@ export const SOURCE_LABEL: Record<LeadSource, string> = {
   WALK_IN: 'Walk-in',
   FACEBOOK: 'Facebook Ads',
   INSTAGRAM: 'Instagram DM',
-  WEBSITE: 'Website CRM',
+  WEBSITE: 'Website Leads',
   WHATSAPP: 'WhatsApp',
   REFERRAL: 'Referral',
   PHONE: 'Phone Call',

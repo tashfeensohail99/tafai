@@ -42,6 +42,13 @@ async function bootstrap(): Promise<void> {
     'https://frontend-production-08d4.up.railway.app',
     'https://tashfeengroup.com',
     'https://www.tashfeengroup.com',
+    // Public marketing site — posts website enquiries to /public/leads/website.
+    // The Railway URL is the staging/preview host; the apex + www are where it
+    // will live once the domain is pointed at it. All three listed so the form
+    // keeps working through the cutover instead of breaking on switch-over day.
+    'https://webnew-production.up.railway.app',
+    'https://tashfeenimmigrationsolutions.com',
+    'https://www.tashfeenimmigrationsolutions.com',
   ];
   const envOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
     .split(',')

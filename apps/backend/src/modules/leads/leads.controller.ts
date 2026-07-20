@@ -13,6 +13,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
@@ -34,6 +35,7 @@ import {
   SetDispositionDto,
   UpdateLeadDto,
 } from './leads.dto';
+import { CreateWebsiteLeadDto } from './public-lead.dto';
 import { LeadsService } from './leads.service';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
@@ -352,5 +354,24 @@ export class LeadVerificationController {
   @Get('verify-email')
   async confirmEmail(@Query('token') token: string) {
     return this.leadsService.verifyLeadEmail(token);
+  }
+
+  /**
+   * Website enquiry form → a lead in the CRM, round-robined to a sales agent.
+   *
+   * Unauthenticated by design (no @UseGuards), like verify-email above. That
+   * makes throttling mandatory rather than optional: ThrottlerGuard has to be
+   * applied per-route in this codebase because ThrottlerModule.forRoot only
+   * registers config and there is no APP_GUARD.
+   *
+   * 5 per minute per IP. Generous for a person who mistypes their number and
+   * resubmits; useless to a script. The service layer adds a honeypot and a
+   * timing floor on top, and rejects both silently.
+   */
+  @Post('website')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async submitWebsiteEnquiry(@Body() dto: CreateWebsiteLeadDto) {
+    return this.leadsService.createWebsiteLead(dto);
   }
 }

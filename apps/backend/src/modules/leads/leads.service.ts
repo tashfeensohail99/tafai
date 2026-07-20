@@ -19,6 +19,7 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../common/phone/phone.util';
+import { findLeadByNormalizedPhone } from '../../common/phone/lead-dedupe';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
@@ -40,6 +41,13 @@ const WEBSITE_SOURCE = 'WEBSITE';
 
 /** A human cannot read the form and type a real enquiry faster than this. */
 const MIN_FORM_ELAPSED_MS = 3000;
+
+/**
+ * Ceiling on a lead's `notes` past which the public form stops appending.
+ * Generous — a genuinely chatty customer will never reach it — but it bounds
+ * what an unauthenticated caller can add to a row that is read on every open.
+ */
+const MAX_PUBLIC_NOTES_CHARS = 20_000;
 
 @Injectable()
 export class LeadsService {
@@ -85,11 +93,22 @@ export class LeadsService {
 
     const firstName = dto.firstName.trim();
     const lastName = dto.lastName.trim();
-    const phone = dto.phone.replace(/[\s()\-.]/g, '');
     const email = dto.email?.trim() || undefined;
 
+    // E.164, exactly like the staff create form (createLead) and the Meta path
+    // (field-mapping). Storing the raw typed string would put "03331120001"
+    // beside the "+923331120001" every other channel writes: the dedupe below
+    // could never match, and the WhatsApp thread lookup would miss the same
+    // person. An unparseable number is still captured rather than rejected —
+    // losing a real enquiry over formatting is worse than a number a rep tidies.
+    const parsed = normalisePhone(dto.phone, 'PK');
+    const phone = parsed.e164 ?? dto.phone.replace(/[\s()\-.]/g, '');
+
     const noteLines = [
-      'Website enquiry.',
+      // Labelled as public and unverified. Anyone who knows a customer's number
+      // can reach the append branch below, so a rep must be able to tell this
+      // text from something the customer actually said to them.
+      'Website enquiry (public form — unverified).',
       dto.page ? `Page: ${dto.page}` : null,
       dto.targetCountry ? `Destination: ${dto.targetCountry}` : null,
       dto.serviceInterest ? `Interest: ${dto.serviceInterest}` : null,
@@ -97,22 +116,45 @@ export class LeadsService {
     ].filter(Boolean);
     const notes = noteLines.join('\n');
 
-    // Same dedupe shape as meta-leads: phone OR case-insensitive email.
-    const orConds: Prisma.LeadWhereInput[] = [{ phone }];
-    if (email) orConds.push({ email: { equals: email, mode: 'insensitive' } });
-    const existing = await this.prisma.lead.findFirst({
-      where: { deletedAt: null, OR: orConds },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, notes: true },
-    });
+    // Phone matching goes through the shared matcher rather than an exact-string
+    // compare: it reconciles the local / national / E.164 spellings the same
+    // number gets stored in, returns the OLDEST hit so the original owner keeps
+    // the customer, and is served by the leads_phone_digits_idx expression
+    // index. A plain `{ phone }` filter would miss those variants AND seq-scan.
+    const byPhone = parsed.e164
+      ? await findLeadByNormalizedPhone(this.prisma, parsed.e164)
+      : null;
+    const byEmail =
+      !byPhone && email
+        ? await this.prisma.lead.findFirst({
+            where: { deletedAt: null, email: { equals: email, mode: 'insensitive' } },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true },
+          })
+        : null;
+    const existingId = byPhone?.id ?? byEmail?.id;
+    const existing = existingId
+      ? await this.prisma.lead.findUnique({
+          where: { id: existingId },
+          select: { id: true, notes: true },
+        })
+      : null;
 
     if (existing) {
       // Append rather than overwrite — the rep's own notes matter more than ours.
+      //
+      // Bounded, because this is an unauthenticated write onto an existing
+      // record: `notes` is an uncapped column that is loaded every time someone
+      // opens the lead, so a script submitting on a known number could grow one
+      // row indefinitely. Past the ceiling we stop adding and let the timeline
+      // carry the signal instead. It never truncates what a rep wrote.
       const stamped = `[${new Date().toISOString().slice(0, 10)}] ${notes}`;
-      await this.prisma.lead.update({
-        where: { id: existing.id },
-        data: { notes: existing.notes ? `${existing.notes}\n\n${stamped}` : stamped },
-      });
+      if ((existing.notes?.length ?? 0) < MAX_PUBLIC_NOTES_CHARS) {
+        await this.prisma.lead.update({
+          where: { id: existing.id },
+          data: { notes: existing.notes ? `${existing.notes}\n\n${stamped}` : stamped },
+        });
+      }
       await this.activityTimeline
         .record({
           entityType: 'lead',

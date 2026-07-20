@@ -17,7 +17,18 @@ import { PrismaService } from '../../common/prisma/prisma.service';
  *
  * Eligibility (identical to the WhatsApp pool):
  *   employee.isActive = true, whatsappInboxMember = true, deletedAt = null,
- *   linked UserAccount.status = ACTIVE.
+ *   linked UserAccount.status = ACTIVE, and NOT holding a finance role.
+ *
+ * The finance exclusion was missing here while `WhatsAppAssignmentService`
+ * enforced it, so this docblock's claim of parity was false and Meta / CSV
+ * leads could be round-robined onto a Finance officer. Working a new sales
+ * lead is a sales job; finance staff sit in the same employee table and can
+ * be WhatsApp inbox members for their own workflows, which is exactly why
+ * `whatsappInboxMember` alone is not a sufficient filter.
+ *
+ * It lives in `ELIGIBLE_WHERE` rather than in `pickNextAgent`, so the reception
+ * "referred by" picker and `isEligibleAgent` inherit it as well — those already
+ * documented themselves as never returning finance staff, and now that holds.
  */
 @Injectable()
 export class LeadAssignmentService {
@@ -40,7 +51,15 @@ export class LeadAssignmentService {
     isActive: true,
     whatsappInboxMember: true,
     deletedAt: null,
-    user: { status: 'ACTIVE' as const },
+    user: {
+      status: 'ACTIVE' as const,
+      // Finance staff are not assignment targets for new sales leads. Mirrors
+      // WhatsAppAssignmentService so every async channel — CSV, Meta, website
+      // — lands on the same pool the live engine uses. It sits in the shared
+      // predicate rather than in pickNextAgent alone so the reception
+      // "referred by" picker is filtered by it too.
+      userRoles: { none: { role: { name: { in: ['finance', 'finance_manager'] } } } },
+    },
   };
 
   /**

@@ -24,9 +24,22 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
 import { AssignLeadDto, CreateLeadDto, ListLeadsQueryDto, UpdateLeadDto } from './leads.dto';
+import { CreateWebsiteLeadDto } from './public-lead.dto';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertConvertibleEmail } from './leads-conversion.util';
+import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
+
+/**
+ * How website enquiries are stamped. UPPERCASE deliberately: the sales UI's
+ * create-lead picker already writes 'WEBSITE', and the admin leads page builds
+ * its source filter from raw DB values — so a lowercase variant would show up
+ * as a second, separate facet for the same thing.
+ */
+const WEBSITE_SOURCE = 'WEBSITE';
+
+/** A human cannot read the form and type a real enquiry faster than this. */
+const MIN_FORM_ELAPSED_MS = 3000;
 
 @Injectable()
 export class LeadsService {
@@ -39,7 +52,117 @@ export class LeadsService {
     private readonly storage: StorageService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
+    private readonly leadAssignment: LeadAssignmentService,
   ) {}
+
+  /**
+   * Create a lead from the public website enquiry form.
+   *
+   * The ONLY unauthenticated write path into this table, so the rules differ
+   * from the staff-facing create:
+   *
+   *  - The caller chooses NOTHING that matters. Source, status, branch and
+   *    assignee are all set here. The DTO cannot express them.
+   *  - Silent spam rejection. A honeypot hit or an impossibly fast submission
+   *    returns the SAME success shape as a real enquiry. Telling a bot why it
+   *    failed just teaches it to pass next time, and a human who somehow trips
+   *    it can still reach us on WhatsApp, which is the primary channel anyway.
+   *  - Duplicates do not create a second lead. Same rule as the Meta path:
+   *    match on phone OR email, keep the existing owner, append a note so the
+   *    rep can see they enquired again rather than getting a fresh record with
+   *    no history.
+   *
+   * Returns only { ok } — never a lead id, an assignee, or whether a duplicate
+   * was found. A public endpoint must not let anyone probe who is in the CRM.
+   */
+  async createWebsiteLead(dto: CreateWebsiteLeadDto): Promise<{ ok: true }> {
+    // Honeypot: hidden field, so any content at all means a bot.
+    if (dto.company && dto.company.trim() !== '') return { ok: true };
+    // Timing floor. Absent value = older client or JS disabled; allow it.
+    if (typeof dto.elapsedMs === 'number' && dto.elapsedMs < MIN_FORM_ELAPSED_MS) {
+      return { ok: true };
+    }
+
+    const firstName = dto.firstName.trim();
+    const lastName = dto.lastName.trim();
+    const phone = dto.phone.replace(/[\s()\-.]/g, '');
+    const email = dto.email?.trim() || undefined;
+
+    const noteLines = [
+      'Website enquiry.',
+      dto.page ? `Page: ${dto.page}` : null,
+      dto.targetCountry ? `Destination: ${dto.targetCountry}` : null,
+      dto.serviceInterest ? `Interest: ${dto.serviceInterest}` : null,
+      dto.message ? `\nWhat they said:\n${dto.message.trim()}` : null,
+    ].filter(Boolean);
+    const notes = noteLines.join('\n');
+
+    // Same dedupe shape as meta-leads: phone OR case-insensitive email.
+    const orConds: Prisma.LeadWhereInput[] = [{ phone }];
+    if (email) orConds.push({ email: { equals: email, mode: 'insensitive' } });
+    const existing = await this.prisma.lead.findFirst({
+      where: { deletedAt: null, OR: orConds },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, notes: true },
+    });
+
+    if (existing) {
+      // Append rather than overwrite — the rep's own notes matter more than ours.
+      const stamped = `[${new Date().toISOString().slice(0, 10)}] ${notes}`;
+      await this.prisma.lead.update({
+        where: { id: existing.id },
+        data: { notes: existing.notes ? `${existing.notes}\n\n${stamped}` : stamped },
+      });
+      await this.activityTimeline
+        .record({
+          entityType: 'lead',
+          entityId: existing.id,
+          leadId: existing.id,
+          eventType: TimelineEventType.NOTE_ADDED,
+          description: 'Enquired again via the website form',
+        })
+        // Timeline is a nice-to-have here; never fail a public submission
+        // because an audit write hiccuped.
+        .catch(() => undefined);
+      return { ok: true };
+    }
+
+    const [branch, assigneeId, referenceCode] = await Promise.all([
+      this.prisma.branch.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } }),
+      this.leadAssignment.pickNextAgent(),
+      generateLeadReferenceCode(this.prisma),
+    ]);
+
+    try {
+      await this.prisma.lead.create({
+        data: {
+          referenceCode,
+          firstName,
+          lastName,
+          email,
+          phone,
+          targetCountry: dto.targetCountry?.trim() || undefined,
+          serviceInterest: dto.serviceInterest?.trim() || undefined,
+          notes,
+          sourceChannel: WEBSITE_SOURCE,
+          status: LeadStatus.NEW,
+          ...(assigneeId ? { assignedEmployeeId: assigneeId, preferredEmployeeId: assigneeId } : {}),
+          ...(branch ? { branchId: branch.id } : {}),
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      // A referenceCode collision under concurrent submissions is a race, not a
+      // client error. Swallow it the way the Meta path does rather than showing
+      // a stranger a 500.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return { ok: true };
+      }
+      throw err;
+    }
+
+    return { ok: true };
+  }
 
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
     const canViewAll = user.permissions.includes('leads.view_all');
@@ -797,7 +920,7 @@ export class LeadsService {
         sourceChannel: dto.sourceChannel,
         referralPartnerId: dto.referralPartnerId,
         status: dto.status ?? LeadStatus.NEW,
-        priority: dto.priority,
+        ...(dto.priority ? { priority: dto.priority } : {}),
         notes: dto.notes,
         // Agreed service fee — anchors the single Invoice that future
         // installment Payments roll up to. NULL is fine when the deal
@@ -911,7 +1034,24 @@ export class LeadsService {
     const updated = await this.prisma.lead.update({
       where: { id },
       data: {
-        ...dto,
+        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
+        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
+        ...(dto.email !== undefined && { email: dto.email }),
+        ...(dto.phone !== undefined && { phone: dto.phone }),
+        ...(dto.alternatePhone !== undefined && { alternatePhone: dto.alternatePhone }),
+        ...(dto.nationality !== undefined && { nationality: dto.nationality }),
+        ...(dto.targetCountry !== undefined && { targetCountry: dto.targetCountry }),
+        ...(dto.serviceInterest !== undefined && { serviceInterest: dto.serviceInterest }),
+        ...(dto.sourceChannel !== undefined && { sourceChannel: dto.sourceChannel }),
+        ...(dto.branchId !== undefined && { branchId: dto.branchId }),
+        ...(dto.assignedEmployeeId !== undefined && { assignedEmployeeId: dto.assignedEmployeeId }),
+        ...(dto.referralPartnerId !== undefined && { referralPartnerId: dto.referralPartnerId }),
+        ...(dto.status !== undefined && { status: dto.status }),
+        ...(dto.priority !== undefined && { priority: dto.priority }),
+        ...(dto.notes !== undefined && { notes: dto.notes }),
+        ...(dto.lostReason !== undefined && { lostReason: dto.lostReason }),
+        ...(dto.serviceFeeAmount !== undefined && { serviceFeeAmount: new Prisma.Decimal(dto.serviceFeeAmount) }),
+        ...(dto.serviceFeeCurrency !== undefined && { serviceFeeCurrency: dto.serviceFeeCurrency }),
         ...emailVerificationReset,
         convertedAt: dto.status === LeadStatus.CONVERTED ? new Date() : undefined,
         // Stamp lostAt when the lead is marked LOST; clear it if it's revived to

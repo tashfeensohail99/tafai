@@ -34,6 +34,7 @@ function makeService(prisma: ReturnType<typeof makePrisma>): LeadsService {
     {} as never,
     {} as never,
     { create: jest.fn() } as never,
+    { pickNextAgent: jest.fn() } as never,
   );
 }
 

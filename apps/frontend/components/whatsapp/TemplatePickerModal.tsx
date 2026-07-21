@@ -14,6 +14,7 @@ import {
   countTemplateBodyParams,
   listTemplates,
   sendTemplate,
+  sendTemplateToLead,
   type WhatsAppTemplate,
 } from '@/lib/whatsapp';
 import { Modal } from './Modal';
@@ -24,18 +25,27 @@ import { Modal } from './Modal';
  * wants to send an approved template.
  *
  * Flow:
- *   1. Fetch approved templates for the thread's channel.
+ *   1. Fetch approved templates for the channel.
  *   2. Agent searches by name, picks one.
  *   3. We detect `{{1}}, {{2}}, …` body placeholders and render one input
  *      per parameter. Header parameters are not exposed in MVP — header text
  *      is rendered as-is to keep the picker simple.
- *   4. On submit, build the `components` payload and POST to the existing
- *      `sendTemplate` API. Parent reloads the thread.
+ *   4. On submit, build the `components` payload and POST. Parent reloads.
+ *
+ * Two send modes:
+ *   - `threadId` — an existing conversation (the chat composer).
+ *   - `leadId`   — FIRST contact with a lead that has no thread yet (the CSV
+ *     leads page). The backend resolves-or-creates the thread, so the rep
+ *     makes first contact on the CRM business number rather than their own.
+ * Exactly one must be supplied.
  */
 export function TemplatePickerModal(props: {
   open: boolean;
   onClose: () => void;
-  threadId: string;
+  /** Thread-keyed send. Mutually exclusive with `leadId`. */
+  threadId?: string;
+  /** Lead-keyed send (no thread yet). Mutually exclusive with `threadId`. */
+  leadId?: string;
   channelId: string;
   /** Pre-fills {{1}} with the contact's name (the common case for greetings). */
   contactName?: string | null;
@@ -106,11 +116,23 @@ export function TemplatePickerModal(props: {
     setSending(true);
     setSendError(null);
     try {
-      await sendTemplate(props.threadId, {
-        templateName: selected.name,
-        language: selected.language,
-        components: buildTemplateComponents(selected, params),
-      });
+      const components = buildTemplateComponents(selected, params);
+      if (props.threadId) {
+        await sendTemplate(props.threadId, {
+          templateName: selected.name,
+          language: selected.language,
+          components,
+        });
+      } else if (props.leadId) {
+        // First contact: the backend opens the thread on the business number.
+        await sendTemplateToLead(props.leadId, {
+          templateName: selected.name,
+          language: selected.language,
+          components,
+        });
+      } else {
+        throw new Error('No thread or lead to send to');
+      }
       props.onSent();
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Failed to send template');

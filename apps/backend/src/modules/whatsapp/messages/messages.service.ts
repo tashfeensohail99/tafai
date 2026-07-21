@@ -320,7 +320,15 @@ export class WhatsAppMessagesService {
    */
   async sendTemplateToLead(
     caller: CallerContext,
-    input: { leadId: string; templateName?: string; language?: string; idempotencyKey?: string },
+    input: {
+      leadId: string;
+      templateName?: string;
+      language?: string;
+      /** Meta components for the chosen template. When omitted we fall back to
+       *  the legacy 2-param `reengage_personal` shape (mobile one-tap path). */
+      components?: Array<Record<string, unknown>>;
+      idempotencyKey?: string;
+    },
   ) {
     const lead = await this.prisma.lead.findUnique({
       where: { id: input.leadId },
@@ -434,37 +442,51 @@ export class WhatsAppMessagesService {
       threadId = created.id;
     }
 
-    // Template body params — reengage_personal: "Hi {{1}}, this is {{2}} from
-    // Tashfeen …". {{1}} = the lead's first name, {{2}} = the rep's name.
-    const rep = caller.employeeId
-      ? await this.prisma.employee.findUnique({
-          where: { id: caller.employeeId },
-          select: { firstName: true },
-        })
-      : null;
-    const repName = rep?.firstName?.trim() || 'Tashfeen Immigration Solutions';
-    const leadFirstName = lead.firstName?.trim() || 'there';
-    const components: Array<Record<string, unknown>> = [
-      {
-        type: 'body',
-        parameters: [
-          { type: 'text', text: leadFirstName },
-          { type: 'text', text: repName },
-        ],
-      },
-    ];
+    // Template body params. When the caller picked a template in the UI it
+    // supplies its own components (param count follows THAT template), and we
+    // must not second-guess them — a mismatched count is a Meta #132000 reject.
+    // With none supplied we keep the legacy default for reengage_personal:
+    // "Hi {{1}}, this is {{2}} from Tashfeen …" — {{1}} the lead's first name,
+    // {{2}} the rep's name.
+    let components = input.components;
+    if (!components?.length) {
+      const rep = caller.employeeId
+        ? await this.prisma.employee.findUnique({
+            where: { id: caller.employeeId },
+            select: { firstName: true },
+          })
+        : null;
+      const repName = rep?.firstName?.trim() || 'Tashfeen Immigration Solutions';
+      const leadFirstName = lead.firstName?.trim() || 'there';
+      components = [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: leadFirstName },
+            { type: 'text', text: repName },
+          ],
+        },
+      ];
+    }
+
+    const templateName = input.templateName?.trim() || 'reengage_personal';
+    const language = input.language?.trim() || 'en';
 
     // Coarse time-bucketed idempotency key: a double-click / two-tab / retry
     // burst collapses to ONE send (WhatsAppMessage.idempotencyKey is @unique),
     // while genuinely re-contacting the lead a couple of minutes later stays
     // allowed. A collision throws P2002, which we treat as an idempotent no-op.
+    // The template name is part of the key: a rep who sends template A and then
+    // deliberately picks template B seconds later must get BOTH, not a silent
+    // no-op that looks like a successful second send.
     const bucket = Math.floor(Date.now() / 120_000); // 2-minute window
-    const idempotencyKey = input.idempotencyKey ?? `wa-tpl-lead-${threadId}-b${bucket}`;
+    const idempotencyKey =
+      input.idempotencyKey ?? `wa-tpl-lead-${threadId}-${templateName}-b${bucket}`;
     try {
       const message = await this.sendTemplate(caller, {
         threadId,
-        templateName: input.templateName?.trim() || 'reengage_personal',
-        language: input.language?.trim() || 'en',
+        templateName,
+        language,
         components,
         idempotencyKey,
       });

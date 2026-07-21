@@ -330,12 +330,32 @@ export async function getThreadForLead(leadId: string): Promise<ThreadListItem |
  */
 export async function sendTemplateToLead(
   leadId: string,
-  input?: { templateName?: string; language?: string; idempotencyKey?: string },
+  input?: {
+    templateName?: string;
+    language?: string;
+    /** Meta components for the picked template. Omit to let the backend apply
+     *  its 2-param `reengage_personal` default (the mobile one-tap path). */
+    components?: unknown[];
+    idempotencyKey?: string;
+  },
 ): Promise<{ threadId: string; message: ChatMessage | null }> {
   return apiFetch<{ threadId: string; message: ChatMessage | null }>(
     `/whatsapp/leads/${leadId}/send-template`,
     { method: 'POST', body: JSON.stringify(input ?? {}) },
   );
+}
+
+/**
+ * The ACTIVE sending channel (id + display number), or null if none is
+ * configured. Rep-accessible — needed to list templates for a lead that has no
+ * thread yet (first contact from the CSV-leads page).
+ */
+export function getActiveChannel(): Promise<{ id: string; displayNumber: string } | null> {
+  // no-store: an admin can flip the active channel server-side at any time and
+  // a stale id would list templates for a number we no longer send from.
+  return apiFetch<{ id: string; displayNumber: string } | null>('/whatsapp/channels/active', {
+    cache: 'no-store',
+  });
 }
 
 /**

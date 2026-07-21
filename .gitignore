@@ -76,3 +76,8 @@ infra/docker/.env
 *.key
 *.cert
 *.p12
+
+# Ad-hoc credential dumps from ops scripts — never commit
+*creds*.json
+*credentials*.json
+*secret*.json

@@ -34,35 +34,13 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppMessagesService } from './messages.service';
+import { TemplateComponentDto } from './template-component.dto';
 import { Audit } from '../../../common/decorators/audit.decorator';
 
 class SendTextDto {
   @IsString() @MinLength(1) body!: string;
   @IsOptional() @IsString() contextWaMessageId?: string;
   @IsOptional() @IsString() idempotencyKey?: string;
-}
-
-// Meta template "parameters" entry. We only send text params today; declaring
-// `type` + `text` is what lets them survive the global ValidationPipe
-// (whitelist + transform). An untyped Record<> here was being collapsed to an
-// empty array by the pipe, producing the malformed `components: [[]]` that Meta
-// rejected with error 100 ("template.components.0 ... missing : 'type'").
-class TemplateParamDto {
-  @IsString() type!: string;
-  @IsOptional() @IsString() text?: string;
-}
-
-// Meta template component (header / body / button). `parameters` is preserved
-// + validated via @ValidateNested + @Type so the nested structure survives.
-class TemplateComponentDto {
-  @IsString() type!: string;
-  @IsOptional() @IsString() sub_type?: string;
-  @IsOptional() @IsString() index?: string;
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => TemplateParamDto)
-  parameters?: TemplateParamDto[];
 }
 
 class SendTemplateDto {

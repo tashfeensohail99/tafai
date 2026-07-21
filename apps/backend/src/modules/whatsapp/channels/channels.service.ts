@@ -215,6 +215,22 @@ export class WhatsAppChannelsService {
     return rows.map(toPublic);
   }
 
+  /**
+   * The channel outbound sends actually go out on: the first ACTIVE one by
+   * createdAt — the same pick as messages.service.sendTemplateToLead and
+   * csv-drip.service, so a rep browsing templates sees the ones the send will
+   * really use. Returns only what a non-admin needs (id + display number);
+   * never tokens or WABA ids.
+   */
+  async activeForSending(): Promise<{ id: string; displayNumber: string } | null> {
+    const ch = await this.prisma.whatsAppChannel.findFirst({
+      where: { status: WhatsAppChannelStatus.ACTIVE },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, displayNumber: true },
+    });
+    return ch ?? null;
+  }
+
   async getOrFail(id: string): Promise<PublicChannel> {
     const ch = await this.prisma.whatsAppChannel.findUnique({ where: { id } });
     if (!ch) throw new NotFoundException('WhatsApp channel not found');

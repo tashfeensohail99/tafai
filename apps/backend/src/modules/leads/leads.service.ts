@@ -219,16 +219,31 @@ export class LeadsService {
       ...(query.targetCountry ? { targetCountry: { equals: query.targetCountry, mode: 'insensitive' } } : {}),
       ...this.createdRange(query),
       // CSV-origin filter: lead has at least one import-row with a
-      // successful (IMPORTED or DUPLICATE) outcome. Once the customer REPLIES
-      // (their WhatsApp thread gets a first inbound) the lead is a live inbox
-      // conversation, so it drops off the CSV worklist — "leave on reply". The
-      // drip's own outbound template does NOT set firstInboundAt, so a lead
-      // mid-drip (touch sent, no reply) correctly stays on the list. NOT (vs a
+      // successful (IMPORTED or DUPLICATE) outcome. A lead drops off this
+      // worklist once it is genuinely handled, which is EITHER:
+      //   - the customer REPLIED (thread has a first inbound) → it's now a live
+      //     inbox conversation, or
+      //   - a REP has messaged them (thread.lastHumanReplyAt) → first contact is
+      //     made, so it is no longer "still to reach".
+      // lastHumanReplyAt is the org-wide "we contacted them" key (the inbox's
+      // Uncontacted filter and the re-engagement blast both key on it) and is
+      // stamped only for sends with a real sender — the CSV drip's bot template
+      // has sentByEmployeeId null, so a lead mid-drip (touch sent, no reply)
+      // correctly STAYS on the list until a human picks it up. NOT (vs a
       // top-level OR) so it composes with the rep-scope / search OR clauses.
       ...(query.fromCsv
         ? {
             importRows: { some: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } } },
-            NOT: { whatsappThread: { is: { firstInboundAt: { not: null } } } },
+            NOT: {
+              whatsappThread: {
+                is: {
+                  OR: [
+                    { firstInboundAt: { not: null } },
+                    { lastHumanReplyAt: { not: null } },
+                  ],
+                },
+              },
+            },
           }
         : {}),
       ...(!canViewAll
@@ -324,11 +339,17 @@ export class LeadsService {
     const repScope: Prisma.LeadWhereInput[] = canViewAll
       ? []
       : [{ OR: [{ assignedEmployee: { userId: user.id } }, { createdByUserId: user.id }] }];
-    // Contacted = drip template sent OR customer replied (thread first inbound).
+    // Contacted = drip template sent OR a rep messaged them OR customer replied.
+    // MUST stay in step with the list filter in findAllAccessible (fromCsv), or
+    // "Remaining" stops reconciling with the rows actually shown. The extra
+    // dripTouch1At term is why it isn't literally the same predicate: a
+    // mid-drip lead counts as contacted for the KPI but stays ON the list, so
+    // the rep can still take it over manually.
     const contactedCond: Prisma.LeadWhereInput = {
       OR: [
         { dripTouch1At: { not: null } },
         { whatsappThread: { is: { firstInboundAt: { not: null } } } },
+        { whatsappThread: { is: { lastHumanReplyAt: { not: null } } } },
       ],
     };
 

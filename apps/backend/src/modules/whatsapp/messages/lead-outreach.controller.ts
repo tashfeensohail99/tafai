@@ -1,5 +1,6 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
-import { IsOptional, IsString } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import { RequirePermissions } from '../../../common/decorators/require-permissions.decorator';
@@ -8,10 +9,24 @@ import { RequestUser } from '../../../common/types/auth.types';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { Audit } from '../../../common/decorators/audit.decorator';
 import { WhatsAppMessagesService } from './messages.service';
+import { TemplateComponentDto } from './template-component.dto';
 
 class SendLeadTemplateDto {
   @IsOptional() @IsString() templateName?: string;
   @IsOptional() @IsString() language?: string;
+  /**
+   * Meta components for the chosen template. Sent by the CSV-leads / lead
+   * template picker, where the rep picks ANY approved template and fills its
+   * placeholders — so the param count must follow the template, not a
+   * hardcoded shape. Omitted by the mobile one-tap path, which keeps the
+   * legacy 2-param `reengage_personal` default.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => TemplateComponentDto)
+  components?: TemplateComponentDto[];
   @IsOptional() @IsString() idempotencyKey?: string;
 }
 
@@ -45,7 +60,12 @@ export class WhatsAppLeadOutreachController {
     @CurrentUser() user: RequestUser,
   ) {
     const caller = await this.callerContext(user);
-    return this.messages.sendTemplateToLead(caller, { leadId, ...dto });
+    return this.messages.sendTemplateToLead(caller, {
+      leadId,
+      ...dto,
+      // Validated nested DTO instances — structurally the Meta components JSON.
+      components: dto.components as unknown as Array<Record<string, unknown>> | undefined,
+    });
   }
 
   /** Mirror of messages.controller.callerContext — builds the WhatsApp scope

@@ -20,18 +20,40 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { apiFetch } from '@/lib/api-client';
-import { renderWelcomeMessage, waWebLink } from '@/lib/lead-imports-api';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
+import { TemplatePickerModal } from '@/components/whatsapp/TemplatePickerModal';
+import { getActiveChannel } from '@/lib/whatsapp';
 
 /**
- * Sales agent view of leads sourced from CSV/Excel uploads. On import each lead
- * is auto-sent a WhatsApp TEMPLATE (business number) and a second one ~40h later
- * if they stay quiet — the "Auto-outreach" column shows that drip's progress.
- * A lead leaves this list the moment the customer REPLIES (it becomes a live
- * inbox conversation). If BOTH auto-touches go unanswered, the row surfaces a
- * personal-WhatsApp button so the rep can escalate on their own number (the old
- * behaviour, now a deliberate last resort rather than the first touch).
+ * Sales agent view of leads sourced from CSV/Excel uploads. Leads imported
+ * since the auto-drip shipped are auto-sent a WhatsApp TEMPLATE on import and a
+ * second one ~40h later if they stay quiet — the "Auto-outreach" column shows
+ * that drip's progress. Leads imported BEFORE it shipped were never enqueued
+ * and are labelled as such rather than being shown a queue that doesn't exist.
+ *
+ * Every messageable row offers a WhatsApp button that sends an approved
+ * TEMPLATE from the CRM business number (rep picks the template, fills its
+ * placeholders). The backend opens the thread, so the conversation is logged in
+ * the CRM inbox — no personal-WhatsApp escalation.
+ *
+ * A lead leaves this list once it is genuinely handled: the customer replied,
+ * OR a rep has messaged them.
  */
+
+/**
+ * The CSV auto-drip shipped 2026-07-04 (migration 20260704140000_lead_csv_drip)
+ * and the column was added with no backfill, so EVERY lead imported before this
+ * has null drip state and never had a job enqueued. Without this the page shows
+ * them "Auto-message queued" forever and reps stand down waiting for a message
+ * that will never send.
+ */
+const DRIP_LAUNCHED_AT = Date.parse('2026-07-04T00:00:00Z');
+/**
+ * Touch-1 is enqueued at import with at most a 600s stagger, so a lead with no
+ * drip state hours later was never queued either (lost job / cleared queue).
+ * Generous enough that a genuinely in-flight touch is never mislabelled.
+ */
+const DRIP_GRACE_MS = 24 * 60 * 60 * 1000;
 
 interface ApiCsvLead {
   id: string;
@@ -79,27 +101,52 @@ const SKIP_LABEL: Record<string, string> = {
   thread_conflict: 'Duplicate contact',
   converted_client: 'Existing client',
 };
-// The personal-WhatsApp escalation is offered ONLY on genuinely terminal states
-// where the auto-drip is truly finished (2 touches sent, or an "already active"
-// lead a rep is handling). Everything here is either never-message (opt-out /
-// block / bad number / existing client), auto-retrying (daily_cap / no_channel /
-// no_template), or a duplicate whose real thread lives in the inbox — so no
-// premature "continue on personal WhatsApp" button.
-const NO_FALLBACK = new Set([
-  'opted_out', 'blocked', 'invalid_phone', 'daily_cap',
-  'no_channel', 'no_template', 'thread_conflict', 'converted_client',
+// Manual outreach is withheld ONLY where messaging is wrong or impossible:
+// opted out (marketing consent withdrawn), blocked (the backend refuses it
+// anyway), an unusable number, an existing client, or a duplicate whose real
+// conversation already lives in the inbox. A stalled drip (daily_cap /
+// no_channel / no_template) is exactly when a rep SHOULD be able to step in
+// manually, so those are messageable.
+const NEVER_MESSAGE = new Set([
+  'opted_out', 'blocked', 'invalid_phone', 'thread_conflict', 'converted_client',
 ]);
 
-/** Drip status + whether to offer the personal-WhatsApp escalation button. */
-function dripCell(lead: ApiCsvLead): { label: string; tone: BadgeTone; showFallback: boolean } {
-  if (lead.dripTouch2At) return { label: '2 sent · no reply', tone: 'warning', showFallback: true };
+/** Drip status + whether the rep may send a template from the CRM. */
+function dripCell(
+  lead: ApiCsvLead,
+  importedAt: string,
+): { label: string; tone: BadgeTone; canMessage: boolean; hint: string } {
+  if (lead.dripTouch2At) {
+    return { label: '2 sent · no reply', tone: 'warning', canMessage: true, hint: 'No reply after 2 auto-messages — send a template from the CRM number' };
+  }
   if (lead.dripSkippedReason) {
     const r = lead.dripSkippedReason;
     const danger = r === 'opted_out' || r === 'blocked' || r === 'invalid_phone';
-    return { label: SKIP_LABEL[r] ?? r, tone: danger ? 'danger' : 'neutral', showFallback: !NO_FALLBACK.has(r) };
+    const canMessage = !NEVER_MESSAGE.has(r);
+    return {
+      label: SKIP_LABEL[r] ?? r,
+      tone: danger ? 'danger' : 'neutral',
+      canMessage,
+      hint: canMessage
+        ? 'Auto-outreach did not send — message them yourself from the CRM number'
+        : 'This contact must not be messaged',
+    };
   }
-  if (lead.dripTouch1At) return { label: 'Touch 1 sent', tone: 'info', showFallback: false };
-  return { label: 'Auto-message queued', tone: 'neutral', showFallback: false };
+  if (lead.dripTouch1At) {
+    return { label: 'Touch 1 sent', tone: 'info', canMessage: true, hint: 'Send a template from the CRM number' };
+  }
+  // No drip state at all. Only genuinely "queued" if this lead was imported
+  // after the drip shipped AND recently enough that touch-1 could still fire;
+  // otherwise no job was ever enqueued and saying "queued" is a lie that stops
+  // reps working the lead.
+  const importedMs = Date.parse(importedAt);
+  const neverQueued =
+    !Number.isFinite(importedMs) ||
+    importedMs < DRIP_LAUNCHED_AT ||
+    Date.now() - importedMs > DRIP_GRACE_MS;
+  return neverQueued
+    ? { label: 'No auto-outreach', tone: 'neutral', canMessage: true, hint: 'No automatic message was sent for this lead — contact them from the CRM number' }
+    : { label: 'Auto-message queued', tone: 'neutral', canMessage: true, hint: 'Auto-message is queued — you can also message them now from the CRM number' };
 }
 
 interface CsvStats {
@@ -116,6 +163,22 @@ export function SalesCsvLeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [batchFilter, setBatchFilter] = useState<string>('ALL');
+  // The lead whose template picker is open, and the business number we send
+  // from. The channel is fetched once — these leads have no thread yet, so
+  // there's no thread.channelId to read it from.
+  const [pickerLead, setPickerLead] = useState<ApiCsvLead | null>(null);
+  const [channelId, setChannelId] = useState<string | null>(null);
+  /**
+   * Leads this rep has just templated. The server excludes a lead once
+   * thread.lastHumanReplyAt is set, but that is stamped by the outbound worker
+   * only AFTER Meta accepts the send — a second or two later. Reloading
+   * immediately therefore returns the lead again, the row looks untouched, and
+   * the rep re-sends thinking it failed. Hide it locally until the server
+   * agrees; this must be applied in `filtered` (not by mutating `leads`)
+   * because load() replaces `leads` wholesale.
+   */
+  const [justSentIds, setJustSentIds] = useState<Set<string>>(() => new Set());
+  const [sentNote, setSentNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -140,6 +203,14 @@ export function SalesCsvLeadsPage() {
     void load();
   }, [load]);
 
+  // Resolve the sending number once. A failure here only disables the send
+  // button (with a reason) — it must never block the list from rendering.
+  useEffect(() => {
+    getActiveChannel()
+      .then((ch) => setChannelId(ch?.id ?? null))
+      .catch(() => setChannelId(null));
+  }, []);
+
   // Build unique batch list for filter chips.
   const batches = useMemo(() => {
     const map = new Map<string, { id: string; name: string; batchNumber: string; count: number }>();
@@ -155,6 +226,8 @@ export function SalesCsvLeadsPage() {
 
   const filtered = useMemo(() => {
     return leads.filter((lead) => {
+      // Just templated by this rep — the server hasn't caught up yet.
+      if (justSentIds.has(lead.id)) return false;
       if (batchFilter !== 'ALL') {
         const b = lead.importRows?.[0]?.batch;
         if (!b || b.id !== batchFilter) return false;
@@ -166,7 +239,7 @@ export function SalesCsvLeadsPage() {
       }
       return true;
     });
-  }, [leads, batchFilter, search]);
+  }, [leads, batchFilter, search, justSentIds]);
 
   // KPI values from the funnel stats, falling back to list-derived numbers
   // while the stats request is in flight.
@@ -180,8 +253,25 @@ export function SalesCsvLeadsPage() {
       <PageHeader
         eyebrow="Sales · CSV Leads"
         title="CSV Leads"
-        description="Leads assigned to you from spreadsheet uploads. Each is auto-sent a WhatsApp template on import (and a follow-up ~40h later if they stay quiet). A lead leaves this list once they reply; if both auto-touches go unanswered, use the WhatsApp button to continue on your personal number."
+        description="Leads assigned to you from spreadsheet uploads. Use the WhatsApp button to send an approved template from the CRM business number — the chat then appears in your inbox. Leads imported before automatic outreach was switched on show “No auto-outreach”: nothing was ever sent to them, so contact them yourself. A lead leaves this list once they reply or you message them."
       />
+
+      {/* Explicit send confirmation. Without it the only feedback is the row
+          vanishing, which reads as "nothing happened" — the exact complaint
+          this page had. Dismissible; cleared on the next send. */}
+      {sentNote ? (
+        <div className="sos-banner sos-banner--success" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <MessageSquare size={14} />
+          <span style={{ flex: 1 }}>{sentNote}</span>
+          <button
+            type="button"
+            onClick={() => setSentNote(null)}
+            className="sos-btn sos-btn--ghost sos-btn--sm"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {/* KPIs — full funnel so the count doesn't "shrink" as leads reply. */}
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
@@ -197,7 +287,7 @@ export function SalesCsvLeadsPage() {
           value={kContacted}
           tone="success"
           Icon={MessageSquare}
-          hint="Auto-messaged or replied (in the inbox)"
+          hint="Auto-messaged, messaged by you, or replied"
         />
         <MetricCard
           label="Remaining"
@@ -273,8 +363,6 @@ export function SalesCsvLeadsPage() {
                 {filtered.map((lead) => {
                   const batch = lead.importRows?.[0]?.batch;
                   const importedAt = lead.importRows?.[0]?.createdAt ?? lead.createdAt;
-                  const text = renderWelcomeMessage(null, { firstName: lead.firstName });
-                  const link = waWebLink(lead.phone, text);
                   return (
                     <tr key={lead.id} style={{ borderBottom: '1px solid var(--sos-divider)' }}>
                       <td style={{ padding: '14px 16px' }}>
@@ -308,29 +396,33 @@ export function SalesCsvLeadsPage() {
                       </td>
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                         {(() => {
-                          const d = dripCell(lead);
+                          const d = dripCell(lead, importedAt);
                           return (
                             <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
                               <StatusBadge tone={d.tone} size="sm">{d.label}</StatusBadge>
-                              {d.showFallback ? (
-                                <a
-                                  href={link}
-                                  target="tashfeen-whatsapp"
-                                  onClick={(e) => {
-                                    // Reuse ONE WhatsApp tab instead of spawning a fresh,
-                                    // cold-loading tab on every click. window.open with a
-                                    // fixed window name navigates the existing WhatsApp tab
-                                    // to the new chat and focuses it.
-                                    e.preventDefault();
-                                    const w = window.open(link, 'tashfeen-whatsapp');
-                                    if (w) w.focus();
-                                  }}
+                              {d.canMessage ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setPickerLead(lead)}
+                                  disabled={!channelId}
                                   className="sos-btn sos-btn--primary sos-btn--sm"
-                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#25D366', borderColor: '#25D366', color: '#fff' }}
-                                  title="No reply after 2 auto-messages — continue on your personal WhatsApp"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                    background: channelId ? '#25D366' : 'var(--sos-surface-2)',
+                                    borderColor: channelId ? '#25D366' : 'var(--sos-border-subtle)',
+                                    color: channelId ? '#fff' : 'var(--sos-text-muted)',
+                                    cursor: channelId ? 'pointer' : 'not-allowed',
+                                  }}
+                                  title={
+                                    channelId
+                                      ? d.hint
+                                      : 'No active WhatsApp number is configured — ask an admin to connect one.'
+                                  }
                                 >
                                   <MessageSquare size={13} /> WhatsApp
-                                </a>
+                                </button>
                               ) : null}
                             </div>
                           );
@@ -344,6 +436,27 @@ export function SalesCsvLeadsPage() {
           </div>
         )}
       </GlassCard>
+
+      {/* First contact from the CRM business number. The backend opens the
+          thread, so the conversation lands in the inbox and the lead drops off
+          this list on reload. */}
+      {pickerLead && channelId ? (
+        <TemplatePickerModal
+          open
+          onClose={() => setPickerLead(null)}
+          leadId={pickerLead.id}
+          channelId={channelId}
+          contactName={pickerLead.firstName}
+          onSent={() => {
+            const sent = pickerLead;
+            setJustSentIds((s) => new Set(s).add(sent.id));
+            setSentNote(`Template sent to ${sent.firstName} ${sent.lastName} — the chat is now in your inbox.`);
+            setPickerLead(null);
+            // Refresh the KPI stats. The row stays hidden either way.
+            void load();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1130,6 +1130,136 @@ export class WhatsAppMessagesService {
   }
 
   /**
+   * Re-send a media message we already hold. WhatsApp deletes its server copy
+   * of media shortly after delivery, so once the recipient's device drops the
+   * local file they see "This media is no longer available — ask the sender to
+   * re-send it." We still have the original (mediaUrl = durable storage key),
+   * so this clones it into a fresh outbound message and dispatches it. The
+   * outbound worker signs a new link from the same key at send time — no
+   * re-upload, no re-record. Copies payload verbatim so a voice note stays a
+   * voice note (isVoiceNote) and a document keeps its filename.
+   */
+  async resendMedia(caller: CallerContext, input: { threadId: string; messageId: string }) {
+    const thread = await this.thread(caller, input.threadId);
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
+
+    // Free-form media is subject to the same 24-hour window as any non-template
+    // send — fail with a clear message rather than a raw Meta rejection.
+    const now = new Date();
+    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestException(
+        '24-hour customer-service window has expired. Use a template message instead.',
+      );
+    }
+
+    const original = await this.prisma.whatsAppMessage.findUnique({
+      where: { id: input.messageId },
+      select: {
+        threadId: true,
+        type: true,
+        mediaUrl: true,
+        mediaMimeType: true,
+        body: true,
+        payload: true,
+      },
+    });
+    if (!original || original.threadId !== thread.id) {
+      throw new NotFoundException('Message not found on this thread');
+    }
+    const MEDIA_TYPES: WhatsAppMessageType[] = [
+      WhatsAppMessageType.IMAGE,
+      WhatsAppMessageType.VIDEO,
+      WhatsAppMessageType.AUDIO,
+      WhatsAppMessageType.DOCUMENT,
+      WhatsAppMessageType.STICKER,
+    ];
+    if (!MEDIA_TYPES.includes(original.type)) {
+      throw new BadRequestException('Only media messages can be re-sent.');
+    }
+    if (!original.mediaUrl) {
+      throw new BadRequestException(
+        'This media was never stored, so it cannot be re-sent — please upload it again.',
+      );
+    }
+
+    // Resolve a SENDABLE reference. Two stored shapes:
+    //   • durable storage key (voice notes, AI brochures) — send as-is; the
+    //     worker signs a fresh link at dispatch. Always re-sendable.
+    //   • "meta:<id>" (rep-sent images/videos/documents) — this is Meta's
+    //     uploaded-media id, which expires on the SAME ~30-day clock as the
+    //     server copy the recipient just lost. Cloning it would silently fail
+    //     at dispatch. So rehost it to our storage NOW: download the bytes
+    //     from Meta while they may still exist, and send a fresh link. If Meta
+    //     already purged them, the media is genuinely unrecoverable → say so.
+    let mediaRef = original.mediaUrl;
+    let mediaMime = original.mediaMimeType;
+    if (mediaRef.startsWith('meta:')) {
+      const channel = await this.prisma.whatsAppChannel.findUnique({
+        where: { id: thread.channelId },
+        select: { id: true, phoneNumberId: true, accessTokenEnc: true },
+      });
+      if (!channel) throw new NotFoundException('WhatsApp channel not found');
+      const metaClient = this.metaFactory.forChannel(channel);
+      const metaMediaId = mediaRef.slice(5);
+      let bytes: Buffer;
+      let mime: string;
+      try {
+        const info = await metaClient.getMediaUrl(metaMediaId);
+        mime = info.mime_type;
+        bytes = await metaClient.downloadMedia(info.url);
+      } catch {
+        throw new BadRequestException(
+          'The original file is no longer available to re-send — WhatsApp deleted its copy. Please upload it again.',
+        );
+      }
+      const ext = (mime.split(';')[0].split('/')[1] ?? 'bin').trim();
+      const filename =
+        (original.payload as { filename?: string } | null)?.filename ?? `resend.${ext}`;
+      const up = await this.storage.upload(bytes, mime, 'whatsapp/outbound', filename);
+      mediaRef = up.key;
+      mediaMime = mime;
+      // Preserve permanently: repoint the ORIGINAL row at the durable key too,
+      // so the inbox can re-stream it forever and any future re-send is
+      // instant. Best-effort — a failure here must not block this send.
+      await this.prisma.whatsAppMessage
+        .update({ where: { id: input.messageId }, data: { mediaUrl: up.key, mediaMimeType: mime } })
+        .catch(() => undefined);
+    }
+
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: thread.id,
+        channelId: thread.channelId,
+        leadId: thread.leadId,
+        clientId: thread.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: original.type,
+        status: WhatsAppMessageStatus.QUEUED,
+        // Durable key — the worker signs a fresh link at dispatch.
+        mediaUrl: mediaRef,
+        mediaMimeType: mediaMime,
+        body: original.body,
+        ...(original.payload
+          ? { payload: original.payload as Prisma.InputJsonValue }
+          : {}),
+        sentByEmployeeId: senderEmployeeId,
+        idempotencyKey: randomUUID(),
+      },
+      select: this.publicSelect(),
+    });
+
+    await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
+    // Mirror sendMediaMessage: a human send silences the AI bot for 4h.
+    if (senderEmployeeId) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
+    return message;
+  }
+
+  /**
    * Transcode any audio buffer to OGG/OPUS mono 16 kHz using ffmpeg.
    * Meta requires this exact format for voice notes (voice: true messages).
    * Falls back gracefully — callers should catch and upload the original.

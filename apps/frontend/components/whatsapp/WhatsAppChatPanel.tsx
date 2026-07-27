@@ -76,6 +76,7 @@ import {
   requestCallPermission,
   listMessages,
   markThreadRead,
+  resendMedia,
   sendContact,
   sendLocation,
   sendMediaMessage,
@@ -383,6 +384,26 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
 
   const [locationOpen, setLocationOpen] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
+  // Which media message is currently being re-sent (disables its menu item).
+  const [resendingId, setResendingId] = useState<string | null>(null);
+
+  // Re-send a stored media message. WhatsApp drops its server copy after
+  // delivery, so a recipient who cleared the file sees "no longer available";
+  // we still hold it, so this pushes a fresh copy. On success the new bubble
+  // arrives via reload; on failure surface the backend reason (e.g. the 24h
+  // window is closed → must use a template).
+  const handleResend = async (target: ChatMessage) => {
+    if (!thread || resendingId) return;
+    setResendingId(target.id);
+    try {
+      await resendMedia(thread.id, target.id);
+      await reload();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not re-send this media.');
+    } finally {
+      setResendingId(null);
+    }
+  };
 
   // React to a specific message with an emoji. Optimistic: the reaction row
   // appears immediately (rendered by SpecialMessageContent from the payload),
@@ -1129,6 +1150,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                     // 24h window is open (backend hard-rejects otherwise). No
                     // onReact ⇒ canReact is false ⇒ the emoji row hides.
                     onReact={withinWindow ? (emoji) => handleReact(m, emoji) : undefined}
+                    // Re-send offered only while the 24h window is open (the
+                    // backend rejects a free-form media send otherwise).
+                    onResend={withinWindow ? () => handleResend(m) : undefined}
+                    resending={resendingId === m.id}
                     allMessages={messages}
                   />
                 );
@@ -3446,6 +3471,8 @@ function MessageBubble({
   onImageClick,
   onReply,
   onReact,
+  onResend,
+  resending,
   allMessages,
 }: {
   message: ChatMessage;
@@ -3453,6 +3480,10 @@ function MessageBubble({
   onReply?: () => void;
   /** React to this message with an emoji (per-message menu). */
   onReact?: (emoji: string) => void;
+  /** Re-send this stored media message (per-message menu, outbound media only). */
+  onResend?: () => void;
+  /** True while this specific message's re-send is in flight. */
+  resending?: boolean;
   /** Used to resolve the quoted message preview when this bubble is a reply. */
   allMessages?: ChatMessage[];
 }) {
@@ -3490,6 +3521,17 @@ function MessageBubble({
   // delivered message (inbound or our own sent one), not a temp/failed row.
   const canReact =
     Boolean(onReact) &&
+    Boolean(message.waMessageId) &&
+    message.status !== 'FAILED' &&
+    !message.id.startsWith('temp-');
+  // Re-send: our own delivered media that we still hold. The recipient's
+  // WhatsApp purges its copy after delivery, so this pushes the stored file
+  // out again. Offered on outbound media that actually sent (has a waMessageId),
+  // never on inbound, a temp bubble, or a failed send.
+  const canResend =
+    Boolean(onResend) &&
+    isOut &&
+    isMedia &&
     Boolean(message.waMessageId) &&
     message.status !== 'FAILED' &&
     !message.id.startsWith('temp-');
@@ -3616,6 +3658,13 @@ function MessageBubble({
                   icon={<Copy size={15} />}
                   label="Copy"
                   onClick={() => { void navigator.clipboard?.writeText(copyText).catch(() => {}); setMenuOpen(false); }}
+                />
+              ) : null}
+              {canResend ? (
+                <BubbleMenuItem
+                  icon={<RotateCcw size={15} />}
+                  label={resending ? 'Re-sending…' : 'Re-send'}
+                  onClick={() => { if (!resending) { onResend?.(); setMenuOpen(false); } }}
                 />
               ) : null}
               <BubbleMenuItem

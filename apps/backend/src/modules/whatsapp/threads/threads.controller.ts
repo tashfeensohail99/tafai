@@ -16,6 +16,7 @@ import {
 import type { Response } from 'express';
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { LeadDisposition } from '@prisma/client';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import {
@@ -145,6 +146,16 @@ class ListThreadsDto {
   @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   unread?: boolean;
+
+  /**
+   * "Disposition" filter (inbox funnel): only threads whose LEAD carries this
+   * sales disposition. Client-only threads (no lead) never match. Stacks (AND)
+   * with the tab/search/other filters, so e.g. Uncontacted + FOLLOW_UP works.
+   * Declared as the enum so an unknown value 400s at validation rather than
+   * silently returning everything. MUST be declared — the global ValidationPipe
+   * runs forbidNonWhitelisted, so an undeclared param would 400 the request.
+   */
+  @IsOptional() @IsEnum(LeadDisposition) disposition?: LeadDisposition;
 
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;

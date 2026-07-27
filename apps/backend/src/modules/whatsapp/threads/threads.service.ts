@@ -66,6 +66,14 @@ interface ThreadListOptions {
    * Server-side kill-switch: WA_UNREAD_FILTER_ENABLED=false makes it a no-op.
    */
   unread?: boolean;
+  /**
+   * "Disposition" filter (inbox funnel) — only threads whose LEAD carries this
+   * sales disposition. Client-only threads never match (disposition is lead-
+   * only). Stacks with the tab/search filters. When set to JUNK or DEAD it also
+   * lifts the default active-inbox hygiene that normally hides those, so a rep
+   * can deliberately pull up their Junk/Dead pile.
+   */
+  disposition?: LeadDisposition;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -341,7 +349,20 @@ export class WhatsAppThreadsService {
       // Sales-disposition hygiene: JUNK / DEAD leads drop out of the active
       // inbox views (they stay in the DB + still reachable by direct lookup).
       // Uses the null-safe positive filter — a naive NOT+is emptied the inbox.
-      and.push(LEAD_NOT_JUNK_OR_DEAD);
+      // EXCEPTION: if the caller is explicitly filtering TO Junk or Dead, honour
+      // that — the disposition filter below constrains it, and applying the
+      // hygiene exclusion too would always return nothing.
+      const wantsJunkOrDead =
+        opts.disposition === LeadDisposition.JUNK ||
+        opts.disposition === LeadDisposition.DEAD;
+      if (!wantsJunkOrDead) and.push(LEAD_NOT_JUNK_OR_DEAD);
+    }
+
+    if (opts.disposition) {
+      // Inbox "disposition" funnel — only threads whose lead carries this tag.
+      // A to-one relation match, so a client-only thread (lead null) is
+      // correctly excluded. Composes (AND) with the tab/search filters.
+      and.push({ lead: { is: { disposition: opts.disposition } } });
     }
 
     if (opts.search) {

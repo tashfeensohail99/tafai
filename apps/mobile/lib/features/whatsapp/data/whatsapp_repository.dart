@@ -42,6 +42,7 @@ class WhatsappRepository {
     bool? archived,
     bool? blocked,
     bool? unread,
+    String? disposition,
     String? search,
     String? cursor,
     int limit = 30,
@@ -57,6 +58,8 @@ class WhatsappRepository {
           if (archived == true) 'archived': true,
           if (blocked == true) 'blocked': true,
           if (unread == true) 'unread': true,
+          // Inbox disposition funnel — only chats whose lead carries this tag.
+          if (disposition != null && disposition.isNotEmpty) 'disposition': disposition,
           if (search != null && search.isNotEmpty) 'search': search,
           if (cursor != null) 'cursor': cursor,
           'limit': limit,

@@ -12,6 +12,7 @@ import '../data/whatsapp_providers.dart';
 import '../data/whatsapp_repository.dart';
 import '../domain/wa_stats.dart';
 import '../domain/wa_thread.dart';
+import 'disposition_sheet.dart';
 import 'thread_screen.dart';
 
 /// The "Chat" tab — the WhatsApp inbox. Mirrors the web: All / Open /
@@ -89,6 +90,73 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
             followUpDue: false,
           ));
 
+  /// Disposition funnel: pick one of the 10 dispositions (or "Any") to narrow
+  /// the current list. Stacks on top of the active tab — the backend ANDs it.
+  Future<void> _pickDispositionFilter() async {
+    final current = ref.read(inboxFilterProvider).disposition;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(
+                  AppTokens.space4, AppTokens.space3, AppTokens.space4, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Filter by disposition',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.clear_all),
+              title: const Text('Any disposition'),
+              selected: current == null,
+              // Sentinel — an empty string means "clear the filter".
+              onTap: () => Navigator.pop(sheetCtx, ''),
+            ),
+            for (final e in kDispositions.entries)
+              ListTile(
+                leading: Icon(Icons.circle, size: 12, color: dispositionColor(e.key)),
+                title: Text(e.value),
+                selected: current == e.key,
+                onTap: () => Navigator.pop(sheetCtx, e.key),
+              ),
+            const SizedBox(height: AppTokens.space2),
+          ],
+        ),
+      ),
+    );
+    if (picked == null) return; // dismissed — leave the filter as-is
+    ref.read(inboxFilterProvider.notifier).update((f) => picked.isEmpty
+        ? f.copyWith(clearDisposition: true)
+        : f.copyWith(disposition: picked));
+  }
+
+  /// Set the disposition on a chat straight from the inbox (long-press → Set
+  /// disposition). Opens the same picker the chat's ⋮ menu uses, then refreshes
+  /// so the row's chip updates.
+  Future<void> _setRowDisposition(WhatsappThread t) async {
+    final leadId = t.leadId;
+    if (leadId == null) return; // client-only thread — no lead to disposition
+    final changed = await showDispositionSheet(
+      context,
+      leadId: leadId,
+      current: t.lead?.disposition,
+    );
+    if (changed == null || !mounted) return;
+    final filter = ref.read(inboxFilterProvider);
+    await ref.read(threadsControllerProvider(filter).notifier).refresh();
+    if (!mounted) return; // re-guard after the await, like _openThread
+    ref.invalidate(threadStatsProvider);
+  }
+
   Future<void> _refreshAll(WaFilter filter) async {
     ref.invalidate(threadStatsProvider);
     await ref.read(threadsControllerProvider(filter).notifier).refresh();
@@ -134,6 +202,18 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                 ),
               ),
               const Divider(height: 1),
+              // Set disposition — only for lead-backed chats (a converted
+              // client thread has no lead to tag). Shows the current tag inline.
+              if (t.leadId != null)
+                ListTile(
+                  leading: const Icon(Icons.sell_outlined),
+                  title: const Text('Set disposition'),
+                  subtitle: t.lead?.disposition != null
+                      ? Text(kDispositions[t.lead!.disposition] ??
+                          t.lead!.disposition!)
+                      : null,
+                  onTap: () => Navigator.pop(sheetCtx, 'disposition'),
+                ),
               ListTile(
                 leading: Icon(t.isPinnedByMe
                     ? Icons.push_pin
@@ -171,6 +251,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       },
     );
     if (action == null || !mounted) return;
+    // Disposition opens its own picker rather than a one-shot repo call.
+    if (action == 'disposition') {
+      await _setRowDisposition(t);
+      return;
+    }
     final repo = ref.read(whatsappRepositoryProvider);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -282,6 +367,19 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                   onTap: () => _toggleView(WaTab.blocked),
                   selectedColor: AppTokens.statusDanger,
                 ),
+                const SizedBox(width: AppTokens.space2),
+                // Disposition funnel — shows the picked disposition when set,
+                // else a generic "Disposition" that opens the picker.
+                CrmFilterChip(
+                  label: filter.disposition != null
+                      ? (kDispositions[filter.disposition] ?? filter.disposition!)
+                      : 'Disposition',
+                  selected: filter.disposition != null,
+                  onTap: _pickDispositionFilter,
+                  selectedColor: filter.disposition != null
+                      ? dispositionColor(filter.disposition)
+                      : null,
+                ),
               ],
             ),
           ),
@@ -304,6 +402,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                 ref.read(threadsControllerProvider(filter).notifier).refresh(),
             onOpen: _openThread,
             onActions: _showThreadActions,
+            onSetDisposition: _setRowDisposition,
           ),
         ),
       ],
@@ -429,6 +528,7 @@ class _ThreadsList extends StatelessWidget {
   final VoidCallback onRetry;
   final void Function(WhatsappThread) onOpen;
   final void Function(WhatsappThread) onActions;
+  final void Function(WhatsappThread) onSetDisposition;
 
   const _ThreadsList({
     required this.state,
@@ -441,6 +541,7 @@ class _ThreadsList extends StatelessWidget {
     required this.onRetry,
     required this.onOpen,
     required this.onActions,
+    required this.onSetDisposition,
   });
 
   @override
@@ -536,7 +637,8 @@ class _ThreadsList extends StatelessWidget {
               return _ThreadTile(
                   thread: t,
                   onTap: () => onOpen(t),
-                  onLongPress: () => onActions(t));
+                  onLongPress: () => onActions(t),
+                  onSetDisposition: () => onSetDisposition(t));
             case _RowKind.loadMore:
               WidgetsBinding.instance.addPostFrameCallback((_) => onLoadMore());
               return const Padding(
@@ -756,8 +858,13 @@ class _ThreadTile extends StatelessWidget {
   final WhatsappThread thread;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
+  /// Tap the disposition chip → open the picker (lead-backed chats only).
+  final VoidCallback? onSetDisposition;
   const _ThreadTile(
-      {required this.thread, required this.onTap, this.onLongPress});
+      {required this.thread,
+      required this.onTap,
+      this.onLongPress,
+      this.onSetDisposition});
 
   String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
@@ -966,6 +1073,20 @@ class _ThreadTile extends StatelessWidget {
                         ],
                       ],
                     ),
+                    // Disposition chip — visible at a glance; tap to set/change
+                    // (lead-backed chats only; converted-client threads have no
+                    // lead to tag).
+                    if (thread.leadId != null) ...[
+                      const SizedBox(height: 5),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: GestureDetector(
+                          onTap: onSetDisposition,
+                          child: DispositionChip(
+                              disposition: thread.lead?.disposition),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -15,12 +15,29 @@ class WaFilter {
   final WaTab tab;
   final String search;
   final bool followUpDue;
-  const WaFilter({this.tab = WaTab.all, this.search = '', this.followUpDue = false});
+  /// Sales-disposition funnel. Null = no disposition filter (any). When set,
+  /// the list is narrowed to chats whose lead carries this disposition, on TOP
+  /// of the active tab. `clearDisposition:true` on copyWith resets it to null.
+  final String? disposition;
+  const WaFilter({
+    this.tab = WaTab.all,
+    this.search = '',
+    this.followUpDue = false,
+    this.disposition,
+  });
 
-  WaFilter copyWith({WaTab? tab, String? search, bool? followUpDue}) => WaFilter(
+  WaFilter copyWith({
+    WaTab? tab,
+    String? search,
+    bool? followUpDue,
+    String? disposition,
+    bool clearDisposition = false,
+  }) =>
+      WaFilter(
         tab: tab ?? this.tab,
         search: search ?? this.search,
         followUpDue: followUpDue ?? this.followUpDue,
+        disposition: clearDisposition ? null : (disposition ?? this.disposition),
       );
 
   @override
@@ -28,10 +45,11 @@ class WaFilter {
       other is WaFilter &&
       other.tab == tab &&
       other.search == search &&
-      other.followUpDue == followUpDue;
+      other.followUpDue == followUpDue &&
+      other.disposition == disposition;
 
   @override
-  int get hashCode => Object.hash(tab, search, followUpDue);
+  int get hashCode => Object.hash(tab, search, followUpDue, disposition);
 }
 
 final inboxFilterProvider = StateProvider<WaFilter>((_) => const WaFilter());
@@ -134,6 +152,7 @@ class ThreadsController extends StateNotifier<ThreadsState> {
         archived: f.archived,
         blocked: f.blocked,
         followUpDue: _dueFlag,
+        disposition: _filter.disposition,
         search: _filter.search,
       );
       state = ThreadsState(
@@ -163,6 +182,7 @@ class ThreadsController extends StateNotifier<ThreadsState> {
         archived: f.archived,
         blocked: f.blocked,
         followUpDue: _dueFlag,
+        disposition: _filter.disposition,
         search: _filter.search,
         cursor: state.nextCursor,
       );

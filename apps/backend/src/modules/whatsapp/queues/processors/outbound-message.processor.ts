@@ -10,6 +10,7 @@ import {
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { StorageService } from '../../../storage/storage.service';
+import { OpenAiService } from '../../../ai/openai.service';
 import { WhatsAppMetaClientFactory } from '../../meta/client.factory';
 import { MetaApiError, type MetaSendResponse } from '../../meta/cloud-client';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
@@ -43,6 +44,7 @@ export class OutboundMessageProcessor extends WorkerHost {
     private readonly publisher: WhatsAppRealtimePublisher,
     private readonly timeline: ActivityTimelineService,
     private readonly storage: StorageService,
+    private readonly openai: OpenAiService,
   ) {
     super();
   }
@@ -262,6 +264,13 @@ export class OutboundMessageProcessor extends WorkerHost {
               status: 'FAILED',
             });
           }
+          // A voice note that permanently failed to send (commonly Meta media
+          // error 131053) leaves its audio trapped in a red bubble — the rep
+          // has to re-record or give up. Transcribe it so they can send the
+          // text instead. Fire-and-forget: never let it affect the retry throw.
+          void this.transcribeFailedVoice(message, org?.id ?? null).catch((e) =>
+            this.log.warn(`failed-voice transcript ${message.id}: ${(e as Error).message}`),
+          );
         }
         // Re-throw so BullMQ counts the attempt and applies retry policy.
         throw err;
@@ -296,9 +305,86 @@ export class OutboundMessageProcessor extends WorkerHost {
           status: 'FAILED',
         });
       }
+      void this.transcribeFailedVoice(message, org?.id ?? null).catch((e) =>
+        this.log.warn(`failed-voice transcript ${message.id}: ${(e as Error).message}`),
+      );
       this.log.error(`outbound ${messageId} failed (non-Meta): ${errMsg}`);
       throw err;
     }
+  }
+
+  /**
+   * When an outbound VOICE NOTE permanently fails, transcribe the audio we still
+   * hold and attach the text to the message (payload.failedTranscript) so the
+   * rep can send it as a message instead of re-recording. Whisper reuse of the
+   * inbound pipeline; only runs for a genuine voice note whose bytes we host
+   * (storage key). Rare (≈17/month), so an inline Whisper call is fine — no
+   * queue. Best-effort: any failure is swallowed by the caller's .catch.
+   */
+  private async transcribeFailedVoice(
+    message: {
+      id: string;
+      threadId: string;
+      type: WhatsAppMessageType;
+      mediaUrl: string | null;
+      mediaMimeType: string | null;
+      payload: Prisma.JsonValue | null;
+    },
+    orgId: string | null,
+  ): Promise<void> {
+    if (message.type !== WhatsAppMessageType.AUDIO) return;
+    const isVoiceNote =
+      (message.payload as { isVoiceNote?: boolean } | null)?.isVoiceNote === true;
+    if (!isVoiceNote) return;
+    // We can only transcribe audio we host. A "meta:<id>"/null ref means the
+    // bytes live only on Meta (and it just rejected them) — nothing to read.
+    if (!message.mediaUrl || message.mediaUrl.startsWith('meta:')) return;
+
+    let bytes: Buffer;
+    try {
+      if (message.mediaUrl.startsWith('http')) {
+        const r = await fetch(message.mediaUrl);
+        if (!r.ok) return;
+        bytes = Buffer.from(await r.arrayBuffer());
+      } else {
+        bytes = (await this.storage.download(message.mediaUrl)).bytes;
+      }
+    } catch {
+      return;
+    }
+    if (!bytes || bytes.length === 0) return;
+
+    const res = await this.openai.transcribe(bytes, `voice-${message.id}.ogg`);
+    const text = res?.text?.trim();
+    if (!text) return;
+
+    const basePayload =
+      message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload)
+        ? (message.payload as Record<string, unknown>)
+        : {};
+    await this.prisma.whatsAppMessage.update({
+      where: { id: message.id },
+      data: {
+        payload: {
+          ...basePayload,
+          failedTranscript: text,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    // Nudge open chats so the transcript appears without a manual reload. Carry
+    // the text on the event so the client can render it immediately; a cold load
+    // reads it straight from the message payload.
+    if (orgId) {
+      await this.publisher
+        .publishToOrg(orgId, WHATSAPP_WS_EVENTS.MESSAGE_STATUS, {
+          threadId: message.threadId,
+          messageId: message.id,
+          status: 'FAILED',
+          failedTranscript: text,
+        })
+        .catch(() => undefined);
+    }
+    this.log.log(`failed-voice ${message.id}: transcript attached (${text.length} chars)`);
   }
 
   private async dispatchSend(

@@ -26,6 +26,7 @@ import {
   UserPlus,
   Wallet,
   X,
+  FolderOpen,
 } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
 import {
@@ -96,6 +97,7 @@ function buildProcessingNav(intakePending: number, isManager: boolean): DrawerMe
   items.push(
     { label: 'My Cases', href: '/processing/cases', icon: FolderKanban, caption: 'Your active caseload' },
     { label: 'Documents', href: '/processing/documents', icon: FileSearch, caption: 'Pending reviews' },
+    { label: 'Databank', href: '/processing/databank', icon: FolderOpen, caption: 'Client document repository' },
     { label: 'Tasks', href: '/processing/tasks', icon: ClipboardList, caption: 'Open task list' },
     { label: 'Refunds & Appeals', href: '/processing/refunds', icon: Wallet, caption: 'Rejected — refund or escalate' },
     { label: 'History', href: '/processing/history', icon: History, caption: 'Completed cases' },

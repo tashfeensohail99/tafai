@@ -3,9 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateOrphanClientReferenceCode } from '../../common/reference-codes/reference-codes';
+import {
+  looksLikePhoneSearch,
+  phoneSearchCandidates,
+} from '../../common/phone/phone-search.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateClientDto, ListClientsQueryDto, UpdateClientDto } from './clients.dto';
 
@@ -16,7 +20,25 @@ export class ClientsService {
     private readonly auditLog: AuditLogService,
   ) {}
 
+  /**
+   * Client ids whose stored phone is the same number as the typed term in any
+   * format — the client mirror of the lead lookup. A client converted from a
+   * lead carries the canonical `+92…`, while staff search the local `0…` form.
+   */
+  private async phoneSearchClientIds(term: string): Promise<string[]> {
+    if (!looksLikePhoneSearch(term)) return [];
+    const candidates = phoneSearchCandidates(term);
+    if (!candidates.length) return [];
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM crm.clients
+      WHERE regexp_replace(phone, '[^0-9]', '', 'g') IN (${Prisma.join(candidates)})
+        AND "deletedAt" IS NULL
+      LIMIT 500`;
+    return rows.map((r) => r.id);
+  }
+
   async findAll(query: ListClientsQueryDto) {
+    const phoneMatchIds = query.search ? await this.phoneSearchClientIds(query.search) : [];
     return this.prisma.client.findMany({
       where: {
         deletedAt: null,
@@ -29,6 +51,7 @@ export class ClientsService {
                 { lastName: { contains: query.search, mode: 'insensitive' } },
                 { email: { contains: query.search, mode: 'insensitive' } },
                 { phone: { contains: query.search, mode: 'insensitive' } },
+                ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
               ],
             }
           : {}),

@@ -44,6 +44,7 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { fetchLeads } from '@/lib/sales-api';
+import { phoneMatches } from '@/lib/phone-search';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { Modal } from '@/components/whatsapp/Modal';
 
@@ -267,6 +268,9 @@ export function SalesLeadsPage() {
         (l) =>
           `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
           l.phone.toLowerCase().includes(q) ||
+          // Numbers are stored +92…, everyone types 0… — without this a rep
+          // searching the number reception wrote down finds nothing.
+          phoneMatches(l.phone, query) ||
           l.service.toLowerCase().includes(q) ||
           l.targetCountry.toLowerCase().includes(q) ||
           (l.referenceCode ?? '').toLowerCase().includes(q) ||

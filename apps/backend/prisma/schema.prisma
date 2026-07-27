@@ -1853,6 +1853,10 @@ model Client {
   receipts         Receipt[]
   timelineEvents   ActivityTimeline[]
   processingCases  ProcessingCase[]
+  // Databank: the per-client document repository (Google Drive replacement).
+  // Files belong to the CLIENT so they survive across every case.
+  databankFolders  DatabankFolder[]
+  databankFiles    DatabankFile[]
   reminders        ClientReminder[]
   // WhatsApp chat history follows the client after lead-to-client conversion.
   whatsappThreads  WhatsAppThread[]   @relation("ClientWhatsAppThreads")
@@ -2875,6 +2879,21 @@ enum InboundDocumentStatus {
   @@schema("processing")
 }
 
+/// How a databank file came to exist. Descriptive only — drives audit and the
+/// Google Drive migration reconciliation, never access control.
+///   UPLOAD    — a normal upload (button or drag-drop)
+///   CLIPBOARD — pasted from the clipboard (e.g. a screenshot)
+///   COPIED    — duplicated from another databank file (see copiedFromFileId)
+///   MIGRATED  — imported from Google Drive (see migrationSourcePath)
+enum DatabankFileSource {
+  UPLOAD
+  CLIPBOARD
+  COPIED
+  MIGRATED
+
+  @@schema("processing")
+}
+
 enum DocAccessType {
   VIEW
   DOWNLOAD
@@ -3316,6 +3335,85 @@ model ClientDocumentVersion {
   @@index([documentItemId])
   @@index([caseId])
   @@map("client_document_versions")
+  @@schema("processing")
+}
+
+// =============================================================================
+// DATABANK — per-client document repository (Google Drive replacement)
+//
+// A free-form file store that lives ALONGSIDE the structured document checklist
+// (CaseDocumentItem / ClientDocumentVersion), not inside it. Two design rules:
+//   1. Files belong to the CLIENT, not a case, so they persist across every one
+//      of the client's cases. `caseId` is deliberately absent — tag-to-case can
+//      be added later without a schema change to the file's ownership.
+//   2. A real nested FOLDER TREE (parentFolderId self-relation), so the team
+//      gets a Drive-like experience: create / rename / move folders, drag-drop.
+//
+// Access is scoped in the SERVICE layer using the existing processing case
+// permissions (processing.case.view_all = manager sees every client;
+// otherwise the officer sees only clients they have an assigned case for —
+// Client.processingCases.some.assignedOfficerId). Nothing here enforces it.
+//
+// Physical bytes live in the S3/R2 bucket via StorageService; these rows hold
+// only the object key (storageKey), same pattern as every other file model.
+// =============================================================================
+
+/// A folder in a client's databank tree. `parentFolderId` NULL = the client's
+/// root. Uniqueness of names within a parent is enforced in the service layer,
+/// not the DB (Postgres treats NULL parents as distinct, and filesystems allow
+/// "Folder (2)" style disambiguation anyway).
+model DatabankFolder {
+  id              String    @id @default(uuid())
+  clientId        String
+  parentFolderId  String?
+  name            String
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  // Soft delete — a deleted folder (and its subtree) is recoverable, never
+  // hard-removed by normal use. FK cascades only fire on a rare hard delete.
+  deletedAt       DateTime?
+
+  client   Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  parent   DatabankFolder?  @relation("DatabankFolderTree", fields: [parentFolderId], references: [id], onDelete: Cascade)
+  children DatabankFolder[] @relation("DatabankFolderTree")
+  files    DatabankFile[]
+
+  @@index([clientId])
+  @@index([parentFolderId])
+  @@index([deletedAt])
+  @@map("databank_folders")
+  @@schema("processing")
+}
+
+/// One file in a client's databank. `folderId` NULL = the client's root.
+model DatabankFile {
+  id                  String             @id @default(uuid())
+  clientId            String
+  folderId            String?
+  fileName            String
+  storageKey          String
+  mimeType            String?
+  fileSizeBytes       Int?
+  source              DatabankFileSource @default(UPLOAD)
+  /// Original Google Drive path, set only on MIGRATED files (migration audit).
+  migrationSourcePath String?
+  /// The databank file this was copied from, set only on COPIED files. Plain id
+  /// (no FK) so deleting the original never affects the copy.
+  copiedFromFileId    String?
+  uploadedByUserId    String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  deletedAt           DateTime?
+
+  client Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  folder DatabankFolder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([folderId])
+  @@index([clientId, folderId])
+  @@index([deletedAt])
+  @@map("databank_files")
   @@schema("processing")
 }
 

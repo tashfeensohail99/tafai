@@ -23,6 +23,7 @@ import { apiFetch } from '@/lib/api-client';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { TemplatePickerModal } from '@/components/whatsapp/TemplatePickerModal';
 import { getActiveChannel } from '@/lib/whatsapp';
+import { phoneMatches } from '@/lib/phone-search';
 
 /**
  * Sales agent view of leads sourced from CSV/Excel uploads. Leads imported
@@ -235,7 +236,9 @@ export function SalesCsvLeadsPage() {
       if (search.trim()) {
         const q = search.trim().toLowerCase();
         const hay = `${lead.firstName} ${lead.lastName} ${lead.phone} ${lead.email ?? ''} ${lead.referenceCode}`.toLowerCase();
-        if (!hay.includes(q)) return false;
+        // Numbers are stored +92…, everyone types 0… — the plain substring
+        // check alone would miss the lead entirely.
+        if (!hay.includes(q) && !phoneMatches(lead.phone, search)) return false;
       }
       return true;
     });

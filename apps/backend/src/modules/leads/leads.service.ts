@@ -20,6 +20,10 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../common/phone/phone.util';
 import { findLeadByNormalizedPhone } from '../../common/phone/lead-dedupe';
+import {
+  looksLikePhoneSearch,
+  phoneSearchCandidates,
+} from '../../common/phone/phone-search.util';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
@@ -206,8 +210,37 @@ export class LeadsService {
     return { ok: true };
   }
 
+  /**
+   * Lead ids whose stored phone is the SAME NUMBER as the typed term, whatever
+   * format either is written in. Reception records `03219566502` on the visit
+   * slip, the lead is saved as `+923219566502`, and a substring search finds
+   * neither from the other — staff concluded such leads were "missing" or
+   * deleted when they were sitting in plain sight.
+   *
+   * Equality `IN (…)` on the digits expression so it uses
+   * `leads_phone_digits_idx`; an unanchored LIKE would reintroduce the
+   * full-table regex scan that cost 21s before that index existed.
+   *
+   * Returns [] for anything that isn't a phone number, so name and
+   * reference-code searches are untouched.
+   */
+  private async phoneSearchLeadIds(term: string): Promise<string[]> {
+    if (!looksLikePhoneSearch(term)) return [];
+    const candidates = phoneSearchCandidates(term);
+    if (!candidates.length) return [];
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM crm.leads
+      WHERE regexp_replace(phone, '[^0-9]', '', 'g') IN (${Prisma.join(candidates)})
+        AND "deletedAt" IS NULL
+      LIMIT 500`;
+    return rows.map((r) => r.id);
+  }
+
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
     const canViewAll = user.permissions.includes('leads.view_all');
+    // Resolved before the where-clause is built: a phone term has to become a
+    // set of ids, because Prisma can't express the digits-only comparison.
+    const phoneMatchIds = query.search ? await this.phoneSearchLeadIds(query.search) : [];
 
     const where: Prisma.LeadWhereInput = {
       deletedAt: null,
@@ -260,7 +293,10 @@ export class LeadsService {
               { firstName: { contains: query.search, mode: 'insensitive' } },
               { lastName: { contains: query.search, mode: 'insensitive' } },
               { email: { contains: query.search, mode: 'insensitive' } },
+              // Raw substring kept so a partial number still behaves as before;
+              // the id term below is what makes 0321… find a stored +92321….
               { phone: { contains: query.search, mode: 'insensitive' } },
+              ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
             ],
           }
         : {}),
@@ -888,6 +924,7 @@ export class LeadsService {
   }
 
   async findAll(query: ListLeadsQueryDto) {
+    const phoneMatchIds = query.search ? await this.phoneSearchLeadIds(query.search) : [];
     return this.prisma.lead.findMany({
       where: {
         deletedAt: null,
@@ -902,6 +939,7 @@ export class LeadsService {
                 { lastName: { contains: query.search, mode: 'insensitive' } },
                 { email: { contains: query.search, mode: 'insensitive' } },
                 { phone: { contains: query.search, mode: 'insensitive' } },
+                ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
               ],
             }
           : {}),

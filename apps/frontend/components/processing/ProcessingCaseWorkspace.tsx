@@ -34,6 +34,7 @@ import {
   AlertTriangle,
   ShieldAlert,
   Compass,
+  FolderOpen,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -81,18 +82,22 @@ import { CorrectionRequestModal } from './CorrectionRequestModal';
 import { CancelCaseModal } from './CancelCaseModal';
 import { CorrectionsTab } from './tabs/CorrectionsTab';
 import { MilestonesTab } from './tabs/MilestonesTab';
+import { DatabankTab } from './tabs/DatabankTab';
 import { SubmissionPackagePanel } from './SubmissionPackagePanel';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Tabs -----------------------------------------------------------
 
-type TabKey = 'milestones' | 'documents' | 'timeline' | 'history' | 'communications' | 'finance' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
+type TabKey = 'milestones' | 'documents' | 'databank' | 'timeline' | 'history' | 'communications' | 'finance' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
   // Milestones first — the case-progress narrative the associate works
   // through. Seeded per case-type at acknowledge time.
   { key: 'milestones', label: 'Milestones', Icon: Sparkles },
   { key: 'documents', label: 'Documents', Icon: FileSearch },
+  // Databank — the free-form per-client document repository (Drive replacement),
+  // alongside the structured Documents checklist.
+  { key: 'databank', label: 'Databank', Icon: FolderOpen },
   { key: 'timeline', label: 'Timeline', Icon: History },
   { key: 'history', label: 'History', Icon: Headphones },
   { key: 'communications', label: 'Comms', Icon: MessageSquare },
@@ -637,6 +642,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           {/* Tab content */}
           {activeTab === 'milestones' && <MilestonesTab c={c} />}
           {activeTab === 'documents' && <DocumentChecklistTab c={c} />}
+          {activeTab === 'databank' && <DatabankTab clientId={api.clientId} clientName={c.clientName} />}
           {activeTab === 'timeline' && <CaseTimelineTab c={c} />}
           {activeTab === 'history' && <CaseHistoryTab c={c} />}
           {activeTab === 'communications' && <CommunicationsTab c={c} />}

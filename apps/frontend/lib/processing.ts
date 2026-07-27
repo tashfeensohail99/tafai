@@ -1947,3 +1947,174 @@ export function deleteEmailTemplate(id: string): Promise<{ deleted: boolean }> {
     cache: 'no-store',
   });
 }
+
+// ---------------------------------------------------------------------------
+// Databank — the per-client document repository (Google Drive replacement).
+// Backend: apps/backend/src/modules/processing/databank/*. Access is scoped
+// server-side by the processing case permissions; the client just calls.
+// ---------------------------------------------------------------------------
+
+export type DatabankFileSource = 'UPLOAD' | 'CLIPBOARD' | 'COPIED' | 'MIGRATED';
+
+export interface ApiDatabankFolder {
+  id: string;
+  name: string;
+  parentFolderId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiDatabankFile {
+  id: string;
+  // Present on mutation results; omitted from the tree payload (the tab already
+  // knows its client), hence optional.
+  clientId?: string;
+  folderId: string | null;
+  fileName: string;
+  mimeType: string | null;
+  fileSizeBytes: number | null;
+  source: DatabankFileSource;
+  uploadedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiDatabankTree {
+  clientId: string;
+  folders: ApiDatabankFolder[];
+  files: ApiDatabankFile[];
+}
+
+export interface ApiDatabankClientRow {
+  id: string;
+  referenceCode: string;
+  firstName: string;
+  lastName: string;
+  fileCount: number;
+}
+
+export function fetchDatabankTree(clientId: string): Promise<ApiDatabankTree> {
+  return apiFetch<ApiDatabankTree>(`/processing/databank/clients/${clientId}/tree`, {
+    cache: 'no-store',
+  });
+}
+
+export function fetchDatabankClients(q?: string): Promise<ApiDatabankClientRow[]> {
+  const qs = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  return apiFetch<ApiDatabankClientRow[]>(`/processing/databank/clients${qs}`, { cache: 'no-store' });
+}
+
+export function createDatabankFolder(
+  clientId: string,
+  name: string,
+  parentFolderId: string | null = null,
+): Promise<ApiDatabankFolder> {
+  return apiFetch<ApiDatabankFolder>(`/processing/databank/clients/${clientId}/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parentFolderId }),
+    cache: 'no-store',
+  });
+}
+
+export function renameDatabankFolder(folderId: string, name: string): Promise<ApiDatabankFolder> {
+  return apiFetch<ApiDatabankFolder>(`/processing/databank/folders/${folderId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+    cache: 'no-store',
+  });
+}
+
+export function moveDatabankFolder(
+  folderId: string,
+  parentFolderId: string | null,
+): Promise<ApiDatabankFolder> {
+  return apiFetch<ApiDatabankFolder>(`/processing/databank/folders/${folderId}/move`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentFolderId }),
+    cache: 'no-store',
+  });
+}
+
+export function deleteDatabankFolder(folderId: string): Promise<{ deletedFolders: number }> {
+  return apiFetch<{ deletedFolders: number }>(`/processing/databank/folders/${folderId}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}
+
+/** Upload a file into a client's databank (multipart). `source` is CLIPBOARD
+ *  for a pasted screenshot, else UPLOAD. Mirrors uploadOfficerDocument. */
+export async function uploadDatabankFile(
+  clientId: string,
+  file: File,
+  folderId: string | null = null,
+  source: DatabankFileSource = 'UPLOAD',
+): Promise<ApiDatabankFile> {
+  const { getAccessToken } = await import('./auth-client');
+  const token = getAccessToken();
+  const form = new FormData();
+  form.append('file', file);
+  if (folderId) form.append('folderId', folderId);
+  form.append('source', source);
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const res = await fetch(`${base}/processing/databank/clients/${clientId}/files`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form,
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const msg =
+      errBody && typeof errBody === 'object' && 'message' in errBody
+        ? String((errBody as { message?: unknown }).message)
+        : `Upload failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export function getDatabankFileSignedUrl(
+  fileId: string,
+): Promise<{ url: string; fileName: string; mimeType: string | null }> {
+  return apiFetch(`/processing/databank/files/${fileId}/signed-url`, { cache: 'no-store' });
+}
+
+export function renameDatabankFile(fileId: string, fileName: string): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/processing/databank/files/${fileId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName }),
+    cache: 'no-store',
+  });
+}
+
+export function moveDatabankFile(fileId: string, folderId: string | null): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/processing/databank/files/${fileId}/move`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId }),
+    cache: 'no-store',
+  });
+}
+
+export function copyDatabankFile(
+  fileId: string,
+  opts: { targetClientId?: string; targetFolderId?: string | null } = {},
+): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/processing/databank/files/${fileId}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+    cache: 'no-store',
+  });
+}
+
+export function deleteDatabankFile(fileId: string): Promise<{ id: string; deleted: boolean }> {
+  return apiFetch<{ id: string; deleted: boolean }>(`/processing/databank/files/${fileId}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+  });
+}

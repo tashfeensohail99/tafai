@@ -8,6 +8,8 @@ import { LeadsModule } from '../leads/leads.module';
 import { FinanceModule } from '../finance/finance.module';
 import { ProcessingController } from './processing.controller';
 import { ProcessingService } from './processing.service';
+import { DatabankController } from './databank/databank.controller';
+import { DatabankService } from './databank/databank.service';
 import { DOC_AI_QUEUE } from './document-ai/document-ai.contracts';
 import { DocumentParserClient } from './document-ai/document-parser.client';
 import { DocumentAiService } from './document-ai/document-ai.service';
@@ -35,9 +37,10 @@ import { ClientNudgeService } from './client-nudge.service';
     // DocIntakeProcessor below consumes it.
     BullModule.registerQueue({ name: DOC_AI_QUEUE }),
   ],
-  controllers: [ProcessingController],
+  controllers: [ProcessingController, DatabankController],
   providers: [
     ProcessingService,
+    DatabankService,
     DocumentParserClient,
     DocumentAiService,
     DocAiProcessor,

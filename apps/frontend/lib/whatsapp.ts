@@ -735,6 +735,19 @@ export async function sendMediaMessage(
   });
 }
 
+/**
+ * Re-send a media message we already hold in storage. WhatsApp purges its
+ * server copy after delivery, so once the recipient's phone drops the local
+ * file they see "no longer available — ask the sender to re-send." We still
+ * have the file, so this pushes it out again as a fresh message — no re-upload.
+ */
+export function resendMedia(threadId: string, messageId: string): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(
+    `/whatsapp/threads/${threadId}/messages/media/${messageId}/resend`,
+    { method: 'POST' },
+  );
+}
+
 // ---- Templates catalog --------------------------------------------------
 
 export type WhatsAppTemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';

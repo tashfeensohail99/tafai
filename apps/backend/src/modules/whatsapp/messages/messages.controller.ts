@@ -175,6 +175,24 @@ export class WhatsAppMessagesController {
     });
   }
 
+  /**
+   * Re-send a media message we already hold in storage. WhatsApp purges its
+   * server copy after delivery, so when the recipient's phone drops the local
+   * file they get "no longer available — ask the sender to re-send." We still
+   * have the file, so this pushes it out again without re-uploading.
+   */
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
+  @Post('media/:messageId/resend')
+  @RequirePermissions('whatsapp.send_message')
+  async resendMedia(
+    @CurrentUser() user: RequestUser,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+  ) {
+    const caller = await this.callerContext(user);
+    return this.messages.resendMedia(caller, { threadId, messageId });
+  }
+
   /** React to a customer message with an emoji. */
   @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
   @Post('reaction')

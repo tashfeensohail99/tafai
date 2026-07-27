@@ -309,10 +309,33 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       if (pending) return;
       pending = setTimeout(() => void flushNew(), 300);
     };
-    const onStatus = (evt: { threadId: string; messageId: string; status: WhatsAppMessageStatus }) => {
+    const onStatus = (evt: {
+      threadId: string;
+      messageId: string;
+      status: WhatsAppMessageStatus;
+      // Present only on the follow-up event for a failed voice note: the
+      // Whisper transcript, so the "Send as text" fallback appears without a
+      // reload. Merged into the message payload the render path reads.
+      failedTranscript?: string;
+    }) => {
       if (evt.threadId !== threadId) return;
       setMessages((curr) =>
-        curr.map((m) => (m.id === evt.messageId ? { ...m, status: evt.status } : m)),
+        curr.map((m) =>
+          m.id === evt.messageId
+            ? {
+                ...m,
+                status: evt.status,
+                ...(evt.failedTranscript
+                  ? {
+                      payload: {
+                        ...(m.payload as Record<string, unknown> | null),
+                        failedTranscript: evt.failedTranscript,
+                      } as ChatMessage['payload'],
+                    }
+                  : {}),
+              }
+            : m,
+        ),
       );
     };
     // The customer answered our call-permission request — flip the chip live so
@@ -386,6 +409,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   const [contactOpen, setContactOpen] = useState(false);
   // Which media message is currently being re-sent (disables its menu item).
   const [resendingId, setResendingId] = useState<string | null>(null);
+  // Failed-voice messages whose transcript has already been sent as text —
+  // hides the "Send as text" button so it can't be delivered to the customer
+  // twice (the failed AUDIO bubble itself never changes state).
+  const [transcriptSentIds, setTranscriptSentIds] = useState<Set<string>>(() => new Set());
 
   // Re-send a stored media message. WhatsApp drops its server copy after
   // delivery, so a recipient who cleared the file sees "no longer available";
@@ -571,6 +598,76 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
               : m,
           ),
         );
+        setError(reason);
+      }
+    })();
+  };
+
+  /**
+   * Send a specific text body (not the composer draft) — used by the failed-
+   * voice-note "Send as text" action, which pushes the Whisper transcript as a
+   * normal message. Same optimistic-bubble flow as handleSend.
+   */
+  const sendTranscriptAsText = (message: ChatMessage) => {
+    const body = (message.payload as { failedTranscript?: string } | null)?.failedTranscript?.trim();
+    if (!body || !thread) return;
+    // Guard the double-send: the failed AUDIO bubble never changes state, so
+    // the button would otherwise stay live. Mark sent up-front (before the
+    // async send) so a fast double-click can't fire twice; roll back on failure
+    // so the rep can retry.
+    if (transcriptSentIds.has(message.id)) return;
+    setTranscriptSentIds((s) => new Set(s).add(message.id));
+    const idempotencyKey =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const tempId = `temp-${idempotencyKey}`;
+    const nowIso = new Date().toISOString();
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      threadId: thread.id,
+      leadId: thread.leadId ?? null,
+      clientId: thread.clientId ?? null,
+      direction: 'OUTBOUND',
+      type: 'TEXT',
+      status: 'QUEUED',
+      body,
+      payload: null,
+      mediaUrl: null,
+      mediaMimeType: null,
+      templateName: null,
+      templateLanguage: null,
+      sentByEmployeeId: null,
+      waMessageId: null,
+      repliedToWaMessageId: null,
+      errorCode: null,
+      errorTitle: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      failedAt: null,
+      createdAt: nowIso,
+    };
+    setMessages((curr) => [...curr, tempMessage]);
+    void (async () => {
+      try {
+        const real = await sendText(thread.id, body, { idempotencyKey });
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Failed to send';
+        setMessages((curr) =>
+          curr.map((m) =>
+            m.id === tempId
+              ? { ...m, status: 'FAILED', errorTitle: reason, failedAt: new Date().toISOString() }
+              : m,
+          ),
+        );
+        // The send failed — let the rep try again by re-showing the button.
+        setTranscriptSentIds((s) => {
+          const next = new Set(s);
+          next.delete(message.id);
+          return next;
+        });
         setError(reason);
       }
     })();
@@ -1154,6 +1251,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                     // backend rejects a free-form media send otherwise).
                     onResend={withinWindow ? () => handleResend(m) : undefined}
                     resending={resendingId === m.id}
+                    // Failed voice note → send its Whisper transcript as text.
+                    // Only meaningful inside the 24h window (a text send needs it).
+                    onSendTranscript={withinWindow ? () => sendTranscriptAsText(m) : undefined}
+                    transcriptSent={transcriptSentIds.has(m.id)}
                     allMessages={messages}
                   />
                 );
@@ -3473,6 +3574,8 @@ function MessageBubble({
   onReact,
   onResend,
   resending,
+  onSendTranscript,
+  transcriptSent,
   allMessages,
 }: {
   message: ChatMessage;
@@ -3484,6 +3587,10 @@ function MessageBubble({
   onResend?: () => void;
   /** True while this specific message's re-send is in flight. */
   resending?: boolean;
+  /** Send a failed voice note's transcript as a text message. */
+  onSendTranscript?: () => void;
+  /** True once this failed voice note's transcript has been sent — hides the button. */
+  transcriptSent?: boolean;
   /** Used to resolve the quoted message preview when this bubble is a reply. */
   allMessages?: ChatMessage[];
 }) {
@@ -3761,6 +3868,41 @@ function MessageBubble({
             ⚠ {failureReason(message.errorCode, message.errorTitle)}
           </div>
         ) : null}
+        {/* Failed voice note → the Whisper transcript + one-tap "Send as text",
+            so the rep recovers the message instead of re-recording. */}
+        {(() => {
+          const transcript =
+            isOut &&
+            message.status === 'FAILED' &&
+            message.type === 'AUDIO'
+              ? (message.payload as { failedTranscript?: string } | null)?.failedTranscript
+              : undefined;
+          if (!transcript) return null;
+          return (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--sos-border-subtle)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sos-text-muted)', letterSpacing: '0.04em', marginBottom: 3 }}>
+                TRANSCRIPT
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.4, color: 'var(--sos-text-primary)', whiteSpace: 'pre-wrap' }}>
+                {transcript}
+              </div>
+              {transcriptSent ? (
+                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: 'var(--sos-status-success)' }}>
+                  ✓ Sent as text
+                </div>
+              ) : onSendTranscript ? (
+                <button
+                  type="button"
+                  onClick={onSendTranscript}
+                  className="sos-btn sos-btn--primary sos-btn--sm"
+                  style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                >
+                  <Send size={13} /> Send as text
+                </button>
+              ) : null}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

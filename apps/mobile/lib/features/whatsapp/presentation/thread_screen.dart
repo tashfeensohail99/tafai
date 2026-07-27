@@ -44,6 +44,11 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   bool _busyAi = false;
   bool _initialScrollDone = false;
 
+  // Failed voice notes whose transcript has already been sent as text. Held at
+  // screen level (not in the bubble) so it survives the tail-poll rebuilds and
+  // the "Send as text" button can't deliver the same text to the customer twice.
+  final Set<String> _sentTranscriptIds = {};
+
   // Voice note recording (WhatsApp-style).
   AudioRecorder? _voiceRec;
   DateTime? _voiceStart;
@@ -1153,7 +1158,16 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                     !msg.id.startsWith('temp-'))
                 ? () => _showReactionPicker(msg)
                 : null,
-            child: _Bubble(message: msg, threadId: _threadId, quoted: quoted),
+            child: _Bubble(
+              message: msg,
+              threadId: _threadId,
+              quoted: quoted,
+              windowOpen: _thread.windowOpen,
+              transcriptSent: _sentTranscriptIds.contains(msg.id),
+              onTranscriptSent: () {
+                if (mounted) setState(() => _sentTranscriptIds.add(msg.id));
+              },
+            ),
           ),
         );
         if (!showDay) return bubble;
@@ -1414,7 +1428,29 @@ class _Bubble extends StatelessWidget {
   final ChatMessage message;
   final String threadId;
   final ChatMessage? quoted;
-  const _Bubble({required this.message, required this.threadId, this.quoted});
+  /// 24h session window open — gates the failed-voice "Send as text" button
+  /// (a free-form text send is rejected by Meta once the window closes).
+  final bool windowOpen;
+  /// This failed voice note's transcript has already been sent — hide the button.
+  final bool transcriptSent;
+  /// Called after the transcript is successfully sent, so the screen records it.
+  final VoidCallback? onTranscriptSent;
+  const _Bubble({
+    required this.message,
+    required this.threadId,
+    this.quoted,
+    this.windowOpen = true,
+    this.transcriptSent = false,
+    this.onTranscriptSent,
+  });
+
+  /// The Whisper transcript attached when an outbound voice note permanently
+  /// failed (payload.failedTranscript). Null unless this is that case.
+  String? get _failedVoiceTranscript {
+    if (!message.isFailed || message.type != 'AUDIO') return null;
+    final t = message.payload?['failedTranscript'];
+    return (t is String && t.trim().isNotEmpty) ? t : null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1460,6 +1496,17 @@ class _Bubble extends StatelessWidget {
           children: [
             if (quoted != null) _quotedBlock(quoted!, out, fg),
             _content(fg),
+            // Failed voice note → the Whisper transcript + one-tap "Send as
+            // text" so the rep recovers the message instead of re-recording.
+            if (_failedVoiceTranscript != null)
+              _FailedTranscript(
+                threadId: threadId,
+                transcript: _failedVoiceTranscript!,
+                fg: fg,
+                windowOpen: windowOpen,
+                alreadySent: transcriptSent,
+                onSent: onTranscriptSent,
+              ),
             const SizedBox(height: 2),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -2069,4 +2116,107 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
           ],
         ),
       );
+}
+
+/// Transcript block under a failed voice note, with a one-tap "Send as text".
+/// When an outbound voice note permanently fails (commonly Meta media error
+/// 131053), the backend attaches a Whisper transcript; this lets the rep push
+/// it to the customer as a normal message instead of re-recording.
+class _FailedTranscript extends ConsumerStatefulWidget {
+  const _FailedTranscript({
+    required this.threadId,
+    required this.transcript,
+    required this.fg,
+    required this.windowOpen,
+    required this.alreadySent,
+    this.onSent,
+  });
+  final String threadId;
+  final String transcript;
+  final Color fg;
+  final bool windowOpen;
+  final bool alreadySent;
+  final VoidCallback? onSent;
+
+  @override
+  ConsumerState<_FailedTranscript> createState() => _FailedTranscriptState();
+}
+
+class _FailedTranscriptState extends ConsumerState<_FailedTranscript> {
+  bool _busy = false;
+
+  Future<void> _send() async {
+    if (_busy || widget.alreadySent) return;
+    setState(() => _busy = true);
+    try {
+      final msg = await ref
+          .read(whatsappRepositoryProvider)
+          .sendText(widget.threadId, widget.transcript);
+      ref.read(messagesControllerProvider(widget.threadId).notifier).append(msg);
+      // Record at screen level so the button can't re-send after a poll rebuild.
+      widget.onSent?.call();
+    } on AppError catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(messageForError(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = widget.fg.withValues(alpha: 0.6);
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: widget.fg.withValues(alpha: 0.15))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('TRANSCRIPT',
+              style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                  color: muted)),
+          const SizedBox(height: 2),
+          Text(widget.transcript,
+              style: TextStyle(fontSize: 13, height: 1.35, color: widget.fg)),
+          const SizedBox(height: 6),
+          if (widget.alreadySent)
+            const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.check, size: 14, color: AppTokens.statusSuccess),
+              SizedBox(width: 4),
+              Text('Sent as text',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppTokens.statusSuccess)),
+            ])
+          else if (!widget.windowOpen)
+            // The 24h window is closed — a free-form text send would be rejected.
+            Text('24-hour window closed — reopen with a template to send this.',
+                style: TextStyle(fontSize: 11.5, color: muted))
+          else
+            SizedBox(
+              height: 30,
+              child: FilledButton.icon(
+                onPressed: _busy ? null : _send,
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  backgroundColor: AppTokens.brandNavy,
+                ),
+                icon: const Icon(Icons.send, size: 14),
+                label: Text(_busy ? 'Sending…' : 'Send as text',
+                    style: const TextStyle(fontSize: 12.5)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

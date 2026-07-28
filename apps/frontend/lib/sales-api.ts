@@ -39,6 +39,11 @@ export interface ApiLead {
   sourceChannel?: string | null;
   status: string; // LeadStatus enum from Prisma
   priority?: string | null; // HOT | WARM | COLD | null
+  /** Sales DISPOSITION — the single source of truth, set from the WhatsApp
+   *  CRM chat (LeadDisposition enum; null = never dispositioned). Distinct from
+   *  `status` (pipeline stage) and from a follow-up's outcome note. */
+  disposition?: string | null;
+  dispositionAt?: string | null;
   notes?: string | null;
   /** Agreed total service fee. Decimal column → arrives as a string
    *  over JSON to preserve precision. Null when the deal isn't priced. */
@@ -221,6 +226,9 @@ export function adaptLead(api: ApiLead): Lead {
     assignedAt: api.createdAt,
     priority: mapPriority(api.priority),
     stage,
+    // WhatsApp CRM disposition — the one source of truth, surfaced on the lead
+    // so search/list/profile all read the same field (not a follow-up note).
+    disposition: api.disposition ?? null,
     slaStatus: mapSla(stage),
     nextAction: defaultNextAction(stage),
     salesNote: api.notes ?? undefined,

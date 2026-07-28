@@ -46,7 +46,28 @@ import {
 import { fetchLeads } from '@/lib/sales-api';
 import { phoneMatches } from '@/lib/phone-search';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
+import { DISPOSITION_LABEL } from '@/lib/whatsapp';
 import { Modal } from '@/components/whatsapp/Modal';
+
+/** Tone for the WhatsApp-CRM disposition chip — positive outcomes green,
+ *  at-risk amber, dead-ends red/neutral. Mirrors the inbox colours. */
+function dispositionTone(d: string): BadgeTone {
+  switch (d) {
+    case 'QUALIFIED':
+    case 'CONVERTED_TO_DEAL':
+      return 'success';
+    case 'FOLLOW_UP':
+    case 'CONTACT_LATER':
+    case 'REQUESTED_DISCOUNT':
+      return 'warning';
+    case 'PRICE_CONCERN':
+    case 'NOT_ELIGIBLE':
+    case 'NO_RESPONSE':
+      return 'danger';
+    default:
+      return 'neutral'; // JUNK / DEAD / unknown
+  }
+}
 
 type FilterKey =
   | 'ALL'
@@ -274,7 +295,13 @@ export function SalesLeadsPage() {
           l.service.toLowerCase().includes(q) ||
           l.targetCountry.toLowerCase().includes(q) ||
           (l.referenceCode ?? '').toLowerCase().includes(q) ||
-          (l.email ?? '').toLowerCase().includes(q),
+          (l.email ?? '').toLowerCase().includes(q) ||
+          // Searchable by WhatsApp CRM disposition (e.g. "qualified", "junk").
+          (l.disposition
+            ? (DISPOSITION_LABEL[l.disposition as keyof typeof DISPOSITION_LABEL] ?? l.disposition)
+                .toLowerCase()
+                .includes(q)
+            : false),
       );
     }
     return result;
@@ -637,6 +664,13 @@ function LeadCard({ lead }: { lead: Lead }) {
           }}
         >
           <StatusBadge tone={stageBadgeTone(lead.stage)}>{STAGE_LABEL[lead.stage]}</StatusBadge>
+          {/* WhatsApp CRM disposition — the single source of truth. Shown only
+              when set, so an undispositioned lead isn't cluttered. */}
+          {lead.disposition ? (
+            <StatusBadge tone={dispositionTone(lead.disposition)}>
+              {DISPOSITION_LABEL[lead.disposition as keyof typeof DISPOSITION_LABEL] ?? lead.disposition}
+            </StatusBadge>
+          ) : null}
           <StatusBadge tone={priorityTone(lead.priority)}>{PRIORITY_LABEL[lead.priority]} priority</StatusBadge>
           <StatusBadge tone={sourceTone(lead.source)}>{SOURCE_LABEL[lead.source]}</StatusBadge>
           {lead.slaStatus === 'OVERDUE' ? (

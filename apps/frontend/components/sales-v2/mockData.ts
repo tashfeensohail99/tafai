@@ -47,6 +47,10 @@ export interface Lead {
   assignedAt: string; // ISO
   priority: Priority;
   stage: LeadStage;
+  /** Sales DISPOSITION from the WhatsApp CRM (the single source of truth) —
+   *  one of LEAD_DISPOSITIONS, or null if never dispositioned. Separate from
+   *  `stage` (pipeline) and from a follow-up's outcome note. */
+  disposition?: string | null;
   slaStatus: SlaStatus;
   slaDueAt?: string;
   nextAction: string;

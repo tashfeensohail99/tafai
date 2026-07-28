@@ -489,8 +489,8 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
             </div>
 
             <Field
-              label="Outcome / reason"
-              hint="What did you tell them, what's the next move?"
+              label="Outcome note"
+              hint="A note on this follow-up — not the lead's disposition. Set the disposition from the WhatsApp chat."
             >
               <FormTextarea
                 value={outcome}

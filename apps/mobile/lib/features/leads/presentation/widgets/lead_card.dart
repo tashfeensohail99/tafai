@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/util/format.dart';
 import '../../../../core/widgets/premium_ui.dart';
+import '../../../whatsapp/presentation/disposition_sheet.dart';
 import '../../domain/lead.dart';
 import '../lead_visuals.dart';
 
@@ -116,7 +117,7 @@ class LeadCard extends StatelessWidget {
                         // phone
                         Row(
                           children: [
-                            Icon(Icons.phone_outlined,
+                            const Icon(Icons.phone_outlined,
                                 size: 13,
                                 color: AppTokens.textMutedLight),
                             const SizedBox(width: 4),
@@ -153,6 +154,17 @@ class LeadCard extends StatelessWidget {
                               color: statusColor,
                               compact: true,
                             ),
+                            // WhatsApp CRM disposition — the single source of
+                            // truth, shown only when set.
+                            if (lead.disposition != null) ...[
+                              const SizedBox(width: 6),
+                              PremiumStatusBadge(
+                                label: kDispositions[lead.disposition!] ??
+                                    lead.disposition!,
+                                color: dispositionColor(lead.disposition),
+                                compact: true,
+                              ),
+                            ],
                             const Spacer(),
                             Text(
                               relativeTime(lead.updatedAt),

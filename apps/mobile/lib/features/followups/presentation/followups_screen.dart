@@ -112,8 +112,8 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen> {
               controller: controller,
               maxLines: 3,
               decoration: const InputDecoration(
-                labelText: 'Outcome (optional)',
-                hintText: 'What happened?',
+                labelText: 'Outcome note (optional)',
+                hintText: 'A note on this follow-up — not the disposition',
               ),
             ),
           ],

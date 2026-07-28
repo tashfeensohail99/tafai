@@ -46,6 +46,10 @@ class Lead {
   final String? sourceChannel;
   final String status; // LeadStatus
   final String? priority; // HOT | WARM | COLD
+  /// Sales DISPOSITION from the WhatsApp CRM — the single source of truth
+  /// (LeadDisposition enum; null = never dispositioned). Separate from `status`
+  /// (pipeline) and from a follow-up's outcome note.
+  final String? disposition;
   final String? notes;
   final String? serviceFeeAmount; // decimal-as-string
   final String? serviceFeeCurrency;
@@ -67,6 +71,7 @@ class Lead {
     this.sourceChannel,
     required this.status,
     this.priority,
+    this.disposition,
     this.notes,
     this.serviceFeeAmount,
     this.serviceFeeCurrency,
@@ -97,6 +102,7 @@ class Lead {
       sourceChannel: asStringOrNull(json['sourceChannel']),
       status: json['status'] as String? ?? 'NEW',
       priority: asStringOrNull(json['priority']),
+      disposition: asStringOrNull(json['disposition']),
       notes: asStringOrNull(json['notes']),
       serviceFeeAmount: asStringOrNull(json['serviceFeeAmount']),
       serviceFeeCurrency: asStringOrNull(json['serviceFeeCurrency']),

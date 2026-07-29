@@ -1636,6 +1636,15 @@ function normalizeMediaMime(mimeType: string, filename: string): string {
     webp: 'image/webp',
     mp4: 'video/mp4',
     '3gp': 'video/3gp',
+    // Non-mp4 videos map to a video/* MIME so resolveMediaType classifies them
+    // as video and the send path transcodes them to a WhatsApp-ready mp4
+    // (Meta itself only accepts mp4/3gp). Covers octet-stream uploads whose
+    // only clue is the extension (.mov is iPhone's default).
+    mov: 'video/quicktime',
+    m4v: 'video/x-m4v',
+    mkv: 'video/x-matroska',
+    webm: 'video/webm',
+    avi: 'video/x-msvideo',
     pdf: 'application/pdf',
     doc: 'application/msword',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

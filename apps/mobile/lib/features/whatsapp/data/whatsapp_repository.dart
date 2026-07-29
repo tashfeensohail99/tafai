@@ -482,6 +482,14 @@ class WhatsappRepository {
       'gif': ['image', 'gif'],
       'mp4': ['video', 'mp4'],
       '3gp': ['video', '3gp'],
+      // Non-mp4 videos are declared with their real type so the backend
+      // classifies them as video and transcodes them to an mp4 WhatsApp
+      // accepts. iPhone records .mov by default — the most common case.
+      'mov': ['video', 'quicktime'],
+      'm4v': ['video', 'x-m4v'],
+      'mkv': ['video', 'x-matroska'],
+      'webm': ['video', 'webm'],
+      'avi': ['video', 'x-msvideo'],
       'pdf': ['application', 'pdf'],
       'txt': ['text', 'plain'],
     };

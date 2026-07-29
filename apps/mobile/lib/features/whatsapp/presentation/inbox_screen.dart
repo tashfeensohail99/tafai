@@ -888,6 +888,10 @@ class _ThreadTile extends StatelessWidget {
           : Colors.white,
       child: InkWell(
         onTap: onTap,
+        // Press-and-hold opens the row actions sheet (Pin / Archive / Junk /
+        // Set disposition). This was declared + passed in but never bound to
+        // the InkWell, so long-press did nothing and pinning looked "missing".
+        onLongPress: onLongPress,
         child: Padding(
           padding: const EdgeInsets.symmetric(
               horizontal: AppTokens.space4, vertical: 13),

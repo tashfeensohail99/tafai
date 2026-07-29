@@ -83,9 +83,27 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     });
     // Poll the tail every 5s so outgoing ticks advance and new inbound
     // messages appear without a manual pull-to-refresh.
-    _statusPoll = Timer.periodic(const Duration(seconds: 5), (_) {
+    _statusPoll = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (!mounted || _sending) return;
       ref.read(messagesControllerProvider(_threadId).notifier).syncTail();
+      // syncTail refreshes MESSAGES only, not the thread — so the 24-hour
+      // window state would stay frozen at its initial value. When it's showing
+      // CLOSED, also poll the thread: an inbound reply reopens the window on
+      // the backend, and this unlocks the composer live instead of forcing a
+      // manual refresh. (Once open, windowOpen counts down client-side, so no
+      // extra fetch is needed.)
+      if (!_thread.windowOpen) {
+        try {
+          final fresh =
+              await ref.read(whatsappRepositoryProvider).getThread(_threadId);
+          if (mounted && fresh.windowOpen && !_thread.windowOpen) {
+            setState(() {
+              _thread = fresh;
+              _aiEnabled = fresh.aiEnabled ?? _aiEnabled;
+            });
+          }
+        } catch (_) {}
+      }
     });
   }
 

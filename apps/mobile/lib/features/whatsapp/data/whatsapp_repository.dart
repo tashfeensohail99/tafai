@@ -482,6 +482,14 @@ class WhatsappRepository {
       'gif': ['image', 'gif'],
       'mp4': ['video', 'mp4'],
       '3gp': ['video', '3gp'],
+      // Non-mp4 videos are declared with their real type so the backend
+      // classifies them as video and transcodes them to an mp4 WhatsApp
+      // accepts. iPhone records .mov by default — the most common case.
+      'mov': ['video', 'quicktime'],
+      'm4v': ['video', 'x-m4v'],
+      'mkv': ['video', 'x-matroska'],
+      'webm': ['video', 'webm'],
+      'avi': ['video', 'x-msvideo'],
       'pdf': ['application', 'pdf'],
       'txt': ['text', 'plain'],
     };
@@ -510,6 +518,14 @@ class WhatsappRepository {
       final res = await _c.post<Map<String, dynamic>>(
         '/whatsapp/threads/$threadId/messages/media',
         data: form,
+        // The server may transcode/compress a large video before handing it to
+        // WhatsApp, which can run well past the 30s global receive timeout.
+        // Give media sends their own generous window so a real send isn't
+        // reported as a timeout (which would tempt a duplicate re-send).
+        options: Options(
+          sendTimeout: const Duration(minutes: 3),
+          receiveTimeout: const Duration(minutes: 3),
+        ),
       );
       return ChatMessage.fromJson(res.data!);
     } on DioException catch (e) {

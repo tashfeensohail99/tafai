@@ -24,6 +24,20 @@ const execFileAsync = promisify(execFile);
 // fails the entire deploy. The apk package is deterministic and baked into the
 // image layer, so builds no longer depend on an external download.
 const FFMPEG_BIN = 'ffmpeg';
+// ffprobe ships in the same alpine `ffmpeg` apk package — used to read a
+// video's duration so we can target a bitrate that lands under WhatsApp's cap.
+const FFPROBE_BIN = 'ffprobe';
+
+// WhatsApp Cloud API media ceilings (Meta-enforced, per message type):
+//   • inline video   → 16 MB  (a video over this can't be sent as a video)
+//   • document       → 100 MB (our fallback: send an oversized clip as a file)
+// We compress videos to a target below the video cap; if a clip is so long it
+// still won't fit after compression, it goes out as a document up to 100 MB.
+const WA_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
+const WA_DOCUMENT_MAX_BYTES = 100 * 1024 * 1024;
+// Compression target — a few MB under the 16 MB video cap so single-pass x264
+// bitrate variance can't push the result back over the line.
+const VIDEO_TARGET_BYTES = 14 * 1024 * 1024;
 import {
   Prisma,
   WhatsAppChannelStatus,
@@ -983,6 +997,9 @@ export class WhatsAppMessagesService {
     let uploadBuffer = input.file;
     let uploadMimeType = effectiveMime;
     let uploadFilename = input.filename;
+    // Set when an oversized video can't fit the 16 MB inline-video cap even
+    // after compression → delivered as a document (up to 100 MB) instead.
+    let sendAsDocument = false;
 
     if (isVoiceNote) {
       // ALWAYS transcode voice notes to clean Ogg/Opus — never trust the
@@ -1023,6 +1040,45 @@ export class WhatsAppMessagesService {
       }
     }
 
+    // Videos: compress/transcode to an MP4 that fits WhatsApp's 16 MB inline
+    // cap. A raw phone clip is usually too big and often in a container Meta
+    // rejects (.mov / .mkv / .webm), so without this "send video" silently
+    // failed. If it still won't fit after compression, send it as a document
+    // (WhatsApp allows any file up to 100 MB); past that, ask the rep to trim.
+    // Already a WhatsApp-ready mp4 under the cap → send as-is, no re-encode
+    // (re-encoding a small clean clip only loses quality and wastes time).
+    const videoAlreadyOk =
+      effectiveMime === 'video/mp4' && uploadBuffer.length <= WA_VIDEO_MAX_BYTES;
+    if (mediaType === 'video' && !isVoiceNote && !videoAlreadyOk) {
+      const originalBytes = uploadBuffer.length;
+      try {
+        uploadBuffer = await this.transcodeVideoToMp4(input.file);
+        uploadMimeType = 'video/mp4';
+        uploadFilename = `${input.filename.replace(/\.[^./\\]+$/, '') || 'video'}.mp4`;
+        this.logger.debug(
+          `Compressed video for thread=${thread.id}: ${originalBytes} → ${uploadBuffer.length} bytes`,
+        );
+      } catch (err) {
+        // Compression failed — keep the original bytes and let the size checks
+        // below (and Meta) decide. Better to try the raw file than hard-fail.
+        const reason = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `Video compression failed for thread=${thread.id} (${reason}); sending original`,
+        );
+      }
+      if (uploadBuffer.length > WA_VIDEO_MAX_BYTES) {
+        if (uploadBuffer.length <= WA_DOCUMENT_MAX_BYTES) {
+          // Too big to play inline, small enough to send as a file.
+          sendAsDocument = true;
+        } else {
+          throw new BadRequestException(
+            'This video is too large to send on WhatsApp even after compression ' +
+              '(limit ~100 MB). Please trim or shorten it and try again.',
+          );
+        }
+      }
+    }
+
     // How the outbound worker will reference the media:
     //   • `meta:<id>`        — we uploaded the bytes to Meta (default path).
     //   • a durable storage key — the worker signs a fresh link and Meta
@@ -1031,16 +1087,20 @@ export class WhatsAppMessagesService {
     //     delivery with 131053; fetching a link we host (served with the
     //     right Content-Type) delivers reliably.
     let mediaRef: string;
-    if (isVoiceNote) {
+    // Voice notes AND oversized-video documents are hosted in our storage and
+    // delivered by link — Meta fetches the file at send time. The document
+    // path deliberately skips Meta's /media upload (which would apply the
+    // 16 MB VIDEO cap) so the 100 MB document limit applies instead.
+    if (isVoiceNote || sendAsDocument) {
       const up = await this.storage.upload(
         uploadBuffer,
-        uploadMimeType, // audio/ogg
+        uploadMimeType,
         'whatsapp/outbound',
-        uploadFilename, // voice-note.ogg
+        uploadFilename,
       );
       mediaRef = up.key;
       this.logger.debug(
-        `Voice note hosted for link delivery: thread=${thread.id} key=${up.key} bytes=${uploadBuffer.length}`,
+        `Media hosted for link delivery: thread=${thread.id} key=${up.key} bytes=${uploadBuffer.length} asDocument=${sendAsDocument}`,
       );
     } else {
       try {
@@ -1075,9 +1135,11 @@ export class WhatsAppMessagesService {
       }
     }
 
-    // Map MIME type → WhatsApp message type enum
-    const messageType =
-      mediaType === 'image'
+    // Map MIME type → WhatsApp message type enum. An oversized video that fell
+    // back to file delivery is a DOCUMENT regardless of its video/* MIME.
+    const messageType = sendAsDocument
+      ? WhatsAppMessageType.DOCUMENT
+      : mediaType === 'image'
         ? WhatsAppMessageType.IMAGE
         : mediaType === 'video'
           ? WhatsAppMessageType.VIDEO
@@ -1103,9 +1165,14 @@ export class WhatsAppMessagesService {
         // renders waveform + auto-play). By this point a voice note is
         // guaranteed to be Ogg/Opus — the transcode above either succeeded
         // or threw, so we never flag a non-Ogg file as a voice note.
+        // Voice notes carry isVoiceNote (worker sends voice:true); a video that
+        // fell back to a document carries its filename so WhatsApp shows it as
+        // a named file the recipient can download and play.
         ...(isVoiceNote
           ? { payload: { isVoiceNote: true } as unknown as Prisma.InputJsonValue }
-          : {}),
+          : sendAsDocument
+            ? { payload: { filename: uploadFilename } as unknown as Prisma.InputJsonValue }
+            : {}),
         sentByEmployeeId: senderEmployeeId,
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
@@ -1321,6 +1388,109 @@ export class WhatsAppMessagesService {
     }
   }
 
+  /** Probe a media file's duration in seconds via ffprobe; null if unknown. */
+  private async probeDurationSec(path: string): Promise<number | null> {
+    try {
+      const { stdout } = await execFileAsync(FFPROBE_BIN, [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        path,
+      ]);
+      const d = parseFloat(String(stdout).trim());
+      return Number.isFinite(d) && d > 0 ? d : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Compress/transcode any video buffer to a WhatsApp-friendly H.264/AAC MP4,
+   * aiming to land under the 16 MB inline-video cap. Phone clips are routinely
+   * 30–150 MB and in containers Meta rejects (.mov, .mkv, .webm), so a raw
+   * "send video" almost always failed before this existed.
+   *
+   * Strategy: read the duration, compute a video bitrate that hits ~14 MB, and
+   * encode at 720p. If that still overshoots 16 MB (a long clip), re-encode at
+   * 480p with a lower bitrate. Returns the SMALLEST result — the caller checks
+   * the final size and, if it's still over 16 MB, sends it as a document
+   * instead of an inline video. Best-effort: on ffmpeg failure the caller
+   * catches and falls back to the original bytes.
+   */
+  private async transcodeVideoToMp4(input: Buffer): Promise<Buffer> {
+    const tmpIn = join(tmpdir(), `vid-in-${randomUUID()}`);
+
+    const encode = async (
+      boxW: number,
+      boxH: number,
+      videoKbps: number,
+      audioKbps: number,
+    ): Promise<Buffer> => {
+      const tmpOut = join(tmpdir(), `vid-out-${randomUUID()}.mp4`);
+      try {
+        await execFileAsync(
+          FFMPEG_BIN,
+          [
+            '-hide_banner',
+            '-y',
+            '-i', tmpIn,
+            // Fit within the box preserving aspect (works for portrait too),
+            // then force even dimensions (yuv420p/H.264 requires them).
+            '-vf', `scale=w=${boxW}:h=${boxH}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`,
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-profile:v', 'main',
+            '-pix_fmt', 'yuv420p',
+            '-b:v', `${videoKbps}k`,
+            '-maxrate', `${Math.round(videoKbps * 1.5)}k`,
+            '-bufsize', `${videoKbps * 2}k`,
+            '-c:a', 'aac',
+            '-b:a', `${audioKbps}k`,
+            '-ac', '2',
+            '-movflags', '+faststart', // moov atom up front → streams/plays sooner
+            '-map', '0:v:0',
+            '-map', '0:a:0?', // include first audio track if present (optional)
+            tmpOut,
+          ],
+          { maxBuffer: 16 * 1024 * 1024 },
+        );
+        return await readFile(tmpOut);
+      } catch (e) {
+        const stderr = (e as { stderr?: unknown }).stderr;
+        const tail = stderr
+          ? ` — ${String(stderr).trim().split('\n').slice(-2).join(' ')}`
+          : ` — ${(e as Error).message}`;
+        throw new Error(`ffmpeg video transcode failed${tail}`);
+      } finally {
+        await unlink(tmpOut).catch(() => {});
+      }
+    };
+
+    try {
+      await writeFile(tmpIn, input);
+      const durationSec = await this.probeDurationSec(tmpIn);
+
+      // Video bitrate (kbps) that fills VIDEO_TARGET_BYTES over the clip's
+      // length, minus the audio track. Floor keeps quality watchable; cap
+      // avoids wasting bits on a short clip.
+      const bitrateFor = (audioKbps: number, floor: number, cap: number): number => {
+        if (!durationSec) return Math.min(cap, 1200); // no duration → modest default
+        const totalKbps = (VIDEO_TARGET_BYTES * 8) / 1000 / durationSec;
+        return Math.max(floor, Math.min(cap, Math.floor(totalKbps) - audioKbps));
+      };
+
+      // Pass 1 — 720p.
+      const out720 = await encode(1280, 720, bitrateFor(96, 300, 2500), 96);
+      if (out720.length <= WA_VIDEO_MAX_BYTES) return out720;
+
+      // Pass 2 — 480p, lower audio, for long clips that overshot at 720p.
+      const out480 = await encode(854, 480, bitrateFor(64, 250, 1200), 64);
+      return out480.length < out720.length ? out480 : out720;
+    } finally {
+      await unlink(tmpIn).catch(() => {});
+    }
+  }
+
   /**
    * Decide which employee gets stamped on the outgoing message's
    * `sentByEmployeeId`. Two cases:
@@ -1466,6 +1636,15 @@ function normalizeMediaMime(mimeType: string, filename: string): string {
     webp: 'image/webp',
     mp4: 'video/mp4',
     '3gp': 'video/3gp',
+    // Non-mp4 videos map to a video/* MIME so resolveMediaType classifies them
+    // as video and the send path transcodes them to a WhatsApp-ready mp4
+    // (Meta itself only accepts mp4/3gp). Covers octet-stream uploads whose
+    // only clue is the extension (.mov is iPhone's default).
+    mov: 'video/quicktime',
+    m4v: 'video/x-m4v',
+    mkv: 'video/x-matroska',
+    webm: 'video/webm',
+    avi: 'video/x-msvideo',
     pdf: 'application/pdf',
     doc: 'application/msword',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

@@ -38,7 +38,6 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import {
-  LeadStatus,
   PresenceStatus,
   WhatsAppAssignmentReason,
   type Prisma,
@@ -273,23 +272,14 @@ export class WhatsAppAssignmentService {
       return unassigned(lead.id);
     }
 
-    // Candidate:
-    //   • sticky (preferred, if in the pool), else
-    //   • ad-restricted → least-loaded of the sub-team. The shared global RR
-    //     cursor is advanced constantly by whole-pool assignments, so reusing it
-    //     here would lump most ad leads on one rep; balance by NEW backlog instead.
-    //   • otherwise strict round-robin over the whole pool via the shared cursor.
+    // Candidate: sticky (preferred, if in the pool) else the SAME strict
+    // round-robin the engine already uses — just over `pool`, which is the
+    // Lahore sub-team when this chat came from a routed ad, or the whole
+    // eligible pool otherwise. Cursor advances exactly as before.
     const sticky = lead.preferredEmployeeId
       ? pool.find((e) => e.id === lead.preferredEmployeeId)
       : undefined;
-    // Only a real whole-pool round-robin pick advances the shared org cursor
-    // (sticky and ad-restricted picks must not move it).
-    const usedSharedCursor = !sticky && !adTeam;
-    const candidateId = sticky
-      ? sticky.id
-      : adTeam
-        ? await this.pickLeastLoaded(pool)
-        : pickRoundRobin(pool, org.rrCursorEmployeeId).id;
+    const candidateId = sticky ? sticky.id : pickRoundRobin(pool, org.rrCursorEmployeeId).id;
     const reason = sticky ? WhatsAppAssignmentReason.STICKY : WhatsAppAssignmentReason.ROUND_ROBIN;
 
     // ── Phase 2 — COMMIT under a short lock (the ONLY critical section).
@@ -336,7 +326,7 @@ export class WhatsAppAssignmentService {
       // Done outside the try so a failed side-write still spreads this batch;
       // the DB cursor then simply resumes one behind on the next sweep, which
       // is the already-documented "a rep gets picked once more" tolerance.
-      if (usedSharedCursor) {
+      if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
         org.rrCursorEmployeeId = result.assigned;
       }
       try {
@@ -357,7 +347,7 @@ export class WhatsAppAssignmentService {
         // Advance the round-robin cursor (RR only). No longer inside the
         // assignment tx, so it no longer pins the shared Organization row for
         // the whole transaction — that shared-row convoy was a pool amplifier.
-        if (usedSharedCursor) {
+        if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
           await this.prisma.organization.update({
             where: { id: org.organizationId },
             data: { rrCursorEmployeeId: result.assigned },
@@ -498,25 +488,6 @@ export class WhatsAppAssignmentService {
       select: { id: true, presenceStatus: true },
     });
     return rows;
-  }
-
-  /**
-   * Pick the sub-team member with the smallest NEW-lead backlog (ties broken by
-   * id for determinism). Used only for ad-restricted routing so a fixed team
-   * shares the inflow by who is least busy, independent of the global
-   * round-robin cursor. One indexed groupBy on the low-volume ad path.
-   */
-  private async pickLeastLoaded(pool: { id: string }[]): Promise<string> {
-    const ids = pool.map((e) => e.id);
-    const counts = await this.prisma.lead.groupBy({
-      by: ['assignedEmployeeId'],
-      where: { assignedEmployeeId: { in: ids }, status: LeadStatus.NEW, deletedAt: null },
-      _count: { _all: true },
-    });
-    const backlog = new Map(counts.map((c) => [c.assignedEmployeeId as string, c._count._all]));
-    return [...pool].sort(
-      (a, b) => (backlog.get(a.id) ?? 0) - (backlog.get(b.id) ?? 0) || (a.id < b.id ? -1 : 1),
-    )[0]!.id;
   }
 }
 

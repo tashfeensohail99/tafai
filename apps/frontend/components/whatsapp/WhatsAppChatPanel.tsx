@@ -39,6 +39,7 @@ import {
   Copy,
   Download,
   Info,
+  Loader2,
   Smile,
   File as FileIcon,
   FileText,
@@ -122,6 +123,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Number of videos currently being optimised (server-side transcode) — drives
+  // the "optimizing your video…" hint so a large clip that takes a while to
+  // compress reads as progress, not a stuck send.
+  const [videosOptimizing, setVideosOptimizing] = useState(0);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
@@ -842,6 +847,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
     if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
     setPendingMedia(null);
 
+    // The server transcodes/compresses videos to fit WhatsApp, which can take
+    // a little while for a large clip — surface that as an "optimizing" hint.
+    if (isVideo) setVideosOptimizing((n) => n + 1);
+
     void (async () => {
       try {
         const real = await sendMediaMessage(
@@ -862,6 +871,8 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           ),
         );
         setError(reason);
+      } finally {
+        if (isVideo) setVideosOptimizing((n) => Math.max(0, n - 1));
       }
     })();
   };
@@ -1299,6 +1310,29 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             fails after the thread has already loaded. Without this
             banner, sendError silently fell into state and the user saw
             "nothing happened" when a voice note was rejected by Meta. */}
+        {videosOptimizing > 0 && thread ? (
+          <div
+            role="status"
+            style={{
+              padding: '8px 14px',
+              background: 'var(--sos-status-info-soft, rgba(49,130,206,0.10))',
+              color: 'var(--sos-status-info, #3182ce)',
+              borderTop: '1px solid var(--sos-status-info-border, rgba(49,130,206,0.30))',
+              fontSize: 12.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexShrink: 0,
+            }}
+          >
+            <Loader2 size={14} className="sos-spin" style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              {videosOptimizing > 1
+                ? `Optimizing ${videosOptimizing} videos for WhatsApp — large clips can take up to a minute. They'll send automatically.`
+                : `Optimizing your video for WhatsApp — large clips can take up to a minute. It'll send automatically when ready.`}
+            </span>
+          </div>
+        ) : null}
         {error && thread ? (
           <div
             role="alert"

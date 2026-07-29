@@ -62,6 +62,11 @@ class SendReactionDto {
   @IsOptional() @IsString() idempotencyKey?: string;
 }
 
+class ForwardMessageDto {
+  /** The thread to forward this message INTO (the destination contact). */
+  @IsString() @MinLength(1) targetThreadId!: string;
+}
+
 class SendLocationDto {
   @IsNumber() @Min(-90) @Max(90) latitude!: number;
   @IsNumber() @Min(-180) @Max(180) longitude!: number;
@@ -196,6 +201,27 @@ export class WhatsAppMessagesController {
   ) {
     const caller = await this.callerContext(user);
     return this.messages.resendMedia(caller, { threadId, messageId });
+  }
+
+  /**
+   * Forward an existing message (text or media) to ANOTHER thread. The URL
+   * :threadId is the SOURCE thread the rep is viewing; the destination is
+   * `targetThreadId` in the body. Reaches the target contact on WhatsApp, so it
+   * obeys the target's 24-hour window.
+   */
+  @Audit({ entityType: 'WhatsAppThread', category: 'MUTATION', severity: 'HIGH', idParam: 'threadId', action: 'WHATSAPP_MESSAGE_SENT' })
+  @Post(':messageId/forward')
+  @RequirePermissions('whatsapp.send_message')
+  async forwardMessage(
+    @CurrentUser() user: RequestUser,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Body() dto: ForwardMessageDto,
+  ) {
+    const caller = await this.callerContext(user);
+    return this.messages.forwardMessage(caller, {
+      messageId,
+      targetThreadId: dto.targetThreadId,
+    });
   }
 
   /** React to a customer message with an emoji. */

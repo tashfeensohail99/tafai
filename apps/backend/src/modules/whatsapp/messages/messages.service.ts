@@ -1402,12 +1402,24 @@ export class WhatsAppMessagesService {
       throw new BadRequestException('Only text and media messages can be forwarded.');
     }
 
-    // Merge the "forwarded" marker onto any existing payload (document filename,
-    // voice-note flag) so media still renders correctly on the target.
-    const basePayload = (original.payload as Record<string, unknown> | null) ?? {};
+    // Build a CLEAN payload for the forwarded copy — never spread the source
+    // payload wholesale: it can carry system flags (autoAck, window_save,
+    // callPermissionRequest, processing source…) that would corrupt SLA / lead
+    // state on the TARGET thread. Whitelist only what the outbound worker needs
+    // to render the media, reading BOTH shapes:
+    //   • outbound-origin: payload.filename / payload.isVoiceNote (top-level)
+    //   • inbound-origin:  payload.document.filename / payload.audio.voice
+    const src = (original.payload as Record<string, unknown> | null) ?? {};
+    const filename =
+      (src.filename as string | undefined) ??
+      (src.document as { filename?: string } | undefined)?.filename;
+    const isVoiceNote =
+      src.isVoiceNote === true ||
+      (src.audio as { voice?: boolean } | undefined)?.voice === true;
     const forwardPayload = {
-      ...basePayload,
       forwarded: true,
+      ...(filename ? { filename } : {}),
+      ...(isVoiceNote ? { isVoiceNote: true } : {}),
     } as unknown as Prisma.InputJsonValue;
 
     let mediaRef: string | null = null;

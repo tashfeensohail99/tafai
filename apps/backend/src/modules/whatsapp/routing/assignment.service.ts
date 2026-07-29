@@ -38,12 +38,50 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  LeadStatus,
   PresenceStatus,
   WhatsAppAssignmentReason,
   type Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { computeSlaDeadline, type BusinessHours } from './business-hours';
+
+// ── Ad-specific routing (interim, hard-coded) ───────────────────────────────
+// New Click-to-WhatsApp chats from these Meta ads route ONLY to the Lahore
+// desk, never the whole round-robin pool. Keyed on the Meta ad id
+// (referral.source_id, captured on the thread as adReferral). Employee ids are
+// the production Lahore reps (verified 2026-07-30). This is a deliberate
+// stop-gap pending a manager-editable routing screen — to add/remove an ad edit
+// AD_ROUTING; to change the team edit LAHORE_DESK. Repeat customers already
+// owned by an eligible rep are untouched (the keep-check runs first), so this
+// only steers genuinely new / unassigned leads.
+const LAHORE_DESK: readonly string[] = [
+  '4d0802f0-30f5-469b-9279-e57536815c8e', // Tabida Bilal
+  '88016096-7b41-4c59-b6e7-a6d8bca2908f', // Samiya Aslam
+  '2faaef9e-8583-43bc-92d4-b739dd1d8ab5', // Rubab
+  '1a0b7967-e27e-431a-9efd-f4dfe923c779', // Ifra Qaiser Mehmood
+  '1beff9a3-8f13-4669-8faf-03325a3735e0', // Noman Gondal
+  '6439a4ca-3626-4ba8-a274-610719acf2c4', // Aqsa Sadiq
+];
+const AD_ROUTING: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  // "Turn Your Visa Refusal into Approval by Judicial Review" (JR) — confirmed live.
+  ['52533803620533', new Set(LAHORE_DESK)],
+  // "C11" ad id exactly as provided (no chats delivered under it yet).
+  ['52531891901333', new Set(LAHORE_DESK)],
+  // "Business Permit to Canada PR" — the C11-theme ad actually delivering
+  // (408 chats 2026-07-23→29); one digit-cluster off the id above, almost
+  // certainly the same ad. Keyed too so routing works whichever id Meta sends.
+  ['52531891900933', new Set(LAHORE_DESK)],
+]);
+
+/** The fixed sub-team a Click-to-WhatsApp referral must route to, or null when
+ *  the ad has no override (→ normal whole-pool round-robin). */
+function adTeamForReferral(adReferral: unknown): ReadonlySet<string> | null {
+  if (!adReferral || typeof adReferral !== 'object' || Array.isArray(adReferral)) return null;
+  const sid = (adReferral as Record<string, unknown>)['source_id'];
+  if (typeof sid !== 'string') return null;
+  return AD_ROUTING.get(sid) ?? null;
+}
 
 export interface AssignmentOutcome {
   leadId: string;
@@ -149,6 +187,9 @@ export class WhatsAppAssignmentService {
         id: true,
         slaDeadlineAt: true,
         firstInboundAt: true,
+        // Click-to-WhatsApp ad attribution — drives the ad-specific routing
+        // override below (referral.source_id → fixed sub-team).
+        adReferral: true,
         lead: {
           select: { id: true, assignedEmployeeId: true, preferredEmployeeId: true, branchId: true },
         },
@@ -210,24 +251,45 @@ export class WhatsAppAssignmentService {
       );
     }
 
-    // NEW-lead pool = eligible restricted to ONLINE (Away/Offline agents don't
+    // Ad-specific routing: chats from certain Click-to-WhatsApp ads must be
+    // assigned ONLY within a fixed sub-team (the Lahore desk), never the whole
+    // pool. Keyed on the Meta ad id (referral.source_id). NOT applied to live
+    // calls — a call must still ring the next available rep anywhere.
+    const adTeam = opts?.forLiveCall ? null : adTeamForReferral(thread.adReferral);
+    const basePool = adTeam ? eligible.filter((e) => adTeam.has(e.id)) : eligible;
+
+    // NEW-lead pool = basePool restricted to ONLINE (Away/Offline agents don't
     // receive new leads). A live inbound call can't wait for the sweeper, so if
-    // nobody is ONLINE it falls back to the full eligible pool (still ONE rep).
-    const onlinePool = eligible.filter((e) => e.presenceStatus === PresenceStatus.ONLINE);
-    const pool = onlinePool.length > 0 ? onlinePool : opts?.forLiveCall ? eligible : [];
+    // nobody is ONLINE it falls back to the full base pool (still ONE rep). An
+    // ad-restricted lead with none of the sub-team online stays unassigned and
+    // the sweeper retries — still only ever within the sub-team.
+    const onlinePool = basePool.filter((e) => e.presenceStatus === PresenceStatus.ONLINE);
+    const pool = onlinePool.length > 0 ? onlinePool : opts?.forLiveCall ? basePool : [];
     if (pool.length === 0) {
       this.log.log(
-        { leadId: lead.id, basePool: eligible.length, forLiveCall: !!opts?.forLiveCall },
+        { leadId: lead.id, basePool: basePool.length, adRestricted: !!adTeam, forLiveCall: !!opts?.forLiveCall },
         'assignment: no eligible agent to receive this lead — leaving unassigned (sweeper will pick up)',
       );
       return unassigned(lead.id);
     }
 
-    // Candidate: sticky (preferred, if in the pool) else strict round-robin.
+    // Candidate:
+    //   • sticky (preferred, if in the pool), else
+    //   • ad-restricted → least-loaded of the sub-team. The shared global RR
+    //     cursor is advanced constantly by whole-pool assignments, so reusing it
+    //     here would lump most ad leads on one rep; balance by NEW backlog instead.
+    //   • otherwise strict round-robin over the whole pool via the shared cursor.
     const sticky = lead.preferredEmployeeId
       ? pool.find((e) => e.id === lead.preferredEmployeeId)
       : undefined;
-    const candidateId = sticky ? sticky.id : pickRoundRobin(pool, org.rrCursorEmployeeId).id;
+    // Only a real whole-pool round-robin pick advances the shared org cursor
+    // (sticky and ad-restricted picks must not move it).
+    const usedSharedCursor = !sticky && !adTeam;
+    const candidateId = sticky
+      ? sticky.id
+      : adTeam
+        ? await this.pickLeastLoaded(pool)
+        : pickRoundRobin(pool, org.rrCursorEmployeeId).id;
     const reason = sticky ? WhatsAppAssignmentReason.STICKY : WhatsAppAssignmentReason.ROUND_ROBIN;
 
     // ── Phase 2 — COMMIT under a short lock (the ONLY critical section).
@@ -274,7 +336,7 @@ export class WhatsAppAssignmentService {
       // Done outside the try so a failed side-write still spreads this batch;
       // the DB cursor then simply resumes one behind on the next sweep, which
       // is the already-documented "a rep gets picked once more" tolerance.
-      if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
+      if (usedSharedCursor) {
         org.rrCursorEmployeeId = result.assigned;
       }
       try {
@@ -295,7 +357,7 @@ export class WhatsAppAssignmentService {
         // Advance the round-robin cursor (RR only). No longer inside the
         // assignment tx, so it no longer pins the shared Organization row for
         // the whole transaction — that shared-row convoy was a pool amplifier.
-        if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
+        if (usedSharedCursor) {
           await this.prisma.organization.update({
             where: { id: org.organizationId },
             data: { rrCursorEmployeeId: result.assigned },
@@ -436,6 +498,25 @@ export class WhatsAppAssignmentService {
       select: { id: true, presenceStatus: true },
     });
     return rows;
+  }
+
+  /**
+   * Pick the sub-team member with the smallest NEW-lead backlog (ties broken by
+   * id for determinism). Used only for ad-restricted routing so a fixed team
+   * shares the inflow by who is least busy, independent of the global
+   * round-robin cursor. One indexed groupBy on the low-volume ad path.
+   */
+  private async pickLeastLoaded(pool: { id: string }[]): Promise<string> {
+    const ids = pool.map((e) => e.id);
+    const counts = await this.prisma.lead.groupBy({
+      by: ['assignedEmployeeId'],
+      where: { assignedEmployeeId: { in: ids }, status: LeadStatus.NEW, deletedAt: null },
+      _count: { _all: true },
+    });
+    const backlog = new Map(counts.map((c) => [c.assignedEmployeeId as string, c._count._all]));
+    return [...pool].sort(
+      (a, b) => (backlog.get(a.id) ?? 0) - (backlog.get(b.id) ?? 0) || (a.id < b.id ? -1 : 1),
+    )[0]!.id;
   }
 }
 

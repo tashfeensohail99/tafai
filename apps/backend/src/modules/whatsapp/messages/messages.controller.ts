@@ -151,7 +151,12 @@ export class WhatsAppMessagesController {
   @RequirePermissions('whatsapp.send_message')
   @UseInterceptors(
     FileInterceptor('file', {
-      limits: { fileSize: 16 * 1024 * 1024 }, // 16 MB — Meta's hard limit
+      // 100 MB ingestion cap — NOT the WhatsApp limit. Meta caps inline video
+      // at 16 MB, but the service compresses oversized videos down to fit, so
+      // the raw (large) file must be allowed IN to be compressed. 100 MB also
+      // matches Meta's document ceiling (large PDFs now go through too). The
+      // service still enforces the real per-type limits after processing.
+      limits: { fileSize: 100 * 1024 * 1024 },
     }),
   )
   async sendMedia(

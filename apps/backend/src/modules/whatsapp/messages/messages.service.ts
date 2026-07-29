@@ -1249,49 +1249,15 @@ export class WhatsAppMessagesService {
       );
     }
 
-    // Resolve a SENDABLE reference. Two stored shapes:
-    //   • durable storage key (voice notes, AI brochures) — send as-is; the
-    //     worker signs a fresh link at dispatch. Always re-sendable.
-    //   • "meta:<id>" (rep-sent images/videos/documents) — this is Meta's
-    //     uploaded-media id, which expires on the SAME ~30-day clock as the
-    //     server copy the recipient just lost. Cloning it would silently fail
-    //     at dispatch. So rehost it to our storage NOW: download the bytes
-    //     from Meta while they may still exist, and send a fresh link. If Meta
-    //     already purged them, the media is genuinely unrecoverable → say so.
-    let mediaRef = original.mediaUrl;
-    let mediaMime = original.mediaMimeType;
-    if (mediaRef.startsWith('meta:')) {
-      const channel = await this.prisma.whatsAppChannel.findUnique({
-        where: { id: thread.channelId },
-        select: { id: true, phoneNumberId: true, accessTokenEnc: true },
-      });
-      if (!channel) throw new NotFoundException('WhatsApp channel not found');
-      const metaClient = this.metaFactory.forChannel(channel);
-      const metaMediaId = mediaRef.slice(5);
-      let bytes: Buffer;
-      let mime: string;
-      try {
-        const info = await metaClient.getMediaUrl(metaMediaId);
-        mime = info.mime_type;
-        bytes = await metaClient.downloadMedia(info.url);
-      } catch {
-        throw new BadRequestException(
-          'The original file is no longer available to re-send — WhatsApp deleted its copy. Please upload it again.',
-        );
-      }
-      const ext = (mime.split(';')[0].split('/')[1] ?? 'bin').trim();
-      const filename =
-        (original.payload as { filename?: string } | null)?.filename ?? `resend.${ext}`;
-      const up = await this.storage.upload(bytes, mime, 'whatsapp/outbound', filename);
-      mediaRef = up.key;
-      mediaMime = mime;
-      // Preserve permanently: repoint the ORIGINAL row at the durable key too,
-      // so the inbox can re-stream it forever and any future re-send is
-      // instant. Best-effort — a failure here must not block this send.
-      await this.prisma.whatsAppMessage
-        .update({ where: { id: input.messageId }, data: { mediaUrl: up.key, mediaMimeType: mime } })
-        .catch(() => undefined);
-    }
+    // Resolve a SENDABLE reference (durable key as-is; rehost a "meta:<id>" ref
+    // off Meta's expiring store before it's purged). Shared with forwardMessage.
+    const { mediaRef, mediaMime } = await this.resolveSendableMediaRef({
+      sourceChannelId: thread.channelId,
+      mediaUrl: original.mediaUrl,
+      mediaMimeType: original.mediaMimeType,
+      payload: original.payload,
+      repointMessageId: input.messageId,
+    });
 
     const message = await this.prisma.whatsAppMessage.create({
       data: {
@@ -1320,6 +1286,174 @@ export class WhatsAppMessagesService {
     if (senderEmployeeId) {
       await this.prisma.whatsAppThread.update({
         where: { id: thread.id },
+        data: { aiDisabledAt: new Date() },
+      });
+    }
+    return message;
+  }
+
+  /**
+   * Resolve a media message's stored ref into one that can be dispatched
+   * (again), possibly to a DIFFERENT thread than the one it came from. Durable
+   * storage keys are returned as-is (the worker signs a fresh link at
+   * dispatch). A "meta:<id>" ref is Meta's uploaded-media id, which (a) expires
+   * on the same ~30-day clock as the recipient's copy and (b) is only valid
+   * within its OWN channel/WABA — so it's rehosted to our storage NOW: download
+   * the bytes from the SOURCE channel while they still exist, upload to durable
+   * storage, and (best-effort) repoint the source row so it's preserved and any
+   * future re-send/forward is instant. Throws if Meta already purged the bytes.
+   */
+  private async resolveSendableMediaRef(args: {
+    sourceChannelId: string;
+    mediaUrl: string;
+    mediaMimeType: string | null;
+    payload: unknown;
+    repointMessageId: string;
+  }): Promise<{ mediaRef: string; mediaMime: string | null }> {
+    let mediaRef = args.mediaUrl;
+    let mediaMime = args.mediaMimeType;
+    if (mediaRef.startsWith('meta:')) {
+      const channel = await this.prisma.whatsAppChannel.findUnique({
+        where: { id: args.sourceChannelId },
+        select: { id: true, phoneNumberId: true, accessTokenEnc: true },
+      });
+      if (!channel) throw new NotFoundException('WhatsApp channel not found');
+      const metaClient = this.metaFactory.forChannel(channel);
+      const metaMediaId = mediaRef.slice(5);
+      let bytes: Buffer;
+      let mime: string;
+      try {
+        const info = await metaClient.getMediaUrl(metaMediaId);
+        mime = info.mime_type;
+        bytes = await metaClient.downloadMedia(info.url);
+      } catch {
+        throw new BadRequestException(
+          'The original file is no longer available — WhatsApp deleted its copy. Please upload it again.',
+        );
+      }
+      const ext = (mime.split(';')[0].split('/')[1] ?? 'bin').trim();
+      const filename =
+        (args.payload as { filename?: string } | null)?.filename ?? `media.${ext}`;
+      const up = await this.storage.upload(bytes, mime, 'whatsapp/outbound', filename);
+      mediaRef = up.key;
+      mediaMime = mime;
+      // Preserve permanently: repoint the SOURCE row at the durable key too, so
+      // the inbox can re-stream it forever. Best-effort — never block the send.
+      await this.prisma.whatsAppMessage
+        .update({
+          where: { id: args.repointMessageId },
+          data: { mediaUrl: up.key, mediaMimeType: mime },
+        })
+        .catch(() => undefined);
+    }
+    return { mediaRef, mediaMime };
+  }
+
+  /**
+   * Forward an existing message (text OR media) to ANOTHER thread — WhatsApp-
+   * style. The content is re-sent to the target contact on WhatsApp, so it
+   * obeys the target thread's 24-hour window (closed → clear "send a template"
+   * error). Media is rehosted the same way {@link resendMedia} does, so a
+   * "meta:<id>" ref works even across channels. Tags payload.forwarded so the
+   * inbox can show a "Forwarded" marker. Access is enforced on BOTH threads:
+   * the caller must be able to send on the target AND view the source.
+   */
+  async forwardMessage(
+    caller: CallerContext,
+    input: { messageId: string; targetThreadId: string },
+  ) {
+    const target = await this.thread(caller, input.targetThreadId);
+    const senderEmployeeId = this.resolveSenderEmployeeId(caller, target);
+
+    const now = new Date();
+    if (!target.windowExpiresAt || target.windowExpiresAt.getTime() <= now.getTime()) {
+      throw new BadRequestException(
+        '24-hour customer-service window has expired. Use a template message instead.',
+      );
+    }
+
+    const original = await this.prisma.whatsAppMessage.findUnique({
+      where: { id: input.messageId },
+      select: {
+        threadId: true,
+        channelId: true,
+        type: true,
+        mediaUrl: true,
+        mediaMimeType: true,
+        body: true,
+        payload: true,
+      },
+    });
+    if (!original) throw new NotFoundException('Message not found');
+    // Enforce that the caller may see the SOURCE thread too — prevents
+    // forwarding content out of a conversation they don't have access to.
+    await this.thread(caller, original.threadId);
+
+    const MEDIA_TYPES: WhatsAppMessageType[] = [
+      WhatsAppMessageType.IMAGE,
+      WhatsAppMessageType.VIDEO,
+      WhatsAppMessageType.AUDIO,
+      WhatsAppMessageType.DOCUMENT,
+      WhatsAppMessageType.STICKER,
+    ];
+    const isMedia = MEDIA_TYPES.includes(original.type);
+    const isText = original.type === WhatsAppMessageType.TEXT;
+    if (!isMedia && !isText) {
+      throw new BadRequestException('Only text and media messages can be forwarded.');
+    }
+
+    // Merge the "forwarded" marker onto any existing payload (document filename,
+    // voice-note flag) so media still renders correctly on the target.
+    const basePayload = (original.payload as Record<string, unknown> | null) ?? {};
+    const forwardPayload = {
+      ...basePayload,
+      forwarded: true,
+    } as unknown as Prisma.InputJsonValue;
+
+    let mediaRef: string | null = null;
+    let mediaMime: string | null = null;
+    if (isMedia) {
+      if (!original.mediaUrl) {
+        throw new BadRequestException(
+          'This media was never stored, so it cannot be forwarded — please re-upload it.',
+        );
+      }
+      const resolved = await this.resolveSendableMediaRef({
+        sourceChannelId: original.channelId,
+        mediaUrl: original.mediaUrl,
+        mediaMimeType: original.mediaMimeType,
+        payload: original.payload,
+        repointMessageId: input.messageId,
+      });
+      mediaRef = resolved.mediaRef;
+      mediaMime = resolved.mediaMime;
+    } else if (!original.body?.trim()) {
+      throw new BadRequestException('There is no text to forward.');
+    }
+
+    const message = await this.prisma.whatsAppMessage.create({
+      data: {
+        threadId: target.id,
+        channelId: target.channelId,
+        leadId: target.leadId,
+        clientId: target.clientId,
+        direction: WhatsAppMessageDirection.OUTBOUND,
+        type: original.type,
+        status: WhatsAppMessageStatus.QUEUED,
+        body: original.body,
+        ...(isMedia ? { mediaUrl: mediaRef, mediaMimeType: mediaMime } : {}),
+        payload: forwardPayload,
+        sentByEmployeeId: senderEmployeeId,
+        idempotencyKey: randomUUID(),
+      },
+      select: this.publicSelect(),
+    });
+
+    await this.outboundQueue.add('send', { messageId: message.id }, { jobId: message.id });
+    // A human forward silences the AI bot for 4h on the TARGET thread.
+    if (senderEmployeeId) {
+      await this.prisma.whatsAppThread.update({
+        where: { id: target.id },
         data: { aiDisabledAt: new Date() },
       });
     }

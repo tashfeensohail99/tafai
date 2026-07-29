@@ -748,6 +748,23 @@ export function resendMedia(threadId: string, messageId: string): Promise<ChatMe
   );
 }
 
+/**
+ * Forward a message (text or media) to ANOTHER contact's chat. `threadId` is
+ * the SOURCE thread being viewed; the content is sent to `targetThreadId`'s
+ * contact on WhatsApp, so it obeys that contact's 24-hour window (a closed
+ * target rejects with the standard window error).
+ */
+export function forwardMessage(
+  threadId: string,
+  messageId: string,
+  targetThreadId: string,
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(
+    `/whatsapp/threads/${threadId}/messages/${messageId}/forward`,
+    { method: 'POST', body: JSON.stringify({ targetThreadId }) },
+  );
+}
+
 // ---- Templates catalog --------------------------------------------------
 
 export type WhatsAppTemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';

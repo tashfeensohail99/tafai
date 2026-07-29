@@ -39,6 +39,7 @@ import {
   Copy,
   Download,
   Info,
+  Forward,
   Loader2,
   Smile,
   File as FileIcon,
@@ -76,7 +77,9 @@ import {
   getThread,
   requestCallPermission,
   listMessages,
+  listThreads,
   markThreadRead,
+  forwardMessage,
   resendMedia,
   sendContact,
   sendLocation,
@@ -86,6 +89,7 @@ import {
   type AdReferral,
   type ChatMessage,
   type ThreadDetail,
+  type ThreadListItem,
   type WhatsAppMessageStatus,
 } from '@/lib/whatsapp';
 import { ConvertToClientModal } from './ConvertToClientModal';
@@ -154,6 +158,11 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   // the "optimizing your video…" hint so a large clip that takes a while to
   // compress reads as progress, not a stuck send.
   const [videosOptimizing, setVideosOptimizing] = useState(0);
+  // Forward: the message the rep is forwarding (opens the contact picker), an
+  // in-flight flag, and a transient "Forwarded to X" confirmation.
+  const [forwardingMsg, setForwardingMsg] = useState<ChatMessage | null>(null);
+  const [forwardBusy, setForwardBusy] = useState(false);
+  const [forwardNotice, setForwardNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
@@ -472,6 +481,30 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       alert(e instanceof Error ? e.message : 'Could not re-send this media.');
     } finally {
       setResendingId(null);
+    }
+  };
+
+  // Forward the picked message to another contact's chat. The backend re-sends
+  // the content to the target on WhatsApp (subject to the TARGET's 24h window,
+  // which the picker already gates on and the backend re-checks).
+  const doForward = async (target: ThreadListItem) => {
+    const msg = forwardingMsg;
+    if (!msg || !thread || forwardBusy) return;
+    setForwardBusy(true);
+    try {
+      await forwardMessage(thread.id, msg.id, target.id);
+      const name =
+        (target.lead ?? target.client)
+          ? `${(target.lead ?? target.client)!.firstName} ${(target.lead ?? target.client)!.lastName}`.trim()
+          : target.waContactId;
+      setForwardingMsg(null);
+      setForwardNotice(`Forwarded to ${name || target.waContactId}`);
+      window.setTimeout(() => setForwardNotice(null), 3500);
+    } catch (e) {
+      setForwardingMsg(null);
+      setError(e instanceof Error ? e.message : 'Could not forward the message.');
+    } finally {
+      setForwardBusy(false);
     }
   };
 
@@ -1302,6 +1335,10 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
                     // Re-send offered only while the 24h window is open (the
                     // backend rejects a free-form media send otherwise).
                     onResend={withinWindow ? () => handleResend(m) : undefined}
+                    // Forward can go to ANY contact (the 24h check applies to the
+                    // TARGET, enforced in the picker + backend), so it's offered
+                    // regardless of THIS thread's window.
+                    onForward={() => setForwardingMsg(m)}
                     resending={resendingId === m.id}
                     // Failed voice note → send its Whisper transcript as text.
                     // Only meaningful inside the 24h window (a text send needs it).
@@ -1351,6 +1388,25 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             fails after the thread has already loaded. Without this
             banner, sendError silently fell into state and the user saw
             "nothing happened" when a voice note was rejected by Meta. */}
+        {forwardNotice && thread ? (
+          <div
+            role="status"
+            style={{
+              padding: '8px 14px',
+              background: 'var(--sos-status-success-soft, rgba(0,168,132,0.12))',
+              color: 'var(--wa-accent, #00a884)',
+              borderTop: '1px solid var(--sos-status-success-border, rgba(0,168,132,0.30))',
+              fontSize: 12.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexShrink: 0,
+            }}
+          >
+            <Forward size={14} style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0 }}>{forwardNotice}</span>
+          </div>
+        ) : null}
         {videosOptimizing > 0 && thread ? (
           <div
             role="status"
@@ -1493,6 +1549,25 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
         open={contactOpen}
         onClose={() => setContactOpen(false)}
         onSend={handleSendContact}
+      />
+
+      <ForwardPickerModal
+        open={forwardingMsg !== null}
+        busy={forwardBusy}
+        sourcePreview={
+          forwardingMsg
+            ? (forwardingMsg.body?.trim()
+                ? forwardingMsg.body.trim().slice(0, 60)
+                : forwardingMsg.type === 'IMAGE' ? '📷 Photo'
+                : forwardingMsg.type === 'VIDEO' ? '🎥 Video'
+                : forwardingMsg.type === 'AUDIO' ? '🎙️ Voice message'
+                : forwardingMsg.type === 'DOCUMENT' ? '📄 Document'
+                : forwardingMsg.type === 'STICKER' ? 'Sticker'
+                : 'Message')
+            : ''
+        }
+        onClose={() => { if (!forwardBusy) setForwardingMsg(null); }}
+        onPick={doForward}
       />
 
       <ConvertToClientModal
@@ -3150,6 +3225,92 @@ function SendModalShell({
   );
 }
 
+function ForwardPickerModal({ open, sourcePreview, busy, onClose, onPick }: {
+  open: boolean;
+  sourcePreview: string;
+  busy: boolean;
+  onClose: () => void;
+  onPick: (target: ThreadListItem) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<ThreadListItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => { if (open) { setQ(''); setResults([]); } }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    // Debounce the search; the inbox list endpoint already supports ?search=.
+    const t = setTimeout(() => {
+      listThreads({ search: q.trim() || undefined, limit: 25 })
+        .then((res) => { if (!cancelled) setResults(res.items); })
+        .catch(() => { if (!cancelled) setResults([]); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q, open]);
+  if (!open) return null;
+  const now = Date.now();
+  const nameOf = (t: ThreadListItem) => {
+    const c = t.lead ?? t.client;
+    const n = c ? `${c.firstName} ${c.lastName}`.trim() : '';
+    return n || t.waContactId;
+  };
+  const phoneOf = (t: ThreadListItem) => t.lead?.phone ?? t.client?.phone ?? t.waContactId;
+  return (
+    <SendModalShell
+      title="Forward to…"
+      onClose={onClose}
+      footer={
+        <button type="button" onClick={onClose} style={{ ...sendModalBtn, cursor: 'pointer', background: 'transparent', color: 'var(--sos-text-muted)' }}>Cancel</button>
+      }
+    >
+      <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        Forwarding: <span style={{ color: 'var(--sos-text-primary)' }}>{sourcePreview}</span>
+      </div>
+      <input
+        autoFocus
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search a contact by name or number…"
+        style={sendModalInput}
+      />
+      <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {loading ? <div style={{ fontSize: 13, color: 'var(--sos-text-muted)', padding: '8px 2px' }}>Searching…</div> : null}
+        {!loading && results.length === 0 ? <div style={{ fontSize: 13, color: 'var(--sos-text-muted)', padding: '8px 2px' }}>No conversations found.</div> : null}
+        {results.map((t) => {
+          const isOpen = !!t.windowExpiresAt && new Date(t.windowExpiresAt).getTime() > now;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              disabled={!isOpen || busy}
+              onClick={() => { if (isOpen && !busy) onPick(t); }}
+              title={isOpen ? '' : "This contact's 24-hour window is closed — WhatsApp doesn't allow forwarding free-form messages to them. Send them a template first."}
+              style={{
+                all: 'unset', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '10px', borderRadius: 8,
+                cursor: isOpen && !busy ? 'pointer' : 'not-allowed',
+                opacity: isOpen ? 1 : 0.45,
+              }}
+              onMouseEnter={(e) => { if (isOpen && !busy) (e.currentTarget as HTMLButtonElement).style.background = 'var(--sos-surface-2)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, color: 'var(--sos-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(t)}</div>
+                <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>{phoneOf(t)}</div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, color: isOpen ? 'var(--wa-accent, #00a884)' : 'var(--sos-text-faint)' }}>
+                {isOpen ? 'Open' : 'Closed'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </SendModalShell>
+  );
+}
+
 function LocationPickerModal({ open, onClose, onSend }: {
   open: boolean;
   onClose: () => void;
@@ -3648,6 +3809,7 @@ function MessageBubble({
   onReply,
   onReact,
   onResend,
+  onForward,
   resending,
   onSendTranscript,
   transcriptSent,
@@ -3660,6 +3822,8 @@ function MessageBubble({
   onReact?: (emoji: string) => void;
   /** Re-send this stored media message (per-message menu, outbound media only). */
   onResend?: () => void;
+  /** Forward this message (text or media) to another contact's chat. */
+  onForward?: () => void;
   /** True while this specific message's re-send is in flight. */
   resending?: boolean;
   /** Send a failed voice note's transcript as a text message. */
@@ -3714,6 +3878,14 @@ function MessageBubble({
     Boolean(onResend) &&
     isOut &&
     isMedia &&
+    Boolean(message.waMessageId) &&
+    message.status !== 'FAILED' &&
+    !message.id.startsWith('temp-');
+  // Forward: any real (delivered, non-temp) text OR media message — inbound or
+  // outbound — can be forwarded to another contact's chat.
+  const canForward =
+    Boolean(onForward) &&
+    (isMedia || message.type === 'TEXT') &&
     Boolean(message.waMessageId) &&
     message.status !== 'FAILED' &&
     !message.id.startsWith('temp-');
@@ -3840,6 +4012,13 @@ function MessageBubble({
                   icon={<Copy size={15} />}
                   label="Copy"
                   onClick={() => { void navigator.clipboard?.writeText(copyText).catch(() => {}); setMenuOpen(false); }}
+                />
+              ) : null}
+              {canForward ? (
+                <BubbleMenuItem
+                  icon={<Forward size={15} />}
+                  label="Forward"
+                  onClick={() => { onForward?.(); setMenuOpen(false); }}
                 />
               ) : null}
               {canResend ? (

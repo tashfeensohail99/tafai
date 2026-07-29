@@ -220,6 +220,25 @@ class WhatsappRepository {
     }
   }
 
+  /// POST /whatsapp/threads/:sourceThreadId/messages/:messageId/forward —
+  /// forward a message (text or media) to ANOTHER contact's chat. Reaches the
+  /// target on WhatsApp, so it needs the TARGET's 24h window open (else 400).
+  Future<ChatMessage> forwardMessage(
+    String sourceThreadId, {
+    required String messageId,
+    required String targetThreadId,
+  }) async {
+    try {
+      final res = await _c.post<Map<String, dynamic>>(
+        '/whatsapp/threads/$sourceThreadId/messages/$messageId/forward',
+        data: {'targetThreadId': targetThreadId},
+      );
+      return ChatMessage.fromJson(res.data!);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   /// POST /whatsapp/threads/:id/messages/location — send a pin-drop location.
   Future<ChatMessage> sendLocation(
     String threadId, {

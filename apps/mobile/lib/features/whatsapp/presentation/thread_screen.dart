@@ -23,6 +23,7 @@ import '../domain/wa_message.dart';
 import '../domain/wa_thread.dart';
 import 'disposition_sheet.dart';
 import 'media_preview_screen.dart';
+import 'forward_target_sheet.dart';
 import 'quick_reply_sheet.dart';
 import 'video_player_screen.dart';
 import 'template_picker_sheet.dart';
@@ -585,33 +586,89 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     }
   }
 
-  /// Emoji picker shown on long-press of a message → sends a reaction.
-  Future<void> _showReactionPicker(ChatMessage target) async {
+  /// Long-press actions on a message: react (emoji) / reply / forward / copy.
+  Future<void> _showMessageActions(ChatMessage target) async {
     HapticFeedback.selectionClick();
     const emojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
-    final picked = await showModalBottomSheet<String>(
+    const mediaTypes = {'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER'};
+    final canCopy = (target.body ?? '').trim().isNotEmpty;
+    final canForward = target.type == 'TEXT' || mediaTypes.contains(target.type);
+    // Reactions are session messages → only inside the open 24h window.
+    final canReact = _thread.windowOpen;
+
+    final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              for (final e in emojis)
-                InkResponse(
-                  onTap: () => Navigator.pop(ctx, e),
-                  child: Padding(
-                    padding: const EdgeInsets.all(6),
-                    child: Text(e, style: const TextStyle(fontSize: 30)),
-                  ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (canReact) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    for (final e in emojis)
+                      InkResponse(
+                        onTap: () => Navigator.pop(ctx, 'react:$e'),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Text(e, style: const TextStyle(fontSize: 30)),
+                        ),
+                      ),
+                  ],
                 ),
+              ),
+              const Divider(height: 1),
             ],
-          ),
+            ListTile(
+              leading: const Icon(Icons.reply),
+              title: const Text('Reply'),
+              onTap: () => Navigator.pop(ctx, 'reply'),
+            ),
+            if (canForward)
+              ListTile(
+                leading: const Icon(Icons.forward),
+                title: const Text('Forward'),
+                onTap: () => Navigator.pop(ctx, 'forward'),
+              ),
+            if (canCopy)
+              ListTile(
+                leading: const Icon(Icons.copy_outlined),
+                title: const Text('Copy'),
+                onTap: () => Navigator.pop(ctx, 'copy'),
+              ),
+          ],
         ),
       ),
     );
+    if (action == null || !mounted) return;
+    if (action.startsWith('react:')) {
+      await _reactTo(target, action.substring(6));
+    } else if (action == 'reply') {
+      setState(() => _replyingTo = target);
+    } else if (action == 'forward') {
+      await _forwardFlow(target);
+    } else if (action == 'copy') {
+      await Clipboard.setData(ClipboardData(text: target.body ?? ''));
+      if (mounted) _toast('Copied to clipboard');
+    }
+  }
+
+  /// Pick a target contact and forward [target] to their chat.
+  Future<void> _forwardFlow(ChatMessage target) async {
+    final picked = await showForwardTargetSheet(context);
     if (picked == null || !mounted) return;
-    await _reactTo(target, picked);
+    try {
+      await ref.read(whatsappRepositoryProvider).forwardMessage(
+            _threadId,
+            messageId: target.id,
+            targetThreadId: picked.id,
+          );
+      if (mounted) _toast('Forwarded to ${picked.displayName}');
+    } on AppError catch (e) {
+      if (mounted) _toast(messageForError(e));
+    }
   }
 
   Future<void> _reactTo(ChatMessage target, String emoji) async {
@@ -1196,7 +1253,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             onLongPress: (msg.waMessageId != null &&
                     !msg.isFailed &&
                     !msg.id.startsWith('temp-'))
-                ? () => _showReactionPicker(msg)
+                ? () => _showMessageActions(msg)
                 : null,
             child: _Bubble(
               message: msg,

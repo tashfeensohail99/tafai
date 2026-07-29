@@ -265,6 +265,21 @@ export class OrchestratorService {
       return { mode: 'SKIPPED', skipReason: 'contact-blocked' };
     }
 
+    // ── Email-capture sub-flow — runs BEFORE the human-reply lockout ──────────
+    // The window-keeper asks un-emailed leads for their email and flags the
+    // thread ASK_EMAIL regardless of who is handling it. If a rep has ALSO
+    // replied, the lockout below would skip this handler and the client's
+    // emailed reply would be LOST — so the keeper re-asks an email they already
+    // gave (the reported "bot asked for an email the client already provided"
+    // bug). Capture it here first. When a rep is on the thread, save it
+    // SILENTLY (no bot reply, no call-permission card) so the bot never talks
+    // over the rep — the email is still recorded and the keeper stops asking.
+    if (thread.aiState === 'ASK_EMAIL') {
+      const humanActive =
+        !input.windowSave && (await this.hasHumanReply(thread.id));
+      return this.handlePostBookingEmail(thread, input.inboundText, humanActive);
+    }
+
     // ── Human-reply lockout ────────────────────────────────────────────────
     // Once a real agent has replied ANYWHERE on this thread, sales owns the
     // conversation — the bot must stay silent so it never talks over the rep
@@ -279,36 +294,8 @@ export class OrchestratorService {
     // window-saver sets `windowSave` so the bot may send ONE context-aware
     // re-engagement — keeping the conversation (and the free window) alive.
     // See {@link WhatsAppWindowSaverService}.
-    if (!input.windowSave) {
-      // Not every employee-ATTRIBUTED outbound is a human REPLY. The call-
-      // permission request is a system/bot-initiated interactive card that
-      // still carries the assigned rep's id for attribution
-      // (calls.service.ts:630, payload.callPermissionRequest) — and it is
-      // auto-fired by the window-keeper on live, un-booked leads. Counting it
-      // would let one automated card permanently silence the bot on a lead
-      // nobody actually replied to. So exclude it.
-      //
-      // This must be filtered in JS, not the query: a genuine typed reply
-      // stores payload = NULL, and a Prisma `NOT { payload path equals }`
-      // filter drops null-payload rows via SQL three-valued logic — which
-      // would silently miss the human reply and reintroduce the very bug.
-      const employeeSends = await this.prisma.whatsAppMessage.findMany({
-        where: {
-          threadId: thread.id,
-          direction: 'OUTBOUND',
-          sentByEmployeeId: { not: null }, // bot/system base-sends are null
-        },
-        select: { payload: true },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-      });
-      const humanReplied = employeeSends.some((m) => {
-        const p = m.payload as { callPermissionRequest?: unknown } | null;
-        return !(p && p.callPermissionRequest === true);
-      });
-      if (humanReplied) {
-        return { mode: 'SKIPPED', skipReason: 'human-replied-on-thread' };
-      }
+    if (!input.windowSave && (await this.hasHumanReply(thread.id))) {
+      return { mode: 'SKIPPED', skipReason: 'human-replied-on-thread' };
     }
 
     // Funnel-state stop: once we've handed off to a real consultant, the bot
@@ -318,15 +305,8 @@ export class OrchestratorService {
       return { mode: 'SKIPPED', skipReason: 'handed-off' };
     }
 
-    // Post-booking email-collection sub-flow. After an auto-booked appointment
-    // we set aiState='ASK_EMAIL' and ask for the client's email; their reply is
-    // handled here DETERMINISTICALLY (no LLM): save it + fire the verification
-    // link, then send the WhatsApp call-permission request. Always ends
-    // HANDED_OFF. (Block/human-reply guards above still apply, so a human
-    // takeover or a blocked contact short-circuits before this.)
-    if (thread.aiState === 'ASK_EMAIL') {
-      return this.handlePostBookingEmail(thread, input.inboundText);
-    }
+    // (ASK_EMAIL is handled above, before the human-reply lockout, so a rep's
+    // presence never causes the client's emailed reply to be dropped.)
 
     // No bot-reply count cap. The bot keeps engaging the lead for as long as
     // the lead keeps replying and no human steps in — we'd rather nurture the
@@ -717,12 +697,48 @@ export class OrchestratorService {
   }
 
   /**
-   * Deterministic post-booking sub-flow (no LLM). Runs when the thread is in
-   * ASK_EMAIL (set right after an auto-booked appointment). Takes the client's
-   * reply: if it contains an email, save it + fire the verification link (so
-   * it's verified before Finance ever sees it); then send the WhatsApp
-   * call-permission request (attributed to the assigned rep — the human who'll
-   * call). Single attempt — never nags; always ends in HANDED_OFF.
+   * Has a real agent replied ANYWHERE on this thread? Once one has, sales owns
+   * the conversation and the bot stays silent (except the deterministic email
+   * capture, which still RECORDS the reply — see decide()).
+   *
+   * Filtered in JS, not SQL: a genuine typed reply stores payload = NULL, and a
+   * Prisma `NOT { payload path equals }` filter drops null-payload rows via SQL
+   * three-valued logic — silently missing the human reply. Also EXCLUDES the
+   * call-permission card: it's a bot/window-keeper-initiated interactive card
+   * that still carries the assigned rep's id for attribution
+   * (calls.service.ts, payload.callPermissionRequest), so counting it would let
+   * one automated card permanently silence the bot on a lead nobody replied to.
+   */
+  private async hasHumanReply(threadId: string): Promise<boolean> {
+    const employeeSends = await this.prisma.whatsAppMessage.findMany({
+      where: {
+        threadId,
+        direction: 'OUTBOUND',
+        sentByEmployeeId: { not: null }, // bot/system base-sends are null
+      },
+      select: { payload: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return employeeSends.some((m) => {
+      const p = m.payload as { callPermissionRequest?: unknown } | null;
+      return !(p && p.callPermissionRequest === true);
+    });
+  }
+
+  /**
+   * Deterministic email-capture sub-flow (no LLM). Runs when the thread is in
+   * ASK_EMAIL (set by an auto-booking OR by the window-keeper asking un-emailed
+   * leads for their address). Takes the client's reply: if it contains an
+   * email, save it + fire the verification link (so it's verified before
+   * Finance ever sees it).
+   *
+   * `silent` = a rep is actively handling this thread. In that case we RECORD
+   * the email but send NO bot WhatsApp message and NO call-permission card — so
+   * the bot never talks over the rep — and we clear ASK_EMAIL directly (a
+   * SKIPPED decision does not apply nextAiState). Otherwise (no rep on the
+   * thread): full flow — save, ack, and request call permission, ending
+   * HANDED_OFF. Single attempt — never nags.
    */
   private async handlePostBookingEmail(
     thread: {
@@ -735,12 +751,14 @@ export class OrchestratorService {
       } | null;
     },
     inboundText: string,
+    silent: boolean,
   ): Promise<OrchestratorDecision> {
     const leadId = thread.lead?.id ?? null;
     const repUserId = thread.lead?.assignedEmployee?.user?.id ?? null;
     const email = this.extractEmail(inboundText);
 
     let reply: string;
+    let emailSaved = false;
     if (email && leadId) {
       try {
         const token = randomBytes(32).toString('hex');
@@ -754,6 +772,7 @@ export class OrchestratorService {
             emailVerificationSentAt: new Date(),
           },
         });
+        emailSaved = true;
         const leadName =
           `${thread.lead?.firstName ?? ''} ${thread.lead?.lastName ?? ''}`.trim() || 'there';
         void this.email
@@ -768,6 +787,25 @@ export class OrchestratorService {
       }
     } else {
       reply = 'No problem — we can confirm your email later.';
+    }
+
+    // Rep is handling this thread: record the email but stay silent — no bot
+    // WhatsApp reply and no call-permission card, so the bot never talks over
+    // the rep. Clear ASK_EMAIL directly once captured (a SKIPPED decision does
+    // NOT apply nextAiState), so we stop re-capturing; if no address was in the
+    // reply, keep ASK_EMAIL so a later reply with it is still caught.
+    if (silent) {
+      if (emailSaved) {
+        await this.prisma.whatsAppThread
+          .update({ where: { id: thread.id }, data: { aiState: 'HANDED_OFF' } })
+          .catch((e) =>
+            this.log.warn(`ASK_EMAIL state clear failed: ${(e as Error).message}`),
+          );
+      }
+      return {
+        mode: 'SKIPPED',
+        skipReason: emailSaved ? 'email-captured-quietly' : 'ask-email-human-active',
+      };
     }
 
     // Ask for call permission (best-effort). The 24h window is open since the

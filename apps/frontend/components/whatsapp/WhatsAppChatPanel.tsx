@@ -117,6 +117,33 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
   // list (to compute the tail cursor) without re-subscribing on every change.
   const messagesRef = useRef<ChatMessage[]>([]);
   messagesRef.current = messages;
+  // A status event (SENT/DELIVERED/READ) can arrive over the socket BEFORE an
+  // optimistic media send's real row has swapped in — server-side video
+  // compression delays the HTTP response past Meta's status webhook. Without
+  // this, that status matches no message and is dropped, leaving the bubble
+  // stuck on the "queued" clock even though it delivered. Buffer such statuses
+  // by message id and apply them the moment the row lands.
+  const pendingStatusRef = useRef<
+    Map<string, { status: WhatsAppMessageStatus; failedTranscript?: string }>
+  >(new Map());
+  // Merge any buffered status into a server message as it arrives.
+  const withBufferedStatus = (m: ChatMessage): ChatMessage => {
+    const p = pendingStatusRef.current.get(m.id);
+    if (!p) return m;
+    pendingStatusRef.current.delete(m.id);
+    return {
+      ...m,
+      status: p.status,
+      ...(p.failedTranscript
+        ? {
+            payload: {
+              ...(m.payload as Record<string, unknown> | null),
+              failedTranscript: p.failedTranscript,
+            } as ChatMessage['payload'],
+          }
+        : {}),
+    };
+  };
   // Pagination state for "Load older messages" — backend pages 50 at a time
   // (max 200) via the ?before=<oldest> cursor.
   const [hasMore, setHasMore] = useState(true);
@@ -324,6 +351,17 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
       failedTranscript?: string;
     }) => {
       if (evt.threadId !== threadId) return;
+      // Row not in our list yet — an optimistic media send whose real row is
+      // still being compressed/uploaded. Buffer the status; the swap-in applies
+      // it via withBufferedStatus. Otherwise this update would be lost and the
+      // bubble would stay on the "queued" clock despite having delivered.
+      if (!messagesRef.current.some((m) => m.id === evt.messageId)) {
+        pendingStatusRef.current.set(evt.messageId, {
+          status: evt.status,
+          failedTranscript: evt.failedTranscript,
+        });
+        return;
+      }
       setMessages((curr) =>
         curr.map((m) =>
           m.id === evt.messageId
@@ -860,7 +898,9 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           trimmedCaption,
           idempotencyKey,
         );
-        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+        // Apply any status (SENT/DELIVERED) that raced in while the video was
+        // still compressing, so the bubble doesn't stay on the queued clock.
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? withBufferedStatus(real) : m)));
       } catch (err) {
         const reason = err instanceof Error ? err.message : 'Failed to send';
         setMessages((curr) =>
@@ -933,7 +973,8 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           undefined,
           idempotencyKey,
         );
-        setMessages((curr) => curr.map((m) => (m.id === tempId ? real : m)));
+        // Apply any status that raced in during the upload/transcode window.
+        setMessages((curr) => curr.map((m) => (m.id === tempId ? withBufferedStatus(real) : m)));
         URL.revokeObjectURL(previewUrl);
       } catch (err) {
         const reason = err instanceof Error ? err.message : 'Failed to send voice message';

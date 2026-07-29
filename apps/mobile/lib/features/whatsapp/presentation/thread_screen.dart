@@ -628,13 +628,20 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             ),
             if (canForward)
               ListTile(
-                leading: const Icon(Icons.forward),
+                // Icons.forward isn't in the tree-shaken icon font of the
+                // shipped 1.0.40+42 build; Icons.arrow_forward IS (used in the
+                // inbox), so its glyph is present. Using it keeps this feature
+                // shippable as a Shorebird OTA patch (which can't update the
+                // font asset) instead of forcing a full APK.
+                leading: const Icon(Icons.arrow_forward),
                 title: const Text('Forward'),
                 onTap: () => Navigator.pop(ctx, 'forward'),
               ),
             if (canCopy)
               ListTile(
-                leading: const Icon(Icons.copy_outlined),
+                // No copy-shaped glyph in the tree-shaken font — using a
+                // wrong-shaped icon (send, download, description) is more
+                // confusing than none. Icon-less until the next full APK.
                 title: const Text('Copy'),
                 onTap: () => Navigator.pop(ctx, 'copy'),
               ),

@@ -628,7 +628,9 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     // WhatsApp-style: show a preview + optional caption and let the user
     // confirm before anything is sent. Returns null if they back out.
     const imageExts = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'};
+    const videoExts = {'mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', '3gp'};
     final ext = (picked.extension ?? '').toLowerCase();
+    final isVideo = videoExts.contains(ext);
     final caption = await Navigator.of(context).push<String?>(
       MaterialPageRoute(
         builder: (_) => MediaPreviewScreen(
@@ -642,6 +644,20 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     if (caption == null || !mounted) return; // cancelled in the preview
 
     setState(() => _sending = true);
+    // Videos are transcoded/compressed server-side to fit WhatsApp, which can
+    // take a little while for a large clip — tell the rep it's working so a
+    // slow send doesn't read as a hang (and doesn't tempt a duplicate re-send).
+    if (isVideo && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Optimizing your video for WhatsApp — large clips can take up to a '
+            'minute. It will send automatically when ready.',
+          ),
+          duration: Duration(minutes: 3),
+        ),
+      );
+    }
     try {
       final msg = await ref.read(whatsappRepositoryProvider).sendMedia(
             _threadId,
@@ -649,9 +665,15 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             fileName: picked.name,
             caption: caption.isEmpty ? null : caption,
           );
+      if (isVideo && mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      }
       ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
       _jumpToBottom(animate: true);
     } on AppError catch (e) {
+      if (isVideo && mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      }
       _toast(messageForError(e));
     } finally {
       if (mounted) setState(() => _sending = false);

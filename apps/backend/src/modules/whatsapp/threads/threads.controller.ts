@@ -665,8 +665,21 @@ export class WhatsAppThreadsController {
     res.setHeader('Cache-Control', 'private, max-age=300');
 
     // Videos and documents must trigger a device download, not inline display.
+    // RFC 6266: an ASCII-safe `filename=` for legacy clients + `filename*=UTF-8''`
+    // for real name. Node's HTTP layer throws ERR_INVALID_CHAR on any non-ASCII
+    // / control character in a raw header value — WhatsApp-sourced filenames
+    // routinely contain Urdu, Arabic, emoji, curly quotes, or CR/LF, which was
+    // 500ing the media stream (seen in prod).
     if (message.type === 'VIDEO' || message.type === 'DOCUMENT') {
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      const asciiSafe = filename
+        .replace(/[^\x20-\x7E]/g, '_')   // strip non-ASCII / control chars
+        .replace(/["\\]/g, '_')           // and characters that break "quoted" form
+        .slice(0, 200) || 'file';
+      const encoded = encodeURIComponent(filename).replace(/['()]/g, escape);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${asciiSafe}"; filename*=UTF-8''${encoded}`,
+      );
     } else {
       res.setHeader('Content-Disposition', 'inline');
     }

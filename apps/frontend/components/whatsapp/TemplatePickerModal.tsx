@@ -105,7 +105,9 @@ export function TemplatePickerModal(props: {
     );
   }, [expectedParams, selectedId, props.contactName]);
 
-  const allParamsFilled = params.slice(0, expectedParams).every((v) => v.trim().length > 0);
+  // {{1}} is the client's name — it's set from the client record on the server
+  // and locked here, so only {{2}}+ need to be filled by the agent.
+  const allParamsFilled = params.slice(1, expectedParams).every((v) => v.trim().length > 0);
 
   const onSend = async () => {
     if (!selected) return;
@@ -292,23 +294,41 @@ export function TemplatePickerModal(props: {
               {expectedParams > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div className="sos-eyebrow">Parameters</div>
-                  {Array.from({ length: expectedParams }).map((_, i) => (
-                    <Field
-                      key={i}
-                      label={i === 0 && props.contactName ? `{{1}} (name)` : `{{${i + 1}}}`}
-                      required
-                    >
-                      <FormInput
-                        value={params[i] ?? ''}
-                        onChange={(e) => {
-                          const next = [...params];
-                          next[i] = e.target.value;
-                          setParams(next);
-                        }}
-                        placeholder={`Value for placeholder ${i + 1}`}
-                      />
-                    </Field>
-                  ))}
+                  {Array.from({ length: expectedParams }).map((_, i) =>
+                    i === 0 ? (
+                      // {{1}} is the recipient's name — set from the client record
+                      // on the server and locked here. Reps were typing whole
+                      // messages into this field, which broke the send, so it's
+                      // read-only: it always goes out as the client's saved name.
+                      <Field key={i} label="{{1}} — client name (locked)">
+                        <div
+                          style={{
+                            padding: '9px 11px',
+                            borderRadius: 'var(--sos-radius-sm)',
+                            border: '1px solid var(--sos-border-subtle)',
+                            background: 'var(--sos-surface-2, var(--sos-surface-1))',
+                            color: 'var(--sos-text-muted)',
+                            fontSize: 'var(--sos-text-sm)',
+                          }}
+                        >
+                          {props.contactName?.trim() || "The client's saved name"}
+                        </div>
+                      </Field>
+                    ) : (
+                      <Field key={i} label={`{{${i + 1}}}`} required>
+                        <FormInput
+                          value={params[i] ?? ''}
+                          onChange={(e) => {
+                            const next = [...params];
+                            // Strip newlines/tabs — Meta rejects them in params.
+                            next[i] = e.target.value.replace(/[\r\n\t]+/g, ' ');
+                            setParams(next);
+                          }}
+                          placeholder={`Value for placeholder ${i + 1}`}
+                        />
+                      </Field>
+                    ),
+                  )}
                 </div>
               )}
             </>

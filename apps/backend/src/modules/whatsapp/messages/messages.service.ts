@@ -266,13 +266,13 @@ export class WhatsAppMessagesService {
       }
     }
     const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
-    // Repair empty template BODY parameters before the message reaches Meta.
-    // The web picker pre-fills {{1}} with the contact name and blocks empty
-    // sends; the mobile picker (≤ v1.0.18) does neither, so an agent who taps
-    // Send without typing the name submits an empty {{1}} — which Meta rejects
-    // with 131008 ("Required parameter is missing") and the bubble shows "Not
-    // delivered". Filling it here fixes every client with no app update needed.
-    const components = await this.fillEmptyTemplateParams(thread, input.components);
+    // Normalise the template BODY parameters before the message reaches Meta:
+    // {{1}} is FORCED to the contact's real first name (reps were treating the
+    // open {{1}} field as a message box — typing whole sentences into it — which
+    // produced "Hi <paragraph>, …" sends and Meta rejections when the text
+    // carried newlines), and every parameter is stripped of the newlines / tabs
+    // / space-runs Meta rejects. Fixes web AND mobile with no app update needed.
+    const components = await this.normalizeTemplateParams(thread, input.components);
 
     // Render the template's body with the supplied parameters so the chat
     // bubble + inbox preview show what the customer actually receives, instead
@@ -855,14 +855,27 @@ export class WhatsAppMessagesService {
   }
 
   /**
-   * Fill empty template BODY parameters before sending. {{1}} is the greeting
-   * name in our templates; when it arrives empty (older mobile clients don't
-   * pre-fill it) we substitute the contact's first name so Meta doesn't reject
-   * the send with 131008, falling back to a neutral "there" when no name is on
-   * file. A non-first empty parameter is a genuine caller mistake we can't
-   * guess, so we reject it loudly rather than let Meta silently drop the send.
+   * Normalise template BODY parameters before the message reaches Meta.
+   *
+   * {{1}} is the greeting name in every one of our templates and it must ALWAYS
+   * be the contact's real first name — never rep-typed text. Reps were treating
+   * the open {{1}} field as a message box (typing whole sentences into it),
+   * which produced "Hi <paragraph>, …" sends and Meta rejections when the text
+   * carried newlines. So we OVERRIDE {{1}} with the contact's first name here
+   * (falling back to a neutral "there" when no name is on file), discarding
+   * whatever was submitted for it — fixing web AND mobile with no app update.
+   *
+   * Every other parameter ({{2}}, {{3}}, …) is a genuine caller value (a date,
+   * an amount): we keep it but SANITISE it, because WhatsApp rejects a parameter
+   * that contains a newline, a tab, or a long run of spaces. An empty non-first
+   * parameter is a real caller mistake we can't guess, so we reject it loudly
+   * rather than let Meta silently drop the send.
+   *
+   * NOTE: relies on the "{{1}} = recipient name" convention every current
+   * template follows. If a future template needs {{1}} to be something else,
+   * revisit this override.
    */
-  private async fillEmptyTemplateParams(
+  private async normalizeTemplateParams(
     thread: { leadId: string | null; clientId: string | null },
     components: Array<Record<string, unknown>> | undefined,
   ): Promise<Array<Record<string, unknown>>> {
@@ -871,26 +884,31 @@ export class WhatsAppMessagesService {
       String((c as { type?: string }).type ?? '').toLowerCase() === 'body';
     const paramText = (p: Record<string, unknown>) =>
       String((p as { text?: string }).text ?? '');
-    const hasEmpty = list.some(
-      (c) =>
-        isBody(c) &&
-        ((c as { parameters?: Array<Record<string, unknown>> }).parameters ?? []).some(
-          (p) => paramText(p).trim().length === 0,
-        ),
-    );
-    if (!hasEmpty) return list;
+    // Meta rejects a template parameter containing newlines, tabs, or long
+    // space-runs, and caps parameter length — flatten all whitespace to single
+    // spaces and cap so a send can never fail on parameter formatting.
+    const sanitize = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 1024);
 
-    const name = (await this.resolveContactFirstName(thread))?.trim() || 'there';
+    const hasBodyParams = list.some(
+      (c) => isBody(c) && ((c as { parameters?: unknown[] }).parameters ?? []).length > 0,
+    );
+    if (!hasBodyParams) return list;
+
+    const name = sanitize((await this.resolveContactFirstName(thread)) ?? '') || 'there';
     return list.map((c) => {
       if (!isBody(c)) return c;
       const params = (
         (c as { parameters?: Array<Record<string, unknown>> }).parameters ?? []
       ).map((p, i) => {
-        if (paramText(p).trim().length > 0) return p;
+        // {{1}} is ALWAYS the recipient's name — reps cannot set it.
         if (i === 0) return { ...p, type: 'text', text: name };
-        throw new BadRequestException(
-          `Template parameter {{${i + 1}}} is required — please fill it in before sending.`,
-        );
+        const text = sanitize(paramText(p));
+        if (text.length === 0) {
+          throw new BadRequestException(
+            `Template parameter {{${i + 1}}} is required — please fill it in before sending.`,
+          );
+        }
+        return { ...p, type: 'text', text };
       });
       return { ...c, parameters: params };
     });

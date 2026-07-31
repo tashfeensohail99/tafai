@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { json, raw } from 'express';
+import compression from 'compression';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -26,6 +27,23 @@ async function bootstrap(): Promise<void> {
   // would look like one is working. Revisit this number if another proxy (e.g.
   // Cloudflare) is ever put in front; it must equal the number of hops.
   app.set('trust proxy', 1);
+
+  // gzip every response big enough to be worth it. Measured on real prod rows:
+  // one 30-row mobile inbox page is 82,741 bytes uncompressed and 17,367 gzipped
+  // (4.8x). Reps are on Pakistani mobile data, so that transfer time is a large
+  // share of what "the app is slow to load chats" actually feels like — far more
+  // than any query tuning, because the database itself is ~3% busy.
+  //
+  // Mounted BEFORE the body parsers and routes so it wraps every response.
+  // Media streaming (already-compressed jpeg/mp4/ogg bytes) is skipped via the
+  // default `compression.filter`, which honours Content-Type and our own
+  // `Cache-Control: no-transform`.
+  app.use(
+    compression({
+      // 1 KB — below this the CPU + 20-byte gzip header cost more than they save.
+      threshold: 1024,
+    }),
+  );
 
   // Meta WhatsApp webhook signature verification requires the RAW request
   // body. We mount a raw body parser for that path only; everything else

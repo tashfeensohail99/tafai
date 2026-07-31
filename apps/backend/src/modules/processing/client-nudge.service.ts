@@ -139,6 +139,10 @@ export class ClientNudgeService implements OnModuleInit, OnModuleDestroy {
   // ---------- Main sweep loop -----------------------------------------------
 
   async sweep(): Promise<void> {
+    if (process.env.CLIENT_NUDGE_ENABLED === 'false') {
+      this.log.debug('Client nudge sweeper disabled (CLIENT_NUDGE_ENABLED=false)');
+      return;
+    }
     if (this.running) return;
     this.running = true;
     const now = new Date();

@@ -187,6 +187,12 @@ export class OpenAiService {
    * recorded extension (e.g. "voice.ogg") so the API picks the right
    * decoder. Returns null on failure rather than throwing — a missed
    * transcription should just skip the AI reply, not break the pipeline.
+   *
+   * If Whisper returns Urdu-script text (nearly all Pakistani speakers), the
+   * transcript is transliterated to Roman Urdu via a cheap gpt-4o-mini pass
+   * — reps read Roman Urdu ~10× faster than the native script. English +
+   * numbers pass through untouched. Failure of the transliteration step
+   * falls back to the raw Urdu-script text — better than nothing.
    */
   async transcribe(audio: Buffer, filename: string): Promise<{ text: string; latencyMs: number } | null> {
     try {
@@ -197,10 +203,49 @@ export class OpenAiService {
         file,
         model: TRANSCRIPTION_MODEL,
       });
-      return { text: res.text.trim(), latencyMs: Date.now() - t0 };
+      const raw = res.text.trim();
+      const romanised = await this.toRomanUrduIfNeeded(raw);
+      return { text: romanised, latencyMs: Date.now() - t0 };
     } catch (e) {
       this.log.error(`whisper transcribe failed: ${(e as Error).message}`);
       return null;
+    }
+  }
+
+  /**
+   * If the text contains Arabic-script characters (Urdu uses the Arabic
+   * script), transliterate to Roman Urdu — Urdu spelled with Latin letters
+   * (e.g. "میں آپ کا شکرگزار ہوں" → "mein aap ka shukar guzar hoon").
+   * English, digits, and punctuation are preserved as-is; the model is
+   * instructed not to translate to English. Returns the input unchanged
+   * when nothing looks like Urdu script, or when the model call fails.
+   */
+  private async toRomanUrduIfNeeded(text: string): Promise<string> {
+    // U+0600..U+06FF = Arabic (covers Urdu); U+0750..U+077F = Arabic Supplement.
+    if (!/[؀-ۿݐ-ݿ]/.test(text)) return text;
+    try {
+      const c = await this.getClient();
+      const res = await c.chat.completions.create({
+        model: CHAT_MODEL,
+        temperature: 0,
+        max_tokens: Math.min(1024, Math.ceil(text.length * 2) + 64),
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You transliterate Urdu text (written in the Arabic-derived Urdu script) into Roman Urdu — Urdu spelled with English letters, phonetically. ' +
+              'Keep English words, numbers, and punctuation exactly as written. ' +
+              'Do NOT translate to English. Do NOT add commentary, quotes, or explanations. ' +
+              'Return only the Roman Urdu transliteration.',
+          },
+          { role: 'user', content: text },
+        ],
+      });
+      const out = res.choices[0]?.message?.content?.trim();
+      return out && out.length > 0 ? out : text;
+    } catch (e) {
+      this.log.warn(`roman-urdu transliteration failed, using raw: ${(e as Error).message}`);
+      return text;
     }
   }
 

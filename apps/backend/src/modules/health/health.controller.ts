@@ -1,4 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
+import { connect as tcpConnect } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 @Controller('health')
@@ -62,6 +64,106 @@ export class HealthController {
       // A typical inbox open issues ~7 sequential statements; this is the pure
       // network floor that screen pays before any query work happens.
       estimatedInboxOpenNetworkFloorMs: round(pct(50) * 7),
+    };
+  }
+
+  /**
+   * Separate DISTANCE from ROUND-TRIP COUNT. This decides whether the fix is a
+   * database migration or a connection-config change — a very expensive
+   * difference to guess at.
+   *
+   * `SELECT 1` measures ~400-500ms in production, but Singapore (Railway) to
+   * Seoul (Supabase, ap-northeast-2) should be only ~70-90ms. Something is
+   * multiplying it ~5x. Two candidates, opposite fixes:
+   *
+   *   (a) genuine distance      -> a TCP handshake also costs ~400ms
+   *                                => only co-location fixes it (migrate the DB).
+   *   (b) too many round-trips  -> TCP handshake ~80ms, but each query costs 5x that
+   *                                because connections are being re-established, or
+   *                                the driver/pooler is not pipelining
+   *                                => fixable in config. No migration needed.
+   *
+   * A bare TCP connect is exactly one round trip, so it is the cleanest possible
+   * ruler for the real network distance. We then express the query cost as a
+   * multiple of it.
+   */
+  @Get('net-latency')
+  async netLatency() {
+    const raw = process.env.DATABASE_URL ?? '';
+    const m = raw.match(/@([^:/?]+):(\d+)/);
+    if (!m) return { error: 'could not parse host:port from DATABASE_URL' };
+    const host = m[1];
+    const port = parseInt(m[2], 10);
+
+    const timeOnce = (withTls: boolean) =>
+      new Promise<number>((resolve, reject) => {
+        const started = process.hrtime.bigint();
+        const done = (sock: { destroy: () => void }) => {
+          const ms = Number(process.hrtime.bigint() - started) / 1e6;
+          sock.destroy();
+          resolve(ms);
+        };
+        const sock = withTls
+          ? tlsConnect({ host, port, servername: host, rejectUnauthorized: false }, () => done(sock))
+          : tcpConnect({ host, port }, () => done(sock));
+        sock.setTimeout(10_000, () => {
+          sock.destroy();
+          reject(new Error('timeout'));
+        });
+        sock.on('error', (e) => {
+          sock.destroy();
+          reject(e);
+        });
+      });
+
+    const sample = async (withTls: boolean) => {
+      const out: number[] = [];
+      for (let i = 0; i < 8; i++) {
+        try {
+          out.push(await timeOnce(withTls));
+        } catch {
+          /* skip failed probe */
+        }
+      }
+      out.sort((a, b) => a - b);
+      return out;
+    };
+
+    const tcp = await sample(false);
+    const tls = await sample(true);
+
+    // Query cost on an already-established pooled connection.
+    await this.prisma.$queryRaw`SELECT 1`;
+    const q: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const s = process.hrtime.bigint();
+      await this.prisma.$queryRaw`SELECT 1`;
+      q.push(Number(process.hrtime.bigint() - s) / 1e6);
+    }
+    q.sort((a, b) => a - b);
+
+    const med = (a: number[]) => (a.length ? a[Math.floor(a.length / 2)] : NaN);
+    const round = (n: number) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : null);
+
+    const tcpMed = med(tcp);
+    const queryMed = med(q);
+    const ratio = Number.isFinite(tcpMed) && tcpMed > 0 ? queryMed / tcpMed : NaN;
+
+    return {
+      host,
+      port,
+      tcpHandshakeMs: { median: round(tcpMed), min: round(tcp[0]), samples: tcp.length },
+      tlsHandshakeMs: { median: round(med(tls)), min: round(tls[0]), samples: tls.length },
+      queryMs: { median: round(queryMed), min: round(q[0]) },
+      // One TCP handshake == one network round trip. This is how many the driver
+      // effectively spends per trivial query.
+      queryCostInRoundTrips: round(ratio),
+      interpretation:
+        !Number.isFinite(ratio)
+          ? 'probe failed'
+          : ratio > 2.5
+            ? 'TOO MANY ROUND-TRIPS: the network is not the whole story. Query costs >2.5 network round trips, so connection reuse / pooler config is inflating it. Likely fixable WITHOUT migrating the database.'
+            : 'DISTANCE-BOUND: a query costs about one network round trip, so the latency is the physical distance. Co-locating the database is the only real fix.',
     };
   }
 }

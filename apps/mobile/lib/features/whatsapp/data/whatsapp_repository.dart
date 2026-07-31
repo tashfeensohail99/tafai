@@ -180,6 +180,23 @@ class WhatsappRepository {
     }
   }
 
+  /// GET /whatsapp/threads/:threadId/messages/:messageId/media → raw bytes.
+  /// Same proxy endpoint web uses — bytes traverse phone → backend → R2 (a
+  /// proven-healthy path) instead of phone → R2 edge directly, which suffers
+  /// from carrier/CDN reachability issues on some Pakistani mobile networks.
+  /// Bearer + timeouts inherited from the shared Dio client.
+  Future<List<int>> downloadMediaBytes(String threadId, String messageId) async {
+    try {
+      final res = await _c.get<List<int>>(
+        '/whatsapp/threads/$threadId/messages/$messageId/media',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return res.data!;
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   /// POST /whatsapp/threads/:id/messages/text — only inside the 24h window
   /// (else 400 → use a template).
   Future<ChatMessage> sendText(String threadId, String body,

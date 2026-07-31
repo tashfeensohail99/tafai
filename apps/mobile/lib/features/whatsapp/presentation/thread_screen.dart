@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -2141,29 +2140,32 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
     );
   }
 
-  /// Download audio bytes to a temp file and return the local path.
-  /// Caches across widget rebuilds so repeat plays are instant.
+  /// Download audio bytes to a temp file and return the local path. Fetches
+  /// via the backend `/media` proxy (same endpoint web uses), so bytes ride
+  /// phone → backend → R2 — a proven-healthy path — instead of phone → R2
+  /// edge directly (which the phone's carrier can't always reach reliably).
+  /// Guards against 0-byte cache hits from a prior crashed write.
   Future<String?> _downloadAudioFile() async {
     final msgId = widget.message.id;
     final cached = _audioFileCache[msgId];
-    if (cached != null && File(cached).existsSync()) return cached;
-
-    final url = await _fetchUrl();
-    if (url == null) return null;
+    if (cached != null) {
+      final f = File(cached);
+      if (f.existsSync() && f.lengthSync() > 0) return cached;
+      _audioFileCache.remove(msgId);
+    }
 
     try {
+      final bytes = await ref
+          .read(whatsappRepositoryProvider)
+          .downloadMediaBytes(widget.threadId, msgId);
+      if (bytes.isEmpty) {
+        debugPrint('voice download returned 0 bytes');
+        return null;
+      }
       final dir = await getTemporaryDirectory();
       final ext = widget.message.mediaMimeType?.split('/').last ?? 'ogg';
       final path = '${dir.path}/voice_$msgId.$ext';
-      final dio = Dio();
-      await dio.download(
-        url,
-        path,
-        options: Options(
-          receiveTimeout: const Duration(seconds: 30),
-          headers: {'Accept': '*/*'},
-        ),
-      );
+      await File(path).writeAsBytes(bytes, flush: true);
       _audioFileCache[msgId] = path;
       return path;
     } catch (e) {
@@ -2173,8 +2175,8 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
   }
 
   /// Lazily download + play/pause the voice note. Downloads to a local temp
-  /// file first (avoids signed-URL expiry and OEM streaming codec issues),
-  /// then plays from disk via ExoPlayer.
+  /// file first (via the backend proxy — avoids R2-edge reachability issues
+  /// on some carriers and gives ExoPlayer clean local bytes to play).
   Future<void> _toggleAudio() async {
     var c = _audio;
     if (c == null) {
@@ -2182,12 +2184,9 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
       if (mounted) setState(() => _audioLoading = true);
 
       var localPath = await _downloadAudioFile();
-      // Retry once with a fresh URL if the download failed (expired URL).
-      if (localPath == null) {
-        _mediaUrlCache.remove(widget.message.id);
-        _url = null;
-        localPath = await _downloadAudioFile();
-      }
+      // Retry once — the shared Dio has a 15s connectTimeout so a transient
+      // hiccup fails fast; a second attempt often succeeds on flaky networks.
+      localPath ??= await _downloadAudioFile();
       if (localPath == null) {
         if (mounted) {
           setState(() => _audioLoading = false);

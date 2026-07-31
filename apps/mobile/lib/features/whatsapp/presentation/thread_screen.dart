@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1821,7 +1822,14 @@ class _MediaContent extends ConsumerStatefulWidget {
 /// Session cache of signed media URLs by message id, so scrolling the thread
 /// doesn't refetch a fresh URL for every image each time it scrolls back in.
 /// (The image bytes are also disk-cached by CachedNetworkImage via cacheKey.)
-final Map<String, String> _mediaUrlCache = {};
+final Map<String, ({String url, DateTime ts})> _mediaUrlCache = {};
+
+/// Signed URLs expire after 5 minutes; evict at 4 min to avoid mid-stream failures.
+const _urlCacheTtl = Duration(minutes: 4);
+
+/// Cache of audio files already downloaded to disk — keyed by message id,
+/// value is the local file path. Survives widget rebuilds within the session.
+final Map<String, String> _audioFileCache = {};
 
 class _MediaContentState extends ConsumerState<_MediaContent> {
   String? _url;
@@ -1850,19 +1858,21 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
     if (_isImage) _fetchUrl();
   }
 
-  Future<String?> _fetchUrl() async {
-    if (_url != null) return _url;
+  Future<String?> _fetchUrl({bool forceRefresh = false}) async {
+    if (!forceRefresh && _url != null) return _url;
     final cached = _mediaUrlCache[widget.message.id];
-    if (cached != null) {
-      if (mounted) setState(() => _url = cached);
-      return cached;
+    if (!forceRefresh &&
+        cached != null &&
+        DateTime.now().difference(cached.ts) < _urlCacheTtl) {
+      if (mounted) setState(() => _url = cached.url);
+      return cached.url;
     }
     if (mounted) setState(() => _loading = true);
     try {
       final url = await ref
           .read(whatsappRepositoryProvider)
           .mediaSignedUrl(widget.threadId, widget.message.id);
-      _mediaUrlCache[widget.message.id] = url;
+      _mediaUrlCache[widget.message.id] = (url: url, ts: DateTime.now());
       if (mounted) setState(() => _url = url);
       return url;
     } catch (_) {
@@ -2131,23 +2141,70 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
     );
   }
 
-  /// Lazily load + play/pause the voice note. Builds the ExoPlayer controller
-  /// on first tap (works for inbound and the rep's own outbound voice).
+  /// Download audio bytes to a temp file and return the local path.
+  /// Caches across widget rebuilds so repeat plays are instant.
+  Future<String?> _downloadAudioFile() async {
+    final msgId = widget.message.id;
+    final cached = _audioFileCache[msgId];
+    if (cached != null && File(cached).existsSync()) return cached;
+
+    final url = await _fetchUrl();
+    if (url == null) return null;
+
+    try {
+      final dir = await getTemporaryDirectory();
+      final ext = widget.message.mediaMimeType?.split('/').last ?? 'ogg';
+      final path = '${dir.path}/voice_$msgId.$ext';
+      final dio = Dio();
+      await dio.download(
+        url,
+        path,
+        options: Options(
+          receiveTimeout: const Duration(seconds: 30),
+          headers: {'Accept': '*/*'},
+        ),
+      );
+      _audioFileCache[msgId] = path;
+      return path;
+    } catch (e) {
+      debugPrint('voice download failed: $e');
+      return null;
+    }
+  }
+
+  /// Lazily download + play/pause the voice note. Downloads to a local temp
+  /// file first (avoids signed-URL expiry and OEM streaming codec issues),
+  /// then plays from disk via ExoPlayer.
   Future<void> _toggleAudio() async {
     var c = _audio;
     if (c == null) {
       if (_audioLoading) return;
       if (mounted) setState(() => _audioLoading = true);
-      final url = await _fetchUrl();
-      if (url == null) {
-        if (mounted) setState(() => _audioLoading = false);
+
+      var localPath = await _downloadAudioFile();
+      // Retry once with a fresh URL if the download failed (expired URL).
+      if (localPath == null) {
+        _mediaUrlCache.remove(widget.message.id);
+        _url = null;
+        localPath = await _downloadAudioFile();
+      }
+      if (localPath == null) {
+        if (mounted) {
+          setState(() => _audioLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not download voice message. Check your connection.')),
+          );
+        }
         return;
       }
-      c = VideoPlayerController.networkUrl(Uri.parse(url));
+
+      c = VideoPlayerController.file(File(localPath));
       try {
         await c.initialize();
-      } catch (_) {
+      } catch (e) {
+        debugPrint('ExoPlayer init failed for $localPath: $e');
         await c.dispose();
+        _audioFileCache.remove(widget.message.id);
         if (mounted) {
           setState(() => _audioLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(

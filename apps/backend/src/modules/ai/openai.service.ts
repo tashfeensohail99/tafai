@@ -192,7 +192,15 @@ export class OpenAiService {
    * transcript is transliterated to Roman Urdu via a cheap gpt-4o-mini pass
    * — reps read Roman Urdu ~10× faster than the native script. English +
    * numbers pass through untouched. Failure of the transliteration step
-   * falls back to the raw Urdu-script text — better than nothing.
+   * falls back to the raw script text — better than nothing.
+   *
+   * `language: 'ur'` is passed deliberately. Urdu and Hindi are the SAME
+   * spoken language (Hindustani) with different scripts, and Whisper's
+   * training data skews Hindi — left to auto-detect, short/ambiguous
+   * Pakistani-Urdu clips frequently come back transcribed in Devanagari
+   * (Hindi script) instead of the Urdu (Arabic) script. Forcing the language
+   * hint skips that guess entirely. toRomanUrduIfNeeded() also still checks
+   * for Devanagari as a safety net in case a clip slips through anyway.
    */
   async transcribe(audio: Buffer, filename: string): Promise<{ text: string; latencyMs: number } | null> {
     try {
@@ -202,6 +210,7 @@ export class OpenAiService {
       const res = await c.audio.transcriptions.create({
         file,
         model: TRANSCRIPTION_MODEL,
+        language: 'ur',
       });
       const raw = res.text.trim();
       const romanised = await this.toRomanUrduIfNeeded(raw);
@@ -213,16 +222,19 @@ export class OpenAiService {
   }
 
   /**
-   * If the text contains Arabic-script characters (Urdu uses the Arabic
-   * script), transliterate to Roman Urdu — Urdu spelled with Latin letters
-   * (e.g. "میں آپ کا شکرگزار ہوں" → "mein aap ka shukar guzar hoon").
-   * English, digits, and punctuation are preserved as-is; the model is
-   * instructed not to translate to English. Returns the input unchanged
-   * when nothing looks like Urdu script, or when the model call fails.
+   * If the text contains Urdu (Arabic-script) or Devanagari (Hindi-script —
+   * Whisper's occasional mis-detection despite the language hint above)
+   * characters, transliterate to Roman Urdu — Urdu spelled with Latin
+   * letters (e.g. Urdu script "میں آپ کا شکرگزار ہوں" or its Devanagari
+   * equivalent → "mein aap ka shukar guzar hoon"). English, digits, and
+   * punctuation are preserved as-is; the model is instructed not to
+   * translate to English. Returns the input unchanged when nothing looks
+   * like either script, or when the model call fails.
    */
   private async toRomanUrduIfNeeded(text: string): Promise<string> {
-    // U+0600..U+06FF = Arabic (covers Urdu); U+0750..U+077F = Arabic Supplement.
-    if (!/[؀-ۿݐ-ݿ]/.test(text)) return text;
+    // U+0600..U+06FF = Arabic (covers Urdu); U+0750..U+077F = Arabic
+    // Supplement; U+0900..U+097F = Devanagari (Whisper's Hindi mis-detect).
+    if (!/[؀-ۿݐ-ݿऀ-ॿ]/.test(text)) return text;
     try {
       const c = await this.getClient();
       const res = await c.chat.completions.create({
@@ -233,7 +245,9 @@ export class OpenAiService {
           {
             role: 'system',
             content:
-              'You transliterate Urdu text (written in the Arabic-derived Urdu script) into Roman Urdu — Urdu spelled with English letters, phonetically. ' +
+              'You transliterate Urdu text into Roman Urdu — Urdu spelled with English letters, phonetically. ' +
+              'The input may be written in the Urdu (Perso-Arabic) script or, occasionally, in Devanagari (Hindi script) — ' +
+              'Hindi and Urdu are the same spoken language, so treat Devanagari input the same way: read it phonetically and romanise it as Urdu. ' +
               'Keep English words, numbers, and punctuation exactly as written. ' +
               'Do NOT translate to English. Do NOT add commentary, quotes, or explanations. ' +
               'Return only the Roman Urdu transliteration.',

@@ -110,12 +110,13 @@ const OFFICE_CLOSE_HOUR = 18; // 18:00 (6 PM); bookable window is [09:00, 18:00)
 const OFFICE_HOURS = 'Monday–Saturday, 9 AM–6 PM (Pakistan time)';
 const OFFICE_ADDRESS =
   'Office No. 3029B, 3rd Floor, World Trade Centre, Giga Mall, Sector F, DHA Phase 2, Islamabad';
-// Lahore branch — opens 2026-07-10. Until then, Lahore enquiries are served by
-// phone / Google Meet or at the Islamabad office; office-visit bookings still
-// resolve to the Islamabad address above (Lahore is not yet a bookable venue).
+// Lahore branch — open and staffed (opened 2026-07-10). Office-visit BOOKINGS
+// still resolve to the Islamabad address below (line ~1019) — Lahore isn't
+// wired into the appointment engine as a selectable venue — but the bot may
+// freely tell clients the Lahore address/location below when asked.
 const LAHORE_OFFICE_ADDRESS =
-  'Office #201 & 202, 2nd Floor, Haly Tower, Sector R, DHA Phase 2, Lahore';
-const LAHORE_OFFICE_OPEN_DATE = '10 July 2026';
+  'Office #201 & 202, 2nd Floor, Haly Tower, Sector R DHA Phase 2, Lahore, 54000';
+const LAHORE_OFFICE_MAPS_URL = 'https://share.google/HY79OU4AQwXBS3oRt';
 
 /**
  * Clamp a proposed slot into office hours AND working days. Before opening →
@@ -1513,7 +1514,7 @@ export class OrchestratorService {
       `10. The initial CONSULTATION IS FREE. If the customer asks about a consultation / booking / meeting fee, or "kya consultation ki fees hai", tell them the consultation is free — there is no charge to talk to us. NEVER say or imply the consultation is paid. (Service/case fees for the actual work are only discussed during that free consultation.)`,
       ``,
       `KNOWN FACTS YOU MAY ALWAYS USE`,
-      `- Offices: Pakistan — Islamabad: ${OFFICE_ADDRESS}. Lahore: ${LAHORE_OFFICE_ADDRESS} — this branch OPENS on ${LAHORE_OFFICE_OPEN_DATE}; before that date it is not open yet, so serve Lahore clients by phone / Google Meet or at the Islamabad office. Plus an office in Canada. We do NOT have a Karachi office — never mention one.`,
+      `- Offices: Pakistan — Islamabad: ${OFFICE_ADDRESS}. Lahore: ${LAHORE_OFFICE_ADDRESS} — this branch is OPEN now. If a customer asks for the Lahore office address, directions, or location, give the address above AND this Google Maps link: ${LAHORE_OFFICE_MAPS_URL}. Plus an office in Canada. We do NOT have a Karachi office — never mention one.`,
       `- Office hours: ${OFFICE_HOURS} for the Pakistan office. Phone, Google Meet, and office-visit consultations are all booked within these hours.`,
       `- Phone: +92 335-000-1111  ·  Email: info@tashfeenimmigrationsolutions.com`,
       `- Services: Canadian work permits & PR (C11, ICT, SUV, LMIA, RCIP), USA (E2, EB2-NIW), Judicial Review, Visit visas (Canada/UK/Schengen).`,

@@ -57,6 +57,7 @@ function buildSalesNav(stats: MySalesStats | null): DrawerMenuItem[] {
   return [
     { label: 'Dashboard', href: '/sales', icon: LayoutDashboard, caption: 'Workspace overview' },
     { label: 'WhatsApp Inbox', href: '/sales/inbox', icon: MessageSquare, caption: 'Your assigned chats' },
+    { label: 'WhatsApp Status', href: '/sales/status', icon: Sparkles, caption: 'Post to WA Status (pilot)' },
     { label: 'CSV Leads', href: '/sales/csv-leads', icon: FileSpreadsheet, caption: 'From spreadsheet uploads' },
     {
       label: 'Assigned Leads',
@@ -82,6 +83,7 @@ function buildSalesNav(stats: MySalesStats | null): DrawerMenuItem[] {
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/sales') return { title: 'Sales Dashboard', subtitle: 'Your daily command center' };
   if (pathname.startsWith('/sales/inbox')) return { title: 'WhatsApp Inbox', subtitle: 'Your assigned conversations' };
+  if (pathname.startsWith('/sales/status')) return { title: 'WhatsApp Status', subtitle: 'Compose, schedule, and track Status posts' };
   if (pathname.startsWith('/sales/csv-leads')) return { title: 'CSV Leads', subtitle: 'Leads from spreadsheet uploads' };
   if (pathname.startsWith('/sales/leads/')) return { title: 'Lead Profile', subtitle: 'Edit progress, priority, and next action' };
   if (pathname === '/sales/leads') return { title: 'Assigned Leads', subtitle: 'Admin assigned and auto CRM leads' };

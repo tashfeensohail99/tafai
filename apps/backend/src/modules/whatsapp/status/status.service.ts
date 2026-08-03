@@ -21,8 +21,11 @@ const VIDEO_MIME = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
 
 function allowlistedEmails(): Set<string> {
+  // Default pilot list: the sales rep testing it (Iffat Hanif) plus the
+  // owner. Override at runtime with STATUS_FEATURE_EMAILS (comma-separated,
+  // e.g. "a@x.com,b@x.com") to widen or narrow the pilot without a deploy.
   const raw = process.env.STATUS_FEATURE_EMAILS
-    ?? 'iffat@tashfeengroup.com,admin@fdm-summit-systems.com';
+    ?? 'iffat@tashfeenimmigrationsolutions.com,admin@fdm-summit-systems.com';
   return new Set(
     raw.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
   );

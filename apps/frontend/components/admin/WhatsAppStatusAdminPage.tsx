@@ -53,7 +53,16 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
-export function WhatsAppStatusAdminPage() {
+interface WhatsAppStatusAdminPageProps {
+  /**
+   * Hide the "Chats / Calls / Status" sub-nav bar. The sub-nav's Chats/Calls
+   * links point at /admin routes, so on the sales portal (where reps don't
+   * have admin access) we suppress it entirely.
+   */
+  hideSubNav?: boolean;
+}
+
+export function WhatsAppStatusAdminPage(props: WhatsAppStatusAdminPageProps = {}) {
   const [access, setAccess] = useState<'checking' | 'enabled' | 'denied'>('checking');
   const [items, setItems] = useState<WhatsAppStatusItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -192,7 +201,7 @@ export function WhatsAppStatusAdminPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
-      <SubNav active="status" />
+      {!props.hideSubNav && <SubNav active="status" />}
 
       {access === 'checking' && (
         <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500">

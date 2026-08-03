@@ -3873,6 +3873,23 @@ enum WhatsAppCampaignStatus {
   @@schema("whatsapp")
 }
 
+enum WhatsAppStatusState {
+  DRAFT
+  SCHEDULED
+  POSTED
+  EXPIRED
+  FAILED
+
+  @@schema("whatsapp")
+}
+
+enum WhatsAppStatusMediaType {
+  IMAGE
+  VIDEO
+
+  @@schema("whatsapp")
+}
+
 // One row per WABA phone number. Tashfeen runs a single channel today; the
 // schema supports more (per-branch, per-product).
 model WhatsAppChannel {
@@ -4288,6 +4305,36 @@ model WhatsAppOptOut {
   createdAt DateTime @default(now())
 
   @@map("opt_outs")
+  @@schema("whatsapp")
+}
+
+// WhatsApp Status posts — content the employee prepares in the CRM and then
+// publishes to WhatsApp Status manually from their own phone via the WA
+// Business app. We hold the media + caption, drive the state machine
+// (DRAFT/SCHEDULED/POSTED/EXPIRED/FAILED), remind the owner when a scheduled
+// post is due, and expire posted items 24 h after posting. Actual posting is
+// out-of-band — Meta does not expose a Status API.
+model WhatsAppStatus {
+  id             String                  @id @default(uuid())
+  employeeId     String
+  mediaKey       String
+  mediaType      WhatsAppStatusMediaType
+  mediaMimeType  String
+  mediaSizeBytes Int
+  caption        String?
+  state          WhatsAppStatusState     @default(DRAFT)
+  scheduledAt    DateTime?
+  postedAt       DateTime?
+  expiresAt      DateTime?
+  failReason     String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  deletedAt      DateTime?
+
+  @@index([employeeId, state])
+  @@index([state, scheduledAt])
+  @@index([state, expiresAt])
+  @@map("statuses")
   @@schema("whatsapp")
 }
 

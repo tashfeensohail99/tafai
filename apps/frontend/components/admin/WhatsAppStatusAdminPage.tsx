@@ -137,7 +137,7 @@ export function WhatsAppStatusAdminPage() {
     setSubmitting(true);
     setError(null);
     try {
-      await createStatus({
+      const created = await createStatus({
         file,
         filename: file.name,
         ...(caption.trim() ? { caption: caption.trim() } : {}),
@@ -147,10 +147,11 @@ export function WhatsAppStatusAdminPage() {
           : {}),
       });
       clearComposer();
+      const partsSuffix = created.length > 1 ? ` — split into ${created.length} parts` : '';
       setNotice(
-        initialState === 'DRAFT' ? 'Saved as draft'
-          : initialState === 'SCHEDULED' ? 'Scheduled'
-            : 'Posted — remember to publish it on your phone',
+        initialState === 'DRAFT' ? `Saved as draft${partsSuffix}`
+          : initialState === 'SCHEDULED' ? `Scheduled${partsSuffix}`
+            : `Posted${partsSuffix} — remember to publish on your phone`,
       );
       await load();
     } catch (e) {
@@ -369,6 +370,9 @@ function ComposerCard(props: {
               {props.file.name} · {formatSize(props.file.size)}
             </p>
           )}
+          <p className="mt-2 text-[11px] leading-snug text-slate-400">
+            Videos over 30 s are split into multiple Status posts automatically. Videos over ~18 MB are compressed to fit WhatsApp&apos;s 16 MB cap.
+          </p>
           <input
             ref={props.fileInputRef}
             type="file"

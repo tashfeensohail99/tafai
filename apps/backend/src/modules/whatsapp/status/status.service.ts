@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { RequestUser } from '../../../common/types/auth.types';
+import { processStatusVideo } from './video-processor';
 
 const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 const IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
@@ -90,32 +91,76 @@ export class WhatsAppStatusService {
       throw new BadRequestException(`Invalid initial state: ${state}`);
     }
 
-    const uploaded = await this.storage.upload(
-      input.file,
-      input.mimeType,
-      'whatsapp/status',
-      input.originalFilename,
-    );
+    // WhatsApp Status caps videos at 30 s and 16 MB. Long clips are split
+    // into multiple status posts; large clips are transcoded down. Images
+    // pass through untouched.
+    const uploads = await this.prepareUploads(input, mediaType);
 
     const now = new Date();
     const postedAt = state === WhatsAppStatusState.POSTED ? now : null;
     const expiresAt = postedAt ? new Date(postedAt.getTime() + STATUS_TTL_MS) : null;
+    const baseCaption = input.caption?.trim() || null;
 
-    const row = await this.prisma.whatsAppStatus.create({
-      data: {
-        employeeId,
-        mediaKey: uploaded.key,
-        mediaType,
-        mediaMimeType: input.mimeType,
-        mediaSizeBytes: uploaded.sizeBytes,
-        caption: input.caption?.trim() || null,
-        state,
-        scheduledAt: state === WhatsAppStatusState.SCHEDULED ? input.scheduledAt : null,
-        postedAt,
-        expiresAt,
-      },
-    });
-    return this.toDto(row);
+    const rows = [];
+    for (let i = 0; i < uploads.length; i++) {
+      const part = uploads[i];
+      // When one upload became several chunks, mark each with "(part n/N)"
+      // so viewers landing on any single Status know it's a series.
+      const partCaption = uploads.length > 1
+        ? (baseCaption
+          ? `${baseCaption} (part ${i + 1}/${uploads.length})`
+          : `Part ${i + 1}/${uploads.length}`)
+        : baseCaption;
+
+      const stored = await this.storage.upload(
+        part.buffer,
+        part.mimeType,
+        'whatsapp/status',
+        input.originalFilename,
+      );
+
+      const row = await this.prisma.whatsAppStatus.create({
+        data: {
+          employeeId,
+          mediaKey: stored.key,
+          mediaType,
+          mediaMimeType: part.mimeType,
+          mediaSizeBytes: stored.sizeBytes,
+          caption: partCaption,
+          state,
+          scheduledAt: state === WhatsAppStatusState.SCHEDULED ? input.scheduledAt : null,
+          postedAt,
+          expiresAt,
+        },
+      });
+      rows.push(row);
+    }
+    return Promise.all(rows.map((r) => this.toDto(r)));
+  }
+
+  /**
+   * Split + compress the upload as needed. Images pass through untouched
+   * (WhatsApp Status accepts JPEG/PNG at any reasonable size). Videos go
+   * through ffmpeg only when they exceed the 30 s / 16 MB / non-MP4 rules.
+   */
+  private async prepareUploads(
+    input: CreateStatusInput,
+    mediaType: WhatsAppStatusMediaType,
+  ): Promise<Array<{ buffer: Buffer; mimeType: string }>> {
+    if (mediaType !== WhatsAppStatusMediaType.VIDEO) {
+      return [{ buffer: input.file, mimeType: input.mimeType }];
+    }
+    try {
+      const chunks = await processStatusVideo(input.file, input.mimeType);
+      if (chunks.length === 0) throw new Error('processor returned no chunks');
+      return chunks.map((c) => ({ buffer: c.buffer, mimeType: c.mimeType }));
+    } catch (e) {
+      this.log.warn(
+        `Video processing failed for status upload (${input.file.length} bytes, ${input.mimeType}): ${(e as Error).message}. ` +
+        `Falling back to original bytes.`,
+      );
+      return [{ buffer: input.file, mimeType: input.mimeType }];
+    }
   }
 
   async list(user: RequestUser, filters: ListStatusFilters) {

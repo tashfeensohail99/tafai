@@ -37,19 +37,24 @@ export function listStatuses(opts: {
   return apiFetch<WhatsAppStatusItem[]>(`/whatsapp/status${qs}`);
 }
 
+/**
+ * Create one or more Status posts from a single upload. Videos longer than
+ * 30 s are split into ≤30 s chunks and produce multiple rows in one call;
+ * everything else produces a single-row array.
+ */
 export async function createStatus(input: {
   file: Blob;
   filename: string;
   caption?: string;
   initialState?: 'DRAFT' | 'SCHEDULED' | 'POSTED';
   scheduledAt?: Date;
-}): Promise<WhatsAppStatusItem> {
+}): Promise<WhatsAppStatusItem[]> {
   const form = new FormData();
   form.append('file', input.file, input.filename);
   if (input.caption) form.append('caption', input.caption);
   if (input.initialState) form.append('initialState', input.initialState);
   if (input.scheduledAt) form.append('scheduledAt', input.scheduledAt.toISOString());
-  return apiFetch<WhatsAppStatusItem>('/whatsapp/status', {
+  return apiFetch<WhatsAppStatusItem[]>('/whatsapp/status', {
     method: 'POST',
     body: form,
   });

@@ -105,6 +105,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'Ads', href: '/admin/ads', icon: Megaphone, caption: 'Meta ad spend → leads', permissionKey: 'leads.view_all' },
       { label: 'Lead Imports', href: '/admin/lead-imports', icon: FileSpreadsheet, caption: 'CSV/Excel bulk upload', permissionKey: 'leads.create' },
       { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageSquare, caption: 'All conversations', permissionKey: 'whatsapp.view_all_inboxes' },
+      { label: 'WhatsApp Status', href: '/admin/whatsapp/status', icon: Sparkles, caption: 'Post to WA Status (pilot)', permissionKey: 'whatsapp.view_inbox' },
       { label: 'WhatsApp report', href: '/admin/wa-report', icon: BarChart3, caption: 'Daily / weekly / monthly chat activity', permissionKey: 'leads.view_all' },
       { label: 'Clients', href: '/admin/clients', icon: Users, caption: 'Converted accounts', permissionKey: 'clients.view_all' },
       { label: 'Appointments', href: '/admin/appointments', icon: CalendarDays, caption: 'Calendar', permissionKey: 'appointments.view_all' },
@@ -153,6 +154,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/lead-imports/')) return { title: 'Import detail', subtitle: 'Batch progress + per-agent distribution' };
   if (pathname === '/admin/lead-imports') return { title: 'Lead Imports', subtitle: 'CSV/Excel bulk uploads' };
   if (pathname.startsWith('/admin/leads')) return { title: 'Leads', subtitle: 'All inbound' };
+  if (pathname.startsWith('/admin/whatsapp/status')) return { title: 'WhatsApp Status', subtitle: 'Compose, schedule, and track Status posts' };
   if (pathname.startsWith('/admin/whatsapp')) return { title: 'WhatsApp conversations', subtitle: 'All threads' };
   if (pathname.startsWith('/admin/clients')) return { title: 'Clients', subtitle: 'Converted accounts' };
   if (pathname.startsWith('/admin/appointments')) return { title: 'Appointments', subtitle: 'Calendar across the business' };

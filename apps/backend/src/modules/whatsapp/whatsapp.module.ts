@@ -14,6 +14,7 @@ import { WhatsAppNotificationsModule } from './notifications/notifications.modul
 import { WhatsAppTemplatesModule } from './templates/templates.module';
 import { WhatsAppSettingsModule } from './settings/settings.module';
 import { WhatsAppCallsModule } from './calls/calls.module';
+import { WhatsAppStatusModule } from './status/status.module';
 
 /**
  * Root WhatsApp module. Composes the entire integration.
@@ -47,6 +48,7 @@ import { WhatsAppCallsModule } from './calls/calls.module';
     WhatsAppTemplatesModule,
     WhatsAppSettingsModule,
     WhatsAppCallsModule,
+    WhatsAppStatusModule,
   ],
 })
 export class WhatsAppModule {}

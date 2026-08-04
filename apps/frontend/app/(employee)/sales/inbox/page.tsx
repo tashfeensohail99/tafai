@@ -45,7 +45,6 @@ import { DispositionChip } from '@/components/whatsapp/DispositionChip';
 import { DispositionPickerModal } from '@/components/whatsapp/DispositionPickerModal';
 import { DispositionFilterChip } from '@/components/whatsapp/DispositionFilterChip';
 import type { LeadDisposition } from '@/lib/whatsapp';
-import { Tag } from 'lucide-react';
 
 /** Hook: track viewport width so we can switch to single-pane on mobile. */
 function useIsMobile(threshold = 1024): boolean {
@@ -1554,13 +1553,9 @@ function RowActionsMenu({
             padding: 4,
           }}
         >
-          {item.lead ? (
-            <RowMenuItem
-              icon={<Tag size={15} />}
-              label="Set disposition"
-              onClick={() => run(() => onSetDisposition(item))}
-            />
-          ) : null}
+          {/* No "Set disposition" here — the row's own "+ Tag" / disposition
+              chip already opens the picker (and shows the current tag). A menu
+              item would be a redundant second door to the same sheet. */}
           {canPin ? (
             <RowMenuItem
               icon={item.isPinnedByMe ? <PinOff size={15} /> : <Pin size={15} />}

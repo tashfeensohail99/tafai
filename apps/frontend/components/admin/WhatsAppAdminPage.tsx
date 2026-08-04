@@ -42,7 +42,6 @@ import {
   Search,
   ShieldOff,
   Sticker,
-  Tag,
   TimerReset,
   User,
   UserCog,
@@ -1587,14 +1586,8 @@ const ThreadRow = memo(function ThreadRow({
           Archive/Unarchive and Block/Unblock controls. stopPropagation so a
           click on an action doesn't also open the thread. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-        {item.lead ? (
-          <RowActionButton
-            label="Set disposition"
-            disabled={busy}
-            onClick={() => onSetDisposition(item)}
-            icon={<Tag size={15} />}
-          />
-        ) : null}
+        {/* No "Set disposition" action button — the row's own disposition
+            chip already opens the picker + shows the current tag. */}
         {canReassign ? (
           <RowActionButton
             label="Reassign thread"

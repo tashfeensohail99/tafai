@@ -729,17 +729,20 @@ export default function SalesInboxPage() {
           </div>
         </div>
 
-        {/* Filter chips — WhatsApp-style rounded pills with live counts */}
+        {/* Filter chips — WhatsApp-style rounded pills with live counts.
+            Wrap onto a second line when the column is narrow instead of
+            showing a horizontal scrollbar (the native scrollbar read as
+            broken UI). */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
+            flexWrap: 'wrap',
             gap: 8,
             padding: '8px 12px',
             borderBottom: '1px solid var(--sos-border-subtle)',
             background: 'var(--wa-panel-header)',
             flexShrink: 0,
-            overflowX: 'auto',
           }}
         >
           {FILTERS.map((f) => {

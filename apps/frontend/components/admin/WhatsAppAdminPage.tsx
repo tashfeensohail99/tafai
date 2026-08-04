@@ -42,6 +42,7 @@ import {
   Search,
   ShieldOff,
   Sticker,
+  Tag,
   TimerReset,
   User,
   UserCog,
@@ -58,6 +59,7 @@ import {
   threadMatchesSearch,
   unarchiveThread,
   unblockContact,
+  type LeadDisposition,
   type ThreadListItem,
   type ThreadStats,
   type WhatsAppThreadStatus,
@@ -66,6 +68,8 @@ import { listTeamPresence, type TeamPresenceRow } from '@/lib/whatsapp-admin';
 import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realtime';
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
+import { DispositionChip } from '@/components/whatsapp/DispositionChip';
+import { DispositionPickerModal } from '@/components/whatsapp/DispositionPickerModal';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Hooks + helpers
@@ -140,6 +144,13 @@ export function WhatsAppAdminPage() {
 
   // Reassign modal state
   const [reassignTarget, setReassignTarget] = useState<ThreadListItem | null>(null);
+  // Row-level Set-Disposition modal — opened from the row action bar (parity
+  // with mobile inbox). Rendered at the page root so it clears overflow.
+  const [dispositionTarget, setDispositionTarget] = useState<{
+    leadId: string;
+    current: LeadDisposition | null;
+    threadId: string;
+  } | null>(null);
   const [reassignEmployee, setReassignEmployee] = useState<string>('');
   const [reassignBusy, setReassignBusy] = useState(false);
   const [reassignError, setReassignError] = useState<string | null>(null);
@@ -242,6 +253,35 @@ export function WhatsAppAdminPage() {
     setBlockReason('');
     setBlockError(null);
   }, []);
+
+  /** Row-action → open the shared disposition picker for this thread's lead. */
+  const openDisposition = useCallback((t: ThreadListItem) => {
+    if (!t.lead) return;
+    setDispositionTarget({
+      leadId: t.lead.id,
+      current: t.lead.disposition ?? null,
+      threadId: t.id,
+    });
+  }, []);
+
+  /** Patch the local thread list so the row chip refreshes without a full reload. */
+  const handleDispositionSaved = useCallback((d: LeadDisposition) => {
+    const target = dispositionTarget;
+    if (!target) return;
+    setItems((prev) =>
+      prev.map((row) => {
+        if (row.id !== target.threadId || !row.lead) return row;
+        return {
+          ...row,
+          lead: {
+            ...row.lead,
+            disposition: d,
+            dispositionAt: new Date().toISOString(),
+          },
+        };
+      }),
+    );
+  }, [dispositionTarget]);
 
   // Archive / unarchive a single thread. Optimistic-ish: refetch on success so
   // the row leaves/enters the active list per the current tab.
@@ -887,6 +927,7 @@ export function WhatsAppAdminPage() {
                     onBlock={openBlock}
                     onUnblock={handleUnblock}
                     onArchive={handleArchive}
+                    onSetDisposition={openDisposition}
                   />
                 ))
               )}
@@ -966,6 +1007,18 @@ export function WhatsAppAdminPage() {
           )
         ) : null}
       </div>
+
+      {/* Disposition picker — opened from a row's Tag button (mobile parity).
+          Rendered at the page root so it clears the list's overflow / z-index. */}
+      {dispositionTarget ? (
+        <DispositionPickerModal
+          open={!!dispositionTarget}
+          leadId={dispositionTarget.leadId}
+          current={dispositionTarget.current}
+          onClose={() => setDispositionTarget(null)}
+          onSaved={handleDispositionSaved}
+        />
+      ) : null}
 
       {/* ── Reassign modal ── */}
       {reassignTarget ? (
@@ -1266,6 +1319,7 @@ const ThreadRow = memo(function ThreadRow({
   onBlock,
   onUnblock,
   onArchive,
+  onSetDisposition,
 }: {
   item: ThreadListItem;
   active: boolean;
@@ -1280,6 +1334,9 @@ const ThreadRow = memo(function ThreadRow({
   onBlock: (item: ThreadListItem) => void;
   onUnblock: (item: ThreadListItem) => void;
   onArchive: (item: ThreadListItem) => void;
+  /** Opens the shared disposition picker for this row's lead. No-op for
+   *  client-only rows (converted contacts have no lead to tag). */
+  onSetDisposition: (item: ThreadListItem) => void;
 }) {
   const isArchived = item.status === 'ARCHIVED';
   const displayName =
@@ -1442,6 +1499,16 @@ const ThreadRow = memo(function ThreadRow({
             {renderPreview(item.lastMessagePreview)}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            {/* Disposition chip — mirrors the mobile inbox so admins can
+                see the sales tag on every row at a glance. Clicking opens
+                the picker without opening the chat. */}
+            {item.lead ? (
+              <DispositionChip
+                disposition={item.lead.disposition ?? null}
+                emptyLabel="Tag"
+                onClick={() => onSetDisposition(item)}
+              />
+            ) : null}
             {item.unreadCount > 0 && (
               <span
                 style={{
@@ -1498,6 +1565,14 @@ const ThreadRow = memo(function ThreadRow({
           Archive/Unarchive and Block/Unblock controls. stopPropagation so a
           click on an action doesn't also open the thread. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+        {item.lead ? (
+          <RowActionButton
+            label="Set disposition"
+            disabled={busy}
+            onClick={() => onSetDisposition(item)}
+            icon={<Tag size={15} />}
+          />
+        ) : null}
         {canReassign ? (
           <RowActionButton
             label="Reassign thread"

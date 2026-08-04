@@ -41,6 +41,10 @@ import { useThreadListLivePatch, useWhatsAppSocket } from '@/lib/whatsapp-realti
 import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { InfoHint } from '@/components/common/InfoHint';
+import { DispositionChip } from '@/components/whatsapp/DispositionChip';
+import { DispositionPickerModal } from '@/components/whatsapp/DispositionPickerModal';
+import type { LeadDisposition } from '@/lib/whatsapp';
+import { Tag } from 'lucide-react';
 
 /** Hook: track viewport width so we can switch to single-pane on mobile. */
 function useIsMobile(threshold = 1024): boolean {
@@ -90,6 +94,13 @@ export default function SalesInboxPage() {
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Row-level Set-Disposition modal — opened from the ⋮ row menu.
+  // Lifted here so the modal renders once at the page root, above overflow.
+  const [dispositionTarget, setDispositionTarget] = useState<{
+    leadId: string;
+    current: LeadDisposition | null;
+    threadId: string;
+  } | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   // Real DB counts for the tab badges — fetched from the stats endpoint so
@@ -426,6 +437,35 @@ export default function SalesInboxPage() {
     setBlockReason('');
     setBlockError(null);
   }, []);
+
+  /** Row ⋮ → "Set disposition" — only valid for lead-backed rows. */
+  const openDisposition = useCallback((t: ThreadListItem) => {
+    if (!t.lead) return;
+    setDispositionTarget({
+      leadId: t.lead.id,
+      current: t.lead.disposition ?? null,
+      threadId: t.id,
+    });
+  }, []);
+
+  /** Patch the local thread list so the row chip updates instantly. */
+  const handleDispositionSaved = useCallback((d: LeadDisposition) => {
+    const target = dispositionTarget;
+    if (!target) return;
+    setItems((prev) =>
+      prev.map((row) => {
+        if (row.id !== target.threadId || !row.lead) return row;
+        return {
+          ...row,
+          lead: {
+            ...row.lead,
+            disposition: d,
+            dispositionAt: new Date().toISOString(),
+          },
+        };
+      }),
+    );
+  }, [dispositionTarget]);
 
   async function handleBlock() {
     if (!blockTarget) return;
@@ -897,6 +937,7 @@ export default function SalesInboxPage() {
                   onUnblock={handleUnblock}
                   onArchive={handleArchive}
                   onPin={handlePin}
+                  onSetDisposition={openDisposition}
                 />
               ))}
               {nextCursor ? (
@@ -1023,6 +1064,18 @@ export default function SalesInboxPage() {
         </div>
       ) : null}
 
+      {/* Disposition picker — opened from the row ⋮ menu (mobile parity).
+          Rendered at the page root so it sits above list overflow / z-index. */}
+      {dispositionTarget ? (
+        <DispositionPickerModal
+          open={!!dispositionTarget}
+          leadId={dispositionTarget.leadId}
+          current={dispositionTarget.current}
+          onClose={() => setDispositionTarget(null)}
+          onSaved={handleDispositionSaved}
+        />
+      ) : null}
+
       {/* Block confirm dialog */}
       {blockTarget ? (
         <div
@@ -1128,6 +1181,7 @@ const ThreadRow = memo(function ThreadRow({
   onUnblock,
   onArchive,
   onPin,
+  onSetDisposition,
 }: {
   item: ThreadListItem;
   active: boolean;
@@ -1142,6 +1196,9 @@ const ThreadRow = memo(function ThreadRow({
   onUnblock: (item: ThreadListItem) => void;
   onArchive: (item: ThreadListItem) => void;
   onPin: (item: ThreadListItem) => void;
+  /** Opens the disposition picker for this row's lead. Not offered for
+   *  client-only rows (converted contacts have no lead to tag). */
+  onSetDisposition: (item: ThreadListItem) => void;
 }) {
   const displayName =
     item.client?.firstName || item.client?.lastName
@@ -1299,6 +1356,17 @@ const ThreadRow = memo(function ThreadRow({
               {renderPreview(item.lastMessagePreview)}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              {/* Disposition chip — mirrors the mobile inbox. Shows the tag
+                  colour if set; a dashed "+ Tag" affordance when unset (only
+                  for lead-backed rows — converted contacts have no lead to
+                  tag). Clicking opens the picker without opening the chat. */}
+              {item.lead ? (
+                <DispositionChip
+                  disposition={item.lead.disposition ?? null}
+                  emptyLabel="Tag"
+                  onClick={() => onSetDisposition(item)}
+                />
+              ) : null}
               {item.isPinnedByMe && (
                 <Pin
                   size={12}
@@ -1352,7 +1420,7 @@ const ThreadRow = memo(function ThreadRow({
         {/* Per-row actions tucked behind a three-dot menu — keeps the row clean
             (the open Archive/Block icons were noisy). The menu stops propagation
             so opening it / picking an action doesn't also open the chat. */}
-        {canArchive || canBlock || canPin ? (
+        {canArchive || canBlock || canPin || item.lead ? (
           <RowActionsMenu
             item={item}
             isArchived={isArchived}
@@ -1365,6 +1433,7 @@ const ThreadRow = memo(function ThreadRow({
             onBlock={onBlock}
             onUnblock={onUnblock}
             onPin={onPin}
+            onSetDisposition={onSetDisposition}
           />
         ) : null}
       </div>
@@ -1372,8 +1441,8 @@ const ThreadRow = memo(function ThreadRow({
   );
 });
 
-/** Three-dot row menu → Archive/Unarchive + Mark-as-Junk(block)/Unblock. Keeps
- *  the inbox row clean instead of showing the action icons openly. */
+/** Three-dot row menu → Pin/Archive + Set-disposition + Mark-as-Junk(block)/Unblock.
+ *  Keeps the inbox row clean instead of showing the action icons openly. */
 function RowActionsMenu({
   item,
   isArchived,
@@ -1386,6 +1455,7 @@ function RowActionsMenu({
   onBlock,
   onUnblock,
   onPin,
+  onSetDisposition,
 }: {
   item: ThreadListItem;
   isArchived: boolean;
@@ -1397,6 +1467,7 @@ function RowActionsMenu({
   onArchive: (item: ThreadListItem) => void;
   onBlock: (item: ThreadListItem) => void;
   onUnblock: (item: ThreadListItem) => void;
+  onSetDisposition: (item: ThreadListItem) => void;
   onPin: (item: ThreadListItem) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1456,6 +1527,13 @@ function RowActionsMenu({
             padding: 4,
           }}
         >
+          {item.lead ? (
+            <RowMenuItem
+              icon={<Tag size={15} />}
+              label="Set disposition"
+              onClick={() => run(() => onSetDisposition(item))}
+            />
+          ) : null}
           {canPin ? (
             <RowMenuItem
               icon={item.isPinnedByMe ? <PinOff size={15} /> : <Pin size={15} />}

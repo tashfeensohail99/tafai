@@ -774,9 +774,6 @@ export default function SalesInboxPage() {
               </button>
             );
           })}
-          {/* Disposition funnel — filter chats by their lead's sales
-              disposition (mobile parity). Stacks with the active tab. */}
-          <DispositionFilterChip value={dispositionFilter} onChange={setDispositionFilter} />
           {/* ⓘ — hover explains what each chip means */}
           <div
             style={{
@@ -799,6 +796,26 @@ export default function SalesInboxPage() {
               ]}
             />
           </div>
+        </div>
+
+        {/* Disposition funnel — filter chats by their lead's sales disposition
+            (mobile parity). Its OWN always-visible row (not the scrolling tab
+            row, where it was hidden past the overflow). Stacks with the tab. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 10px',
+            borderBottom: '1px solid var(--sos-border-subtle)',
+            background: 'var(--wa-panel-header)',
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--sos-text-secondary)', flexShrink: 0 }}>
+            Disposition
+          </span>
+          <DispositionFilterChip value={dispositionFilter} onChange={setDispositionFilter} />
         </div>
 
         {/* "Due follow-ups" quick filter — shows how many of your chats have an

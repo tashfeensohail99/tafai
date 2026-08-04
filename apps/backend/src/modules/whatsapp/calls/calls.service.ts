@@ -757,6 +757,13 @@ export class WhatsAppCallsService {
         callPermissionUpdatedAt: now,
         lastMessageAt: now,
         lastMessagePreview: '🔔 Call permission requested',
+        // Requesting a call is a deliberate human outreach → it counts as first
+        // contact, so the lead leaves the "Uncontacted" tab (which keys purely on
+        // lastHumanReplyAt IS NULL). Mirrors a normal human send. We intentionally
+        // do NOT clear awaitingReply: a customer still waiting on a real answer
+        // should stay in the rep's follow-up/Pending bucket.
+        lastHumanReplyAt: now,
+        lastHumanActivityAt: now,
       },
     });
     this.log.log(`call-permission request sent for thread ${thread.id}`);

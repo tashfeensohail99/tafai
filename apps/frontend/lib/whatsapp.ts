@@ -294,6 +294,9 @@ export function listThreads(opts: {
   archived?: boolean;
   /** "Blocked" tab — show ONLY threads whose contact (Lead/Client) is blocked. */
   blocked?: boolean;
+  /** Disposition funnel — only threads whose LEAD carries this sales disposition.
+   *  Stacks (AND) with the tab + search. Client-only threads never match. */
+  disposition?: LeadDisposition;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;
   search?: string;

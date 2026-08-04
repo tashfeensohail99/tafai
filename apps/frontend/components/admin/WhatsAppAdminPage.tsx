@@ -70,6 +70,7 @@ import { WhatsAppChatPanel } from '@/components/whatsapp/WhatsAppChatPanel';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { DispositionChip } from '@/components/whatsapp/DispositionChip';
 import { DispositionPickerModal } from '@/components/whatsapp/DispositionPickerModal';
+import { DispositionFilterChip } from '@/components/whatsapp/DispositionFilterChip';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Hooks + helpers
@@ -122,6 +123,9 @@ export function WhatsAppAdminPage() {
   // Admin filter: '' = all agents, otherwise an employeeId to scope the list to
   // that agent's assigned conversations (e.g. "Iffat's chats").
   const [agentFilter, setAgentFilter] = useState<string>('');
+  // Disposition funnel — scope to chats whose lead carries this sales
+  // disposition (stacks with the tab). Mirrors the mobile inbox filter.
+  const [dispositionFilter, setDispositionFilter] = useState<LeadDisposition | null>(null);
   const [search, setSearch] = useState('');
   // Debounced copy — only triggers a fetch after typing pauses 300ms, so a
   // 5-char query is one round-trip instead of five. Matches /sales/inbox.
@@ -189,10 +193,11 @@ export function WhatsAppAdminPage() {
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
       ...(unassignedOnly ? { unassigned: true } : {}),
       ...(agentFilter ? { employeeId: agentFilter } : {}),
+      ...(dispositionFilter ? { disposition: dispositionFilter } : {}),
       ...(cursor ? { cursor } : {}),
       limit: PAGE_SIZE,
     }),
-    [filter, debouncedSearch, unassignedOnly, agentFilter],
+    [filter, debouncedSearch, unassignedOnly, agentFilter, dispositionFilter],
   );
 
   // Refetch the thread list + stats — the two things a new/updated message
@@ -822,6 +827,23 @@ export function WhatsAppAdminPage() {
                   </span>
                 ) : null}
               </label>
+            </div>
+
+            {/* Disposition funnel — filter the list by lead sales disposition
+                (mobile parity). Stacks with the tab + agent + unassigned filters. */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 12px',
+                borderBottom: '1px solid var(--sos-border-subtle)',
+                background: 'var(--wa-panel-header)',
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: 12, color: 'var(--sos-text-secondary)' }}>Disposition</span>
+              <DispositionFilterChip value={dispositionFilter} onChange={setDispositionFilter} />
             </div>
 
             {/* Admin-only: filter the list by assigned agent (e.g. "Iffat's chats") */}

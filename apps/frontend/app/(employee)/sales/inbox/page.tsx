@@ -43,6 +43,7 @@ import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { InfoHint } from '@/components/common/InfoHint';
 import { DispositionChip } from '@/components/whatsapp/DispositionChip';
 import { DispositionPickerModal } from '@/components/whatsapp/DispositionPickerModal';
+import { DispositionFilterChip } from '@/components/whatsapp/DispositionFilterChip';
 import type { LeadDisposition } from '@/lib/whatsapp';
 import { Tag } from 'lucide-react';
 
@@ -86,6 +87,10 @@ export default function SalesInboxPage() {
   // "Due (N)" chip toggle — when on, the list is filtered to chats whose lead
   // has an OPEN follow-up due/overdue now (combines with the active tab).
   const [followUpDueOnly, setFollowUpDueOnly] = useState(false);
+  // Disposition funnel — when set, the list is scoped to chats whose lead
+  // carries this sales disposition (stacks with the active tab). Mirrors the
+  // mobile inbox's disposition filter chip.
+  const [dispositionFilter, setDispositionFilter] = useState<LeadDisposition | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   // #4 content search — chats matched by MESSAGE TEXT (not just name/phone).
@@ -153,7 +158,7 @@ export default function SalesInboxPage() {
   useEffect(() => {
     pagesRef.current = 1;
     setNextCursor(null);
-  }, [filter, debouncedSearch, followUpDueOnly]);
+  }, [filter, debouncedSearch, followUpDueOnly, dispositionFilter]);
 
   // Server-side filter per tab. Open = "a human has replied" (contacted);
   // Uncontacted = "no human has ever replied"; All = no filter. The "Due (N)"
@@ -173,9 +178,11 @@ export default function SalesInboxPage() {
               : filter === 'BLOCKED'
                 ? { blocked: true as const }
                 : { contacted: true as const };
-      return followUpDueOnly ? { ...base, followUpDue: true as const } : base;
+      const withDue = followUpDueOnly ? { ...base, followUpDue: true as const } : base;
+      // Disposition stacks (AND) on top of whichever tab is active.
+      return dispositionFilter ? { ...withDue, disposition: dispositionFilter } : withDue;
     },
-    [filter, followUpDueOnly],
+    [filter, followUpDueOnly, dispositionFilter],
   );
 
   // Fetch just the tab counts without reloading the thread list.
@@ -767,6 +774,9 @@ export default function SalesInboxPage() {
               </button>
             );
           })}
+          {/* Disposition funnel — filter chats by their lead's sales
+              disposition (mobile parity). Stacks with the active tab. */}
+          <DispositionFilterChip value={dispositionFilter} onChange={setDispositionFilter} />
           {/* ⓘ — hover explains what each chip means */}
           <div
             style={{

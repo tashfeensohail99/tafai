@@ -36,6 +36,17 @@ class WaParty {
         disposition: disposition,
       );
 
+  /// A copy with a new name (reflects an inline rename locally).
+  WaParty renamed(String first, String last) => WaParty(
+        id: id,
+        firstName: first,
+        lastName: last,
+        phone: phone,
+        status: status,
+        disposition: disposition,
+        blockedAt: blockedAt,
+      );
+
   /// A copy with a new disposition (reflects a set-disposition locally).
   WaParty withDisposition(String d) => WaParty(
         id: id,

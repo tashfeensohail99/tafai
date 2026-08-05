@@ -16,6 +16,7 @@ import '../../../core/util/format.dart';
 import '../../../core/util/launchers.dart';
 import '../../../core/widgets/app_states.dart';
 import '../../calls/application/call_controller.dart';
+import '../../leads/data/leads_repository.dart';
 import '../../leads/presentation/lead_detail_screen.dart';
 import '../data/whatsapp_providers.dart';
 import '../data/whatsapp_repository.dart';
@@ -882,6 +883,75 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     );
   }
 
+  /// Rename the contact inline — from tapping the name in the header or the ⋮
+  /// "Edit name" item. Persists to the LEAD (PATCH /leads/:id): that's the name
+  /// the inbox shows AND the one the assign-lead search matches, so the new
+  /// name is immediately findable. Reflects it locally at once (no reload).
+  Future<void> _editName() async {
+    final lead = _thread.lead;
+    final leadId = _thread.leadId;
+    if (lead == null || leadId == null) return; // client-only thread: no lead
+    final firstCtl = TextEditingController(text: lead.firstName);
+    final lastCtl = TextEditingController(text: lead.lastName);
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit name'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: firstCtl,
+              autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(labelText: 'First name'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: lastCtl,
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => Navigator.pop(ctx, true),
+              decoration: const InputDecoration(labelText: 'Last name'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    final first = firstCtl.text.trim();
+    final last = lastCtl.text.trim();
+    firstCtl.dispose();
+    lastCtl.dispose();
+    if (save != true || !mounted) return;
+    if (first.isEmpty) {
+      _toast('First name is required.');
+      return;
+    }
+    try {
+      await ref
+          .read(leadsRepositoryProvider)
+          .update(leadId, firstName: first, lastName: last);
+      if (!mounted) return;
+      setState(() {
+        _thread = _thread.copyWith(lead: lead.renamed(first, last));
+      });
+      _toast('Name updated');
+    } on AppError catch (e) {
+      _toast(messageForError(e));
+    } catch (_) {
+      _toast('Could not update the name.');
+    }
+  }
+
   /// Set the lead's sales disposition from the chat (WhatsApp-style bottom
   /// sheet). Updates the local chip on success.
   Future<void> _showDispositionSheet() async {
@@ -982,30 +1052,36 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _thread.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      height: 1.2,
+              // Tap the name to rename the contact (leads only). Mirrors the
+              // ⋮ "Edit name" item — whichever the rep reaches for.
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _thread.leadId != null ? _editName : null,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _thread.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
                     ),
-                  ),
-                  Text(
-                    _thread.phone,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w400,
-                      color: Colors.white.withValues(alpha: 0.8),
-                      height: 1.2,
+                    Text(
+                      _thread.phone,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.white.withValues(alpha: 0.8),
+                        height: 1.2,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
@@ -1055,6 +1131,7 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                   case 'ai': _toggleAi(); break;
                   case 'takeover': _takeOver(); break;
                   case 'disposition': _showDispositionSheet(); break;
+                  case 'editname': _editName(); break;
                   case 'lead': _openLead(); break;
                   case 'archive': _archive(); break;
                   case 'unarchive': _unarchive(); break;
@@ -1086,6 +1163,15 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                       Icon(Icons.sell_outlined, size: 20),
                       SizedBox(width: AppTokens.space3),
                       Text('Set disposition'),
+                    ]),
+                  ),
+                if (_thread.leadId != null)
+                  const PopupMenuItem(
+                    value: 'editname',
+                    child: Row(children: [
+                      Icon(Icons.edit_outlined, size: 20),
+                      SizedBox(width: AppTokens.space3),
+                      Text('Edit name'),
                     ]),
                   ),
                 if (_thread.leadId != null)

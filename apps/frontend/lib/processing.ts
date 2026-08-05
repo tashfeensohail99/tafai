@@ -370,8 +370,24 @@ export interface ApiIntakeCaseItem extends ApiProcessingCaseListItem {
   financeHandoverNote: string | null;
 }
 
-export function fetchIntakeQueue(): Promise<ApiIntakeCaseItem[]> {
-  return apiFetch<ApiIntakeCaseItem[]>('/processing/intake', { cache: 'no-store' });
+export interface IntakeQueueResponse {
+  items: ApiIntakeCaseItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export function fetchIntakeQueue(opts?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+}): Promise<IntakeQueueResponse> {
+  const qs = new URLSearchParams();
+  if (opts?.page) qs.set('page', String(opts.page));
+  if (opts?.limit) qs.set('limit', String(opts.limit));
+  if (opts?.search?.trim()) qs.set('search', opts.search.trim());
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<IntakeQueueResponse>(`/processing/intake${suffix}`, { cache: 'no-store' });
 }
 
 export function fetchProcessingCases(query: ListCasesQuery = {}): Promise<ListCasesResponse> {

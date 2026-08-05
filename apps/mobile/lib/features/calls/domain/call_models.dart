@@ -143,7 +143,12 @@ class CallState {
   String get statusLabel => switch (phase) {
         CallPhase.dialing => 'Calling…',
         CallPhase.ringing => 'Incoming WhatsApp call',
-        CallPhase.connecting => 'Connecting…',
+        // OUTBOUND sits in `connecting` while the CUSTOMER'S phone is still
+        // ringing — Meta warms the media path during ringback, so we reach
+        // 'connected' before they pick up. Showing "Connecting…" there reads as
+        // "the system is stuck", so reps hang up on calls that were ringing
+        // perfectly well. INBOUND is genuinely connecting (rep already answered).
+        CallPhase.connecting => isOutbound ? 'Ringing…' : 'Connecting…',
         CallPhase.inCall => timerLabel,
         CallPhase.reconnecting => 'Reconnecting…',
         CallPhase.ended => 'Call ended',

@@ -1131,7 +1131,11 @@ export function CallDock() {
             <div style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>
               {phase === 'ringing' && 'Incoming WhatsApp call…'}
               {phase === 'dialing' && 'Calling…'}
-              {phase === 'connecting' && 'Connecting…'}
+              {/* Outbound sits in `connecting` while the CUSTOMER'S phone is
+                  still ringing (Meta warms media during ringback), so
+                  "Connecting…" there reads as "stuck" and reps hang up on a
+                  call that was ringing fine. Inbound is genuinely connecting. */}
+              {phase === 'connecting' && (outboundRef.current ? 'Ringing…' : 'Connecting…')}
               {phase === 'in-call' && `In call · ${fmt(seconds)}`}
               {phase === 'reconnecting' && `Reconnecting… · ${fmt(seconds)}`}
               {phase === 'ended' && `Call ended · ${fmt(seconds)}`}

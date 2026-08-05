@@ -75,15 +75,17 @@ function waitForIce(pc: RTCPeerConnection): Promise<void> {
       if (pc.iceGatheringState === 'complete') finish();
     };
     const onCand = (e: RTCPeerConnectionIceEvent) => {
-      // "typ relay" = a TURN relay candidate made it into our gathered set — the
-      // path that actually works behind CGNAT / mobile NAT.
-      if (e.candidate && /\btyp relay\b/.test(e.candidate.candidate)) sawRelay = true;
+      // A USABLE PUBLIC candidate — server-reflexive (STUN) or relay (TURN).
+      // This used to require "typ relay" specifically, which cost every call
+      // seconds: 30d of CDR shows the selected path is prflx/srflx on every
+      // connected call and relay never once (relay=0 of 1000+), so the relay
+      // gate never opened and we always waited out the floor/cap.
+      if (e.candidate && /\btyp (relay|srflx)\b/.test(e.candidate.candidate)) sawRelay = true;
     };
-    // Once the relay candidate is present and a brief floor has elapsed (enough
-    // to also gather the faster direct/srflx candidate), answer without waiting
-    // out the full cap.
+    // Once a usable candidate is present and a brief floor has elapsed, send
+    // without waiting out the full 12s cap (which still backstops slow links).
     const poll = setInterval(() => {
-      if (sawRelay && Date.now() - startedAt > 2500) finish();
+      if (sawRelay && Date.now() - startedAt > 1200) finish();
     }, 250);
     const cap = setTimeout(finish, 12000);
     pc.addEventListener('icegatheringstatechange', onGather);

@@ -75,9 +75,25 @@ class _AppShellState extends ConsumerState<AppShell> {
     // re-appeared on EVERY launch whenever a special-access permission (e.g.
     // "Display over other apps") wasn't granted, which some OEM phones can't
     // grant at all — so it nagged endlessly with no reliable way to dismiss it.
+    var status = await ref.read(callPermissionsProvider).check();
+
+    // The MICROPHONE is not like the other permissions: without it the rep
+    // can't talk at all, AND the pre-accept warm-up is skipped — so every call
+    // they answer falls back to the slow build path (ICE gather, up to 12s of
+    // silence after tapping Accept). The "seen once" flag below deliberately
+    // stops the setup SCREEN from nagging about special-access permissions
+    // that some OEM phones simply cannot grant, but it must never permanently
+    // suppress the one permission calls cannot work without. Ask for it on its
+    // own, ahead of that flag; Android stops showing this prompt by itself once
+    // the user has denied twice, so it can't turn into a nag.
+    if (!status.microphone) {
+      await ref.read(callPermissionsProvider).requestMicrophone();
+      if (!mounted) return;
+      status = await ref.read(callPermissionsProvider).check();
+    }
+
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_callSetupSeenKey) ?? false) return;
-    final status = await ref.read(callPermissionsProvider).check();
     if (!mounted || status.essentialGranted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const CallSetupScreen(onboarding: true)),

@@ -2233,11 +2233,53 @@ export class ProcessingService {
       ? 'case_reassigned'
       : 'case_assigned';
 
+    // If the case is still sitting in the intake queue, assigning an officer
+    // must ALSO take it out of that queue. The manager dashboard buckets the
+    // intake / "pending" queue by STAGE, so a case that gets an officer here
+    // but stays INTAKE_PENDING keeps showing as unassigned/unacknowledged even
+    // though it now has an owner (the exact "I assigned it but it still shows
+    // unassigned" complaint). Mirror acknowledgeIntake: advance to
+    // DOCUMENTS_COLLECTION and seed the checklist if it was never seeded.
+    const wasIntakePending =
+      processingCase.stage === ProcessingCaseStage.INTAKE_PENDING;
+
     const updated = await this.prisma.$transaction(async (tx) => {
       const c = await tx.processingCase.update({
         where: { id: caseId },
-        data: { assignedOfficerId: dto.officerId, updatedByUserId: user.id },
+        data: {
+          assignedOfficerId: dto.officerId,
+          updatedByUserId: user.id,
+          ...(wasIntakePending
+            ? { stage: ProcessingCaseStage.DOCUMENTS_COLLECTION }
+            : {}),
+        },
       });
+
+      if (wasIntakePending) {
+        // Seed checklist + milestones only if this case never had them — a
+        // finance-origin case seeds at acknowledge, an imported case already
+        // seeded at create. Idempotent: skips when items already exist.
+        const alreadySeeded = await tx.caseDocumentItem.count({ where: { caseId } });
+        if (alreadySeeded === 0) {
+          await this.seedChecklistAndMilestones(tx, {
+            caseId,
+            service: processingCase.service,
+            targetCountry: processingCase.targetCountry,
+            programCode: processingCase.programCode ?? null,
+            actorUserId: user.id,
+          });
+        }
+        await tx.processingCaseStageHistory.create({
+          data: {
+            caseId,
+            fromStage: ProcessingCaseStage.INTAKE_PENDING,
+            toStage: ProcessingCaseStage.DOCUMENTS_COLLECTION,
+            changedByUserId: user.id,
+            reason: 'Assigned to associate — moved out of the intake queue',
+          },
+        });
+      }
+
       await tx.processingAuditLog.create({
         data: {
           caseId,
@@ -2245,8 +2287,16 @@ export class ProcessingService {
           action,
           entityType: 'processing_case',
           entityId: caseId,
-          oldValues: { assignedOfficerId: processingCase.assignedOfficerId },
-          newValues: { assignedOfficerId: dto.officerId },
+          oldValues: {
+            assignedOfficerId: processingCase.assignedOfficerId,
+            ...(wasIntakePending ? { stage: ProcessingCaseStage.INTAKE_PENDING } : {}),
+          },
+          newValues: {
+            assignedOfficerId: dto.officerId,
+            ...(wasIntakePending
+              ? { stage: ProcessingCaseStage.DOCUMENTS_COLLECTION }
+              : {}),
+          },
         },
       });
       return c;

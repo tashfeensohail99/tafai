@@ -710,11 +710,26 @@ class CallController extends StateNotifier<CallState> {
       if (!completer.isCompleted) completer.complete();
     }
 
-    var haveRelay = false;
+    // Resolve once we hold a USABLE PUBLIC candidate — server-reflexive (STUN)
+    // or relay (TURN) — and gathering has been quiet for 800ms.
+    //
+    // This used to require a RELAY candidate specifically, which quietly cost
+    // every outbound call 2-3s: 30d of CDR showed the selected path was
+    // prflx/srflx on every single connected call and **relay literally never
+    // once** (prflx=411, srflx=16, relay=0), so `haveRelay` stayed false, the
+    // fast path never fired, and we always sat through FULL ICE gathering (or
+    // the 12s cap). srflx arrives in a few hundred ms, so the offer now goes
+    // out ~1-2s sooner. Safety is unchanged: the quiet timer RESTARTS on every
+    // later candidate (so a relay arriving in that window is still included),
+    // gathering-complete still resolves, and the 12s hard cap still backstops
+    // a slow link.
+    var haveUsable = false;
     pc.onIceCandidate = (c) {
       final cand = c.candidate ?? '';
-      if (cand.contains('typ relay')) haveRelay = true;
-      if (haveRelay) {
+      if (cand.contains('typ relay') || cand.contains('typ srflx')) {
+        haveUsable = true;
+      }
+      if (haveUsable) {
         quiet?.cancel();
         quiet = Timer(const Duration(milliseconds: 800), done);
       }

@@ -1005,7 +1005,7 @@ export class ProcessingService {
           row,
           rowNumber,
           cell,
-          { officerIndex, officerByEmail, employeeIndex, employeeByEmail },
+          { officerIndex, officerByEmail, officersById, employeeIndex, employeeByEmail },
           seenKeys,
           seenPersons,
         ),
@@ -1150,6 +1150,7 @@ export class ProcessingService {
     indexes: {
       officerIndex: Map<string, string[]>;
       officerByEmail: Map<string, string>;
+      officersById: Map<string, { email: string; name: string }>;
       employeeIndex: Map<string, string[]>;
       employeeByEmail: Map<string, string>;
     },
@@ -1281,14 +1282,29 @@ export class ProcessingService {
       }
     }
     if (!assignedOfficerId && rawOfficer) {
-      const ids = indexes.officerIndex.get(this.normNameKey(rawOfficer));
-      if (!ids || ids.length === 0) {
+      let ids = indexes.officerIndex.get(this.normNameKey(rawOfficer)) ?? [];
+      // Fall back to a loose name-token match so sheets that write a first name
+      // only ("Tayyab") or an initial + name ("M. Tayyab") still resolve to the
+      // full CRM name ("Tayyab Arshad"). Kept SAFE: it only auto-assigns when a
+      // single officer shares those name words — two candidates stay "ambiguous
+      // → unassigned". Processing officer ONLY; the sales-rep column below stays
+      // strict (its identity space is bigger, so loose matching is riskier).
+      let loose = false;
+      if (ids.length === 0) {
+        ids = this.looseOfficerMatch(rawOfficer, indexes.officersById);
+        loose = ids.length > 0;
+      }
+      if (ids.length === 0) {
         if (!officerEmail) warnings.push(`Processing officer "${rawOfficer}" not found — imported unassigned`);
       } else if (ids.length > 1) {
         warnings.push(`Processing officer "${rawOfficer}" is ambiguous (${ids.length} matches) — imported unassigned`);
       } else {
         assignedOfficerId = ids[0];
         result.officerMatched = true;
+        if (loose) {
+          const matched = indexes.officersById.get(ids[0])?.name ?? '';
+          warnings.push(`Processing officer "${rawOfficer}" matched to "${matched}"`);
+        }
       }
     }
     if (!assignedOfficerId && !rawOfficer && !officerEmail) {
@@ -1393,6 +1409,41 @@ export class ProcessingService {
 
   private normNameKey(s: string): string {
     return s.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  /** Significant name tokens — lowercased, punctuation stripped, single-letter
+   *  initials ("M", "M.") dropped. "M. Tayyab" → {"tayyab"}. */
+  private nameTokens(s: string): Set<string> {
+    return new Set(
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 2),
+    );
+  }
+
+  /** Loose officer match, used ONLY as a fallback after an exact name match
+   *  fails. Returns the ids of officers whose name tokens are a subset (or
+   *  superset) of the sheet's officer tokens — so "Tayyab" / "M. Tayyab" both
+   *  hit "Tayyab Arshad". The caller auto-assigns only on a SINGLE hit; two or
+   *  more is treated as ambiguous and left unassigned, so we never mis-route on
+   *  a shared first name. */
+  private looseOfficerMatch(
+    rawOfficer: string,
+    officersById: Map<string, { email: string; name: string }>,
+  ): string[] {
+    const want = this.nameTokens(rawOfficer);
+    if (want.size === 0) return [];
+    const hits: string[] = [];
+    for (const [id, o] of officersById) {
+      const have = this.nameTokens(o.name);
+      if (have.size === 0) continue;
+      const wantSubset = [...want].every((t) => have.has(t));
+      const haveSubset = [...have].every((t) => want.has(t));
+      if (wantSubset || haveSubset) hits.push(id);
+    }
+    return hits;
   }
 
   /** Lenient date parse for the "Signup date" cell. Returns null when it can't

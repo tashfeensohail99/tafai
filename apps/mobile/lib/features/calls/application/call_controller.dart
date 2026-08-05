@@ -46,6 +46,7 @@ class CallController extends StateNotifier<CallState> {
 
   Timer? _ringTimeout; // inbound: auto-dismiss if unanswered
   Timer? _dialTimeout; // outbound: give up if no answer
+  Timer? _connectWatchdog; // inbound: force-end if answered media never connects
   Timer? _audioWait; // outbound: poll for first remote audio before the timer starts
   bool _outboundAnswered = false; // latched once the outbound duration timer has begun
   Timer? _tick; // 1s call timer
@@ -347,6 +348,22 @@ class CallController extends StateNotifier<CallState> {
       return;
     }
     unawaited(_acquireLocks()); // fire-and-forget — don't serialize on it
+
+    // Watchdog: the rep has answered, so media must come up within the window.
+    // Nothing else auto-terminates a wedged pickup — the ring timeout was just
+    // cancelled and the dial timeout is outbound-only — so a call whose media
+    // never connects would sit in "Connecting…" forever with no way out (esp. if
+    // the native CallKit screen is on top of the in-app End button). That is the
+    // "couldn't hang up, had to restart the phone" bug. If we don't reach in-call
+    // in time, force a full hangup: tears media/audio down AND tells the backend
+    // to end the Meta leg (so no zombie ANSWERED row lingers either).
+    _connectWatchdog?.cancel();
+    _connectWatchdog = Timer(const Duration(seconds: 40), () {
+      if (state.phase == CallPhase.connecting) {
+        _log('inbound connect watchdog fired — media never connected; ending');
+        hangup();
+      }
+    });
 
     try {
       // Pre-warmed path: the peer + SDP were built (and Meta pre-accepted)
@@ -720,6 +737,9 @@ class CallController extends StateNotifier<CallState> {
     // until the real accept). Stay on the ringing UI; acceptIncoming() flips
     // to in-call after the answer POST.
     if (state.phase == CallPhase.ringing) return;
+    // Media is progressing — the inbound connect watchdog has done its job.
+    _connectWatchdog?.cancel();
+    _connectWatchdog = null;
     _disconnectGrace?.cancel();
     _disconnectGrace = null;
     if (state.phase == CallPhase.inCall) return;
@@ -1057,6 +1077,7 @@ class CallController extends StateNotifier<CallState> {
 
     _ringTimeout?.cancel();
     _dialTimeout?.cancel();
+    _connectWatchdog?.cancel();
     _audioWait?.cancel();
     _audioWait = null;
     _outboundAnswered = false;
@@ -1065,6 +1086,7 @@ class CallController extends StateNotifier<CallState> {
     _heartbeat?.cancel();
     _ringTimeout = null;
     _dialTimeout = null;
+    _connectWatchdog = null;
     _tick = null;
     _disconnectGrace = null;
     _heartbeat = null;

@@ -236,11 +236,42 @@ export class LeadsService {
     return rows.map((r) => r.id);
   }
 
+  /**
+   * Lead ids whose CONVERTED CLIENT's name matches the search term. The
+   * assign-lead / leads-list search only sees Lead.firstName/lastName, but a
+   * client's name is frequently CORRECTED on the Client record after conversion
+   * (passport/CNIC auto-fill, Processing edits) and there is NO back-sync to the
+   * Lead — so a rep searching the name they actually know matches no lead and
+   * "can't find the client". Matching the linked client's name here closes that
+   * gap. Mirrors phoneSearchLeadIds: returns a set of ids folded into the OR.
+   */
+  private async clientNameLeadIds(term: string): Promise<string[]> {
+    const t = term.trim();
+    if (t.length < 2) return []; // a single char would match half the table
+    const like = `%${t}%`;
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT l.id
+      FROM crm.leads l
+      JOIN crm.clients c ON c.id = l."convertedClientId"
+      WHERE l."deletedAt" IS NULL
+        AND c."deletedAt" IS NULL
+        AND (
+          c."firstName" ILIKE ${like}
+          OR c."lastName" ILIKE ${like}
+          OR (c."firstName" || ' ' || c."lastName") ILIKE ${like}
+        )
+      LIMIT 500`;
+    return rows.map((r) => r.id);
+  }
+
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
     const canViewAll = user.permissions.includes('leads.view_all');
     // Resolved before the where-clause is built: a phone term has to become a
     // set of ids, because Prisma can't express the digits-only comparison.
     const phoneMatchIds = query.search ? await this.phoneSearchLeadIds(query.search) : [];
+    // Also fold in leads whose converted CLIENT's name matches — see
+    // clientNameLeadIds (the client name is often the one the rep knows).
+    const clientNameIds = query.search ? await this.clientNameLeadIds(query.search) : [];
 
     const where: Prisma.LeadWhereInput = {
       deletedAt: null,
@@ -297,6 +328,7 @@ export class LeadsService {
               // the id term below is what makes 0321… find a stored +92321….
               { phone: { contains: query.search, mode: 'insensitive' } },
               ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
+              ...(clientNameIds.length ? [{ id: { in: clientNameIds } }] : []),
             ],
           }
         : {}),

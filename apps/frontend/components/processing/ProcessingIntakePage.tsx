@@ -10,7 +10,7 @@
 //
 // Sales never randomly assigns; associates never self-pick from this queue.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -296,26 +296,21 @@ function AcknowledgeModal({
 
 // ---------- Manager queue page ---------------------------------------------
 
+const PAGE_SIZE = 20;
+
 export function ProcessingIntakePage() {
   const { user } = useProcessingSession();
   const [queue, setQueue] = useState<ApiIntakeCaseItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [officers, setOfficers] = useState<ApiProcessingOfficer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<ApiIntakeCaseItem | null>(null);
   const [assignedCount, setAssignedCount] = useState(0);
   const [search, setSearch] = useState('');
-
-  const visibleQueue = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return queue;
-    return queue.filter((c) =>
-      [casePersonName(c), casePersonPhone(c), labelForServiceCode(c.service), c.targetCountry, c.lead?.referenceCode ?? '']
-        .join(' ')
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [queue, search]);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
 
   // Per the Processing workflow only managers can acknowledge. Associates
   // visiting this URL get a clear access-required state instead of a 403
@@ -324,17 +319,48 @@ export function ProcessingIntakePage() {
     && (user.permissions.includes('processing.case.assign')
       || user.permissions.includes('processing.case.view_all'));
 
-  function load() {
+  // Debounce the search box → server (spans all pages) and jump back to page 1
+  // so results start from the top of the filtered set.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Officer roster — fetched once (doesn't change per page).
+  useEffect(() => {
+    if (!canManage) return;
+    fetchProcessingOfficers().then(setOfficers).catch(() => {});
+  }, [canManage]);
+
+  // Queue — refetched on page / search / post-acknowledge change.
+  useEffect(() => {
+    if (!canManage) { setLoading(false); return; }
+    let cancelled = false;
     setLoading(true);
-    Promise.all([fetchIntakeQueue(), fetchProcessingOfficers()])
-      .then(([q, o]) => {
-        setQueue(q);
-        setOfficers(o);
+    fetchIntakeQueue({ page, limit: PAGE_SIZE, search: debouncedSearch || undefined })
+      .then((res) => {
+        if (cancelled) return;
+        // If a page emptied out (e.g. the last item was just acknowledged),
+        // step back a page rather than showing a blank list.
+        if (res.items.length === 0 && res.total > 0 && page > 1) {
+          setPage((p) => Math.max(1, p - 1));
+          return;
+        }
+        setQueue(res.items);
+        setTotal(res.total);
+        setError(null);
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load queue'))
-      .finally(() => setLoading(false));
-  }
-  useEffect(() => { if (canManage) load(); else setLoading(false); }, [canManage]);
+      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load queue'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [canManage, page, debouncedSearch, reloadTick]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page * PAGE_SIZE, total);
 
   if (!canManage) {
     return (
@@ -360,7 +386,7 @@ export function ProcessingIntakePage() {
           onConfirm={() => {
             setActiveModal(null);
             setAssignedCount((n) => n + 1);
-            load();
+            setReloadTick((t) => t + 1);
           }}
         />
       ) : null}
@@ -370,8 +396,8 @@ export function ProcessingIntakePage() {
           eyebrow="Processing — Manager"
           title="Manager Queue"
           description={
-            queue.length > 0
-              ? `${queue.length} case${queue.length !== 1 ? 's' : ''} from Finance awaiting your review. Confirm the case category and pick the right Associate.`
+            total > 0
+              ? `${total} case${total !== 1 ? 's' : ''} from Finance awaiting your review. Confirm the case category and pick the right Associate.`
               : 'Queue is clear. All cases from Finance have been assigned.'
           }
           actions={
@@ -381,43 +407,48 @@ export function ProcessingIntakePage() {
           }
         />
 
-        {loading ? (
-          <GlassCard variant="panel" padded="lg">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
-              <Loader2 size={16} className="sos-spin" />
-              <span>Loading queue…</span>
-            </div>
-          </GlassCard>
-        ) : error ? (
+        {error ? (
           <GlassCard variant="panel" padded="lg">
             <div style={{ padding: 16, color: 'var(--sos-status-danger)' }}>Failed to load: {error}</div>
           </GlassCard>
-        ) : queue.length === 0 ? (
-          <GlassCard variant="panel" padded="lg">
-            <EmptyState
-              Icon={CheckCircle2}
-              title="Queue is clear"
-              description="No new cases from Finance pending review."
-            />
-          </GlassCard>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', maxWidth: 340 }}>
-              <Search size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
-              <input
-                type="search"
-                placeholder="Search client, phone, service…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 12.5 }}
-              />
-            </div>
-            {visibleQueue.length === 0 ? (
-              <div style={{ fontSize: 13, color: 'var(--sos-text-muted)', padding: '12px 4px' }}>
-                No cases match “{search.trim()}”.
+            {/* Search runs server-side, so it spans every page (not just the
+                one loaded). Kept above the loading/list area so it stays put
+                during page changes and a zero-result search never traps you. */}
+            {(total > 0 || debouncedSearch) ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-hover)', maxWidth: 340 }}>
+                <Search size={13} style={{ color: 'var(--sos-text-muted)', flexShrink: 0 }} />
+                <input
+                  type="search"
+                  placeholder="Search client, phone, reference…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 12.5 }}
+                />
               </div>
             ) : null}
-            {visibleQueue.map((c) => (
+            {loading ? (
+              <GlassCard variant="panel" padded="lg">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--sos-text-muted)', padding: 24 }}>
+                  <Loader2 size={16} className="sos-spin" />
+                  <span>Loading queue…</span>
+                </div>
+              </GlassCard>
+            ) : queue.length === 0 ? (
+              <GlassCard variant="panel" padded="lg">
+                <EmptyState
+                  Icon={CheckCircle2}
+                  title={debouncedSearch ? 'No matches' : 'Queue is clear'}
+                  description={
+                    debouncedSearch
+                      ? `No cases match “${debouncedSearch}”.`
+                      : 'No new cases from Finance pending review.'
+                  }
+                />
+              </GlassCard>
+            ) : null}
+            {!loading && queue.map((c) => (
               <GlassCard
                 key={c.id}
                 variant="default"
@@ -487,6 +518,25 @@ export function ProcessingIntakePage() {
                 </div>
               </GlassCard>
             ))}
+            {/* Pagination — server-driven; only when there's more than one page. */}
+            {!loading && totalPages > 1 ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, paddingTop: 4 }}>
+                <span style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                  Showing {from}–{to} of {total}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <SecondaryButton onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                    Previous
+                  </SecondaryButton>
+                  <span style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                    Page {page} of {totalPages}
+                  </span>
+                  <SecondaryButton onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+                    Next
+                  </SecondaryButton>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
 

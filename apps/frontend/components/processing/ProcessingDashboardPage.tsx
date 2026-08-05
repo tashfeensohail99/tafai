@@ -30,6 +30,7 @@ import {
   fetchProcessingDashboard,
   fetchIntakeQueue,
   type ApiProcessingCaseListItem,
+  type IntakeQueueResponse,
   type ProcessingDashboardMetrics,
 } from '@/lib/processing';
 import { labelForServiceCode } from '@/lib/service-types';
@@ -109,13 +110,17 @@ export function ProcessingDashboardPage() {
     Promise.all([
       fetchProcessingDashboard(),
       fetchProcessingCases({ limit: 8 }),
-      isManager ? fetchIntakeQueue() : Promise.resolve([]),
+      // Managers get the intake preview (urgent cases sort to the top, so the
+      // first page is enough for the dashboard's urgent-cases panel).
+      isManager
+        ? fetchIntakeQueue({ limit: 50 })
+        : Promise.resolve<IntakeQueueResponse>({ items: [], total: 0, page: 1, limit: 50 }),
     ])
       .then(([m, casesRes, intake]) => {
         if (cancelled) return;
         setMetrics(m);
         setMyCases(casesRes.cases.filter((c) => c.stage !== 'COMPLETED' && c.stage !== 'CANCELLED' && c.stage !== 'JUNK'));
-        setIntakePending(intake);
+        setIntakePending(intake.items);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load dashboard');

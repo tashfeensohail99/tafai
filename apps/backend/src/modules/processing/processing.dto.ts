@@ -11,6 +11,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -194,6 +195,14 @@ export class ListIntakeQueueQueryDto {
   @IsEnum(ProcessingCasePriority)
   priority?: ProcessingCasePriority;
 
+  /** Free-text filter over the applicant name / phone (client + lead) and the
+   *  reference code, applied server-side so it spans every page, not just the
+   *  one currently loaded. */
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  search?: string;
+
   @IsOptional()
   @Transform(({ value }) => parseInt(value, 10))
   @IsInt()
@@ -204,6 +213,7 @@ export class ListIntakeQueueQueryDto {
   @Transform(({ value }) => parseInt(value, 10))
   @IsInt()
   @Min(1)
+  @Max(100)
   limit?: number = 20;
 }
 

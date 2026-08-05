@@ -1566,46 +1566,74 @@ export class ProcessingService {
   }
 
   async listIntakeQueue(query: ListIntakeQueueQueryDto) {
-    return this.prisma.processingCase.findMany({
-      where: {
-        stage: ProcessingCaseStage.INTAKE_PENDING,
-        ...(query.priority ? { priority: query.priority } : {}),
-      },
-      include: {
-        lead: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            serviceInterest: true,
-            targetCountry: true,
-            // Originating sales rep — Processing needs to know who owned the
-            // lead to chase context on an incoming case.
-            assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const search = query.search?.trim();
+
+    const where: Prisma.ProcessingCaseWhereInput = {
+      stage: ProcessingCaseStage.INTAKE_PENDING,
+      ...(query.priority ? { priority: query.priority } : {}),
+      // Server-side search so it spans the whole queue, not just the loaded
+      // page. Matches the applicant name / phone on either the client or the
+      // originating lead, plus the reference code.
+      ...(search
+        ? {
+            OR: [
+              { client: { firstName: { contains: search, mode: 'insensitive' } } },
+              { client: { lastName: { contains: search, mode: 'insensitive' } } },
+              { client: { phone: { contains: search } } },
+              { lead: { firstName: { contains: search, mode: 'insensitive' } } },
+              { lead: { lastName: { contains: search, mode: 'insensitive' } } },
+              { lead: { phone: { contains: search } } },
+              { lead: { referenceCode: { contains: search, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.processingCase.findMany({
+        where,
+        include: {
+          lead: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              phone: true,
+              referenceCode: true,
+              serviceInterest: true,
+              targetCountry: true,
+              // Originating sales rep — Processing needs to know who owned the
+              // lead to chase context on an incoming case.
+              assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+            },
+          },
+          client: {
+            select: { id: true, firstName: true, lastName: true, phone: true },
+          },
+          financeHandover: {
+            select: {
+              id: true,
+              submittedAmount: true,
+              currency: true,
+              receiptFileName: true,
+              submittedAt: true,
+              createdByUserId: true,
+            },
           },
         },
-        client: {
-          select: { id: true, firstName: true, lastName: true, phone: true },
-        },
-        financeHandover: {
-          select: {
-            id: true,
-            submittedAmount: true,
-            currency: true,
-            receiptFileName: true,
-            submittedAt: true,
-            createdByUserId: true,
-          },
-        },
-      },
-      orderBy: [
-        { priority: 'desc' },
-        { createdAt: 'asc' },
-      ],
-      skip: ((query.page ?? 1) - 1) * (query.limit ?? 20),
-      take: query.limit ?? 20,
-    });
+        orderBy: [
+          { priority: 'desc' },
+          { createdAt: 'asc' },
+        ],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.processingCase.count({ where }),
+    ]);
+
+    return { items, total, page, limit };
   }
 
   /**

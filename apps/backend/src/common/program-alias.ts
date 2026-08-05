@@ -41,7 +41,13 @@ const ALIASES: Record<string, ResolvedProgram> = {
   'PERMANENT RESIDENCY': { service: 'PR_CASE' },
   'PERMANENT RESIDENCE': { service: 'PR_CASE' },
   'VISIT VISA': { service: 'VISIT_VISA' },
+  // The processing sheets often write just "Visit" (or "Visit Case", matching
+  // the "C11 Case" / "JR Resubmission Case" style) — treat those as Visit Visa.
+  VISIT: { service: 'VISIT_VISA' },
+  'VISIT CASE': { service: 'VISIT_VISA' },
+  'VISITOR VISA': { service: 'VISIT_VISA' },
   'TOURIST VISA': { service: 'TOURIST_VISA' },
+  TOURIST: { service: 'TOURIST_VISA' },
   'SPOUSE VISA': { service: 'SPOUSE_VISA' },
   E2: { service: 'E2_VISA' },
   'E2 VISA': { service: 'E2_VISA' },

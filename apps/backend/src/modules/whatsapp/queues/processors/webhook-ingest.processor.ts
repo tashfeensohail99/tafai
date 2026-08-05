@@ -854,43 +854,60 @@ export class WebhookIngestProcessor extends WorkerHost {
       this.log.error(`call assignment failed for thread ${thread.id}: ${(err as Error).message}`);
     }
 
-    // Route to the assigned rep: a lead-scoped callback task + a bell ping.
+    // Route to the assigned rep. ORDER MATTERS: every millisecond here is dead
+    // air the CALLER spends listening to ringing, so we RING FIRST and do all
+    // bookkeeping afterwards. (This block used to run a callback-task write and
+    // a bell-notification write BEFORE the ring — ~1-2s of avoidable latency on
+    // a cross-region DB, on top of the ~8 round-trips already above.)
     try {
+      // ONE query for everything the ring needs: the lead, its assigned rep, and
+      // that rep's userId (previously a second employee lookup).
       const t = await this.prisma.whatsAppThread.findUnique({
         where: { id: thread.id },
         select: {
           lead: {
-            select: { id: true, firstName: true, lastName: true, phone: true, assignedEmployeeId: true },
+            select: {
+              id: true, firstName: true, lastName: true, phone: true, assignedEmployeeId: true,
+              assignedEmployee: { select: { user: { select: { id: true } } } },
+            },
           },
         },
       });
       const lead = t?.lead ?? null;
       const assignedEmployeeId = lead?.assignedEmployeeId ?? null;
       if (assignedEmployeeId) {
-        await this.prisma.whatsAppCall.updateMany({
-          where: { waCallId: call.id },
-          data: { assignedEmployeeId },
-        });
-        const emp = await this.prisma.employee.findUnique({
-          where: { id: assignedEmployeeId },
-          select: { user: { select: { id: true } } },
-        });
-        const userId = emp?.user?.id ?? null;
+        const userId = lead?.assignedEmployee?.user?.id ?? null;
         const who = `${lead?.firstName ?? ''} ${lead?.lastName ?? ''}`.trim() || lead?.phone || phone;
-        if (lead?.id && userId) {
-          await this.prisma.followUp.create({
-            data: {
-              leadId: lead.id,
-              assignedEmployeeId,
-              createdByUserId: userId,
-              title: `Call back ${who}`,
-              description: `Missed WhatsApp call from ${phone} — call them back.`,
-              contactMethod: 'WHATSAPP',
-              dueAt: now,
-              priority: FollowUpPriority.HIGH,
-            },
-          });
-        }
+        const ring = {
+          callId: callRow.id,
+          from: phone,
+          leadId: lead?.id ?? null,
+          leadName: who,
+          threadId: thread.id,
+        };
+
+        // ── RING NOW ────────────────────────────────────────────────────────
+        // Browser (CallDock, per-employee channel so only the assigned rep's
+        // tabs ring) and the mobile app (high-priority data push → CallKit even
+        // when backgrounded/locked) go out TOGETHER, not one after the other.
+        await Promise.all([
+          this.publisher.publishToEmployee(
+            assignedEmployeeId,
+            WHATSAPP_WS_EVENTS.CALL_INCOMING,
+            ring,
+          ),
+          userId ? this.push.sendCallInvite(userId, ring) : Promise.resolve(),
+        ]);
+
+        // ── Bookkeeping AFTER the phone is already ringing ───────────────────
+        // NOTE: the "Call back …" follow-up is deliberately NOT created here.
+        // It used to fire on EVERY inbound call — including ones answered
+        // seconds later — producing ~38% phantom tasks that buried the genuine
+        // misses in the rep's callback list. It is now created only when the
+        // call is actually MISSED (see maybeSendMissedCallInvite's caller).
+        await this.prisma.whatsAppCall
+          .updateMany({ where: { waCallId: call.id }, data: { assignedEmployeeId } })
+          .catch(() => undefined);
         if (userId) {
           await this.notifications.create({
             userId,
@@ -898,31 +915,6 @@ export class WebhookIngestProcessor extends WorkerHost {
             title: `📞 WhatsApp call from ${who}`,
             body: phone,
             link: lead?.id ? `/sales/leads/${lead.id}` : '/sales/inbox',
-          });
-        }
-        // Phase 1: ring THIS rep's browser (CallDock). Per-employee channel, so
-        // only the assigned rep's open tabs ring — not every agent in the org.
-        await this.publisher.publishToEmployee(
-          assignedEmployeeId,
-          WHATSAPP_WS_EVENTS.CALL_INCOMING,
-          {
-            callId: callRow.id,
-            from: phone,
-            leadId: lead?.id ?? null,
-            leadName: who,
-            threadId: thread.id,
-          },
-        );
-        // Also wake the rep's mobile app with a high-priority data push so it
-        // rings natively even when backgrounded / screen-locked. No-op until an
-        // FCM key is set in Admin → API Keys and a device has registered.
-        if (userId) {
-          await this.push.sendCallInvite(userId, {
-            callId: callRow.id,
-            from: phone,
-            leadName: who,
-            leadId: lead?.id ?? null,
-            threadId: thread.id,
           });
         }
       }
@@ -1439,6 +1431,52 @@ export class WebhookIngestProcessor extends WorkerHost {
    *    calls doesn't spam the customer. The per-call idempotency key is a
    *    second layer against Meta webhook retries.
    */
+  /**
+   * Create the owning rep's "call them back" task for a genuinely missed call.
+   * Deliberately NOT called from the ring path (see handleIncomingCall): a task
+   * must only exist for a call nobody answered. Skips when the lead already has
+   * an OPEN callback task, so repeat missed calls don't stack duplicates.
+   */
+  private async createMissedCallTask(
+    lead: {
+      id: string;
+      firstName: string | null;
+      lastName: string | null;
+      phone: string | null;
+      assignedEmployeeId: string | null;
+      assignedEmployee: { user: { id: string } | null } | null;
+    } | null,
+    threadId: string,
+  ): Promise<void> {
+    const employeeId = lead?.assignedEmployeeId;
+    const userId = lead?.assignedEmployee?.user?.id;
+    if (!lead?.id || !employeeId || !userId) return;
+
+    const existing = await this.prisma.followUp.findFirst({
+      where: { leadId: lead.id, status: 'OPEN', title: { startsWith: 'Call back' } },
+      select: { id: true },
+    });
+    if (existing) {
+      this.log.debug(`missed-call task skipped for lead ${lead.id} (one already open)`);
+      return;
+    }
+
+    const who = `${lead.firstName ?? ''} ${lead.lastName ?? ''}`.trim() || lead.phone || 'this contact';
+    await this.prisma.followUp.create({
+      data: {
+        leadId: lead.id,
+        assignedEmployeeId: employeeId,
+        createdByUserId: userId,
+        title: `Call back ${who}`,
+        description: `Missed WhatsApp call from ${lead.phone ?? 'this contact'} — call them back.`,
+        contactMethod: 'WHATSAPP',
+        dueAt: new Date(),
+        priority: FollowUpPriority.HIGH,
+      },
+    });
+    this.log.log(`missed-call callback task created for lead ${lead.id} (thread ${threadId})`);
+  }
+
   private async maybeSendMissedCallInvite(args: {
     threadId: string;
     channelId: string;
@@ -1452,7 +1490,12 @@ export class WebhookIngestProcessor extends WorkerHost {
       select: {
         id: true,
         windowExpiresAt: true,
-        lead: { select: { firstName: true } },
+        lead: {
+          select: {
+            id: true, firstName: true, lastName: true, phone: true, assignedEmployeeId: true,
+            assignedEmployee: { select: { user: { select: { id: true } } } },
+          },
+        },
         client: { select: { firstName: true } },
       },
     });
@@ -1473,6 +1516,14 @@ export class WebhookIngestProcessor extends WorkerHost {
       this.log.debug(`missed-call invite skipped for thread ${args.threadId} (sent recently)`);
       return;
     }
+
+    // The "call them back" task belongs HERE — this runs only when a call was
+    // genuinely MISSED. It used to be created on every inbound call at ring
+    // time, so ~38% of tasks were phantoms for calls the rep actually answered,
+    // burying the real misses in the callback list (2222 tasks vs 1612 real
+    // misses, 1348 left open). One OPEN task per lead is enough — a second
+    // missed call from the same lead shouldn't stack another row.
+    void this.createMissedCallTask(thread.lead, args.threadId).catch(() => undefined);
 
     const windowOpen =
       !!thread.windowExpiresAt && thread.windowExpiresAt.getTime() > now.getTime();

@@ -5,6 +5,7 @@ import { normalisePhone } from '../../common/phone/phone.util';
 import { findLeadByNormalizedPhone } from '../../common/phone/lead-dedupe';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { LeadAssignmentService } from '../lead-assignment/lead-assignment.service';
 import type { ResolveCallDto, SmartOfficeResolveResponse } from './smart-office.dto';
 
 interface ResolveOutcome {
@@ -33,12 +34,55 @@ export class SmartOfficeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
+    private readonly leadAssignment: LeadAssignmentService,
   ) {}
+
+  /** Round-robin auto-assign a genuinely-new caller to a rep (and ring that
+   *  rep) instead of dropping to Telenor's default queue. Kill switch:
+   *  SMARTOFFICE_UAN_AUTOASSIGN_ENABLED=false reverts to unassigned capture. */
+  private uanAutoAssignEnabled(): boolean {
+    return process.env.SMARTOFFICE_UAN_AUTOASSIGN_ENABLED !== 'false';
+  }
 
   async resolve(dto: ResolveCallDto): Promise<SmartOfficeResolveResponse> {
     const callId = dto.call_id ?? null;
     const norm = normalisePhone(dto.a_party_number, 'PK');
-    const outcome = await this.resolveOwner(norm.ok ? norm.e164 ?? null : null, norm.reason);
+    let outcome = await this.resolveOwner(norm.ok ? norm.e164 ?? null : null, norm.reason);
+
+    // Genuinely-new caller (no lead AND no client). Instead of dropping to
+    // Telenor's default queue and parking an UNASSIGNED lead, round-robin the
+    // call to a rep who has a PBX extension — the SAME shared cursor every
+    // other channel uses — and create the lead already assigned (+ sticky) to
+    // that rep. So the call rings that person AND their later WhatsApp sticks
+    // to the same person. Falls back gracefully: if nothing is assignable
+    // (no rep has an extension yet, kill switch off, or any error) we revert
+    // to the old unassigned-capture + matched:false default routing — no call
+    // is ever lost. This IS on the response path (we must return the picked
+    // extension), but it's a handful of indexed queries, well within 5s.
+    if (norm.ok && norm.e164 && outcome.reason === 'no lead or client for caller') {
+      if (this.uanAutoAssignEnabled()) {
+        const assigned = await this.assignUnknownCaller(norm.e164).catch((e) => {
+          this.log.warn(`UAN auto-assign failed, falling back: ${(e as Error).message}`);
+          return null;
+        });
+        if (assigned) {
+          outcome = {
+            ...outcome,
+            matched: true,
+            agentExtension: assigned.extension,
+            agentName: assigned.name,
+            agentEmployeeId: assigned.employeeId,
+            leadId: assigned.leadId,
+            reason: 'unknown caller — round-robin assigned',
+          };
+        }
+      }
+      // Still unmatched after the attempt (disabled / no assignable rep) →
+      // keep the safety net: park an UNASSIGNED lead, best-effort + off-path.
+      if (!outcome.matched) {
+        void this.captureUnknownCaller(norm.e164);
+      }
+    }
 
     // Our own inbound-call log (Telenor exposes no CDRs). Fire-and-forget so a
     // logging hiccup never delays or fails the 5-second-budget response.
@@ -49,16 +93,6 @@ export class SmartOfficeService {
       callId,
       ...outcome,
     });
-
-    // Capture a genuinely-unknown caller (no lead AND no client) as a new
-    // UNASSIGNED lead so real phone demand isn't lost — a rep picks it up from
-    // the pipeline. Fire-and-forget: the live call still default-routes via
-    // matched:false below; we never delay/fail the 5s-budget response for a
-    // capture write. ONLY on the "no lead or client" outcome — a blocked /
-    // unassigned / inactive OWNER already exists and must not spawn a duplicate.
-    if (norm.ok && norm.e164 && outcome.reason === 'no lead or client for caller') {
-      void this.captureUnknownCaller(norm.e164);
-    }
 
     if (outcome.matched && outcome.agentExtension) {
       return {
@@ -160,6 +194,112 @@ export class SmartOfficeService {
     } catch (e) {
       this.log.warn(`smart-office call log failed: ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * Round-robin a genuinely-new caller to a rep who has a PBX extension and
+   * create the lead ALREADY ASSIGNED (+ sticky) to that rep — so the live call
+   * rings that person and their later WhatsApp sticks to the same owner.
+   *
+   * Reuses the shared `LeadAssignmentService` cursor (WhatsApp / CSV / Meta /
+   * website all rotate on it), but restricted to reps who have an extension
+   * (`pickNextAgent(selectedAgentIds)`) — a call can only be routed to a rep we
+   * can hand Telenor an extension for. Returns null (caller falls back to the
+   * unassigned capture + Telenor default routing) when nothing is assignable.
+   *
+   * Concurrency: the same advisory lock as captureUnknownCaller serialises
+   * same-number calls; if a racing call already created/owns the lead, we route
+   * this call to THAT owner's extension so both legs ring one rep. `pickNextAgent`
+   * runs in its own tx BEFORE the advisory-lock tx (never nested).
+   */
+  private async assignUnknownCaller(
+    e164: string,
+  ): Promise<{ extension: string; name: string; employeeId: string; leadId: string | null } | null> {
+    const digits = e164.replace(/\D/g, '');
+
+    // Pool: eligible reps who can actually take a routed call (have an ext).
+    // pickNextAgent re-applies the full eligibility predicate (active WhatsApp
+    // inbox member, non-finance), so this loose pre-filter just narrows to
+    // extension-holders; the intersection is the real pool.
+    const extRepIds = (
+      await this.prisma.employee.findMany({
+        where: { pbxExtension: { not: null }, isActive: true, deletedAt: null },
+        select: { id: true },
+      })
+    ).map((e) => e.id);
+    if (extRepIds.length === 0) return null;
+
+    const assigneeId = await this.leadAssignment.pickNextAgent(extRepIds);
+    if (!assigneeId) return null;
+
+    const emp = await this.prisma.employee.findUnique({
+      where: { id: assigneeId },
+      select: { firstName: true, lastName: true, pbxExtension: true, isActive: true },
+    });
+    if (!emp?.pbxExtension || !emp.isActive) return null;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', digits);
+
+      // Re-check under the lock — a racing call may have created it already.
+      const client = await tx.client.findFirst({
+        where: { phone: e164, deletedAt: null },
+        select: { assignedEmployeeId: true },
+      });
+      if (client) return { created: false, ownerId: client.assignedEmployeeId, leadId: null as string | null };
+      const existingLead =
+        (await tx.lead.findFirst({
+          where: { phone: e164, deletedAt: null },
+          select: { id: true, assignedEmployeeId: true },
+        })) ?? (await findLeadByNormalizedPhone(this.prisma, e164));
+      if (existingLead) return { created: false, ownerId: existingLead.assignedEmployeeId, leadId: existingLead.id };
+
+      const branch = await tx.branch.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+      const referenceCode = await generateLeadReferenceCode(this.prisma);
+      const lead = await tx.lead.create({
+        data: {
+          referenceCode,
+          firstName: 'UAN',
+          lastName: digits.slice(-4),
+          phone: e164,
+          sourceChannel: 'uan',
+          status: LeadStatus.NEW,
+          assignedEmployeeId: assigneeId,
+          // Stick to this rep so the caller's later WhatsApp routes here too.
+          preferredEmployeeId: assigneeId,
+          ...(branch ? { branchId: branch.id } : {}),
+        },
+        select: { id: true },
+      });
+      return { created: true, ownerId: assigneeId, leadId: lead.id };
+    });
+
+    // Freshly created and assigned to our round-robin pick — return its ext.
+    if (result.created) {
+      this.log.log(`UAN caller round-robin assigned to ${emp.firstName} ${emp.lastName} (ext ${emp.pbxExtension}), lead ${result.leadId}`);
+      void this.audit
+        .log({
+          action: AuditAction.LEAD_CREATED,
+          entityType: 'Lead',
+          entityId: result.leadId!,
+          category: AuditCategory.WEBHOOK,
+          severity: AuditSeverity.HIGH,
+          metadata: { source: 'smartoffice_inbound_call', assigned: true, assignedEmployeeId: assigneeId, phoneLast4: digits.slice(-4) },
+        })
+        .catch(() => undefined);
+      return { extension: emp.pbxExtension, name: `${emp.firstName} ${emp.lastName}`.trim(), employeeId: assigneeId, leadId: result.leadId };
+    }
+
+    // A racing call already created/owns the lead — route this leg to that
+    // owner's extension so both legs ring one rep. If that owner has no ext,
+    // give up (caller default-routes).
+    if (!result.ownerId) return null;
+    const owner = await this.prisma.employee.findUnique({
+      where: { id: result.ownerId },
+      select: { firstName: true, lastName: true, pbxExtension: true, isActive: true },
+    });
+    if (!owner?.pbxExtension || !owner.isActive) return null;
+    return { extension: owner.pbxExtension, name: `${owner.firstName} ${owner.lastName}`.trim(), employeeId: result.ownerId, leadId: result.leadId };
   }
 
   /**

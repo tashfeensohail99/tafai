@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 
+import '../../../core/device/device_report.dart';
 import 'call_api.dart';
 
 /// Payload the backend sends in an `incoming_call` FCM data message.
@@ -245,12 +246,22 @@ class CallPushService {
     if (!_firebaseReady) return;
     try {
       await FirebaseMessaging.instance.requestPermission();
+      // Build + patch fingerprint for the fleet version report. Computed once
+      // and reused by the refresh listener: it cannot change while the process
+      // is alive, since a downloaded patch only applies on the next restart.
+      final report = await buildDeviceReport();
       final token = await FirebaseMessaging.instance.getToken();
       if (token != null && token.isNotEmpty) {
-        await api.registerDevice(token: token, platform: 'ANDROID');
+        await api.registerDevice(
+          token: token,
+          platform: 'ANDROID',
+          deviceInfo: report,
+        );
       }
       FirebaseMessaging.instance.onTokenRefresh.listen((t) {
-        api.registerDevice(token: t, platform: 'ANDROID').catchError((_) {});
+        api
+            .registerDevice(token: t, platform: 'ANDROID', deviceInfo: report)
+            .catchError((_) {});
       });
     } catch (e) {
       if (kDebugMode) debugPrint('[push] token register failed: $e');

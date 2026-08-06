@@ -57,7 +57,12 @@ apps/mobile/.flutter-plugins
 apps/mobile/.flutter-plugins-dependencies
 apps/mobile/build/
 apps/mobile/.packages
-apps/mobile/pubspec.lock
+# pubspec.lock is deliberately NOT ignored. This is an application, not a
+# reusable package, so the lockfile belongs in git. Shorebird also requires a
+# patch build to produce native output identical to the release it patches --
+# unpinned, `flutter pub get` resolves newer transitive deps, which shifts the
+# R8/DEX output and makes every patch fail with "your app contains native
+# changes". That cost us two patches before we traced it here.
 
 # Uploads / temp
 uploads/

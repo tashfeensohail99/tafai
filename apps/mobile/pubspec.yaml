@@ -90,6 +90,10 @@ dependencies:
   # Shimmer skeleton placeholders shown while lists load (premium feel vs a
   # bare spinner).
   shimmer: ^3.0.0
+  # Reads which Shorebird patch is actually live on this phone, so the fleet
+  # report can tell a landed patch from a published-but-never-applied one.
+  # Pure Dart (FFI into the updater already in the engine) — no platform code.
+  shorebird_code_push: ^2.0.0
 
 dev_dependencies:
   flutter_test:

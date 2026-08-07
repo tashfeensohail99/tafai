@@ -1,81 +1,192 @@
 'use client';
 
-import { Activity, Bell, Filter, Layers, Megaphone, Split, Sparkles, TrendingUp } from 'lucide-react';
-import { GlassCard, PageHeader } from '@/components/sales-v2/ui';
-
-const SECTIONS: Array<{ icon: typeof Megaphone; title: string; body: string }> = [
-  { icon: Megaphone, title: 'Meta Ads', body: 'Every ad with status, spend, leads, CPL and its lead-routing destination.' },
-  { icon: Layers, title: 'Campaigns', body: 'The Campaign → Ad Set → Ad hierarchy, synced hourly from Meta.' },
-  { icon: Split, title: 'Lead Routing', body: 'Point each ad or campaign at Islamabad, Lahore or Both — no developer needed.' },
-  { icon: TrendingUp, title: 'Performance', body: 'CPL, CTR, CPC, CPM and ROAS by ad, current period vs previous.' },
-  { icon: Filter, title: 'Conversions', body: 'The funnel from ad → lead → qualified → paid client. (Later phase.)' },
-  { icon: Sparkles, title: 'AI Insights', body: 'Structured, advisory recommendations — never auto-changes budgets or ads.' },
-  { icon: Bell, title: 'Alerts', body: 'Ad rejected, spending with no leads, CPL spiking, new ad detected.' },
-  { icon: Activity, title: 'Integration Health', body: 'Meta connection, last sync, last lead received, webhook status.' },
-];
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { AlertTriangle, DollarSign, Layers, TrendingUp, Users, UserCheck } from 'lucide-react';
+import { GlassCard, MetricCard, PageHeader } from '@/components/sales-v2/ui';
+import { SpendLeadsChart } from '@/components/marketing/SpendLeadsChart';
+import { StatusPill } from '@/components/marketing/StatusPill';
+import { WindowPicker } from '@/components/marketing/WindowPicker';
+import {
+  fmtCad,
+  fmtInt,
+  fmtNativeAmount,
+  fmtPct,
+  fmtRoas,
+  getMarketingOverview,
+  type MarketingOverview,
+} from '@/lib/marketing';
 
 export default function MarketingOverviewPage() {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<MarketingOverview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getMarketingOverview(days)
+      .then((res) => {
+        if (!cancelled) setData(res);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [days]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <PageHeader
         eyebrow="Marketing"
         title="Marketing Overview"
-        description="Meta ads, campaigns, lead routing and analytics — connected to the CRM so you can see what each advertisement actually produced, not just clicks."
+        description={`Spend, leads and conversions from every Click-to-WhatsApp ad — attributed to the actual paying client, not just the click. Trailing ${days} days.`}
       />
 
-      <GlassCard variant="default">
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              color: 'var(--sos-brand-primary-strong)',
-              background: 'var(--sos-brand-primary-soft)',
-              border: '1px solid var(--sos-brand-primary-border)',
-              borderRadius: 'var(--sos-radius-pill)',
-              padding: '4px 11px',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Phase 1A
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <WindowPicker value={days} onChange={setDays} />
+      </div>
+
+      {error ? (
+        <GlassCard variant="default">
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', color: '#b91c1c' }}>
+            <AlertTriangle size={18} />
+            <span>Couldn't load dashboard: {error}</span>
           </div>
-          <p style={{ margin: 0, color: 'var(--sos-text-secondary)', fontSize: 14, lineHeight: 1.65 }}>
-            This is the foundation: the Marketing role, login and portal are live. The data screens below
-            fill in over the next phases — starting with durable ad→lead attribution (so a lead never loses
-            the ad that produced it), then the campaign hierarchy sync, dashboards, editable routing, alerts
-            and AI insights. Everything reads Meta data the CRM already collects from Click-to-WhatsApp ads.
-          </p>
+        </GlassCard>
+      ) : null}
+
+      {/* KPI strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+        <MetricCard
+          label="Ad spend"
+          value={loading ? '…' : fmtCad(data?.kpis.spendBaseCad ?? 0, { compact: true })}
+          tone="accent"
+          Icon={DollarSign}
+          hint={
+            data?.kpis.spendByCurrency.length
+              ? data.kpis.spendByCurrency.map((c) => fmtNativeAmount(c.amount, c.currency)).join(' · ')
+              : undefined
+          }
+        />
+        <MetricCard label="Leads" value={loading ? '…' : fmtInt(data?.kpis.leads)} tone="info" Icon={Users} hint="Leads from ads" />
+        <MetricCard
+          label="Cost per lead"
+          value={loading ? '…' : fmtCad(data?.kpis.cpl, { compact: true })}
+          tone="neutral"
+          Icon={TrendingUp}
+        />
+        <MetricCard
+          label="Clients converted"
+          value={loading ? '…' : fmtInt(data?.kpis.clientsConverted)}
+          tone="success"
+          Icon={UserCheck}
+          hint={data?.kpis.conversionRate != null ? `${fmtPct(data.kpis.conversionRate)} of leads` : undefined}
+        />
+        <MetricCard
+          label="Revenue (CAD)"
+          value={loading ? '…' : fmtCad(data?.kpis.revenueBaseCad ?? 0, { compact: true })}
+          tone="success"
+          Icon={DollarSign}
+          hint={data?.kpis.cpa != null ? `${fmtCad(data.kpis.cpa, { compact: true })} per client` : undefined}
+        />
+        <MetricCard
+          label="ROAS"
+          value={loading ? '…' : fmtRoas(data?.kpis.roas)}
+          tone={(data?.kpis.roas ?? 0) >= 1 ? 'success' : 'warning'}
+          Icon={TrendingUp}
+          hint="Revenue / spend"
+        />
+      </div>
+
+      {/* Chart */}
+      <GlassCard variant="default">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Daily spend vs leads</div>
+              <div style={{ fontSize: 12, color: 'var(--sos-text-secondary, #4b5563)' }}>
+                {data ? `${data.window.from} → ${data.window.to}` : '—'}
+              </div>
+            </div>
+          </div>
+          {data && data.timeSeries.length > 0 ? (
+            <SpendLeadsChart points={data.timeSeries} />
+          ) : (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)' }}>
+              {loading ? 'Loading…' : 'No data for this window'}
+            </div>
+          )}
         </div>
       </GlassCard>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
-        {SECTIONS.map((s) => (
-          <GlassCard key={s.title} variant="default">
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <div
-                style={{
-                  display: 'grid',
-                  placeItems: 'center',
-                  width: 38,
-                  height: 38,
-                  flexShrink: 0,
-                  borderRadius: 'var(--sos-radius-button)',
-                  background: 'var(--sos-brand-primary-soft)',
-                  color: 'var(--sos-brand-primary-strong)',
-                }}
-              >
-                <s.icon size={18} />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: 3 }}>{s.title}</div>
-                <div style={{ fontSize: 13, color: 'var(--sos-text-secondary)', lineHeight: 1.55 }}>{s.body}</div>
-              </div>
+      {/* Top campaigns */}
+      <GlassCard variant="default">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Top campaigns by spend</div>
+              <div style={{ fontSize: 12, color: 'var(--sos-text-secondary, #4b5563)' }}>Trailing {days} days</div>
             </div>
-          </GlassCard>
-        ))}
-      </div>
+            <Link
+              href="/marketing/campaigns"
+              style={{ fontSize: 12, color: 'var(--sos-brand-primary-strong, #2563eb)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            >
+              <Layers size={14} /> All campaigns →
+            </Link>
+          </div>
+          <TopCampaignsTable data={data} loading={loading} />
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
+
+function TopCampaignsTable({ data, loading }: { data: MarketingOverview | null; loading: boolean }) {
+  if (loading && !data) {
+    return <div style={{ padding: 20, color: 'var(--sos-text-tertiary, #6b7280)' }}>Loading…</div>;
+  }
+  if (!data || data.topCampaigns.length === 0) {
+    return <div style={{ padding: 20, color: 'var(--sos-text-tertiary, #6b7280)' }}>No campaigns had activity in this window.</div>;
+  }
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ textAlign: 'left', color: 'var(--sos-text-tertiary, #6b7280)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            <th style={{ padding: '8px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.08))' }}>Campaign</th>
+            <th style={{ padding: '8px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.08))' }}>Status</th>
+            <th style={{ padding: '8px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.08))', textAlign: 'right' }}>Spend</th>
+            <th style={{ padding: '8px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.08))', textAlign: 'right' }}>Leads</th>
+            <th style={{ padding: '8px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.08))', textAlign: 'right' }}>CPL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.topCampaigns.map((c) => (
+            <tr key={c.campaignId}>
+              <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))' }}>
+                <div style={{ fontWeight: 500 }}>{c.name ?? '(unnamed campaign)'}</div>
+                <div style={{ fontSize: 11, color: 'var(--sos-text-tertiary, #6b7280)' }}>{c.campaignId}</div>
+              </td>
+              <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))' }}>
+                <StatusPill status={c.effectiveStatus} />
+              </td>
+              <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))', textAlign: 'right' }}>
+                {fmtCad(c.spendBaseCad, { compact: true })}
+              </td>
+              <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))', textAlign: 'right' }}>{fmtInt(c.leads)}</td>
+              <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))', textAlign: 'right' }}>{fmtCad(c.cpl)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

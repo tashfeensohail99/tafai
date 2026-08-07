@@ -1,0 +1,159 @@
+'use client';
+
+import { apiFetch, buildQuery } from './api-client';
+
+/**
+ * Marketing dashboard API client (Phase 1D).
+ *
+ * Wraps the three aggregation endpoints on the backend MarketingController.
+ * All monetary values in responses are already base CAD; per-currency spend
+ * is provided on the Overview so the tooltip can show native currency alongside.
+ */
+
+export interface MarketingWindow {
+  from: string; // YYYY-MM-DD
+  to: string;
+  days: number;
+}
+
+export interface SpendByCurrency {
+  currency: string;
+  amount: number;
+}
+
+export interface DailyPoint {
+  date: string; // YYYY-MM-DD
+  spendBaseCad: number;
+  leads: number;
+}
+
+export interface TopCampaign {
+  campaignId: string;
+  name: string | null;
+  effectiveStatus: string | null;
+  spendBaseCad: number;
+  leads: number;
+  cpl: number | null;
+}
+
+export interface MarketingOverview {
+  window: MarketingWindow;
+  kpis: {
+    spendBaseCad: number;
+    spendByCurrency: SpendByCurrency[];
+    leads: number;
+    clientsConverted: number;
+    revenueBaseCad: number;
+    cpl: number | null;
+    cpa: number | null;
+    roas: number | null;
+    conversionRate: number | null;
+  };
+  timeSeries: DailyPoint[];
+  topCampaigns: TopCampaign[];
+}
+
+export interface MarketingAd {
+  adId: string;
+  adName: string | null;
+  adsetId: string;
+  adsetName: string | null;
+  campaignId: string;
+  campaignName: string | null;
+  effectiveStatus: string | null;
+  spendBaseCad: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  cpl: number | null;
+  ctr: number | null;
+}
+
+export interface MarketingAdsResponse {
+  window: MarketingWindow;
+  ads: MarketingAd[];
+}
+
+export interface MarketingAdset {
+  adsetId: string;
+  name: string | null;
+  effectiveStatus: string | null;
+  spendBaseCad: number;
+  leads: number;
+  cpl: number | null;
+}
+
+export interface MarketingCampaign {
+  campaignId: string;
+  name: string | null;
+  effectiveStatus: string | null;
+  objective: string | null;
+  spendBaseCad: number;
+  leads: number;
+  clientsConverted: number;
+  revenueBaseCad: number;
+  cpl: number | null;
+  cpa: number | null;
+  roas: number | null;
+  adsets: MarketingAdset[];
+}
+
+export interface MarketingCampaignsResponse {
+  window: MarketingWindow;
+  campaigns: MarketingCampaign[];
+}
+
+export interface ListOpts {
+  days?: number;
+  includeIdle?: boolean;
+}
+
+export function getMarketingOverview(days?: number): Promise<MarketingOverview> {
+  const qs = buildQuery({ days });
+  return apiFetch<MarketingOverview>(`/admin/marketing/overview${qs}`);
+}
+
+export function getMarketingAds(opts: ListOpts = {}): Promise<MarketingAdsResponse> {
+  const qs = buildQuery({ days: opts.days, includeIdle: opts.includeIdle ? 'true' : undefined });
+  return apiFetch<MarketingAdsResponse>(`/admin/marketing/ads${qs}`);
+}
+
+export function getMarketingCampaigns(opts: ListOpts = {}): Promise<MarketingCampaignsResponse> {
+  const qs = buildQuery({ days: opts.days, includeIdle: opts.includeIdle ? 'true' : undefined });
+  return apiFetch<MarketingCampaignsResponse>(`/admin/marketing/campaigns${qs}`);
+}
+
+/* ------------------------------------------------------------------ format helpers ------ */
+
+/** CAD money with thousands separators; auto-shrinks to K/M for large sums. */
+export function fmtCad(v: number | null | undefined, opts: { compact?: boolean } = {}): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (opts.compact) {
+    if (Math.abs(v) >= 1_000_000) return `CAD ${(v / 1_000_000).toFixed(2)}M`;
+    if (Math.abs(v) >= 10_000) return `CAD ${(v / 1_000).toFixed(1)}K`;
+  }
+  return `CAD ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+/** Native-currency amount without conversion, used in the spend-tooltip line. */
+export function fmtNativeAmount(v: number | null | undefined, currency: string): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (Math.abs(v) >= 1_000_000) return `${currency} ${(v / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(v) >= 10_000) return `${currency} ${(v / 1_000).toFixed(1)}K`;
+  return `${currency} ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+export function fmtInt(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return v.toLocaleString();
+}
+
+export function fmtPct(v: number | null | undefined, digits = 1): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return `${(v * 100).toFixed(digits)}%`;
+}
+
+export function fmtRoas(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return `${v.toFixed(2)}x`;
+}

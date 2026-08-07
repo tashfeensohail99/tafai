@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { ApiKeysModule } from '../api-keys/api-keys.module';
 import { MetaAdsService } from './meta-ads.service';
 import { MetaAdsSyncService } from './meta-ads-sync.service';
+import { MetaHierarchyService } from './meta-hierarchy.service';
+import { MetaHierarchySyncService } from './meta-hierarchy-sync.service';
 import { MetaAdsController } from './meta-ads.controller';
 
 /**
@@ -13,8 +15,8 @@ import { MetaAdsController } from './meta-ads.controller';
  */
 @Module({
   imports: [ApiKeysModule],
-  providers: [MetaAdsService, MetaAdsSyncService],
+  providers: [MetaAdsService, MetaAdsSyncService, MetaHierarchyService, MetaHierarchySyncService],
   controllers: [MetaAdsController],
-  exports: [MetaAdsService],
+  exports: [MetaAdsService, MetaHierarchyService],
 })
 export class MetaAdsModule {}

@@ -907,6 +907,96 @@ model AdSpendDaily {
   @@schema("crm")
 }
 
+// --- Meta ad structure mirror (Phase 1C) -------------------------------------
+// Current-state snapshots of the campaign→ad-set→ad hierarchy, mirrored from the
+// Marketing API so the dashboard can browse structure + delivery state and so
+// CTWA leads (whose referral carries only an ad id) can resolve their ad-set and
+// campaign. Upserted by the Meta id; NOT time-series (spend history stays in
+// AdSpendDaily). Parent links are plain indexed Meta-id strings, not hard FKs —
+// mirrors ad_spend_daily and tolerates any sync ordering.
+
+/// A Meta ad campaign — top of the hierarchy.
+model MetaCampaign {
+  id              String    @id @default(uuid())
+  adAccountId     String // "act_1234567890"
+  campaignId      String    @unique // Meta campaign id
+  name            String?
+  /// The entity's own on/off toggle (ACTIVE / PAUSED / DELETED / ARCHIVED).
+  status          String?
+  /// Real delivery state — rolls up billing/account issues + review outcome.
+  effectiveStatus String?
+  objective       String?
+  /// Budgets in MAJOR units of `budgetCurrency` (Meta returns minor units; we
+  /// ÷100, valid for 2-decimal currencies — PKR/USD/CAD). Campaign-level budget
+  /// is set only under campaign-budget-optimization (CBO); otherwise null and
+  /// the budget lives on the ad sets.
+  dailyBudget     Decimal?  @db.Decimal(14, 2)
+  lifetimeBudget  Decimal?  @db.Decimal(14, 2)
+  budgetCurrency  String?
+  startTime       DateTime?
+  stopTime        DateTime?
+  syncedAt        DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([adAccountId])
+  @@index([effectiveStatus])
+  @@map("meta_campaigns")
+  @@schema("crm")
+}
+
+/// A Meta ad set — the targeting/budget unit under a campaign.
+model MetaAdSet {
+  id               String    @id @default(uuid())
+  adAccountId      String
+  adsetId          String    @unique // Meta ad set id
+  campaignId       String // parent Meta campaign id (indexed; no hard FK)
+  name             String?
+  status           String?
+  effectiveStatus  String?
+  optimizationGoal String?
+  billingEvent     String?
+  /// Budgets in MAJOR units of `budgetCurrency` (see MetaCampaign). Set here
+  /// under ad-set-budget-optimization (ABO); null when the campaign owns the
+  /// budget (CBO).
+  dailyBudget      Decimal?  @db.Decimal(14, 2)
+  lifetimeBudget   Decimal?  @db.Decimal(14, 2)
+  budgetCurrency   String?
+  startTime        DateTime?
+  endTime          DateTime?
+  syncedAt         DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([adAccountId])
+  @@index([campaignId])
+  @@index([effectiveStatus])
+  @@map("meta_ad_sets")
+  @@schema("crm")
+}
+
+/// A Meta ad — the leaf; its id is what CTWA referrals and ad spend join on.
+model MetaAd {
+  id              String    @id @default(uuid())
+  adAccountId     String
+  adId            String    @unique // Meta ad id — joins lead.metaAdId / adReferral.source_id / ad_spend_daily.adId
+  adsetId         String // parent Meta ad set id
+  campaignId      String // grandparent Meta campaign id
+  name            String?
+  status          String?
+  effectiveStatus String?
+  creativeId      String?
+  syncedAt        DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([adAccountId])
+  @@index([adsetId])
+  @@index([campaignId])
+  @@map("meta_ads")
+  @@schema("crm")
+}
+
 model Branch {
   id             String   @id @default(uuid())
   organizationId String

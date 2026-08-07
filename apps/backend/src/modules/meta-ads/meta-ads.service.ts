@@ -65,7 +65,7 @@ export class MetaAdsService {
     private readonly crypto: WhatsAppCryptoService,
   ) {}
 
-  private graphBase(): string {
+  graphBase(): string {
     const ver = this.config.get<string>('app.whatsapp.metaGraphApiVersion') ?? 'v21.0';
     return `https://graph.facebook.com/${ver}`;
   }
@@ -121,25 +121,34 @@ export class MetaAdsService {
     return d.toISOString().slice(0, 10);
   }
 
-  private async getJson(url: string, token: string): Promise<InsightsResponse | null> {
+  /**
+   * Generic authenticated GET against the Graph API. The token rides in the
+   * Authorization header (never the query string) so it never lands in a
+   * constructed URL or upstream access log. Returns the parsed body, or null on
+   * any HTTP / parse / network / timeout error (logged). Shared by the spend and
+   * hierarchy syncs so there is one Graph fetch path.
+   */
+  async graphGet<T = unknown>(url: string, token: string): Promise<T | null> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30_000);
     try {
-      // Token via Authorization header (not the query string) so it never
-      // lands in our constructed URLs / any upstream access log.
       const res = await fetch(url, { signal: ctrl.signal, headers: { Authorization: `Bearer ${token}` } });
-      const body = (await res.json().catch(() => null)) as InsightsResponse | null;
+      const body = (await res.json().catch(() => null)) as (T & { error?: unknown }) | null;
       if (!res.ok) {
-        this.log.error(`Insights ${res.status}: ${JSON.stringify(body?.error ?? body)}`);
+        this.log.error(`Graph ${res.status}: ${JSON.stringify(body?.error ?? body)}`);
         return null;
       }
       return body;
     } catch (e) {
-      this.log.error(`Insights fetch failed: ${(e as Error).message}`);
+      this.log.error(`Graph fetch failed: ${(e as Error).message}`);
       return null;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private getJson(url: string, token: string): Promise<InsightsResponse | null> {
+    return this.graphGet<InsightsResponse>(url, token);
   }
 
   /** Fetch per-ad daily spend rows for [since, until] (inclusive), following paging. */

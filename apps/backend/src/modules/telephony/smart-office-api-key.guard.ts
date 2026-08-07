@@ -3,10 +3,12 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
+import { deriveClientIp, isAllowed } from './smart-office-ip';
 
 /**
  * Guards the Telenor Smart Office call-routing endpoint
@@ -17,13 +19,18 @@ import type { Request } from 'express';
  * configured the endpoint is closed (401) rather than open.
  *
  * Optional defence-in-depth: when `TELENOR_SMART_OFFICE_ALLOWED_IPS` is set
- * (comma-separated exact IPs), the source IP must match one of them. Behind
- * Railway's proxy the real client IP is the first `X-Forwarded-For` hop, so we
- * check that, `req.ip`, and the socket address. Leave the env unset to skip the
- * IP check (key-only). Mirrors AttendanceApiKeyGuard.
+ * (comma-separated exact IPs and/or IPv4 CIDRs) the caller's address must match
+ * one of them. The address is derived by walking the X-Forwarded-For chain from
+ * the right and skipping our own infra hops — see deriveClientIp() for why a
+ * fixed hop count was wrong. Leave the env unset to skip the IP check
+ * (key-only). Every rejection is logged WITH the observed address and full
+ * chain: when an integration partner insists their IP is allow-listed, that log
+ * line is the only thing that settles it.
  */
 @Injectable()
 export class SmartOfficeApiKeyGuard implements CanActivate {
+  private readonly logger = new Logger(SmartOfficeApiKeyGuard.name);
+
   canActivate(context: ExecutionContext): boolean {
     const expected = process.env.TELENOR_SMART_OFFICE_API_KEY ?? '';
     if (!expected) {
@@ -47,21 +54,22 @@ export class SmartOfficeApiKeyGuard implements CanActivate {
       .map((s) => s.trim())
       .filter(Boolean);
     if (allow.length > 0) {
-      // Spoofing-resistant: trust only the hop our own proxy appended (the
-      // RIGHTMOST X-Forwarded-For entry) plus the transport-level peer — never
-      // arbitrary client-supplied entries earlier in the chain (a caller can
-      // forge "X-Forwarded-For: <allowed-ip>, <real>"). The API key is the
-      // primary control; this IP check is optional defence-in-depth, so verify
-      // the matched hop against real Telenor IPs when you enable it.
-      const xffHops = ((req.headers['x-forwarded-for'] as string | undefined) ?? '')
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const proxyAppended = xffHops.length > 0 ? xffHops[xffHops.length - 1] : '';
-      const candidates = [proxyAppended, req.ip ?? '', req.socket?.remoteAddress ?? ''].filter(
-        Boolean,
+      const { ip, chain } = deriveClientIp(
+        req.headers['x-forwarded-for'] as string | undefined,
+        req.ip,
+        req.socket?.remoteAddress,
       );
-      if (!candidates.some((ip) => allow.includes(ip))) {
+      if (!isAllowed(ip, allow)) {
+        // The key was valid, so this is a legitimate partner hitting us from an
+        // address we don't know about — log the evidence rather than leaving
+        // both sides guessing. Not logged to the response: the caller learns
+        // only that the IP was refused.
+        this.logger.warn(
+          `Smart Office IP refused: observed=${ip || '(none)'} ` +
+            `xff=[${chain.join(' -> ') || '(empty)'}] ` +
+            `socket=${req.socket?.remoteAddress ?? '(none)'} ` +
+            `allow=[${allow.join(',')}]`,
+        );
         throw new ForbiddenException('Source IP not allowed');
       }
     }

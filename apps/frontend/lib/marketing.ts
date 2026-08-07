@@ -123,6 +123,54 @@ export function getMarketingCampaigns(opts: ListOpts = {}): Promise<MarketingCam
   return apiFetch<MarketingCampaignsResponse>(`/admin/marketing/campaigns${qs}`);
 }
 
+/* ------------------------------------------------------------------ routing (1E) --- */
+
+export type AdRoutingTargetType = 'AD' | 'CAMPAIGN';
+
+export interface MarketingBranch {
+  id: string;
+  name: string;
+  city: string | null;
+  country: string | null;
+  employeeCount: number;
+}
+
+export interface AdRoutingRule {
+  id: string;
+  targetType: AdRoutingTargetType;
+  targetId: string;
+  branchIds: string[];
+  notes: string | null;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listRoutingBranches(): Promise<MarketingBranch[]> {
+  return apiFetch<MarketingBranch[]>('/admin/marketing/routing/branches');
+}
+
+export function listRoutingRules(): Promise<AdRoutingRule[]> {
+  return apiFetch<AdRoutingRule[]>('/admin/marketing/routing/rules');
+}
+
+export function upsertRoutingRule(input: {
+  targetType: AdRoutingTargetType;
+  targetId: string;
+  branchIds: string[];
+  notes?: string;
+}): Promise<AdRoutingRule> {
+  return apiFetch<AdRoutingRule>('/admin/marketing/routing/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteRoutingRule(id: string): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(`/admin/marketing/routing/rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
 /* ------------------------------------------------------------------ format helpers ------ */
 
 /** CAD money with thousands separators; auto-shrinks to K/M for large sums. */

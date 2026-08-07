@@ -123,6 +123,58 @@ export function getMarketingCampaigns(opts: ListOpts = {}): Promise<MarketingCam
   return apiFetch<MarketingCampaignsResponse>(`/admin/marketing/campaigns${qs}`);
 }
 
+/* ------------------------------------------------------------------ alerts + health (1F) --- */
+
+export type MarketingAlertSeverity = 'critical' | 'warning' | 'info';
+export type MarketingAlertType =
+  | 'AD_DISAPPROVED'
+  | 'AD_SPEND_NO_LEADS'
+  | 'CPL_SPIKE'
+  | 'NEW_UNROUTED_AD';
+
+export interface MarketingAlert {
+  key: string;
+  severity: MarketingAlertSeverity;
+  type: MarketingAlertType;
+  title: string;
+  description: string;
+  adId?: string | null;
+  adName?: string | null;
+  campaignName?: string | null;
+  metric?: { label: string; value: string } | null;
+  since?: string | null;
+}
+
+export type HealthPipeStatus = 'healthy' | 'warning' | 'stale' | 'error' | 'never';
+
+export interface HealthPipe {
+  key: string;
+  label: string;
+  status: HealthPipeStatus;
+  detail: string;
+  lastAt: string | null;
+  ageSeconds: number | null;
+  facts?: Array<{ label: string; value: string }>;
+}
+
+export interface MarketingHealth {
+  generatedAt: string;
+  pipes: HealthPipe[];
+  metaAccount: {
+    configured: boolean;
+    source: string | null;
+    accountId: string | null;
+  };
+}
+
+export function getMarketingAlerts(): Promise<MarketingAlert[]> {
+  return apiFetch<MarketingAlert[]>('/admin/marketing/alerts');
+}
+
+export function getMarketingHealth(): Promise<MarketingHealth> {
+  return apiFetch<MarketingHealth>('/admin/marketing/health');
+}
+
 /* ------------------------------------------------------------------ routing (1E) --- */
 
 export type AdRoutingTargetType = 'AD' | 'CAMPAIGN';

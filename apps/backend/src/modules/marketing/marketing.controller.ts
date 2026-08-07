@@ -5,6 +5,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import { MarketingService } from './marketing.service';
+import { MarketingAlertsService } from './alerts.service';
+import { MarketingHealthService } from './health.service';
 
 class WindowQuery {
   @IsOptional()
@@ -29,7 +31,11 @@ class ListQuery extends WindowQuery {
 @Controller('admin/marketing')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class MarketingController {
-  constructor(private readonly svc: MarketingService) {}
+  constructor(
+    private readonly svc: MarketingService,
+    private readonly alerts: MarketingAlertsService,
+    private readonly health: MarketingHealthService,
+  ) {}
 
   @Get('overview')
   @RequirePermissions('marketing.view')
@@ -47,5 +53,18 @@ export class MarketingController {
   @RequirePermissions('marketing.view')
   campaigns(@Query() q: ListQuery) {
     return this.svc.getCampaigns(q.days, q.includeIdle === 'true');
+  }
+
+  // Phase 1F — Alerts + Health, both read-only, both marketing.view.
+  @Get('alerts')
+  @RequirePermissions('marketing.view')
+  alertsList() {
+    return this.alerts.getAll();
+  }
+
+  @Get('health')
+  @RequirePermissions('marketing.view')
+  healthStatus() {
+    return this.health.getStatus();
   }
 }

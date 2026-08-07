@@ -1105,6 +1105,41 @@ export class WebhookIngestProcessor extends WorkerHost {
       return;
     }
 
+    // Durable ad attribution ON THE LEAD. The CTWA referral is stored on the
+    // thread above, but the thread↔lead link is onDelete:SetNull — when the lead
+    // converts to a client the thread detaches and that attribution orphans. So
+    // also stamp the ad onto the lead itself, where it survives conversion.
+    // First-touch wins: only if the lead has no ad yet, so the ad that GENERATED
+    // the lead is kept even if the contact later clicks another ad.
+    if (leadId && msg.referral?.source_id) {
+      const existing = await this.prisma.lead.findUnique({
+        where: { id: leadId },
+        select: { metaAdId: true },
+      });
+      if (existing && !existing.metaAdId) {
+        const adId = msg.referral.source_id;
+        // Best-effort enrichment from the spend cache — the ad name + campaign
+        // may not be synced yet; the ad id is the durable datum and the rest
+        // always re-derives from it (spend cache / hierarchy sync).
+        const spend = await this.prisma.adSpendDaily.findFirst({
+          where: { adId },
+          orderBy: { date: 'desc' },
+          select: { adName: true, campaignId: true, campaignName: true },
+        });
+        await this.prisma.lead.update({
+          where: { id: leadId },
+          data: {
+            metaSource: 'ctwa',
+            metaAdId: adId,
+            metaAdName: spend?.adName ?? null,
+            metaCampaignId: spend?.campaignId ?? null,
+            metaCampaignName: spend?.campaignName ?? null,
+            ctwaClid: msg.referral.ctwa_clid ?? null,
+          },
+        });
+      }
+    }
+
     const decoded = decodeIncoming(msg);
     const message = await this.prisma.whatsAppMessage.create({
       data: {

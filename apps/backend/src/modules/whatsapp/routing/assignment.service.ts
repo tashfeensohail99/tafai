@@ -43,44 +43,13 @@ import {
   type Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { AdRoutingRulesService } from '../../marketing/routing.service';
 import { computeSlaDeadline, type BusinessHours } from './business-hours';
 
-// ── Ad-specific routing (interim, hard-coded) ───────────────────────────────
-// New Click-to-WhatsApp chats from these Meta ads route ONLY to the Lahore
-// desk, never the whole round-robin pool. Keyed on the Meta ad id
-// (referral.source_id, captured on the thread as adReferral). Employee ids are
-// the production Lahore reps (verified 2026-07-30). This is a deliberate
-// stop-gap pending a manager-editable routing screen — to add/remove an ad edit
-// AD_ROUTING; to change the team edit LAHORE_DESK. Repeat customers already
-// owned by an eligible rep are untouched (the keep-check runs first), so this
-// only steers genuinely new / unassigned leads.
-const LAHORE_DESK: readonly string[] = [
-  '4d0802f0-30f5-469b-9279-e57536815c8e', // Tabida Bilal
-  '88016096-7b41-4c59-b6e7-a6d8bca2908f', // Samiya Aslam
-  '2faaef9e-8583-43bc-92d4-b739dd1d8ab5', // Rubab
-  '1a0b7967-e27e-431a-9efd-f4dfe923c779', // Ifra Qaiser Mehmood
-  '1beff9a3-8f13-4669-8faf-03325a3735e0', // Noman Gondal
-  '6439a4ca-3626-4ba8-a274-610719acf2c4', // Aqsa Sadiq
-];
-const AD_ROUTING: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  // "Turn Your Visa Refusal into Approval by Judicial Review" (JR) — confirmed live.
-  ['52533803620533', new Set(LAHORE_DESK)],
-  // "C11" ad id exactly as provided (no chats delivered under it yet).
-  ['52531891901333', new Set(LAHORE_DESK)],
-  // "Business Permit to Canada PR" — the C11-theme ad actually delivering
-  // (408 chats 2026-07-23→29); one digit-cluster off the id above, almost
-  // certainly the same ad. Keyed too so routing works whichever id Meta sends.
-  ['52531891900933', new Set(LAHORE_DESK)],
-]);
-
-/** The fixed sub-team a Click-to-WhatsApp referral must route to, or null when
- *  the ad has no override (→ normal whole-pool round-robin). */
-function adTeamForReferral(adReferral: unknown): ReadonlySet<string> | null {
-  if (!adReferral || typeof adReferral !== 'object' || Array.isArray(adReferral)) return null;
-  const sid = (adReferral as Record<string, unknown>)['source_id'];
-  if (typeof sid !== 'string') return null;
-  return AD_ROUTING.get(sid) ?? null;
-}
+// Ad-specific routing was a hard-coded LAHORE_DESK+AD_ROUTING map until Phase
+// 1E. The map now lives in `crm.ad_routing_rules` and is administered from
+// /marketing/routing; assignment consumes it via AdRoutingRulesService
+// (60s in-memory cache, invalidated on write). See routing.service.ts.
 
 export interface AssignmentOutcome {
   leadId: string;
@@ -149,7 +118,10 @@ export const createAssignmentCache = (): AssignmentCache => ({
 export class WhatsAppAssignmentService {
   private readonly log = new Logger(WhatsAppAssignmentService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly routingRules: AdRoutingRulesService,
+  ) {}
 
   /**
    * Ensure the lead behind a WhatsApp thread is assigned to an eligible
@@ -250,11 +222,11 @@ export class WhatsAppAssignmentService {
       );
     }
 
-    // Ad-specific routing: chats from certain Click-to-WhatsApp ads must be
-    // assigned ONLY within a fixed sub-team (the Lahore desk), never the whole
-    // pool. Keyed on the Meta ad id (referral.source_id). NOT applied to live
-    // calls — a call must still ring the next available rep anywhere.
-    const adTeam = opts?.forLiveCall ? null : adTeamForReferral(thread.adReferral);
+    // Ad-specific routing: chats from certain Click-to-WhatsApp ads may be
+    // pinned to a sub-team (e.g. Lahore-only) via editable rules in
+    // crm.ad_routing_rules — see AdRoutingRulesService. Not applied to live
+    // calls: a call must still ring the next available rep anywhere.
+    const adTeam = opts?.forLiveCall ? null : await this.routingRules.teamForReferral(thread.adReferral);
     const basePool = adTeam ? eligible.filter((e) => adTeam.has(e.id)) : eligible;
 
     // NEW-lead pool = basePool restricted to ONLINE (Away/Offline agents don't

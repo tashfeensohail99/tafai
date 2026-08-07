@@ -975,6 +975,40 @@ model MetaAdSet {
   @@schema("crm")
 }
 
+/// Editable ad-routing rule (Phase 1E) — replaces the hardcoded AD_ROUTING map
+/// at the assignment seam. One rule pins one Meta ad (or one Meta campaign) to
+/// a subset of Branches; a new Click-to-WhatsApp lead from that ad is round-
+/// robined ONLY within the employees who belong to those branches. Ads with
+/// no rule fall through to the whole-pool default.
+///
+/// `targetId` is the Meta ad id or Meta campaign id (matches `metaAdId` or
+/// `metaCampaignId` on Lead). `branchIds` is a subset of `core.branches.id`
+/// (empty is invalid — represent "no restriction" by simply not creating a
+/// rule). Ad rules win over campaign rules when both match (checked in that
+/// order at assignment time).
+model AdRoutingRule {
+  id              String              @id @default(uuid())
+  targetType      AdRoutingTargetType
+  targetId        String
+  branchIds       String[]
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@unique([targetType, targetId])
+  @@index([targetType])
+  @@map("ad_routing_rules")
+  @@schema("crm")
+}
+
+enum AdRoutingTargetType {
+  AD
+  CAMPAIGN
+
+  @@schema("crm")
+}
+
 /// A Meta ad — the leaf; its id is what CTWA referrals and ad spend join on.
 model MetaAd {
   id              String    @id @default(uuid())

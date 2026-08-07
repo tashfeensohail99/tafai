@@ -264,6 +264,189 @@ export class LeadsService {
     return rows.map((r) => r.id);
   }
 
+  /**
+   * ADMIN search-and-reassign: find a person by ANY identifier, no matter what
+   * state their record is in.
+   *
+   * Reassignment used to be possible only from a WhatsApp conversation, which
+   * silently excluded everyone without a thread — CSV imports, never-contacted
+   * leads, and anything junked or soft-deleted. Those are precisely the records
+   * that end up on the wrong rep and stay there, because nobody can reach them
+   * to fix it.
+   *
+   * So this deliberately applies NO status filter and NO `deletedAt` filter.
+   * Junked and deleted rows come back too, flagged, because an admin cannot
+   * reassign what the search refuses to show. Ordering puts live records first
+   * so the normal case stays at the top.
+   */
+  async adminSearch(
+    term: string,
+    opts: {
+      status?: LeadStatus;
+      source?: string;
+      assignedEmployeeId?: string;
+      /** include = everything (default), exclude = live only, only = junk/deleted only */
+      deleted?: 'include' | 'exclude' | 'only';
+      limit?: number;
+    } = {},
+  ) {
+    const limit = opts.limit ?? 50;
+    const t = (term ?? '').trim();
+    // A filter-only query (e.g. "show me every junked walk-in") is legitimate and
+    // needs no search term; only a 1-char term is rejected as too broad.
+    const hasFilter = !!(opts.status || opts.source || opts.assignedEmployeeId || opts.deleted === 'only');
+    if (t.length < 2 && !hasFilter) return { items: [], truncated: false, sources: [] };
+
+    const digits = t.replace(/\D/g, '');
+    const like = `%${t}%`;
+
+    // Phone and converted-client-name matches need raw SQL (digits-only
+    // comparison; a join Prisma can't express in one where-clause). Both
+    // intentionally omit the deletedAt guard the normal search applies.
+    const [phoneRows, clientRows] = await Promise.all([
+      digits.length >= 4
+        ? this.prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT id FROM crm.leads
+            WHERE regexp_replace(phone, '[^0-9]', '', 'g') LIKE ${`%${digits}%`}
+            LIMIT 200`
+        : Promise.resolve([]),
+      this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT l.id FROM crm.leads l
+        JOIN crm.clients c ON c.id = l."convertedClientId"
+        WHERE c."firstName" ILIKE ${like}
+           OR c."lastName" ILIKE ${like}
+           OR (c."firstName" || ' ' || c."lastName") ILIKE ${like}
+        LIMIT 200`,
+    ]);
+    const idMatches = [...new Set([...phoneRows, ...clientRows].map((r) => r.id))];
+
+    const where: Prisma.LeadWhereInput = {
+      ...(t.length >= 2
+        ? {
+            OR: [
+              { firstName: { contains: t, mode: 'insensitive' as const } },
+              { lastName: { contains: t, mode: 'insensitive' as const } },
+              { email: { contains: t, mode: 'insensitive' as const } },
+              { phone: { contains: t, mode: 'insensitive' as const } },
+              ...(idMatches.length ? [{ id: { in: idMatches } }] : []),
+            ],
+          }
+        : {}),
+      ...(opts.status ? { status: opts.status } : {}),
+      ...(opts.source
+        ? { sourceChannel: { equals: opts.source, mode: 'insensitive' as const } }
+        : {}),
+      ...(opts.assignedEmployeeId
+        ? opts.assignedEmployeeId === 'UNASSIGNED'
+          ? { assignedEmployeeId: null }
+          : { assignedEmployeeId: opts.assignedEmployeeId }
+        : {}),
+      // Default is 'include' — showing junked/deleted rows is the whole point.
+      ...(opts.deleted === 'exclude'
+        ? { deletedAt: null }
+        : opts.deleted === 'only'
+          ? { deletedAt: { not: null } }
+          : {}),
+    };
+
+    const rows = await this.prisma.lead.findMany({
+      where,
+      // Live rows first, then most recently touched — a junked duplicate should
+      // never outrank the real record it shadows.
+      orderBy: [{ deletedAt: 'asc' }, { updatedAt: 'desc' }],
+      take: limit + 1,
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        status: true,
+        sourceChannel: true,
+        deletedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        convertedClientId: true,
+        assignedEmployeeId: true,
+        assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+
+    // `convertedClientId` is a plain scalar (no relation on Lead), so the client
+    // names come from one follow-up query rather than an include.
+    const clientIds = [...new Set(rows.map((r) => r.convertedClientId).filter((x): x is string => !!x))];
+    const clients = clientIds.length
+      ? await this.prisma.client.findMany({
+          where: { id: { in: clientIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+
+    const truncated = rows.length > limit;
+    const items = rows.slice(0, limit).map((l) => {
+      // After conversion the CLIENT record carries the corrected name (passport
+      // auto-fill, Processing edits) and never syncs back to the lead — show it
+      // so the admin sees the name they searched for.
+      const client = l.convertedClientId ? clientById.get(l.convertedClientId) : null;
+      return {
+        id: l.id,
+        name: [l.firstName, l.lastName].filter(Boolean).join(' ').trim() || '(no name)',
+        clientName: client ? `${client.firstName} ${client.lastName ?? ''}`.trim() : null,
+        phone: l.phone,
+        email: l.email,
+        status: l.status,
+        source: l.sourceChannel,
+        isDeleted: !!l.deletedAt,
+        isConverted: !!l.convertedClientId,
+        createdAt: l.createdAt,
+        updatedAt: l.updatedAt,
+        assignedEmployeeId: l.assignedEmployeeId,
+        assignedEmployeeName: l.assignedEmployee
+          ? `${l.assignedEmployee.firstName} ${l.assignedEmployee.lastName ?? ''}`.trim()
+          : null,
+      };
+    });
+    // Distinct sources so the page can offer a real dropdown (walk-in, CSV,
+    // WhatsApp, Meta ad, ...) instead of asking the admin to type the exact
+    // string. sourceChannel is free text, so this is the only honest list.
+    const sourceRows = await this.prisma.lead.findMany({
+      where: { sourceChannel: { not: null } },
+      select: { sourceChannel: true },
+      distinct: ['sourceChannel'],
+      take: 100,
+    });
+    const sources = sourceRows
+      .map((r) => r.sourceChannel)
+      .filter((s): s is string => !!s)
+      .sort((a, b) => a.localeCompare(b));
+
+    return { items, truncated, sources };
+  }
+
+  /**
+   * Who has owned this lead, and when — so an admin can see the churn before
+   * adding to it. Reads the LEAD_ASSIGNED timeline events the assign path
+   * already writes, so there is no new bookkeeping to keep in sync.
+   */
+  async assignmentHistory(id: string) {
+    const events = await this.prisma.activityTimeline.findMany({
+      where: { leadId: id, eventType: TimelineEventType.LEAD_ASSIGNED },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+      select: { id: true, createdAt: true, description: true, metadata: true, actorUserId: true },
+    });
+    return events.map((e: { id: string; createdAt: Date; description: string | null; metadata: unknown }) => {
+      const meta = (e.metadata ?? {}) as { assignedEmployeeName?: string | null };
+      return {
+        id: e.id,
+        at: e.createdAt,
+        toEmployeeName: meta.assignedEmployeeName ?? null,
+        description: e.description,
+      };
+    });
+  }
+
   async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
     const canViewAll = user.permissions.includes('leads.view_all');
     // Resolved before the where-clause is built: a phone term has to become a

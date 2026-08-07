@@ -310,28 +310,40 @@ export class LeadsService {
             },
           }
         : {}),
-      ...(!canViewAll
-        ? {
-            OR: [
-              { assignedEmployee: { userId: user.id } },
-              { createdByUserId: user.id },
-            ],
-          }
-        : {}),
-      ...(query.search
-        ? {
-            OR: [
-              { firstName: { contains: query.search, mode: 'insensitive' } },
-              { lastName: { contains: query.search, mode: 'insensitive' } },
-              { email: { contains: query.search, mode: 'insensitive' } },
-              // Raw substring kept so a partial number still behaves as before;
-              // the id term below is what makes 0321… find a stored +92321….
-              { phone: { contains: query.search, mode: 'insensitive' } },
-              ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
-              ...(clientNameIds.length ? [{ id: { in: clientNameIds } }] : []),
-            ],
-          }
-        : {}),
+      // Rep-scope AND search each need their own OR group — and BOTH must hold.
+      // They go inside a single `AND` array, NOT as two sibling `OR:` keys on
+      // this object: object spread means a second `OR:` key silently CLOBBERS
+      // the first, so `{...repScopeOR, ...searchOR}` would drop the rep scope and
+      // let a `view_assigned` rep search across EVERY rep's leads. Access
+      // scoping must survive a search — an agent only ever sees their own book.
+      AND: [
+        ...(!canViewAll
+          ? [
+              {
+                OR: [
+                  { assignedEmployee: { userId: user.id } },
+                  { createdByUserId: user.id },
+                ],
+              } satisfies Prisma.LeadWhereInput,
+            ]
+          : []),
+        ...(query.search
+          ? [
+              {
+                OR: [
+                  { firstName: { contains: query.search, mode: 'insensitive' } },
+                  { lastName: { contains: query.search, mode: 'insensitive' } },
+                  { email: { contains: query.search, mode: 'insensitive' } },
+                  // Raw substring kept so a partial number still behaves as
+                  // before; the id term makes 0321… find a stored +92321….
+                  { phone: { contains: query.search, mode: 'insensitive' } },
+                  ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
+                  ...(clientNameIds.length ? [{ id: { in: clientNameIds } }] : []),
+                ],
+              } satisfies Prisma.LeadWhereInput,
+            ]
+          : []),
+      ],
     };
 
     // Ad filters require a join through the WhatsApp thread's JSON referral —

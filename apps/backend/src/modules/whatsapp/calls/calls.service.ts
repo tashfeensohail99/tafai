@@ -375,6 +375,10 @@ export class WhatsAppCallsService {
       bytesReceived?: number;
       networkType?: string;
       clientPlatform?: string;
+      dtlsState?: string;
+      iceConnectionState?: string;
+      connectionState?: string;
+      deadAudioDetected?: boolean;
     },
     userId: string,
   ): Promise<{ ok: boolean }> {
@@ -410,6 +414,31 @@ export class WhatsAppCallsService {
     const VALID_PLATFORMS = ['web', 'android', 'ios'];
     if (typeof dto.clientPlatform === 'string' && VALID_PLATFORMS.includes(dto.clientPlatform)) {
       data.clientPlatform = dto.clientPlatform;
+    }
+    // WebRTC transport states — the missing middle of the dead-audio picture.
+    // A healthy RTT already told us ICE checks passed; these say whether DTLS
+    // and the peer connection got there too, so a zero-audio call points at its
+    // own broken step instead of leaving us to reason backwards from zeros.
+    const VALID_DTLS = ['new', 'connecting', 'connected', 'closed', 'failed'];
+    const VALID_ICE_CONN = ['new', 'checking', 'connected', 'completed', 'disconnected', 'failed', 'closed'];
+    const VALID_PC_CONN = ['new', 'connecting', 'connected', 'disconnected', 'failed', 'closed'];
+    if (typeof dto.dtlsState === 'string' && VALID_DTLS.includes(dto.dtlsState)) {
+      data.dtlsState = dto.dtlsState;
+    }
+    if (typeof dto.iceConnectionState === 'string' && VALID_ICE_CONN.includes(dto.iceConnectionState)) {
+      data.iceConnectionState = dto.iceConnectionState;
+    }
+    if (typeof dto.connectionState === 'string' && VALID_PC_CONN.includes(dto.connectionState)) {
+      data.connectionState = dto.connectionState;
+    }
+    // Latch-once: the watchdog re-posts on every 15s CDR sample, and we want the
+    // moment the fault was FIRST seen, not the moment of the last sample.
+    if (dto.deadAudioDetected === true) {
+      const already = await this.prisma.whatsAppCall.findUnique({
+        where: { id },
+        select: { deadAudioDetectedAt: true },
+      });
+      if (already && !already.deadAudioDetectedAt) data.deadAudioDetectedAt = new Date();
     }
     if (Object.keys(data).length === 0) return { ok: true };
     // Scoped to the person on the call so one employee can't pollute another

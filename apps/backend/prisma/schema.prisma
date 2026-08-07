@@ -3981,6 +3981,25 @@ model WhatsAppCall {
   // clientPlatform ∈ web|android|ios (also splits app vs browser calls).
   networkType          String?
   clientPlatform       String?
+  // --- Where the media path actually broke -------------------------------
+  // 7% of answered calls carry ZERO audio in both directions while reporting a
+  // perfectly healthy RTT — so ICE connectivity checks were passing and the
+  // network path existed. That rules the network out and points at the step
+  // after it, but the CDR could not say which. These three record the WebRTC
+  // transport states at CDR time so a dead call names its own failure point:
+  //   dtlsState          ∈ new|connecting|connected|closed|failed
+  //   iceConnectionState ∈ new|checking|connected|completed|disconnected|failed|closed
+  //   connectionState    ∈ new|connecting|connected|disconnected|failed|closed
+  // A dead call showing ice=connected + dtls=connecting is a stalled DTLS
+  // handshake; ice=connected + dtls=connected would instead mean the media
+  // pipeline (audio session / tracks) is at fault, not the transport.
+  dtlsState            String?
+  iceConnectionState   String?
+  connectionState      String?
+  // Set when the client's own watchdog saw zero inbound audio while the peer
+  // was connected — i.e. we detected the fault DURING the call rather than
+  // inferring it afterwards from the byte counters.
+  deadAudioDetectedAt  DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

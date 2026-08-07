@@ -67,16 +67,23 @@ export function isInfraHop(ip: string): boolean {
 }
 
 /**
- * Derive the caller's real IP from the proxy chain.
+ * Derive the caller's real IP.
  *
- * X-Forwarded-For grows left-to-right, each proxy APPENDING the peer it heard
- * from. So the rightmost entries are our own infra and the caller's true
- * address is the RIGHTMOST PUBLIC one. Walking from the right and skipping
- * infra hops is spoofing-resistant: anything the caller forges necessarily sits
- * to the LEFT of the address our edge observed for them.
+ * `reqIp` is Express's own proxyaddr result, which walks the X-Forwarded-For
+ * chain using the `trust proxy` hop count set in main.ts. That is the value to
+ * trust, and getting the hop count right is what makes it forgery-proof —
+ * anything a caller writes into the header lands to the LEFT of the address our
+ * edge observed, so the walk steps past it.
  *
- * This is why a fixed hop count was the wrong tool — it silently breaks the
- * moment the platform inserts another internal hop.
+ * Do NOT reimplement the walk here. An earlier version of this file took the
+ * rightmost non-private hop on the theory that our own infra is always on
+ * private space. Production says otherwise: Railway's edge sits on a PUBLIC
+ * address (measured: `<caller> -> 152.233.15.120`, socket 100.64.0.8), so that
+ * heuristic returned the edge and refused every caller — the very bug it was
+ * written to fix. One source of truth, configured once.
+ *
+ * The fallback below only runs when `reqIp` is absent (a non-Express context or
+ * a direct socket call), and is deliberately conservative.
  */
 export function deriveClientIp(
   xForwardedFor: string | undefined,
@@ -87,12 +94,13 @@ export function deriveClientIp(
     .split(',')
     .map((s) => normalizeIp(s))
     .filter(Boolean);
-  for (let i = chain.length - 1; i >= 0; i -= 1) {
-    if (!isInfraHop(chain[i])) return { ip: chain[i], chain };
-  }
-  // No public hop in the chain (or no XFF at all) — fall back to what the
-  // framework and the socket report, in that order.
-  const fallback = [normalizeIp(reqIp ?? ''), normalizeIp(socketAddress ?? '')].find(Boolean) ?? '';
+
+  const resolved = normalizeIp(reqIp ?? '');
+  if (resolved) return { ip: resolved, chain };
+
+  // No framework-resolved address: prefer the leftmost chain entry (the only
+  // candidate for a caller when we cannot count hops), else the socket peer.
+  const fallback = chain.find((hop) => !isInfraHop(hop)) ?? normalizeIp(socketAddress ?? '');
   return { ip: fallback, chain };
 }
 

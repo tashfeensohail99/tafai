@@ -54,6 +54,8 @@ class CallController extends StateNotifier<CallState> {
   Timer? _disconnectGrace; // transient media drop — give ICE time to recover
   Timer? _heartbeat; // 15s liveness ping so the backend can free a dead leg
   String? _heartbeatCallId; // snapshot so a late tick can't ping a stale call
+  Timer? _deadAudioWatch; // connected but silent? catch it while the rep is still on
+  bool _deadAudioSeen = false; // latched, so the CDR reports it even after recovery
 
   // Recording (best-effort; never breaks the call).
   AudioRecorder? _recorder;
@@ -815,6 +817,7 @@ class CallController extends StateNotifier<CallState> {
     // dock does the same; mobile posted NO CDR before this, so app calls were
     // invisible in the quality data (exactly the reps we most need to see).
     unawaited(_postStats());
+    _armDeadAudioWatch();
     _beginRecording();
   }
 
@@ -905,6 +908,54 @@ class CallController extends StateNotifier<CallState> {
     }
   }
 
+  /// `RTCPeerConnectionStateConnected` → `connected` — the plain spec names the
+  /// backend whitelists, rather than flutter_webrtc's prefixed enum names.
+  static String? _plainState(String? raw, String prefix) {
+    if (raw == null || raw.isEmpty) return null;
+    final s = raw.startsWith(prefix) ? raw.substring(prefix.length) : raw;
+    return s.isEmpty ? null : s[0].toLowerCase() + s.substring(1);
+  }
+
+  /// Connected, but is any audio actually arriving?
+  ///
+  /// ICE reports "connected" on the strength of STUN checks alone. If DTLS then
+  /// stalls there are no SRTP keys, so neither side sends and the call is dead
+  /// both ways while every network metric looks perfect — 7% of answered calls,
+  /// 54 of them in the last 30 days.
+  ///
+  /// We cannot repair it: Meta's call API exposes only pre_accept / accept /
+  /// reject / terminate, with no renegotiation action, so an ICE restart is not
+  /// available to us. What we can do is stop the rep sitting in silence
+  /// wondering whether the client can hear them — say so within seconds, and
+  /// stamp the CDR so the failure is measurable instead of anecdotal.
+  void _armDeadAudioWatch() {
+    _deadAudioWatch?.cancel();
+    _deadAudioWatch = Timer(const Duration(seconds: 6), () async {
+      final pc = _pc;
+      if (pc == null || state.phase != CallPhase.inCall) return;
+      try {
+        final reports = await pc.getStats();
+        // Teardown or a newer call may have run during the await.
+        if (!identical(pc, _pc) || state.phase != CallPhase.inCall) return;
+        var recv = 0;
+        for (final r in reports) {
+          final kind = r.values['kind'] ?? r.values['mediaType'];
+          if (r.type == 'inbound-rtp' && kind == 'audio') {
+            final b = r.values['bytesReceived'];
+            if (b is num) recv = b.round();
+          }
+        }
+        if (recv > 0) return; // audio is flowing — nothing to warn about
+        _deadAudioSeen = true;
+        _log('dead audio: 6s connected, 0 bytes received');
+        state = state.copyWith(errorText: 'No audio on this call — end it and dial again.');
+        unawaited(_postStats()); // stamps deadAudioDetectedAt + transport states
+      } catch (e) {
+        _log('dead-audio watch failed (soft): $e');
+      }
+    });
+  }
+
   /// Read a compact quality snapshot from the live peer (selected ICE path, RTT,
   /// jitter, loss, bytes) — mirrors the web dock's sampleStats — cache it, and
   /// POST it with the rep's network + platform. Fully guarded.
@@ -922,8 +973,18 @@ class CallController extends StateNotifier<CallState> {
           sawTransport = true;
           final sel = r.values['selectedCandidatePairId'];
           if (sel is String) pairId = sel;
+          // Where the media path broke. A healthy RTT only proves ICE checks
+          // passed; if DTLS never finished there are no SRTP keys, so neither
+          // side sends and the call is silent both ways with the network
+          // looking perfect. That is the 7% we could not previously explain.
+          final dtls = r.values['dtlsState'];
+          if (dtls is String) snap['dtlsState'] = dtls;
         }
       }
+      snap['connectionState'] = _plainState(pc.connectionState?.name, 'RTCPeerConnectionState');
+      snap['iceConnectionState'] =
+          _plainState(pc.iceConnectionState?.name, 'RTCIceConnectionState');
+      if (_deadAudioSeen) snap['deadAudioDetected'] = true;
       String? selectedLocalId;
       for (final r in reports) {
         final v = r.values;
@@ -1099,6 +1160,9 @@ class CallController extends StateNotifier<CallState> {
     _tick?.cancel();
     _disconnectGrace?.cancel();
     _heartbeat?.cancel();
+    _deadAudioWatch?.cancel();
+    _deadAudioWatch = null;
+    _deadAudioSeen = false;
     _ringTimeout = null;
     _dialTimeout = null;
     _connectWatchdog = null;

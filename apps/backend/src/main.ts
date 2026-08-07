@@ -19,14 +19,29 @@ async function bootstrap(): Promise<void> {
   // 5/min cap never tripped (verified in production: 7 rapid posts, 7×201,
   // with x-ratelimit-remaining stuck at 4).
   //
-  // The hop count matters. `1` means "one trusted proxy in front of us", so
-  // Express walks back exactly one entry of X-Forwarded-For. That yields the
-  // address Railway itself observed, which a caller cannot forge. Trusting the
-  // whole chain (`true`) would take the LEFTMOST, caller-supplied entry and
-  // hand any script a free throttle bypass — worse than no limiter, because it
-  // would look like one is working. Revisit this number if another proxy (e.g.
-  // Cloudflare) is ever put in front; it must equal the number of hops.
-  app.set('trust proxy', 1);
+  // The hop count matters, and it must EQUAL the number of proxies in front of
+  // us. Trusting the whole chain (`true`) would take the LEFTMOST,
+  // caller-supplied entry and hand any script a free throttle bypass. Trusting
+  // too FEW is just as wrong in the other direction: it yields one of our own
+  // proxies, identical for every caller.
+  //
+  // MEASURED on production 2026-08-07 (one real request, logged end to end):
+  //   X-Forwarded-For: <caller> -> 152.233.15.120
+  //   socket.remoteAddress: 100.64.0.8
+  // So there are TWO hops — Railway's edge (which appends the caller and is on
+  // a PUBLIC address) and an internal router on CGNAT space. With `1` we were
+  // resolving `req.ip` to the edge, 152.233.15.120, for EVERY request. That
+  // made the Telenor IP allow-list refuse all callers, collapsed the throttler
+  // into a single global bucket (the 5/min public lead-form cap applied to the
+  // whole internet at once, not per caller), and recorded the same useless
+  // address on every audit row and login session.
+  //
+  // `2` is still forgery-proof: anything a caller puts in the header lands to
+  // the LEFT of what Railway's edge observed, so Express walks past it. If all
+  // entries end up trusted (a shorter chain) proxyaddr returns the leftmost,
+  // which is the caller — so over-counting degrades gracefully, under-counting
+  // does not. Override without a code change if Railway's topology shifts.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 2));
 
   // gzip every response big enough to be worth it. Measured on real prod rows:
   // one 30-row mobile inbox page is 82,741 bytes uncompressed and 17,367 gzipped

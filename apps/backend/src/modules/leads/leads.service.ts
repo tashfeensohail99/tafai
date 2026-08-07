@@ -297,17 +297,27 @@ export class LeadsService {
     const hasFilter = !!(opts.status || opts.source || opts.assignedEmployeeId || opts.deleted === 'only');
     if (t.length < 2 && !hasFilter) return { items: [], truncated: false, sources: [] };
 
-    const digits = t.replace(/\D/g, '');
     const like = `%${t}%`;
 
-    // Phone and converted-client-name matches need raw SQL (digits-only
-    // comparison; a join Prisma can't express in one where-clause). Both
-    // intentionally omit the deletedAt guard the normal search applies.
+    // Phone match: +923488942524 and 03488942524 are the SAME number, and a
+    // rep may have saved it in either form. phoneSearchCandidates collapses the
+    // term to its national significant number and expands to every equivalent
+    // form ({nsn, 0+nsn, 92+nsn, 920+nsn, raw}); the exact IN on the digits
+    // expression uses leads_phone_digits_idx. An unanchored digits LIKE would
+    // reintroduce the 21s full-table regex scan we indexed away, AND still miss
+    // the 0↔92 bridge. Returns [] for non-phone terms, so a name search skips
+    // this. NO deletedAt guard (unlike phoneSearchLeadIds) — admin search must
+    // reach junked/deleted rows too.
+    const phoneCandidates = phoneSearchCandidates(t);
+
+    // Phone (cross-format) and converted-client-name matches resolve to lead
+    // ids folded into the OR below. The client join can't be expressed in a
+    // single Prisma where-clause; both intentionally omit the deletedAt guard.
     const [phoneRows, clientRows] = await Promise.all([
-      digits.length >= 4
+      phoneCandidates.length
         ? this.prisma.$queryRaw<Array<{ id: string }>>`
             SELECT id FROM crm.leads
-            WHERE regexp_replace(phone, '[^0-9]', '', 'g') LIKE ${`%${digits}%`}
+            WHERE regexp_replace(phone, '[^0-9]', '', 'g') IN (${Prisma.join(phoneCandidates)})
             LIMIT 200`
         : Promise.resolve([]),
       this.prisma.$queryRaw<Array<{ id: string }>>`

@@ -145,6 +145,17 @@ export class MetaLeadsService {
           notes: mapped.notes,
           sourceChannel: 'meta-lead-form',
           status: LeadStatus.NEW,
+          // Durable ad attribution on the lead itself (mirrors the CTWA path).
+          // Lead Ads carry the full chain from Graph, so all levels are filled.
+          metaSource: 'lead-form',
+          metaAdId: submission.adId,
+          metaAdName: submission.adName,
+          metaAdsetId: submission.adsetId,
+          metaAdsetName: submission.adsetName,
+          metaCampaignId: submission.campaignId,
+          metaCampaignName: submission.campaignName,
+          metaFormId: submission.formId,
+          metaLeadId: submission.leadgenId,
           ...(assigneeId ? { assignedEmployeeId: assigneeId, preferredEmployeeId: assigneeId } : {}),
           ...(branch ? { branchId: branch.id } : {}),
           metaSubmissions: { create: { ...submission } },

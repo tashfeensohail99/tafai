@@ -1,3 +1,4 @@
+import { LeadStatus } from '@prisma/client';
 import {
   Body,
   Controller,
@@ -157,6 +158,32 @@ export class LeadsController {
     sendCsvDownload(res, `leads-${todayStamp()}.csv`, csv);
   }
 
+  /**
+   * Admin search-and-reassign. Finds a person in ANY state — including junked
+   * and soft-deleted rows the normal list hides — because those are exactly the
+   * ones stuck on the wrong rep with no way to reach them. Gated on
+   * leads.assign: seeing every record is only useful to someone who can act on
+   * it, and that is the same authority the reassign itself requires.
+   *
+   * Mounted before @Get(':id') so 'admin-search' isn't parsed as a UUID.
+   */
+  @Get('admin-search')
+  @RequirePermissions('leads.assign')
+  adminSearch(
+    @Query('q') q: string,
+    @Query('status') status?: LeadStatus,
+    @Query('source') source?: string,
+    @Query('assignedEmployeeId') assignedEmployeeId?: string,
+    @Query('deleted') deleted?: 'include' | 'exclude' | 'only',
+  ) {
+    return this.leadsService.adminSearch(q ?? '', {
+      status,
+      source,
+      assignedEmployeeId,
+      deleted,
+    });
+  }
+
   @Get(':id')
   @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
   findById(
@@ -170,6 +197,12 @@ export class LeadsController {
   @RequirePermissions('leads.create')
   create(@Body() dto: CreateLeadDto, @CurrentUser() user: RequestUser) {
     return this.leadsService.create(dto, user.id);
+  }
+
+  @Get(':id/assignment-history')
+  @RequirePermissions('leads.assign')
+  assignmentHistory(@Param('id', ParseUUIDPipe) id: string) {
+    return this.leadsService.assignmentHistory(id);
   }
 
   @Post(':id/assign')

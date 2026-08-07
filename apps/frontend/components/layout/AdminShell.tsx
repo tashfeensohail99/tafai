@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  ArrowRightLeft,
   BadgeDollarSign,
   BookOpenText,
   BriefcaseBusiness,
@@ -102,6 +103,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
     items: [
       { label: 'Sales overview', href: '/admin/sales', icon: Users, caption: 'Per-agent KPIs', permissionKey: 'reports.view' },
       { label: 'Leads', href: '/admin/leads', icon: Users, caption: 'All inbound', permissionKey: 'leads.view_all' },
+      { label: 'Search & Reassign', href: '/admin/reassign', icon: ArrowRightLeft, caption: 'Find any lead → move rep', permissionKey: 'leads.assign' },
       { label: 'Ads', href: '/admin/ads', icon: Megaphone, caption: 'Meta ad spend → leads', permissionKey: 'leads.view_all' },
       { label: 'Lead Imports', href: '/admin/lead-imports', icon: FileSpreadsheet, caption: 'CSV/Excel bulk upload', permissionKey: 'leads.create' },
       { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageSquare, caption: 'All conversations', permissionKey: 'whatsapp.view_all_inboxes' },

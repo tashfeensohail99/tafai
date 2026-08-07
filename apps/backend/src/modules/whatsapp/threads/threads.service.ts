@@ -637,23 +637,32 @@ export class WhatsAppThreadsService {
     if (q.length < 2) return { items: [] };
     const take = Math.min(Math.max(limit, 1), 50);
 
-    // Scope EXACTLY like the inbox LIST (NOT the looser per-thread-open scope):
-    //   admin   → everything
+    // Scope EXACTLY like the inbox LIST (NOT the looser per-thread-open scope),
+    // as a thread-level clause (mirrors list()):
+    //   admin   → no constraint (just hide soft-deleted leads' threads)
     //   finance → only leads with a non-DRAFT agreement (pre-agreement Sales
     //             negotiations stay private — same gate list()/stats() use)
-    //   agent   → only their own assigned leads
+    //   agent   → their assigned leads, PLUS lead-less threads for their
+    //             assigned clients (converted contacts) — the client branch the
+    //             old lead-only filter dropped, so a rep's converted-client
+    //             chats are now searchable, matching list()/stats().
     // Using the per-thread-open scope here would let finance see snippets of
     // pre-agreement Sales chats they can't actually open.
-    let leadFilter: Prisma.LeadWhereInput | null = null; // null = no constraint (admin)
+    let scopeClause: Prisma.WhatsAppThreadWhereInput | null = null; // null = admin
     if (caller.canViewAll) {
-      leadFilter = null;
+      scopeClause = null;
     } else if (caller.canViewFinanceScope) {
       const eligible = await this.eligibleLeadIdsForFinance();
       if (eligible.length === 0) return { items: [] };
-      leadFilter = { id: { in: eligible }, deletedAt: null };
+      scopeClause = { lead: { id: { in: eligible }, deletedAt: null } };
     } else {
       if (!caller.employeeId) return { items: [] };
-      leadFilter = { assignedEmployeeId: caller.employeeId, deletedAt: null };
+      scopeClause = {
+        OR: [
+          { lead: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
+          { leadId: null, client: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
+        ],
+      };
     }
 
     // Working-inbox visibility (mirrors list()'s default branch): live chats
@@ -663,14 +672,13 @@ export class WhatsAppThreadsService {
       { OR: [{ lead: { is: { blockedAt: null } } }, { lead: null }] },
       { OR: [{ client: { is: { blockedAt: null } } }, { client: null }] },
     ];
-    const threadWhere: Prisma.WhatsAppThreadWhereInput = { AND: and };
-    if (leadFilter) {
-      // Scoped callers: the lead filter already excludes soft-deleted leads.
-      threadWhere.lead = leadFilter;
+    if (scopeClause) {
+      and.push(scopeClause);
     } else {
       // Admin: still hide threads of soft-deleted leads (lead-less kept).
       and.push({ OR: [{ lead: { is: { deletedAt: null } } }, { lead: null }] });
     }
+    const threadWhere: Prisma.WhatsAppThreadWhereInput = { AND: and };
 
     // Newest matching messages first; cap the scan and dedup to threads below.
     const matches = await this.prisma.whatsAppMessage.findMany({
@@ -774,8 +782,16 @@ export class WhatsAppThreadsService {
       delete base.OR;
     } else if (!caller.canViewAll) {
       if (!caller.employeeId) return empty;
-      base.lead = { assignedEmployeeId: caller.employeeId, deletedAt: null };
-      delete base.OR; // the lead filter already excludes deleted leads
+      // Rep scope mirrors list(): their assigned leads, PLUS lead-less threads
+      // for their assigned clients (converted contacts a reassign routed to
+      // them). Replaces the deletedAt-only OR — the lead branch already carries
+      // deletedAt: null and the client branch is lead-less, so no soft-deleted
+      // lead slips through. (Backs the followUp/archived/blocked/unreadEngaged
+      // Prisma counts; the main badge counts use the raw-SQL scope below.)
+      base.OR = [
+        { lead: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
+        { leadId: null, client: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
+      ];
     }
 
     const and = (extra: Prisma.WhatsAppThreadWhereInput): Prisma.WhatsAppThreadWhereInput => ({
@@ -844,7 +860,10 @@ export class WhatsAppThreadsService {
       let scope = 'l."deletedAt" IS NULL';
       if (!caller.canViewAll) {
         params.push(caller.employeeId);
-        scope += ` AND l."assignedEmployeeId" = $${params.length}`;
+        // Rep scope mirrors list(): their assigned leads OR lead-less threads
+        // for their assigned clients (converted contacts). c is LEFT JOINed
+        // below, so a client thread (leadId NULL) matches on c."assignedEmployeeId".
+        scope += ` AND (l."assignedEmployeeId" = $${params.length} OR (t."leadId" IS NULL AND c."assignedEmployeeId" = $${params.length}))`;
       }
       // Mirror list()'s default working inbox: exclude ARCHIVED threads and
       // BLOCKED contacts so the All/Open/Uncontacted badge counts match the rows.

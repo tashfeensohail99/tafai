@@ -204,5 +204,6 @@ export function destinationForUser(user: SessionUser): string {
   if (roles.has('finance')) return '/finance';
   if (roles.has('processing') || roles.has('processing_manager') || roles.has('documentation')) return '/processing';
   if (roles.has('reception')) return '/reception';
+  if (roles.has('marketing')) return '/marketing';
   return '/sales';
 }

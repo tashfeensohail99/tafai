@@ -99,6 +99,8 @@ export function CallDock() {
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Connected, but no audio arriving — see the watchdog in the in-call effect.
+  const [mediaDead, setMediaDead] = useState(false);
   // Outbound only: a permission-related failure shows a "Request permission"
   // button on the error card so the rep can opt the customer in right there.
   const [showReqPerm, setShowReqPerm] = useState(false);
@@ -162,6 +164,13 @@ export function CallDock() {
     packetLossPct?: number;
     bytesSent?: number;
     bytesReceived?: number;
+    // Where the media path broke. A healthy RTT only proves ICE checks passed;
+    // if DTLS never finished there are no SRTP keys, so neither side sends and
+    // the call is silent both ways with the network looking perfect.
+    dtlsState?: string;
+    iceConnectionState?: string;
+    connectionState?: string;
+    deadAudioDetected?: boolean;
   } | null>(null);
 
   // Read a compact quality snapshot from the live peer connection: the selected
@@ -171,10 +180,12 @@ export function CallDock() {
       const stats = await pc.getStats();
       let pairId: string | undefined;
       let sawTransport = false;
+      let dtls: string | undefined;
       stats.forEach((r) => {
         if (r.type === 'transport') {
           sawTransport = true;
           if (r.selectedCandidatePairId) pairId = r.selectedCandidatePairId as string;
+          if (typeof r.dtlsState === 'string') dtls = r.dtlsState;
         }
       });
       const snap: NonNullable<typeof statsRef.current> = {};
@@ -206,6 +217,12 @@ export function CallDock() {
           snap.bytesSent = r.bytesSent;
         }
       });
+      // Which step of the setup actually completed. ICE reporting "connected"
+      // only means STUN checks passed; if DTLS stalled there are no SRTP keys,
+      // so the call is silent both ways while RTT looks perfect.
+      if (dtls) snap.dtlsState = dtls;
+      snap.iceConnectionState = pc.iceConnectionState;
+      snap.connectionState = pc.connectionState;
       if (Object.keys(snap).length > 0) statsRef.current = { ...statsRef.current, ...snap };
     } catch {
       /* best-effort */
@@ -932,7 +949,10 @@ export function CallDock() {
   // inbound + outbound). The heartbeat (every 15s) lets the backend sweeper free
   // the leg if this tab dies; each tick also re-samples call quality.
   useEffect(() => {
-    if (phase !== 'in-call') return;
+    if (phase !== 'in-call') {
+      setMediaDead(false); // clear the warning for the next call
+      return;
+    }
     beginRecording();
     // Sample quality AND persist it DURING the call — not only at teardown, whose
     // fire-and-forget POST usually dies when the dock unmounts as the call ends
@@ -961,6 +981,29 @@ export function CallDock() {
         void flushStats();
       }, 15000);
     }
+    // Connected, but is any audio actually arriving? ICE says "connected" on
+    // STUN checks alone; if DTLS then stalls, neither side sends and the call
+    // is dead both ways while every metric looks healthy — 7% of answered
+    // calls. Meta's API offers no renegotiation action (pre_accept / accept /
+    // reject / terminate only), so we cannot ICE-restart out of it. We can at
+    // least stop the rep sitting in silence wondering, and record the fault.
+    const deadWatch = setTimeout(() => {
+      const pc2 = pcRef.current;
+      const id = activeIdRef.current;
+      if (!pc2 || !id || id === 'pending') return;
+      void (async () => {
+        await sampleStats(pc2);
+        if (pcRef.current !== pc2) return; // teardown or a newer call won the race
+        if ((statsRef.current?.bytesReceived ?? 0) > 0) return; // audio is flowing
+        setMediaDead(true);
+        statsRef.current = { ...statsRef.current, deadAudioDetected: true };
+        void apiFetch(`/whatsapp/calls/${id}/stats`, {
+          method: 'POST',
+          body: JSON.stringify({ ...clientNetwork(), ...statsRef.current }),
+        }).catch(() => undefined);
+      })();
+    }, 6000);
+    return () => clearTimeout(deadWatch);
   }, [phase, beginRecording, sampleStats]);
 
   async function accept() {
@@ -1138,7 +1181,10 @@ export function CallDock() {
                   "Connecting…" there reads as "stuck" and reps hang up on a
                   call that was ringing fine. Inbound is genuinely connecting. */}
               {phase === 'connecting' && (outboundRef.current ? 'Ringing…' : 'Connecting…')}
-              {phase === 'in-call' && `In call · ${fmt(seconds)}`}
+              {phase === 'in-call' &&
+                (mediaDead
+                  ? 'No audio — end the call and dial again.'
+                  : `In call · ${fmt(seconds)}`)}
               {phase === 'reconnecting' && `Reconnecting… · ${fmt(seconds)}`}
               {phase === 'ended' && `Call ended · ${fmt(seconds)}`}
               {phase === 'error' && 'Call failed'}

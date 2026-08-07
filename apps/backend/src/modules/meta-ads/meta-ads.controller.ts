@@ -8,6 +8,7 @@ import {
 } from '../../common/decorators/require-permissions.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { MetaAdsService } from './meta-ads.service';
+import { MetaHierarchyService } from './meta-hierarchy.service';
 
 class SyncSpendDto {
   @IsOptional()
@@ -25,7 +26,10 @@ class SyncSpendDto {
 @Controller('admin/meta-ads')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class MetaAdsController {
-  constructor(private readonly ads: MetaAdsService) {}
+  constructor(
+    private readonly ads: MetaAdsService,
+    private readonly hierarchy: MetaHierarchyService,
+  ) {}
 
   // Read-only connection/coverage status — Marketing needs this for its
   // Integration Health page, so it accepts the scoped marketing key too. Admins
@@ -43,5 +47,20 @@ export class MetaAdsController {
   @RequirePermissions('settings.manage')
   sync(@Body() dto: SyncSpendDto) {
     return this.ads.syncSpend(dto.days ?? 35);
+  }
+
+  // Campaign→ad-set→ad structure mirror. Counts/freshness are read-only for the
+  // Marketing Integration-Health + Campaigns pages; the manual pull stays admin.
+  @Get('hierarchy')
+  @RequireAnyPermissions('settings.manage', 'marketing.ads.view')
+  hierarchyStatus() {
+    return this.hierarchy.getStatus();
+  }
+
+  @Audit({ entityType: 'MetaAd', category: 'CONFIG', severity: 'LOW', action: 'SETTING_CHANGED' })
+  @Post('hierarchy/sync')
+  @RequirePermissions('settings.manage')
+  syncHierarchy() {
+    return this.hierarchy.syncHierarchy();
   }
 }

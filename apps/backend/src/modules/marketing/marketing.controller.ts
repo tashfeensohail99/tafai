@@ -1,10 +1,11 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { IsBooleanString, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import { MarketingService } from './marketing.service';
+import { MarketingAiInsightsService } from './ai-insights.service';
 
 class WindowQuery {
   @IsOptional()
@@ -29,7 +30,10 @@ class ListQuery extends WindowQuery {
 @Controller('admin/marketing')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class MarketingController {
-  constructor(private readonly svc: MarketingService) {}
+  constructor(
+    private readonly svc: MarketingService,
+    private readonly ai: MarketingAiInsightsService,
+  ) {}
 
   @Get('overview')
   @RequirePermissions('marketing.view')
@@ -47,5 +51,20 @@ export class MarketingController {
   @RequirePermissions('marketing.view')
   campaigns(@Query() q: ListQuery) {
     return this.svc.getCampaigns(q.days, q.includeIdle === 'true');
+  }
+
+  // Phase 1G — advisory AI insights. Read is marketing.ai.view (scoped
+  // narrower than marketing.view because the LLM call costs money and gets
+  // its own permission per the Phase-1A perm sync).
+  @Get('ai')
+  @RequirePermissions('marketing.ai.view')
+  aiInsights(@Query() q: WindowQuery) {
+    return this.ai.get(q.days ?? 30, false);
+  }
+
+  @Post('ai/refresh')
+  @RequirePermissions('marketing.ai.view')
+  aiInsightsRefresh(@Query() q: WindowQuery) {
+    return this.ai.get(q.days ?? 30, true);
   }
 }

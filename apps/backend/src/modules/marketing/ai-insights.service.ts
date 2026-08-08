@@ -129,7 +129,10 @@ export class MarketingAiInsightsService {
         spendCad: round(c.spendBaseCad),
         leads: c.leads,
         clientsConverted: c.clientsConverted,
-        revenueCad: round(c.revenueBaseCad),
+        // Absolute revenue is intentionally NOT fed to the LLM — otherwise a
+        // recommendation could quote it back and leak the amount to the
+        // marketing role. ROAS (a ratio) is enough signal for "worth scaling
+        // or worth cutting" advice.
         cpl: round(c.cpl),
         cpa: round(c.cpa),
         roas: round(c.roas),

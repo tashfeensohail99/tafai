@@ -58,6 +58,17 @@ export class MarketingController {
     return this.svc.getCampaigns(q.days, q.includeIdle === 'true');
   }
 
+  /**
+   * Per-ad OUTCOMES for the Marketing team's Leads page — conversations count
+   * and revenue/ROAS aggregated by ad. Deliberately aggregate-only: nothing on
+   * the response identifies an individual lead.
+   */
+  @Get('leads')
+  @RequirePermissions('marketing.view')
+  leadsByAd(@Query() q: ListQuery) {
+    return this.svc.getLeadsByAd(q.days, q.includeIdle === 'true');
+  }
+
   // Phase 1F — Alerts + Health, both read-only, both marketing.view.
   @Get('alerts')
   @RequirePermissions('marketing.view')

@@ -229,12 +229,14 @@ export class MarketingService {
 
     return {
       window: { from: fromStr, to: toStr, days } satisfies MarketingWindow,
+      // Ad spend is visible to the marketing role, but revenue is NOT — it
+      // stays server-side, used only to derive `roas` (a bare ratio, rendered
+      // as a %). CPL and CPA leak only spend, so they're fine to expose here.
       kpis: {
         spendBaseCad,
         spendByCurrency,
         leads,
         clientsConverted,
-        revenueBaseCad,
         cpl: this.ratio(spendBaseCad, leads),
         cpa: this.ratio(spendBaseCad, clientsConverted),
         roas: this.ratio(revenueBaseCad, spendBaseCad),
@@ -487,6 +489,8 @@ export class MarketingService {
       const leads = this.num(r.leads);
       const converted = this.num(r.converted);
       const revenue = this.num(r.revenue);
+      // Same rule as Overview — revenue never leaves the server; ROAS is a
+      // derived ratio, safe to ship.
       return {
         campaignId: r.campaignId,
         name: r.name,
@@ -495,7 +499,6 @@ export class MarketingService {
         spendBaseCad: spend,
         leads,
         clientsConverted: converted,
-        revenueBaseCad: revenue,
         cpl: this.ratio(spend, leads),
         cpa: this.ratio(spend, converted),
         roas: this.ratio(revenue, spend),
@@ -506,6 +509,122 @@ export class MarketingService {
     return {
       window: { from: fromStr, to: toStr, days } satisfies MarketingWindow,
       campaigns,
+    };
+  }
+
+  /**
+   * Per-ad OUTCOMES for the Marketing team's Leads page. Aggregated only —
+   * NO lead-level PII (no names, phones, or emails leave the aggregation).
+   * Each row is one Meta ad with:
+   *   - conversations (lead count from that ad within the window)
+   *   - clientsConverted (of those leads, how many became paying clients)
+   *   - revenueCad (all-time revenue from those clients, in base CAD)
+   *   - CPL, CPA, ROAS
+   * Rows with zero activity in the window are hidden unless includeIdle.
+   * Ordered by revenue desc (best ROI first), then leads desc.
+   */
+  async getLeadsByAd(daysArg?: number, includeIdle = false) {
+    const { from, to, toEnd, days } = this.resolveWindow(daysArg);
+    const fromStr = this.ymd(from);
+    const toStr = this.ymd(to);
+
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{
+        adId: string;
+        adName: string | null;
+        campaignId: string;
+        campaignName: string | null;
+        effectiveStatus: string | null;
+        spend: string;
+        leads: bigint;
+        converted: bigint;
+        revenue: string;
+      }>
+    >(
+      `WITH ad_spend AS (
+         SELECT "adId", SUM("baseSpend") AS spend
+         FROM crm.ad_spend_daily
+         WHERE date >= $1::date AND date <= $2::date
+         GROUP BY "adId"
+       ),
+       ad_cohort AS (
+         SELECT l.id, l."metaAdId"
+         FROM crm.leads l
+         WHERE l."deletedAt" IS NULL AND l."metaAdId" IS NOT NULL
+           AND l."createdAt" >= $3 AND l."createdAt" < $4
+       ),
+       ad_leads AS (
+         SELECT "metaAdId" AS "adId", COUNT(*) AS leads
+         FROM ad_cohort GROUP BY "metaAdId"
+       ),
+       ad_clients AS (
+         SELECT ac."metaAdId" AS "adId", c.id AS "clientId"
+         FROM ad_cohort ac
+         JOIN crm.clients c ON c."sourceLeadId" = ac.id
+       ),
+       ad_conv AS (
+         SELECT "adId", COUNT(*) AS converted
+         FROM ad_clients GROUP BY "adId"
+       ),
+       ad_revenue AS (
+         SELECT ac."adId", SUM(p."baseAmount") AS revenue
+         FROM ad_clients ac
+         JOIN finance.invoices i ON i."clientId" = ac."clientId"
+         JOIN finance.payments p ON p."invoiceId" = i.id
+         WHERE p.status = 'PAID' AND p."deletedAt" IS NULL
+         GROUP BY ac."adId"
+       )
+       SELECT a."adId",
+              a.name AS "adName",
+              a."campaignId",
+              c.name AS "campaignName",
+              a."effectiveStatus",
+              COALESCE(sp.spend, 0)::text AS spend,
+              COALESCE(ld.leads, 0)::bigint AS leads,
+              COALESCE(cv.converted, 0)::bigint AS converted,
+              COALESCE(rv.revenue, 0)::text AS revenue
+       FROM crm.meta_ads a
+       LEFT JOIN crm.meta_campaigns c  ON c."campaignId" = a."campaignId"
+       LEFT JOIN ad_spend    sp ON sp."adId" = a."adId"
+       LEFT JOIN ad_leads    ld ON ld."adId" = a."adId"
+       LEFT JOIN ad_conv     cv ON cv."adId" = a."adId"
+       LEFT JOIN ad_revenue  rv ON rv."adId" = a."adId"
+       ${includeIdle ? '' : "WHERE COALESCE(sp.spend, 0) > 0 OR COALESCE(ld.leads, 0) > 0"}
+       ORDER BY COALESCE(rv.revenue, 0) DESC NULLS LAST,
+                COALESCE(ld.leads, 0) DESC,
+                COALESCE(sp.spend, 0) DESC`,
+      fromStr,
+      toStr,
+      from,
+      toEnd,
+    );
+
+    // Marketing team does NOT see absolute money on this page — the response
+    // deliberately omits spend, revenue, CPL and CPA (they'd leak the account's
+    // financials). ROAS ships as a ratio only; the frontend renders it as a %.
+    // Rows are still ordered by revenue desc server-side (best return first)
+    // so the client doesn't need the raw number to sort correctly.
+    const ads = rows.map((r) => {
+      const spend = this.num(r.spend);
+      const leads = this.num(r.leads);
+      const converted = this.num(r.converted);
+      const revenue = this.num(r.revenue);
+      return {
+        adId: r.adId,
+        adName: r.adName,
+        campaignId: r.campaignId,
+        campaignName: r.campaignName,
+        effectiveStatus: r.effectiveStatus,
+        conversations: leads,
+        clientsConverted: converted,
+        conversionRate: this.ratio(converted, leads),
+        roas: this.ratio(revenue, spend),
+      };
+    });
+
+    return {
+      window: { from: fromStr, to: toStr, days } satisfies MarketingWindow,
+      ads,
     };
   }
 }

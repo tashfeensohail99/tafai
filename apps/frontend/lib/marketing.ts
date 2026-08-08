@@ -43,7 +43,9 @@ export interface MarketingOverview {
     spendByCurrency: SpendByCurrency[];
     leads: number;
     clientsConverted: number;
-    revenueBaseCad: number;
+    /** Absolute revenue is NEVER included in this response — marketing users
+     *  see spend + a ROAS ratio, but not the raw revenue amount. `roas` is the
+     *  only derived signal shipped; the frontend renders it as a percentage. */
     cpl: number | null;
     cpa: number | null;
     roas: number | null;
@@ -91,7 +93,7 @@ export interface MarketingCampaign {
   spendBaseCad: number;
   leads: number;
   clientsConverted: number;
-  revenueBaseCad: number;
+  /** No revenue on this response either — see MarketingOverview.kpis. */
   cpl: number | null;
   cpa: number | null;
   roas: number | null;
@@ -214,6 +216,33 @@ export function refreshMarketingInsights(days?: number): Promise<MarketingInsigh
   return apiFetch<MarketingInsightsResult>(`/admin/marketing/ai/refresh${qs}`, { method: 'POST' });
 }
 
+/* ------------------------------------------------------------------ leads-by-ad --- */
+
+export interface MarketingLeadsByAdRow {
+  adId: string;
+  adName: string | null;
+  campaignId: string;
+  campaignName: string | null;
+  effectiveStatus: string | null;
+  conversations: number;
+  clientsConverted: number;
+  conversionRate: number | null;
+  /** Return-on-ad-spend as a ratio (rendered as a % in the UI). Absolute spend
+   *  and revenue are NOT included in the response — this page is aggregate-only
+   *  and deliberately hides money amounts from the Marketing role. */
+  roas: number | null;
+}
+
+export interface MarketingLeadsByAdResponse {
+  window: MarketingWindow;
+  ads: MarketingLeadsByAdRow[];
+}
+
+export function getMarketingLeadsByAd(opts: ListOpts = {}): Promise<MarketingLeadsByAdResponse> {
+  const qs = buildQuery({ days: opts.days, includeIdle: opts.includeIdle ? 'true' : undefined });
+  return apiFetch<MarketingLeadsByAdResponse>(`/admin/marketing/leads${qs}`);
+}
+
 /* ------------------------------------------------------------------ routing (1E) --- */
 
 export type AdRoutingTargetType = 'AD' | 'CAMPAIGN';
@@ -292,7 +321,9 @@ export function fmtPct(v: number | null | undefined, digits = 1): string {
   return `${(v * 100).toFixed(digits)}%`;
 }
 
+/** ROAS as a percentage — 3.24x → "324%". Never displays the underlying
+ *  revenue or spend amounts. */
 export function fmtRoas(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
-  return `${v.toFixed(2)}x`;
+  return `${Math.round(v * 100)}%`;
 }

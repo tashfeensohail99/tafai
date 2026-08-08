@@ -119,7 +119,6 @@ export default function MarketingCampaignsPage() {
                 <th style={{ ...cellHead, textAlign: 'right' }}>Clients</th>
                 <th style={{ ...cellHead, textAlign: 'right' }}>CPL</th>
                 <th style={{ ...cellHead, textAlign: 'right' }}>CPA</th>
-                <th style={{ ...cellHead, textAlign: 'right' }}>Revenue</th>
                 <th style={{ ...cellHead, textAlign: 'right' }}>ROAS</th>
               </tr>
             </thead>
@@ -139,7 +138,7 @@ export default function MarketingCampaignsPage() {
               })}
               {!loading && filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ padding: 30, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)' }}>
+                  <td colSpan={9} style={{ padding: 30, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)' }}>
                     {rows.length === 0 ? 'No campaign activity in this window.' : `No campaigns match "${q}".`}
                   </td>
                 </tr>
@@ -181,8 +180,7 @@ function FragmentRow({
         <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(campaign.clientsConverted)}</td>
         <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(campaign.cpl)}</td>
         <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(campaign.cpa)}</td>
-        <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(campaign.revenueBaseCad, { compact: true })}</td>
-        <td style={{ ...cell, textAlign: 'right' }}>{fmtRoas(campaign.roas)}</td>
+        <td style={{ ...cell, textAlign: 'right', fontWeight: 600 }}>{fmtRoas(campaign.roas)}</td>
       </tr>
       {isOpen
         ? campaign.adsets.map((s) => (
@@ -197,7 +195,6 @@ function FragmentRow({
               <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(s.leads)}</td>
               <td style={cell}></td>
               <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(s.cpl)}</td>
-              <td style={cell}></td>
               <td style={cell}></td>
               <td style={cell}></td>
             </tr>

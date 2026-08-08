@@ -91,18 +91,19 @@ export default function MarketingOverviewPage() {
           hint={data?.kpis.conversionRate != null ? `${fmtPct(data.kpis.conversionRate)} of leads` : undefined}
         />
         <MetricCard
-          label="Revenue (CAD)"
-          value={loading ? '…' : fmtCad(data?.kpis.revenueBaseCad ?? 0, { compact: true })}
-          tone="success"
+          label="Cost per client"
+          value={loading ? '…' : fmtCad(data?.kpis.cpa, { compact: true })}
+          tone="neutral"
           Icon={DollarSign}
-          hint={data?.kpis.cpa != null ? `${fmtCad(data.kpis.cpa, { compact: true })} per client` : undefined}
         />
+        {/* Revenue is deliberately hidden from the marketing role — ROAS is
+            the only revenue-derived signal shown, and only as a percentage. */}
         <MetricCard
           label="ROAS"
           value={loading ? '…' : fmtRoas(data?.kpis.roas)}
           tone={(data?.kpis.roas ?? 0) >= 1 ? 'success' : 'warning'}
           Icon={TrendingUp}
-          hint="Revenue / spend"
+          hint="Return on ad spend"
         />
       </div>
 

@@ -229,12 +229,14 @@ export class MarketingService {
 
     return {
       window: { from: fromStr, to: toStr, days } satisfies MarketingWindow,
+      // Ad spend is visible to the marketing role, but revenue is NOT — it
+      // stays server-side, used only to derive `roas` (a bare ratio, rendered
+      // as a %). CPL and CPA leak only spend, so they're fine to expose here.
       kpis: {
         spendBaseCad,
         spendByCurrency,
         leads,
         clientsConverted,
-        revenueBaseCad,
         cpl: this.ratio(spendBaseCad, leads),
         cpa: this.ratio(spendBaseCad, clientsConverted),
         roas: this.ratio(revenueBaseCad, spendBaseCad),
@@ -487,6 +489,8 @@ export class MarketingService {
       const leads = this.num(r.leads);
       const converted = this.num(r.converted);
       const revenue = this.num(r.revenue);
+      // Same rule as Overview — revenue never leaves the server; ROAS is a
+      // derived ratio, safe to ship.
       return {
         campaignId: r.campaignId,
         name: r.name,
@@ -495,7 +499,6 @@ export class MarketingService {
         spendBaseCad: spend,
         leads,
         clientsConverted: converted,
-        revenueBaseCad: revenue,
         cpl: this.ratio(spend, leads),
         cpa: this.ratio(spend, converted),
         roas: this.ratio(revenue, spend),

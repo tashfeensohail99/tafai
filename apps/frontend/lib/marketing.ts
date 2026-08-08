@@ -43,7 +43,9 @@ export interface MarketingOverview {
     spendByCurrency: SpendByCurrency[];
     leads: number;
     clientsConverted: number;
-    revenueBaseCad: number;
+    /** Absolute revenue is NEVER included in this response — marketing users
+     *  see spend + a ROAS ratio, but not the raw revenue amount. `roas` is the
+     *  only derived signal shipped; the frontend renders it as a percentage. */
     cpl: number | null;
     cpa: number | null;
     roas: number | null;
@@ -91,7 +93,7 @@ export interface MarketingCampaign {
   spendBaseCad: number;
   leads: number;
   clientsConverted: number;
-  revenueBaseCad: number;
+  /** No revenue on this response either — see MarketingOverview.kpis. */
   cpl: number | null;
   cpa: number | null;
   roas: number | null;
@@ -319,7 +321,9 @@ export function fmtPct(v: number | null | undefined, digits = 1): string {
   return `${(v * 100).toFixed(digits)}%`;
 }
 
+/** ROAS as a percentage — 3.24x → "324%". Never displays the underlying
+ *  revenue or spend amounts. */
 export function fmtRoas(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
-  return `${v.toFixed(2)}x`;
+  return `${Math.round(v * 100)}%`;
 }

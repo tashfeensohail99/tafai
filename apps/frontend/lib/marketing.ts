@@ -214,6 +214,34 @@ export function refreshMarketingInsights(days?: number): Promise<MarketingInsigh
   return apiFetch<MarketingInsightsResult>(`/admin/marketing/ai/refresh${qs}`, { method: 'POST' });
 }
 
+/* ------------------------------------------------------------------ leads-by-ad --- */
+
+export interface MarketingLeadsByAdRow {
+  adId: string;
+  adName: string | null;
+  campaignId: string;
+  campaignName: string | null;
+  effectiveStatus: string | null;
+  spendBaseCad: number;
+  conversations: number;
+  clientsConverted: number;
+  revenueBaseCad: number;
+  cpl: number | null;
+  cpa: number | null;
+  roas: number | null;
+  conversionRate: number | null;
+}
+
+export interface MarketingLeadsByAdResponse {
+  window: MarketingWindow;
+  ads: MarketingLeadsByAdRow[];
+}
+
+export function getMarketingLeadsByAd(opts: ListOpts = {}): Promise<MarketingLeadsByAdResponse> {
+  const qs = buildQuery({ days: opts.days, includeIdle: opts.includeIdle ? 'true' : undefined });
+  return apiFetch<MarketingLeadsByAdResponse>(`/admin/marketing/leads${qs}`);
+}
+
 /* ------------------------------------------------------------------ routing (1E) --- */
 
 export type AdRoutingTargetType = 'AD' | 'CAMPAIGN';

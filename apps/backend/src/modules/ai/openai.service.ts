@@ -77,14 +77,18 @@ export class OpenAiService {
    * Chat completion via gpt-4o-mini. Returns the assistant message + token
    * usage so callers can log it for cost tracking.
    */
-  async chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
+  async chat(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    opts: { jsonMode?: boolean; maxTokens?: number; temperature?: number } = {},
+  ) {
     const c = await this.getClient();
     const t0 = Date.now();
     const res = await c.chat.completions.create({
       model: CHAT_MODEL,
       messages,
-      temperature: 0.3,
-      max_tokens: 350,
+      temperature: opts.temperature ?? 0.3,
+      max_tokens: opts.maxTokens ?? 350,
+      ...(opts.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
     });
     const latencyMs = Date.now() - t0;
     const reply = res.choices[0]?.message?.content?.trim() ?? '';

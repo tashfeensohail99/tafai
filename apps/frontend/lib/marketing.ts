@@ -175,6 +175,45 @@ export function getMarketingHealth(): Promise<MarketingHealth> {
   return apiFetch<MarketingHealth>('/admin/marketing/health');
 }
 
+/* ------------------------------------------------------------------ AI insights (1G) --- */
+
+export type InsightCategory = 'performance' | 'attribution' | 'routing' | 'creative' | 'budget' | 'other';
+export type InsightSeverity = 'high' | 'medium' | 'low';
+
+export interface MarketingInsight {
+  key: string;
+  category: InsightCategory;
+  severity: InsightSeverity;
+  title: string;
+  rationale: string;
+  action: string;
+  confidence: number;
+  targetAdId?: string | null;
+  targetAdName?: string | null;
+  targetCampaignId?: string | null;
+  targetCampaignName?: string | null;
+}
+
+export interface MarketingInsightsResult {
+  insights: MarketingInsight[];
+  generatedAt: string;
+  windowDays: number;
+  model: string;
+  cached: boolean;
+  tokens?: { input: number; output: number };
+  error?: string;
+}
+
+export function getMarketingInsights(days?: number): Promise<MarketingInsightsResult> {
+  const qs = buildQuery({ days });
+  return apiFetch<MarketingInsightsResult>(`/admin/marketing/ai${qs}`);
+}
+
+export function refreshMarketingInsights(days?: number): Promise<MarketingInsightsResult> {
+  const qs = buildQuery({ days });
+  return apiFetch<MarketingInsightsResult>(`/admin/marketing/ai/refresh${qs}`, { method: 'POST' });
+}
+
 /* ------------------------------------------------------------------ routing (1E) --- */
 
 export type AdRoutingTargetType = 'AD' | 'CAMPAIGN';

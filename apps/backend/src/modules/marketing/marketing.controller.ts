@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { IsBooleanString, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -7,6 +7,7 @@ import { RequirePermissions } from '../../common/decorators/require-permissions.
 import { MarketingService } from './marketing.service';
 import { MarketingAlertsService } from './alerts.service';
 import { MarketingHealthService } from './health.service';
+import { MarketingAiInsightsService } from './ai-insights.service';
 
 class WindowQuery {
   @IsOptional()
@@ -24,9 +25,10 @@ class ListQuery extends WindowQuery {
 }
 
 /**
- * Marketing dashboard endpoints. All three are read-only aggregations for the
- * Phase 1D UI (Overview / Ads / Campaigns pages) and gate on `marketing.view`
- * — the base marketing permission granted to the marketing role in Phase 1A.
+ * Marketing dashboard endpoints. Reads only. Phase 1D covers Overview / Ads /
+ * Campaigns aggregations (marketing.view); Phase 1F adds Alerts + Integration
+ * Health (still marketing.view); Phase 1G adds advisory AI insights, scoped
+ * to the narrower marketing.ai.view because the LLM call costs money.
  */
 @Controller('admin/marketing')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -35,6 +37,7 @@ export class MarketingController {
     private readonly svc: MarketingService,
     private readonly alerts: MarketingAlertsService,
     private readonly health: MarketingHealthService,
+    private readonly ai: MarketingAiInsightsService,
   ) {}
 
   @Get('overview')
@@ -66,5 +69,20 @@ export class MarketingController {
   @RequirePermissions('marketing.view')
   healthStatus() {
     return this.health.getStatus();
+  }
+
+  // Phase 1G — advisory AI insights. Read is marketing.ai.view (scoped
+  // narrower than marketing.view because the LLM call costs money and gets
+  // its own permission per the Phase-1A perm sync).
+  @Get('ai')
+  @RequirePermissions('marketing.ai.view')
+  aiInsights(@Query() q: WindowQuery) {
+    return this.ai.get(q.days ?? 30, false);
+  }
+
+  @Post('ai/refresh')
+  @RequirePermissions('marketing.ai.view')
+  aiInsightsRefresh(@Query() q: WindowQuery) {
+    return this.ai.get(q.days ?? 30, true);
   }
 }

@@ -6,15 +6,13 @@ import { GlassCard, PageHeader } from '@/components/sales-v2/ui';
 import { StatusPill } from '@/components/marketing/StatusPill';
 import { WindowPicker } from '@/components/marketing/WindowPicker';
 import {
-  fmtCad,
   fmtInt,
   fmtPct,
-  fmtRoas,
   getMarketingLeadsByAd,
   type MarketingLeadsByAdRow,
 } from '@/lib/marketing';
 
-type SortKey = 'revenue' | 'conversations' | 'clients' | 'roas' | 'cpl';
+type SortKey = 'roas' | 'conversations' | 'clients' | 'convRate';
 
 export default function MarketingLeadsPage() {
   const [days, setDays] = useState(30);
@@ -23,7 +21,7 @@ export default function MarketingLeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [includeIdle, setIncludeIdle] = useState(false);
-  const [sort, setSort] = useState<SortKey>('revenue');
+  const [sort, setSort] = useState<SortKey>('roas');
 
   useEffect(() => {
     let cancelled = false;
@@ -57,31 +55,30 @@ export default function MarketingLeadsPage() {
       switch (sort) {
         case 'conversations': return b.conversations - a.conversations;
         case 'clients':       return b.clientsConverted - a.clientsConverted;
-        case 'roas':          return (b.roas ?? 0) - (a.roas ?? 0);
-        case 'cpl':           return (a.cpl ?? Infinity) - (b.cpl ?? Infinity); // lower CPL wins
-        default:              return b.revenueBaseCad - a.revenueBaseCad;
+        case 'convRate':      return (b.conversionRate ?? 0) - (a.conversionRate ?? 0);
+        default:              return (b.roas ?? 0) - (a.roas ?? 0);
       }
     });
   }, [rows, q, sort]);
 
-  const totals = useMemo(() => {
-    return rows.reduce(
-      (acc, r) => ({
-        conversations: acc.conversations + r.conversations,
-        clients: acc.clients + r.clientsConverted,
-        revenue: acc.revenue + r.revenueBaseCad,
-        spend: acc.spend + r.spendBaseCad,
-      }),
-      { conversations: 0, clients: 0, revenue: 0, spend: 0 },
-    );
-  }, [rows]);
+  const totals = useMemo(
+    () =>
+      rows.reduce(
+        (acc, r) => ({
+          conversations: acc.conversations + r.conversations,
+          clients: acc.clients + r.clientsConverted,
+        }),
+        { conversations: 0, clients: 0 },
+      ),
+    [rows],
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <PageHeader
         eyebrow="Marketing"
         title="Leads by ad"
-        description={`Conversations, clients and revenue from every Meta ad in the last ${days} days. Aggregated at the ad level — no individual lead details.`}
+        description={`Conversations and return on ad spend for every Meta ad in the last ${days} days. Aggregated at the ad level — no individual lead details, no absolute amounts.`}
       />
 
       {/* Aggregate-only privacy note */}
@@ -92,8 +89,8 @@ export default function MarketingLeadsPage() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--sos-text-secondary, #4b5563)', lineHeight: 1.55 }}>
             <strong style={{ color: 'var(--sos-text-primary, #111827)' }}>Aggregate view.</strong>{' '}
-            One row per ad — count of conversations produced, of those how many became paying clients, and revenue attributed
-            back to the ad. Individual lead names, phone numbers and messages are not shown here.
+            One row per ad — conversations, clients converted, and return on ad spend as a percentage. Individual lead
+            details and absolute money amounts are not shown here.
           </div>
         </div>
       </GlassCard>
@@ -148,22 +145,18 @@ export default function MarketingLeadsPage() {
             <div style={{ fontSize: 12, color: 'var(--sos-text-tertiary, #6b7280)', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <span><strong>{fmtInt(totals.conversations)}</strong> conversations</span>
               <span><strong>{fmtInt(totals.clients)}</strong> clients</span>
-              <span><strong>{fmtCad(totals.revenue, { compact: true })}</strong> revenue</span>
-              <span><strong>{fmtCad(totals.spend, { compact: true })}</strong> spend</span>
             </div>
           ) : null}
         </div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 900 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 780 }}>
             <thead>
               <tr style={{ textAlign: 'left', color: 'var(--sos-text-tertiary, #6b7280)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 <th style={cellHead}>Ad</th>
                 <th style={cellHead}>Status</th>
                 <SortableTh label="Conversations" active={sort === 'conversations'} onClick={() => setSort('conversations')} />
                 <SortableTh label="Clients"       active={sort === 'clients'}       onClick={() => setSort('clients')} />
-                <th style={{ ...cellHead, textAlign: 'right' }}>Conv. rate</th>
-                <SortableTh label="CPL"           active={sort === 'cpl'}           onClick={() => setSort('cpl')} />
-                <SortableTh label="Revenue"       active={sort === 'revenue'}       onClick={() => setSort('revenue')} />
+                <SortableTh label="Conv. rate"    active={sort === 'convRate'}      onClick={() => setSort('convRate')} />
                 <SortableTh label="ROAS"          active={sort === 'roas'}          onClick={() => setSort('roas')} />
               </tr>
             </thead>
@@ -180,14 +173,12 @@ export default function MarketingLeadsPage() {
                   <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(r.conversations)}</td>
                   <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(r.clientsConverted)}</td>
                   <td style={{ ...cell, textAlign: 'right' }}>{fmtPct(r.conversionRate)}</td>
-                  <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(r.cpl)}</td>
-                  <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(r.revenueBaseCad, { compact: true })}</td>
-                  <td style={{ ...cell, textAlign: 'right' }}>{fmtRoas(r.roas)}</td>
+                  <td style={{ ...cell, textAlign: 'right', fontWeight: 600 }}>{fmtRoasPct(r.roas)}</td>
                 </tr>
               ))}
               {!loading && filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)' }}>
+                  <td colSpan={6} style={{ padding: 30, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)' }}>
                     {rows.length === 0
                       ? 'No ad activity in this window.'
                       : `No ads match "${q}".`}
@@ -200,6 +191,13 @@ export default function MarketingLeadsPage() {
       </GlassCard>
     </div>
   );
+}
+
+/** ROAS shown as a percentage — 3.24x returns "324%". Never leaks the
+ *  underlying spend or revenue. */
+function fmtRoasPct(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return `${Math.round(v * 100)}%`;
 }
 
 const cellHead: React.CSSProperties = {

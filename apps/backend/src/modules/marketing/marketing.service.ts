@@ -596,6 +596,11 @@ export class MarketingService {
       toEnd,
     );
 
+    // Marketing team does NOT see absolute money on this page — the response
+    // deliberately omits spend, revenue, CPL and CPA (they'd leak the account's
+    // financials). ROAS ships as a ratio only; the frontend renders it as a %.
+    // Rows are still ordered by revenue desc server-side (best return first)
+    // so the client doesn't need the raw number to sort correctly.
     const ads = rows.map((r) => {
       const spend = this.num(r.spend);
       const leads = this.num(r.leads);
@@ -607,14 +612,10 @@ export class MarketingService {
         campaignId: r.campaignId,
         campaignName: r.campaignName,
         effectiveStatus: r.effectiveStatus,
-        spendBaseCad: spend,
         conversations: leads,
         clientsConverted: converted,
-        revenueBaseCad: revenue,
-        cpl: this.ratio(spend, leads),
-        cpa: this.ratio(spend, converted),
-        roas: this.ratio(revenue, spend),
         conversionRate: this.ratio(converted, leads),
+        roas: this.ratio(revenue, spend),
       };
     });
 

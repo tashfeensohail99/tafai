@@ -222,14 +222,13 @@ export interface MarketingLeadsByAdRow {
   campaignId: string;
   campaignName: string | null;
   effectiveStatus: string | null;
-  spendBaseCad: number;
   conversations: number;
   clientsConverted: number;
-  revenueBaseCad: number;
-  cpl: number | null;
-  cpa: number | null;
-  roas: number | null;
   conversionRate: number | null;
+  /** Return-on-ad-spend as a ratio (rendered as a % in the UI). Absolute spend
+   *  and revenue are NOT included in the response — this page is aggregate-only
+   *  and deliberately hides money amounts from the Marketing role. */
+  roas: number | null;
 }
 
 export interface MarketingLeadsByAdResponse {

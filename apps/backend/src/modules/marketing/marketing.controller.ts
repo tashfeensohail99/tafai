@@ -5,6 +5,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import { MarketingService } from './marketing.service';
+import { MarketingAlertsService } from './alerts.service';
+import { MarketingHealthService } from './health.service';
 import { MarketingAiInsightsService } from './ai-insights.service';
 
 class WindowQuery {
@@ -23,15 +25,18 @@ class ListQuery extends WindowQuery {
 }
 
 /**
- * Marketing dashboard endpoints. All three are read-only aggregations for the
- * Phase 1D UI (Overview / Ads / Campaigns pages) and gate on `marketing.view`
- * — the base marketing permission granted to the marketing role in Phase 1A.
+ * Marketing dashboard endpoints. Reads only. Phase 1D covers Overview / Ads /
+ * Campaigns aggregations (marketing.view); Phase 1F adds Alerts + Integration
+ * Health (still marketing.view); Phase 1G adds advisory AI insights, scoped
+ * to the narrower marketing.ai.view because the LLM call costs money.
  */
 @Controller('admin/marketing')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class MarketingController {
   constructor(
     private readonly svc: MarketingService,
+    private readonly alerts: MarketingAlertsService,
+    private readonly health: MarketingHealthService,
     private readonly ai: MarketingAiInsightsService,
   ) {}
 
@@ -51,6 +56,19 @@ export class MarketingController {
   @RequirePermissions('marketing.view')
   campaigns(@Query() q: ListQuery) {
     return this.svc.getCampaigns(q.days, q.includeIdle === 'true');
+  }
+
+  // Phase 1F — Alerts + Health, both read-only, both marketing.view.
+  @Get('alerts')
+  @RequirePermissions('marketing.view')
+  alertsList() {
+    return this.alerts.getAll();
+  }
+
+  @Get('health')
+  @RequirePermissions('marketing.view')
+  healthStatus() {
+    return this.health.getStatus();
   }
 
   // Phase 1G — advisory AI insights. Read is marketing.ai.view (scoped

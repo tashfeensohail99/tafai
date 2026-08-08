@@ -125,6 +125,19 @@ export class AdRoutingRulesService {
     return this.snap!;
   }
 
+  /** Introspection for the Integration Health page. Doesn't force a rebuild —
+   *  a `null` snapshot means "not built yet"; the caller should render that as
+   *  "warming up" rather than "broken". */
+  snapshotInfo(): { rules: number; ads: number; builtAt: string | null; ageMs: number | null } {
+    if (!this.snap) return { rules: 0, ads: 0, builtAt: null, ageMs: null };
+    return {
+      rules: this.snap.adToEmployees.size + this.snap.campaignToEmployees.size,
+      ads: this.snap.adToCampaign.size,
+      builtAt: new Date(this.snap.builtAt).toISOString(),
+      ageMs: Date.now() - this.snap.builtAt,
+    };
+  }
+
   private async rebuild(): Promise<void> {
     const [rules, ads] = await Promise.all([
       this.prisma.adRoutingRule.findMany({ select: { targetType: true, targetId: true, branchIds: true } }),

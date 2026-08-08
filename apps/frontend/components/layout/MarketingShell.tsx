@@ -34,6 +34,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { getMarketingAlerts } from '@/lib/marketing';
 
 export interface MarketingUser {
   id: string;
@@ -119,6 +120,42 @@ export function MarketingShell({ children }: { children: ReactNode }) {
     }
   }, [session, router]);
 
+  // Alert count → badge on the "Alerts" nav item. Refreshes every 60s while
+  // the shell is mounted so a new critical never sits invisible for long.
+  // Silent-fail if the user's role hasn't been synced with marketing.view yet;
+  // the shell must never crash on a stale permission.
+  const [alertBadge, setAlertBadge] = useState<{ critical: number; warning: number }>({ critical: 0, warning: 0 });
+  useEffect(() => {
+    if (session.status !== 'authed') return;
+    let cancelled = false;
+    const load = () =>
+      getMarketingAlerts()
+        .then((rows) => {
+          if (cancelled) return;
+          const critical = rows.filter((r) => r.severity === 'critical').length;
+          const warning = rows.filter((r) => r.severity === 'warning').length;
+          setAlertBadge({ critical, warning });
+        })
+        .catch(() => {
+          /* not fatal — leave badge empty */
+        });
+    void load();
+    const timer = setInterval(() => void load(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [session.status]);
+
+  const navWithBadges = useMemo<DrawerMenuItem[]>(() => {
+    const critical = alertBadge.critical;
+    const warning = alertBadge.warning;
+    const total = critical + warning;
+    return NAV.map((item) =>
+      item.href === '/marketing/alerts' && total > 0 ? { ...item, badge: total } : item,
+    );
+  }, [alertBadge]);
+
   const sessionValue = useMemo<MarketingSessionContextValue | null>(() => {
     if (session.status !== 'authed') return null;
     const emailHandle = session.user.email.split('@')[0] ?? 'marketing';
@@ -187,7 +224,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
 
           <div className="sos-sidebar__nav sos-scroll">
             <div className="sos-nav-section">Marketing</div>
-            <DrawerMenu items={NAV} onNavigate={() => setMobileOpen(false)} />
+            <DrawerMenu items={navWithBadges} onNavigate={() => setMobileOpen(false)} />
           </div>
 
           <div className="sos-sidebar__user">

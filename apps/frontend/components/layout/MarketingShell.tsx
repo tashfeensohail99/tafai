@@ -249,7 +249,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
         )}
 
         {/* ── Main content ─────────────────────────────────────────────── */}
-        <div className="sos-main">
+        <div className="sos-content">
           <header className="sos-topbar">
             <button
               type="button"
@@ -275,7 +275,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
             </div>
           </header>
 
-          <main className="sos-page-content sos-scroll">{children}</main>
+          <main className="sos-page sos-scroll">{children}</main>
         </div>
       </div>
     </MarketingSessionContext.Provider>

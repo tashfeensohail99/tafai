@@ -468,8 +468,12 @@ export class FinanceProfileService {
    * payment handover. Money figures (fee/paid/outstanding) are computed in a
    * handful of batched queries (no per-row N+1), so the list stays fast.
    */
-  async listCustomers(search?: string) {
+  async listCustomers(search?: string, opts: { take?: number; cursor?: string } = {}) {
     const s = search?.trim();
+    // Perf: `take` caps the page (default 50). Combined with the debounced
+    // search input on the frontend, this stops the Customers list from firing
+    // an 8-query fan-out over every finance-touched lead on every keystroke.
+    const take = Math.max(1, Math.min(200, opts.take ?? 50));
 
     // 1) Candidate leadIds: anyone finance is actually handling — a submitted+
     // agreement (DRAFTs are still in Sales' hands), a contract, or a handover.
@@ -515,6 +519,8 @@ export class FinanceProfileService {
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
+      take,
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     });
     if (leads.length === 0) return [];
 

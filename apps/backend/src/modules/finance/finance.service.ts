@@ -100,6 +100,12 @@ export class FinanceService {
   ) {}
 
   async listInvoices(query: ListInvoicesQueryDto) {
+    // Perf: `take` caps the page so this endpoint never returns every invoice
+    // ever (which is what the Invoices list used to do — slow at ~200 rows,
+    // pool-starving at ~1k). `payments` is intentionally NOT included on the
+    // list — the detail endpoint (`findInvoiceById`) fetches them when the row
+    // is opened. Cursor is keyset pagination on invoice.id.
+    const take = query.take ?? 50;
     return this.prisma.invoice.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
@@ -137,9 +143,10 @@ export class FinanceService {
       include: {
         lead: { select: { id: true, firstName: true, lastName: true, phone: true, serviceInterest: true, targetCountry: true } },
         client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
-        payments: { orderBy: { createdAt: 'desc' } },
       },
       orderBy: { createdAt: 'desc' },
+      take,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
   }
 
@@ -326,74 +333,53 @@ export class FinanceService {
     totals: { month: number; ytd: number; allTime: number };
     byService: Array<{ service: string; month: number; ytd: number; allTime: number }>;
   }> {
+    // Perf: single SQL GROUP BY on the DB instead of fetching every verified
+    // payment ever (with lead+client joined) into Node and grouping in JS.
+    // The old query was called by both the Reports page AND the dashboard
+    // (`getReportsSummary`), so it fired on every Finance-home load; a growing
+    // payments table quietly turned it into a multi-second scan.
+    //
+    // SUM ... CASE WHEN handles the month/ytd/all-time buckets in one pass.
+    // COALESCE picks the service label from Client first, Lead second, else
+    // 'Unclassified' — same waterfall the old JS did. No parameters, so
+    // $queryRawUnsafe is fine and lets us keep the CASE expressions readable.
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{ service: string; month: string; ytd: string; all_time: string }>
+    >(
+      `SELECT
+         COALESCE(c."serviceType", l."serviceInterest", 'Unclassified') AS service,
+         SUM(CASE WHEN p."verifiedAt" >= date_trunc('month', now()) THEN COALESCE(p."baseAmount", p.amount) ELSE 0 END) AS month,
+         SUM(CASE WHEN p."verifiedAt" >= date_trunc('year',  now()) THEN COALESCE(p."baseAmount", p.amount) ELSE 0 END) AS ytd,
+         SUM(COALESCE(p."baseAmount", p.amount)) AS all_time
+       FROM finance.payments p
+       JOIN finance.invoices i ON i.id = p."invoiceId"
+       LEFT JOIN crm.leads    l ON l.id = i."leadId"
+       LEFT JOIN crm.clients  c ON c.id = i."clientId"
+       WHERE p.status IN ('PAID', 'PARTIAL')
+         AND p."verifiedAt" IS NOT NULL
+         AND p."deletedAt"  IS NULL
+         AND i."deletedAt"  IS NULL
+       GROUP BY COALESCE(c."serviceType", l."serviceInterest", 'Unclassified')
+       ORDER BY all_time DESC NULLS LAST`,
+    );
 
-    // Pull every verified payment with the invoice + lead/client joined so we
-    // can derive the service. Dataset is small enough (months × hundreds of
-    // payments) that an in-process group is fine; if it ever grows we'd
-    // switch to a $queryRaw with COALESCE on the service columns.
-    const payments = await this.prisma.payment.findMany({
-      where: {
-        deletedAt: null,
-        status: { in: [PaymentStatus.PAID, PaymentStatus.PARTIAL] },
-        verifiedAt: { not: null },
-        // Exclude cash on soft-deleted (voided) invoices — keeps this CAD roll-up
-        // (which now also powers the reports 'collected' KPI) consistent with the
-        // report's other tiers (collectedOnSigned + expenses both filter deletedAt).
-        invoice: { deletedAt: null },
-      },
-      select: {
-        amount: true,
-        baseAmount: true,
-        verifiedAt: true,
-        invoice: {
-          select: {
-            lead: { select: { serviceInterest: true } },
-            client: { select: { serviceType: true } },
-          },
-        },
-      },
-    });
+    const num = (v: string | null | undefined): number =>
+      v == null ? 0 : Number(v);
+    const byService = rows.map((r) => ({
+      service: r.service,
+      month: num(r.month),
+      ytd: num(r.ytd),
+      allTime: num(r.all_time),
+    }));
+    // Totals: sum the per-service rows (typically <20 services). Cheap and
+    // guaranteed to match the sum of the visible bars in the UI.
+    const totals = byService.reduce(
+      (acc, r) => ({ month: acc.month + r.month, ytd: acc.ytd + r.ytd, allTime: acc.allTime + r.allTime }),
+      { month: 0, ytd: 0, allTime: 0 },
+    );
 
-    const buckets = new Map<
-      string,
-      { service: string; month: number; ytd: number; allTime: number }
-    >();
-    let totalMonth = 0;
-    let totalYtd = 0;
-    let totalAll = 0;
-
-    for (const p of payments) {
-      const amount = Number(p.baseAmount ?? p.amount); // CAD
-      const service =
-        p.invoice.client?.serviceType ??
-        p.invoice.lead?.serviceInterest ??
-        'Unclassified';
-
-      const bucket =
-        buckets.get(service) ?? { service, month: 0, ytd: 0, allTime: 0 };
-      bucket.allTime += amount;
-      totalAll += amount;
-
-      const verifiedAt = p.verifiedAt!;
-      if (verifiedAt >= yearStart) {
-        bucket.ytd += amount;
-        totalYtd += amount;
-      }
-      if (verifiedAt >= monthStart) {
-        bucket.month += amount;
-        totalMonth += amount;
-      }
-      buckets.set(service, bucket);
-    }
-
-    return {
-      asOf: now,
-      totals: { month: totalMonth, ytd: totalYtd, allTime: totalAll },
-      byService: Array.from(buckets.values()).sort((a, b) => b.allTime - a.allTime),
-    };
+    return { asOf: now, totals, byService };
   }
 
   /**
@@ -546,6 +532,13 @@ export class FinanceService {
   }
 
   async listHandovers(query: ListFinanceHandoversQueryDto, user: RequestUser) {
+    // Perf: `take` caps the page (default 50, max 200 from the DTO). Before
+    // this cap, the whole handover history was returned in one shot AND every
+    // row triggered a sequential Supabase Storage signed-URL call — hundreds
+    // of round-trips per History page load. With the cap the signed-URL calls
+    // stay bounded (~50 in parallel), which is fine; if we later raise `take`
+    // meaningfully we should switch to lazy per-click signing.
+    const take = query.take ?? 50;
     const handovers = await this.prisma.financeHandover.findMany({
       where: {
         ...(query.status ? { status: query.status } : {}),
@@ -572,6 +565,8 @@ export class FinanceService {
       },
       include: this.financeHandoverInclude,
       orderBy: { createdAt: 'desc' },
+      take,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
 
     return Promise.all(handovers.map(async (handover) => ({

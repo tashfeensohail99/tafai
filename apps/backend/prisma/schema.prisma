@@ -2260,6 +2260,10 @@ model Invoice {
   @@index([clientId])
   @@index([status])
   @@index([agreementId])
+  // Perf: every finance-side lookup filters `deletedAt IS NULL` alongside the
+  // owner id. Composite avoids a heap-scan for the tombstone.
+  @@index([leadId, deletedAt])
+  @@index([clientId, deletedAt])
   @@map("invoices")
   @@schema("finance")
 }
@@ -2302,6 +2306,9 @@ model ServiceContract {
   @@index([leadId])
   @@index([clientId])
   @@index([status])
+  // Perf: paired with `deletedAt IS NULL` on the finance-profile fan-out.
+  @@index([leadId, deletedAt])
+  @@index([clientId, deletedAt])
   @@map("service_contracts")
   @@schema("finance")
 }
@@ -2376,6 +2383,13 @@ model Payment {
 
   @@index([invoiceId])
   @@index([status])
+  // Perf: the reports revenue query (paid+verified+not-deleted) plus the
+  // per-invoice payment loader both filter on all three; a partial index
+  // isn't worth the write cost, so a plain composite covers both.
+  @@index([status, verifiedAt, deletedAt])
+  // Perf: most payment lookups add `deletedAt IS NULL` — pair with invoiceId
+  // so per-invoice fetches don't seq-scan the deleted-flag column.
+  @@index([invoiceId, deletedAt])
   @@map("payments")
   @@schema("finance")
 }
@@ -2548,6 +2562,9 @@ model Expense {
   @@index([clientId])
   @@index([caseId])
   @@index([category])
+  // Perf: paired with `deletedAt IS NULL` on the profile + reports paths.
+  @@index([leadId, deletedAt])
+  @@index([clientId, deletedAt])
   @@map("expenses")
   @@schema("finance")
 }
@@ -2643,6 +2660,9 @@ model Agreement {
   @@index([clientId])
   @@index([status])
   @@index([categoryKey])
+  // Perf: paired with `deletedAt IS NULL` on the finance-profile fan-out.
+  @@index([leadId, deletedAt])
+  @@index([clientId, deletedAt])
   @@map("agreements")
   @@schema("finance")
 }

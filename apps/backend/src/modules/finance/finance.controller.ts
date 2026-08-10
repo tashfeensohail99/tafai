@@ -64,9 +64,10 @@ export class FinanceController {
     @Query() query: ListInvoicesQueryDto,
     @Res() res: Response,
   ): Promise<void> {
-    // Prisma's full row type leaks the relations; for CSV we only need a few
-    // fields, so cast through unknown and narrow to what rowsToCsv needs.
-    const rows = (await this.financeService.listInvoices(query)) as unknown as Array<{
+    // CSV export needs the full result set — pass a high `take` explicitly so
+    // the pagination cap on the list endpoint doesn't silently truncate the
+    // download. Bounded at 5000 as a sanity ceiling.
+    const rows = (await this.financeService.listInvoices({ ...query, take: 5000 })) as unknown as Array<{
       id: string;
       invoiceNumber: string;
       status: string;

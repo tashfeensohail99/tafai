@@ -4,14 +4,18 @@ import {
   IsDateString,
   IsEmail,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsNumberString,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { FinanceHandoverStatus, InvoiceStatus, PaymentStatus } from '@prisma/client';
 
 /** Mark/unmark a contract milestone (installment) as delivered → earned revenue. */
@@ -58,6 +62,21 @@ export class ListInvoicesQueryDto {
   @IsOptional()
   @IsUUID()
   clientId?: string;
+
+  // Pagination — added to stop the endpoint returning every invoice ever.
+  // Default 50 keeps a page snappy; cap 200 for CSV export use-case.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  take?: number;
+
+  // Keyset cursor: last invoice id from the previous page. Faster than offset
+  // on a large table because it drops all "rows-to-skip" work.
+  @IsOptional()
+  @IsUUID()
+  cursor?: string;
 }
 
 export class ListFinanceQueueQueryDto {
@@ -84,6 +103,18 @@ export class ListFinanceHandoversQueryDto {
   @IsOptional()
   @IsUUID()
   leadId?: string;
+
+  // Same pagination pattern as invoices. Default 50, max 200.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  take?: number;
+
+  @IsOptional()
+  @IsUUID()
+  cursor?: string;
 }
 
 export class CreateInvoiceDto {

@@ -91,6 +91,7 @@ import {
   WaiveDocumentItemDto,
 } from './processing.dto';
 import { NUDGE_DEFAULTS, NUDGE_TYPE_LABELS } from './nudge-defaults';
+import { buildProcessingSearchAnd } from './processing-search';
 import { NUDGE_EMAIL_TYPES } from './processing.dto';
 
 /**
@@ -1575,20 +1576,23 @@ export class ProcessingService {
       ...(query.priority ? { priority: query.priority } : {}),
       // Server-side search so it spans the whole queue, not just the loaded
       // page. Matches the applicant name / phone on either the client or the
-      // originating lead, plus the reference code.
-      ...(search
-        ? {
-            OR: [
-              { client: { firstName: { contains: search, mode: 'insensitive' } } },
-              { client: { lastName: { contains: search, mode: 'insensitive' } } },
-              { client: { phone: { contains: search } } },
-              { lead: { firstName: { contains: search, mode: 'insensitive' } } },
-              { lead: { lastName: { contains: search, mode: 'insensitive' } } },
-              { lead: { phone: { contains: search } } },
-              { lead: { referenceCode: { contains: search, mode: 'insensitive' } } },
-            ],
-          }
-        : {}),
+      // originating lead, plus the reference code. Multi-word: each whitespace
+      // token must hit ONE of the fields, so "abdul qadir" matches a client
+      // whose firstName is Abdul and lastName Qadir (see processing-search.ts).
+      ...(buildProcessingSearchAnd(
+        search,
+        (token): Prisma.ProcessingCaseWhereInput => ({
+          OR: [
+            { client: { firstName: { contains: token, mode: 'insensitive' } } },
+            { client: { lastName: { contains: token, mode: 'insensitive' } } },
+            { client: { phone: { contains: token } } },
+            { lead: { firstName: { contains: token, mode: 'insensitive' } } },
+            { lead: { lastName: { contains: token, mode: 'insensitive' } } },
+            { lead: { phone: { contains: token } } },
+            { lead: { referenceCode: { contains: token, mode: 'insensitive' } } },
+          ],
+        }),
+      ) ?? {}),
     };
 
     const [items, total] = await this.prisma.$transaction([
@@ -1951,22 +1955,27 @@ export class ProcessingService {
       ...(query.authorityDecision ? { authorityDecision: query.authorityDecision } : {}),
       ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
       ...(updatedAtFilter ? { updatedAt: updatedAtFilter } : {}),
-      ...(query.search
-        ? {
-            OR: [
-              {
-                lead: {
-                  OR: [
-                    { firstName: { contains: query.search, mode: 'insensitive' } },
-                    { lastName: { contains: query.search, mode: 'insensitive' } },
-                  ],
-                },
+      // Multi-word name search — each whitespace token must hit one of the
+      // fields, so "abdul qadir" matches an Abdul-Qadir client. See
+      // buildProcessingSearchAnd for why. Service/id kept per-token too so a
+      // query like "visit visa" still matches a service string.
+      ...(buildProcessingSearchAnd(
+        query.search,
+        (token): Prisma.ProcessingCaseWhereInput => ({
+          OR: [
+            {
+              lead: {
+                OR: [
+                  { firstName: { contains: token, mode: 'insensitive' } },
+                  { lastName: { contains: token, mode: 'insensitive' } },
+                ],
               },
-              { service: { contains: query.search, mode: 'insensitive' } },
-              { id: { contains: query.search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+            },
+            { service: { contains: token, mode: 'insensitive' } },
+            { id: { contains: token, mode: 'insensitive' } },
+          ],
+        }),
+      ) ?? {}),
     };
 
     const [cases, total] = await this.prisma.$transaction([

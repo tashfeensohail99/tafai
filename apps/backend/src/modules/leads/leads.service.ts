@@ -20,6 +20,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../common/phone/phone.util';
 import { findLeadByNormalizedPhone } from '../../common/phone/lead-dedupe';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import {
   looksLikePhoneSearch,
   phoneSearchCandidates,
@@ -330,18 +331,27 @@ export class LeadsService {
     ]);
     const idMatches = [...new Set([...phoneRows, ...clientRows].map((r) => r.id))];
 
+    // Multi-word: each token must hit ONE of the direct-fields, OR the lead's
+    // id is in the pre-computed idMatches set (phone digits + converted-client
+    // name — those already handle the concatenated-name case in raw SQL). The
+    // idMatches branch stays outside the AND so a hit there wins regardless of
+    // how the user spelt the direct name.
+    const tokenMatch = t.length >= 2
+      ? matchAllTokens(t, (tok): Prisma.LeadWhereInput => ({
+          OR: [
+            { firstName: { contains: tok, mode: 'insensitive' as const } },
+            { lastName: { contains: tok, mode: 'insensitive' as const } },
+            { email: { contains: tok, mode: 'insensitive' as const } },
+            { phone: { contains: tok, mode: 'insensitive' as const } },
+          ],
+        }))
+      : undefined;
+    const searchOrClauses: Prisma.LeadWhereInput[] = [];
+    if (tokenMatch) searchOrClauses.push(tokenMatch);
+    if (idMatches.length) searchOrClauses.push({ id: { in: idMatches } });
+
     const where: Prisma.LeadWhereInput = {
-      ...(t.length >= 2
-        ? {
-            OR: [
-              { firstName: { contains: t, mode: 'insensitive' as const } },
-              { lastName: { contains: t, mode: 'insensitive' as const } },
-              { email: { contains: t, mode: 'insensitive' as const } },
-              { phone: { contains: t, mode: 'insensitive' as const } },
-              ...(idMatches.length ? [{ id: { in: idMatches } }] : []),
-            ],
-          }
-        : {}),
+      ...(searchOrClauses.length ? { OR: searchOrClauses } : {}),
       ...(opts.status ? { status: opts.status } : {}),
       ...(opts.source
         ? { sourceChannel: { equals: opts.source, mode: 'insensitive' as const } }
@@ -520,20 +530,31 @@ export class LeadsService {
               } satisfies Prisma.LeadWhereInput,
             ]
           : []),
+        // Multi-word search: each whitespace token must hit one of the direct
+        // fields, OR the lead's id is in one of the pre-computed escape sets
+        // (phone digits / converted-client full name — both already handle
+        // spaces in their own SQL). Split-token AND matches the processing fix
+        // #269. The whole thing stays as a SINGLE item inside this AND array —
+        // don't add a sibling OR: at the outer level, per #253's post-mortem.
         ...(query.search
           ? [
-              {
-                OR: [
-                  { firstName: { contains: query.search, mode: 'insensitive' } },
-                  { lastName: { contains: query.search, mode: 'insensitive' } },
-                  { email: { contains: query.search, mode: 'insensitive' } },
-                  // Raw substring kept so a partial number still behaves as
-                  // before; the id term makes 0321… find a stored +92321….
-                  { phone: { contains: query.search, mode: 'insensitive' } },
-                  ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
-                  ...(clientNameIds.length ? [{ id: { in: clientNameIds } }] : []),
-                ],
-              } satisfies Prisma.LeadWhereInput,
+              (() => {
+                const tokenMatch = matchAllTokens(query.search!, (tok): Prisma.LeadWhereInput => ({
+                  OR: [
+                    { firstName: { contains: tok, mode: 'insensitive' } },
+                    { lastName: { contains: tok, mode: 'insensitive' } },
+                    { email: { contains: tok, mode: 'insensitive' } },
+                    // Raw substring kept so a partial number still behaves as
+                    // before; the id term makes 0321… find a stored +92321….
+                    { phone: { contains: tok, mode: 'insensitive' } },
+                  ],
+                }));
+                const clauses: Prisma.LeadWhereInput[] = [];
+                if (tokenMatch) clauses.push(tokenMatch);
+                if (phoneMatchIds.length) clauses.push({ id: { in: phoneMatchIds } });
+                if (clientNameIds.length) clauses.push({ id: { in: clientNameIds } });
+                return { OR: clauses } satisfies Prisma.LeadWhereInput;
+              })(),
             ]
           : []),
       ],

@@ -91,7 +91,7 @@ import {
   WaiveDocumentItemDto,
 } from './processing.dto';
 import { NUDGE_DEFAULTS, NUDGE_TYPE_LABELS } from './nudge-defaults';
-import { buildProcessingSearchAnd } from './processing-search';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import { NUDGE_EMAIL_TYPES } from './processing.dto';
 
 /**
@@ -1578,8 +1578,8 @@ export class ProcessingService {
       // page. Matches the applicant name / phone on either the client or the
       // originating lead, plus the reference code. Multi-word: each whitespace
       // token must hit ONE of the fields, so "abdul qadir" matches a client
-      // whose firstName is Abdul and lastName Qadir (see processing-search.ts).
-      ...(buildProcessingSearchAnd(
+      // whose firstName is Abdul and lastName Qadir (see multi-word-search.ts).
+      ...(matchAllTokens(
         search,
         (token): Prisma.ProcessingCaseWhereInput => ({
           OR: [
@@ -1957,9 +1957,9 @@ export class ProcessingService {
       ...(updatedAtFilter ? { updatedAt: updatedAtFilter } : {}),
       // Multi-word name search — each whitespace token must hit one of the
       // fields, so "abdul qadir" matches an Abdul-Qadir client. See
-      // buildProcessingSearchAnd for why. Service/id kept per-token too so a
-      // query like "visit visa" still matches a service string.
-      ...(buildProcessingSearchAnd(
+      // multi-word-search.ts. Service/id kept per-token too so a query
+      // like "visit visa" still matches a service string.
+      ...(matchAllTokens(
         query.search,
         (token): Prisma.ProcessingCaseWhereInput => ({
           OR: [

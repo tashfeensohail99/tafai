@@ -2,8 +2,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AuditAction, CaseStatus, TimelineEventType } from '@prisma/client';
+import { AuditAction, CaseStatus, Prisma, TimelineEventType } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import {
@@ -39,24 +40,23 @@ export class CasesService {
         ...(query.departmentId ? { departmentId: query.departmentId } : {}),
         ...(query.assignedEmployeeId ? { assignedEmployeeId: query.assignedEmployeeId } : {}),
         ...(query.clientId ? { clientId: query.clientId } : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { caseNumber: { contains: query.search, mode: 'insensitive' } },
-                { serviceType: { contains: query.search, mode: 'insensitive' } },
-                { targetCountry: { contains: query.search, mode: 'insensitive' } },
-                {
-                  client: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              ],
-            }
-          : {}),
+        // Multi-word: each token must hit ONE of the fields. Same fix as #269.
+        ...(matchAllTokens(query.search, (tok): Prisma.CaseWhereInput => ({
+          OR: [
+            { caseNumber: { contains: tok, mode: 'insensitive' } },
+            { serviceType: { contains: tok, mode: 'insensitive' } },
+            { targetCountry: { contains: tok, mode: 'insensitive' } },
+            {
+              client: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        })) ?? {}),
       },
       include: {
         client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },

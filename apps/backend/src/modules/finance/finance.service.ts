@@ -22,6 +22,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { FxService } from '../../common/fx/fx.service';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import { RequestUser } from '../../common/types/auth.types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
@@ -107,32 +108,33 @@ export class FinanceService {
         ...(query.ownerType === 'client' ? { clientId: { not: null } } : {}),
         ...(query.leadId ? { leadId: query.leadId } : {}),
         ...(query.clientId ? { clientId: query.clientId } : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { invoiceNumber: { contains: query.search, mode: 'insensitive' } },
-                { notes: { contains: query.search, mode: 'insensitive' } },
-                {
-                  lead: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-                {
-                  client: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              ],
-            }
-          : {}),
+        // Multi-word: each token must hit ONE of the fields (invoice num,
+        // notes, lead-name/phone, client-name/phone). "abdul qadir" now
+        // matches an invoice whose lead is Abdul Qadir — same fix as #269.
+        ...(matchAllTokens(query.search, (tok): Prisma.InvoiceWhereInput => ({
+          OR: [
+            { invoiceNumber: { contains: tok, mode: 'insensitive' } },
+            { notes: { contains: tok, mode: 'insensitive' } },
+            {
+              lead: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+            {
+              client: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        })) ?? {}),
       },
       include: {
         lead: { select: { id: true, firstName: true, lastName: true, phone: true, serviceInterest: true, targetCountry: true } },
@@ -499,39 +501,40 @@ export class FinanceService {
     return this.prisma.payment.findMany({
       where: {
         status: query.paymentStatus ?? PaymentStatus.PENDING,
-        ...(query.search
-          ? {
-              OR: [
-                { paymentMethod: { contains: query.search, mode: 'insensitive' } },
-                { transactionRef: { contains: query.search, mode: 'insensitive' } },
-                {
-                  invoice: {
-                    OR: [
-                      { invoiceNumber: { contains: query.search, mode: 'insensitive' } },
-                      {
-                        lead: {
-                          OR: [
-                            { firstName: { contains: query.search, mode: 'insensitive' } },
-                            { lastName: { contains: query.search, mode: 'insensitive' } },
-                            { phone: { contains: query.search, mode: 'insensitive' } },
-                          ],
-                        },
-                      },
-                      {
-                        client: {
-                          OR: [
-                            { firstName: { contains: query.search, mode: 'insensitive' } },
-                            { lastName: { contains: query.search, mode: 'insensitive' } },
-                            { phone: { contains: query.search, mode: 'insensitive' } },
-                          ],
-                        },
-                      },
-                    ],
+        // Multi-word: each token must hit ONE of the fields — payment method /
+        // txn ref / invoice number / linked lead-name-phone / linked client-
+        // name-phone. Same fix as #269.
+        ...(matchAllTokens(query.search, (tok): Prisma.PaymentWhereInput => ({
+          OR: [
+            { paymentMethod: { contains: tok, mode: 'insensitive' } },
+            { transactionRef: { contains: tok, mode: 'insensitive' } },
+            {
+              invoice: {
+                OR: [
+                  { invoiceNumber: { contains: tok, mode: 'insensitive' } },
+                  {
+                    lead: {
+                      OR: [
+                        { firstName: { contains: tok, mode: 'insensitive' } },
+                        { lastName: { contains: tok, mode: 'insensitive' } },
+                        { phone: { contains: tok, mode: 'insensitive' } },
+                      ],
+                    },
                   },
-                },
-              ],
-            }
-          : {}),
+                  {
+                    client: {
+                      OR: [
+                        { firstName: { contains: tok, mode: 'insensitive' } },
+                        { lastName: { contains: tok, mode: 'insensitive' } },
+                        { phone: { contains: tok, mode: 'insensitive' } },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        })) ?? {}),
       },
       include: {
         invoice: {
@@ -551,24 +554,23 @@ export class FinanceService {
         ...(query.status ? { status: query.status } : {}),
         ...(query.leadId ? { leadId: query.leadId } : {}),
         ...this.buildHandoverScopeFilter(user),
-        ...(query.search
-          ? {
-              OR: [
-                { paymentMethod: { contains: query.search, mode: 'insensitive' } },
-                { transactionRef: { contains: query.search, mode: 'insensitive' } },
-                { notes: { contains: query.search, mode: 'insensitive' } },
-                {
-                  lead: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              ],
-            }
-          : {}),
+        // Multi-word: each token must hit ONE of the fields. Same fix as #269.
+        ...(matchAllTokens(query.search, (tok): Prisma.FinanceHandoverWhereInput => ({
+          OR: [
+            { paymentMethod: { contains: tok, mode: 'insensitive' } },
+            { transactionRef: { contains: tok, mode: 'insensitive' } },
+            { notes: { contains: tok, mode: 'insensitive' } },
+            {
+              lead: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        })) ?? {}),
       },
       include: this.financeHandoverInclude,
       orderBy: { createdAt: 'desc' },

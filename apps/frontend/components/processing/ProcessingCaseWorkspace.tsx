@@ -80,6 +80,7 @@ import { StageChangeModal } from './StageChangeModal';
 import { ProcessingAssignmentModal } from './ProcessingAssignmentModal';
 import { CorrectionRequestModal } from './CorrectionRequestModal';
 import { CancelCaseModal } from './CancelCaseModal';
+import { CloseCaseModal } from './CloseCaseModal';
 import { CorrectionsTab } from './tabs/CorrectionsTab';
 import { MilestonesTab } from './tabs/MilestonesTab';
 import { DatabankTab } from './tabs/DatabankTab';
@@ -334,6 +335,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showJunkModal, setShowJunkModal] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
   const isManager = user.permissions.includes('processing.case.view_all');
   const canAssign = user.permissions.includes('processing.case.assign');
 
@@ -516,6 +518,13 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           onCancelled={() => setRefetchTick((n) => n + 1)}
         />
       ) : null}
+      {showCloseModal ? (
+        <CloseCaseModal
+          caseRecord={c}
+          onClose={() => setShowCloseModal(false)}
+          onClosed={() => setRefetchTick((n) => n + 1)}
+        />
+      ) : null}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {/* Back to My Cases */}
@@ -550,12 +559,27 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
               </SecondaryButton>
             ) : null}
             <SecondaryButton iconLeft={<ClipboardEdit size={14} />} onClick={() => setShowCorrectionModal(true)}>Request correction</SecondaryButton>
+            {/* Close case -- available to officer AND manager (natural end of a
+                decided case). Distinct from Cancel (which the processing team
+                reserves for "client withdrew, going to refund" -- manager-only,
+                destructive). Visible only when the authority decision is in.
+                Backend enforces the transition via ALLOWED_TRANSITIONS. */}
+            {(c.stage === 'APPROVED' || c.stage === 'REJECTED' || c.stage === 'APPEAL_IN_PROGRESS') ? (
+              <button
+                type="button"
+                onClick={() => setShowCloseModal(true)}
+                title="Close this case (decision received, no further action)"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-status-success-border)', background: 'var(--sos-status-success-soft)', color: 'var(--sos-status-success)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 150ms' }}
+              >
+                <CheckCircle2 size={13} /> Close case
+              </button>
+            ) : null}
             {isManager && c.stage !== 'CANCELLED' && c.stage !== 'COMPLETED' && c.stage !== 'JUNK' ? (
               <>
                 <button
                   type="button"
                   onClick={() => setShowJunkModal(true)}
-                  title="Mark this case as junk (spam / duplicate / dead lead)"
+                  title="Case created by mistake, duplicate, or test data"
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-default)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-secondary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 150ms' }}
                 >
                   <Trash2 size={13} /> Mark as junk
@@ -563,6 +587,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
                 <button
                   type="button"
                   onClick={() => setShowCancelModal(true)}
+                  title="Client did not proceed -- goes to refund workflow"
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-status-danger-border)', background: 'var(--sos-status-danger-soft)', color: 'var(--sos-status-danger)', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 150ms' }}
                 >
                   <XCircle size={13} /> Cancel case

@@ -44,8 +44,17 @@ const ALLOWED_TRANSITIONS: Record<ProcessingStage, ProcessingStage[]> = {
   ADDITIONAL_INFO_REQUESTED: ['UNDER_AUTHORITY_REVIEW', 'DOCUMENTS_COLLECTION'],
   DECISION_RECEIVED: ['APPROVED', 'REJECTED'],
   APPROVED: ['COMPLETED'],
-  REJECTED: ['APPEAL_IN_PROGRESS', 'CANCELLED'],
-  APPEAL_IN_PROGRESS: ['SUBMITTED', 'CANCELLED'],
+  // Team definition (2026-08-10): CLOSE = "submitted and decision done". Adds
+  // COMPLETED as a legitimate target from both REJECTED and APPEAL_IN_PROGRESS
+  // so an officer can close a case whose decision is final and no appeal is
+  // pending, without having to reach for Cancel (reserved for withdrawals +
+  // refunds). CANCELLED is intentionally NOT in this list any more -- Cancel
+  // lives in its own toolbar action with a distinct refund workflow.
+  REJECTED: ['APPEAL_IN_PROGRESS', 'COMPLETED'],
+  // Fixes prior mirror drift too: backend allows UNDER_AUTHORITY_REVIEW (an
+  // appeal that reopens the review), never SUBMITTED (which was pre-existing
+  // frontend drift -- backend would 400 that transition).
+  APPEAL_IN_PROGRESS: ['UNDER_AUTHORITY_REVIEW', 'COMPLETED'],
   COMPLETED: [],
   CANCELLED: [],
   // JUNK is terminal and set only via the manager-only "Mark as junk" action,

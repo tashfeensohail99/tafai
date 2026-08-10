@@ -158,8 +158,15 @@ const ALLOWED_TRANSITIONS: Partial<Record<ProcessingCaseStage, ProcessingCaseSta
     ProcessingCaseStage.REJECTED,
   ],
   APPROVED: [ProcessingCaseStage.COMPLETED],
-  REJECTED: [ProcessingCaseStage.APPEAL_IN_PROGRESS],
-  APPEAL_IN_PROGRESS: [ProcessingCaseStage.UNDER_AUTHORITY_REVIEW],
+  // Processing team's own definition (2026-08-10): CLOSE = "submitted and
+  // decision done". A REJECTED case where the client won't appeal, and an
+  // APPEAL_IN_PROGRESS case where the appeal has resolved, both fit that
+  // definition — they need a legitimate path to COMPLETED so the officer isn't
+  // forced to hit Cancel (which the team reserves for "client withdrew +
+  // refund"). completionNotes remains required on transition to COMPLETED
+  // (enforced in changeCaseStage below), preserving the audit trail.
+  REJECTED: [ProcessingCaseStage.APPEAL_IN_PROGRESS, ProcessingCaseStage.COMPLETED],
+  APPEAL_IN_PROGRESS: [ProcessingCaseStage.UNDER_AUTHORITY_REVIEW, ProcessingCaseStage.COMPLETED],
 };
 
 // Stages that cannot be cancelled by non-manager

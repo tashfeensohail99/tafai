@@ -167,8 +167,21 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled, mode = 'c
               </div>
               <div style={{ fontSize: '13px', color: 'var(--sos-text-primary)', lineHeight: '1.5' }}>
                 {isJunk
-                  ? 'Marking this case as junk locks it and removes it from active queues and reports (it won’t appear in history either). Use this for spam, duplicates, or dead leads.'
-                  : 'Cancelling this case will lock it permanently. All assigned documents, tasks, and submissions will be archived. The client will need a new case to proceed.'}
+                  ? 'Use this for cases created by mistake, duplicates, or test data. The case is locked and removed from active queues and reports (it won’t appear in history either).'
+                  : (
+                    <>
+                      Use this when the client did not proceed with the service and a refund
+                      is owed. The case is locked and all assigned documents, tasks, and
+                      submissions are archived. If the case simply reached a final decision
+                      and no refund is involved, use <strong>Close case</strong> instead.
+                      <br />
+                      <br />
+                      <em style={{ fontSize: '12.5px', color: 'var(--sos-text-muted)' }}>
+                        The finance refund workflow is a manual hand-off today — flag
+                        Finance separately once you cancel here.
+                      </em>
+                    </>
+                  )}
               </div>
             </div>
           </div>
@@ -186,7 +199,7 @@ export function CancelCaseModal({ caseRecord: c, onClose, onCancelled, mode = 'c
             id="cancelReason"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder={isJunk ? 'Why is this case junk — spam, duplicate, dead lead? (min 10 characters)…' : 'Describe why this case is being cancelled (min 10 characters)…'}
+            placeholder={isJunk ? 'Why is this case junk — mistake, duplicate, test data? (min 10 characters)…' : 'Reason client did not proceed + refund status if known (min 10 characters)…'}
             rows={3}
             style={{
               width: '100%',

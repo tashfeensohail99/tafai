@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { LeadImportStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import { StorageService } from '../storage/storage.service';
 import { parseSpreadsheet } from './parsers/spreadsheet-parser';
 import {
@@ -276,17 +277,16 @@ export class LeadImportsService {
         : opts.assignedEmployeeId
           ? { assignedEmployeeId: opts.assignedEmployeeId }
           : {}),
-      ...(search
-        ? {
-            OR: [
-              { firstName: { contains: search, mode: 'insensitive' } },
-              { lastName: { contains: search, mode: 'insensitive' } },
-              { phone: { contains: search } },
-              { email: { contains: search, mode: 'insensitive' } },
-              { referenceCode: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      // Multi-word: each token must hit ONE of the fields. Same fix as #269.
+      ...(matchAllTokens(search, (tok): Prisma.LeadWhereInput => ({
+        OR: [
+          { firstName: { contains: tok, mode: 'insensitive' } },
+          { lastName: { contains: tok, mode: 'insensitive' } },
+          { phone: { contains: tok } },
+          { email: { contains: tok, mode: 'insensitive' } },
+          { referenceCode: { contains: tok, mode: 'insensitive' } },
+        ],
+      })) ?? {}),
     };
 
     const leads = await this.prisma.lead.findMany({

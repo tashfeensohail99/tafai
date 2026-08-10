@@ -4,8 +4,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AppointmentStatus, AuditAction, LeadStatus, TimelineEventType, WhatsAppThreadStatus } from '@prisma/client';
+import { AppointmentStatus, AuditAction, LeadStatus, Prisma, TimelineEventType, WhatsAppThreadStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -182,33 +183,32 @@ export class AppointmentsService {
               },
             }
           : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { title: { contains: query.search, mode: 'insensitive' } },
-                { appointmentType: { contains: query.search, mode: 'insensitive' } },
-                { location: { contains: query.search, mode: 'insensitive' } },
-                {
-                  lead: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-                {
-                  client: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              ],
-            }
-          : {}),
+        // Multi-word: each token must hit ONE of the fields. Same fix as #269.
+        ...(matchAllTokens(query.search, (tok): Prisma.AppointmentWhereInput => ({
+          OR: [
+            { title: { contains: tok, mode: 'insensitive' } },
+            { appointmentType: { contains: tok, mode: 'insensitive' } },
+            { location: { contains: tok, mode: 'insensitive' } },
+            {
+              lead: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+            {
+              client: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        })) ?? {}),
       },
       include: {
         lead: { select: { id: true, firstName: true, lastName: true, phone: true, status: true } },
@@ -356,33 +356,32 @@ export class AppointmentsService {
               },
             }
           : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { title: { contains: query.search, mode: 'insensitive' } },
-                { appointmentType: { contains: query.search, mode: 'insensitive' } },
-                { location: { contains: query.search, mode: 'insensitive' } },
-                {
-                  lead: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-                {
-                  client: {
-                    OR: [
-                      { firstName: { contains: query.search, mode: 'insensitive' } },
-                      { lastName: { contains: query.search, mode: 'insensitive' } },
-                      { phone: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              ],
-            }
-          : {}),
+        // Multi-word: each token must hit ONE of the fields. Same fix as #269.
+        ...(matchAllTokens(query.search, (tok): Prisma.AppointmentWhereInput => ({
+          OR: [
+            { title: { contains: tok, mode: 'insensitive' } },
+            { appointmentType: { contains: tok, mode: 'insensitive' } },
+            { location: { contains: tok, mode: 'insensitive' } },
+            {
+              lead: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+            {
+              client: {
+                OR: [
+                  { firstName: { contains: tok, mode: 'insensitive' } },
+                  { lastName: { contains: tok, mode: 'insensitive' } },
+                  { phone: { contains: tok, mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        })) ?? {}),
       },
       include: {
         lead: { select: { id: true, firstName: true, lastName: true, phone: true, status: true } },

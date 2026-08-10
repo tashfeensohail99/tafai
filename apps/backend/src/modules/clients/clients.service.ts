@@ -6,6 +6,7 @@ import {
 import { AuditAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateOrphanClientReferenceCode } from '../../common/reference-codes/reference-codes';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import {
   looksLikePhoneSearch,
   phoneSearchCandidates,
@@ -39,22 +40,30 @@ export class ClientsService {
 
   async findAll(query: ListClientsQueryDto) {
     const phoneMatchIds = query.search ? await this.phoneSearchClientIds(query.search) : [];
+    // Multi-word search: each token must hit ONE of the direct fields, OR the
+    // client's id is in the pre-computed phone-digit set. Same fix as #269 in
+    // processing — "abdul qadir" now matches a client with firstName Abdul,
+    // lastName Qadir. See common/search/multi-word-search.ts.
+    const tokenMatch = query.search
+      ? matchAllTokens(query.search, (tok): Prisma.ClientWhereInput => ({
+          OR: [
+            { firstName: { contains: tok, mode: 'insensitive' } },
+            { lastName: { contains: tok, mode: 'insensitive' } },
+            { email: { contains: tok, mode: 'insensitive' } },
+            { phone: { contains: tok, mode: 'insensitive' } },
+          ],
+        }))
+      : undefined;
+    const searchOrClauses: Prisma.ClientWhereInput[] = [];
+    if (tokenMatch) searchOrClauses.push(tokenMatch);
+    if (phoneMatchIds.length) searchOrClauses.push({ id: { in: phoneMatchIds } });
+
     return this.prisma.client.findMany({
       where: {
         deletedAt: null,
         ...(query.status ? { status: query.status } : {}),
         ...(query.branchId ? { branchId: query.branchId } : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { firstName: { contains: query.search, mode: 'insensitive' } },
-                { lastName: { contains: query.search, mode: 'insensitive' } },
-                { email: { contains: query.search, mode: 'insensitive' } },
-                { phone: { contains: query.search, mode: 'insensitive' } },
-                ...(phoneMatchIds.length ? [{ id: { in: phoneMatchIds } }] : []),
-              ],
-            }
-          : {}),
+        ...(searchOrClauses.length ? { OR: searchOrClauses } : {}),
       },
       include: {
         branch: { select: { id: true, name: true } },

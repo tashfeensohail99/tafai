@@ -12,6 +12,7 @@ import {
   TimelineEventType,
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { matchAllTokens } from '../../common/search/multi-word-search';
 import { RequestUser } from '../../common/types/auth.types';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -88,24 +89,27 @@ export class FollowUpsService {
   ): Prisma.FollowUpWhereInput {
     const and: Prisma.FollowUpWhereInput[] = [this.buildScopeFilter(user)];
 
-    if (query.search) {
-      and.push({
-        OR: [
-          { title: { contains: query.search, mode: 'insensitive' } },
-          { description: { contains: query.search, mode: 'insensitive' } },
-          { contactMethod: { contains: query.search, mode: 'insensitive' } },
-          {
-            lead: {
-              OR: [
-                { firstName: { contains: query.search, mode: 'insensitive' } },
-                { lastName: { contains: query.search, mode: 'insensitive' } },
-                { phone: { contains: query.search, mode: 'insensitive' } },
-              ],
-            },
+    // Multi-word search: each token must hit ONE of the fields. Same fix as
+    // #269 in processing — see common/search/multi-word-search.ts.
+    const searchAnd = matchAllTokens(query.search, (tok): Prisma.FollowUpWhereInput => ({
+      OR: [
+        { title: { contains: tok, mode: 'insensitive' } },
+        { description: { contains: tok, mode: 'insensitive' } },
+        { contactMethod: { contains: tok, mode: 'insensitive' } },
+        {
+          lead: {
+            OR: [
+              { firstName: { contains: tok, mode: 'insensitive' } },
+              { lastName: { contains: tok, mode: 'insensitive' } },
+              { phone: { contains: tok, mode: 'insensitive' } },
+            ],
           },
-        ],
-      });
-    }
+        },
+      ],
+    }));
+    // Splice each token's OR into the outer AND (rep scope + tokens must all
+    // hold). Empty / whitespace-only search contributes nothing.
+    if (searchAnd) and.push(...searchAnd.AND);
 
     const where: Prisma.FollowUpWhereInput = {
       AND: and,

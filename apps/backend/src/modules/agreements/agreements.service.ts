@@ -243,16 +243,28 @@ export class AgreementsService {
           deletedAt: null,
           status: { not: AgreementStatus.CANCELLED },
         },
-        select: { agreementNumber: true, status: true },
+        select: { id: true, agreementNumber: true, status: true },
         orderBy: { createdAt: 'desc' },
       });
       if (dup) {
-        throw new ConflictException(
-          `This lead already has a ${template.categoryKey} agreement ` +
+        // Structured 409 so the frontend can render a "Open existing agreement"
+        // action instead of a dead-end text banner. `message` stays the human
+        // sentence apiFetch surfaces by default.
+        throw new ConflictException({
+          error: 'Conflict',
+          reason: 'duplicate-category-agreement',
+          message:
+            `This lead already has a ${template.categoryKey} agreement ` +
             `(${dup.agreementNumber}, ${dup.status}). Open and edit that agreement ` +
             `instead of creating a new one. Create a separate agreement only if it is ` +
             `for a different service or a genuinely different applicant.`,
-        );
+          match: {
+            agreementId: dup.id,
+            agreementNumber: dup.agreementNumber,
+            status: dup.status,
+            categoryKey: template.categoryKey,
+          },
+        });
       }
     }
 

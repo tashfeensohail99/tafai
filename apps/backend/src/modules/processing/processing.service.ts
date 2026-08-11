@@ -711,6 +711,25 @@ export class ProcessingService {
     // number later (WhatsApp stays inactive until then).
     const phone = dto.phone?.trim() || `MANUAL-${referenceCode}`;
 
+    // Hard-block duplicates. Defense-in-depth for BOTH callers of this method:
+    //   1. Manual "new client" from the processing UI (createManualClientCase),
+    //   2. The bulk XLSX importer (createClientCaseInternal called in a loop
+    //      from importClients). The importer's own resolver does an early
+    //      dedup check, but that check used exact-string phone match which
+    //      quietly missed +923…/03… variants — the audit found 200 duplicates
+    //      from the 2026-08-05 import that landed via exactly this hole.
+    // Uses the same variant-aware LeadsService check the Sales create-lead
+    // path uses (walks phone through the digit-string variants + checks BOTH
+    // crm.leads and crm.clients). Throws a structured 409 that the import loop
+    // catches per-row and reports as "Duplicate — already in the system".
+    // Skip when the phone is our own MANUAL-* placeholder (no real number to
+    // match on — those never collide with a real customer).
+    if (!phone.startsWith('MANUAL-')) {
+      await this.leadsService.ensureUniqueLead(phone, email);
+    } else if (email) {
+      await this.leadsService.ensureUniqueLead(undefined, email);
+    }
+
     // Portal login. Skipped ENTIRELY for bulk imports (suppressPortalLogin) and
     // when the client already has a UserAccount — this avoids the ~200ms bcrypt
     // (which would otherwise dominate a bulk commit) and an unneeded account.

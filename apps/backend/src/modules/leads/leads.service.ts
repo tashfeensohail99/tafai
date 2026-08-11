@@ -2011,7 +2011,7 @@ export class LeadsService {
    *     ... } }` — so the frontend can render a proper "already exists"
    *     modal with an Open-existing button instead of a generic red toast.
    */
-  private async ensureUniqueLead(phone?: string, email?: string, excludeId?: string) {
+  async ensureUniqueLead(phone?: string, email?: string, excludeId?: string) {
     if (!phone && !email) return;
 
     // --- Phone check ---------------------------------------------------------

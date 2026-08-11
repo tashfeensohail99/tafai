@@ -1348,7 +1348,7 @@ export class LeadsService {
     return lead;
   }
 
-  async create(dto: CreateLeadDto, actorUserId: string) {
+  async create(dto: CreateLeadDto, actorUserId: string, opts: { force?: boolean } = {}) {
     // Canonicalise the phone to E.164 so a manually-entered local number
     // (e.g. 03xx…) is stored in the SAME format inbound WhatsApp/calls arrive in
     // (+92 3xx…). Without this, an inbound from the customer fails to exact-match
@@ -1359,7 +1359,14 @@ export class LeadsService {
     // typed so a create is never blocked.
     const norm = normalisePhone(dto.phone, 'PK');
     const phone = norm.ok && norm.e164 ? norm.e164 : dto.phone;
-    await this.ensureUniqueLead(phone, dto.email);
+    // `force=true` bypasses the dedup guard for legitimate collisions (twins,
+    // family members sharing a phone, or an admin who has already reviewed the
+    // conflict). The override is logged to the audit trail below so it stays
+    // reviewable — reps can't quietly re-open a duplicate without leaving a
+    // trace. Non-force creates get the full lead+client duplicate check.
+    if (!opts.force) {
+      await this.ensureUniqueLead(phone, dto.email);
+    }
     const fallbackAssignedEmployeeId = dto.assignedEmployeeId ?? await this.findEmployeeIdByUserId(actorUserId);
     const referenceCode = await generateLeadReferenceCode(this.prisma);
 
@@ -1415,6 +1422,8 @@ export class LeadsService {
         phone: lead.phone,
         serviceInterest: lead.serviceInterest,
         targetCountry: lead.targetCountry,
+        // Reviewable trail when the create bypassed the duplicate guard.
+        ...(opts.force ? { duplicateOverride: true } : {}),
       },
     });
 
@@ -1423,12 +1432,15 @@ export class LeadsService {
       entityId: lead.id,
       leadId: lead.id,
       eventType: TimelineEventType.LEAD_CREATED,
-      description: `${lead.firstName} ${lead.lastName} created`,
+      description: opts.force
+        ? `${lead.firstName} ${lead.lastName} created (duplicate-phone/email override)`
+        : `${lead.firstName} ${lead.lastName} created`,
       actorUserId,
       metadata: {
         sourceChannel: lead.sourceChannel,
         serviceInterest: lead.serviceInterest,
         targetCountry: lead.targetCountry,
+        ...(opts.force ? { duplicateOverride: true } : {}),
       },
     });
 
@@ -1980,23 +1992,182 @@ export class LeadsService {
     return { lead: updatedLead, client, wasExistingClient };
   }
 
+  /**
+   * Guard against creating (or updating into) a duplicate lead by the same
+   * customer. The prior version compared `{ phone }` as an exact string,
+   * which silently missed the two most common real duplicates:
+   *   1. Format variants — `+923135678933` on the WhatsApp thread AND
+   *      `03135678933` on the walk-in slip end up as different rows because
+   *      the strings are byte-different.
+   *   2. Already-converted clients — a customer becomes a Client on
+   *      conversion, and a rep who later types their number at reception
+   *      would be silently allowed to create ANOTHER new Lead for someone
+   *      the CRM already knows.
+   * Both showed up in prod at scale (a 2026-08-11 audit found 240 dup
+   * groups, ~250 real people). This rewrite:
+   *   • Canonicalises the phone through libphonenumber, then matches against
+   *     every legitimate stored spelling of the number (E.164, national,
+   *     local with trunk 0) using the same digit-string equality that
+   *     `findLeadByNormalizedPhone` uses on the inbound WhatsApp hot path —
+   *     so it's served by the `leads_phone_digits_idx` expression index,
+   *     never a seq-scan.
+   *   • Also checks CRM clients (a customer who converted long ago must not
+   *     become a new lead just because a rep didn't recognise the number).
+   *   • Returns a structured 409 body — `{ error, match: { kind, id, name,
+   *     ... } }` — so the frontend can render a proper "already exists"
+   *     modal with an Open-existing button instead of a generic red toast.
+   */
   private async ensureUniqueLead(phone?: string, email?: string, excludeId?: string) {
     if (!phone && !email) return;
 
-    const duplicateLead = await this.prisma.lead.findFirst({
-      where: {
-        deletedAt: null,
-        AND: [excludeId ? { id: { not: excludeId } } : {}],
-        OR: [
-          ...(phone ? [{ phone }] : []),
-          ...(email ? [{ email }] : []),
-        ],
-      },
-      select: { id: true },
-    });
+    // --- Phone check ---------------------------------------------------------
+    if (phone) {
+      const norm = normalisePhone(phone, 'PK');
+      const digits = (norm.e164 ?? phone).replace(/\D/g, '');
+      const variants = new Set<string>([digits]);
+      if (digits.startsWith('92') && digits.length === 12) {
+        const national = digits.slice(2);
+        variants.add(national);
+        variants.add(`0${national}`);
+      }
+      const variantArr = [...variants].filter((v) => v.length >= 8);
 
-    if (duplicateLead) {
-      throw new ConflictException('A lead with the same phone or email already exists');
+      if (variantArr.length > 0) {
+        // Leads — same predicate as findLeadByNormalizedPhone so the
+        // leads_phone_digits_idx expression index catches it.
+        const leadRow = await this.prisma.$queryRawUnsafe<
+          Array<{ id: string; firstName: string; lastName: string; phone: string; status: string; assignedFirst: string | null; assignedLast: string | null; convertedClientId: string | null; referenceCode: string }>
+        >(
+          `SELECT l.id, l."firstName", l."lastName", l.phone, l.status::text AS status,
+                  e."firstName" AS "assignedFirst", e."lastName" AS "assignedLast",
+                  l."convertedClientId", l."referenceCode"
+             FROM crm.leads l
+             LEFT JOIN core.employees e ON e.id = l."assignedEmployeeId"
+            WHERE l."deletedAt" IS NULL
+              ${excludeId ? `AND l.id <> '${excludeId.replace(/'/g, "''")}'` : ''}
+              AND l.phone !~ '[A-Za-z]'
+              AND regexp_replace(l.phone, '[^0-9]', '', 'g') = ANY($1::text[])
+            ORDER BY l."createdAt" ASC
+            LIMIT 1`,
+          variantArr,
+        );
+        const leadMatch = leadRow[0];
+        if (leadMatch) {
+          throw new ConflictException({
+            error: 'DUPLICATE_PHONE',
+            reason: 'A lead with the same phone number already exists.',
+            match: {
+              kind: 'lead',
+              id: leadMatch.id,
+              firstName: leadMatch.firstName,
+              lastName: leadMatch.lastName,
+              phone: leadMatch.phone,
+              status: leadMatch.status,
+              referenceCode: leadMatch.referenceCode,
+              convertedClientId: leadMatch.convertedClientId,
+              assignedRep:
+                leadMatch.assignedFirst || leadMatch.assignedLast
+                  ? { firstName: leadMatch.assignedFirst ?? '', lastName: leadMatch.assignedLast ?? '' }
+                  : null,
+            },
+          });
+        }
+
+        // Clients — the walk-in scenario the user flagged. Client.phone is
+        // stored canonicalised on well-behaved flows, but we still check all
+        // variants to catch legacy rows.
+        const clientRow = await this.prisma.$queryRawUnsafe<
+          Array<{ id: string; firstName: string; lastName: string; phone: string; referenceCode: string; sourceLeadId: string | null }>
+        >(
+          `SELECT id, "firstName", "lastName", phone, "referenceCode", "sourceLeadId"
+             FROM crm.clients
+            WHERE "deletedAt" IS NULL
+              AND phone !~ '[A-Za-z]'
+              AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($1::text[])
+            ORDER BY "createdAt" ASC
+            LIMIT 1`,
+          variantArr,
+        );
+        const clientMatch = clientRow[0];
+        if (clientMatch) {
+          throw new ConflictException({
+            error: 'DUPLICATE_PHONE',
+            reason: 'This phone belongs to an existing client. Open their record instead of creating a new lead.',
+            match: {
+              kind: 'client',
+              id: clientMatch.id,
+              firstName: clientMatch.firstName,
+              lastName: clientMatch.lastName,
+              phone: clientMatch.phone,
+              referenceCode: clientMatch.referenceCode,
+              sourceLeadId: clientMatch.sourceLeadId,
+            },
+          });
+        }
+      }
+    }
+
+    // --- Email check ---------------------------------------------------------
+    if (email) {
+      const emailLead = await this.prisma.lead.findFirst({
+        where: {
+          deletedAt: null,
+          email: { equals: email, mode: 'insensitive' },
+          ...(excludeId ? { id: { not: excludeId } } : {}),
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          status: true,
+          referenceCode: true,
+          convertedClientId: true,
+          assignedEmployee: { select: { firstName: true, lastName: true } },
+        },
+      });
+      if (emailLead) {
+        throw new ConflictException({
+          error: 'DUPLICATE_EMAIL',
+          reason: 'A lead with the same email already exists.',
+          match: {
+            kind: 'lead',
+            id: emailLead.id,
+            firstName: emailLead.firstName,
+            lastName: emailLead.lastName,
+            phone: emailLead.phone,
+            status: emailLead.status,
+            referenceCode: emailLead.referenceCode,
+            convertedClientId: emailLead.convertedClientId,
+            assignedRep: emailLead.assignedEmployee
+              ? { firstName: emailLead.assignedEmployee.firstName ?? '', lastName: emailLead.assignedEmployee.lastName ?? '' }
+              : null,
+          },
+        });
+      }
+
+      const emailClient = await this.prisma.client.findFirst({
+        where: {
+          deletedAt: null,
+          email: { equals: email, mode: 'insensitive' },
+        },
+        select: { id: true, firstName: true, lastName: true, phone: true, referenceCode: true, sourceLeadId: true },
+      });
+      if (emailClient) {
+        throw new ConflictException({
+          error: 'DUPLICATE_EMAIL',
+          reason: 'This email belongs to an existing client. Open their record instead of creating a new lead.',
+          match: {
+            kind: 'client',
+            id: emailClient.id,
+            firstName: emailClient.firstName,
+            lastName: emailClient.lastName,
+            phone: emailClient.phone,
+            referenceCode: emailClient.referenceCode,
+            sourceLeadId: emailClient.sourceLeadId,
+          },
+        });
+      }
     }
   }
 

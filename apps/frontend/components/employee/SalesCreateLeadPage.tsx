@@ -338,11 +338,14 @@ export function SalesCreateLeadPage() {
       if (
         err instanceof ApiClientError &&
         err.status === 409 &&
-        err.body &&
-        typeof err.body === 'object'
+        err.details &&
+        typeof err.details === 'object'
       ) {
-        // Nest wraps ConflictException(obj) as { statusCode, error, message: obj }.
-        const wrapped = err.body as { message?: unknown };
+        // The parsed 409 body lives on ApiClientError.details. Our
+        // AllExceptionsFilter spreads the ConflictException object to the top
+        // level → { statusCode, error, reason, match }. Older/other handlers
+        // may nest it under `message`, so tolerate both shapes.
+        const wrapped = err.details as { message?: unknown };
         const inner =
           wrapped && typeof wrapped.message === 'object' && wrapped.message !== null
             ? (wrapped.message as {
@@ -350,7 +353,7 @@ export function SalesCreateLeadPage() {
                 reason?: string;
                 match?: DuplicateMatch;
               })
-            : (err.body as {
+            : (err.details as {
                 error?: string;
                 reason?: string;
                 match?: DuplicateMatch;

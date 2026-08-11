@@ -228,7 +228,10 @@ export default function LeadsPage() {
   // need it; opens on click and fetches on demand + when the custom range
   // changes (server ignores partial ranges — see backend getAgentBreakdown).
   const [agentBreakdown, setAgentBreakdown] = useState<AgentBreakdown | null>(null);
-  const [breakdownOpen, setBreakdownOpen] = useState(false);
+  // Open by default — admins/managers use this every day (per Tashfeen's ask).
+  // The fetch effect keys off `breakdownOpen`, so setting true here also
+  // triggers the initial load on mount.
+  const [breakdownOpen, setBreakdownOpen] = useState(true);
   const [breakdownLoading, setBreakdownLoading] = useState(false);
   const [bkCustomFrom, setBkCustomFrom] = useState('');
   const [bkCustomTo, setBkCustomTo] = useState('');

@@ -207,10 +207,20 @@ export class LeadsController {
     return this.leadsService.findByIdAccessible(id, user);
   }
 
+  /**
+   * `?force=true` bypasses the duplicate-phone/duplicate-email guard so a rep
+   * who has just seen the "already exists" warning can still create the row
+   * (twins, family members sharing a phone, etc.). The override is captured
+   * on the lead's audit log + activity timeline so admins can review it.
+   */
   @Post()
   @RequirePermissions('leads.create')
-  create(@Body() dto: CreateLeadDto, @CurrentUser() user: RequestUser) {
-    return this.leadsService.create(dto, user.id);
+  create(
+    @Body() dto: CreateLeadDto,
+    @CurrentUser() user: RequestUser,
+    @Query('force') force?: string,
+  ) {
+    return this.leadsService.create(dto, user.id, { force: force === 'true' });
   }
 
   @Get(':id/assignment-history')

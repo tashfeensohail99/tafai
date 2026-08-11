@@ -3,7 +3,7 @@
 
 import type { Route } from 'next';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, ApiClientError } from '@/lib/api-client';
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   ArrowLeft,
@@ -248,6 +248,27 @@ export function SalesCreateLeadPage() {
   const [savedDraft, setSavedDraft] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Duplicate-phone/email guard state. On 409 the backend hands us the
+  // existing lead/client so we can offer "Open existing" (fastest) or "Create
+  // anyway" (force-through for twins, family sharing a phone, etc.).
+  type DuplicateMatch = {
+    kind: 'lead' | 'client';
+    id: string;
+    firstName: string;
+    lastName: string;
+    phone: string | null;
+    status?: string;
+    referenceCode?: string;
+    convertedClientId?: string | null;
+    sourceLeadId?: string | null;
+    assignedRep?: { firstName: string; lastName: string } | null;
+  };
+  const [duplicate, setDuplicate] = useState<{
+    field: 'phone' | 'email';
+    reason: string;
+    match: DuplicateMatch;
+  } | null>(null);
+
   const step = STEPS[stepIdx];
   const isLast = stepIdx === STEPS.length - 1;
   const totalSteps = STEPS.length;
@@ -281,11 +302,12 @@ export function SalesCreateLeadPage() {
     setSavedDraft(true);
     setTimeout(() => setSavedDraft(false), 2400);
   }
-  async function handleSubmit() {
+  async function handleSubmit(opts: { force?: boolean } = {}) {
     setSubmitting(true);
     setError(null);
+    if (!opts.force) setDuplicate(null);
     try {
-      await apiFetch('/leads', {
+      await apiFetch(opts.force ? '/leads?force=true' : '/leads', {
         method: 'POST',
         body: JSON.stringify({
           firstName: form.firstName.trim(),
@@ -309,6 +331,44 @@ export function SalesCreateLeadPage() {
         router.push('/sales/leads' as Route);
       }
     } catch (err: unknown) {
+      // Backend returns a structured 409 body when the phone or email is
+      // already on a lead or client. Surface it as a modal so the rep can
+      // open the existing record instead of unknowingly creating a second
+      // row for the same person — which was the audit finding on 2026-08-11.
+      if (
+        err instanceof ApiClientError &&
+        err.status === 409 &&
+        err.body &&
+        typeof err.body === 'object'
+      ) {
+        // Nest wraps ConflictException(obj) as { statusCode, error, message: obj }.
+        const wrapped = err.body as { message?: unknown };
+        const inner =
+          wrapped && typeof wrapped.message === 'object' && wrapped.message !== null
+            ? (wrapped.message as {
+                error?: string;
+                reason?: string;
+                match?: DuplicateMatch;
+              })
+            : (err.body as {
+                error?: string;
+                reason?: string;
+                match?: DuplicateMatch;
+              });
+        if (
+          inner &&
+          (inner.error === 'DUPLICATE_PHONE' || inner.error === 'DUPLICATE_EMAIL') &&
+          inner.match
+        ) {
+          setDuplicate({
+            field: inner.error === 'DUPLICATE_PHONE' ? 'phone' : 'email',
+            reason: inner.reason ?? 'This record already exists.',
+            match: inner.match,
+          });
+          setSubmitting(false);
+          return;
+        }
+      }
       const msg = err instanceof Error ? err.message : 'Failed to create lead';
       setError(msg);
       setSubmitting(false);
@@ -388,6 +448,98 @@ export function SalesCreateLeadPage() {
           />
         </div>
       </GlassCard>
+
+      {/* Duplicate-phone / duplicate-email modal — appears on 409 from the
+          create endpoint. Lets the rep OPEN the existing record instead of
+          quietly making a second one (which was the audit finding for
+          Muahmmad walk-in vs Street Hacks WhatsApp on the same number), or
+          force-create for a legitimate collision (twins, family sharing a
+          phone). Force-create is captured on the new lead's audit log. */}
+      {duplicate ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(6, 12, 24, 0.66)', backdropFilter: 'blur(6px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}
+          onClick={() => setDuplicate(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--sos-surface-1)', color: 'var(--sos-text-primary)',
+              border: '1px solid var(--sos-status-warning-border)',
+              borderRadius: 'var(--sos-radius-card)',
+              maxWidth: 560, width: '100%', padding: 22,
+              boxShadow: '0 30px 80px rgba(0,0,0,.55)',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 22 }}>⚠️</span>
+              <h2 style={{ fontSize: 18, margin: 0, color: 'var(--sos-status-warning-strong)' }}>
+                This {duplicate.field} is already in the system
+              </h2>
+            </div>
+            <p className="sos-text-secondary" style={{ fontSize: 13.5, margin: '0 0 14px' }}>
+              {duplicate.reason} Creating a second row would mean two reps working the same person.
+            </p>
+            <div style={{
+              background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)',
+              borderRadius: 10, padding: '12px 14px', marginBottom: 14, fontSize: 13.5,
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                {duplicate.match.firstName} {duplicate.match.lastName}
+                {duplicate.match.kind === 'client' ? (
+                  <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 999, background: 'var(--sos-status-success-soft)', color: 'var(--sos-status-success-strong)', fontSize: 11, fontWeight: 600 }}>
+                    CLIENT
+                  </span>
+                ) : (
+                  <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 999, background: 'var(--sos-brand-primary-soft)', color: 'var(--sos-brand-primary-strong)', fontSize: 11, fontWeight: 600 }}>
+                    LEAD · {duplicate.match.status ?? '?'}
+                  </span>
+                )}
+              </div>
+              <div className="sos-text-muted" style={{ fontSize: 12.5 }}>
+                {duplicate.match.phone ? <>{duplicate.match.phone}<br/></> : null}
+                {duplicate.match.referenceCode ? <>Ref: {duplicate.match.referenceCode}<br/></> : null}
+                {duplicate.match.assignedRep ? <>Assigned to: <b>{duplicate.match.assignedRep.firstName} {duplicate.match.assignedRep.lastName}</b></> : null}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setDuplicate(null)}
+                style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--sos-border)', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 13 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetHref =
+                    duplicate.match.kind === 'client'
+                      ? (`/admin/clients/${duplicate.match.id}` as Route)
+                      : (`/sales/leads/${duplicate.match.id}` as Route);
+                  router.push(targetHref);
+                }}
+                style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--sos-brand-primary-border)', background: 'var(--sos-brand-primary)', color: 'var(--sos-text-on-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+              >
+                Open existing {duplicate.match.kind}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleSubmit({ force: true }); }}
+                disabled={submitting}
+                style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--sos-status-warning-border)', background: 'transparent', color: 'var(--sos-status-warning-strong)', cursor: submitting ? 'wait' : 'pointer', fontSize: 13, fontWeight: 600 }}
+              >
+                Create anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

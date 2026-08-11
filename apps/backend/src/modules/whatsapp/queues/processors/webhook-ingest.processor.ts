@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../../../common/reference-codes/reference-codes';
 import { findLeadByNormalizedPhone } from '../../../../common/phone/lead-dedupe';
+import { findClientByNormalizedPhone } from '../../../../common/phone/client-dedupe';
 import { AuditLogService } from '../../../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../../../activity-timeline/activity-timeline.service';
 import { NotificationsService } from '../../../notifications/notifications.service';
@@ -720,12 +721,27 @@ export class WebhookIngestProcessor extends WorkerHost {
     // messages), serialized per-phone so a simultaneous first message + call
     // can't both create a lead.
     const { leadId, clientId, blocked, createdLead } = await this.withPhoneLock(phone, async () => {
-      const existingClient = await this.prisma.client.findFirst({
-        where: { phone, deletedAt: null },
-        // blockedAt folded in so a blocked contact's call is dropped BEFORE any
-        // thread upsert / call-row create / ring / push.
-        select: { id: true, blockedAt: true },
-      });
+      // Exact-string client lookup FIRST (index-fast) then a variant walk on
+      // miss. Before the walk was added, a client stored as `03xx…` and an
+      // inbound call arriving as `+92xx…` looked like unrelated numbers, so
+      // the code fell through and made a fresh Lead → duplicate. Now both
+      // formats resolve to the same client. `blockedAt` is folded into the
+      // walk-branch fetch too so a blocked contact's call still short-
+      // circuits before any thread/call/push work happens.
+      let existingClient: { id: string; blockedAt: Date | null } | null =
+        await this.prisma.client.findFirst({
+          where: { phone, deletedAt: null },
+          select: { id: true, blockedAt: true },
+        });
+      if (!existingClient) {
+        const variantHit = await findClientByNormalizedPhone(this.prisma, phone);
+        if (variantHit) {
+          existingClient = await this.prisma.client.findUnique({
+            where: { id: variantHit.id },
+            select: { id: true, blockedAt: true },
+          });
+        }
+      }
       if (existingClient) {
         return {
           leadId: null as string | null,
@@ -942,12 +958,26 @@ export class WebhookIngestProcessor extends WorkerHost {
     // orphan-lead race). The second job waits, then finds the lead the first
     // one just created. Different phones lock on different keys and don't wait.
     const { leadId, clientId, createdLead, blocked } = await this.withPhoneLock(phone, async () => {
-      const existingClient = await this.prisma.client.findFirst({
-        where: { phone, deletedAt: null },
-        // blockedAt folded into the phone-lock select so we can drop a blocked
-        // contact's inbound BEFORE creating any thread/message/AI job.
-        select: { id: true, blockedAt: true },
-      });
+      // Same variant walk as the call path. Client.phone is UNIQUE so exact
+      // match is index-fast; on miss we walk digit-string variants so a
+      // client stored as `03xx…` still matches an inbound `+92xx…`. Without
+      // this, the message path would spawn a fresh lead for a person who is
+      // already a paying customer — one of the confirmed sources of the
+      // 2026-08-11 audit's crossover duplicates.
+      let existingClient: { id: string; blockedAt: Date | null } | null =
+        await this.prisma.client.findFirst({
+          where: { phone, deletedAt: null },
+          select: { id: true, blockedAt: true },
+        });
+      if (!existingClient) {
+        const variantHit = await findClientByNormalizedPhone(this.prisma, phone);
+        if (variantHit) {
+          existingClient = await this.prisma.client.findUnique({
+            where: { id: variantHit.id },
+            select: { id: true, blockedAt: true },
+          });
+        }
+      }
       let leadId: string | null = null;
       const clientId: string | null = existingClient?.id ?? null;
       let createdLead = false;

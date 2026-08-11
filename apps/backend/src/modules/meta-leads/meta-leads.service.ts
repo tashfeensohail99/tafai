@@ -6,6 +6,8 @@ import { LeadAssignmentService } from '../lead-assignment/lead-assignment.servic
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { MetaGraphService } from './meta-graph.service';
 import { mapMetaFields } from './field-mapping';
+import { findLeadByNormalizedPhone } from '../../common/phone/lead-dedupe';
+import { findClientByNormalizedPhone } from '../../common/phone/client-dedupe';
 
 /** One leadgen change parsed from the Meta `page` webhook payload. */
 export interface LeadgenEntry {
@@ -96,16 +98,47 @@ export class MetaLeadsService {
       metaCreatedAt: detail.created_time ? new Date(detail.created_time) : null,
     };
 
-    // 3. Identity dedupe — phone (E.164) or email against active leads.
-    const orConds: Prisma.LeadWhereInput[] = [];
-    if (mapped.phoneE164) orConds.push({ phone: mapped.phoneE164 });
-    if (mapped.email) orConds.push({ email: { equals: mapped.email, mode: 'insensitive' } });
-    const existing = orConds.length
-      ? await this.prisma.lead.findFirst({
-          where: { deletedAt: null, OR: orConds },
-          orderBy: { createdAt: 'desc' },
-          select: { id: true },
-        })
+    // 3. Identity dedupe — phone (E.164 + digit-string variants) or email
+    // against active leads AND clients. Exact-string phone match used to miss
+    // `03…` vs `+92…` variants and clients entirely — every Meta re-submission
+    // from a converted customer spawned a duplicate lead. Now:
+    //   • findLeadByNormalizedPhone walks the digit-string variants
+    //     (E.164/national/0-prefixed) served by leads_phone_digits_idx.
+    //   • findClientByNormalizedPhone does the same across crm.clients.
+    // If a client matches, we route the submission to their sourceLeadId
+    // (the original lead), so the enquiry lands where the rep is already
+    // working — never a fresh row.
+    const byLeadPhone = mapped.phoneE164
+      ? await findLeadByNormalizedPhone(this.prisma, mapped.phoneE164)
+      : null;
+    const byClientPhone =
+      !byLeadPhone && mapped.phoneE164
+        ? await findClientByNormalizedPhone(this.prisma, mapped.phoneE164)
+        : null;
+    const byLeadEmail =
+      !byLeadPhone && !byClientPhone && mapped.email
+        ? await this.prisma.lead.findFirst({
+            where: { deletedAt: null, email: { equals: mapped.email, mode: 'insensitive' } },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true },
+          })
+        : null;
+    const byClientEmail =
+      !byLeadPhone && !byClientPhone && !byLeadEmail && mapped.email
+        ? await this.prisma.client.findFirst({
+            where: { deletedAt: null, email: { equals: mapped.email, mode: 'insensitive' } },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, sourceLeadId: true },
+          })
+        : null;
+    const existingLeadId =
+      byLeadPhone?.id
+      ?? byClientPhone?.sourceLeadId
+      ?? byLeadEmail?.id
+      ?? byClientEmail?.sourceLeadId
+      ?? null;
+    const existing = existingLeadId
+      ? await this.prisma.lead.findUnique({ where: { id: existingLeadId }, select: { id: true } })
       : null;
 
     // 3a. Repeat customer → record the submission + a note, keep the assignee.

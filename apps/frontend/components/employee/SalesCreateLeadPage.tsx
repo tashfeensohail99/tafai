@@ -302,12 +302,12 @@ export function SalesCreateLeadPage() {
     setSavedDraft(true);
     setTimeout(() => setSavedDraft(false), 2400);
   }
-  async function handleSubmit(opts: { force?: boolean } = {}) {
+  async function handleSubmit() {
     setSubmitting(true);
     setError(null);
-    if (!opts.force) setDuplicate(null);
+    setDuplicate(null);
     try {
-      await apiFetch(opts.force ? '/leads?force=true' : '/leads', {
+      await apiFetch('/leads', {
         method: 'POST',
         body: JSON.stringify({
           firstName: form.firstName.trim(),
@@ -483,7 +483,7 @@ export function SalesCreateLeadPage() {
               </h2>
             </div>
             <p className="sos-text-secondary" style={{ fontSize: 13.5, margin: '0 0 14px' }}>
-              {duplicate.reason} Creating a second row would mean two reps working the same person.
+              {duplicate.reason} Open the existing record and pick up from there — creating a duplicate is not allowed.
             </p>
             <div style={{
               background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)',
@@ -527,14 +527,6 @@ export function SalesCreateLeadPage() {
                 style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--sos-brand-primary-border)', background: 'var(--sos-brand-primary)', color: 'var(--sos-text-on-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
               >
                 Open existing {duplicate.match.kind}
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleSubmit({ force: true }); }}
-                disabled={submitting}
-                style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--sos-status-warning-border)', background: 'transparent', color: 'var(--sos-status-warning-strong)', cursor: submitting ? 'wait' : 'pointer', fontSize: 13, fontWeight: 600 }}
-              >
-                Create anyway
               </button>
             </div>
           </div>

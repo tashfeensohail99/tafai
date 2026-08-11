@@ -1348,7 +1348,7 @@ export class LeadsService {
     return lead;
   }
 
-  async create(dto: CreateLeadDto, actorUserId: string, opts: { force?: boolean } = {}) {
+  async create(dto: CreateLeadDto, actorUserId: string) {
     // Canonicalise the phone to E.164 so a manually-entered local number
     // (e.g. 03xx…) is stored in the SAME format inbound WhatsApp/calls arrive in
     // (+92 3xx…). Without this, an inbound from the customer fails to exact-match
@@ -1359,14 +1359,13 @@ export class LeadsService {
     // typed so a create is never blocked.
     const norm = normalisePhone(dto.phone, 'PK');
     const phone = norm.ok && norm.e164 ? norm.e164 : dto.phone;
-    // `force=true` bypasses the dedup guard for legitimate collisions (twins,
-    // family members sharing a phone, or an admin who has already reviewed the
-    // conflict). The override is logged to the audit trail below so it stays
-    // reviewable — reps can't quietly re-open a duplicate without leaving a
-    // trace. Non-force creates get the full lead+client duplicate check.
-    if (!opts.force) {
-      await this.ensureUniqueLead(phone, dto.email);
-    }
+    // Duplicate guard is a HARD block. No override, no `?force` escape hatch —
+    // per the 2026-08-11 audit, two reps working the same customer under two
+    // different rows caused real revenue attribution + support issues, so we
+    // never allow a second row for a phone/email that already exists. If a
+    // rep hits this and the collision is legitimate (twins, family sharing a
+    // phone), they take a slightly different phone or route through admin.
+    await this.ensureUniqueLead(phone, dto.email);
     const fallbackAssignedEmployeeId = dto.assignedEmployeeId ?? await this.findEmployeeIdByUserId(actorUserId);
     const referenceCode = await generateLeadReferenceCode(this.prisma);
 
@@ -1422,8 +1421,6 @@ export class LeadsService {
         phone: lead.phone,
         serviceInterest: lead.serviceInterest,
         targetCountry: lead.targetCountry,
-        // Reviewable trail when the create bypassed the duplicate guard.
-        ...(opts.force ? { duplicateOverride: true } : {}),
       },
     });
 
@@ -1432,15 +1429,12 @@ export class LeadsService {
       entityId: lead.id,
       leadId: lead.id,
       eventType: TimelineEventType.LEAD_CREATED,
-      description: opts.force
-        ? `${lead.firstName} ${lead.lastName} created (duplicate-phone/email override)`
-        : `${lead.firstName} ${lead.lastName} created`,
+      description: `${lead.firstName} ${lead.lastName} created`,
       actorUserId,
       metadata: {
         sourceChannel: lead.sourceChannel,
         serviceInterest: lead.serviceInterest,
         targetCountry: lead.targetCountry,
-        ...(opts.force ? { duplicateOverride: true } : {}),
       },
     });
 

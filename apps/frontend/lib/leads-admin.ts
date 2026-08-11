@@ -91,6 +91,32 @@ export function fetchAdPerformance(range?: { from?: string; to?: string }): Prom
   return apiFetch<AdPerformanceRow[]>(`/leads/ad-performance${qs}`, { cache: 'no-store' });
 }
 
+/** One row per rep with lead-count for four windows (24h, 7d, this-week PKT,
+ *  and an optional custom [customFrom,customTo] range). Zero-row reps are
+ *  filtered out server-side. */
+export interface AgentBreakdownRow {
+  id: string;
+  firstName: string;
+  lastName: string;
+  last24h: number;
+  last7d: number;
+  thisWeek: number;
+  custom: number;
+}
+export interface AgentBreakdown {
+  agents: AgentBreakdownRow[];
+  hasCustom: boolean;
+  customFrom: string | null;
+  customTo: string | null;
+}
+export function fetchAgentBreakdown(range?: {
+  customFrom?: string;
+  customTo?: string;
+}): Promise<AgentBreakdown> {
+  const qs = buildQuery({ customFrom: range?.customFrom, customTo: range?.customTo });
+  return apiFetch<AgentBreakdown>(`/leads/agent-breakdown${qs}`, { cache: 'no-store' });
+}
+
 export function listAdminLeads(filters: LeadFilters): Promise<AdminLead[]> {
   return apiFetch<AdminLead[]>(`/leads${buildQuery({ ...filters })}`, { cache: 'no-store' });
 }

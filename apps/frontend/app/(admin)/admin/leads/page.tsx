@@ -44,10 +44,12 @@ import {
   deleteLead,
   exportLeadsCsv,
   fetchAdPerformance,
+  fetchAgentBreakdown,
   fetchLeadStats,
   listAdminLeads,
   type AdminLead,
   type AdPerformanceRow,
+  type AgentBreakdown,
   type LeadFilters,
   type LeadStats,
   type MoneyByCurrency,
@@ -221,6 +223,17 @@ export default function LeadsPage() {
   const [showAllAds, setShowAllAds] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  // Per-agent lead-volume leaderboard (24h / 7d / this-week / optional custom).
+  // Collapsed by default so it doesn't push the KPIs down for admins who don't
+  // need it; opens on click and fetches on demand + when the custom range
+  // changes (server ignores partial ranges — see backend getAgentBreakdown).
+  const [agentBreakdown, setAgentBreakdown] = useState<AgentBreakdown | null>(null);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
+  const [bkCustomFrom, setBkCustomFrom] = useState('');
+  const [bkCustomTo, setBkCustomTo] = useState('');
+  const debBkCustom = useDebounced({ from: bkCustomFrom, to: bkCustomTo }, 300);
+
   const debFilters = useDebounced(filters, 250);
   const tableRef = useRef<HTMLDivElement>(null);
 
@@ -228,6 +241,31 @@ export default function LeadsPage() {
     if (!row.sourceId) return;
     setFilters((f) => ({ ...f, fromAd: true, adSourceId: row.sourceId! }));
     // Let the filter chip render, then bring the (now filtered) table into view.
+    setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  }
+
+  /** Fetch (or refetch) the per-agent breakdown. Called on first expand and
+   *  whenever the custom date range settles. Silent on network errors — the
+   *  section shows "—" values rather than breaking the whole page. */
+  function loadAgentBreakdown(customFrom?: string, customTo?: string) {
+    setBreakdownLoading(true);
+    fetchAgentBreakdown({ customFrom, customTo })
+      .then((b) => setAgentBreakdown(b))
+      .catch(() => { /* leave prior data in place */ })
+      .finally(() => setBreakdownLoading(false));
+  }
+
+  /** Click a cell → filter the table below by (agent, window). `fromIso`/`toIso`
+   *  are ISO strings from the backend for custom, or computed here for the
+   *  preset windows (24h / 7d / this-week PKT). The list endpoint accepts ISO
+   *  timestamps in `createdFrom`/`createdTo`. */
+  function applyAgentWindow(agentId: string, fromIso: string, toIso?: string) {
+    setFilters((f) => ({
+      ...f,
+      assignedEmployeeId: agentId,
+      createdFrom: fromIso,
+      createdTo: toIso ?? new Date().toISOString(),
+    }));
     setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
   }
 
@@ -265,6 +303,14 @@ export default function LeadsPage() {
       cancelled = true;
     };
   }, [canViewAll]);
+
+  // ── Agent breakdown: lazy-load on first expand, refetch when custom range
+  //    settles (debounced). Only when both dates are present — the backend
+  //    ignores half-open ranges, so partial input just fetches the presets.
+  useEffect(() => {
+    if (!canViewAll || !breakdownOpen) return;
+    loadAgentBreakdown(debBkCustom.from || undefined, debBkCustom.to || undefined);
+  }, [canViewAll, breakdownOpen, debBkCustom.from, debBkCustom.to]);
 
   // ── Table: refetch whenever the (debounced) filters change ────────────────
   useEffect(() => {
@@ -566,6 +612,149 @@ export default function LeadsPage() {
           </GlassCard>
         </div>
       ) : null}
+
+      {/* ── Leads per agent (24h / 7d / this week PKT / custom) ───────────
+          Collapsed by default. Cells are clickable → filter the table below by
+          that (agent, window). Only visible to admins with leads.view_all
+          (same gate as the rest of the page). */}
+      <GlassCard variant="default" padded={false}>
+        <button
+          type="button"
+          onClick={() => setBreakdownOpen((v) => !v)}
+          style={{
+            width: '100%',
+            padding: '14px 18px',
+            borderBottom: breakdownOpen ? '1px solid var(--sos-border-subtle)' : 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'inherit',
+            textAlign: 'left',
+          }}
+          aria-expanded={breakdownOpen}
+        >
+          <Users size={16} style={{ color: 'var(--sos-brand-primary)' }} />
+          <h2 className="sos-title" style={{ fontSize: 'var(--sos-text-base)', margin: 0 }}>Leads per agent</h2>
+          <span className="sos-text-faint" style={{ fontSize: 12 }}>
+            New leads assigned to each rep — click a number to filter the table below.
+          </span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--sos-text-muted)' }}>
+            {breakdownOpen ? '▾ Hide' : '▸ Show'}
+          </span>
+        </button>
+
+        {breakdownOpen ? (
+          <div style={{ padding: '12px 18px 16px' }}>
+            {/* Custom range picker — server ignores partial ranges, so both
+                dates must be present for the Custom column to populate. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+              <label style={{ fontSize: 12, color: 'var(--sos-text-secondary)' }}>
+                Custom range:
+                <input
+                  type="date"
+                  value={bkCustomFrom}
+                  onChange={(e) => setBkCustomFrom(e.target.value)}
+                  style={{ marginLeft: 8, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-2)', color: 'inherit', fontSize: 12 }}
+                />
+                <span style={{ margin: '0 6px' }}>→</span>
+                <input
+                  type="date"
+                  value={bkCustomTo}
+                  onChange={(e) => setBkCustomTo(e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-2)', color: 'inherit', fontSize: 12 }}
+                />
+              </label>
+              {(bkCustomFrom || bkCustomTo) ? (
+                <button
+                  type="button"
+                  onClick={() => { setBkCustomFrom(''); setBkCustomTo(''); }}
+                  style={{ padding: '4px 10px', fontSize: 12, borderRadius: 6, border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-2)', color: 'inherit', cursor: 'pointer' }}
+                >
+                  Clear
+                </button>
+              ) : null}
+              {breakdownLoading ? <span className="sos-text-faint" style={{ fontSize: 12 }}>Loading…</span> : null}
+            </div>
+
+            {agentBreakdown && agentBreakdown.agents.length === 0 ? (
+              <div className="sos-text-muted" style={{ padding: 12, textAlign: 'center', fontSize: 13 }}>
+                No leads assigned to any rep in the selected windows.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Agent</th>
+                      <th style={{ ...th, textAlign: 'right' }}>24h</th>
+                      <th style={{ ...th, textAlign: 'right' }}>7d</th>
+                      <th style={{ ...th, textAlign: 'right' }}>This week</th>
+                      {agentBreakdown?.hasCustom ? <th style={{ ...th, textAlign: 'right' }}>Custom</th> : null}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(agentBreakdown?.agents ?? []).map((a) => {
+                      const now = new Date().toISOString();
+                      const h24 = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+                      const d7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+                      // "This week" is Monday 00:00 PKT — compute in local terms
+                      // relative to UTC (PKT = UTC+5, no DST). Cheap approximation
+                      // that matches what the server counted.
+                      const nowMs = Date.now();
+                      const pktMs = nowMs + 5 * 60 * 60 * 1000; // shift to PKT
+                      const pktD = new Date(pktMs);
+                      const dow = pktD.getUTCDay(); // 0=Sun..6=Sat
+                      const daysSinceMon = (dow + 6) % 7;
+                      const mondayPktUtc = new Date(Date.UTC(pktD.getUTCFullYear(), pktD.getUTCMonth(), pktD.getUTCDate() - daysSinceMon, 0, 0, 0)).getTime() - 5 * 60 * 60 * 1000;
+                      const thisWeekIso = new Date(mondayPktUtc).toISOString();
+                      const cell = (n: number, from: string, to?: string) => (
+                        <td style={{ ...td, textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            onClick={() => applyAgentWindow(a.id, from, to)}
+                            disabled={n === 0}
+                            style={{
+                              padding: '4px 10px',
+                              minWidth: 44,
+                              borderRadius: 6,
+                              border: '1px solid var(--sos-border-subtle)',
+                              background: n === 0 ? 'transparent' : 'var(--sos-surface-2)',
+                              color: n === 0 ? 'var(--sos-text-faint)' : 'var(--sos-text-primary)',
+                              fontWeight: n === 0 ? 400 : 600,
+                              cursor: n === 0 ? 'default' : 'pointer',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            {n}
+                          </button>
+                        </td>
+                      );
+                      return (
+                        <tr key={a.id}>
+                          <td style={{ ...td, fontWeight: 600 }}>
+                            {a.firstName} {a.lastName}
+                          </td>
+                          {cell(a.last24h, h24, now)}
+                          {cell(a.last7d, d7, now)}
+                          {cell(a.thisWeek, thisWeekIso, now)}
+                          {agentBreakdown?.hasCustom ? cell(a.custom, agentBreakdown.customFrom!, agentBreakdown.customTo!) : null}
+                        </tr>
+                      );
+                    })}
+                    {!agentBreakdown && breakdownLoading ? (
+                      <tr><td colSpan={5} style={{ ...td, textAlign: 'center' }} className="sos-text-faint">Loading…</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </GlassCard>
 
       {/* ── Ad attribution leaderboard ───────────────────────────────────── */}
       <GlassCard variant="default" padded={false} glow="warm">

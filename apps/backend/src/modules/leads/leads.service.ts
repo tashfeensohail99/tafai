@@ -871,6 +871,107 @@ export class LeadsService {
   }
 
   /**
+   * Per-agent lead-volume leaderboard for the admin leads dashboard.
+   *
+   * Counts new leads assigned to each employee within four windows:
+   *   • last24h   — rolling 24 hours from now
+   *   • last7d    — rolling 7 days from now
+   *   • thisWeek  — Monday 00:00 to now, in PKT (Asia/Karachi) — matches how
+   *                 the sales team reads "this week"
+   *   • custom    — optional [from, to] YYYY-MM-DD range (inclusive of `to`'s
+   *                 whole day). Reported only when both dates are provided.
+   *
+   * "Lead" here means `crm.leads.createdAt` in the window AND `assignedEmployeeId`
+   * set — i.e. new intake routed to a rep. Deleted leads (`deletedAt IS NOT NULL`)
+   * are excluded. Rows are ordered by last7d DESC (most active rep first);
+   * unassigned employees with zero counts across all windows are dropped.
+   *
+   * One SQL round-trip: LEFT JOIN core.employees ← crm.leads, four
+   * COUNT(*) FILTER (WHERE …) clauses. No N+1.
+   */
+  async getAgentBreakdown(opts?: { customFrom?: string; customTo?: string }) {
+    const parseDay = (s: string | undefined, end: boolean): Date | null => {
+      if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+      const d = new Date(`${s}T${end ? '23:59:59.999' : '00:00:00.000'}Z`);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    let customFrom = parseDay(opts?.customFrom, false);
+    let customTo = parseDay(opts?.customTo, true);
+    // If only one bound is supplied, treat as "no custom window" — reporting a
+    // half-open range is more surprising than dropping it entirely.
+    if (!customFrom || !customTo) {
+      customFrom = null;
+      customTo = null;
+    } else if (customFrom > customTo) {
+      [customFrom, customTo] = [customTo, customFrom];
+    }
+    const hasCustom = !!(customFrom && customTo);
+    // Sentinel values keep the SQL a single template — when hasCustom is false,
+    // the COUNT filter can never match (from > to) so custom always comes back 0.
+    const cFrom = customFrom ?? new Date('9999-12-31');
+    const cTo = customTo ?? new Date('1970-01-01');
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        first_name: string;
+        last_name: string;
+        last24h: number;
+        last7d: number;
+        this_week: number;
+        custom: number;
+      }>
+    >(Prisma.sql`
+      SELECT
+        e.id                                       AS id,
+        e."firstName"                              AS first_name,
+        e."lastName"                               AS last_name,
+        COUNT(*) FILTER (WHERE l."createdAt" >= now() - interval '24 hours')::int      AS last24h,
+        COUNT(*) FILTER (WHERE l."createdAt" >= now() - interval '7 days')::int        AS last7d,
+        COUNT(*) FILTER (
+          WHERE l."createdAt" >= date_trunc('week', now() AT TIME ZONE 'Asia/Karachi')
+                                  AT TIME ZONE 'Asia/Karachi'
+        )::int                                                                          AS this_week,
+        COUNT(*) FILTER (
+          WHERE l."createdAt" >= ${cFrom}::timestamptz
+            AND l."createdAt" <= ${cTo}::timestamptz
+        )::int                                                                          AS custom
+      FROM core.employees e
+      JOIN crm.leads l
+        ON l."assignedEmployeeId" = e.id
+       AND l."deletedAt" IS NULL
+      WHERE e."deletedAt" IS NULL
+      GROUP BY e.id, e."firstName", e."lastName"
+      HAVING
+        COUNT(*) FILTER (WHERE l."createdAt" >= now() - interval '7 days') > 0
+        OR COUNT(*) FILTER (
+          WHERE l."createdAt" >= date_trunc('week', now() AT TIME ZONE 'Asia/Karachi')
+                                  AT TIME ZONE 'Asia/Karachi'
+        ) > 0
+        OR COUNT(*) FILTER (
+          WHERE l."createdAt" >= ${cFrom}::timestamptz
+            AND l."createdAt" <= ${cTo}::timestamptz
+        ) > 0
+      ORDER BY last7d DESC, this_week DESC, e."firstName" ASC
+    `);
+
+    return {
+      customFrom: hasCustom ? (customFrom as Date).toISOString() : null,
+      customTo: hasCustom ? (customTo as Date).toISOString() : null,
+      hasCustom,
+      agents: rows.map((r) => ({
+        id: r.id,
+        firstName: r.first_name,
+        lastName: r.last_name,
+        last24h: Number(r.last24h),
+        last7d: Number(r.last7d),
+        thisWeek: Number(r.this_week),
+        custom: Number(r.custom),
+      })),
+    };
+  }
+
+  /**
    * Per-ad leaderboard: Click-to-WhatsApp attribution → lead funnel. Spend +
    * lead-cohort metrics are scoped to [from, to] (YYYY-MM-DD); when omitted,
    * the window defaults to the trailing 30 days. The Leads/Contacted/Converted

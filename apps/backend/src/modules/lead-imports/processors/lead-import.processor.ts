@@ -8,6 +8,7 @@ import { LeadAssignmentService } from '../../lead-assignment/lead-assignment.ser
 import { generateLeadReferenceCode } from '../../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../../common/phone/phone.util';
 import { findLeadByNormalizedPhone } from '../../../common/phone/lead-dedupe';
+import { findClientByNormalizedPhone } from '../../../common/phone/client-dedupe';
 import { parseSpreadsheet } from '../parsers/spreadsheet-parser';
 import { LEAD_IMPORT_QUEUE, type LeadImportJob } from '../queue-contracts';
 import {
@@ -278,7 +279,16 @@ export class LeadImportProcessor extends WorkerHost {
     //    "same last 10 digits", which stops a +1-333-678-7075 US lead being
     //    falsely merged with a PK number that shares those ten digits.
     const existing = await findLeadByNormalizedPhone(this.prisma, normalised.e164);
-    if (existing) {
+    // Also check clients — a customer already converted must never be
+    // re-imported as a fresh lead. When a client matches, we route the
+    // import row's DUPLICATE outcome to the client's sourceLeadId so the
+    // manager sees it landed on the same person's original lead.
+    const existingClient = !existing
+      ? await findClientByNormalizedPhone(this.prisma, normalised.e164)
+      : null;
+    if (existing || existingClient) {
+      const dupLeadId = existing?.id ?? existingClient?.sourceLeadId ?? null;
+      const dupAssignedEmployeeId = existing?.assignedEmployeeId ?? null;
       await this.prisma.leadImportRow.create({
         data: {
           batchId,
@@ -286,8 +296,8 @@ export class LeadImportProcessor extends WorkerHost {
           rawData: row as Prisma.InputJsonValue,
           normalisedPhone: normalised.e164,
           outcome: LeadImportRowOutcome.DUPLICATE,
-          leadId: existing.id,
-          assignedEmployeeId: existing.assignedEmployeeId,
+          leadId: dupLeadId,
+          assignedEmployeeId: dupAssignedEmployeeId,
         },
       });
       await this.prisma.leadImportBatch.update({
@@ -296,8 +306,10 @@ export class LeadImportProcessor extends WorkerHost {
       });
       // Existing lead re-imported → it stays with its ORIGINAL owner (above).
       // Still send it the drip template (the drip service skips it if the lead
-      // is already in an active conversation).
-      this.scheduleDrip(existing.id, rowNumber);
+      // is already in an active conversation). If the match was via a CLIENT
+      // (already converted), we skip the drip — reaching out to a paying
+      // customer with an outbound-marketing template is not the right move.
+      if (existing) this.scheduleDrip(existing.id, rowNumber);
       return;
     }
 

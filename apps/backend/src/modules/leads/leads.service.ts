@@ -20,6 +20,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateLeadReferenceCode } from '../../common/reference-codes/reference-codes';
 import { normalisePhone } from '../../common/phone/phone.util';
 import { findLeadByNormalizedPhone } from '../../common/phone/lead-dedupe';
+import { findClientByNormalizedPhone } from '../../common/phone/client-dedupe';
 import { matchAllTokens } from '../../common/search/multi-word-search';
 import {
   looksLikePhoneSearch,
@@ -129,15 +130,36 @@ export class LeadsService {
     const byPhone = parsed.e164
       ? await findLeadByNormalizedPhone(this.prisma, parsed.e164)
       : null;
+    // Also check clients — a customer who already converted must not become a
+    // fresh lead just because they re-submitted the site form. Every client
+    // carries a sourceLeadId back to the original lead, so we route the
+    // enquiry to THAT lead (append note there) instead of spawning a new one.
+    const byPhoneClient =
+      !byPhone && parsed.e164
+        ? await findClientByNormalizedPhone(this.prisma, parsed.e164)
+        : null;
     const byEmail =
-      !byPhone && email
+      !byPhone && !byPhoneClient && email
         ? await this.prisma.lead.findFirst({
             where: { deletedAt: null, email: { equals: email, mode: 'insensitive' } },
             orderBy: { createdAt: 'asc' },
             select: { id: true },
           })
         : null;
-    const existingId = byPhone?.id ?? byEmail?.id;
+    const byEmailClient =
+      !byPhone && !byPhoneClient && !byEmail && email
+        ? await this.prisma.client.findFirst({
+            where: { deletedAt: null, email: { equals: email, mode: 'insensitive' } },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, sourceLeadId: true },
+          })
+        : null;
+    const existingId =
+      byPhone?.id
+      ?? byPhoneClient?.sourceLeadId
+      ?? byEmail?.id
+      ?? byEmailClient?.sourceLeadId
+      ?? undefined;
     const existing = existingId
       ? await this.prisma.lead.findUnique({
           where: { id: existingId },

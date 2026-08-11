@@ -108,6 +108,20 @@ export class LeadsController {
   }
 
   /**
+   * Per-agent lead-volume leaderboard for the admin leads page. Counts new
+   * leads assigned to each rep in four windows (24h, 7d, this week PKT, and
+   * an optional custom [customFrom, customTo] range in YYYY-MM-DD).
+   */
+  @Get('agent-breakdown')
+  @RequirePermissions('leads.view_all')
+  agentBreakdown(
+    @Query('customFrom') customFrom?: string,
+    @Query('customTo') customTo?: string,
+  ) {
+    return this.leadsService.getAgentBreakdown({ customFrom, customTo });
+  }
+
+  /**
    * Stream a CSV of every lead the caller can see. Uses the same filtering as
    * GET / so admins get everything and agents get their own book.
    */

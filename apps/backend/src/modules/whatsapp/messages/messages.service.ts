@@ -1100,15 +1100,16 @@ export class WhatsAppMessagesService {
     // How the outbound worker will reference the media:
     //   • `meta:<id>`        — we uploaded the bytes to Meta (default path).
     //   • a durable storage key — the worker signs a fresh link and Meta
-    //     FETCHES it. Used for voice notes because Meta's media *upload*
-    //     endpoint mis-stores our Opus as application/octet-stream and fails
-    //     delivery with 131053; fetching a link we host (served with the
-    //     right Content-Type) delivers reliably.
+    //     FETCHES it. Used for oversized-video documents (see below).
     let mediaRef: string;
-    // Voice notes AND oversized-video documents are hosted in our storage and
-    // delivered by link — Meta fetches the file at send time. The document
-    // path deliberately skips Meta's /media upload (which would apply the
-    // 16 MB VIDEO cap) so the 100 MB document limit applies instead.
+    // Voice-note media id: when set, the worker sends by media_id and skips
+    // link delivery entirely (see below for why this is the permanent fix).
+    let voiceMetaMediaId: string | null = null;
+    // Voice notes AND oversized-video documents keep a durable copy in our
+    // storage — the inbox streams it forever (rep/admin playback) and the
+    // re-send action reuses it. Documents are ALSO delivered by link (Meta
+    // fetches at send time): that deliberately skips Meta's /media upload,
+    // which would apply the 16 MB VIDEO cap instead of the 100 MB document one.
     if (isVoiceNote || sendAsDocument) {
       const up = await this.storage.upload(
         uploadBuffer,
@@ -1118,8 +1119,42 @@ export class WhatsAppMessagesService {
       );
       mediaRef = up.key;
       this.logger.debug(
-        `Media hosted for link delivery: thread=${thread.id} key=${up.key} bytes=${uploadBuffer.length} asDocument=${sendAsDocument}`,
+        `Media hosted in storage: thread=${thread.id} key=${up.key} bytes=${uploadBuffer.length} asDocument=${sendAsDocument}`,
       );
+      // PERMANENT FIX for voice notes (2026-08-12): also upload the bytes to
+      // Meta and send by media_id. Link delivery routes through Meta's
+      // fwdproxy, which rate-limits by our STORAGE PROVIDER'S ASN — not per
+      // account — so aggregate traffic to that network intermittently returns
+      // HTTP 429 ("Request ratelimit by fwdproxy"). Meta then has no audio to
+      // serve and the recipient sees "audio no longer available", even though
+      // our stored copy is perfect (verified: rep can play it, client can't).
+      // Uploading bytes bypasses fwdproxy entirely — Meta's own documented
+      // recommendation ("for better performance, use id … instead"). The
+      // earlier 131053/octet-stream upload bug that forced link delivery has
+      // since been fixed in uploadMedia (bare mime + explicit Content-Length +
+      // no chunked encoding), and a live upload of a real voice note now
+      // returns a valid audio/ogg media_id.
+      //   Only for voice notes — documents keep the link path for the 100 MB
+      //   limit above. Best-effort: on any upload error we keep the storage key
+      //   and the worker falls back to link delivery, so a hiccup never blocks
+      //   a voice note from sending.
+      if (isVoiceNote) {
+        try {
+          voiceMetaMediaId = await metaClient.uploadMedia(
+            uploadBuffer,
+            uploadMimeType,
+            uploadFilename,
+          );
+          this.logger.debug(
+            `Voice note uploaded to Meta: thread=${thread.id} mediaId=${voiceMetaMediaId} (storage key=${up.key} kept for playback + link fallback)`,
+          );
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : 'unknown upload error';
+          this.logger.warn(
+            `Voice note Meta upload failed — falling back to link delivery for thread=${thread.id}: ${reason}`,
+          );
+        }
+      }
     } else {
       try {
         const metaMediaId = await metaClient.uploadMedia(
@@ -1187,7 +1222,14 @@ export class WhatsAppMessagesService {
         // fell back to a document carries its filename so WhatsApp shows it as
         // a named file the recipient can download and play.
         ...(isVoiceNote
-          ? { payload: { isVoiceNote: true } as unknown as Prisma.InputJsonValue }
+          ? {
+              payload: {
+                isVoiceNote: true,
+                // Present when the Meta upload succeeded → worker sends by
+                // media_id (bypasses fwdproxy). Absent → worker link-falls-back.
+                ...(voiceMetaMediaId ? { metaMediaId: voiceMetaMediaId } : {}),
+              } as unknown as Prisma.InputJsonValue,
+            }
           : sendAsDocument
             ? { payload: { filename: uploadFilename } as unknown as Prisma.InputJsonValue }
             : {}),
@@ -1277,6 +1319,17 @@ export class WhatsAppMessagesService {
       repointMessageId: input.messageId,
     });
 
+    // Strip a stale voice-note metaMediaId before cloning: the id is bound to
+    // its original ~30-day/channel window, so a re-send must NOT reuse it (the
+    // worker would try an expired media_id and fail). Dropping it makes the
+    // clone deliver from the durable storage key instead. isVoiceNote/filename
+    // are preserved so the message still renders correctly.
+    const resendPayload = ((): Prisma.InputJsonValue | undefined => {
+      if (!original.payload) return undefined;
+      const { metaMediaId: _drop, ...rest } = original.payload as Record<string, unknown>;
+      return rest as Prisma.InputJsonValue;
+    })();
+
     const message = await this.prisma.whatsAppMessage.create({
       data: {
         threadId: thread.id,
@@ -1290,9 +1343,7 @@ export class WhatsAppMessagesService {
         mediaUrl: mediaRef,
         mediaMimeType: mediaMime,
         body: original.body,
-        ...(original.payload
-          ? { payload: original.payload as Prisma.InputJsonValue }
-          : {}),
+        ...(resendPayload ? { payload: resendPayload } : {}),
         sentByEmployeeId: senderEmployeeId,
         idempotencyKey: randomUUID(),
       },

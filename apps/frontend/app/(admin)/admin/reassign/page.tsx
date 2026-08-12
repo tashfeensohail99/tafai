@@ -6,6 +6,7 @@ import {
   ChevronDown,
   History,
   Loader2,
+  Lock,
   Search,
   Trash2,
   UserCheck,
@@ -32,6 +33,10 @@ interface EmployeeOption {
 }
 
 interface AdminSearchRow {
+  // 'lead' = the record is a Lead row (normal reassign flow).
+  // 'client' = ORPHAN client (no source lead); reassign is disabled and the
+  // admin is told this lives in a different flow.
+  type: 'lead' | 'client';
   id: string;
   name: string;
   clientName: string | null;
@@ -40,7 +45,14 @@ interface AdminSearchRow {
   status: string;
   source: string | null;
   isDeleted: boolean;
+  // Converted lead -- reassigning it in isolation would leave the client on
+  // its old rep, which is what actually drives Telenor routing / ownership.
   isConverted: boolean;
+  // Populated when isConverted -- the client's OWN phone (may differ from the
+  // lead's phone if updated post-conversion) and current rep. Both surface in
+  // the expanded-row warning so the admin sees why the reassign is blocked.
+  convertedClientPhone: string | null;
+  convertedClientAssignedEmployeeName: string | null;
   createdAt: string;
   updatedAt: string;
   assignedEmployeeId: string | null;
@@ -383,15 +395,18 @@ function ResultRow({
   const loadedFor = useRef<string | null>(null);
 
   // Lazy-load the assignment history the first time this row is expanded.
+  // Client rows use a different id-space than /leads/:id -- skip the fetch
+  // rather than 404 (the endpoint is lead-only).
   useEffect(() => {
     if (!expanded || loadedFor.current === lead.id) return;
     loadedFor.current = lead.id;
+    if (lead.type !== 'lead') { setHistory([]); return; }
     setHistoryLoading(true);
     apiFetch<HistoryEntry[]>(`/leads/${lead.id}/assignment-history`)
       .then(setHistory)
       .catch(() => setHistory([]))
       .finally(() => setHistoryLoading(false));
-  }, [expanded, lead.id]);
+  }, [expanded, lead.id, lead.type]);
 
   async function reassign() {
     if (!targetRep) return;
@@ -412,6 +427,10 @@ function ResultRow({
   }
 
   const currentRep = lead.assignedEmployeeName ?? repName(lead.assignedEmployeeId);
+  // Reassign is disabled for: soft-deleted leads (existing rule), converted
+  // leads (would silently leave the client with the old rep -- see backend
+  // safety net + server 400), and orphan client rows (own flow).
+  const reassignBlocked = lead.isDeleted || lead.isConverted || lead.type === 'client';
 
   return (
     <>
@@ -430,8 +449,11 @@ function ResultRow({
             {lead.isDeleted ? (
               <StatusBadge tone="danger" size="sm" dot={false}>Deleted</StatusBadge>
             ) : null}
-            {lead.isConverted ? (
-              <StatusBadge tone="success" size="sm" dot={false}>Client</StatusBadge>
+            {lead.type === 'lead' && lead.isConverted ? (
+              <StatusBadge tone="warning" size="sm" dot={false}>Converted → Client</StatusBadge>
+            ) : null}
+            {lead.type === 'client' ? (
+              <StatusBadge tone="info" size="sm" dot={false}>Client (no lead)</StatusBadge>
             ) : null}
           </span>
         </td>
@@ -442,10 +464,17 @@ function ResultRow({
         <td style={td}>{lead.source ?? '—'}</td>
         <td style={td}>{currentRep ?? <span className="sos-text-faint">Unassigned</span>}</td>
         <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--sos-brand-primary-strong)', fontWeight: 600, fontSize: 12.5 }}>
-            <ArrowRightLeft size={14} /> Reassign
-            <ChevronDown size={14} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }} />
-          </span>
+          {reassignBlocked ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--sos-text-muted)', fontWeight: 600, fontSize: 12.5 }}>
+              <Lock size={14} /> View
+              <ChevronDown size={14} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }} />
+            </span>
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--sos-brand-primary-strong)', fontWeight: 600, fontSize: 12.5 }}>
+              <ArrowRightLeft size={14} /> Reassign
+              <ChevronDown size={14} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }} />
+            </span>
+          )}
         </td>
       </tr>
       {expanded ? (
@@ -464,6 +493,31 @@ function ResultRow({
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, color: 'var(--sos-text-muted)' }}>
                     <Trash2 size={14} style={{ marginTop: 2, flexShrink: 0 }} />
                     <span>This lead is deleted, so it can’t be reassigned. Restore it from the Leads page first if it needs an owner.</span>
+                  </div>
+                ) : lead.type === 'lead' && lead.isConverted ? (
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12.5, color: 'var(--sos-text-primary)', padding: '10px 12px', borderRadius: 8, background: 'var(--sos-status-warning-soft)', border: '1px solid var(--sos-status-warning-border)' }}>
+                    <Lock size={16} style={{ marginTop: 2, flexShrink: 0, color: 'var(--sos-status-warning)' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <strong>This lead has been converted to a client.</strong>
+                      <span>
+                        Client is currently assigned to{' '}
+                        <strong>{lead.convertedClientAssignedEmployeeName ?? 'no one'}</strong>
+                        {lead.convertedClientPhone && lead.convertedClientPhone !== lead.phone
+                          ? ` (phone on file: ${lead.convertedClientPhone})`
+                          : null}
+                        . Reassigning the lead alone won&apos;t change client ownership or Telenor call routing —
+                        the client record has to be updated separately.
+                      </span>
+                    </div>
+                  </div>
+                ) : lead.type === 'client' ? (
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12.5, color: 'var(--sos-text-primary)', padding: '10px 12px', borderRadius: 8, background: 'var(--sos-brand-primary-soft)', border: '1px solid var(--sos-border-subtle)' }}>
+                    <Lock size={16} style={{ marginTop: 2, flexShrink: 0, color: 'var(--sos-brand-primary-strong)' }} />
+                    <div>
+                      <strong>Client record.</strong>{' '}
+                      Client reassignment is not part of this page — it lives with the client management flow.
+                      Shown here so you know the record exists.
+                    </div>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>

@@ -426,14 +426,22 @@ export class OutboundMessageProcessor extends WorkerHost {
       case WhatsAppMessageType.DOCUMENT:
       case WhatsAppMessageType.STICKER: {
         // Resolve mediaUrl into a Meta media reference:
+        //   • payload.metaMediaId → we uploaded the bytes to Meta (voice notes);
+        //     send by media_id, which bypasses Meta's fwdproxy entirely. The
+        //     mediaUrl stays a durable storage key so the inbox still streams
+        //     our own copy for playback + re-send.
         //   • "meta:<id>"  → we already uploaded to Meta; send by media_id.
         //   • "http(s)://" → an externally-hosted public URL; send as-is.
         //   • anything else → a DURABLE storage key (e.g. brochures/C11.pdf).
         //     Sign a FRESH link right now so Meta fetches a live URL — never a
         //     5-min-old one that expired while the job sat in the queue, and
         //     the key stays on the row so the inbox can re-stream it forever.
+        //     (Voice notes with no metaMediaId land here as a link fallback.)
+        const payloadMetaMediaId = (message.payload as { metaMediaId?: string } | null)?.metaMediaId;
         let mediaRef: { mediaId: string } | { link: string } | Record<string, never>;
-        if (message.mediaUrl?.startsWith('meta:')) {
+        if (payloadMetaMediaId) {
+          mediaRef = { mediaId: payloadMetaMediaId };
+        } else if (message.mediaUrl?.startsWith('meta:')) {
           mediaRef = { mediaId: message.mediaUrl.slice(5) };
         } else if (message.mediaUrl?.startsWith('http')) {
           mediaRef = { link: message.mediaUrl };

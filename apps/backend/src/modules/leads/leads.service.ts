@@ -335,12 +335,22 @@ export class LeadsService {
 
     // Phone (cross-format) and converted-client-name matches resolve to lead
     // ids folded into the OR below. The client join can't be expressed in a
-    // single Prisma where-clause; both intentionally omit the deletedAt guard.
-    const [phoneRows, clientRows] = await Promise.all([
+    // single Prisma where-clause; all three intentionally omit the deletedAt
+    // guard. Client-phone match is the reason a client whose number changed
+    // after conversion is still findable through the reassign page (previously
+    // the phone search only hit lead.phone and missed post-conversion updates).
+    const [phoneRows, clientPhoneRows, clientNameRows] = await Promise.all([
       phoneCandidates.length
         ? this.prisma.$queryRaw<Array<{ id: string }>>`
             SELECT id FROM crm.leads
             WHERE regexp_replace(phone, '[^0-9]', '', 'g') IN (${Prisma.join(phoneCandidates)})
+            LIMIT 200`
+        : Promise.resolve([]),
+      phoneCandidates.length
+        ? this.prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT l.id FROM crm.leads l
+            JOIN crm.clients c ON c.id = l."convertedClientId"
+            WHERE regexp_replace(c.phone, '[^0-9]', '', 'g') IN (${Prisma.join(phoneCandidates)})
             LIMIT 200`
         : Promise.resolve([]),
       this.prisma.$queryRaw<Array<{ id: string }>>`
@@ -351,7 +361,7 @@ export class LeadsService {
            OR (c."firstName" || ' ' || c."lastName") ILIKE ${like}
         LIMIT 200`,
     ]);
-    const idMatches = [...new Set([...phoneRows, ...clientRows].map((r) => r.id))];
+    const idMatches = [...new Set([...phoneRows, ...clientPhoneRows, ...clientNameRows].map((r) => r.id))];
 
     // Multi-word: each token must hit ONE of the direct-fields, OR the lead's
     // id is in the pre-computed idMatches set (phone digits + converted-client
@@ -415,23 +425,31 @@ export class LeadsService {
     });
 
     // `convertedClientId` is a plain scalar (no relation on Lead), so the client
-    // names come from one follow-up query rather than an include.
+    // record comes from one follow-up query rather than an include. Widened to
+    // pull phone + assignedEmployee too: the frontend surfaces both so an admin
+    // reassigning a converted lead can SEE that the client is on a different
+    // rep (Telenor routing follows the CLIENT, not the lead — see #269 / the
+    // +923135678933 case where lead-reassign didn't affect call routing).
     const clientIds = [...new Set(rows.map((r) => r.convertedClientId).filter((x): x is string => !!x))];
     const clients = clientIds.length
       ? await this.prisma.client.findMany({
           where: { id: { in: clientIds } },
-          select: { id: true, firstName: true, lastName: true },
+          select: {
+            id: true, firstName: true, lastName: true, phone: true,
+            assignedEmployee: { select: { firstName: true, lastName: true } },
+          },
         })
       : [];
     const clientById = new Map(clients.map((c) => [c.id, c]));
 
     const truncated = rows.length > limit;
-    const items = rows.slice(0, limit).map((l) => {
+    const leadItems = rows.slice(0, limit).map((l) => {
       // After conversion the CLIENT record carries the corrected name (passport
       // auto-fill, Processing edits) and never syncs back to the lead — show it
       // so the admin sees the name they searched for.
       const client = l.convertedClientId ? clientById.get(l.convertedClientId) : null;
       return {
+        type: 'lead' as const,
         id: l.id,
         name: [l.firstName, l.lastName].filter(Boolean).join(' ').trim() || '(no name)',
         clientName: client ? `${client.firstName} ${client.lastName ?? ''}`.trim() : null,
@@ -441,6 +459,12 @@ export class LeadsService {
         source: l.sourceChannel,
         isDeleted: !!l.deletedAt,
         isConverted: !!l.convertedClientId,
+        // Post-conversion, the CLIENT is the record that drives call routing +
+        // ownership; expose its phone + assigned rep so the frontend can warn.
+        convertedClientPhone: client?.phone ?? null,
+        convertedClientAssignedEmployeeName: client?.assignedEmployee
+          ? `${client.assignedEmployee.firstName} ${client.assignedEmployee.lastName ?? ''}`.trim()
+          : null,
         createdAt: l.createdAt,
         updatedAt: l.updatedAt,
         assignedEmployeeId: l.assignedEmployeeId,
@@ -449,6 +473,83 @@ export class LeadsService {
           : null,
       };
     });
+
+    // Orphan clients: those with no sourceLeadId AND not referenced by any
+    // lead's convertedClientId. Rare but real (walk-ins created directly).
+    // Skipped when the admin filtered by lead-only criteria (status/source),
+    // since those don't apply to clients. Reuses the same search term across
+    // name + phone; deletedAt honoured symmetrically with leads.
+    const clientDeletedFilter =
+      opts.deleted === 'exclude' ? { deletedAt: null }
+        : opts.deleted === 'only' ? { deletedAt: { not: null } as const }
+          : {};
+    const skipClients = !!(opts.status || opts.source || opts.assignedEmployeeId);
+    // Ids of clients ALREADY referenced by a lead this query returned — we skip
+    // those to avoid a duplicate row (they're surfaced via the lead already).
+    const referencedClientIds = new Set(clientIds);
+    let clientItems: Array<Record<string, unknown>> = [];
+    if (!skipClients && (t.length >= 2 || opts.deleted === 'only')) {
+      // Phone match ids for orphan clients (digits-only, same regex trick as leads).
+      const orphanPhoneRows = phoneCandidates.length
+        ? await this.prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT id FROM crm.clients
+            WHERE regexp_replace(phone, '[^0-9]', '', 'g') IN (${Prisma.join(phoneCandidates)})
+            LIMIT 200`
+        : [];
+      const orphanPhoneIds = new Set(orphanPhoneRows.map((r) => r.id));
+
+      const orphanRows = await this.prisma.client.findMany({
+        where: {
+          ...clientDeletedFilter,
+          // Not referenced by any lead's convertedClientId AND has no sourceLeadId.
+          // The second guard is fast (indexed field) and catches the schema-native
+          // "orphan" case; the first defends against schema drift.
+          sourceLeadId: null,
+          id: { notIn: [...referencedClientIds] },
+          ...(t.length >= 2
+            ? {
+                OR: [
+                  { firstName: { contains: t, mode: 'insensitive' as const } },
+                  { lastName: { contains: t, mode: 'insensitive' as const } },
+                  { email: { contains: t, mode: 'insensitive' as const } },
+                  { phone: { contains: t, mode: 'insensitive' as const } },
+                  ...(orphanPhoneIds.size ? [{ id: { in: [...orphanPhoneIds] } }] : []),
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ deletedAt: 'asc' }, { updatedAt: 'desc' }],
+        take: limit,
+        select: {
+          id: true, firstName: true, lastName: true, phone: true, email: true, status: true,
+          deletedAt: true, createdAt: true, updatedAt: true,
+          assignedEmployeeId: true,
+          assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
+        },
+      });
+      clientItems = orphanRows.map((c) => ({
+        type: 'client' as const,
+        id: c.id,
+        name: [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || '(no name)',
+        clientName: null,
+        phone: c.phone,
+        email: c.email,
+        status: c.status,
+        source: null,
+        isDeleted: !!c.deletedAt,
+        isConverted: false,
+        convertedClientPhone: null,
+        convertedClientAssignedEmployeeName: null,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+        assignedEmployeeId: c.assignedEmployeeId,
+        assignedEmployeeName: c.assignedEmployee
+          ? `${c.assignedEmployee.firstName} ${c.assignedEmployee.lastName ?? ''}`.trim()
+          : null,
+      }));
+    }
+    // Leads first (they're the primary workflow), then orphan clients.
+    const items = [...leadItems, ...clientItems];
     // Distinct sources so the page can offer a real dropdown (walk-in, CSV,
     // WhatsApp, Meta ad, ...) instead of asking the admin to type the exact
     // string. sourceChannel is free text, so this is the only honest list.
@@ -1813,6 +1914,19 @@ export class LeadsService {
     await this.assertLeadAccess(id, user);
     const actorUserId = user.id;
     const existing = await this.findById(id);
+
+    // Safety net (2026-08-11): reassigning a lead that's already been converted
+    // to a client is a silent trap -- lead.assignedEmployeeId changes but the
+    // CLIENT record (which drives Telenor call routing, invoicing, processing
+    // ownership) stays with its old rep. We saw this in prod on +923135678933:
+    // lead reassign moved to Mahiuddin, but calls kept routing to Uzma because
+    // the client was still hers. Refuse here so the frontend's disable can't be
+    // bypassed. Client reassignment lives in its own flow.
+    if (existing.convertedClientId) {
+      throw new BadRequestException(
+        'This lead has been converted to a client. Reassigning the lead alone will not update client ownership or Telenor call routing. Change the client\'s owner from the client management flow instead.',
+      );
+    }
 
     const updated = await this.prisma.lead.update({
       where: { id },

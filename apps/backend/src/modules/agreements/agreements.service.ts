@@ -1899,7 +1899,30 @@ export class AgreementsService {
     const newRows = (after.installments ?? [])
       .slice()
       .sort((x, y) => (x.sequence ?? 0) - (y.sequence ?? 0));
-    const anyPaid = stages.some((s) => carriesMoney(s.invoice));
+    // Money received against THIS agreement — scoped exactly like the receipt /
+    // finance-profile views (sum paidAmount across the agreement's invoices).
+    // The primary payment flow records EVERY payment on a single agreement-linked
+    // invoice (installmentId NULL, anchored to the whole fee), so a per-installment
+    // invoice back-link is NOT a reliable "is this stage paid?" signal — the AR
+    // waterfall over total-paid (what computeReceiptAccountContext and
+    // syncInstallmentStatuses use) is.
+    const agInvoices = contract
+      ? await this.prisma.invoice.findMany({
+          where: { agreementId: a.id, deletedAt: null },
+          select: { id: true, paidAmount: true },
+        })
+      : [];
+    const totalPaid = agInvoices.reduce((s, i) => s + Number(i.paidAmount), 0);
+    const anyPaid = totalPaid > 0.005;
+    // Allocate total-paid across the CURRENT stages in sequence order; a stage
+    // that receives ANY coverage is treated as paid and is immutable here.
+    let paidPool = totalPaid;
+    const stagePaid = stages.map((s) => {
+      const amt = Number(s.amount) || 0;
+      const covered = Math.max(0, Math.min(paidPool, amt));
+      paidPool -= covered;
+      return covered > 0.005;
+    });
 
     // ── Safety guards (only meaningful once a ledger exists) ──
     if (contract && stages.length > 0) {
@@ -1915,13 +1938,17 @@ export class AgreementsService {
             `been recorded. A currency change with recorded payments must be handled in Finance.`,
         );
       }
+      if (cents(newNet) < cents(totalPaid)) {
+        throw new ConflictException(
+          `This correction lowers the total to ${newCurrency} ${newNet.toLocaleString()}, below the ` +
+            `${contract.currency} ${totalPaid.toLocaleString()} already received. Reducing a fee below money ` +
+            `already collected needs a finance credit note / refund — handle it in Finance.`,
+        );
+      }
       for (let k = 0; k < stages.length; k++) {
-        if (
-          carriesMoney(stages[k].invoice) &&
-          cents(Number(stages[k].amount)) !== cents(newRows[k].amount)
-        ) {
+        if (stagePaid[k] && cents(Number(stages[k].amount)) !== cents(newRows[k].amount)) {
           throw new ConflictException(
-            `Stage ${stages[k].sequence} is already paid — its amount can't be changed here. ` +
+            `Stage ${stages[k].sequence} has already received a payment — its amount can't be changed here. ` +
               `Correcting a paid stage needs a finance credit note / refund; reject this and adjust it in Finance.`,
           );
         }
@@ -1962,15 +1989,9 @@ export class AgreementsService {
     }
 
     // The agreement's non-voided receipts — the corrected total / balance /
-    // schedule shows on every one, so refresh them all.
-    const invoiceIds = contract
-      ? (
-          await this.prisma.invoice.findMany({
-            where: { agreementId: a.id, deletedAt: null },
-            select: { id: true },
-          })
-        ).map((i) => i.id)
-      : [];
+    // schedule shows on every one, so refresh them all. (Reuse the invoice ids
+    // already loaded for paid-detection.)
+    const invoiceIds = agInvoices.map((i) => i.id);
     const receiptIds = invoiceIds.length
       ? (
           await this.prisma.receipt.findMany({
@@ -2028,7 +2049,7 @@ export class AgreementsService {
           // being STILL unpaid at write time (updateMany with a status/paidAmount
           // filter) — so a payment verified between our read and here can never
           // have its recorded amount silently rewritten.
-          if (ex.invoice && ex.invoice.deletedAt == null && !carriesMoney(ex.invoice)) {
+          if (ex.invoice && ex.invoice.deletedAt == null && !stagePaid[k] && !carriesMoney(ex.invoice)) {
             await tx.invoice.updateMany({
               where: {
                 id: ex.invoice.id,

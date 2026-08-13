@@ -1640,6 +1640,144 @@ export class AgreementsService {
     return updated;
   }
 
+  /**
+   * Admin APPLIES a pending BIO correction. Cascade (no money moves):
+   *   1. Agreement — bioData := after, recompose contentHtml from the template
+   *      + corrected bio (the old name is baked into contentHtml), regenerate
+   *      the stored PDF (best-effort; puppeteer is prod-only, so a render
+   *      failure nulls the key for lazy regen instead of failing the apply).
+   *   2. Client + Lead — update the applicant NAME (split from applicantName)
+   *      so downstream renders (receipts render the client name LIVE) pick it
+   *      up. Never touches the unique/routing phone or the guarded email.
+   *   3. Receipts — null pdfStorageKey on the agreement's (non-voided) receipts
+   *      so each re-renders with the corrected name on next download.
+   * Payment-plan corrections are NOT applied here (that cascade — including
+   * void/reissue of receipts — is the next phase); they must be rejected or
+   * handled once that lands.
+   */
+  async applyChangeRequest(id: string, userId: string) {
+    const cr = await this.prisma.agreementChangeRequest.findUnique({ where: { id } });
+    if (!cr) throw new NotFoundException('Change request not found');
+    if (cr.status !== AgreementChangeStatus.PENDING) {
+      throw new ConflictException(`This request is already ${cr.status.toLowerCase()}.`);
+    }
+    if (cr.type !== AgreementChangeType.BIO) {
+      throw new BadRequestException(
+        'Payment-plan corrections can’t be applied yet — that cascade (with receipt void/reissue) ' +
+          'is coming in the next update. Reject this request or wait for that release.',
+      );
+    }
+
+    const a = await this.prisma.agreement.findFirst({
+      where: { id: cr.agreementId, deletedAt: null },
+    });
+    if (!a) throw new NotFoundException('Agreement not found');
+    const template = await this.prisma.agreementTemplate.findUnique({
+      where: { id: a.templateId },
+    });
+    if (!template) throw new NotFoundException('Agreement template missing');
+
+    const newBio = (cr.after ?? {}) as AgreementBioData;
+    const beforeBio = (cr.before ?? {}) as AgreementBioData;
+    const plan = (a.paymentPlan as AgreementPlanData) ?? {};
+
+    // Recompose the document from the template + corrected bio (the applicant
+    // name is baked into the stored contentHtml, so we cannot reuse it).
+    const inner = this.render.composeAgreementInner(
+      template.bodyHtml,
+      template.programTitle,
+      newBio,
+      plan,
+      a.agreementNumber,
+    );
+
+    // Regenerate the locked PDF — best-effort. Off-prod (no Chromium) this
+    // throws; we then null the key so getPdfUrl lazily regenerates from the
+    // now-corrected contentHtml in prod, and the apply itself still succeeds.
+    let pdfKey: string | null = null;
+    try {
+      const buffer = await this.render.renderStoredPdf(template.programTitle, inner, newBio.country);
+      const up = await this.storage.upload(buffer, 'application/pdf', 'agreements', `${a.agreementNumber}.pdf`);
+      pdfKey = up.key;
+    } catch (e) {
+      this.log.warn(`bio-apply PDF render failed (will lazy-regenerate): ${(e as Error).message}`);
+    }
+
+    // Name change → split applicantName into first/last (canonical codebase
+    // split). Only touch names when the name actually changed.
+    const nameChanged =
+      (newBio.applicantName ?? '').trim() !== (beforeBio.applicantName ?? '').trim();
+    const parts = (newBio.applicantName ?? '').trim().split(/\s+/).filter(Boolean);
+    const firstName = parts[0] ?? '';
+    const lastName = parts.slice(1).join(' ');
+
+    // The agreement's non-voided receipts — null their cached PDF so they
+    // re-render with the corrected client name on next download.
+    const invoices = await this.prisma.invoice.findMany({
+      where: { agreementId: a.id, deletedAt: null },
+      select: { id: true },
+    });
+    const invoiceIds = invoices.map((i) => i.id);
+    const receiptIds = invoiceIds.length
+      ? (
+          await this.prisma.receipt.findMany({
+            where: { invoiceId: { in: invoiceIds }, voidedAt: null },
+            select: { id: true },
+          })
+        ).map((r) => r.id)
+      : [];
+
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.agreement.update({
+        where: { id: a.id },
+        data: {
+          bioData: newBio as unknown as Prisma.InputJsonValue,
+          contentHtml: inner,
+          generatedPdfKey: pdfKey,
+          generatedPdfAt: pdfKey ? now : null,
+        },
+      });
+      if (nameChanged && firstName) {
+        // Explicit admin correction — authoritative, so bypass the implicit
+        // lead→client name-sync guard and write both records directly.
+        if (a.clientId) {
+          await tx.client.update({ where: { id: a.clientId }, data: { firstName, lastName } });
+        }
+        if (a.leadId) {
+          await tx.lead.update({ where: { id: a.leadId }, data: { firstName, lastName } });
+        }
+      }
+      if (receiptIds.length) {
+        await tx.receipt.updateMany({
+          where: { id: { in: receiptIds } },
+          data: { pdfStorageKey: null, pdfGeneratedAt: null },
+        });
+      }
+      await tx.agreementChangeRequest.update({
+        where: { id },
+        data: { status: AgreementChangeStatus.APPLIED, appliedByUserId: userId, appliedAt: now },
+      });
+    });
+
+    await this.recordEvent(
+      a.id,
+      userId,
+      'CHANGE_APPLIED',
+      `Applied bio correction${nameChanged ? ` — name → ${newBio.applicantName}` : ''}` +
+        (receiptIds.length ? ` (${receiptIds.length} receipt(s) queued to re-render)` : ''),
+      cr.before as Prisma.InputJsonValue,
+      cr.after as Prisma.InputJsonValue,
+    );
+
+    return {
+      ok: true,
+      nameChanged,
+      receiptsRefreshed: receiptIds.length,
+      pdfRegenerated: !!pdfKey,
+    };
+  }
+
   private summariseUpdate(dto: UpdateAgreementDto): string {
     const parts: string[] = [];
     if (dto.paymentPlan) parts.push('payment plan');

@@ -202,6 +202,14 @@ export class AgreementsController {
     return this.agreements.rejectChangeRequest(id, user.id, dto.note);
   }
 
+  /** Admin applies a pending BIO correction (cascades to agreement + client +
+   *  receipts). Payment-plan apply is not available yet. */
+  @Post('change-requests/:id/apply')
+  @RequireAnyPermissions('settings.manage', 'finance.create_invoice')
+  applyChangeRequest(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    return this.agreements.applyChangeRequest(id, user.id);
+  }
+
   @Post('change-requests/:id/cancel')
   @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
   cancelChangeRequest(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {

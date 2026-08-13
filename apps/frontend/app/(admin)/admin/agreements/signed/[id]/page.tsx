@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import type { Route } from 'next';
-import { ArrowLeft, X } from 'lucide-react';
-import { GlassCard, PageHeader, StatusBadge, GhostButton, DangerButton } from '@/components/sales-v2/ui';
+import { ArrowLeft, Check, X } from 'lucide-react';
+import { GlassCard, PageHeader, StatusBadge, GhostButton, DangerButton, PrimaryButton } from '@/components/sales-v2/ui';
 import type { BadgeTone } from '@/components/sales-v2/ui/StatusBadge';
 import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
 import { useAdminSession } from '@/components/layout/AdminShell';
 import {
   getSignedAgreementDetail,
   rejectChangeRequest,
+  applyChangeRequest,
   type SignedAgreementDetail,
   type ChangeRequestRow,
 } from '@/lib/agreements-admin';
@@ -93,7 +94,9 @@ export default function SignedAgreementDetailPage() {
   const [data, setData] = useState<SignedAgreementDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [crBusy, setCrBusy] = useState<string | null>(null);
+  const [crAction, setCrAction] = useState<'apply' | 'reject' | null>(null);
 
   const load = useCallback(async () => {
     if (!canView || !id) return;
@@ -116,7 +119,9 @@ export default function SignedAgreementDetailPage() {
     const note = window.prompt('Reason for rejecting this correction request (optional):');
     if (note === null) return; // dialog cancelled — do not reject
     setCrBusy(crId);
+    setCrAction('reject');
     setError(null);
+    setNotice(null);
     try {
       await rejectChangeRequest(crId, note.trim() || undefined);
       await load();
@@ -124,6 +129,29 @@ export default function SignedAgreementDetailPage() {
       setError(e instanceof Error ? e.message : 'Could not reject the request');
     } finally {
       setCrBusy(null);
+      setCrAction(null);
+    }
+  };
+
+  const onApply = async (crId: string) => {
+    if (!window.confirm('Apply this correction? It updates the agreement, the client record, and re-generates the agreement PDF + receipts.')) return;
+    setCrBusy(crId);
+    setCrAction('apply');
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await applyChangeRequest(crId);
+      setNotice(
+        `Applied.${r.nameChanged ? ' Name updated on the agreement + client.' : ''}` +
+          (r.receiptsRefreshed ? ` ${r.receiptsRefreshed} receipt(s) will re-render with the correction.` : '') +
+          (r.pdfRegenerated ? '' : ' The agreement PDF will regenerate on next open.'),
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not apply the correction');
+    } finally {
+      setCrBusy(null);
+      setCrAction(null);
     }
   };
 
@@ -161,8 +189,9 @@ export default function SignedAgreementDetailPage() {
           />
 
           {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}
+          {notice && !error ? <div className="sos-banner sos-banner--success">{notice}</div> : null}
 
-          {/* Correction requests — diff + reject (apply arrives next update) */}
+          {/* Correction requests — diff + apply/reject */}
           {data.changeRequests.length > 0 ? (
             <GlassCard variant="default">
               <div style={{ fontWeight: 600, marginBottom: 10 }}>Correction requests</div>
@@ -206,10 +235,21 @@ export default function SignedAgreementDetailPage() {
                         <div className="sos-text-faint" style={{ fontSize: 12.5, marginTop: 6 }}>No field differences detected.</div>
                       )}
                       {cr.status === 'PENDING' ? (
-                        <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
-                          <span className="sos-text-faint" style={{ fontSize: 12 }}>
-                            Applying (with finance cascade) arrives in the next update.
-                          </span>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                          {cr.type === 'BIO' ? (
+                            <PrimaryButton
+                              size="sm"
+                              iconLeft={<Check size={14} />}
+                              disabled={crBusy === cr.id}
+                              onClick={() => void onApply(cr.id)}
+                            >
+                              {crBusy === cr.id && crAction === 'apply' ? 'Applying…' : 'Apply correction'}
+                            </PrimaryButton>
+                          ) : (
+                            <span className="sos-text-faint" style={{ fontSize: 12 }}>
+                              Payment-plan apply (with receipt void/reissue) arrives in the next update.
+                            </span>
+                          )}
                           <DangerButton
                             size="sm"
                             iconLeft={<X size={14} />}
@@ -217,7 +257,7 @@ export default function SignedAgreementDetailPage() {
                             disabled={crBusy === cr.id}
                             onClick={() => void onReject(cr.id)}
                           >
-                            {crBusy === cr.id ? 'Rejecting…' : 'Reject'}
+                            {crBusy === cr.id && crAction === 'reject' ? 'Rejecting…' : 'Reject'}
                           </DangerButton>
                         </div>
                       ) : cr.reviewNote ? (

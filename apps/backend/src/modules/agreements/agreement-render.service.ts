@@ -423,6 +423,27 @@ export class AgreementRenderService {
     return this.composeBody(bodyHtml, vars, stages, plan.currency ?? 'CAD');
   }
 
+  /**
+   * The standalone payment-plan `<table class="payplan">…</table>` fragment for a
+   * plan — the exact block that `{{PAYMENT_PLAN}}` expands to in a composed
+   * document (including the destination-country rewrite composeBody applies to
+   * stage labels/triggers). Used to surgically SWAP the schedule inside an
+   * already-stored contentHtml when a payment-plan correction is applied, without
+   * recomposing (and thus without losing manual edits or drifting to a newer
+   * template).
+   */
+  renderPaymentPlanTable(plan: AgreementPlanData, country?: string): string {
+    const table = this.renderPaymentPlan(this.planToStages(plan), plan.currency ?? 'CAD');
+    return country ? this.applyCountry(table, country) : table;
+  }
+
+  /** The `{{TOTAL_AMOUNT}}` token value for a plan ("PKR 125,000") — so a plan
+   *  correction can find-and-replace the old total wherever it sits in prose. */
+  agreementTotalText(plan: AgreementPlanData): string {
+    const currency = plan.currency ?? 'CAD';
+    return `${currency} ${this.formatMoney(plan.netPayable ?? 0)}`;
+  }
+
   /** Full branded PDF for a concrete agreement. */
   async renderAgreementPdf(
     programTitle: string,

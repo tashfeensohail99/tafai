@@ -200,13 +200,19 @@ export function rejectChangeRequest(id: string, note?: string): Promise<ChangeRe
 
 export interface ApplyChangeResult {
   ok: boolean;
-  nameChanged: boolean;
+  /** Present on a BIO apply. */
+  nameChanged?: boolean;
+  /** Present on a PAYMENT_PLAN apply. */
+  planChanged?: boolean;
+  installmentsUpdated?: number;
   receiptsRefreshed: number;
   pdfRegenerated: boolean;
 }
 
-/** Admin applies a pending BIO correction — cascades to the agreement,
- *  client/lead name, and receipts. */
+/** Admin applies a pending correction. BIO → agreement + client/lead name +
+ *  receipts. PAYMENT_PLAN → agreement + contract + installments + unpaid
+ *  invoices + receipts (money already received is preserved; the server refuses
+ *  paid-stage / stage-count / currency changes with a 409). */
 export function applyChangeRequest(id: string): Promise<ApplyChangeResult> {
   return apiFetch<ApplyChangeResult>(`/agreements/change-requests/${id}/apply`, { method: 'POST' });
 }

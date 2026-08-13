@@ -133,19 +133,25 @@ export default function SignedAgreementDetailPage() {
     }
   };
 
-  const onApply = async (crId: string) => {
-    if (!window.confirm('Apply this correction? It updates the agreement, the client record, and re-generates the agreement PDF + receipts.')) return;
-    setCrBusy(crId);
+  const onApply = async (cr: ChangeRequestRow) => {
+    const isPlan = cr.type === 'PAYMENT_PLAN';
+    const confirmMsg = isPlan
+      ? 'Apply this payment-plan correction? It updates the agreement + PDF, the service contract & installments, any unpaid invoices, and re-renders receipts with the corrected totals. Money already received is preserved — the server refuses changes to a paid stage.'
+      : 'Apply this correction? It updates the agreement, the client record, and re-generates the agreement PDF + receipts.';
+    if (!window.confirm(confirmMsg)) return;
+    setCrBusy(cr.id);
     setCrAction('apply');
     setError(null);
     setNotice(null);
     try {
-      const r = await applyChangeRequest(crId);
-      setNotice(
-        `Applied.${r.nameChanged ? ' Name updated on the agreement + client.' : ''}` +
-          (r.receiptsRefreshed ? ` ${r.receiptsRefreshed} receipt(s) will re-render with the correction.` : '') +
-          (r.pdfRegenerated ? '' : ' The agreement PDF will regenerate on next open.'),
-      );
+      const r = await applyChangeRequest(cr.id);
+      const bits: string[] = ['Applied.'];
+      if (r.nameChanged) bits.push('Name updated on the agreement + client.');
+      if (r.planChanged) bits.push('Payment plan + service contract updated.');
+      if (r.installmentsUpdated) bits.push(`${r.installmentsUpdated} stage(s) updated.`);
+      if (r.receiptsRefreshed) bits.push(`${r.receiptsRefreshed} receipt(s) will re-render with the correction.`);
+      if (!r.pdfRegenerated) bits.push('The agreement PDF will regenerate on next open.');
+      setNotice(bits.join(' '));
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not apply the correction');
@@ -236,20 +242,14 @@ export default function SignedAgreementDetailPage() {
                       )}
                       {cr.status === 'PENDING' ? (
                         <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                          {cr.type === 'BIO' ? (
-                            <PrimaryButton
-                              size="sm"
-                              iconLeft={<Check size={14} />}
-                              disabled={crBusy === cr.id}
-                              onClick={() => void onApply(cr.id)}
-                            >
-                              {crBusy === cr.id && crAction === 'apply' ? 'Applying…' : 'Apply correction'}
-                            </PrimaryButton>
-                          ) : (
-                            <span className="sos-text-faint" style={{ fontSize: 12 }}>
-                              Payment-plan apply (with receipt void/reissue) arrives in the next update.
-                            </span>
-                          )}
+                          <PrimaryButton
+                            size="sm"
+                            iconLeft={<Check size={14} />}
+                            disabled={crBusy === cr.id}
+                            onClick={() => void onApply(cr)}
+                          >
+                            {crBusy === cr.id && crAction === 'apply' ? 'Applying…' : 'Apply correction'}
+                          </PrimaryButton>
                           <DangerButton
                             size="sm"
                             iconLeft={<X size={14} />}

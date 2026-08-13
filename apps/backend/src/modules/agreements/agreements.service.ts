@@ -10,7 +10,10 @@ import {
   AgreementChangeStatus,
   AgreementChangeType,
   AgreementStatus,
+  type AgreementChangeRequest,
   AuditAction,
+  InstallmentStatus,
+  InvoiceStatus,
   PaymentPlanType,
   Prisma,
   ServiceContractStatus,
@@ -1669,9 +1672,8 @@ export class AgreementsService {
    *      up. Never touches the unique/routing phone or the guarded email.
    *   3. Receipts — null pdfStorageKey on the agreement's (non-voided) receipts
    *      so each re-renders with the corrected name on next download.
-   * Payment-plan corrections are NOT applied here (that cascade — including
-   * void/reissue of receipts — is the next phase); they must be rejected or
-   * handled once that lands.
+   * Payment-plan corrections are routed to {@link applyPlanChangeRequest}
+   * (contract + installment + invoice + receipt cascade).
    */
   async applyChangeRequest(id: string, userId: string) {
     const cr = await this.prisma.agreementChangeRequest.findUnique({ where: { id } });
@@ -1679,11 +1681,8 @@ export class AgreementsService {
     if (cr.status !== AgreementChangeStatus.PENDING) {
       throw new ConflictException(`This request is already ${cr.status.toLowerCase()}.`);
     }
-    if (cr.type !== AgreementChangeType.BIO) {
-      throw new BadRequestException(
-        'Payment-plan corrections can’t be applied yet — that cascade (with receipt void/reissue) ' +
-          'is coming in the next update. Reject this request or wait for that release.',
-      );
+    if (cr.type === AgreementChangeType.PAYMENT_PLAN) {
+      return this.applyPlanChangeRequest(cr, userId);
     }
 
     const a = await this.prisma.agreement.findFirst({
@@ -1823,6 +1822,369 @@ export class AgreementsService {
       receiptsRefreshed: receiptIds.length,
       pdfRegenerated: !!pdfKey,
     };
+  }
+
+  /**
+   * Admin APPLIES a pending PAYMENT_PLAN correction. Cascade:
+   *   1. Agreement — paymentPlan / gross / discount / total / currency :=
+   *      corrected; SWAP the plan table + fix inline totals inside contentHtml
+   *      (surgical, so manual edits survive and the doc never drifts to a newer
+   *      template); regenerate the stored PDF (best-effort).
+   *   2. ServiceContract — totalAmount / currency := corrected.
+   *   3. Installments — each stage's amount / dueDate / description := corrected;
+   *      for any UNPAID stage that already has an invoice, update that invoice's
+   *      amount too (so the next payment bills the corrected figure).
+   *   4. Receipts — null pdfStorageKey on the agreement's (non-voided) receipts
+   *      so each re-renders with the corrected engagement total / balance /
+   *      upcoming schedule (a receipt shows the whole account, not just its own
+   *      line).
+   *
+   * SAFETY — money already received is never silently moved. The apply is
+   * REFUSED (409) when it would:
+   *   • change an already-PAID stage's amount  → needs a finance credit note /
+   *     refund;
+   *   • change the NUMBER of stages            → restructure belongs in Finance;
+   *   • change the currency once any payment exists.
+   */
+  private async applyPlanChangeRequest(cr: AgreementChangeRequest, userId: string) {
+    const a = await this.prisma.agreement.findFirst({
+      where: { id: cr.agreementId, deletedAt: null },
+    });
+    if (!a) throw new NotFoundException('Agreement not found');
+
+    const before = (cr.before ?? {}) as unknown as AgreementPlanData;
+    const after = (cr.after ?? {}) as unknown as AgreementPlanData;
+    // Defensive: the corrected plan must still balance (validated at request
+    // time, but the ledger writes below trust it).
+    this.assertPlanBalances({
+      planType: after.planType ?? '',
+      grossAmount: after.grossAmount ?? 0,
+      discountAmount: after.discountAmount ?? 0,
+      netPayable: after.netPayable ?? 0,
+      installments: after.installments ?? [],
+    });
+
+    const cents = (n: number | null | undefined) => Math.round((Number(n) || 0) * 100);
+    const newNet = Number(after.netPayable ?? 0);
+    const newCurrency = after.currency ?? a.currency;
+
+    // Load the agreement's contract + its installments (each with its 0/1 invoice).
+    const contract = a.serviceContractId
+      ? await this.prisma.serviceContract.findFirst({
+          where: { id: a.serviceContractId, deletedAt: null },
+          include: {
+            installments: {
+              orderBy: { sequence: 'asc' },
+              include: {
+                invoice: { select: { id: true, status: true, paidAmount: true, deletedAt: true } },
+              },
+            },
+          },
+        })
+      : null;
+
+    const carriesMoney = (
+      inv: { status: InvoiceStatus; paidAmount: Prisma.Decimal } | null | undefined,
+    ) =>
+      !!inv &&
+      (Number(inv.paidAmount) > 0 ||
+        inv.status === InvoiceStatus.PAID ||
+        inv.status === InvoiceStatus.PARTIALLY_PAID);
+
+    // Live (non-cancelled) stages, ordered; matched positionally to the corrected
+    // schedule (both sorted by sequence).
+    const stages = (contract?.installments ?? []).filter(
+      (i) => i.status !== InstallmentStatus.CANCELLED,
+    );
+    let newRows = (after.installments ?? [])
+      .slice()
+      .sort((x, y) => (x.sequence ?? 0) - (y.sequence ?? 0));
+    // A single full-payment plan carries NO installments, but
+    // materializeServiceContract synthesised one "Full payment" stage for the
+    // contract — mirror that here so a FULL-plan correction pairs 1:1 with it
+    // instead of tripping the stage-count guard.
+    if (newRows.length === 0) {
+      newRows = [{ sequence: 1, stage: 'Full payment', amount: newNet, trigger: null, dueDate: null }];
+    }
+    // Money received against THIS agreement — scoped exactly like the receipt /
+    // finance-profile views (sum paidAmount across the agreement's invoices).
+    // The primary payment flow records EVERY payment on a single agreement-linked
+    // invoice (installmentId NULL, anchored to the whole fee), so a per-installment
+    // invoice back-link is NOT a reliable "is this stage paid?" signal — the AR
+    // waterfall over total-paid (what computeReceiptAccountContext and
+    // syncInstallmentStatuses use) is. Fetched regardless of a materialised
+    // contract so payments taken before materialisation still guard + refresh.
+    const agInvoices = await this.prisma.invoice.findMany({
+      where: { agreementId: a.id, deletedAt: null },
+      select: { id: true, paidAmount: true, installmentId: true, status: true },
+    });
+    const totalPaid = agInvoices.reduce((s, i) => s + Number(i.paidAmount), 0);
+    const anyPaid = totalPaid > 0.005;
+    // Allocate total-paid across the CURRENT stages in sequence order; a stage
+    // that receives ANY coverage is treated as paid and is immutable here.
+    let paidPool = totalPaid;
+    const stagePaid = stages.map((s) => {
+      const amt = Number(s.amount) || 0;
+      const covered = Math.max(0, Math.min(paidPool, amt));
+      paidPool -= covered;
+      return covered > 0.005;
+    });
+
+    // ── Safety guards — money already received is never silently moved ──
+    // The currency / reduce-below-paid guards apply whenever money exists, even
+    // if the ledger was never materialised into a contract.
+    const baseCurrency = contract?.currency ?? a.currency;
+    if (anyPaid && newCurrency !== baseCurrency) {
+      throw new ConflictException(
+        `This correction changes the currency (${baseCurrency} → ${newCurrency}) but payments have already been ` +
+          `recorded. A currency change with recorded payments must be handled in Finance.`,
+      );
+    }
+    if (anyPaid && cents(newNet) < cents(totalPaid)) {
+      throw new ConflictException(
+        `This correction lowers the total to ${newCurrency} ${newNet.toLocaleString()}, below the ` +
+          `${baseCurrency} ${totalPaid.toLocaleString()} already received. Reducing a fee below money already ` +
+          `collected needs a finance credit note / refund — handle it in Finance.`,
+      );
+    }
+    // Stage-structure guards need a materialised schedule.
+    if (contract && stages.length > 0) {
+      if (newRows.length !== stages.length) {
+        throw new ConflictException(
+          `This correction changes the number of payment stages (was ${stages.length}, now ${newRows.length}). ` +
+            `Adding or removing a stage must be done in Finance — reject this and rebuild the schedule there.`,
+        );
+      }
+      const seqs = newRows.map((r) => r.sequence ?? 0);
+      if (new Set(seqs).size !== seqs.length) {
+        throw new ConflictException(
+          'The corrected plan has duplicate stage numbers — please fix the schedule and resubmit.',
+        );
+      }
+      for (let k = 0; k < stages.length; k++) {
+        if (stagePaid[k] && cents(Number(stages[k].amount)) !== cents(newRows[k].amount)) {
+          throw new ConflictException(
+            `Stage ${stages[k].sequence} has already received a payment — its amount can't be changed here. ` +
+              `Correcting a paid stage needs a finance credit note / refund; reject this and adjust it in Finance.`,
+          );
+        }
+      }
+    }
+
+    // ── Corrected document (surgical: swap plan table + fix inline totals) ──
+    const template = await this.prisma.agreementTemplate.findUnique({
+      where: { id: a.templateId },
+    });
+    const bio = (a.bioData ?? {}) as AgreementBioData;
+    const currentPlan = (a.paymentPlan as AgreementPlanData) ?? before;
+    const baseHtml =
+      a.contentHtml && a.contentHtml.trim()
+        ? a.contentHtml
+        : template
+          ? this.render.composeAgreementInner(
+              template.bodyHtml,
+              template.programTitle,
+              bio,
+              after,
+              a.agreementNumber,
+            )
+          : '';
+    const inner = baseHtml
+      ? this.applyPlanTextCorrections(baseHtml, currentPlan, after, bio.country)
+      : a.contentHtml;
+
+    // Regenerate the locked PDF — best-effort (puppeteer is prod-only). On
+    // failure the key is nulled and getPdfUrl re-renders + re-locks on next view.
+    let pdfKey: string | null = null;
+    if (inner && template) {
+      try {
+        const buffer = await this.render.renderStoredPdf(template.programTitle, inner, bio.country);
+        const up = await this.storage.upload(buffer, 'application/pdf', 'agreements', `${a.agreementNumber}.pdf`);
+        pdfKey = up.key;
+      } catch (e) {
+        this.log.warn(`plan-apply PDF render failed (will lazy-regenerate): ${(e as Error).message}`);
+      }
+    }
+
+    // The agreement's non-voided receipts — the corrected total / balance /
+    // schedule shows on every one, so refresh them all. (Reuse the invoice ids
+    // already loaded for paid-detection.)
+    const invoiceIds = agInvoices.map((i) => i.id);
+    const receiptIds = invoiceIds.length
+      ? (
+          await this.prisma.receipt.findMany({
+            where: { invoiceId: { in: invoiceIds }, voidedAt: null },
+            select: { id: true },
+          })
+        ).map((r) => r.id)
+      : [];
+
+    // Tax-inclusive split for the corrected fee, mirroring how the primary
+    // invoice was created (the fee is treated as tax-inclusive), so re-anchoring
+    // it to the new total keeps subtotal + tax tied to the fee to the cent.
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { taxRatePercent: true },
+    });
+    const taxRate = Number(org?.taxRatePercent ?? 0);
+    const feeNet = taxRate > 0 ? Math.round((newNet / (1 + taxRate / 100)) * 100) / 100 : newNet;
+    const feeTax = Math.round((newNet - feeNet) * 100) / 100;
+
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      // Atomic claim — one apply per request, race-safe with a second apply /
+      // a reject.
+      const claim = await tx.agreementChangeRequest.updateMany({
+        where: { id: cr.id, status: AgreementChangeStatus.PENDING },
+        data: { status: AgreementChangeStatus.APPLIED, appliedByUserId: userId, appliedAt: now },
+      });
+      if (claim.count === 0) {
+        throw new ConflictException('This request was already actioned by someone else.');
+      }
+
+      await tx.agreement.update({
+        where: { id: a.id },
+        data: {
+          paymentPlan: after as unknown as Prisma.InputJsonValue,
+          grossAmount: after.grossAmount ?? undefined,
+          discountAmount: after.discountAmount ?? undefined,
+          totalAmount: newNet,
+          currency: newCurrency,
+          paymentPlanType: this.toPlanTypeEnum(after.planType),
+          ...(inner ? { contentHtml: inner } : {}),
+          generatedPdfKey: pdfKey,
+          generatedPdfAt: pdfKey ? now : null,
+        },
+      });
+
+      if (contract) {
+        await tx.serviceContract.update({
+          where: { id: contract.id },
+          data: { totalAmount: newNet, currency: newCurrency },
+        });
+        for (let k = 0; k < stages.length; k++) {
+          const ex = stages[k];
+          const nw = newRows[k];
+          const amount = Number(nw.amount) || 0;
+          const dueDate = nw.dueDate ? new Date(nw.dueDate) : ex.dueDate;
+          const desc = (nw.stage ?? '').trim() + (nw.trigger ? ` — ${nw.trigger}` : '');
+          await tx.installment.update({
+            where: { id: ex.id },
+            data: { amount, dueDate, ...(desc ? { description: desc } : {}) },
+          });
+          // Keep an UNPAID invoice's amount in step so the next payment bills the
+          // corrected figure. Paid invoices are money-locked (and guarded above),
+          // so they're left untouched. The write is conditioned on the invoice
+          // being STILL unpaid at write time (updateMany with a status/paidAmount
+          // filter) — so a payment verified between our read and here can never
+          // have its recorded amount silently rewritten.
+          if (ex.invoice && ex.invoice.deletedAt == null && !stagePaid[k] && !carriesMoney(ex.invoice)) {
+            await tx.invoice.updateMany({
+              where: {
+                id: ex.invoice.id,
+                deletedAt: null,
+                paidAmount: 0,
+                status: { in: [InvoiceStatus.DRAFT, InvoiceStatus.SENT] },
+              },
+              data: { subtotal: amount, totalAmount: amount, currency: newCurrency },
+            });
+          }
+        }
+      }
+
+      // Re-anchor the PRIMARY agreement-linked invoice(s) — installmentId NULL,
+      // billed for the WHOLE fee (the handover payment flow bills against this) —
+      // to the corrected total, so finance doesn't keep billing / auto-close at
+      // the OLD figure. Safe: the guards above ensure the new total is >= money
+      // already received, so paidAmount can never exceed it; status is recomputed
+      // like verifyPayment. Installment-linked invoices were handled above;
+      // CANCELLED invoices are left alone.
+      for (const inv of agInvoices) {
+        if (inv.installmentId !== null || inv.status === InvoiceStatus.CANCELLED) continue;
+        const paid = Number(inv.paidAmount);
+        const status =
+          paid >= newNet - 0.005
+            ? InvoiceStatus.PAID
+            : paid > 0.005
+              ? InvoiceStatus.PARTIALLY_PAID
+              : InvoiceStatus.SENT;
+        await tx.invoice.updateMany({
+          where: { id: inv.id, deletedAt: null, status: { not: InvoiceStatus.CANCELLED } },
+          data: { subtotal: feeNet, taxAmount: feeTax, totalAmount: newNet, currency: newCurrency, status },
+        });
+      }
+
+      if (receiptIds.length) {
+        await tx.receipt.updateMany({
+          where: { id: { in: receiptIds } },
+          data: { pdfStorageKey: null, pdfGeneratedAt: null },
+        });
+      }
+    });
+
+    // Best-effort audit — never fail an already-committed apply on a logging hiccup.
+    try {
+      await this.recordEvent(
+        a.id,
+        userId,
+        'CHANGE_APPLIED',
+        `Applied payment-plan correction — total ${newCurrency} ${newNet.toLocaleString()}` +
+          (stages.length ? `, ${stages.length} stage(s) updated` : '') +
+          (receiptIds.length ? ` (${receiptIds.length} receipt(s) queued to re-render)` : ''),
+        cr.before as Prisma.InputJsonValue,
+        cr.after as Prisma.InputJsonValue,
+      );
+    } catch (e) {
+      this.log.warn(`plan-apply audit event failed (apply committed): ${(e as Error).message}`);
+    }
+
+    return {
+      ok: true,
+      planChanged: true,
+      installmentsUpdated: contract ? stages.length : 0,
+      receiptsRefreshed: receiptIds.length,
+      pdfRegenerated: !!pdfKey,
+    };
+  }
+
+  /**
+   * Correct a payment plan inside an agreement's stored HTML by SWAPPING the
+   * `{{PAYMENT_PLAN}}` table (value-independent, so amount AND row changes are
+   * handled, with the same destination-country rewrite) and find-replacing the
+   * old inline total ("PKR 120,000" → "PKR 125,000") in the surrounding PROSE
+   * only — preserving every manual edit and never drifting to a newer template.
+   *
+   * Safety: the total replace runs ONLY on the prose on either side of the plan
+   * table (never on a table cell — a new stage amount that happens to equal the
+   * old total must not be rewritten), and matches an EXACT figure (a trailing
+   * digit/comma/dot boundary stops "PKR 10,500" from eating "PKR 10,500,000").
+   * It is best-effort: if the stored prose formatted the total differently it
+   * simply no-ops — the swapped table and the finance ledger stay authoritative.
+   */
+  private applyPlanTextCorrections(
+    html: string,
+    before: AgreementPlanData,
+    after: AgreementPlanData,
+    country?: string,
+  ): string {
+    const oldTotal = this.render.agreementTotalText(before);
+    const newTotal = this.render.agreementTotalText(after);
+    const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fixTotal = (s: string): string => {
+      if (!oldTotal || oldTotal === newTotal) return s;
+      return s.replace(new RegExp(escRe(oldTotal) + '(?![\\d.,])', 'g'), () => newTotal);
+    };
+
+    // Lenient match: tolerate extra attributes / classes / order on the tag.
+    const table = /<table\b[^>]*\bclass="[^"]*\bpayplan\b[^"]*"[^>]*>[\s\S]*?<\/table>/;
+    const m = table.exec(html);
+    if (!m) return fixTotal(html);
+    // Only swap when the corrected plan actually has a schedule — otherwise
+    // keep the existing table rather than replace it with a "to be inserted"
+    // placeholder. Either way, fix the total only in the prose around it.
+    const swap = (after.installments?.length ?? 0) > 0;
+    const middle = swap ? this.render.renderPaymentPlanTable(after, country) : m[0];
+    return fixTotal(html.slice(0, m.index)) + middle + fixTotal(html.slice(m.index + m[0].length));
   }
 
   /**

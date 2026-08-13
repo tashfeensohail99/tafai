@@ -252,6 +252,24 @@ export class ListAgreementsQueryDto {
   mine?: boolean;
 }
 
+/**
+ * Admin "Signed Agreements" console — list every agreement that has been
+ * passed to Finance (any status except DRAFT/CANCELLED), with applicant-aware
+ * search (name / phone +92·0313·92 / email / agreement number) and a date
+ * range. `changeRequested` narrows to agreements that have a pending
+ * correction request.
+ */
+export class AdminSignedListQueryDto {
+  @IsOptional() @IsString() @MaxLength(120) search?: string;
+  @IsOptional() @IsString() @MaxLength(40) status?: string;
+  @IsOptional() @IsDateString() createdFrom?: string;
+  @IsOptional() @IsDateString() createdTo?: string;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  changeRequested?: boolean;
+}
+
 // ─── Finance review ──────────────────────────────────────────────────────
 
 export class RequestChangesDto {

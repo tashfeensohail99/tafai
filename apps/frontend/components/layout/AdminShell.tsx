@@ -11,6 +11,7 @@ import {
   BarChart3,
   Clock,
   DoorOpen,
+  FileSignature,
   FileSpreadsheet,
   FileText,
   Flag,
@@ -120,6 +121,13 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
     ],
   },
   {
+    label: 'Agreements',
+    items: [
+      { label: 'Signed Agreements', href: '/admin/agreements/signed', icon: FileSignature, caption: 'Passed to finance — search & correct', permissionKey: 'settings.manage' },
+      { label: 'Agreement Templates', href: '/admin/settings/agreements', icon: FileText, caption: 'Service agreement drafts', permissionKey: 'settings.manage' },
+    ],
+  },
+  {
     label: 'Settings',
     items: [
       { label: 'Services', href: '/admin/settings/services', icon: BadgeDollarSign, caption: 'Service catalog', permissionKey: 'settings.manage' },
@@ -129,7 +137,6 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'WhatsApp Team', href: '/admin/settings/whatsapp/team', icon: UsersRound, caption: 'Inbox roster', permissionKey: 'whatsapp.view_team_dashboard' },
       { label: 'WhatsApp Templates', href: '/admin/settings/whatsapp/templates', icon: FileText, caption: 'Department routing', permissionKey: 'whatsapp.manage_templates' },
       { label: 'Presence Report', href: '/admin/settings/whatsapp/presence-report', icon: ClipboardList, caption: 'Away/Offline accountability', permissionKey: 'whatsapp.view_all_inboxes' },
-      { label: 'Agreement Templates', href: '/admin/settings/agreements', icon: FileText, caption: 'Service agreement drafts', permissionKey: 'settings.manage' },
       { label: 'Integrations', href: '/admin/settings/integrations', icon: Plug2, caption: 'Meta API & external keys', permissionKey: 'settings.manage' },
       { label: 'API Keys', href: '/admin/settings/api-keys', icon: Key, caption: 'OpenAI & future providers', permissionKey: 'settings.manage' },
       { label: 'Bot Knowledge', href: '/admin/settings/ai-knowledge', icon: BookOpenText, caption: 'AI bot facts (RAG)', permissionKey: 'settings.manage' },
@@ -166,6 +173,9 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/processing')) return { title: 'Processing', subtitle: 'Manager view' };
   if (pathname.startsWith('/admin/documents')) return { title: 'Documents', subtitle: 'Document pool' };
   if (pathname.startsWith('/admin/workflow')) return { title: 'Workflow board', subtitle: 'Kanban across stages' };
+  if (pathname.startsWith('/admin/agreements/signed/')) return { title: 'Signed Agreement', subtitle: 'Review & correct' };
+  if (pathname.startsWith('/admin/agreements/signed')) return { title: 'Signed Agreements', subtitle: 'Passed to finance — search & correct' };
+  if (pathname.startsWith('/admin/settings/agreements')) return { title: 'Agreement Templates', subtitle: 'Service agreement drafts' };
   if (pathname.startsWith('/admin/settings/services')) return { title: 'Services', subtitle: 'Service catalog' };
   if (pathname.startsWith('/admin/settings/countries')) return { title: 'Countries', subtitle: 'Target destinations' };
   if (pathname.startsWith('/admin/settings/whatsapp/channels')) return { title: 'WhatsApp Channels', subtitle: 'Connected WABA numbers' };

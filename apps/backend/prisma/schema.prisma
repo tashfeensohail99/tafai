@@ -2686,6 +2686,61 @@ model AgreementEvent {
   @@schema("finance")
 }
 
+/// A rep-raised (or admin-raised) correction request against a FINALISED
+/// agreement (post-approval — the pre-approval loop is CHANGES_REQUESTED). The
+/// rep types the corrected bio OR payment plan; `before`/`after` hold the full
+/// section snapshot so the admin sees an exact diff and can apply in one click.
+/// Applying cascades into the finance ledger (invoices/receipts). Decoupled by
+/// id (no FK) like the rest of the agreement model. Never touches the template
+/// body — only bioData or paymentPlan.
+model AgreementChangeRequest {
+  id                String                @id @default(uuid())
+  agreementId       String
+  /// Snapshot for fast listing/search without joining the agreement row.
+  agreementNumber   String
+  leadId            String?
+  clientId          String?
+  requestedByUserId String
+  type              AgreementChangeType
+  status            AgreementChangeStatus @default(PENDING)
+  /// Why the rep is requesting the change (free text).
+  reason            String?
+  /// Full section snapshot BEFORE (the current bioData or paymentPlan JSON).
+  before            Json
+  /// Full section snapshot the rep wants applied (bioData or paymentPlan JSON).
+  after             Json
+  /// Admin decision metadata.
+  appliedByUserId   String?
+  appliedAt         DateTime?
+  rejectedByUserId  String?
+  rejectedAt        DateTime?
+  reviewNote        String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@index([agreementId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("agreement_change_requests")
+  @@schema("finance")
+}
+
+enum AgreementChangeType {
+  BIO
+  PAYMENT_PLAN
+
+  @@schema("finance")
+}
+
+enum AgreementChangeStatus {
+  PENDING
+  APPLIED
+  REJECTED
+  CANCELLED
+
+  @@schema("finance")
+}
+
 // =============================================================================
 // AUDIT LOG
 // =============================================================================

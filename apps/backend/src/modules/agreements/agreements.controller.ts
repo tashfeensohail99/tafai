@@ -27,6 +27,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { AgreementTemplatesService } from './agreement-templates.service';
 import { AgreementsService } from './agreements.service';
 import {
+  AdminSignedListQueryDto,
   CreateAgreementDto,
   CreateAgreementTemplateDto,
   ListAgreementsQueryDto,
@@ -143,6 +144,28 @@ export class AgreementsController {
   @RequireAnyPermissions('leads.update', 'finance.view_all', 'finance.create_invoice', 'settings.manage')
   reviewCounts(@CurrentUser() user: RequestUser) {
     return this.agreements.reviewCounts(user.id);
+  }
+
+  // ─── Admin: Signed Agreements correction console ──────────────────────────
+  // Declared BEFORE ':id' so the literal 'signed/*' paths aren't parsed as a
+  // UUID. Admin-only (super-admin holds settings.manage + finance.view_all).
+
+  @Get('signed/list')
+  @RequireAnyPermissions('settings.manage', 'finance.view_all')
+  adminSignedList(@Query() query: AdminSignedListQueryDto) {
+    return this.agreements.adminListSigned(query);
+  }
+
+  @Get('signed/stats')
+  @RequireAnyPermissions('settings.manage', 'finance.view_all')
+  adminSignedStats() {
+    return this.agreements.adminSignedStats();
+  }
+
+  @Get('signed/:id')
+  @RequireAnyPermissions('settings.manage', 'finance.view_all')
+  adminSignedDetail(@Param('id', ParseUUIDPipe) id: string) {
+    return this.agreements.adminSignedDetail(id);
   }
 
   @Get(':id')

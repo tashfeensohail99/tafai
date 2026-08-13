@@ -840,13 +840,31 @@ export class AgreementsService {
   async getPdfUrl(id: string): Promise<{ url: string }> {
     const a = await this.prisma.agreement.findFirst({
       where: { id, deletedAt: null },
-      select: { generatedPdfKey: true },
+      select: { generatedPdfKey: true, status: true, agreementNumber: true },
     });
     if (!a) throw new NotFoundException('Agreement not found');
     if (a.generatedPdfKey) {
       return { url: await this.storage.getSignedUrl(a.generatedPdfKey) };
     }
     const buffer = await this.previewPdf(id);
+    // A finalised agreement with no stored key must RE-ACQUIRE a locked official
+    // PDF — e.g. after a bio correction whose eager render failed, or a legacy
+    // approved agreement. Render to the official key and persist it, so we don't
+    // re-render on every future view. Non-finalised (draft) agreements keep the
+    // throwaway preview key and are never mistaken for the locked document.
+    const FINALISED: AgreementStatus[] = [
+      AgreementStatus.APPROVED,
+      AgreementStatus.SENT,
+      AgreementStatus.SIGNED,
+    ];
+    if (FINALISED.includes(a.status)) {
+      const up = await this.storage.upload(buffer, 'application/pdf', 'agreements', `${a.agreementNumber}.pdf`);
+      await this.prisma.agreement.update({
+        where: { id },
+        data: { generatedPdfKey: up.key, generatedPdfAt: new Date() },
+      });
+      return { url: await this.storage.getSignedUrl(up.key) };
+    }
     const key = `agreements/preview/${id}.pdf`;
     await this.storage.uploadAt(key, buffer, 'application/pdf');
     return { url: await this.storage.getSignedUrl(key) };
@@ -1638,6 +1656,203 @@ export class AgreementsService {
     });
     await this.recordEvent(cr.agreementId, userId, 'CHANGE_CANCELLED', 'Correction request cancelled', null, null);
     return updated;
+  }
+
+  /**
+   * Admin APPLIES a pending BIO correction. Cascade (no money moves):
+   *   1. Agreement — bioData := after, recompose contentHtml from the template
+   *      + corrected bio (the old name is baked into contentHtml), regenerate
+   *      the stored PDF (best-effort; puppeteer is prod-only, so a render
+   *      failure nulls the key for lazy regen instead of failing the apply).
+   *   2. Client + Lead — update the applicant NAME (split from applicantName)
+   *      so downstream renders (receipts render the client name LIVE) pick it
+   *      up. Never touches the unique/routing phone or the guarded email.
+   *   3. Receipts — null pdfStorageKey on the agreement's (non-voided) receipts
+   *      so each re-renders with the corrected name on next download.
+   * Payment-plan corrections are NOT applied here (that cascade — including
+   * void/reissue of receipts — is the next phase); they must be rejected or
+   * handled once that lands.
+   */
+  async applyChangeRequest(id: string, userId: string) {
+    const cr = await this.prisma.agreementChangeRequest.findUnique({ where: { id } });
+    if (!cr) throw new NotFoundException('Change request not found');
+    if (cr.status !== AgreementChangeStatus.PENDING) {
+      throw new ConflictException(`This request is already ${cr.status.toLowerCase()}.`);
+    }
+    if (cr.type !== AgreementChangeType.BIO) {
+      throw new BadRequestException(
+        'Payment-plan corrections can’t be applied yet — that cascade (with receipt void/reissue) ' +
+          'is coming in the next update. Reject this request or wait for that release.',
+      );
+    }
+
+    const a = await this.prisma.agreement.findFirst({
+      where: { id: cr.agreementId, deletedAt: null },
+    });
+    if (!a) throw new NotFoundException('Agreement not found');
+    const template = await this.prisma.agreementTemplate.findUnique({
+      where: { id: a.templateId },
+    });
+    if (!template) throw new NotFoundException('Agreement template missing');
+
+    const newBio = (cr.after ?? {}) as AgreementBioData;
+    const beforeBio = (cr.before ?? {}) as AgreementBioData;
+    const plan = (a.paymentPlan as AgreementPlanData) ?? {};
+
+    // Correct the document by surgically replacing the CHANGED bio VALUES in the
+    // existing contentHtml. This preserves any manual body edits and avoids
+    // drifting back to the current template (both of which a full recompose
+    // would cause). Fall back to a template recompose only when there is no
+    // stored body. (A field that was previously EMPTY has no anchor to replace,
+    // so it's carried only on the stored bioData, not re-rendered — acceptable
+    // for typo corrections.)
+    const baseHtml =
+      a.contentHtml && a.contentHtml.trim()
+        ? a.contentHtml
+        : this.render.composeAgreementInner(
+            template.bodyHtml,
+            template.programTitle,
+            newBio,
+            plan,
+            a.agreementNumber,
+          );
+    const inner = this.applyBioTextCorrections(baseHtml, beforeBio, newBio);
+
+    // Regenerate the locked PDF — best-effort. Off-prod (no Chromium) this
+    // throws; we then null the key so getPdfUrl re-renders AND re-locks with the
+    // corrected content on next view (see getPdfUrl). The apply still succeeds.
+    let pdfKey: string | null = null;
+    try {
+      const buffer = await this.render.renderStoredPdf(template.programTitle, inner, newBio.country);
+      const up = await this.storage.upload(buffer, 'application/pdf', 'agreements', `${a.agreementNumber}.pdf`);
+      pdfKey = up.key;
+    } catch (e) {
+      this.log.warn(`bio-apply PDF render failed (will lazy-regenerate): ${(e as Error).message}`);
+    }
+
+    // Name change → split applicantName into first/last (canonical codebase
+    // split). Only touch names when the name actually changed.
+    const nameChanged =
+      (newBio.applicantName ?? '').trim() !== (beforeBio.applicantName ?? '').trim();
+    const parts = (newBio.applicantName ?? '').trim().split(/\s+/).filter(Boolean);
+    const firstName = parts[0] ?? '';
+    const lastName = parts.slice(1).join(' ');
+
+    // Only the applicant NAME is visible on a receipt, so only refresh receipt
+    // PDFs when the name actually changed.
+    let receiptIds: string[] = [];
+    if (nameChanged) {
+      const invoices = await this.prisma.invoice.findMany({
+        where: { agreementId: a.id, deletedAt: null },
+        select: { id: true },
+      });
+      const invoiceIds = invoices.map((i) => i.id);
+      receiptIds = invoiceIds.length
+        ? (
+            await this.prisma.receipt.findMany({
+              where: { invoiceId: { in: invoiceIds }, voidedAt: null },
+              select: { id: true },
+            })
+          ).map((r) => r.id)
+        : [];
+    }
+
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      // Atomic claim: only proceed if the request is STILL pending, so two
+      // concurrent applies (or apply racing reject) can't both run the cascade.
+      const claim = await tx.agreementChangeRequest.updateMany({
+        where: { id, status: AgreementChangeStatus.PENDING },
+        data: { status: AgreementChangeStatus.APPLIED, appliedByUserId: userId, appliedAt: now },
+      });
+      if (claim.count === 0) {
+        throw new ConflictException('This request was already actioned by someone else.');
+      }
+
+      await tx.agreement.update({
+        where: { id: a.id },
+        data: {
+          bioData: newBio as unknown as Prisma.InputJsonValue,
+          contentHtml: inner,
+          generatedPdfKey: pdfKey,
+          generatedPdfAt: pdfKey ? now : null,
+        },
+      });
+
+      if (nameChanged && firstName) {
+        // Explicit admin correction — authoritative, so bypass the implicit
+        // lead→client name-sync guard. updateMany (not update) so a dangling /
+        // soft-deleted client or lead id can't abort the whole apply. Never
+        // blank an existing surname when the corrected name is a single token.
+        const nameData = lastName ? { firstName, lastName } : { firstName };
+        if (a.clientId) {
+          await tx.client.updateMany({ where: { id: a.clientId, deletedAt: null }, data: nameData });
+        }
+        if (a.leadId) {
+          await tx.lead.updateMany({ where: { id: a.leadId, deletedAt: null }, data: nameData });
+        }
+      }
+
+      if (receiptIds.length) {
+        await tx.receipt.updateMany({
+          where: { id: { in: receiptIds } },
+          data: { pdfStorageKey: null, pdfGeneratedAt: null },
+        });
+      }
+    });
+
+    // Best-effort audit — never fail the (already-committed) apply on a logging
+    // hiccup, which would otherwise 500 and make a retry hit "already applied".
+    try {
+      await this.recordEvent(
+        a.id,
+        userId,
+        'CHANGE_APPLIED',
+        `Applied bio correction${nameChanged ? ` — name → ${newBio.applicantName}` : ''}` +
+          (receiptIds.length ? ` (${receiptIds.length} receipt(s) queued to re-render)` : ''),
+        cr.before as Prisma.InputJsonValue,
+        cr.after as Prisma.InputJsonValue,
+      );
+    } catch (e) {
+      this.log.warn(`bio-apply audit event failed (apply committed): ${(e as Error).message}`);
+    }
+
+    return {
+      ok: true,
+      nameChanged,
+      receiptsRefreshed: receiptIds.length,
+      pdfRegenerated: !!pdfKey,
+    };
+  }
+
+  /**
+   * Replace the CHANGED bio field VALUES (old → new) inside an agreement's
+   * stored HTML — a surgical correction that preserves the rest of the
+   * document. Both the raw and HTML-escaped spellings of the old value are
+   * swapped; the replacement is applied via a function so `$` in a value is
+   * never treated as a regex back-reference.
+   */
+  private applyBioTextCorrections(
+    html: string,
+    before: AgreementBioData,
+    after: AgreementBioData,
+  ): string {
+    const keys: (keyof AgreementBioData)[] = [
+      'applicantName', 'fatherName', 'cnic', 'passport', 'dob', 'nationality',
+      'address', 'phone', 'email', 'fileNumber', 'country', 'agreementDate',
+    ];
+    const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let out = html;
+    for (const k of keys) {
+      const oldV = String(before[k] ?? '').trim();
+      const newV = String(after[k] ?? '');
+      if (!oldV || oldV === newV.trim()) continue;
+      out = out.replace(new RegExp(escRe(oldV), 'g'), () => newV);
+      const oldEsc = escHtml(oldV);
+      if (oldEsc !== oldV) out = out.replace(new RegExp(escRe(oldEsc), 'g'), () => escHtml(newV));
+    }
+    return out;
   }
 
   private summariseUpdate(dto: UpdateAgreementDto): string {

@@ -197,3 +197,16 @@ export function rejectChangeRequest(id: string, note?: string): Promise<ChangeRe
     body: JSON.stringify({ note }),
   });
 }
+
+export interface ApplyChangeResult {
+  ok: boolean;
+  nameChanged: boolean;
+  receiptsRefreshed: number;
+  pdfRegenerated: boolean;
+}
+
+/** Admin applies a pending BIO correction — cascades to the agreement,
+ *  client/lead name, and receipts. */
+export function applyChangeRequest(id: string): Promise<ApplyChangeResult> {
+  return apiFetch<ApplyChangeResult>(`/agreements/change-requests/${id}/apply`, { method: 'POST' });
+}

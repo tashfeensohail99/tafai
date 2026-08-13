@@ -30,9 +30,12 @@ import {
   AdminSignedListQueryDto,
   CreateAgreementDto,
   CreateAgreementTemplateDto,
+  CreateChangeRequestDto,
   ListAgreementsQueryDto,
+  ListChangeRequestsQueryDto,
   ListTemplatesQueryDto,
   PreviewTemplateDto,
+  RejectChangeRequestDto,
   RequestChangesDto,
   UpdateAgreementDto,
   UpdateAgreementTemplateDto,
@@ -166,6 +169,45 @@ export class AgreementsController {
   @RequireAnyPermissions('settings.manage', 'finance.view_all')
   adminSignedDetail(@Param('id', ParseUUIDPipe) id: string) {
     return this.agreements.adminSignedDetail(id);
+  }
+
+  // ─── Correction requests ──────────────────────────────────────────────────
+  // The literal 'change-requests' GET must precede ':id' so it isn't parsed as
+  // a UUID.
+
+  @Get('change-requests')
+  @RequireAnyPermissions('settings.manage', 'finance.view_all')
+  listChangeRequests(@Query() query: ListChangeRequestsQueryDto) {
+    return this.agreements.listChangeRequests(query);
+  }
+
+  @Post('change-requests/:id/reject')
+  @RequireAnyPermissions('settings.manage', 'finance.view_all')
+  rejectChangeRequest(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RejectChangeRequestDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.agreements.rejectChangeRequest(id, user.id, dto.note);
+  }
+
+  @Post('change-requests/:id/cancel')
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
+  cancelChangeRequest(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    const canViewAll = user.permissions.some((p) => VIEW_ALL_PERMS.includes(p));
+    return this.agreements.cancelChangeRequest(id, user.id, canViewAll);
+  }
+
+  /** Rep raises a correction request on their own finalised agreement. */
+  @Post(':id/change-requests')
+  @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
+  createChangeRequest(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateChangeRequestDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    const canViewAll = user.permissions.some((p) => VIEW_ALL_PERMS.includes(p));
+    return this.agreements.createChangeRequest(id, user.id, dto, canViewAll);
   }
 
   @Get(':id')

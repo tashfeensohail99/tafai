@@ -1,17 +1,51 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import type { Route } from 'next';
-import { ArrowLeft } from 'lucide-react';
-import { GlassCard, PageHeader, StatusBadge, GhostButton } from '@/components/sales-v2/ui';
+import { ArrowLeft, X } from 'lucide-react';
+import { GlassCard, PageHeader, StatusBadge, GhostButton, DangerButton } from '@/components/sales-v2/ui';
 import type { BadgeTone } from '@/components/sales-v2/ui/StatusBadge';
 import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
 import { useAdminSession } from '@/components/layout/AdminShell';
 import {
   getSignedAgreementDetail,
+  rejectChangeRequest,
   type SignedAgreementDetail,
+  type ChangeRequestRow,
 } from '@/lib/agreements-admin';
+
+// ── correction-request diff helpers ──
+const BIO_LABELS: Record<string, string> = {
+  applicantName: 'Name', fatherName: 'Father', cnic: 'CNIC', passport: 'Passport',
+  dob: 'DOB', nationality: 'Nationality', address: 'Address', phone: 'Phone',
+  email: 'Email', fileNumber: 'File #', country: 'Destination', agreementDate: 'Agreement date',
+};
+interface DiffRow { label: string; before: string; after: string }
+function diffRows(cr: ChangeRequestRow): DiffRow[] {
+  const b = (cr.before ?? {}) as Record<string, unknown>;
+  const a = (cr.after ?? {}) as Record<string, unknown>;
+  const rows: DiffRow[] = [];
+  const push = (label: string, bv: unknown, av: unknown) => {
+    const bs = bv == null || bv === '' ? '—' : String(bv);
+    const as = av == null || av === '' ? '—' : String(av);
+    if (bs !== as) rows.push({ label, before: bs, after: as });
+  };
+  if (cr.type === 'BIO') {
+    const keys = new Set([...Object.keys(b), ...Object.keys(a)]);
+    keys.forEach((k) => push(BIO_LABELS[k] ?? k, b[k], a[k]));
+  } else {
+    push('Plan type', b.planType, a.planType);
+    push('Currency', b.currency, a.currency);
+    push('Gross', b.grossAmount, a.grossAmount);
+    push('Discount', b.discountAmount, a.discountAmount);
+    push('Net payable', b.netPayable, a.netPayable);
+    const inst = (v: unknown) =>
+      (Array.isArray(v) ? v : []).map((i: Record<string, unknown>) => `${i.stage ?? ''} ${i.amount ?? 0}`).join(' · ') || '—';
+    push('Installments', inst(b.installments), inst(a.installments));
+  }
+  return rows;
+}
 
 function money(amount: string | number | null | undefined, currency: string): string {
   const n = Number(amount ?? 0);
@@ -57,25 +91,38 @@ export default function SignedAgreementDetailPage() {
   const [data, setData] = useState<SignedAgreementDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [crBusy, setCrBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!canView || !id) return;
+    setLoading(true);
+    try {
+      setData(await getSignedAgreementDetail(id));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [id, canView]);
 
   useEffect(() => {
-    if (!canView || !id) return;
-    let cancelled = false;
-    setLoading(true);
-    getSignedAgreementDetail(id)
-      .then((d) => {
-        if (!cancelled) setData(d);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, canView]);
+    void load();
+  }, [load]);
+
+  const onReject = async (crId: string) => {
+    const note = window.prompt('Reason for rejecting this correction request (optional):') ?? '';
+    setCrBusy(crId);
+    setError(null);
+    try {
+      await rejectChangeRequest(crId, note || undefined);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reject the request');
+    } finally {
+      setCrBusy(null);
+    }
+  };
 
   if (!canView) {
     return <PermissionDeniedState message="You need the settings.manage or finance.view_all permission." />;
@@ -109,6 +156,76 @@ export default function SignedAgreementDetailPage() {
             }
             actions={<StatusBadge tone={statusTone(data.status)}>{data.status.replace(/_/g, ' ')}</StatusBadge>}
           />
+
+          {error ? <div className="sos-banner sos-banner--danger">{error}</div> : null}
+
+          {/* Correction requests — diff + reject (apply arrives next update) */}
+          {data.changeRequests.length > 0 ? (
+            <GlassCard variant="default">
+              <div style={{ fontWeight: 600, marginBottom: 10 }}>Correction requests</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {data.changeRequests.map((cr) => {
+                  const rows = diffRows(cr);
+                  return (
+                    <div key={cr.id} style={{ border: '1px solid var(--sos-border)', borderRadius: 10, padding: 12 }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <StatusBadge tone={cr.status === 'PENDING' ? 'warning' : cr.status === 'APPLIED' ? 'success' : 'neutral'} size="sm">
+                          {cr.status}
+                        </StatusBadge>
+                        <strong style={{ fontSize: 13.5 }}>{cr.type === 'BIO' ? 'Applicant bio' : 'Payment plan'}</strong>
+                        <span className="sos-text-faint" style={{ fontSize: 12, marginLeft: 'auto' }}>{fmtDate(cr.createdAt)}</span>
+                      </div>
+                      {cr.reason ? (
+                        <div className="sos-text-muted" style={{ fontSize: 13, marginTop: 6 }}>“{cr.reason}”</div>
+                      ) : null}
+                      {rows.length > 0 ? (
+                        <div style={{ overflowX: 'auto', marginTop: 8 }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid var(--sos-border)' }}>
+                                <th style={th}>Field</th>
+                                <th style={th}>Current</th>
+                                <th style={th}>Requested</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((r, i) => (
+                                <tr key={i} style={{ borderBottom: '1px solid var(--sos-border)' }}>
+                                  <td style={td}>{r.label}</td>
+                                  <td style={{ ...td, color: 'var(--sos-text-muted)', textDecoration: 'line-through' }}>{r.before}</td>
+                                  <td style={{ ...td, fontWeight: 600 }}>{r.after}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="sos-text-faint" style={{ fontSize: 12.5, marginTop: 6 }}>No field differences detected.</div>
+                      )}
+                      {cr.status === 'PENDING' ? (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                          <span className="sos-text-faint" style={{ fontSize: 12 }}>
+                            Applying (with finance cascade) arrives in the next update.
+                          </span>
+                          <DangerButton
+                            size="sm"
+                            iconLeft={<X size={14} />}
+                            style={{ marginLeft: 'auto' }}
+                            disabled={crBusy === cr.id}
+                            onClick={() => void onReject(cr.id)}
+                          >
+                            {crBusy === cr.id ? 'Rejecting…' : 'Reject'}
+                          </DangerButton>
+                        </div>
+                      ) : cr.reviewNote ? (
+                        <div className="sos-text-faint" style={{ fontSize: 12, marginTop: 8 }}>Note: {cr.reviewNote}</div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </GlassCard>
+          ) : null}
 
           {/* Applicant bio */}
           <GlassCard variant="default">
@@ -238,24 +355,9 @@ export default function SignedAgreementDetailPage() {
             )}
           </GlassCard>
 
-          {/* Change requests + events */}
+          {/* Timeline */}
           <GlassCard variant="default">
             <div style={{ fontWeight: 600, marginBottom: 8 }}>History</div>
-            {data.changeRequests.length > 0 ? (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginBottom: 4 }}>Correction requests</div>
-                {data.changeRequests.map((cr) => (
-                  <div key={cr.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '3px 0' }}>
-                    <StatusBadge tone={cr.status === 'PENDING' ? 'warning' : cr.status === 'APPLIED' ? 'success' : 'neutral'} size="sm">
-                      {cr.status}
-                    </StatusBadge>
-                    <span>{cr.type === 'BIO' ? 'Bio change' : 'Payment-plan change'}</span>
-                    <span className="sos-text-muted">{cr.reason ?? ''}</span>
-                    <span className="sos-text-faint" style={{ marginLeft: 'auto' }}>{fmtDate(cr.createdAt)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
             <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginBottom: 4 }}>Timeline</div>
             {data.events.length === 0 ? (
               <div className="sos-text-faint" style={{ fontSize: 13 }}>No events.</div>

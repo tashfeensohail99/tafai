@@ -28,8 +28,10 @@ import {
 } from '@/components/sales-v2/ui';
 import {
   AGREEMENT_CURRENCIES,
+  cancelChangeRequest,
   composeAgreementDocument,
   composeAgreementTitle,
+  createChangeRequest,
   getAgreement,
   submitAgreement,
   updateAgreement,
@@ -40,6 +42,13 @@ import {
   type PaymentPlanInput,
   type PaymentPlanType,
 } from '@/lib/agreements';
+
+// Finalised statuses a rep may raise a post-lock correction request against.
+const REQUESTABLE: AgreementStatus[] = ['APPROVED', 'SENT', 'SIGNED'];
+const BIO_KEYS: (keyof BioDataInput)[] = [
+  'applicantName', 'fatherName', 'cnic', 'passport', 'dob', 'nationality',
+  'address', 'phone', 'email', 'fileNumber', 'agreementDate', 'country',
+];
 
 const EDITABLE: AgreementStatus[] = ['DRAFT', 'CHANGES_REQUESTED', 'EDITED_PENDING_SALES'];
 
@@ -70,6 +79,10 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<'save' | 'submit' | null>(null);
   const [dirty, setDirty] = useState(false);
+  // Post-lock correction request (finalised agreements).
+  const [requestMode, setRequestMode] = useState(false);
+  const [requestReason, setRequestReason] = useState('');
+  const [reqBusy, setReqBusy] = useState(false);
 
   // form state
   const [bio, setBio] = useState<BioDataInput>({ applicantName: '' });
@@ -118,6 +131,11 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   useEffect(() => { void load(); }, [load]);
 
   const editable = data ? EDITABLE.includes(data.status) : false;
+  // Finalised (locked) agreement → the rep can raise a correction request that
+  // unlocks the form in "request mode" without editing the live agreement.
+  const finalized = data ? REQUESTABLE.includes(data.status) : false;
+  const formEditable = editable || requestMode;
+  const pendingRequests = (data?.changeRequests ?? []).filter((c) => c.status === 'PENDING');
   const netPayable = Math.max(0, num(gross) - num(discount));
   const installmentSum = rows.reduce((acc, r) => acc + num(r.amount), 0);
   // The schedule balances when the rows sum to the net payable. With no rows,
@@ -146,7 +164,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
 
   // What the preview shows: manual edits, else the live composition (or, when
   // locked, the stored document).
-  const previewHtml = manual ? manualHtml : editable ? composedHtml : data?.contentHtml || composedHtml;
+  const previewHtml = manual ? manualHtml : formEditable ? composedHtml : data?.contentHtml || composedHtml;
 
   // ── form mutators ──
   const touch = () => setDirty(true);
@@ -163,6 +181,67 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
     return null;
   };
   const validationError = validate();
+
+  // ── correction-request change detection + handlers ──
+  const bioChanged = (): boolean => {
+    const o = (data?.bioData ?? {}) as BioDataInput;
+    return BIO_KEYS.some((k) => (bio[k] ?? '') !== (o[k] ?? ''));
+  };
+  const planChanged = (): boolean => {
+    const o = (data?.paymentPlan ?? {}) as Partial<PaymentPlanInput>;
+    if ((o.planType ?? 'INSTALLMENT') !== planType) return true;
+    if ((o.currency ?? currency) !== currency) return true;
+    if (cents(Number(o.grossAmount ?? 0)) !== cents(num(gross))) return true;
+    if (cents(Number(o.discountAmount ?? 0)) !== cents(num(discount))) return true;
+    const oi = o.installments ?? [];
+    if (oi.length !== installments.length) return true;
+    return installments.some((a, i) => {
+      const b = oi[i];
+      return (
+        (a.stage ?? '') !== (b?.stage ?? '') ||
+        cents(Number(a.amount ?? 0)) !== cents(Number(b?.amount ?? 0)) ||
+        (a.trigger ?? '') !== (b?.trigger ?? '')
+      );
+    });
+  };
+
+  const enterRequestMode = () => { setRequestMode(true); setError(null); setNotice(null); };
+  const cancelRequestMode = () => { setRequestMode(false); setRequestReason(''); void load(); };
+
+  const submitCorrection = async () => {
+    const v = validate();
+    if (v) { setError(v); return; }
+    const changedBio = bioChanged();
+    const changedPlan = planChanged();
+    if (!changedBio && !changedPlan) {
+      setError('Change at least one field before submitting a correction request.');
+      return;
+    }
+    setReqBusy(true); setError(null);
+    try {
+      if (changedBio) {
+        await createChangeRequest(agreementId, { type: 'BIO', reason: requestReason.trim() || undefined, bioData: bio });
+      }
+      if (changedPlan) {
+        await createChangeRequest(agreementId, {
+          type: 'PAYMENT_PLAN', reason: requestReason.trim() || undefined,
+          paymentPlan: { planType, currency, grossAmount: num(gross), discountAmount: num(discount), netPayable, installments },
+        });
+      }
+      setNotice('Correction request sent to admin for review.');
+      setRequestMode(false); setRequestReason('');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not submit correction request');
+    } finally { setReqBusy(false); }
+  };
+
+  const doCancelRequest = async (id: string) => {
+    if (!window.confirm('Cancel this correction request?')) return;
+    setError(null);
+    try { await cancelChangeRequest(id); setNotice('Correction request cancelled.'); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not cancel the request'); }
+  };
 
   const save = useCallback(async (): Promise<boolean> => {
     const v = validate();
@@ -249,6 +328,17 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
                 </PrimaryButton>
               </>
             ) : null}
+            {finalized && !requestMode ? (
+              <GhostButton size="sm" iconLeft={<Pencil size={15} />} onClick={enterRequestMode}>Request a correction</GhostButton>
+            ) : null}
+            {requestMode ? (
+              <>
+                <PrimaryButton size="sm" iconLeft={<Send size={15} />} onClick={() => void submitCorrection()} disabled={reqBusy}>
+                  {reqBusy ? 'Sending…' : 'Submit request'}
+                </PrimaryButton>
+                <GhostButton size="sm" iconLeft={<RotateCcw size={15} />} onClick={cancelRequestMode} disabled={reqBusy}>Cancel</GhostButton>
+              </>
+            ) : null}
           </div>
         </div>
         {/* What's-next bar */}
@@ -264,6 +354,46 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
         {error ? <div className="sos-banner sos-banner--danger" style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}><AlertTriangle size={16} /> {error}</div> : null}
         {notice && !error ? <div className="sos-banner sos-banner--success" style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}><CheckCircle2 size={16} /> {notice}</div> : null}
       </GlassCard>
+
+      {/* Correction request — reason + how-to (finalised agreements) */}
+      {requestMode ? (
+        <GlassCard variant="default">
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <Pencil size={18} style={{ color: 'var(--sos-accent, #6366f1)', flexShrink: 0, marginTop: 2 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Requesting a correction</div>
+              <div className="sos-text-secondary" style={{ fontSize: 13, marginTop: 3 }}>
+                Edit the applicant details and/or payment plan below to how they <em>should</em> read, then add a short reason and submit.
+                An admin reviews and applies it — the document wording isn’t changed by you.
+              </div>
+              <label className="sos-label" style={{ marginTop: 10 }}>Reason (what’s wrong / what to fix)</label>
+              <textarea
+                className="sos-textarea"
+                value={requestReason}
+                onChange={(e) => setRequestReason(e.target.value)}
+                placeholder="e.g. Applicant name should be “Muhammad Ali”, not “Muhamad Ali”."
+                style={{ width: '100%', minHeight: 56 }}
+              />
+            </div>
+          </div>
+        </GlassCard>
+      ) : null}
+
+      {/* Pending correction requests awaiting admin */}
+      {pendingRequests.length > 0 && !requestMode ? (
+        <GlassCard variant="default">
+          <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>
+            Pending correction request{pendingRequests.length > 1 ? 's' : ''}
+          </div>
+          {pendingRequests.map((cr) => (
+            <div key={cr.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13, padding: '4px 0' }}>
+              <StatusBadge tone="warning" size="sm" dot>{cr.type === 'BIO' ? 'Applicant bio' : 'Payment plan'}</StatusBadge>
+              <span className="sos-text-muted">{cr.reason ?? 'Awaiting admin review'}</span>
+              <GhostButton size="sm" style={{ marginLeft: 'auto' }} onClick={() => void doCancelRequest(cr.id)}>Cancel</GhostButton>
+            </div>
+          ))}
+        </GlassCard>
+      ) : null}
 
       {/* Finance review — bounce-back note + discussion thread */}
       {(data.status === 'CHANGES_REQUESTED' && data.financeNotes) || data.events.length > 0 ? (
@@ -360,15 +490,15 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
           {/* Applicant */}
           <GlassCard variant="default">
             <SectionHead n={1} title="Applicant details" />
-            <FormInput label="Full name" required value={bio.applicantName} disabled={!editable} onChange={(e) => setBioField('applicantName', e.target.value)} />
+            <FormInput label="Full name" required value={bio.applicantName} disabled={!formEditable} onChange={(e) => setBioField('applicantName', e.target.value)} />
             <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 10 }}>
-              <FormInput label="CNIC" value={bio.cnic ?? ''} disabled={!editable} onChange={(e) => setBioField('cnic', e.target.value)} />
-              <FormInput label="Passport" value={bio.passport ?? ''} disabled={!editable} onChange={(e) => setBioField('passport', e.target.value)} />
-              <FormInput label="Nationality" value={bio.nationality ?? ''} disabled={!editable} onChange={(e) => setBioField('nationality', e.target.value)} />
-              <FormInput label="Destination country" value={bio.country ?? ''} placeholder="Canada" disabled={!editable} onChange={(e) => setBioField('country', e.target.value)} />
+              <FormInput label="CNIC" value={bio.cnic ?? ''} disabled={!formEditable} onChange={(e) => setBioField('cnic', e.target.value)} />
+              <FormInput label="Passport" value={bio.passport ?? ''} disabled={!formEditable} onChange={(e) => setBioField('passport', e.target.value)} />
+              <FormInput label="Nationality" value={bio.nationality ?? ''} disabled={!formEditable} onChange={(e) => setBioField('nationality', e.target.value)} />
+              <FormInput label="Destination country" value={bio.country ?? ''} placeholder="Canada" disabled={!formEditable} onChange={(e) => setBioField('country', e.target.value)} />
             </div>
             <div style={{ marginTop: 10 }}>
-              <FormInput label="Address" value={bio.address ?? ''} disabled={!editable} onChange={(e) => setBioField('address', e.target.value)} />
+              <FormInput label="Address" value={bio.address ?? ''} disabled={!formEditable} onChange={(e) => setBioField('address', e.target.value)} />
             </div>
             <button type="button" onClick={() => setShowMore((v) => !v)} className="sos-text-secondary"
               style={{ marginTop: 10, background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, padding: 0, textDecoration: 'underline' }}>
@@ -376,12 +506,12 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
             </button>
             {showMore ? (
               <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 10 }}>
-                <FormInput label="Father / guardian" value={bio.fatherName ?? ''} disabled={!editable} onChange={(e) => setBioField('fatherName', e.target.value)} />
-                <FormInput label="Date of birth" value={bio.dob ?? ''} placeholder="01 Jan 1990" disabled={!editable} onChange={(e) => setBioField('dob', e.target.value)} />
-                <FormInput label="Phone" value={bio.phone ?? ''} disabled={!editable} onChange={(e) => setBioField('phone', e.target.value)} />
-                <FormInput label="Email" value={bio.email ?? ''} disabled={!editable} onChange={(e) => setBioField('email', e.target.value)} />
-                <FormInput label="File number" value={bio.fileNumber ?? ''} disabled={!editable} onChange={(e) => setBioField('fileNumber', e.target.value)} />
-                <FormInput label="Agreement date" value={bio.agreementDate ?? ''} placeholder="today" disabled={!editable} onChange={(e) => setBioField('agreementDate', e.target.value)} />
+                <FormInput label="Father / guardian" value={bio.fatherName ?? ''} disabled={!formEditable} onChange={(e) => setBioField('fatherName', e.target.value)} />
+                <FormInput label="Date of birth" value={bio.dob ?? ''} placeholder="01 Jan 1990" disabled={!formEditable} onChange={(e) => setBioField('dob', e.target.value)} />
+                <FormInput label="Phone" value={bio.phone ?? ''} disabled={!formEditable} onChange={(e) => setBioField('phone', e.target.value)} />
+                <FormInput label="Email" value={bio.email ?? ''} disabled={!formEditable} onChange={(e) => setBioField('email', e.target.value)} />
+                <FormInput label="File number" value={bio.fileNumber ?? ''} disabled={!formEditable} onChange={(e) => setBioField('fileNumber', e.target.value)} />
+                <FormInput label="Agreement date" value={bio.agreementDate ?? ''} placeholder="today" disabled={!formEditable} onChange={(e) => setBioField('agreementDate', e.target.value)} />
               </div>
             ) : null}
           </GlassCard>
@@ -390,14 +520,14 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
           <GlassCard variant="default">
             <SectionHead n={2} title="Payment plan" />
             <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
-              <FormSelect label="Plan type" value={planType} disabled={!editable}
+              <FormSelect label="Plan type" value={planType} disabled={!formEditable}
                 onChange={(e) => { setPlanType(e.target.value as PaymentPlanType); touch(); }}
                 options={[{ value: 'FULL', label: 'Single payment' }, { value: 'INSTALLMENT', label: 'Installments' }, { value: 'MILESTONE', label: 'Milestone-based' }]} />
-              <FormSelect label="Currency" value={currency} disabled={!editable}
+              <FormSelect label="Currency" value={currency} disabled={!formEditable}
                 onChange={(e) => { setCurrency(e.target.value); touch(); }}
                 options={AGREEMENT_CURRENCIES.map((c) => ({ value: c, label: c }))} />
-              <FormInput label="Total agreed" inputMode="decimal" value={gross} disabled={!editable} onChange={(e) => { setGross(e.target.value); touch(); }} />
-              <FormInput label="Discount" inputMode="decimal" value={discount} disabled={!editable} onChange={(e) => { setDiscount(e.target.value); touch(); }} />
+              <FormInput label="Total agreed" inputMode="decimal" value={gross} disabled={!formEditable} onChange={(e) => { setGross(e.target.value); touch(); }} />
+              <FormInput label="Discount" inputMode="decimal" value={discount} disabled={!formEditable} onChange={(e) => { setDiscount(e.target.value); touch(); }} />
             </div>
             {/* Net payable highlight */}
             <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'var(--sos-surface-1, rgba(99,102,241,0.06))', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
@@ -407,7 +537,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 6px' }}>
               <label className="sos-label" style={{ margin: 0 }}>{planType === 'MILESTONE' ? 'Milestones' : planType === 'FULL' ? 'Payment' : 'Installments'}</label>
-              {editable ? (
+              {formEditable ? (
                 <GhostButton size="sm" iconLeft={<Plus size={14} />} onClick={addRow}>Add</GhostButton>
               ) : null}
             </div>
@@ -419,10 +549,10 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {rows.map((r, i) => (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.4fr auto', gap: 6, alignItems: 'center' }}>
-                    <input className="sos-input" placeholder="Stage" value={r.stage} disabled={!editable} onChange={(e) => setRow(i, { stage: e.target.value })} />
-                    <input className="sos-input" placeholder="Amount" inputMode="decimal" value={r.amount} disabled={!editable} onChange={(e) => setRow(i, { amount: e.target.value })} />
-                    <input className="sos-input" placeholder="When (e.g. At signing)" value={r.trigger} disabled={!editable} onChange={(e) => setRow(i, { trigger: e.target.value })} />
-                    {editable ? <GhostButton size="sm" onClick={() => removeRow(i)} aria-label="Remove"><Trash2 size={14} /></GhostButton> : <span />}
+                    <input className="sos-input" placeholder="Stage" value={r.stage} disabled={!formEditable} onChange={(e) => setRow(i, { stage: e.target.value })} />
+                    <input className="sos-input" placeholder="Amount" inputMode="decimal" value={r.amount} disabled={!formEditable} onChange={(e) => setRow(i, { amount: e.target.value })} />
+                    <input className="sos-input" placeholder="When (e.g. At signing)" value={r.trigger} disabled={!formEditable} onChange={(e) => setRow(i, { trigger: e.target.value })} />
+                    {formEditable ? <GhostButton size="sm" onClick={() => removeRow(i)} aria-label="Remove"><Trash2 size={14} /></GhostButton> : <span />}
                   </div>
                 ))}
               </div>
@@ -435,7 +565,7 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
 
             <div style={{ marginTop: 14 }}>
               <label className="sos-label">Notes for Finance (shown during review · not shown to client)</label>
-              <textarea className="sos-textarea" value={salesNotes} disabled={!editable}
+              <textarea className="sos-textarea" value={salesNotes} disabled={!formEditable}
                 onChange={(e) => { setSalesNotes(e.target.value); touch(); }} style={{ width: '100%', minHeight: 60 }} />
             </div>
           </GlassCard>

@@ -203,9 +203,10 @@ export class AgreementsController {
   }
 
   /** Admin applies a pending BIO correction (cascades to agreement + client +
-   *  receipts). Payment-plan apply is not available yet. */
+   *  receipts). Same gate as viewing/rejecting a request, so anyone who can act
+   *  on the queue can also apply. Payment-plan apply is not available yet. */
   @Post('change-requests/:id/apply')
-  @RequireAnyPermissions('settings.manage', 'finance.create_invoice')
+  @RequireAnyPermissions('settings.manage', 'finance.view_all')
   applyChangeRequest(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
     return this.agreements.applyChangeRequest(id, user.id);
   }

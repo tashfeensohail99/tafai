@@ -923,11 +923,33 @@ export class AgreementsService {
 
   // ─── Reads ───────────────────────────────────────────────────────────────
 
-  async get(id: string) {
+  /** True when the user created the agreement or owns its lead (creator or
+   *  assignee). Used to scope reads + correction requests for non-view-all
+   *  users so one rep can't reach another rep's agreement (and its bio/plan
+   *  PII + correction history) by id. */
+  private async userOwnsAgreement(
+    a: { createdByUserId: string | null; leadId: string | null },
+    userId: string,
+  ): Promise<boolean> {
+    if (a.createdByUserId === userId) return true;
+    if (!a.leadId) return false;
+    const lead = await this.prisma.lead.findFirst({
+      where: { id: a.leadId, deletedAt: null },
+      select: { createdByUserId: true, assignedEmployee: { select: { userId: true } } },
+    });
+    return !!lead && (lead.createdByUserId === userId || lead.assignedEmployee?.userId === userId);
+  }
+
+  async get(id: string, userId?: string, canViewAll = true) {
     const agreement = await this.prisma.agreement.findFirst({
       where: { id, deletedAt: null },
     });
     if (!agreement) throw new NotFoundException('Agreement not found');
+    // Object-level authorization: a non-view-all user may only read their own
+    // agreements. 404 (not 403) so a stranger can't probe which ids exist.
+    if (userId && !canViewAll && !(await this.userOwnsAgreement(agreement, userId))) {
+      throw new NotFoundException('Agreement not found');
+    }
 
     const [template, lead, events, changeRequests] = await Promise.all([
       this.prisma.agreementTemplate.findUnique({
@@ -1452,7 +1474,7 @@ export class AgreementsService {
     agreementId: string,
     userId: string,
     dto: CreateChangeRequestDto,
-    canViewAll: boolean,
+    canManageAll: boolean,
   ) {
     const a = await this.prisma.agreement.findFirst({
       where: { id: agreementId, deletedAt: null },
@@ -1465,22 +1487,10 @@ export class AgreementsService {
       );
     }
 
-    // Ownership: a non-view-all user may only request on their own lead's
-    // agreement (creator or assignee). Admins/finance (view-all) may request
-    // on any.
-    if (!canViewAll) {
-      const lead = a.leadId
-        ? await this.prisma.lead.findFirst({
-            where: { id: a.leadId, deletedAt: null },
-            select: { createdByUserId: true, assignedEmployee: { select: { userId: true } } },
-          })
-        : null;
-      const owns =
-        !!lead &&
-        (lead.createdByUserId === userId || lead.assignedEmployee?.userId === userId);
-      if (!owns) {
-        throw new ForbiddenException('You can only request changes on your own agreements.');
-      }
+    // Ownership: only an admin/finance (canManageAll) may request on any
+    // agreement; everyone else is limited to their own (creator or lead owner).
+    if (!canManageAll && !(await this.userOwnsAgreement(a, userId))) {
+      throw new ForbiddenException('You can only request changes on your own agreements.');
     }
 
     const type = dto.type as AgreementChangeType;
@@ -1613,13 +1623,13 @@ export class AgreementsService {
   }
 
   /** Rep cancels their own pending request (or an admin cancels any). */
-  async cancelChangeRequest(id: string, userId: string, canViewAll: boolean) {
+  async cancelChangeRequest(id: string, userId: string, canManageAll: boolean) {
     const cr = await this.prisma.agreementChangeRequest.findUnique({ where: { id } });
     if (!cr) throw new NotFoundException('Change request not found');
     if (cr.status !== AgreementChangeStatus.PENDING) {
       throw new ConflictException(`This request is already ${cr.status.toLowerCase()}.`);
     }
-    if (!canViewAll && cr.requestedByUserId !== userId) {
+    if (!canManageAll && cr.requestedByUserId !== userId) {
       throw new ForbiddenException('You can only cancel your own request.');
     }
     const updated = await this.prisma.agreementChangeRequest.update({

@@ -189,10 +189,15 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
   };
   const planChanged = (): boolean => {
     const o = (data?.paymentPlan ?? {}) as Partial<PaymentPlanInput>;
+    // Compare against the SAME baseline load() used to seed the form, so a
+    // partial stored plan JSON doesn't produce false positives/negatives.
+    const baseCurrency = o.currency ?? data?.currency ?? 'CAD';
+    const baseGross = o.grossAmount ?? Number(data?.grossAmount ?? 0);
+    const baseDiscount = o.discountAmount ?? Number(data?.discountAmount ?? 0);
     if ((o.planType ?? 'INSTALLMENT') !== planType) return true;
-    if ((o.currency ?? currency) !== currency) return true;
-    if (cents(Number(o.grossAmount ?? 0)) !== cents(num(gross))) return true;
-    if (cents(Number(o.discountAmount ?? 0)) !== cents(num(discount))) return true;
+    if (baseCurrency !== currency) return true;
+    if (cents(Number(baseGross)) !== cents(num(gross))) return true;
+    if (cents(Number(baseDiscount)) !== cents(num(discount))) return true;
     const oi = o.installments ?? [];
     if (oi.length !== installments.length) return true;
     return installments.some((a, i) => {
@@ -218,22 +223,33 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
       return;
     }
     setReqBusy(true); setError(null);
-    try {
-      if (changedBio) {
-        await createChangeRequest(agreementId, { type: 'BIO', reason: requestReason.trim() || undefined, bioData: bio });
-      }
-      if (changedPlan) {
+    const reason = requestReason.trim() || undefined;
+    // Each section is its own request; run them independently so a rejection of
+    // one (e.g. a duplicate-pending 409) doesn't discard the other.
+    const errors: string[] = [];
+    let created = 0;
+    if (changedBio) {
+      try { await createChangeRequest(agreementId, { type: 'BIO', reason, bioData: bio }); created++; }
+      catch (err) { errors.push('Bio: ' + (err instanceof Error ? err.message : 'failed')); }
+    }
+    if (changedPlan) {
+      try {
         await createChangeRequest(agreementId, {
-          type: 'PAYMENT_PLAN', reason: requestReason.trim() || undefined,
-          paymentPlan: { planType, currency, grossAmount: num(gross), discountAmount: num(discount), netPayable, installments },
+          type: 'PAYMENT_PLAN', reason,
+          // Preserve the original plan's non-editable fields (tax, government
+          // fees, refund policy) so the requested `after` is a full plan.
+          paymentPlan: {
+            ...((data?.paymentPlan ?? {}) as PaymentPlanInput),
+            planType, currency, grossAmount: num(gross), discountAmount: num(discount), netPayable, installments,
+          },
         });
-      }
-      setNotice('Correction request sent to admin for review.');
-      setRequestMode(false); setRequestReason('');
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not submit correction request');
-    } finally { setReqBusy(false); }
+        created++;
+      } catch (err) { errors.push('Payment plan: ' + (err instanceof Error ? err.message : 'failed')); }
+    }
+    setReqBusy(false);
+    if (created > 0) { setRequestMode(false); setRequestReason(''); await load(); }
+    if (errors.length) setError(errors.join(' · '));
+    else setNotice('Correction request sent to admin for review.');
   };
 
   const doCancelRequest = async (id: string) => {
@@ -565,7 +581,9 @@ export function AgreementEditorPage({ agreementId }: { agreementId: string }) {
 
             <div style={{ marginTop: 14 }}>
               <label className="sos-label">Notes for Finance (shown during review · not shown to client)</label>
-              <textarea className="sos-textarea" value={salesNotes} disabled={!formEditable}
+              {/* Draft-only: a correction request carries bio/plan, not salesNotes,
+                  so it stays locked in request mode to avoid silently-dropped edits. */}
+              <textarea className="sos-textarea" value={salesNotes} disabled={!editable}
                 onChange={(e) => { setSalesNotes(e.target.value); touch(); }} style={{ width: '100%', minHeight: 60 }} />
             </div>
           </GlassCard>

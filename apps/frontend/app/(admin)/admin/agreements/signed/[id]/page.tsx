@@ -41,7 +41,9 @@ function diffRows(cr: ChangeRequestRow): DiffRow[] {
     push('Discount', b.discountAmount, a.discountAmount);
     push('Net payable', b.netPayable, a.netPayable);
     const inst = (v: unknown) =>
-      (Array.isArray(v) ? v : []).map((i: Record<string, unknown>) => `${i.stage ?? ''} ${i.amount ?? 0}`).join(' · ') || '—';
+      (Array.isArray(v) ? v : [])
+        .map((i: Record<string, unknown>) => `${i.stage ?? ''} ${i.amount ?? 0}${i.trigger ? ' @' + i.trigger : ''}`)
+        .join(' · ') || '—';
     push('Installments', inst(b.installments), inst(a.installments));
   }
   return rows;
@@ -111,11 +113,12 @@ export default function SignedAgreementDetailPage() {
   }, [load]);
 
   const onReject = async (crId: string) => {
-    const note = window.prompt('Reason for rejecting this correction request (optional):') ?? '';
+    const note = window.prompt('Reason for rejecting this correction request (optional):');
+    if (note === null) return; // dialog cancelled — do not reject
     setCrBusy(crId);
     setError(null);
     try {
-      await rejectChangeRequest(crId, note || undefined);
+      await rejectChangeRequest(crId, note.trim() || undefined);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reject the request');
@@ -142,10 +145,10 @@ export default function SignedAgreementDetailPage() {
 
       {loading ? (
         <div className="sos-text-muted" style={{ padding: 24, textAlign: 'center' }}>Loading…</div>
-      ) : error ? (
-        <div className="sos-banner sos-banner--danger">{error}</div>
       ) : !data ? (
-        <div className="sos-text-muted" style={{ padding: 24, textAlign: 'center' }}>Not found.</div>
+        // Only a fatal LOAD failure (no data) collapses the page. An action
+        // error (e.g. a failed reject) keeps the detail + shows an inline banner.
+        <div className="sos-banner sos-banner--danger">{error ?? 'Not found.'}</div>
       ) : (
         <>
           <PageHeader

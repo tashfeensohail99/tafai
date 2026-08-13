@@ -41,8 +41,19 @@ import {
   UpdateAgreementTemplateDto,
 } from './agreements.dto';
 
-/** Permissions that grant a cross-agent view of agreements. */
+/** Permissions that grant a cross-agent VIEW of agreements (read scope). */
 const VIEW_ALL_PERMS = ['finance.view_all', 'leads.view_all', 'settings.manage'];
+
+/** Permissions that grant acting on ANY agreement's correction requests
+ *  (write scope). Deliberately excludes the read-only `leads.view_all` so a
+ *  sales-manager view permission can't create/cancel requests on others'
+ *  agreements — only admin/finance bypass the ownership check. */
+const MANAGE_ALL_PERMS = [
+  'settings.manage',
+  'finance.view_all',
+  'finance.create_invoice',
+  'finance.verify_payment',
+];
 
 /**
  * Agreement authoring. Template management (admin/finance) + Sales-side
@@ -194,8 +205,8 @@ export class AgreementsController {
   @Post('change-requests/:id/cancel')
   @RequireAnyPermissions('leads.update', 'finance.create_invoice', 'settings.manage')
   cancelChangeRequest(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
-    const canViewAll = user.permissions.some((p) => VIEW_ALL_PERMS.includes(p));
-    return this.agreements.cancelChangeRequest(id, user.id, canViewAll);
+    const canManageAll = user.permissions.some((p) => MANAGE_ALL_PERMS.includes(p));
+    return this.agreements.cancelChangeRequest(id, user.id, canManageAll);
   }
 
   /** Rep raises a correction request on their own finalised agreement. */
@@ -206,14 +217,15 @@ export class AgreementsController {
     @Body() dto: CreateChangeRequestDto,
     @CurrentUser() user: RequestUser,
   ) {
-    const canViewAll = user.permissions.some((p) => VIEW_ALL_PERMS.includes(p));
-    return this.agreements.createChangeRequest(id, user.id, dto, canViewAll);
+    const canManageAll = user.permissions.some((p) => MANAGE_ALL_PERMS.includes(p));
+    return this.agreements.createChangeRequest(id, user.id, dto, canManageAll);
   }
 
   @Get(':id')
   @RequireAnyPermissions('leads.update', 'finance.view_all', 'settings.manage')
-  getAgreement(@Param('id', ParseUUIDPipe) id: string) {
-    return this.agreements.get(id);
+  getAgreement(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    const canViewAll = user.permissions.some((p) => VIEW_ALL_PERMS.includes(p));
+    return this.agreements.get(id, user.id, canViewAll);
   }
 
   @Patch(':id')

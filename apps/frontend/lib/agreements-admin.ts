@@ -172,3 +172,28 @@ export function listSignedAgreements(filters: SignedFilters): Promise<SignedAgre
 export function getSignedAgreementDetail(id: string): Promise<SignedAgreementDetail> {
   return apiFetch<SignedAgreementDetail>(`/agreements/signed/${id}`, { cache: 'no-store' });
 }
+
+// ─── Correction requests (admin queue) ──────────────────────────────────────
+
+export interface ChangeRequestListRow extends ChangeRequestRow {
+  agreementId: string;
+  agreementNumber: string;
+  requestedBy: { firstName: string; lastName: string } | null;
+  lead: { firstName: string; lastName: string } | null;
+}
+
+export function listChangeRequests(query?: {
+  status?: string;
+  agreementId?: string;
+}): Promise<ChangeRequestListRow[]> {
+  return apiFetch<ChangeRequestListRow[]>(`/agreements/change-requests${buildQuery({ ...query })}`, {
+    cache: 'no-store',
+  });
+}
+
+export function rejectChangeRequest(id: string, note?: string): Promise<ChangeRequestRow> {
+  return apiFetch<ChangeRequestRow>(`/agreements/change-requests/${id}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}

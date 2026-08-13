@@ -270,6 +270,36 @@ export class AdminSignedListQueryDto {
   changeRequested?: boolean;
 }
 
+// ─── Post-lock correction requests (rep → admin) ─────────────────────────
+
+/** A rep requests a correction to a FINALISED agreement. Exactly one section
+ *  is corrected per request: send `bioData` for a BIO change or `paymentPlan`
+ *  for a PAYMENT_PLAN change, matching `type`. The template body is never
+ *  touched — only bio or plan. */
+export class CreateChangeRequestDto {
+  @IsString() @IsIn(['BIO', 'PAYMENT_PLAN']) type!: 'BIO' | 'PAYMENT_PLAN';
+  @IsOptional() @IsString() @MaxLength(2000) reason?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BioDataDto)
+  bioData?: BioDataDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PaymentPlanDto)
+  paymentPlan?: PaymentPlanDto;
+}
+
+export class RejectChangeRequestDto {
+  @IsOptional() @IsString() @MaxLength(2000) note?: string;
+}
+
+export class ListChangeRequestsQueryDto {
+  @IsOptional() @IsString() @MaxLength(20) status?: string;
+  @IsOptional() @IsString() agreementId?: string;
+}
+
 // ─── Finance review ──────────────────────────────────────────────────────
 
 export class RequestChangesDto {

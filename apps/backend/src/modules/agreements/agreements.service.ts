@@ -1,11 +1,14 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AgreementChangeStatus,
+  AgreementChangeType,
   AgreementStatus,
   AuditAction,
   PaymentPlanType,
@@ -31,7 +34,9 @@ import {
 import {
   AdminSignedListQueryDto,
   CreateAgreementDto,
+  CreateChangeRequestDto,
   ListAgreementsQueryDto,
+  ListChangeRequestsQueryDto,
   PaymentPlanDto,
   UpdateAgreementDto,
 } from './agreements.dto';
@@ -918,13 +923,35 @@ export class AgreementsService {
 
   // ─── Reads ───────────────────────────────────────────────────────────────
 
-  async get(id: string) {
+  /** True when the user created the agreement or owns its lead (creator or
+   *  assignee). Used to scope reads + correction requests for non-view-all
+   *  users so one rep can't reach another rep's agreement (and its bio/plan
+   *  PII + correction history) by id. */
+  private async userOwnsAgreement(
+    a: { createdByUserId: string | null; leadId: string | null },
+    userId: string,
+  ): Promise<boolean> {
+    if (a.createdByUserId === userId) return true;
+    if (!a.leadId) return false;
+    const lead = await this.prisma.lead.findFirst({
+      where: { id: a.leadId, deletedAt: null },
+      select: { createdByUserId: true, assignedEmployee: { select: { userId: true } } },
+    });
+    return !!lead && (lead.createdByUserId === userId || lead.assignedEmployee?.userId === userId);
+  }
+
+  async get(id: string, userId?: string, canViewAll = true) {
     const agreement = await this.prisma.agreement.findFirst({
       where: { id, deletedAt: null },
     });
     if (!agreement) throw new NotFoundException('Agreement not found');
+    // Object-level authorization: a non-view-all user may only read their own
+    // agreements. 404 (not 403) so a stranger can't probe which ids exist.
+    if (userId && !canViewAll && !(await this.userOwnsAgreement(agreement, userId))) {
+      throw new NotFoundException('Agreement not found');
+    }
 
-    const [template, lead, events] = await Promise.all([
+    const [template, lead, events, changeRequests] = await Promise.all([
       this.prisma.agreementTemplate.findUnique({
         where: { id: agreement.templateId },
         select: { id: true, name: true, categoryKey: true, programTitle: true, bodyHtml: true },
@@ -950,9 +977,14 @@ export class AgreementsService {
         orderBy: { createdAt: 'desc' },
         take: 50,
       }),
+      this.prisma.agreementChangeRequest.findMany({
+        where: { agreementId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
     ]);
 
-    return { ...agreement, template, lead, events };
+    return { ...agreement, template, lead, events, changeRequests };
   }
 
   async list(query: ListAgreementsQueryDto, userId: string, canViewAll: boolean) {
@@ -1422,6 +1454,190 @@ export class AgreementsService {
     });
 
     return { ...agreement, template, lead, client, events, changeRequests, contract, invoices };
+  }
+
+  // ─── Correction requests (rep → admin) ────────────────────────────────────
+
+  /** Statuses a rep may raise a post-lock correction request against. The
+   *  pre-approval loop (DRAFT/CHANGES_REQUESTED/EDITED_PENDING_SALES) is edited
+   *  directly; these are the finalised, locked ones. */
+  private static readonly REQUESTABLE: AgreementStatus[] = [
+    AgreementStatus.APPROVED,
+    AgreementStatus.SENT,
+    AgreementStatus.SIGNED,
+  ];
+
+  /** Rep raises a correction against a FINALISED agreement. Server snapshots
+   *  `before` from the live agreement (never trusts the client for it) and
+   *  validates the corrected section. Never touches the template body. */
+  async createChangeRequest(
+    agreementId: string,
+    userId: string,
+    dto: CreateChangeRequestDto,
+    canManageAll: boolean,
+  ) {
+    const a = await this.prisma.agreement.findFirst({
+      where: { id: agreementId, deletedAt: null },
+    });
+    if (!a) throw new NotFoundException('Agreement not found');
+    if (!AgreementsService.REQUESTABLE.includes(a.status)) {
+      throw new ConflictException(
+        `Corrections can only be requested on a finalised agreement (this one is ${a.status}). ` +
+          `Draft / bounced agreements can be edited directly.`,
+      );
+    }
+
+    // Ownership: only an admin/finance (canManageAll) may request on any
+    // agreement; everyone else is limited to their own (creator or lead owner).
+    if (!canManageAll && !(await this.userOwnsAgreement(a, userId))) {
+      throw new ForbiddenException('You can only request changes on your own agreements.');
+    }
+
+    const type = dto.type as AgreementChangeType;
+
+    // One pending request per type per agreement — keeps the admin queue clean.
+    const dup = await this.prisma.agreementChangeRequest.findFirst({
+      where: { agreementId, type, status: AgreementChangeStatus.PENDING },
+      select: { id: true },
+    });
+    if (dup) {
+      throw new ConflictException(
+        `There is already a pending ${type === 'BIO' ? 'applicant-bio' : 'payment-plan'} ` +
+          `change request for this agreement. Cancel it before raising another.`,
+      );
+    }
+
+    let before: Prisma.InputJsonValue;
+    let after: Prisma.InputJsonValue;
+    if (type === AgreementChangeType.BIO) {
+      if (!dto.bioData) throw new BadRequestException('bioData is required for a BIO change.');
+      if (!dto.bioData.applicantName?.trim()) {
+        throw new BadRequestException('Applicant name is required.');
+      }
+      before = (a.bioData ?? {}) as Prisma.InputJsonValue;
+      after = dto.bioData as unknown as Prisma.InputJsonValue;
+    } else {
+      if (!dto.paymentPlan) {
+        throw new BadRequestException('paymentPlan is required for a PAYMENT_PLAN change.');
+      }
+      this.assertPlanBalances(dto.paymentPlan);
+      before = (a.paymentPlan ?? {}) as Prisma.InputJsonValue;
+      after = this.normalizePlan(dto.paymentPlan) as unknown as Prisma.InputJsonValue;
+    }
+
+    const cr = await this.prisma.agreementChangeRequest.create({
+      data: {
+        agreementId,
+        agreementNumber: a.agreementNumber,
+        leadId: a.leadId,
+        clientId: a.clientId,
+        requestedByUserId: userId,
+        type,
+        reason: dto.reason ?? null,
+        before,
+        after,
+      },
+    });
+
+    await this.recordEvent(
+      agreementId,
+      userId,
+      'CHANGE_REQUESTED',
+      `Correction requested (${type === 'BIO' ? 'applicant bio' : 'payment plan'})` +
+        (dto.reason ? `: ${dto.reason}` : ''),
+      before,
+      after,
+    );
+
+    return cr;
+  }
+
+  /** Admin queue: list correction requests, optionally by status / agreement,
+   *  enriched with the requester + applicant name for display. */
+  async listChangeRequests(query: ListChangeRequestsQueryDto) {
+    const where: Prisma.AgreementChangeRequestWhereInput = {};
+    if (
+      query.status &&
+      (['PENDING', 'APPLIED', 'REJECTED', 'CANCELLED'] as string[]).includes(query.status)
+    ) {
+      where.status = query.status as AgreementChangeStatus;
+    }
+    if (query.agreementId) where.agreementId = query.agreementId;
+
+    const rows = await this.prisma.agreementChangeRequest.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    const userIds = [...new Set(rows.map((r) => r.requestedByUserId))];
+    const emps = userIds.length
+      ? await this.prisma.employee.findMany({
+          where: { userId: { in: userIds } },
+          select: { userId: true, firstName: true, lastName: true },
+        })
+      : [];
+    const empMap = new Map(emps.map((e) => [e.userId, e]));
+
+    const leadIds = [...new Set(rows.map((r) => r.leadId).filter(Boolean))] as string[];
+    const leads = leadIds.length
+      ? await this.prisma.lead.findMany({
+          where: { id: { in: leadIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const leadMap = new Map(leads.map((l) => [l.id, l]));
+
+    return rows.map((r) => ({
+      ...r,
+      requestedBy: empMap.get(r.requestedByUserId) ?? null,
+      lead: r.leadId ? leadMap.get(r.leadId) ?? null : null,
+    }));
+  }
+
+  /** Admin rejects a pending correction request (no ledger change). */
+  async rejectChangeRequest(id: string, userId: string, note?: string) {
+    const cr = await this.prisma.agreementChangeRequest.findUnique({ where: { id } });
+    if (!cr) throw new NotFoundException('Change request not found');
+    if (cr.status !== AgreementChangeStatus.PENDING) {
+      throw new ConflictException(`This request is already ${cr.status.toLowerCase()}.`);
+    }
+    const updated = await this.prisma.agreementChangeRequest.update({
+      where: { id },
+      data: {
+        status: AgreementChangeStatus.REJECTED,
+        rejectedByUserId: userId,
+        rejectedAt: new Date(),
+        reviewNote: note ?? null,
+      },
+    });
+    await this.recordEvent(
+      cr.agreementId,
+      userId,
+      'CHANGE_REJECTED',
+      `Correction request rejected${note ? `: ${note}` : ''}`,
+      null,
+      null,
+    );
+    return updated;
+  }
+
+  /** Rep cancels their own pending request (or an admin cancels any). */
+  async cancelChangeRequest(id: string, userId: string, canManageAll: boolean) {
+    const cr = await this.prisma.agreementChangeRequest.findUnique({ where: { id } });
+    if (!cr) throw new NotFoundException('Change request not found');
+    if (cr.status !== AgreementChangeStatus.PENDING) {
+      throw new ConflictException(`This request is already ${cr.status.toLowerCase()}.`);
+    }
+    if (!canManageAll && cr.requestedByUserId !== userId) {
+      throw new ForbiddenException('You can only cancel your own request.');
+    }
+    const updated = await this.prisma.agreementChangeRequest.update({
+      where: { id },
+      data: { status: AgreementChangeStatus.CANCELLED },
+    });
+    await this.recordEvent(cr.agreementId, userId, 'CHANGE_CANCELLED', 'Correction request cancelled', null, null);
+    return updated;
   }
 
   private summariseUpdate(dto: UpdateAgreementDto): string {

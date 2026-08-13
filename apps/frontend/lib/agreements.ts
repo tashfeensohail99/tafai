@@ -189,6 +189,19 @@ export interface AgreementEvent {
   createdAt: string;
 }
 
+/** A rep-raised correction request against a finalised agreement. */
+export interface AgreementChangeRequestSummary {
+  id: string;
+  type: 'BIO' | 'PAYMENT_PLAN';
+  status: 'PENDING' | 'APPLIED' | 'REJECTED' | 'CANCELLED';
+  reason: string | null;
+  requestedByUserId: string;
+  createdAt: string;
+  appliedAt: string | null;
+  rejectedAt: string | null;
+  reviewNote: string | null;
+}
+
 export interface AgreementDetail extends AgreementSummary {
   templateId: string;
   bioData: BioDataInput;
@@ -208,6 +221,28 @@ export interface AgreementDetail extends AgreementSummary {
     referenceCode: string;
   } | null;
   events: AgreementEvent[];
+  /** Correction-request history (most recent first). */
+  changeRequests?: AgreementChangeRequestSummary[];
+}
+
+/** Rep raises a correction on a finalised agreement (bio OR payment plan). */
+export function createChangeRequest(
+  agreementId: string,
+  input:
+    | { type: 'BIO'; reason?: string; bioData: BioDataInput }
+    | { type: 'PAYMENT_PLAN'; reason?: string; paymentPlan: PaymentPlanInput },
+): Promise<AgreementChangeRequestSummary> {
+  return apiFetch<AgreementChangeRequestSummary>(`/agreements/${agreementId}/change-requests`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Rep cancels their own pending correction request. */
+export function cancelChangeRequest(id: string): Promise<AgreementChangeRequestSummary> {
+  return apiFetch<AgreementChangeRequestSummary>(`/agreements/change-requests/${id}/cancel`, {
+    method: 'POST',
+  });
 }
 
 export function listTemplateOptions(): Promise<TemplateOption[]> {

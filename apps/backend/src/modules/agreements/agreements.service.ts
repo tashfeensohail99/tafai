@@ -16,6 +16,10 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { StorageService } from '../storage/storage.service';
 import { isCanonicalServiceCode } from '../../common/service-types';
+import {
+  looksLikePhoneSearch,
+  phoneSearchCandidates,
+} from '../../common/phone/phone-search.util';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -25,6 +29,7 @@ import {
   type AgreementPlanData,
 } from './agreement-render.service';
 import {
+  AdminSignedListQueryDto,
   CreateAgreementDto,
   ListAgreementsQueryDto,
   PaymentPlanDto,
@@ -43,6 +48,26 @@ const SALES_EDITABLE: AgreementStatus[] = [
   AgreementStatus.CHANGES_REQUESTED,
   AgreementStatus.EDITED_PENDING_SALES,
 ];
+
+/** "Passed to Finance" — every status except an in-progress DRAFT or a
+ *  CANCELLED agreement. Drives the admin Signed-Agreements correction console. */
+const PASSED_TO_FINANCE: AgreementStatus[] = [
+  AgreementStatus.SUBMITTED,
+  AgreementStatus.FINANCE_REVIEW,
+  AgreementStatus.CHANGES_REQUESTED,
+  AgreementStatus.APPROVED,
+  AgreementStatus.EDITED_PENDING_SALES,
+  AgreementStatus.SENT,
+  AgreementStatus.SIGNED,
+];
+
+/** UTC instant of the most recent midnight in Pakistan (UTC+5), so "today" /
+ *  "this week" counters line up with the team's working day, not UTC. */
+function startOfPktDay(d: Date): Date {
+  const shifted = new Date(d.getTime() + 5 * 3600 * 1000);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - 5 * 3600 * 1000);
+}
 
 /** A plan shape sufficient for balance validation. */
 interface BalanceCheckPlan {
@@ -1161,6 +1186,242 @@ export class AgreementsService {
       }),
     ]);
     return { financeToReview, salesChangesRequested };
+  }
+
+  // ─── Admin: Signed Agreements correction console ──────────────────────────
+
+  /**
+   * Resolve a free-text search term to matching lead + client ids, so the admin
+   * can search signed agreements by applicant name / phone (+92·0313·92) /
+   * email as well as by agreement number. Phone terms use the equality-on-index
+   * path (`phoneSearchCandidates`); text terms match name/email/reference.
+   */
+  private async resolveSearchTargets(
+    term: string,
+  ): Promise<{ leadIds: string[]; clientIds: string[] }> {
+    const t = term.trim();
+    if (!t) return { leadIds: [], clientIds: [] };
+
+    if (looksLikePhoneSearch(t)) {
+      const candidates = phoneSearchCandidates(t);
+      if (candidates.length === 0) return { leadIds: [], clientIds: [] };
+      const [leads, clients] = await Promise.all([
+        this.prisma.$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT id FROM crm.leads WHERE "deletedAt" IS NULL
+             AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($1::text[]) LIMIT 500`,
+          candidates,
+        ),
+        this.prisma.$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT id FROM crm.clients WHERE "deletedAt" IS NULL
+             AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($1::text[]) LIMIT 500`,
+          candidates,
+        ),
+      ]);
+      return { leadIds: leads.map((r) => r.id), clientIds: clients.map((r) => r.id) };
+    }
+
+    const contains = { contains: t, mode: 'insensitive' as const };
+    const [leads, clients] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { firstName: contains },
+            { lastName: contains },
+            { email: contains },
+            { referenceCode: contains },
+          ],
+        },
+        select: { id: true },
+        take: 500,
+      }),
+      this.prisma.client.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { firstName: contains },
+            { lastName: contains },
+            { email: contains },
+            { referenceCode: contains },
+          ],
+        },
+        select: { id: true },
+        take: 500,
+      }),
+    ]);
+    return { leadIds: leads.map((l) => l.id), clientIds: clients.map((c) => c.id) };
+  }
+
+  /** Admin list of every agreement passed to Finance, with applicant-aware
+   *  search, status + date filters, and a per-row pending-change-request count. */
+  async adminListSigned(query: AdminSignedListQueryDto) {
+    const where: Prisma.AgreementWhereInput = {
+      deletedAt: null,
+      status:
+        query.status && this.isStatus(query.status)
+          ? query.status
+          : { in: PASSED_TO_FINANCE },
+    };
+
+    if (query.createdFrom || query.createdTo) {
+      const createdAt: Prisma.DateTimeFilter = {};
+      if (query.createdFrom) createdAt.gte = new Date(query.createdFrom);
+      if (query.createdTo) {
+        const to = new Date(query.createdTo);
+        to.setUTCHours(23, 59, 59, 999);
+        createdAt.lte = to;
+      }
+      where.createdAt = createdAt;
+    }
+
+    if (query.search && query.search.trim()) {
+      const term = query.search.trim();
+      const { leadIds, clientIds } = await this.resolveSearchTargets(term);
+      const or: Prisma.AgreementWhereInput[] = [
+        { agreementNumber: { contains: term, mode: 'insensitive' } },
+      ];
+      if (leadIds.length) or.push({ leadId: { in: leadIds } });
+      if (clientIds.length) or.push({ clientId: { in: clientIds } });
+      where.AND = [{ OR: or }];
+    }
+
+    if (query.changeRequested) {
+      const pend = await this.prisma.agreementChangeRequest.findMany({
+        where: { status: 'PENDING' },
+        select: { agreementId: true },
+        distinct: ['agreementId'],
+      });
+      const ids = pend.map((p) => p.agreementId);
+      // No pending requests → force an empty result rather than "all".
+      where.id = { in: ids.length ? ids : ['__none__'] };
+    }
+
+    const rows = await this.prisma.agreement.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        agreementNumber: true,
+        categoryKey: true,
+        status: true,
+        currency: true,
+        totalAmount: true,
+        grossAmount: true,
+        discountAmount: true,
+        paymentPlanType: true,
+        leadId: true,
+        clientId: true,
+        serviceContractId: true,
+        createdByUserId: true,
+        createdAt: true,
+        updatedAt: true,
+        submittedAt: true,
+      },
+    });
+
+    const leadIds = [...new Set(rows.map((r) => r.leadId).filter(Boolean))] as string[];
+    const leads = leadIds.length
+      ? await this.prisma.lead.findMany({
+          where: { id: { in: leadIds } },
+          select: { id: true, firstName: true, lastName: true, phone: true, email: true, referenceCode: true },
+        })
+      : [];
+    const leadMap = new Map(leads.map((l) => [l.id, l]));
+
+    const agIds = rows.map((r) => r.id);
+    const pendCounts = agIds.length
+      ? await this.prisma.agreementChangeRequest.groupBy({
+          by: ['agreementId'],
+          where: { agreementId: { in: agIds }, status: 'PENDING' },
+          _count: { _all: true },
+        })
+      : [];
+    const pendMap = new Map(pendCounts.map((p) => [p.agreementId, p._count._all]));
+
+    return rows.map((r) => ({
+      ...r,
+      lead: r.leadId ? leadMap.get(r.leadId) ?? null : null,
+      pendingChangeCount: pendMap.get(r.id) ?? 0,
+    }));
+  }
+
+  /** Dashboard counters for the Signed-Agreements console. */
+  async adminSignedStats() {
+    const now = new Date();
+    const startToday = startOfPktDay(now);
+    const startWeek = new Date(startToday.getTime() - 6 * 86400 * 1000);
+    const passed: Prisma.AgreementWhereInput = {
+      deletedAt: null,
+      status: { in: PASSED_TO_FINANCE },
+    };
+    const [total, newToday, thisWeek, pendReqs] = await Promise.all([
+      this.prisma.agreement.count({ where: passed }),
+      this.prisma.agreement.count({ where: { ...passed, createdAt: { gte: startToday } } }),
+      this.prisma.agreement.count({ where: { ...passed, createdAt: { gte: startWeek } } }),
+      this.prisma.agreementChangeRequest.findMany({
+        where: { status: 'PENDING' },
+        select: { agreementId: true },
+        distinct: ['agreementId'],
+      }),
+    ]);
+    return { total, newToday, thisWeek, changeRequested: pendReqs.length };
+  }
+
+  /** Full admin detail for one agreement: bio + plan + template + parties +
+   *  the materialised finance ledger (contract, installments, invoices with
+   *  their payments/receipts/credit-notes) + its change-request history. */
+  async adminSignedDetail(id: string) {
+    const agreement = await this.prisma.agreement.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!agreement) throw new NotFoundException('Agreement not found');
+
+    const [template, lead, client, events, changeRequests, contract] = await Promise.all([
+      this.prisma.agreementTemplate.findUnique({
+        where: { id: agreement.templateId },
+        select: { id: true, name: true, categoryKey: true, programTitle: true },
+      }),
+      agreement.leadId
+        ? this.prisma.lead.findUnique({
+            where: { id: agreement.leadId },
+            select: { id: true, firstName: true, lastName: true, phone: true, email: true, emailVerified: true, referenceCode: true },
+          })
+        : null,
+      agreement.clientId
+        ? this.prisma.client.findUnique({
+            where: { id: agreement.clientId },
+            select: { id: true, firstName: true, lastName: true, phone: true, email: true, referenceCode: true },
+          })
+        : null,
+      this.prisma.agreementEvent.findMany({
+        where: { agreementId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      this.prisma.agreementChangeRequest.findMany({
+        where: { agreementId: id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      agreement.serviceContractId
+        ? this.prisma.serviceContract.findUnique({
+            where: { id: agreement.serviceContractId },
+            include: { installments: { orderBy: { sequence: 'asc' } } },
+          })
+        : null,
+    ]);
+
+    const invoices = await this.prisma.invoice.findMany({
+      where: { agreementId: id, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        payments: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
+        receipts: { orderBy: { issuedAt: 'asc' } },
+        creditNotes: { orderBy: { issuedAt: 'asc' } },
+      },
+    });
+
+    return { ...agreement, template, lead, client, events, changeRequests, contract, invoices };
   }
 
   private summariseUpdate(dto: UpdateAgreementDto): string {

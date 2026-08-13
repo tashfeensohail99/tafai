@@ -1896,22 +1896,28 @@ export class AgreementsService {
     const stages = (contract?.installments ?? []).filter(
       (i) => i.status !== InstallmentStatus.CANCELLED,
     );
-    const newRows = (after.installments ?? [])
+    let newRows = (after.installments ?? [])
       .slice()
       .sort((x, y) => (x.sequence ?? 0) - (y.sequence ?? 0));
+    // A single full-payment plan carries NO installments, but
+    // materializeServiceContract synthesised one "Full payment" stage for the
+    // contract — mirror that here so a FULL-plan correction pairs 1:1 with it
+    // instead of tripping the stage-count guard.
+    if (newRows.length === 0) {
+      newRows = [{ sequence: 1, stage: 'Full payment', amount: newNet, trigger: null, dueDate: null }];
+    }
     // Money received against THIS agreement — scoped exactly like the receipt /
     // finance-profile views (sum paidAmount across the agreement's invoices).
     // The primary payment flow records EVERY payment on a single agreement-linked
     // invoice (installmentId NULL, anchored to the whole fee), so a per-installment
     // invoice back-link is NOT a reliable "is this stage paid?" signal — the AR
     // waterfall over total-paid (what computeReceiptAccountContext and
-    // syncInstallmentStatuses use) is.
-    const agInvoices = contract
-      ? await this.prisma.invoice.findMany({
-          where: { agreementId: a.id, deletedAt: null },
-          select: { id: true, paidAmount: true },
-        })
-      : [];
+    // syncInstallmentStatuses use) is. Fetched regardless of a materialised
+    // contract so payments taken before materialisation still guard + refresh.
+    const agInvoices = await this.prisma.invoice.findMany({
+      where: { agreementId: a.id, deletedAt: null },
+      select: { id: true, paidAmount: true, installmentId: true, status: true },
+    });
     const totalPaid = agInvoices.reduce((s, i) => s + Number(i.paidAmount), 0);
     const anyPaid = totalPaid > 0.005;
     // Allocate total-paid across the CURRENT stages in sequence order; a stage
@@ -1924,7 +1930,24 @@ export class AgreementsService {
       return covered > 0.005;
     });
 
-    // ── Safety guards (only meaningful once a ledger exists) ──
+    // ── Safety guards — money already received is never silently moved ──
+    // The currency / reduce-below-paid guards apply whenever money exists, even
+    // if the ledger was never materialised into a contract.
+    const baseCurrency = contract?.currency ?? a.currency;
+    if (anyPaid && newCurrency !== baseCurrency) {
+      throw new ConflictException(
+        `This correction changes the currency (${baseCurrency} → ${newCurrency}) but payments have already been ` +
+          `recorded. A currency change with recorded payments must be handled in Finance.`,
+      );
+    }
+    if (anyPaid && cents(newNet) < cents(totalPaid)) {
+      throw new ConflictException(
+        `This correction lowers the total to ${newCurrency} ${newNet.toLocaleString()}, below the ` +
+          `${baseCurrency} ${totalPaid.toLocaleString()} already received. Reducing a fee below money already ` +
+          `collected needs a finance credit note / refund — handle it in Finance.`,
+      );
+    }
+    // Stage-structure guards need a materialised schedule.
     if (contract && stages.length > 0) {
       if (newRows.length !== stages.length) {
         throw new ConflictException(
@@ -1932,17 +1955,10 @@ export class AgreementsService {
             `Adding or removing a stage must be done in Finance — reject this and rebuild the schedule there.`,
         );
       }
-      if (anyPaid && newCurrency !== contract.currency) {
+      const seqs = newRows.map((r) => r.sequence ?? 0);
+      if (new Set(seqs).size !== seqs.length) {
         throw new ConflictException(
-          `This correction changes the currency (${contract.currency} → ${newCurrency}) but payments have already ` +
-            `been recorded. A currency change with recorded payments must be handled in Finance.`,
-        );
-      }
-      if (cents(newNet) < cents(totalPaid)) {
-        throw new ConflictException(
-          `This correction lowers the total to ${newCurrency} ${newNet.toLocaleString()}, below the ` +
-            `${contract.currency} ${totalPaid.toLocaleString()} already received. Reducing a fee below money ` +
-            `already collected needs a finance credit note / refund — handle it in Finance.`,
+          'The corrected plan has duplicate stage numbers — please fix the schedule and resubmit.',
         );
       }
       for (let k = 0; k < stages.length; k++) {
@@ -2002,6 +2018,17 @@ export class AgreementsService {
           })
         ).map((r) => r.id)
       : [];
+
+    // Tax-inclusive split for the corrected fee, mirroring how the primary
+    // invoice was created (the fee is treated as tax-inclusive), so re-anchoring
+    // it to the new total keeps subtotal + tax tied to the fee to the cent.
+    const org = await this.prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { taxRatePercent: true },
+    });
+    const taxRate = Number(org?.taxRatePercent ?? 0);
+    const feeNet = taxRate > 0 ? Math.round((newNet / (1 + taxRate / 100)) * 100) / 100 : newNet;
+    const feeTax = Math.round((newNet - feeNet) * 100) / 100;
 
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
@@ -2063,6 +2090,28 @@ export class AgreementsService {
             });
           }
         }
+      }
+
+      // Re-anchor the PRIMARY agreement-linked invoice(s) — installmentId NULL,
+      // billed for the WHOLE fee (the handover payment flow bills against this) —
+      // to the corrected total, so finance doesn't keep billing / auto-close at
+      // the OLD figure. Safe: the guards above ensure the new total is >= money
+      // already received, so paidAmount can never exceed it; status is recomputed
+      // like verifyPayment. Installment-linked invoices were handled above;
+      // CANCELLED invoices are left alone.
+      for (const inv of agInvoices) {
+        if (inv.installmentId !== null || inv.status === InvoiceStatus.CANCELLED) continue;
+        const paid = Number(inv.paidAmount);
+        const status =
+          paid >= newNet - 0.005
+            ? InvoiceStatus.PAID
+            : paid > 0.005
+              ? InvoiceStatus.PARTIALLY_PAID
+              : InvoiceStatus.SENT;
+        await tx.invoice.updateMany({
+          where: { id: inv.id, deletedAt: null, status: { not: InvoiceStatus.CANCELLED } },
+          data: { subtotal: feeNet, taxAmount: feeTax, totalAmount: newNet, currency: newCurrency, status },
+        });
       }
 
       if (receiptIds.length) {

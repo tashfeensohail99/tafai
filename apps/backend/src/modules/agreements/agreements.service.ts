@@ -1973,7 +1973,9 @@ export class AgreementsService {
               a.agreementNumber,
             )
           : '';
-    const inner = baseHtml ? this.applyPlanTextCorrections(baseHtml, currentPlan, after) : a.contentHtml;
+    const inner = baseHtml
+      ? this.applyPlanTextCorrections(baseHtml, currentPlan, after, bio.country)
+      : a.contentHtml;
 
     // Regenerate the locked PDF — best-effort (puppeteer is prod-only). On
     // failure the key is nulled and getPdfUrl re-renders + re-locks on next view.
@@ -2099,27 +2101,41 @@ export class AgreementsService {
   /**
    * Correct a payment plan inside an agreement's stored HTML by SWAPPING the
    * `{{PAYMENT_PLAN}}` table (value-independent, so amount AND row changes are
-   * handled) and find-replacing the old inline total ("PKR 120,000" → "PKR
-   * 125,000") in the surrounding prose — preserving every manual edit and never
-   * drifting to a newer template. The table swap runs first so the old total in
-   * the old table is gone before the prose replace, and the new table's new
-   * total (which differs from the old) is never touched.
+   * handled, with the same destination-country rewrite) and find-replacing the
+   * old inline total ("PKR 120,000" → "PKR 125,000") in the surrounding PROSE
+   * only — preserving every manual edit and never drifting to a newer template.
+   *
+   * Safety: the total replace runs ONLY on the prose on either side of the plan
+   * table (never on a table cell — a new stage amount that happens to equal the
+   * old total must not be rewritten), and matches an EXACT figure (a trailing
+   * digit/comma/dot boundary stops "PKR 10,500" from eating "PKR 10,500,000").
+   * It is best-effort: if the stored prose formatted the total differently it
+   * simply no-ops — the swapped table and the finance ledger stay authoritative.
    */
   private applyPlanTextCorrections(
     html: string,
     before: AgreementPlanData,
     after: AgreementPlanData,
+    country?: string,
   ): string {
-    let out = html;
-    const table = /<table class="payplan">[\s\S]*?<\/table>/;
-    if (table.test(out)) {
-      const fresh = this.render.renderPaymentPlanTable(after);
-      out = out.replace(table, () => fresh);
-    }
     const oldTotal = this.render.agreementTotalText(before);
     const newTotal = this.render.agreementTotalText(after);
-    if (oldTotal && oldTotal !== newTotal) out = out.split(oldTotal).join(newTotal);
-    return out;
+    const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fixTotal = (s: string): string => {
+      if (!oldTotal || oldTotal === newTotal) return s;
+      return s.replace(new RegExp(escRe(oldTotal) + '(?![\\d.,])', 'g'), () => newTotal);
+    };
+
+    // Lenient match: tolerate extra attributes / classes / order on the tag.
+    const table = /<table\b[^>]*\bclass="[^"]*\bpayplan\b[^"]*"[^>]*>[\s\S]*?<\/table>/;
+    const m = table.exec(html);
+    if (!m) return fixTotal(html);
+    // Only swap when the corrected plan actually has a schedule — otherwise
+    // keep the existing table rather than replace it with a "to be inserted"
+    // placeholder. Either way, fix the total only in the prose around it.
+    const swap = (after.installments?.length ?? 0) > 0;
+    const middle = swap ? this.render.renderPaymentPlanTable(after, country) : m[0];
+    return fixTotal(html.slice(0, m.index)) + middle + fixTotal(html.slice(m.index + m[0].length));
   }
 
   /**

@@ -426,12 +426,15 @@ export class AgreementRenderService {
   /**
    * The standalone payment-plan `<table class="payplan">…</table>` fragment for a
    * plan — the exact block that `{{PAYMENT_PLAN}}` expands to in a composed
-   * document. Used to surgically SWAP the schedule inside an already-stored
-   * contentHtml when a payment-plan correction is applied, without recomposing
-   * (and thus without losing manual edits or drifting to a newer template).
+   * document (including the destination-country rewrite composeBody applies to
+   * stage labels/triggers). Used to surgically SWAP the schedule inside an
+   * already-stored contentHtml when a payment-plan correction is applied, without
+   * recomposing (and thus without losing manual edits or drifting to a newer
+   * template).
    */
-  renderPaymentPlanTable(plan: AgreementPlanData): string {
-    return this.renderPaymentPlan(this.planToStages(plan), plan.currency ?? 'CAD');
+  renderPaymentPlanTable(plan: AgreementPlanData, country?: string): string {
+    const table = this.renderPaymentPlan(this.planToStages(plan), plan.currency ?? 'CAD');
+    return country ? this.applyCountry(table, country) : table;
   }
 
   /** The `{{TOTAL_AMOUNT}}` token value for a plan ("PKR 125,000") — so a plan

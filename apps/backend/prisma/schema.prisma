@@ -991,6 +991,9 @@ model AdRoutingRule {
   targetType      AdRoutingTargetType
   targetId        String
   branchIds       String[]
+  /// Specific employee ids this rule pins to, in ADDITION to any branchIds.
+  /// A rule's team = union of (active employees in branchIds) + these ids.
+  employeeIds     String[]            @default([])
   notes           String?
   createdByUserId String?
   createdAt       DateTime            @default(now())

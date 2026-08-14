@@ -1956,7 +1956,7 @@ model Client {
   firstName           String
   lastName            String
   email               String?      @unique
-  phone               String       @unique
+  phone               String?      @unique
   alternatePhone      String?
   nationality         String?
   dateOfBirth         DateTime?
@@ -1976,6 +1976,11 @@ model Client {
   // verified case to Processing (the moment Lead becomes Client). Existing
   // rows were backfilled in the same migration.
   sourceLeadId       String?
+  // Family / group: an ADDITIONAL applicant who shares a PAYER's contact.
+  // A dependent has its own referenceCode (file) + Processing case + finance
+  // ledger, but no phone of its own (the payer is the contact). NULL = a
+  // primary / payer client (the normal case).
+  payerClientId      String?
   assignedEmployeeId String?
   serviceType        String?
   targetCountry      String?
@@ -1994,6 +1999,9 @@ model Client {
   createdBy        UserAccount?       @relation("ClientCreatedBy", fields: [createdByUserId], references: [id])
   sourceLead       Lead?              @relation("ClientSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
   assignedEmployee Employee?          @relation("ClientAssignedEmployee", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  // Payer <-> dependent applicants (self-relation, one payer -> many applicants).
+  payer            Client?            @relation("ClientDependents", fields: [payerClientId], references: [id], onDelete: SetNull)
+  dependents       Client[]           @relation("ClientDependents")
   cases            Case[]
   documents        ClientDocument[]
   appointments     Appointment[]      @relation("ClientAppointments")
@@ -2017,6 +2025,7 @@ model Client {
   @@index([status])
   @@index([branchId])
   @@index([sourceLeadId])
+  @@index([payerClientId])
   @@index([assignedEmployeeId])
   @@index([blockedAt])
   @@map("clients")

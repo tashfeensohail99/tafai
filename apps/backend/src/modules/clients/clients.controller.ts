@@ -19,6 +19,20 @@ import { RequestUser } from '../../common/types/auth.types';
 import { ClientsService } from './clients.service';
 import { CreateClientDto, ListClientsQueryDto, UpdateClientDto } from './clients.dto';
 import { rowsToCsv, sendCsvDownload, todayStamp } from '../../common/csv/csv.util';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
+
+class CreateDependentDto {
+  @IsString() @MaxLength(120) firstName!: string;
+  @IsString() @MaxLength(120) lastName!: string;
+  @IsOptional() @IsString() @MaxLength(40) cnic?: string;
+  @IsOptional() @IsString() @MaxLength(80) nationality?: string;
+  @IsOptional() @IsString() @MaxLength(120) serviceType?: string;
+  @IsOptional() @IsString() @MaxLength(120) targetCountry?: string;
+}
+
+class AssignApplicantDto {
+  @IsString() @MaxLength(64) clientId!: string;
+}
 
 @Controller('clients')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -83,6 +97,28 @@ export class ClientsController {
   @RequirePermissions('clients.create')
   create(@Body() dto: CreateClientDto, @CurrentUser() user: RequestUser) {
     return this.clientsService.create(dto, user.id);
+  }
+
+  /** Add a dependent applicant (family / group member) under a payer client. */
+  @Post(':id/dependents')
+  @RequirePermissions('clients.create')
+  createDependent(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateDependentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.clientsService.createDependentApplicant(id, dto, user.id);
+  }
+
+  /** Move an agreement (+ its invoices) onto a specific applicant's own file. */
+  @Post('agreements/:agreementId/applicant')
+  @RequirePermissions('clients.update')
+  assignApplicant(
+    @Param('agreementId', ParseUUIDPipe) agreementId: string,
+    @Body() dto: AssignApplicantDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.clientsService.assignAgreementApplicant(agreementId, dto.clientId, user.id);
   }
 
   @Patch(':id')

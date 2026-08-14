@@ -50,24 +50,29 @@ export class AdRoutingRulesService {
   async upsert(input: {
     targetType: AdRoutingTargetType;
     targetId: string;
-    branchIds: string[];
+    branchIds?: string[];
+    employeeIds?: string[];
     notes?: string | null;
     createdByUserId?: string | null;
   }): Promise<AdRoutingRule> {
-    if (input.branchIds.length === 0) {
-      throw new Error('branchIds cannot be empty — delete the rule instead');
+    const branchIds = input.branchIds ?? [];
+    const employeeIds = input.employeeIds ?? [];
+    if (branchIds.length === 0 && employeeIds.length === 0) {
+      throw new Error('Pick at least one branch or one person — otherwise delete the rule.');
     }
     const row = await this.prisma.adRoutingRule.upsert({
       where: { targetType_targetId: { targetType: input.targetType, targetId: input.targetId } },
       create: {
         targetType: input.targetType,
         targetId: input.targetId,
-        branchIds: input.branchIds,
+        branchIds,
+        employeeIds,
         notes: input.notes ?? null,
         createdByUserId: input.createdByUserId ?? null,
       },
       update: {
-        branchIds: input.branchIds,
+        branchIds,
+        employeeIds,
         notes: input.notes ?? null,
       },
     });
@@ -140,14 +145,18 @@ export class AdRoutingRulesService {
 
   private async rebuild(): Promise<void> {
     const [rules, ads] = await Promise.all([
-      this.prisma.adRoutingRule.findMany({ select: { targetType: true, targetId: true, branchIds: true } }),
+      this.prisma.adRoutingRule.findMany({ select: { targetType: true, targetId: true, branchIds: true, employeeIds: true } }),
       this.prisma.metaAd.findMany({ select: { adId: true, campaignId: true } }),
     ]);
 
     // Resolve every distinct branch id referenced by a rule into its active
     // employee roster (one query, batched across rules).
     const allBranchIds = new Set<string>();
-    for (const r of rules) r.branchIds.forEach((b) => allBranchIds.add(b));
+    const allEmployeeIds = new Set<string>();
+    for (const r of rules) {
+      r.branchIds.forEach((b) => allBranchIds.add(b));
+      r.employeeIds.forEach((e) => allEmployeeIds.add(e));
+    }
     const employeesByBranch = new Map<string, string[]>();
     if (allBranchIds.size > 0) {
       const emps = await this.prisma.employee.findMany({
@@ -161,12 +170,23 @@ export class AdRoutingRulesService {
         employeesByBranch.set(e.branchId, bucket);
       }
     }
+    // Validate directly-pinned employee ids (drop any who are since deactivated
+    // or deleted, so a stale pin can't silently route a lead to nobody).
+    const activeEmployeeIds = new Set<string>();
+    if (allEmployeeIds.size > 0) {
+      const emps = await this.prisma.employee.findMany({
+        where: { id: { in: [...allEmployeeIds] }, deletedAt: null, isActive: true },
+        select: { id: true },
+      });
+      for (const e of emps) activeEmployeeIds.add(e.id);
+    }
 
     const adToEmployees = new Map<string, ReadonlySet<string>>();
     const campaignToEmployees = new Map<string, ReadonlySet<string>>();
     for (const r of rules) {
       const team = new Set<string>();
       for (const b of r.branchIds) for (const id of employeesByBranch.get(b) ?? []) team.add(id);
+      for (const id of r.employeeIds) if (activeEmployeeIds.has(id)) team.add(id);
       if (r.targetType === 'AD') adToEmployees.set(r.targetId, team);
       else campaignToEmployees.set(r.targetId, team);
     }

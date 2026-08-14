@@ -260,10 +260,22 @@ export interface AdRoutingRule {
   targetType: AdRoutingTargetType;
   targetId: string;
   branchIds: string[];
+  employeeIds: string[];
   notes: string | null;
   createdByUserId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A selectable rep for the routing UI (the roster + the "specific people" picker). */
+export interface MarketingRoutingEmployee {
+  id: string;
+  name: string;
+  branchId: string | null;
+  branchName: string | null;
+  /** True = in the WhatsApp lead round-robin (a lead can actually reach them). */
+  inPool: boolean;
+  presence: string;
 }
 
 export function listRoutingBranches(): Promise<MarketingBranch[]> {
@@ -278,6 +290,7 @@ export function upsertRoutingRule(input: {
   targetType: AdRoutingTargetType;
   targetId: string;
   branchIds: string[];
+  employeeIds: string[];
   notes?: string;
 }): Promise<AdRoutingRule> {
   return apiFetch<AdRoutingRule>('/admin/marketing/routing/rules', {
@@ -285,6 +298,10 @@ export function upsertRoutingRule(input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
+}
+
+export function listRoutingEmployees(): Promise<MarketingRoutingEmployee[]> {
+  return apiFetch<MarketingRoutingEmployee[]>('/admin/marketing/routing/employees');
 }
 
 export function deleteRoutingRule(id: string): Promise<{ ok: true }> {

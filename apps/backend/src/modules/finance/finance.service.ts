@@ -1333,6 +1333,7 @@ export class FinanceService {
     const overpay = await this.checkEngagementOverpay(
       payment.invoice.leadId,
       payment.invoice.clientId,
+      payment.invoice.agreementId,
       payment.invoiceId,
       Number(payment.invoice.paidAmount),
       Number(payment.invoice.totalAmount),
@@ -1617,16 +1618,51 @@ export class FinanceService {
   private async checkEngagementOverpay(
     leadId: string | null,
     clientId: string | null,
+    agreementId: string | null,
     currentInvoiceId: string,
     currentInvoicePaid: number,
     currentInvoiceTotal: number,
   ): Promise<{ engagementFee: number; engagementPaidBefore: number }> {
+    // Scope the ceiling to the ONE agreement this payment settles. A payer can
+    // hold several agreements at once — multiple programs (e.g. C11 + Visit +
+    // JR), or dependent-applicant siblings that all share the payer's lead /
+    // client — so measuring every agreement's payments against a single
+    // agreement's fee would false-positive an "overpay" the moment the OTHER
+    // agreements' cash exceeds this one's fee. The receipt / account view
+    // already scopes by agreement (see computeReceiptAccountContext); mirror it.
+    if (agreementId) {
+      const [contract, others] = await Promise.all([
+        this.prisma.serviceContract.findFirst({
+          where: { agreementId, deletedAt: null },
+          select: { totalAmount: true },
+        }),
+        this.prisma.invoice.aggregate({
+          _sum: { paidAmount: true },
+          where: { agreementId, deletedAt: null, NOT: { id: currentInvoiceId } },
+        }),
+      ]);
+      let engagementFee: number;
+      if (contract) {
+        engagementFee = Number(contract.totalAmount.toString());
+      } else {
+        // No materialised ServiceContract yet — fall back to the signed sales
+        // agreement's own total (the same fallback the receipt / profile use).
+        const agreement = await this.prisma.agreement.findFirst({
+          where: { id: agreementId, deletedAt: null },
+          select: { totalAmount: true },
+        });
+        engagementFee = agreement ? Number(agreement.totalAmount.toString()) : currentInvoiceTotal;
+      }
+      const othersPaid = Number(others._sum.paidAmount?.toString() ?? 0);
+      return { engagementFee, engagementPaidBefore: currentInvoicePaid + othersPaid };
+    }
+
+    // No agreement attribution (legacy invoice): scope by the CLIENT when known
+    // — a single payer can carry several dependent-applicant clients that share
+    // the payer's lead, so scoping by leadId would lump a sibling applicant's
+    // fee + payments into this engagement. Fall back to the lead only for a
+    // pre-conversion invoice that has no client yet.
     const ownerOr: Array<{ leadId?: string; clientId?: string }> = [];
-    // Scope by the CLIENT when one is known — a single payer can now carry
-    // several dependent-applicant clients that all share the payer's lead (the
-    // payer/dependent model), so scoping by leadId would lump a sibling
-    // applicant's fee + payments into this engagement. Fall back to the lead
-    // only for a pre-conversion invoice that has no client yet.
     if (clientId) ownerOr.push({ clientId });
     else if (leadId) ownerOr.push({ leadId });
     if (ownerOr.length === 0) {

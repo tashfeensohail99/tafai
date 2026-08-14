@@ -91,6 +91,53 @@ export class ClientsService {
     return client;
   }
 
+  /**
+   * The "family" view for a client: the PAYER (top-level contact) + every
+   * DEPENDENT applicant grouped under them, each with its file (referenceCode)
+   * and agreement count. Works whether the given id is the payer or a dependent.
+   */
+  async getFamily(clientId: string) {
+    const c = await this.prisma.client.findFirst({
+      where: { id: clientId, deletedAt: null },
+      select: { id: true, payerClientId: true },
+    });
+    if (!c) throw new NotFoundException('Client not found');
+    const payerId = c.payerClientId ?? c.id;
+
+    const [payer, dependents] = await Promise.all([
+      this.prisma.client.findFirst({
+        where: { id: payerId, deletedAt: null },
+        select: { id: true, firstName: true, lastName: true, referenceCode: true, phone: true, email: true, cnic: true },
+      }),
+      this.prisma.client.findMany({
+        where: { payerClientId: payerId, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, firstName: true, lastName: true, referenceCode: true, cnic: true },
+      }),
+    ]);
+    if (!payer) throw new NotFoundException('Payer client not found');
+
+    const ids = [payer.id, ...dependents.map((d) => d.id)];
+    const counts = await this.prisma.agreement.groupBy({
+      by: ['clientId'],
+      where: { clientId: { in: ids }, deletedAt: null },
+      _count: true,
+    });
+    const countBy = new Map(counts.map((x) => [x.clientId!, x._count]));
+    const shape = (x: { id: string; firstName: string; lastName: string; referenceCode: string; cnic: string | null }) => ({
+      id: x.id,
+      name: `${x.firstName} ${x.lastName}`.trim(),
+      referenceCode: x.referenceCode,
+      cnic: x.cnic ?? null,
+      agreementCount: countBy.get(x.id) ?? 0,
+    });
+
+    return {
+      payer: { ...shape(payer), phone: payer.phone ?? null, email: payer.email ?? null },
+      dependents: dependents.map(shape),
+    };
+  }
+
   async create(dto: CreateClientDto, actorUserId: string) {
     await this.ensureUniqueClient(dto.phone, dto.email);
     // Direct client create (not from a lead). Generate an orphan-series

@@ -48,6 +48,7 @@ import { labelForServiceCode } from '@/lib/service-types';
 import { fetchHandoverById, fetchFxRates, fetchReceiptPdfBlob, recognizeInstallment, reviewHandover, sendReceiptToClient, toBaseCAD, verifyPayment, FINANCE_CURRENCIES, type ApiHandover } from '@/lib/finance-api';
 import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
 import { sendTemplate } from '@/lib/whatsapp';
+import { FamilyApplicantsCard } from '@/components/finance/FamilyApplicantsCard';
 
 const CURRENCY_OPTIONS = FINANCE_CURRENCIES.map((c) => ({ value: c, label: c }));
 
@@ -730,6 +731,8 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
             {data.processingCase ? idTile('Processing', `${label(data.processingCase.stage)} · ${data.processingCase.service}`) : null}
           </div>
         </GlassCard>
+
+        {data.clientId ? <FamilyApplicantsCard clientId={data.clientId} /> : null}
 
         {/* CONSULTATION CREDIT (audit #1) — informational. A paid consult fee's
             invoice carries the same customer, so its payment already nets into

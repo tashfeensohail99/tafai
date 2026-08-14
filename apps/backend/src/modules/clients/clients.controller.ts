@@ -93,6 +93,13 @@ export class ClientsController {
     return this.clientsService.findById(id);
   }
 
+  /** Payer + dependent applicants (family) for a client. */
+  @Get(':id/family')
+  @RequirePermissions('clients.view_all')
+  family(@Param('id', ParseUUIDPipe) id: string) {
+    return this.clientsService.getFamily(id);
+  }
+
   @Post()
   @RequirePermissions('clients.create')
   create(@Body() dto: CreateClientDto, @CurrentUser() user: RequestUser) {

@@ -1528,7 +1528,7 @@ export class WhatsAppThreadsService {
         contactType: 'client' as const,
         contactId: c.id,
         name: `${c.firstName} ${c.lastName}`.trim(),
-        phone: c.phone,
+        phone: c.phone ?? '',
         blockedAt: c.blockedAt!,
         blockedReason: c.blockedReason,
         blockedByName: c.blockedByUserId ? actorName.get(c.blockedByUserId) ?? null : null,

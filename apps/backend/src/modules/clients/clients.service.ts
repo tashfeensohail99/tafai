@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AuditAction, Prisma } from '@prisma/client';
+import { AuditAction, ClientStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { generateOrphanClientReferenceCode } from '../../common/reference-codes/reference-codes';
 import { matchAllTokens } from '../../common/search/multi-word-search';
@@ -134,6 +134,125 @@ export class ClientsService {
     });
 
     return client;
+  }
+
+  /**
+   * Create a DEPENDENT applicant under a payer client — an additional person
+   * (family / group member) who shares the payer's phone/email contact. The
+   * dependent gets its OWN reference code (file number) + Processing case +
+   * finance ledger, but NO phone of its own (the payer is the single contact
+   * point). This lets one payer carry several applicants without the unique-
+   * phone collision that used to force them all onto one lead + file number.
+   */
+  async createDependentApplicant(
+    payerClientId: string,
+    dto: {
+      firstName: string;
+      lastName: string;
+      cnic?: string | null;
+      nationality?: string | null;
+      serviceType?: string | null;
+      targetCountry?: string | null;
+    },
+    actorUserId: string,
+  ) {
+    const payer = await this.prisma.client.findFirst({ where: { id: payerClientId, deletedAt: null } });
+    if (!payer) throw new NotFoundException('Payer client not found');
+    if (payer.payerClientId) {
+      throw new ConflictException('That client is itself a dependent — add applicants under the top-level payer.');
+    }
+    const firstName = dto.firstName?.trim();
+    const lastName = dto.lastName?.trim();
+    if (!firstName || !lastName) throw new ConflictException('An applicant needs a first and last name.');
+
+    const referenceCode = await generateOrphanClientReferenceCode(this.prisma);
+    const dependent = await this.prisma.client.create({
+      data: {
+        referenceCode,
+        firstName,
+        lastName,
+        cnic: dto.cnic?.trim() || null,
+        nationality: dto.nationality ?? payer.nationality,
+        phone: null, // no contact of its own — reached through the payer
+        email: null,
+        payerClientId: payer.id,
+        branchId: payer.branchId,
+        assignedEmployeeId: payer.assignedEmployeeId,
+        sourceLeadId: payer.sourceLeadId,
+        serviceType: dto.serviceType ?? payer.serviceType,
+        targetCountry: dto.targetCountry ?? payer.targetCountry,
+        status: ClientStatus.NEW_CLIENT,
+        createdByUserId: actorUserId,
+      },
+    });
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.CLIENT_CREATED,
+      entityType: 'Client',
+      entityId: dependent.id,
+      newValues: { firstName, lastName, referenceCode, payerClientId: payer.id, dependent: true },
+    });
+
+    return dependent;
+  }
+
+  /**
+   * Point an agreement (+ its non-cancelled invoices) at a specific applicant
+   * client, and swap the agreement's bioData/document file number to that
+   * applicant's own reference code — moving an agreement that was created for a
+   * family member off the payer's/lead's shared file onto the applicant's own.
+   * Money is untouched; only attribution + the file identifier move.
+   */
+  async assignAgreementApplicant(agreementId: string, clientId: string, actorUserId: string) {
+    const [agreement, client] = await Promise.all([
+      this.prisma.agreement.findFirst({ where: { id: agreementId, deletedAt: null } }),
+      this.prisma.client.findFirst({ where: { id: clientId, deletedAt: null } }),
+    ]);
+    if (!agreement) throw new NotFoundException('Agreement not found');
+    if (!client) throw new NotFoundException('Applicant client not found');
+
+    const bio = (agreement.bioData ?? {}) as Record<string, unknown>;
+    const oldFile = typeof bio.fileNumber === 'string' ? bio.fileNumber : null;
+    const newBio = { ...bio, fileNumber: client.referenceCode };
+    // Swap the (unique) file-number token in the stored document too, and null
+    // the cached PDF so it re-renders with the applicant's own file number.
+    const newHtml =
+      oldFile && agreement.contentHtml
+        ? agreement.contentHtml.split(oldFile).join(client.referenceCode)
+        : agreement.contentHtml;
+
+    await this.prisma.$transaction([
+      this.prisma.agreement.update({
+        where: { id: agreement.id },
+        data: {
+          clientId: client.id,
+          bioData: newBio as unknown as Prisma.InputJsonValue,
+          ...(newHtml !== agreement.contentHtml
+            ? { contentHtml: newHtml, generatedPdfKey: null, generatedPdfAt: null }
+            : {}),
+        },
+      }),
+      this.prisma.invoice.updateMany({
+        where: { agreementId: agreement.id, deletedAt: null },
+        data: { clientId: client.id },
+      }),
+    ]);
+
+    await this.auditLog.log({
+      actorUserId,
+      action: AuditAction.CLIENT_UPDATED,
+      entityType: 'Agreement',
+      entityId: agreement.id,
+      oldValues: { clientId: agreement.clientId, fileNumber: oldFile },
+      newValues: {
+        clientId: client.id,
+        fileNumber: client.referenceCode,
+        applicant: `${client.firstName} ${client.lastName}`.trim(),
+      },
+    });
+
+    return { ok: true, agreementId: agreement.id, clientId: client.id, fileNumber: client.referenceCode };
   }
 
   async update(id: string, dto: UpdateClientDto, actorUserId: string) {

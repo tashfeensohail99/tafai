@@ -1631,27 +1631,28 @@ export class FinanceService {
     // agreements' cash exceeds this one's fee. The receipt / account view
     // already scopes by agreement (see computeReceiptAccountContext); mirror it.
     if (agreementId) {
-      const [contract, others] = await Promise.all([
-        this.prisma.serviceContract.findFirst({
-          where: { agreementId, deletedAt: null },
-          select: { totalAmount: true },
+      // ServiceContract has NO agreementId column — the link is
+      // Agreement.serviceContractId — so resolve the contract THROUGH the
+      // agreement, mirroring computeReceiptAccountContext. Fee = the
+      // materialised contract's total, else the signed agreement's own total.
+      // Paid-before = only THIS agreement's invoices.
+      const [agreement, others] = await Promise.all([
+        this.prisma.agreement.findFirst({
+          where: { id: agreementId, deletedAt: null },
+          select: { totalAmount: true, serviceContractId: true },
         }),
         this.prisma.invoice.aggregate({
           _sum: { paidAmount: true },
           where: { agreementId, deletedAt: null, NOT: { id: currentInvoiceId } },
         }),
       ]);
-      let engagementFee: number;
-      if (contract) {
-        engagementFee = Number(contract.totalAmount.toString());
-      } else {
-        // No materialised ServiceContract yet — fall back to the signed sales
-        // agreement's own total (the same fallback the receipt / profile use).
-        const agreement = await this.prisma.agreement.findFirst({
-          where: { id: agreementId, deletedAt: null },
+      let engagementFee = agreement ? Number(agreement.totalAmount.toString()) : currentInvoiceTotal;
+      if (agreement?.serviceContractId) {
+        const contract = await this.prisma.serviceContract.findFirst({
+          where: { id: agreement.serviceContractId, deletedAt: null },
           select: { totalAmount: true },
         });
-        engagementFee = agreement ? Number(agreement.totalAmount.toString()) : currentInvoiceTotal;
+        if (contract) engagementFee = Number(contract.totalAmount.toString());
       }
       const othersPaid = Number(others._sum.paidAmount?.toString() ?? 0);
       return { engagementFee, engagementPaidBefore: currentInvoicePaid + othersPaid };

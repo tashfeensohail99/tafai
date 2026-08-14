@@ -1622,8 +1622,13 @@ export class FinanceService {
     currentInvoiceTotal: number,
   ): Promise<{ engagementFee: number; engagementPaidBefore: number }> {
     const ownerOr: Array<{ leadId?: string; clientId?: string }> = [];
-    if (leadId) ownerOr.push({ leadId });
+    // Scope by the CLIENT when one is known — a single payer can now carry
+    // several dependent-applicant clients that all share the payer's lead (the
+    // payer/dependent model), so scoping by leadId would lump a sibling
+    // applicant's fee + payments into this engagement. Fall back to the lead
+    // only for a pre-conversion invoice that has no client yet.
     if (clientId) ownerOr.push({ clientId });
+    else if (leadId) ownerOr.push({ leadId });
     if (ownerOr.length === 0) {
       return { engagementFee: currentInvoiceTotal, engagementPaidBefore: currentInvoicePaid };
     }
@@ -1710,8 +1715,13 @@ export class FinanceService {
     // Plain shape both Prisma.ServiceContractWhereInput['OR'] and
     // Prisma.InvoiceWhereInput['OR'] accept (each has leadId/clientId fields).
     const ownerOr: Array<{ leadId?: string; clientId?: string }> = [];
-    if (leadId) ownerOr.push({ leadId });
+    // Scope by the CLIENT when one is known — a single payer can now carry
+    // several dependent-applicant clients that all share the payer's lead (the
+    // payer/dependent model), so scoping by leadId would lump a sibling
+    // applicant's fee + payments into this engagement. Fall back to the lead
+    // only for a pre-conversion invoice that has no client yet.
     if (clientId) ownerOr.push({ clientId });
+    else if (leadId) ownerOr.push({ leadId });
 
     const fallbackAccount = (totalPaid: number) => ({
       totalFee: num(fallback.totalAmount),
@@ -2969,8 +2979,13 @@ export class FinanceService {
    */
   private async syncInstallmentStatuses(clientId: string | null, leadId: string | null) {
     const ownerOr: Array<{ leadId: string } | { clientId: string }> = [];
-    if (leadId) ownerOr.push({ leadId });
+    // Scope by the CLIENT when one is known — a single payer can now carry
+    // several dependent-applicant clients that all share the payer's lead (the
+    // payer/dependent model), so scoping by leadId would lump a sibling
+    // applicant's fee + payments into this engagement. Fall back to the lead
+    // only for a pre-conversion invoice that has no client yet.
     if (clientId) ownerOr.push({ clientId });
+    else if (leadId) ownerOr.push({ leadId });
     if (ownerOr.length === 0) return;
 
     const contract = await this.prisma.serviceContract.findFirst({

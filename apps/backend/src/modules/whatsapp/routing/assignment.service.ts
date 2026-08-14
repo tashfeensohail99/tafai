@@ -36,6 +36,7 @@
  * the thread.
  */
 
+import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import {
   PresenceStatus,
@@ -94,6 +95,11 @@ export interface AssignmentCache {
   orgByBranch: Map<string, OrgAssignmentConfig | null>;
   /** organizationId → the single shared, mutable org object (the cursor lives here). */
   orgById: Map<string, OrgAssignmentConfig>;
+  /** poolKey → last-picked employeeId for an ad sub-team's OWN round-robin.
+   *  Read-through from crm.routing_cursors on first miss, then advanced
+   *  in-memory across a sweep so a batch of same-desk threads still spreads
+   *  instead of every one landing on the desk's first member. */
+  poolCursors: Map<string, string | null>;
 }
 
 /**
@@ -112,6 +118,7 @@ export interface AssignmentCache {
 export const createAssignmentCache = (): AssignmentCache => ({
   orgByBranch: new Map(),
   orgById: new Map(),
+  poolCursors: new Map(),
 });
 
 @Injectable()
@@ -244,14 +251,24 @@ export class WhatsAppAssignmentService {
       return unassigned(lead.id);
     }
 
+    // Round-robin cursor. An ad sub-team rotates on its OWN cursor (keyed by the
+    // desk's eligible membership) so a small desk like Lahore isn't starved by
+    // the single org-wide cursor that every pool + channel otherwise shares —
+    // that shared cursor kept collapsing the pick to the desk's first member.
+    // The default whole-pool path keeps using the org cursor, unchanged.
+    const deskKey = adTeam ? poolKeyOf(basePool.map((e) => e.id)) : null;
+    const rrCursor = deskKey
+      ? await this.readPoolCursor(deskKey, opts?.cache)
+      : org.rrCursorEmployeeId;
+
     // Candidate: sticky (preferred, if in the pool) else the SAME strict
-    // round-robin the engine already uses — just over `pool`, which is the
-    // Lahore sub-team when this chat came from a routed ad, or the whole
-    // eligible pool otherwise. Cursor advances exactly as before.
+    // round-robin the engine already uses — just over `pool` (the ad sub-team
+    // when this chat came from a routed ad, else the whole eligible pool),
+    // advanced against that pool's own cursor.
     const sticky = lead.preferredEmployeeId
       ? pool.find((e) => e.id === lead.preferredEmployeeId)
       : undefined;
-    const candidateId = sticky ? sticky.id : pickRoundRobin(pool, org.rrCursorEmployeeId).id;
+    const candidateId = sticky ? sticky.id : pickRoundRobin(pool, rrCursor).id;
     const reason = sticky ? WhatsAppAssignmentReason.STICKY : WhatsAppAssignmentReason.ROUND_ROBIN;
 
     // ── Phase 2 — COMMIT under a short lock (the ONLY critical section).
@@ -299,7 +316,11 @@ export class WhatsAppAssignmentService {
       // the DB cursor then simply resumes one behind on the next sweep, which
       // is the already-documented "a rep gets picked once more" tolerance.
       if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
-        org.rrCursorEmployeeId = result.assigned;
+        // Advance the cursor this pick actually used: the desk's own cursor for
+        // an ad sub-team (in-memory, so a sweep batch keeps spreading), else the
+        // shared org cursor. The durable write happens best-effort just below.
+        if (deskKey) opts?.cache?.poolCursors.set(deskKey, result.assigned);
+        else org.rrCursorEmployeeId = result.assigned;
       }
       try {
         await this.prisma.whatsAppThread.update({
@@ -320,10 +341,20 @@ export class WhatsAppAssignmentService {
         // assignment tx, so it no longer pins the shared Organization row for
         // the whole transaction — that shared-row convoy was a pool amplifier.
         if (reason === WhatsAppAssignmentReason.ROUND_ROBIN) {
-          await this.prisma.organization.update({
-            where: { id: org.organizationId },
-            data: { rrCursorEmployeeId: result.assigned },
-          });
+          if (deskKey) {
+            // Per-desk cursor: its own row, so advancing one desk never contends
+            // with another (no shared-row convoy) and each desk rotates cleanly.
+            await this.prisma.routingCursor.upsert({
+              where: { poolKey: deskKey },
+              create: { poolKey: deskKey, employeeId: result.assigned },
+              update: { employeeId: result.assigned },
+            });
+          } else {
+            await this.prisma.organization.update({
+              where: { id: org.organizationId },
+              data: { rrCursorEmployeeId: result.assigned },
+            });
+          }
         }
       } catch (err) {
         this.log.warn(
@@ -365,6 +396,25 @@ export class WhatsAppAssignmentService {
     }
     cache.orgByBranch.set(key, shared);
     return shared;
+  }
+
+  /** Per-desk round-robin cursor for an ad sub-team, keyed by the desk's
+   *  membership. Read-through from crm.routing_cursors; when a sweep cache is
+   *  present its in-memory value (advanced as the sweep assigns) wins, so a
+   *  batch of same-desk threads still spreads instead of all landing on the
+   *  desk's first member. Absent row → null → pickRoundRobin starts at pool[0]. */
+  private async readPoolCursor(poolKey: string, cache?: AssignmentCache): Promise<string | null> {
+    if (cache) {
+      const hit = cache.poolCursors.get(poolKey);
+      if (hit !== undefined) return hit; // cached null is a real "no cursor yet"
+    }
+    const row = await this.prisma.routingCursor.findUnique({
+      where: { poolKey },
+      select: { employeeId: true },
+    });
+    const val = row?.employeeId ?? null;
+    cache?.poolCursors.set(poolKey, val);
+    return val;
   }
 
   /**
@@ -463,8 +513,16 @@ export class WhatsAppAssignmentService {
   }
 }
 
-function pickRoundRobin<T extends { id: string }>(eligible: T[], cursor: string | null): T {
+export function pickRoundRobin<T extends { id: string }>(eligible: T[], cursor: string | null): T {
   if (!cursor) return eligible[0]!;
   const next = eligible.find((a) => a.id > cursor);
   return next ?? eligible[0]!;
+}
+
+/** Stable key for a desk's own round-robin cursor: a hash of the eligible
+ *  sub-team's membership. Two ad rules that resolve to the SAME people share one
+ *  cursor (so every Lahore ad rotates the Lahore desk together); a membership
+ *  change (rep added/removed) re-keys and simply restarts that desk's rotation. */
+export function poolKeyOf(ids: string[]): string {
+  return createHash('sha1').update([...ids].sort().join(',')).digest('hex');
 }

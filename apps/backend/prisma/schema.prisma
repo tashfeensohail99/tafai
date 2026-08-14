@@ -1005,6 +1005,22 @@ model AdRoutingRule {
   @@schema("crm")
 }
 
+/// Per-desk round-robin cursor. `Organization.rrCursorEmployeeId` is a SINGLE
+/// pointer shared by every pool and channel, so a small ad sub-team (e.g. the
+/// Lahore desk) never rotates cleanly through its own members — the shared
+/// pointer keeps collapsing the pick to the same person, starving the rest.
+/// This gives each ad sub-team its OWN cursor, keyed by a stable hash of the
+/// desk's eligible membership, so each desk rotates person-to-person on its
+/// own. The default (non-ad) pool still advances `Organization.rrCursorEmployeeId`.
+model RoutingCursor {
+  poolKey    String   @id
+  employeeId String
+  updatedAt  DateTime @updatedAt
+
+  @@map("routing_cursors")
+  @@schema("crm")
+}
+
 enum AdRoutingTargetType {
   AD
   CAMPAIGN

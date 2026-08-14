@@ -243,6 +243,38 @@ export function getMarketingLeadsByAd(opts: ListOpts = {}): Promise<MarketingLea
   return apiFetch<MarketingLeadsByAdResponse>(`/admin/marketing/leads${qs}`);
 }
 
+/* ------------------------------------------------------------------ leads-by-program --- */
+
+export type AdProgram = 'C11' | 'JR' | 'VISIT_VISA' | 'C10' | 'RCIP' | 'OTHER';
+
+export interface ProgramAdRow {
+  name: string;
+  responses: number;
+}
+
+export interface MarketingProgramRow {
+  program: AdProgram;
+  label: string;
+  /** Ad responses (leads attributed to an ad of this program) in the window. */
+  responses: number;
+  converted: number;
+  conversionRate: number | null;
+  /** Share of all ad responses in the window (0..1). */
+  share: number | null;
+  topAds: ProgramAdRow[];
+}
+
+export interface MarketingProgramsResponse {
+  window: MarketingWindow;
+  totalResponses: number;
+  programs: MarketingProgramRow[];
+}
+
+export function getMarketingLeadsByProgram(days?: number): Promise<MarketingProgramsResponse> {
+  const qs = buildQuery({ days });
+  return apiFetch<MarketingProgramsResponse>(`/admin/marketing/programs${qs}`);
+}
+
 /* ------------------------------------------------------------------ routing (1E) --- */
 
 export type AdRoutingTargetType = 'AD' | 'CAMPAIGN';

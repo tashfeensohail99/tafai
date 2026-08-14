@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import {
+  AD_PROGRAM_LABEL,
+  AD_PROGRAM_ORDER,
+  classifyAdProgram,
+  type AdProgram,
+} from '../../common/ad-program';
 
 /** A calendar day of activity, used by the Overview time-series. */
 export interface DailyPoint {
@@ -625,6 +631,81 @@ export class MarketingService {
     return {
       window: { from: fromStr, to: toStr, days } satisfies MarketingWindow,
       ads,
+    };
+  }
+
+  /**
+   * Responses grouped by PROGRAM (C11 / JR / Visit Visa / …). Tashfeen's CTWA
+   * ads have no program field, but the ad/campaign NAME embeds it, so we group
+   * the distinct ad+campaign names in SQL, then classify each in JS
+   * (classifyAdProgram) and sum. A "response" is one lead attributed to an ad
+   * (someone messaged from the ad). Ads whose name carries no program token
+   * fall into OTHER — shown openly, never silently dropped. Aggregate only, no
+   * lead-level PII.
+   */
+  async getLeadsByProgram(daysArg?: number) {
+    const { from, to, toEnd, days } = this.resolveWindow(daysArg);
+
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{ adName: string | null; campaignName: string | null; leads: bigint; converted: bigint }>
+    >(
+      `WITH cohort AS (
+         SELECT l.id, l."metaAdName", l."metaCampaignName"
+         FROM crm.leads l
+         WHERE l."deletedAt" IS NULL AND l."metaAdId" IS NOT NULL
+           AND l."createdAt" >= $1 AND l."createdAt" < $2
+       ),
+       conv AS (
+         SELECT DISTINCT co.id
+         FROM cohort co JOIN crm.clients c ON c."sourceLeadId" = co.id
+       )
+       SELECT co."metaAdName"      AS "adName",
+              co."metaCampaignName" AS "campaignName",
+              COUNT(*)::bigint      AS leads,
+              COUNT(cv.id)::bigint  AS converted
+       FROM cohort co
+       LEFT JOIN conv cv ON cv.id = co.id
+       GROUP BY co."metaAdName", co."metaCampaignName"`,
+      from,
+      toEnd,
+    );
+
+    const buckets = new Map<AdProgram, { responses: number; converted: number; ads: Map<string, number> }>();
+    for (const p of AD_PROGRAM_ORDER) buckets.set(p, { responses: 0, converted: 0, ads: new Map() });
+
+    let totalResponses = 0;
+    for (const r of rows) {
+      const program = classifyAdProgram(r.adName, r.campaignName);
+      const leads = this.num(r.leads);
+      const b = buckets.get(program)!;
+      b.responses += leads;
+      b.converted += this.num(r.converted);
+      totalResponses += leads;
+      const adLabel = r.adName ?? r.campaignName ?? '(unnamed)';
+      b.ads.set(adLabel, (b.ads.get(adLabel) ?? 0) + leads);
+    }
+
+    const programs = AD_PROGRAM_ORDER.map((program) => {
+      const b = buckets.get(program)!;
+      const topAds = [...b.ads.entries()]
+        .sort((a, c) => c[1] - a[1])
+        .slice(0, 6)
+        .map(([name, responses]) => ({ name, responses }));
+      return {
+        program,
+        label: AD_PROGRAM_LABEL[program],
+        responses: b.responses,
+        converted: b.converted,
+        conversionRate: this.ratio(b.converted, b.responses),
+        share: this.ratio(b.responses, totalResponses),
+        topAds,
+      };
+    }).filter((p) => p.responses > 0);
+
+    return {
+      window: { from: this.ymd(from), to: this.ymd(to), days } satisfies MarketingWindow,
+      totalResponses,
+      programs,
     };
   }
 }

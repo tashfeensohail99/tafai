@@ -69,6 +69,14 @@ export class MarketingController {
     return this.svc.getLeadsByAd(q.days, q.includeIdle === 'true');
   }
 
+  /** Responses grouped by program (C11 / JR / Visit Visa / …), classified from
+   *  the ad/campaign name. Aggregate only. */
+  @Get('programs')
+  @RequirePermissions('marketing.view')
+  programs(@Query() q: WindowQuery) {
+    return this.svc.getLeadsByProgram(q.days);
+  }
+
   // Phase 1F — Alerts + Health, both read-only, both marketing.view.
   @Get('alerts')
   @RequirePermissions('marketing.view')

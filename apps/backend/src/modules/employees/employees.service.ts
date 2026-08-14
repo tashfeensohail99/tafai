@@ -112,9 +112,24 @@ export class EmployeesService {
   async update(id: string, dto: UpdateEmployeeDto, actorUserId: string) {
     const emp = await this.findById(id);
 
+    // A WhatsApp-pool member must belong to a branch. If the pool is (or is
+    // being) enabled and no branch is set, default to Islamabad — the catch-all
+    // sales floor — so a pool-on employee is never left branchless (which would
+    // drop them out of per-branch rosters and marketing reporting).
+    const poolOn = dto.whatsappInboxMember ?? emp.whatsappInboxMember;
+    const branchAfter = dto.branchId !== undefined ? dto.branchId : emp.branchId;
+    let branchDefault: string | undefined;
+    if (poolOn && !branchAfter) {
+      const isb = await this.prisma.branch.findFirst({
+        where: { name: { equals: 'Islamabad', mode: 'insensitive' }, isActive: true },
+        select: { id: true },
+      });
+      branchDefault = isb?.id;
+    }
+
     const updated = await this.prisma.employee.update({
       where: { id },
-      data: dto,
+      data: branchDefault ? { ...dto, branchId: branchDefault } : dto,
     });
 
     await this.auditLog.log({

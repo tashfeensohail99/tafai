@@ -15,6 +15,7 @@ import {
   InstallmentStatus,
   InvoiceStatus,
   PaymentPlanType,
+  PaymentStatus,
   Prisma,
   ServiceContractStatus,
 } from '@prisma/client';
@@ -1934,12 +1935,15 @@ export class AgreementsService {
     // The currency / reduce-below-paid guards apply whenever money exists, even
     // if the ledger was never materialised into a contract.
     const baseCurrency = contract?.currency ?? a.currency;
-    if (anyPaid && newCurrency !== baseCurrency) {
-      throw new ConflictException(
-        `This correction changes the currency (${baseCurrency} → ${newCurrency}) but payments have already been ` +
-          `recorded. A currency change with recorded payments must be handled in Finance.`,
-      );
-    }
+    // A currency correction is a RELABEL, not an FX conversion: the amounts stay
+    // the same, only the (wrongly-picked) currency label changes — e.g. CAD was
+    // selected for a fee that was always PKR. Allowed even with payments on file.
+    // But a payment applies to its invoice as NATIVE only when their currencies
+    // match, else it applies the stored CAD base (see verifyPayment). So after a
+    // relabel each invoice's paidAmount must be RE-DERIVED from its payments
+    // under the new currency (below) — else a PKR payment stays booked at its
+    // tiny CAD-base figure against the now-PKR invoice.
+    const currencyChanged = newCurrency !== baseCurrency;
     if (anyPaid && cents(newNet) < cents(totalPaid)) {
       throw new ConflictException(
         `This correction lowers the total to ${newCurrency} ${newNet.toLocaleString()}, below the ` +
@@ -2030,6 +2034,30 @@ export class AgreementsService {
     const feeNet = taxRate > 0 ? Math.round((newNet / (1 + taxRate / 100)) * 100) / 100 : newNet;
     const feeTax = Math.round((newNet - feeNet) * 100) / 100;
 
+    // On a currency relabel, re-derive each invoice's paidAmount from its VERIFIED
+    // (non-refunded) payments using the same native-vs-base rule verifyPayment
+    // applies: payment currency now matches the invoice → count native; else the
+    // stored CAD base. This heals the mis-track that the wrong currency caused.
+    const paidByInvoice = new Map<string, number>();
+    if (currencyChanged && invoiceIds.length > 0) {
+      const pays = await this.prisma.payment.findMany({
+        where: {
+          invoiceId: { in: invoiceIds },
+          deletedAt: null,
+          verifiedAt: { not: null },
+          status: { not: PaymentStatus.REFUNDED },
+        },
+        select: { invoiceId: true, amount: true, currency: true, baseAmount: true },
+      });
+      for (const p of pays) {
+        const applied =
+          (p.currency ?? newCurrency) === newCurrency
+            ? Number(p.amount)
+            : Number(p.baseAmount ?? p.amount);
+        paidByInvoice.set(p.invoiceId, (paidByInvoice.get(p.invoiceId) ?? 0) + applied);
+      }
+    }
+
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
       // Atomic claim — one apply per request, race-safe with a second apply /
@@ -2088,6 +2116,16 @@ export class AgreementsService {
               },
               data: { subtotal: amount, totalAmount: amount, currency: newCurrency },
             });
+          } else if (currencyChanged && ex.invoice && ex.invoice.deletedAt == null) {
+            // A paid/partly-paid stage invoice: its amount is money-locked (and
+            // unchanged on a relabel), but relabel its currency + re-derive its
+            // native paid figure and status.
+            const paid = paidByInvoice.get(ex.invoice.id) ?? Number(ex.invoice.paidAmount);
+            const st = paid >= amount - 0.005 ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
+            await tx.invoice.updateMany({
+              where: { id: ex.invoice.id, deletedAt: null, status: { not: InvoiceStatus.CANCELLED } },
+              data: { currency: newCurrency, paidAmount: paid, status: st },
+            });
           }
         }
       }
@@ -2101,7 +2139,8 @@ export class AgreementsService {
       // CANCELLED invoices are left alone.
       for (const inv of agInvoices) {
         if (inv.installmentId !== null || inv.status === InvoiceStatus.CANCELLED) continue;
-        const paid = Number(inv.paidAmount);
+        // On a relabel, use the re-derived native paid; otherwise the stored one.
+        const paid = currencyChanged ? paidByInvoice.get(inv.id) ?? 0 : Number(inv.paidAmount);
         const status =
           paid >= newNet - 0.005
             ? InvoiceStatus.PAID
@@ -2110,7 +2149,14 @@ export class AgreementsService {
               : InvoiceStatus.SENT;
         await tx.invoice.updateMany({
           where: { id: inv.id, deletedAt: null, status: { not: InvoiceStatus.CANCELLED } },
-          data: { subtotal: feeNet, taxAmount: feeTax, totalAmount: newNet, currency: newCurrency, status },
+          data: {
+            subtotal: feeNet,
+            taxAmount: feeTax,
+            totalAmount: newNet,
+            currency: newCurrency,
+            status,
+            ...(currencyChanged ? { paidAmount: paid } : {}),
+          },
         });
       }
 
@@ -2129,6 +2175,7 @@ export class AgreementsService {
         userId,
         'CHANGE_APPLIED',
         `Applied payment-plan correction — total ${newCurrency} ${newNet.toLocaleString()}` +
+          (currencyChanged ? ` (currency relabeled ${baseCurrency} → ${newCurrency}, paid re-derived)` : '') +
           (stages.length ? `, ${stages.length} stage(s) updated` : '') +
           (receiptIds.length ? ` (${receiptIds.length} receipt(s) queued to re-render)` : ''),
         cr.before as Prisma.InputJsonValue,

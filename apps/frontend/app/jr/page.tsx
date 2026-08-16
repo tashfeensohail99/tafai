@@ -10,8 +10,11 @@
 // cannot touch the live app, the session, or any real data.
 //
 // It is gated behind the same login as the rest of the workspace so the real
-// matter identifiers it is seeded with stay internal. Any signed-in staff
-// member (JR team + admins) may open it; clients are sent back to their portal.
+// matter identifiers it is seeded with stay internal. Which module opens is
+// driven by the signed-in user's role:
+//   • jr_head        → JR Head console (all cases, assign to associates), locked
+//   • jr_associate   → Associate workspace (own cases + own report), locked
+//   • admin / other  → Head console with the role toggle available to inspect both
 //
 // When the real module ships (PRs 0–10 in the architecture doc) this route is
 // replaced by the (jr) route group + JrShell; until then this is the shareable
@@ -43,19 +46,16 @@ export default function JrPrototypePage() {
   const session = useSession();
   const router = useRouter();
 
-  const allowed =
-    session.status === 'authed' && session.user.roles.some((r) => STAFF_ROLES.has(r));
-
   useEffect(() => {
     if (session.status === 'unauthed') {
       router.replace('/login');
       return;
     }
-    if (session.status === 'authed' && !allowed) {
-      // Signed in, but not staff (e.g. a client) — send them home.
-      router.replace(destinationForUser(session.user));
+    if (session.status === 'authed') {
+      const ok = session.user.roles.some((r) => STAFF_ROLES.has(r));
+      if (!ok) router.replace(destinationForUser(session.user));
     }
-  }, [session, allowed, router]);
+  }, [session, router]);
 
   if (session.status === 'loading') {
     return (
@@ -64,7 +64,31 @@ export default function JrPrototypePage() {
       </div>
     );
   }
-  if (!allowed) return null;
+  if (session.status !== 'authed') return null;
+
+  const roles = session.user.roles;
+  if (!roles.some((r) => STAFF_ROLES.has(r))) return null;
+
+  // Open the desk in the module that matches the login.
+  const isAdmin = roles.includes('admin') || roles.includes('super_admin');
+  const isHead = roles.includes('jr_head');
+  const isAssoc = roles.includes('jr_associate');
+  let mode: 'head' | 'assoc' = 'head';
+  let lock = false;
+  if (isAssoc && !isAdmin && !isHead) {
+    mode = 'assoc';
+    lock = true;
+  } else if (isHead && !isAdmin) {
+    mode = 'head';
+    lock = true;
+  }
+  // Admins and non-JR staff open the Head console with the toggle available.
+
+  const boot = JSON.stringify({ role: mode, lock });
+  const html = proto.html.replace(
+    '<body>\n',
+    `<body>\n<script>window.__JR_BOOT__=${boot};</script>\n`,
+  );
 
   return (
     <div
@@ -105,7 +129,7 @@ export default function JrPrototypePage() {
       </div>
       <iframe
         title="Judicial Review desk prototype"
-        srcDoc={proto.html}
+        srcDoc={html}
         sandbox="allow-scripts"
         style={{ flex: 1, width: '100%', border: 0 }}
       />

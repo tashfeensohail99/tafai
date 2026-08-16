@@ -1436,7 +1436,12 @@ export class FinanceService {
     // been paid, so installment.status is real + auditable rather than only a
     // read-time calc. Best-effort — must never block a verified payment.
     try {
-      await this.syncInstallmentStatuses(clientId, updatedInvoice.leadId);
+      await this.syncInstallmentStatuses(
+        clientId,
+        updatedInvoice.leadId,
+        updatedInvoice.agreementId,
+        updatedInvoice.isConsultation,
+      );
     } catch (err) {
       this.logger.error(
         `Installment status sync failed for payment=${updatedPayment.id}: ${err instanceof Error ? err.message : err}`,
@@ -3014,29 +3019,66 @@ export class FinanceService {
    * so the contract schedule's own status reflects reality and isn't just a
    * read-time calculation. Idempotent; only writes when a status changes.
    */
-  private async syncInstallmentStatuses(clientId: string | null, leadId: string | null) {
-    const ownerOr: Array<{ leadId: string } | { clientId: string }> = [];
-    // Scope by the CLIENT when one is known — a single payer can now carry
-    // several dependent-applicant clients that all share the payer's lead (the
-    // payer/dependent model), so scoping by leadId would lump a sibling
-    // applicant's fee + payments into this engagement. Fall back to the lead
-    // only for a pre-conversion invoice that has no client yet.
-    if (clientId) ownerOr.push({ clientId });
-    else if (leadId) ownerOr.push({ leadId });
-    if (ownerOr.length === 0) return;
+  private async syncInstallmentStatuses(
+    clientId: string | null,
+    leadId: string | null,
+    agreementId: string | null,
+    isConsultation: boolean,
+  ) {
+    // A consultation fee is never part of a service-contract installment
+    // schedule, so verifying one must not waterfall into (and mis-mark) any
+    // contract. It always carries agreementId=null, so without this it would
+    // hit the legacy client-lump fallback below and pull a real contract's
+    // schedule off the client's unrelated consult cash.
+    if (isConsultation) return;
 
-    const contract = await this.prisma.serviceContract.findFirst({
-      where: { OR: ownerOr, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      include: { installments: { orderBy: { sequence: 'asc' } } },
-    });
-    if (!contract) return;
+    // Resolve the CONTRACT whose installments we sync, and the invoices whose
+    // paid amounts feed the waterfall. Scope to the invoice's own AGREEMENT when
+    // it has one: a payer can hold several agreements at once (multiple
+    // programs, or dependent-applicant siblings), each billed in its OWN native
+    // currency, so summing every invoice into the client's newest contract
+    // mis-marks a sibling agreement's installments and mixes currencies.
+    // ServiceContract has no agreementId — the link is Agreement.serviceContractId
+    // — so resolve the contract THROUGH the agreement, mirroring
+    // checkEngagementOverpay (#293/#294). Legacy invoices with no agreementId
+    // fall back to the previous client→lead scoping; a single-agreement client
+    // is unaffected either way.
+    let contract: Prisma.ServiceContractGetPayload<{ include: { installments: true } }> | null = null;
+    let remaining = 0;
 
-    const paidAgg = await this.prisma.invoice.aggregate({
-      _sum: { paidAmount: true },
-      where: { deletedAt: null, OR: ownerOr },
-    });
-    let remaining = Number(paidAgg._sum.paidAmount ?? 0);
+    if (agreementId) {
+      const agreement = await this.prisma.agreement.findFirst({
+        where: { id: agreementId, deletedAt: null },
+        select: { serviceContractId: true },
+      });
+      if (!agreement?.serviceContractId) return; // no materialised contract to sync
+      contract = await this.prisma.serviceContract.findFirst({
+        where: { id: agreement.serviceContractId, deletedAt: null },
+        include: { installments: { orderBy: { sequence: 'asc' } } },
+      });
+      if (!contract) return;
+      const paidAgg = await this.prisma.invoice.aggregate({
+        _sum: { paidAmount: true },
+        where: { deletedAt: null, agreementId },
+      });
+      remaining = Number(paidAgg._sum.paidAmount ?? 0);
+    } else {
+      const ownerOr: Array<{ leadId: string } | { clientId: string }> = [];
+      if (clientId) ownerOr.push({ clientId });
+      else if (leadId) ownerOr.push({ leadId });
+      if (ownerOr.length === 0) return;
+      contract = await this.prisma.serviceContract.findFirst({
+        where: { OR: ownerOr, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        include: { installments: { orderBy: { sequence: 'asc' } } },
+      });
+      if (!contract) return;
+      const paidAgg = await this.prisma.invoice.aggregate({
+        _sum: { paidAmount: true },
+        where: { deletedAt: null, OR: ownerOr },
+      });
+      remaining = Number(paidAgg._sum.paidAmount ?? 0);
+    }
 
     for (const inst of contract.installments) {
       const amount = Number(inst.amount);

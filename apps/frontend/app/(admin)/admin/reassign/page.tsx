@@ -4,9 +4,12 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ArrowRightLeft,
   ChevronDown,
+  Clock,
+  FileText,
   History,
   Loader2,
   Lock,
+  MessageSquare,
   Search,
   Trash2,
   UserCheck,
@@ -25,6 +28,9 @@ import {
 import { PermissionDeniedState } from '@/components/shared/PermissionDeniedState';
 import { useAdminSession } from '@/components/layout/AdminShell';
 import { apiFetch } from '@/lib/api-client';
+import { WhatsAppLeadTab } from '@/components/whatsapp/WhatsAppLeadTab';
+import { LeadActivityTimeline } from '@/components/shared/LeadActivityTimeline';
+import { LeadAgreementSummary } from '@/components/shared/LeadAgreementSummary';
 
 interface EmployeeOption {
   id: string;
@@ -351,6 +357,7 @@ export default function ReassignPage() {
                     key={lead.id}
                     lead={lead}
                     employees={employees}
+                    permissions={user.permissions}
                     expanded={expandedId === lead.id}
                     onToggle={() => setExpandedId((cur) => (cur === lead.id ? null : lead.id))}
                     repName={repName}
@@ -371,9 +378,22 @@ export default function ReassignPage() {
   );
 }
 
+// The context tabs an admin can see are gated by what they're allowed to read:
+// chat needs a WhatsApp-inbox permission, timeline needs a lead/reports read,
+// agreement needs a lead/finance read. A super-admin holds all three. Each
+// endpoint ALSO enforces scope server-side, so a missing permission means an
+// empty/── result, never another rep's data — the gate just hides the tab.
+type ContextTabKey = 'chat' | 'timeline' | 'agreement';
+const CONTEXT_TABS: Array<{ key: ContextTabKey; label: string; Icon: typeof MessageSquare; anyOf: string[] }> = [
+  { key: 'chat', label: 'Chat', Icon: MessageSquare, anyOf: ['whatsapp.view_inbox', 'whatsapp.view_all_inboxes'] },
+  { key: 'timeline', label: 'Timeline', Icon: Clock, anyOf: ['leads.view_all', 'leads.view_assigned', 'reports.view'] },
+  { key: 'agreement', label: 'Agreement', Icon: FileText, anyOf: ['leads.update', 'finance.view_all', 'settings.manage'] },
+];
+
 function ResultRow({
   lead,
   employees,
+  permissions,
   expanded,
   onToggle,
   repName,
@@ -382,6 +402,7 @@ function ResultRow({
 }: {
   lead: AdminSearchRow;
   employees: EmployeeOption[];
+  permissions: string[];
   expanded: boolean;
   onToggle: () => void;
   repName: (id: string | null) => string | null;
@@ -392,7 +413,26 @@ function ResultRow({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [targetRep, setTargetRep] = useState('');
   const [saving, setSaving] = useState(false);
+  const [contextTab, setContextTab] = useState<ContextTabKey | null>(null);
+  // Context (chat/timeline/agreement) is NOT fetched on expand — the chat
+  // panel especially is heavy. It loads only when the admin clicks "Preview
+  // history", and resets when the row collapses so re-expanding stays cheap.
+  const [showContext, setShowContext] = useState(false);
   const loadedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!expanded) {
+      setShowContext(false);
+      setContextTab(null);
+    }
+  }, [expanded]);
+
+  // Which context tabs this admin may see. Only leads carry this context
+  // (client rows use a different id-space than /leads/:id).
+  const contextTabs = lead.type === 'lead'
+    ? CONTEXT_TABS.filter((t) => t.anyOf.some((p) => permissions.includes(p)))
+    : [];
+  const activeContextTab: ContextTabKey | null = contextTab ?? contextTabs[0]?.key ?? null;
 
   // Lazy-load the assignment history the first time this row is expanded.
   // Client rows use a different id-space than /leads/:id -- skip the fetch
@@ -573,6 +613,80 @@ function ResultRow({
                 </div>
               </div>
             </div>
+
+            {/* Context panel — chat / timeline / agreement, read-only, so the
+                admin reassigns with the full story rather than blindly. Only
+                for lead rows; each tab is gated on the admin's own permission
+                and its endpoint is scope-enforced server-side. Nothing here
+                fetches until the admin clicks "Preview history" — keeps the
+                search list light. */}
+            {contextTabs.length > 0 ? (
+              <div style={{ padding: '0 18px 18px', background: 'var(--sos-surface-2)' }}>
+                <div style={{ borderTop: '1px solid var(--sos-border-subtle)', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {!showContext ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, padding: '6px 0' }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowContext(true)}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 8,
+                          padding: '9px 18px', borderRadius: 10, cursor: 'pointer',
+                          border: '1px solid var(--sos-brand-primary-border)',
+                          background: 'var(--sos-brand-primary-soft)',
+                          color: 'var(--sos-brand-primary-strong)',
+                          fontSize: 13, fontWeight: 600,
+                        }}
+                      >
+                        <History size={15} /> Preview history
+                      </button>
+                      <span className="sos-text-faint" style={{ fontSize: 11.5, textAlign: 'center' }}>
+                        Loads this lead&apos;s chat, timeline &amp; agreement — nothing is fetched until you ask.
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span className="sos-text-faint" style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
+                          Before you reassign
+                        </span>
+                        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+                          {contextTabs.map((t) => {
+                            const active = t.key === activeContextTab;
+                            return (
+                              <button
+                                key={t.key}
+                                type="button"
+                                onClick={() => setContextTab(t.key)}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                                  padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
+                                  border: `1px solid ${active ? 'var(--sos-brand-primary-border)' : 'var(--sos-border-subtle)'}`,
+                                  background: active ? 'var(--sos-brand-primary-soft)' : 'transparent',
+                                  color: active ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-muted)',
+                                  fontSize: 12.5, fontWeight: 600,
+                                }}
+                              >
+                                <t.Icon size={14} /> {t.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {activeContextTab === 'chat' ? (
+                        <div style={{ height: 460, display: 'flex', flexDirection: 'column', border: '1px solid var(--sos-border-subtle)', borderRadius: 10, overflow: 'hidden' }}>
+                          <WhatsAppLeadTab leadId={lead.id} leadPhone={lead.phone} fillHeight readOnly />
+                        </div>
+                      ) : activeContextTab === 'timeline' ? (
+                        <LeadActivityTimeline leadId={lead.id} compact />
+                      ) : activeContextTab === 'agreement' ? (
+                        <LeadAgreementSummary leadId={lead.id} />
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </td>
         </tr>
       ) : null}

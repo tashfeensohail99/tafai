@@ -108,13 +108,19 @@ interface Props {
   threadId: string;
   /** Hide the right-hand profile + CTA panel when the tab variant already shows it. */
   hideSidePanel?: boolean;
+  /** View-only: hide the composer, the reply bar and the window banner so the
+   *  conversation can be shown purely for context (e.g. the admin reassign
+   *  page, where an admin reads the chat before moving the lead but must not
+   *  message from there). Sending is already blocked server-side without
+   *  whatsapp.send_message; this suppresses the send UI to match. */
+  readOnly?: boolean;
   /** Called after a successful lead-to-client conversion. Parent typically routes to the client page. */
   onConverted?: (clientId: string) => void;
   /** Mobile: show a back arrow in the chat header to return to the conversation list. */
   onBack?: () => void;
 }
 
-export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack }: Props) {
+export function WhatsAppChatPanel({ threadId, hideSidePanel, readOnly, onConverted, onBack }: Props) {
   const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Live mirror of `messages` so the realtime handler can read the latest
@@ -1469,7 +1475,7 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
             (non-reply) message instead. The quoted content is rendered
             with the same QuotedMessagePreview component used inside
             bubbles so the affordance is visually consistent. */}
-        {replyingTo ? (
+        {replyingTo && !readOnly ? (
           <div
             style={{
               padding: '8px 14px',
@@ -1510,22 +1516,26 @@ export function WhatsAppChatPanel({ threadId, hideSidePanel, onConverted, onBack
           </div>
         ) : null}
 
-        <WindowStatusBanner withinWindow={withinWindow} windowExpiresAt={thread?.windowExpiresAt ?? null} />
-        <ChatComposer
-          value={draft}
-          onChange={setDraft}
-          onSend={handleSend}
-          onSendVoice={handleSendVoice}
-          onSendMedia={handlePickMedia}
-          onOpenCamera={() => setCameraOpen(true)}
-          onOpenTemplate={() => setTemplateOpen(true)}
-          onOpenQuickReplies={() => setQuickRepliesOpen(true)}
-          onOpenLocation={() => setLocationOpen(true)}
-          onOpenContact={() => setContactOpen(true)}
-          disabled={!withinWindow}
-          windowExpiresAt={thread?.windowExpiresAt ?? null}
-          sending={sending}
-        />
+        {readOnly ? null : (
+          <>
+            <WindowStatusBanner withinWindow={withinWindow} windowExpiresAt={thread?.windowExpiresAt ?? null} />
+            <ChatComposer
+              value={draft}
+              onChange={setDraft}
+              onSend={handleSend}
+              onSendVoice={handleSendVoice}
+              onSendMedia={handlePickMedia}
+              onOpenCamera={() => setCameraOpen(true)}
+              onOpenTemplate={() => setTemplateOpen(true)}
+              onOpenQuickReplies={() => setQuickRepliesOpen(true)}
+              onOpenLocation={() => setLocationOpen(true)}
+              onOpenContact={() => setContactOpen(true)}
+              disabled={!withinWindow}
+              windowExpiresAt={thread?.windowExpiresAt ?? null}
+              sending={sending}
+            />
+          </>
+        )}
       </div>
 
       {/* ── Side panel (profile + CTAs) ── */}

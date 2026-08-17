@@ -22,6 +22,7 @@ export function WhatsAppLeadTab({
   leadId,
   renderHeaderActions,
   fillHeight = false,
+  readOnly = false,
 }: {
   leadId: string;
   /** Accepted for API compatibility; the lookup now resolves by lead + phone server-side. */
@@ -32,6 +33,9 @@ export function WhatsAppLeadTab({
    *  profile so the conversation scrolls in a box instead of growing to fill
    *  the whole page. Default (Sales lead page) keeps the original layout. */
   fillHeight?: boolean;
+  /** View-only: hide the composer and side-panel CTAs so the chat is shown
+   *  purely for context (admin reassign page). */
+  readOnly?: boolean;
 }) {
   const [thread, setThread] = useState<ThreadListItem | null | undefined>(undefined);
 
@@ -91,10 +95,10 @@ export function WhatsAppLeadTab({
         // flex:1 + minHeight:0 gives the panel a bounded height so its own
         // message list (overflowY:auto) scrolls instead of the page.
         <div style={{ flex: 1, minHeight: 0 }}>
-          <WhatsAppChatPanel threadId={thread.id} />
+          <WhatsAppChatPanel threadId={thread.id} readOnly={readOnly} hideSidePanel={readOnly} />
         </div>
       ) : (
-        <WhatsAppChatPanel threadId={thread.id} />
+        <WhatsAppChatPanel threadId={thread.id} readOnly={readOnly} hideSidePanel={readOnly} />
       )}
     </div>
   );

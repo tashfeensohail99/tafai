@@ -5101,3 +5101,96 @@ model WhatsAppDailyReportLog {
   @@map("daily_report_log")
   @@schema("whatsapp")
 }
+
+// =============================================================================
+// NVR FACE-ATTENDANCE (ported from intag) — additive. See modules/face-attendance.
+// =============================================================================
+enum PunchDirection {
+  IN
+  OUT
+
+  @@schema("core")
+}
+
+/// A stored face descriptor for an employee (512-d ArcFace `normed_embedding`
+/// from InsightFace buffalo_l, produced by the Python face-worker). Multiple
+/// samples per employee improve matching. `embedding` is a pgvector column —
+/// Prisma can't type it, so vector inserts/reads use raw SQL (mirrors
+/// ai.knowledge). Recognition = nearest cosine distance (`<=>`) across all
+/// enrollments of active, non-deleted employees (embeddings are unit vectors,
+/// so cosine is the natural metric; Summit's box uses the same 512-d space).
+model FaceEnrollment {
+  id              String                     @id @default(uuid())
+  employeeId      String
+  embedding       Unsupported("vector(512)")
+  modelVersion    String                     @default("insightface-buffalo_l-512")
+  quality         Float?
+  createdByUserId String?
+  createdAt       DateTime                   @default(now())
+
+  @@index([employeeId])
+  @@map("face_enrollments")
+  @@schema("core")
+}
+
+enum FaceCaptureStatus {
+  PENDING // received, not yet embedded/matched
+  MATCHED // matched an enrolled employee above threshold
+  UNMATCHED // no employee above threshold (unknown face / visitor)
+  DUPLICATE // same NVR event uuid already ingested
+  ERROR // embedding/processing failed
+
+  @@schema("core")
+}
+
+/// One raw face snapshot pushed by the Hikvision NVR (ISAPI alarm-server POST).
+/// The NVR fires several of these per person-pass; they are deduped on
+/// `eventUuid`, embedded by the face-worker, matched against FaceEnrollment, and
+/// burst-aggregated (multiple confirming captures -> ONE AttendancePunch) so the
+/// existing payroll rollup is unchanged. Also the audit trail of every match.
+model FaceCaptureEvent {
+  id                String            @id @default(uuid())
+  eventUuid         String?           @unique // NVR event uuid (dedup key)
+  channelId         String? // NVR channel that captured the face
+  deviceId          String? // NVR device id / mac
+  source            String            @default("NVR")
+  branchId          String? // resolved from channel, for multi-branch
+  capturedAt        DateTime // NVR-reported capture time (offset-aware)
+  receivedAt        DateTime          @default(now())
+  imageObjectKey    String? // stored JPEG in the media bucket
+  status            FaceCaptureStatus @default(PENDING)
+  matchedEmployeeId String? // employee this capture matched (if any)
+  similarity        Float? // cosine similarity of the match
+  detScore          Float? // face detector confidence
+  punchId           String? // AttendancePunch this capture drove/confirmed
+  error             String?
+  processedAt       DateTime?
+  createdAt         DateTime          @default(now())
+
+  @@index([matchedEmployeeId, capturedAt])
+  @@index([status])
+  @@index([capturedAt])
+  @@map("face_capture_events")
+  @@schema("core")
+}
+
+/// Raw in/out punch event from a kiosk face match. Server-timestamped
+/// (`punchedAt` = backend clock, never the tamperable browser clock). Rolled up
+/// per day into AttendanceRecord (checkIn/checkOut/grossPresenceMin) so the
+/// existing payroll engine consumes it unchanged.
+model AttendancePunch {
+  id         String         @id @default(uuid())
+  employeeId String
+  punchedAt  DateTime       @default(now())
+  direction  PunchDirection
+  source     String         @default("KIOSK")
+  kioskId    String?
+  branchId   String?
+  similarity Float?
+  createdAt  DateTime       @default(now())
+
+  @@index([employeeId, punchedAt])
+  @@index([punchedAt])
+  @@map("attendance_punches")
+  @@schema("core")
+}

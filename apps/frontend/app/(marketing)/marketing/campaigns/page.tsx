@@ -5,7 +5,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { GlassCard, PageHeader } from '@/components/sales-v2/ui';
 import { StatusPill } from '@/components/marketing/StatusPill';
 import { WindowPicker } from '@/components/marketing/WindowPicker';
-import { fmtCad, fmtInt, fmtRoas, getMarketingCampaigns, type MarketingCampaign } from '@/lib/marketing';
+import { fmtMoney, fmtInt, fmtRoas, getMarketingCampaigns, type MarketingCampaign } from '@/lib/marketing';
 
 export default function MarketingCampaignsPage() {
   const [days, setDays] = useState(30);
@@ -175,11 +175,11 @@ function FragmentRow({
           </div>
         </td>
         <td style={cell}><StatusPill status={campaign.effectiveStatus} /></td>
-        <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(campaign.spendBaseCad, { compact: true })}</td>
+        <td style={{ ...cell, textAlign: 'right' }}>{fmtMoney(campaign.spend, campaign.spendCurrency, { compact: true })}</td>
         <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(campaign.leads)}</td>
         <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(campaign.clientsConverted)}</td>
-        <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(campaign.cpl)}</td>
-        <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(campaign.cpa)}</td>
+        <td style={{ ...cell, textAlign: 'right' }}>{fmtMoney(campaign.cpl, campaign.spendCurrency)}</td>
+        <td style={{ ...cell, textAlign: 'right' }}>{fmtMoney(campaign.cpa, campaign.spendCurrency)}</td>
         <td style={{ ...cell, textAlign: 'right', fontWeight: 600 }}>{fmtRoas(campaign.roas)}</td>
       </tr>
       {isOpen
@@ -191,10 +191,10 @@ function FragmentRow({
                 <div style={{ fontSize: 10, color: 'var(--sos-text-tertiary, #6b7280)' }}>{s.adsetId}</div>
               </td>
               <td style={cell}><StatusPill status={s.effectiveStatus} /></td>
-              <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(s.spendBaseCad, { compact: true })}</td>
+              <td style={{ ...cell, textAlign: 'right' }}>{fmtMoney(s.spend, s.spendCurrency, { compact: true })}</td>
               <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(s.leads)}</td>
               <td style={cell}></td>
-              <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(s.cpl)}</td>
+              <td style={{ ...cell, textAlign: 'right' }}>{fmtMoney(s.cpl, s.spendCurrency)}</td>
               <td style={cell}></td>
               <td style={cell}></td>
             </tr>

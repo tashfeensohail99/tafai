@@ -6,8 +6,10 @@ import { apiFetch, buildQuery } from './api-client';
  * Marketing dashboard API client (Phase 1D).
  *
  * Wraps the three aggregation endpoints on the backend MarketingController.
- * All monetary values in responses are already base CAD; per-currency spend
- * is provided on the Overview so the tooltip can show native currency alongside.
+ * Ad spend (and the spend-derived CPL/CPA) is returned in the ad account's
+ * NATIVE currency — PKR for this org — carried as `spendCurrency`; render it
+ * with `fmtMoney(amount, spendCurrency)`. Revenue never crosses the wire; ROAS
+ * ships as a bare ratio only.
  */
 
 export interface MarketingWindow {
@@ -23,7 +25,7 @@ export interface SpendByCurrency {
 
 export interface DailyPoint {
   date: string; // YYYY-MM-DD
-  spendBaseCad: number;
+  spend: number; // native currency (see kpis.spendCurrency)
   leads: number;
 }
 
@@ -31,7 +33,8 @@ export interface TopCampaign {
   campaignId: string;
   name: string | null;
   effectiveStatus: string | null;
-  spendBaseCad: number;
+  spend: number;
+  spendCurrency: string;
   leads: number;
   cpl: number | null;
 }
@@ -39,7 +42,8 @@ export interface TopCampaign {
 export interface MarketingOverview {
   window: MarketingWindow;
   kpis: {
-    spendBaseCad: number;
+    spend: number; // native ad-account currency
+    spendCurrency: string; // e.g. 'PKR'
     spendByCurrency: SpendByCurrency[];
     leads: number;
     clientsConverted: number;
@@ -63,7 +67,8 @@ export interface MarketingAd {
   campaignId: string;
   campaignName: string | null;
   effectiveStatus: string | null;
-  spendBaseCad: number;
+  spend: number;
+  spendCurrency: string;
   impressions: number;
   clicks: number;
   leads: number;
@@ -80,7 +85,8 @@ export interface MarketingAdset {
   adsetId: string;
   name: string | null;
   effectiveStatus: string | null;
-  spendBaseCad: number;
+  spend: number;
+  spendCurrency: string;
   leads: number;
   cpl: number | null;
 }
@@ -90,7 +96,8 @@ export interface MarketingCampaign {
   name: string | null;
   effectiveStatus: string | null;
   objective: string | null;
-  spendBaseCad: number;
+  spend: number;
+  spendCurrency: string;
   leads: number;
   clientsConverted: number;
   /** No revenue on this response either — see MarketingOverview.kpis. */
@@ -342,14 +349,21 @@ export function deleteRoutingRule(id: string): Promise<{ ok: true }> {
 
 /* ------------------------------------------------------------------ format helpers ------ */
 
-/** CAD money with thousands separators; auto-shrinks to K/M for large sums. */
-export function fmtCad(v: number | null | undefined, opts: { compact?: boolean } = {}): string {
+/** Money in the given currency (e.g. 'PKR') with thousands separators;
+ *  auto-shrinks to K/M for large sums when `compact`. Currency defaults to PKR
+ *  — the ad account's native currency for this org. */
+export function fmtMoney(
+  v: number | null | undefined,
+  currency: string | null | undefined,
+  opts: { compact?: boolean } = {},
+): string {
   if (v == null || !Number.isFinite(v)) return '—';
+  const ccy = currency || 'PKR';
   if (opts.compact) {
-    if (Math.abs(v) >= 1_000_000) return `CAD ${(v / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(v) >= 10_000) return `CAD ${(v / 1_000).toFixed(1)}K`;
+    if (Math.abs(v) >= 1_000_000) return `${ccy} ${(v / 1_000_000).toFixed(2)}M`;
+    if (Math.abs(v) >= 10_000) return `${ccy} ${(v / 1_000).toFixed(1)}K`;
   }
-  return `CAD ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `${ccy} ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
 /** Native-currency amount without conversion, used in the spend-tooltip line. */

@@ -5,7 +5,7 @@ import { AlertTriangle, Search } from 'lucide-react';
 import { GlassCard, PageHeader } from '@/components/sales-v2/ui';
 import { StatusPill } from '@/components/marketing/StatusPill';
 import { WindowPicker } from '@/components/marketing/WindowPicker';
-import { fmtCad, fmtInt, fmtPct, getMarketingAds, type MarketingAd } from '@/lib/marketing';
+import { fmtMoney, fmtInt, fmtPct, getMarketingAds, type MarketingAd } from '@/lib/marketing';
 
 type SortKey = 'spend' | 'leads' | 'cpl' | 'clicks' | 'impressions';
 
@@ -52,7 +52,7 @@ export default function MarketingAdsPage() {
         case 'cpl': return (b.cpl ?? 0) - (a.cpl ?? 0);
         case 'clicks': return b.clicks - a.clicks;
         case 'impressions': return b.impressions - a.impressions;
-        default: return b.spendBaseCad - a.spendBaseCad;
+        default: return b.spend - a.spend;
       }
     });
   }, [rows, q, sort]);
@@ -136,12 +136,12 @@ export default function MarketingAdsPage() {
                     </div>
                   </td>
                   <td style={cell}><StatusPill status={r.effectiveStatus} /></td>
-                  <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(r.spendBaseCad, { compact: true })}</td>
+                  <td style={{ ...cell, textAlign: 'right' }}>{fmtMoney(r.spend, r.spendCurrency, { compact: true })}</td>
                   <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(r.impressions)}</td>
                   <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(r.clicks)}</td>
                   <td style={{ ...cell, textAlign: 'right' }}>{fmtPct(r.ctr, 2)}</td>
                   <td style={{ ...cell, textAlign: 'right' }}>{fmtInt(r.leads)}</td>
-                  <td style={{ ...cell, textAlign: 'right' }}>{fmtCad(r.cpl)}</td>
+                  <td style={{ ...cell, textAlign: 'right' }}>{fmtMoney(r.cpl, r.spendCurrency)}</td>
                 </tr>
               ))}
               {!loading && filtered.length === 0 ? (

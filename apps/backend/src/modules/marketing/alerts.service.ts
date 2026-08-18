@@ -88,9 +88,9 @@ export class MarketingAlertsService {
       Array<{ adId: string; adName: string | null; campaignName: string | null; spend: string; leads: bigint }>
     >(
       `WITH ad_spend AS (
-         SELECT "adId", SUM("baseSpend") AS spend
+         SELECT "adId", SUM(spend) AS spend
          FROM crm.ad_spend_daily WHERE date >= $1::date
-         GROUP BY "adId" HAVING SUM("baseSpend") > 0
+         GROUP BY "adId" HAVING SUM(spend) > 0
        ),
        ad_leads AS (
          SELECT "metaAdId" AS "adId", COUNT(*) AS leads
@@ -123,7 +123,7 @@ export class MarketingAlertsService {
       adId: r.adId,
       adName: r.adName,
       campaignName: r.campaignName,
-      metric: { label: '7-day spend', value: fmtCad(Number(r.spend)) },
+      metric: { label: '7-day spend', value: fmtPkr(Number(r.spend)) },
       since: null,
     }));
   }
@@ -148,7 +148,7 @@ export class MarketingAlertsService {
       }>
     >(
       `WITH spend7 AS (
-         SELECT "adId", SUM("baseSpend") AS s FROM crm.ad_spend_daily
+         SELECT "adId", SUM(spend) AS s FROM crm.ad_spend_daily
          WHERE date >= $1::date GROUP BY "adId"
        ),
        leads7 AS (
@@ -157,7 +157,7 @@ export class MarketingAlertsService {
          GROUP BY "metaAdId"
        ),
        spend30 AS (
-         SELECT "adId", SUM("baseSpend") AS s FROM crm.ad_spend_daily
+         SELECT "adId", SUM(spend) AS s FROM crm.ad_spend_daily
          WHERE date >= $3::date GROUP BY "adId"
        ),
        leads30 AS (
@@ -200,7 +200,7 @@ export class MarketingAlertsService {
         adId: r.adId,
         adName: r.adName,
         campaignName: r.campaignName,
-        metric: { label: '7d CPL vs 30d', value: `${fmtCad(cpl7)} vs ${fmtCad(cpl30)}` },
+        metric: { label: '7d CPL vs 30d', value: `${fmtPkr(cpl7)} vs ${fmtPkr(cpl30)}` },
         since: null,
       };
     });
@@ -217,9 +217,9 @@ export class MarketingAlertsService {
       Array<{ adId: string; adName: string | null; campaignName: string | null; spend: string }>
     >(
       `WITH ad_spend AS (
-         SELECT "adId", SUM("baseSpend") AS spend
+         SELECT "adId", SUM(spend) AS spend
          FROM crm.ad_spend_daily WHERE date >= $1::date
-         GROUP BY "adId" HAVING SUM("baseSpend") > 0
+         GROUP BY "adId" HAVING SUM(spend) > 0
        )
        SELECT s."adId",
               a.name AS "adName",
@@ -247,7 +247,7 @@ export class MarketingAlertsService {
       adId: r.adId,
       adName: r.adName,
       campaignName: r.campaignName,
-      metric: { label: '14-day spend', value: fmtCad(Number(r.spend)) },
+      metric: { label: '14-day spend', value: fmtPkr(Number(r.spend)) },
       since: null,
     }));
   }
@@ -262,7 +262,10 @@ export class MarketingAlertsService {
   }
 }
 
-function fmtCad(v: number | null | undefined): string {
+// Ad spend/CPL are surfaced to Marketing in the ad account's native currency
+// (PKR for this org) — the number they recognise. The queries below already
+// select native `spend`, so this just labels it.
+function fmtPkr(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
-  return `CAD ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `PKR ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }

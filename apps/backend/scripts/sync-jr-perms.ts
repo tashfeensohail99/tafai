@@ -1,9 +1,10 @@
 /**
- * Safe, idempotent production sync for the Judicial Review module (access step).
+ * Safe, idempotent production sync for the Judicial Review module (PR 1).
  *
  * `prisma db seed` is NOT safe in prod (creates demo data), so this does ONLY
- * the additive part: upsert the `jr.*` permissions, ensure the `jr_head` and
- * `jr_associate` roles exist, and grant. No deletes — safe to run repeatedly.
+ * the additive part: upsert the 16 `jr.*` permissions, ensure the `jr_head` and
+ * `jr_associate` roles exist, and grant. No deletes — safe to run repeatedly,
+ * and it tolerates a missing role (prod has no sales_manager, etc.).
  * Mirrors scripts/sync-marketing-perms.ts.
  *
  *   railway run --service backend -- npx ts-node -T scripts/sync-jr-perms.ts
@@ -16,24 +17,47 @@
  * role — "JR Head" for the head, "JR Associate" for each associate. The /jr
  * route then opens the matching module automatically (Head console vs
  * Associate workspace).
- *
- * This is the ACCESS step only (roles + routing for the prototype). The full
- * module's 16 scoped permission keys ship later with the real build (PR 1).
  */
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 const PERMS = [
-  { key: 'jr.view', module: 'jr', description: 'Access the Judicial Review desk' },
+  { key: 'jr.portal.view', module: 'jr', description: 'Access the Judicial Review portal' },
+  { key: 'jr.matter.view_assigned', module: 'jr', description: 'Read matters assigned to me' },
+  { key: 'jr.matter.view_all', module: 'jr', description: 'Read every JR matter (manager key)' },
+  { key: 'jr.matter.create', module: 'jr', description: 'Create a JR matter' },
+  { key: 'jr.matter.assign', module: 'jr', description: 'Keep or delegate a matter to an associate' },
+  { key: 'jr.matter.update_stage', module: 'jr', description: 'Advance a matter through the stage machine' },
+  { key: 'jr.route.determine', module: 'jr', description: 'Set route, deciding-office location, appeal-right-exhausted' },
+  { key: 'jr.deadline.override', module: 'jr', description: 'Manually override a computed deadline (reason mandatory)' },
+  { key: 'jr.counsel.manage', module: 'jr', description: 'CRUD counsel; set counsel of record' },
+  { key: 'jr.artifact.view', module: 'jr', description: 'Read artifacts + versions; mint signed URLs' },
+  { key: 'jr.artifact.author', module: 'jr', description: 'Create artifacts, upload versions, move DRAFT <-> INTERNAL_QA' },
+  { key: 'jr.artifact.submit_to_counsel', module: 'jr', description: 'Move an artifact INTERNAL_QA -> COUNSEL_REVIEW' },
+  { key: 'jr.artifact.record_counsel_review', module: 'jr', description: "Record counsel's approval or change request" },
+  { key: 'jr.artifact.file', module: 'jr', description: 'Move an artifact COUNSEL_APPROVED -> FILED -> SERVED' },
+  { key: 'jr.note.create', module: 'jr', description: 'Write a JR note' },
+  { key: 'jr.rules.manage', module: 'jr', description: 'Edit deadline rules; set verificationStatus = VERIFIED' },
 ];
 
 const JR_KEYS = PERMS.map((p) => p.key);
 
-// Both JR roles and admins get jr.view. Nothing else — JR is self-contained.
+// An associate can draft and submit for review, but cannot record the approval
+// or mark a document filed, and never sees other associates' matters.
+const ASSOCIATE_KEYS = [
+  'jr.portal.view',
+  'jr.matter.view_assigned',
+  'jr.matter.update_stage',
+  'jr.artifact.view',
+  'jr.artifact.author',
+  'jr.artifact.submit_to_counsel',
+  'jr.note.create',
+];
+
 const GRANTS: Record<string, string[]> = {
   jr_head: JR_KEYS,
-  jr_associate: JR_KEYS,
+  jr_associate: ASSOCIATE_KEYS,
   super_admin: JR_KEYS,
   admin: JR_KEYS,
 };
@@ -99,7 +123,7 @@ async function main() {
     }
   }
 
-  console.log('\ndone — jr_head / jr_associate roles + jr.view synced');
+  console.log('\ndone — jr_head / jr_associate roles + 16 jr.* keys synced');
   console.log('NEXT: in /admin/users, create each login and tick "JR Head" or "JR Associate".');
   console.log('NOTE: already-signed-in users must re-login (or wait ~15 min) to pick up the role.');
 }

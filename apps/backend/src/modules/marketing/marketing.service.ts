@@ -708,4 +708,74 @@ export class MarketingService {
       programs,
     };
   }
+
+  /**
+   * Leads RECEIVED per rep within the window — the "who's getting how many
+   * leads" monitor the marketing team asked for. COUNTS ONLY: no revenue, no
+   * client or agreement data, and no lead-level PII beyond the assignee's own
+   * name. `fromAds` splits out leads attributed to a Meta ad, so marketing can
+   * see how much of each rep's intake their own campaigns drive vs everything
+   * else (WhatsApp walk-ins, UAN calls, imports, …).
+   */
+  async getLeadsByRep(daysArg?: number) {
+    const { from, to, toEnd, days } = this.resolveWindow(daysArg);
+
+    const [rows, unassignedRow] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Array<{ id: string; total: bigint; fromAds: bigint }>>(
+        `SELECT "assignedEmployeeId" AS id,
+                COUNT(*)::bigint AS total,
+                COUNT(*) FILTER (WHERE "metaAdId" IS NOT NULL)::bigint AS "fromAds"
+         FROM crm.leads
+         WHERE "deletedAt" IS NULL AND "assignedEmployeeId" IS NOT NULL
+           AND "createdAt" >= $1 AND "createdAt" < $2
+         GROUP BY "assignedEmployeeId"`,
+        from,
+        toEnd,
+      ),
+      this.prisma.$queryRawUnsafe<Array<{ n: bigint }>>(
+        `SELECT COUNT(*)::bigint AS n FROM crm.leads
+         WHERE "deletedAt" IS NULL AND "assignedEmployeeId" IS NULL
+           AND "createdAt" >= $1 AND "createdAt" < $2`,
+        from,
+        toEnd,
+      ),
+    ]);
+
+    const ids = rows.map((r) => r.id);
+    const emps = ids.length
+      ? await this.prisma.employee.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, firstName: true, lastName: true, isActive: true },
+        })
+      : [];
+    const empById = new Map(emps.map((e) => [e.id, e]));
+
+    const reps = rows
+      .map((r) => {
+        const e = empById.get(r.id);
+        const total = this.num(r.total);
+        const fromAds = this.num(r.fromAds);
+        return {
+          employeeId: r.id,
+          name: e ? `${e.firstName} ${e.lastName}`.trim() : '(unknown)',
+          isActive: e?.isActive ?? false,
+          total,
+          fromAds,
+          other: total - fromAds,
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+
+    const totals = reps.reduce(
+      (acc, r) => ({ total: acc.total + r.total, fromAds: acc.fromAds + r.fromAds, other: acc.other + r.other }),
+      { total: 0, fromAds: 0, other: 0 },
+    );
+
+    return {
+      window: { from: this.ymd(from), to: this.ymd(to), days } satisfies MarketingWindow,
+      reps,
+      unassigned: this.num(unassignedRow[0]?.n),
+      totals,
+    };
+  }
 }

@@ -79,6 +79,34 @@ export class WhatsAppCallsController {
     return this.calls.initiateOutbound(body?.threadId, body?.sdpOffer, user.id);
   }
 
+  // Rep-scoped calls history + missed-call badge for the in-app "Calls" tab.
+  // Any inbox rep may see their OWN calls. Literal routes declared before ':id'
+  // so they win over the dock's UUID-param route.
+  @Get('mine')
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  mine(
+    @CurrentUser() user: RequestUser,
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
+    @Query('direction') direction?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.calls.listMine(user.id, {
+      limit: limit ? Number(limit) : undefined,
+      before: before ? new Date(before) : undefined,
+      direction: direction || undefined,
+      status: status || undefined,
+    });
+  }
+
+  @Get('mine/missed-count')
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
+  myMissedCount(@CurrentUser() user: RequestUser) {
+    return this.calls.myMissedCount(user.id);
+  }
+
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.calls.getForDock(id);

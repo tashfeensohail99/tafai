@@ -100,12 +100,17 @@ class CallController extends StateNotifier<CallState> {
     switch (e) {
       case CallIncoming():
         _log('socket: incoming ${e.callId}');
-        // Already on a call → CALL-WAITING. Don't drop the second call (the old
-        // behaviour silently ignored it and let the backend time out). Surface
-        // it as a WhatsApp-style in-app banner over the live call so the rep can
-        // End & Accept or Decline. In-app banner (not a 2nd CallKit screen) so
-        // we don't hand a second call to the self-managed Telecom session.
-        if (state.isActive) {
+        // Already on a LIVE call → CALL-WAITING. Don't drop the second call (the
+        // old behaviour silently ignored it and let the backend time out).
+        // Surface it as a WhatsApp-style in-app banner over the live call so the
+        // rep can End & Accept or Decline. In-app banner (not a 2nd CallKit
+        // screen) so we don't hand a second call to the self-managed Telecom
+        // session. The terminal ended/error window (isActive stays true for
+        // ~1.4s after a call ends) is NOT a live call — a call landing there
+        // must ring fresh, not flash a call-waiting banner over "Call ended".
+        if (state.isActive &&
+            state.phase != CallPhase.ended &&
+            state.phase != CallPhase.error) {
           // Ignore a duplicate for the same call, or a 2nd waiting call while
           // one is already banner-queued (first-come-first-shown).
           if (e.callId == state.callId ||
@@ -143,7 +148,22 @@ class CallController extends StateNotifier<CallState> {
           state = state.copyWith(clearWaiting: true);
         }
         if (e.callId == state.callId) {
+          // If a 2nd call is STILL waiting in the banner when this (primary)
+          // call ends on its own, don't drop it — capture it before teardown
+          // clears it, then ring it natively via CallKit now that the rep is
+          // free (accept flows through CallHost.onAccept from idle as normal).
+          final pending = state.waiting;
           _teardown(reason: 'Call ended');
+          if (pending != null) {
+            _log('call-waiting: primary ended — ringing waiting ${pending.callId}');
+            unawaited(showIncomingCallkit(IncomingCallPush(
+              callId: pending.callId,
+              from: pending.from,
+              leadName: pending.leadName,
+              leadId: pending.leadId,
+              threadId: pending.threadId,
+            )));
+          }
         }
     }
   }

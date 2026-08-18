@@ -2,18 +2,19 @@
 
 import { useMemo, useState } from 'react';
 import type { DailyPoint } from '@/lib/marketing';
-import { fmtCad, fmtInt } from '@/lib/marketing';
+import { fmtMoney, fmtInt } from '@/lib/marketing';
 
 /**
- * Inline SVG line chart of spend (CAD) and leads on a shared date axis.
+ * Inline SVG line chart of spend (native currency, e.g. PKR) and leads on a
+ * shared date axis.
  *
- * Two independent Y-axes so the two magnitudes (dollars vs counts) can share
+ * Two independent Y-axes so the two magnitudes (money vs counts) can share
  * a plot without one squashing the other. No chart library — one dep-free
  * component; the whole thing is ~150 lines and knows exactly what we render.
  * Theme-aware (uses --sos-* CSS vars); pointer-tracked to show a per-day
  * tooltip. Responsive via viewBox — the parent controls width.
  */
-export function SpendLeadsChart({ points }: { points: DailyPoint[] }) {
+export function SpendLeadsChart({ points, currency = 'PKR' }: { points: DailyPoint[]; currency?: string }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const geom = useMemo(() => {
@@ -28,14 +29,14 @@ export function SpendLeadsChart({ points }: { points: DailyPoint[] }) {
     const n = points.length;
     const step = n > 1 ? innerW / (n - 1) : 0;
 
-    const spendMax = Math.max(1, ...points.map((p) => p.spendBaseCad));
+    const spendMax = Math.max(1, ...points.map((p) => p.spend));
     const leadsMax = Math.max(1, ...points.map((p) => p.leads));
 
     const xAt = (i: number) => padL + (n > 1 ? i * step : innerW / 2);
     const ySpend = (v: number) => padT + innerH - (v / spendMax) * innerH;
     const yLeads = (v: number) => padT + innerH - (v / leadsMax) * innerH;
 
-    const spendPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xAt(i).toFixed(2)},${ySpend(p.spendBaseCad).toFixed(2)}`).join(' ');
+    const spendPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xAt(i).toFixed(2)},${ySpend(p.spend).toFixed(2)}`).join(' ');
     const leadsPath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xAt(i).toFixed(2)},${yLeads(p.leads).toFixed(2)}`).join(' ');
 
     // Area under the spend curve — soft fill so the axis chart doesn't feel bare on quiet ranges.
@@ -106,7 +107,7 @@ export function SpendLeadsChart({ points }: { points: DailyPoint[] }) {
             fontSize="10"
             textAnchor="end"
           >
-            {fmtCad(geom.spendMax * t, { compact: true })}
+            {fmtMoney(geom.spendMax * t, currency, { compact: true })}
           </text>
         ))}
         {/* right-axis (leads) labels */}
@@ -133,7 +134,7 @@ export function SpendLeadsChart({ points }: { points: DailyPoint[] }) {
         {hover ? (
           <g pointerEvents="none">
             <line x1={geom.xAt(hoverIdx!)} x2={geom.xAt(hoverIdx!)} y1={geom.padT} y2={geom.padT + geom.innerH} stroke="var(--sos-border-strong, rgba(0,0,0,0.25))" strokeWidth={1} />
-            <circle cx={geom.xAt(hoverIdx!)} cy={geom.ySpend(hover.spendBaseCad)} r={4} fill="var(--sos-brand-primary-strong, #2563eb)" />
+            <circle cx={geom.xAt(hoverIdx!)} cy={geom.ySpend(hover.spend)} r={4} fill="var(--sos-brand-primary-strong, #2563eb)" />
             <circle cx={geom.xAt(hoverIdx!)} cy={geom.yLeads(hover.leads)} r={4} fill="var(--sos-brand-accent, #ea580c)" />
           </g>
         ) : null}
@@ -143,7 +144,7 @@ export function SpendLeadsChart({ points }: { points: DailyPoint[] }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 14, fontSize: 12, color: 'var(--sos-text-secondary, #4b5563)' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 12, height: 3, background: 'var(--sos-brand-primary-strong, #2563eb)', borderRadius: 2 }} /> Spend (CAD)
+            <span style={{ width: 12, height: 3, background: 'var(--sos-brand-primary-strong, #2563eb)', borderRadius: 2 }} /> Spend ({currency})
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <span
@@ -161,7 +162,7 @@ export function SpendLeadsChart({ points }: { points: DailyPoint[] }) {
         <div style={{ fontSize: 12, color: 'var(--sos-text-secondary, #4b5563)', minHeight: 18 }}>
           {hover ? (
             <span>
-              <strong>{hover.date}</strong> — {fmtCad(hover.spendBaseCad)} / {fmtInt(hover.leads)} leads
+              <strong>{hover.date}</strong> — {fmtMoney(hover.spend, currency)} / {fmtInt(hover.leads)} leads
             </span>
           ) : (
             <span>Hover to inspect a day</span>

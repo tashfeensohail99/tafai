@@ -8,7 +8,7 @@ import { SpendLeadsChart } from '@/components/marketing/SpendLeadsChart';
 import { StatusPill } from '@/components/marketing/StatusPill';
 import { WindowPicker } from '@/components/marketing/WindowPicker';
 import {
-  fmtCad,
+  fmtMoney,
   fmtInt,
   fmtNativeAmount,
   fmtPct,
@@ -67,19 +67,21 @@ export default function MarketingOverviewPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
         <MetricCard
           label="Ad spend"
-          value={loading ? '…' : fmtCad(data?.kpis.spendBaseCad ?? 0, { compact: true })}
+          value={loading ? '…' : fmtMoney(data?.kpis.spend ?? 0, data?.kpis.spendCurrency, { compact: true })}
           tone="accent"
           Icon={DollarSign}
           hint={
-            data?.kpis.spendByCurrency.length
-              ? data.kpis.spendByCurrency.map((c) => fmtNativeAmount(c.amount, c.currency)).join(' · ')
+            // Only useful when spend spans more than one currency; for a single
+            // (PKR) account this would just repeat the headline, so we hide it.
+            (data?.kpis.spendByCurrency.length ?? 0) > 1
+              ? data!.kpis.spendByCurrency.map((c) => fmtNativeAmount(c.amount, c.currency)).join(' · ')
               : undefined
           }
         />
         <MetricCard label="Leads" value={loading ? '…' : fmtInt(data?.kpis.leads)} tone="info" Icon={Users} hint="Leads from ads" />
         <MetricCard
           label="Cost per lead"
-          value={loading ? '…' : fmtCad(data?.kpis.cpl, { compact: true })}
+          value={loading ? '…' : fmtMoney(data?.kpis.cpl, data?.kpis.spendCurrency, { compact: true })}
           tone="neutral"
           Icon={TrendingUp}
         />
@@ -92,7 +94,7 @@ export default function MarketingOverviewPage() {
         />
         <MetricCard
           label="Cost per client"
-          value={loading ? '…' : fmtCad(data?.kpis.cpa, { compact: true })}
+          value={loading ? '…' : fmtMoney(data?.kpis.cpa, data?.kpis.spendCurrency, { compact: true })}
           tone="neutral"
           Icon={DollarSign}
         />
@@ -119,7 +121,7 @@ export default function MarketingOverviewPage() {
             </div>
           </div>
           {data && data.timeSeries.length > 0 ? (
-            <SpendLeadsChart points={data.timeSeries} />
+            <SpendLeadsChart points={data.timeSeries} currency={data.kpis.spendCurrency} />
           ) : (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--sos-text-tertiary, #6b7280)' }}>
               {loading ? 'Loading…' : 'No data for this window'}
@@ -180,10 +182,10 @@ function TopCampaignsTable({ data, loading }: { data: MarketingOverview | null; 
                 <StatusPill status={c.effectiveStatus} />
               </td>
               <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))', textAlign: 'right' }}>
-                {fmtCad(c.spendBaseCad, { compact: true })}
+                {fmtMoney(c.spend, c.spendCurrency, { compact: true })}
               </td>
               <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))', textAlign: 'right' }}>{fmtInt(c.leads)}</td>
-              <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))', textAlign: 'right' }}>{fmtCad(c.cpl)}</td>
+              <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--sos-border-subtle, rgba(0,0,0,0.05))', textAlign: 'right' }}>{fmtMoney(c.cpl, c.spendCurrency)}</td>
             </tr>
           ))}
         </tbody>

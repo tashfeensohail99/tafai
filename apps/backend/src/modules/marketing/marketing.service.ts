@@ -10,7 +10,7 @@ import {
 /** A calendar day of activity, used by the Overview time-series. */
 export interface DailyPoint {
   date: string; // YYYY-MM-DD
-  spendBaseCad: number;
+  spend: number; // native ad-account currency (see kpis.spendCurrency)
   leads: number;
 }
 
@@ -38,9 +38,13 @@ export interface MarketingWindow {
  * Revenue joins forward: Lead → Client (via Client.sourceLeadId) →
  * Invoice → Payment (PAID + not soft-deleted) → sum baseAmount in CAD.
  *
- * All monetary values in the response are base CAD so the frontend never has
- * to reconcile currencies. Spend is also returned per-currency for the
- * "PKR X.XM (≈ CAD Y.YK)" tooltip on the spend card.
+ * Ad spend is returned in the ad account's NATIVE currency (PKR for this org)
+ * — the number Marketing actually recognises — carried alongside a
+ * `spendCurrency` label; CPL/CPA inherit that native currency. Revenue never
+ * leaves the server: ROAS is the only revenue-derived signal shipped, computed
+ * from the CAD base internally (a ratio, so the unit cancels) and rendered as a
+ * percentage. `spendByCurrency` still lists native spend per currency for the
+ * KPI-card tooltip.
  *
  * Every aggregation is raw SQL, joining directly at the DB — the alternative
  * (per-row Prisma queries) fans out badly across ~22k leads × 200 ads.
@@ -138,7 +142,7 @@ export class MarketingService {
            SELECT generate_series($1::date, $2::date, '1 day')::date AS d
          ),
          spend_daily AS (
-           SELECT date::date AS d, SUM("baseSpend") AS spend
+           SELECT date::date AS d, SUM(spend) AS spend
            FROM crm.ad_spend_daily WHERE date >= $1::date AND date <= $2::date
            GROUP BY date::date
          ),
@@ -170,11 +174,12 @@ export class MarketingService {
           name: string | null;
           effectiveStatus: string | null;
           spend: string;
+          currency: string | null;
           leads: bigint;
         }>
       >(
         `WITH campaign_spend AS (
-           SELECT a."campaignId", SUM(s."baseSpend") AS spend
+           SELECT a."campaignId", SUM(s.spend) AS spend, MAX(s.currency) AS currency
            FROM crm.meta_ads a
            JOIN crm.ad_spend_daily s ON s."adId" = a."adId"
            WHERE s.date >= $1::date AND s.date <= $2::date
@@ -191,6 +196,7 @@ export class MarketingService {
                 c.name,
                 c."effectiveStatus",
                 COALESCE(sp.spend, 0)::text AS spend,
+                sp.currency AS currency,
                 COALESCE(ld.leads, 0)::bigint AS leads
          FROM crm.meta_campaigns c
          LEFT JOIN campaign_spend sp ON sp."campaignId" = c."campaignId"
@@ -210,41 +216,51 @@ export class MarketingService {
       amount: this.num(r.native),
     }));
     const spendBaseCad = spendRows.reduce((acc, r) => acc + this.num(r.base), 0);
+    // Headline spend in the ad account's native currency. When every spend row
+    // shares one currency (the norm — a single PKR ad account) we show that
+    // native total; if a second currency ever appears, summing natives would be
+    // meaningless, so we fall back to the CAD base rather than mislead.
+    const singleCurrency = spendRows.length === 1 ? spendRows[0].currency : null;
+    const spend = singleCurrency ? this.num(spendRows[0].native) : spendBaseCad;
+    const spendCurrency = singleCurrency ?? 'CAD';
     const leads = this.num(leadCountRow[0]?.n);
     const clientsConverted = this.num(convRow[0]?.converted);
     const revenueBaseCad = this.num(convRow[0]?.revenue);
 
     const timeSeries: DailyPoint[] = seriesRows.map((r) => ({
       date: this.ymd(r.date),
-      spendBaseCad: this.num(r.spend),
+      spend: this.num(r.spend),
       leads: this.num(r.leads),
     }));
 
     const topCampaigns = topRows.map((r) => {
-      const spend = this.num(r.spend);
+      const cSpend = this.num(r.spend);
       const cLeads = this.num(r.leads);
       return {
         campaignId: r.campaignId,
         name: r.name,
         effectiveStatus: r.effectiveStatus,
-        spendBaseCad: spend,
+        spend: cSpend,
+        spendCurrency: r.currency ?? spendCurrency,
         leads: cLeads,
-        cpl: this.ratio(spend, cLeads),
+        cpl: this.ratio(cSpend, cLeads),
       };
     });
 
     return {
       window: { from: fromStr, to: toStr, days } satisfies MarketingWindow,
-      // Ad spend is visible to the marketing role, but revenue is NOT — it
-      // stays server-side, used only to derive `roas` (a bare ratio, rendered
-      // as a %). CPL and CPA leak only spend, so they're fine to expose here.
+      // Ad spend is visible to the marketing role (in native PKR), but revenue
+      // is NOT — it stays server-side, used only to derive `roas` (a bare ratio,
+      // computed on the CAD base and rendered as a %). CPL and CPA leak only
+      // spend, so they're fine to expose here (in native currency).
       kpis: {
-        spendBaseCad,
+        spend,
+        spendCurrency,
         spendByCurrency,
         leads,
         clientsConverted,
-        cpl: this.ratio(spendBaseCad, leads),
-        cpa: this.ratio(spendBaseCad, clientsConverted),
+        cpl: this.ratio(spend, leads),
+        cpa: this.ratio(spend, clientsConverted),
         roas: this.ratio(revenueBaseCad, spendBaseCad),
         conversionRate: this.ratio(clientsConverted, leads),
       },
@@ -275,6 +291,7 @@ export class MarketingService {
         campaignName: string | null;
         effectiveStatus: string | null;
         spend: string;
+        currency: string | null;
         impressions: string | null;
         clicks: string | null;
         leads: bigint;
@@ -282,7 +299,8 @@ export class MarketingService {
     >(
       `WITH ad_spend AS (
          SELECT "adId",
-                SUM("baseSpend") AS spend,
+                SUM(spend) AS spend,
+                MAX(currency) AS currency,
                 SUM(impressions) AS imp,
                 SUM(clicks) AS clk
          FROM crm.ad_spend_daily
@@ -304,6 +322,7 @@ export class MarketingService {
               camp.name AS "campaignName",
               a."effectiveStatus",
               COALESCE(sp.spend, 0)::text AS spend,
+              sp.currency AS currency,
               sp.imp::text  AS impressions,
               sp.clk::text  AS clicks,
               COALESCE(ld.leads, 0)::bigint AS leads
@@ -333,7 +352,8 @@ export class MarketingService {
         campaignId: r.campaignId,
         campaignName: r.campaignName,
         effectiveStatus: r.effectiveStatus,
-        spendBaseCad: spend,
+        spend,
+        spendCurrency: r.currency ?? 'PKR',
         impressions,
         clicks,
         leads,
@@ -369,13 +389,18 @@ export class MarketingService {
           effectiveStatus: string | null;
           objective: string | null;
           spend: string;
+          spendCad: string;
+          currency: string | null;
           leads: bigint;
           converted: bigint;
           revenue: string;
         }>
       >(
         `WITH campaign_spend AS (
-           SELECT a."campaignId", SUM(s."baseSpend") AS spend
+           SELECT a."campaignId",
+                  SUM(s.spend) AS native,
+                  SUM(s."baseSpend") AS base,
+                  MAX(s.currency) AS currency
            FROM crm.meta_ads a
            JOIN crm.ad_spend_daily s ON s."adId" = a."adId"
            WHERE s.date >= $1::date AND s.date <= $2::date
@@ -412,7 +437,9 @@ export class MarketingService {
                 c.name,
                 c."effectiveStatus",
                 c.objective,
-                COALESCE(sp.spend, 0)::text  AS spend,
+                COALESCE(sp.native, 0)::text  AS spend,
+                COALESCE(sp.base, 0)::text  AS "spendCad",
+                sp.currency AS currency,
                 COALESCE(ld.leads, 0)::bigint AS leads,
                 COALESCE(cv.converted, 0)::bigint AS converted,
                 COALESCE(rv.revenue, 0)::text AS revenue
@@ -421,8 +448,8 @@ export class MarketingService {
          LEFT JOIN campaign_leads    ld ON ld."campaignId" = c."campaignId"
          LEFT JOIN campaign_conv     cv ON cv."campaignId" = c."campaignId"
          LEFT JOIN campaign_revenue  rv ON rv."campaignId" = c."campaignId"
-         ${includeIdle ? '' : "WHERE COALESCE(sp.spend, 0) > 0 OR COALESCE(ld.leads, 0) > 0"}
-         ORDER BY COALESCE(sp.spend, 0) DESC NULLS LAST, COALESCE(ld.leads, 0) DESC`,
+         ${includeIdle ? '' : "WHERE COALESCE(sp.native, 0) > 0 OR COALESCE(ld.leads, 0) > 0"}
+         ORDER BY COALESCE(sp.native, 0) DESC NULLS LAST, COALESCE(ld.leads, 0) DESC`,
         fromStr,
         toStr,
         from,
@@ -435,11 +462,12 @@ export class MarketingService {
           effectiveStatus: string | null;
           campaignId: string;
           spend: string;
+          currency: string | null;
           leads: bigint;
         }>
       >(
         `WITH adset_spend AS (
-           SELECT a."adsetId", SUM(s."baseSpend") AS spend
+           SELECT a."adsetId", SUM(s.spend) AS spend, MAX(s.currency) AS currency
            FROM crm.meta_ads a
            JOIN crm.ad_spend_daily s ON s."adId" = a."adId"
            WHERE s.date >= $1::date AND s.date <= $2::date
@@ -457,6 +485,7 @@ export class MarketingService {
                 s."effectiveStatus",
                 s."campaignId",
                 COALESCE(sp.spend, 0)::text AS spend,
+                sp.currency AS currency,
                 COALESCE(ld.leads, 0)::bigint AS leads
          FROM crm.meta_ad_sets s
          LEFT JOIN adset_spend sp ON sp."adsetId" = s."adsetId"
@@ -473,7 +502,7 @@ export class MarketingService {
     // Bucket ad-sets under their campaign.
     const adsetsByCampaign = new Map<
       string,
-      Array<{ adsetId: string; name: string | null; effectiveStatus: string | null; spendBaseCad: number; leads: number; cpl: number | null }>
+      Array<{ adsetId: string; name: string | null; effectiveStatus: string | null; spend: number; spendCurrency: string; leads: number; cpl: number | null }>
     >();
     for (const r of adsetRows) {
       const spend = this.num(r.spend);
@@ -483,7 +512,8 @@ export class MarketingService {
         adsetId: r.adsetId,
         name: r.name,
         effectiveStatus: r.effectiveStatus,
-        spendBaseCad: spend,
+        spend,
+        spendCurrency: r.currency ?? 'PKR',
         leads,
         cpl: this.ratio(spend, leads),
       });
@@ -491,23 +521,26 @@ export class MarketingService {
     }
 
     const campaigns = campaignRows.map((r) => {
-      const spend = this.num(r.spend);
+      const spend = this.num(r.spend); // native (PKR)
+      const spendCad = this.num(r.spendCad); // CAD base, ROAS only
       const leads = this.num(r.leads);
       const converted = this.num(r.converted);
       const revenue = this.num(r.revenue);
       // Same rule as Overview — revenue never leaves the server; ROAS is a
-      // derived ratio, safe to ship.
+      // derived ratio (computed on the CAD base so revenue & spend share a
+      // unit), safe to ship. Spend/CPL/CPA are shown in native currency.
       return {
         campaignId: r.campaignId,
         name: r.name,
         effectiveStatus: r.effectiveStatus,
         objective: r.objective,
-        spendBaseCad: spend,
+        spend,
+        spendCurrency: r.currency ?? 'PKR',
         leads,
         clientsConverted: converted,
         cpl: this.ratio(spend, leads),
         cpa: this.ratio(spend, converted),
-        roas: this.ratio(revenue, spend),
+        roas: this.ratio(revenue, spendCad),
         adsets: adsetsByCampaign.get(r.campaignId) ?? [],
       };
     });

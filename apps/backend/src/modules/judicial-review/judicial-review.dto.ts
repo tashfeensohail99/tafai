@@ -1,9 +1,11 @@
 import {
   IsBoolean,
+  IsBooleanString,
   IsDateString,
   IsEnum,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -510,4 +512,61 @@ export class UpdateMatterDto {
   @IsOptional()
   @IsBoolean()
   redeterminationApproved?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Deadline engine DTOs (PR 4). Every property is decorated — the global
+// ValidationPipe runs forbidNonWhitelisted, so an undecorated field 400s.
+// ---------------------------------------------------------------------------
+
+/** PATCH /jr/deadlines/:id/override — manually override a computed deadline. */
+export class OverrideDeadlineDto {
+  @IsDateString()
+  overriddenDueAt!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
+}
+
+/**
+ * POST /jr/matters/:matterId/deadlines/underlying-doc — add an expiry watch on an
+ * underlying client document (medical, police certificate, LMIA, passport, …).
+ */
+export class UnderlyingDocWatchDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  label!: string;
+
+  @IsDateString()
+  expiryDate!: string;
+}
+
+/** PATCH /jr/rules/:id/verify — mark a deadline rule VERIFIED (the Head's gate). */
+export class VerifyRuleDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  sourceUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+}
+
+/** GET /jr/board — the pending-deadline board, optionally fatal-only. */
+export class DeadlineBoardQueryDto {
+  @IsOptional()
+  @IsBooleanString()
+  fatalOnly?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  take?: number;
 }

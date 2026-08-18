@@ -21,6 +21,8 @@ import {
 } from './judicial-review.dto';
 import { JR_ALLOWED_TRANSITIONS, JR_TERMINAL_STAGES } from './jr-stage-machine';
 import { CitizenshipMatterError, determineRoute as computeRoute } from './jr-route-tree';
+import { JrDeadlinesService } from './jr-deadlines.service';
+import { toLegalDateUtc } from './jr-deadline-engine';
 
 /**
  * Core Judicial Review service (PR 1 foundation). Holds the matter-access guard
@@ -29,7 +31,10 @@ import { CitizenshipMatterError, determineRoute as computeRoute } from './jr-rou
  */
 @Injectable()
 export class JudicialReviewService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deadlines: JrDeadlinesService,
+  ) {}
 
   /**
    * List JR matters visible to the caller. `jr.matter.view_all` sees every
@@ -171,6 +176,9 @@ export class JudicialReviewService {
         oldValues: { stage: current },
         newValues,
       });
+      // Stage (and any stamped anchors) can change which deadlines apply — recompute
+      // inside the same transaction so the ledger never lags the matter.
+      await this.deadlines.recomputeDeadlines(matterId, user.id, tx);
       return next;
     });
   }
@@ -344,7 +352,9 @@ export class JudicialReviewService {
         throw new UnprocessableEntityException('Cannot mark LEAVE_GRANTED: leaveGranted must be true.');
       }
       stamped.leaveDecidedAt = new Date(dto.leaveDecidedAt);
-      stamped.leaveOrderAt = new Date(dto.leaveOrderAt);
+      // leaveOrderAt is the POST_LEAVE_SETTLEMENT deadline anchor — normalize to the
+      // stated UTC calendar day (toLegalDateUtc) so a time-of-day can't drift it.
+      stamped.leaveOrderAt = toLegalDateUtc(dto.leaveOrderAt);
       stamped.leaveGranted = true;
       return stamped;
     }
@@ -536,6 +546,9 @@ export class JudicialReviewService {
           terminalReferralCloseReason: result.terminalReferralCloseReason ?? null,
         },
       });
+      // Route decides the milestone set (Federal Court vs IAD/RAD referral clock) —
+      // recompute inside the same transaction.
+      await this.deadlines.recomputeDeadlines(matterId, user.id, tx);
       return next;
     });
   }
@@ -569,11 +582,14 @@ export class JudicialReviewService {
     if (dto.rule9ResponseType !== undefined) data.rule9ResponseType = dto.rule9ResponseType;
     if (dto.rule9RespondingOffice !== undefined)
       data.rule9RespondingOffice = dto.rule9RespondingOffice;
-    if (dto.aljrFiledAt !== undefined) data.aljrFiledAt = new Date(dto.aljrFiledAt);
-    if (dto.aljrServedAt !== undefined) data.aljrServedAt = new Date(dto.aljrServedAt);
+    // Deadline ANCHORS (the fields the engine keys off) are normalized to the UTC
+    // calendar day the client stated, so a zoned time-of-day can never drift a
+    // fatal date (toLegalDateUtc). Non-anchor timestamps keep their raw instant.
+    if (dto.aljrFiledAt !== undefined) data.aljrFiledAt = toLegalDateUtc(dto.aljrFiledAt);
+    if (dto.aljrServedAt !== undefined) data.aljrServedAt = toLegalDateUtc(dto.aljrServedAt);
     if (dto.noaReceivedAt !== undefined) data.noaReceivedAt = new Date(dto.noaReceivedAt);
     if (dto.rule9RequestedAt !== undefined) data.rule9RequestedAt = new Date(dto.rule9RequestedAt);
-    if (dto.rule9ResponseAt !== undefined) data.rule9ResponseAt = new Date(dto.rule9ResponseAt);
+    if (dto.rule9ResponseAt !== undefined) data.rule9ResponseAt = toLegalDateUtc(dto.rule9ResponseAt);
     if (dto.anonymityOrderRequestedAt !== undefined)
       data.anonymityOrderRequestedAt = new Date(dto.anonymityOrderRequestedAt);
     if (dto.affidavitDraftSentAt !== undefined)
@@ -583,14 +599,14 @@ export class JudicialReviewService {
       data.affidavitReceivedAt = new Date(dto.affidavitReceivedAt);
     if (dto.perfectedAt !== undefined) data.perfectedAt = new Date(dto.perfectedAt);
     if (dto.applicantRecordServedAt !== undefined)
-      data.applicantRecordServedAt = new Date(dto.applicantRecordServedAt);
+      data.applicantRecordServedAt = toLegalDateUtc(dto.applicantRecordServedAt);
     if (dto.respondentMemoServedAt !== undefined)
-      data.respondentMemoServedAt = new Date(dto.respondentMemoServedAt);
+      data.respondentMemoServedAt = toLegalDateUtc(dto.respondentMemoServedAt);
     if (dto.replyFiledAt !== undefined) data.replyFiledAt = new Date(dto.replyFiledAt);
     if (dto.ctrDueAt !== undefined) data.ctrDueAt = new Date(dto.ctrDueAt);
     if (dto.ctrReceivedAt !== undefined) data.ctrReceivedAt = new Date(dto.ctrReceivedAt);
-    if (dto.hearingAt !== undefined) data.hearingAt = new Date(dto.hearingAt);
-    if (dto.judgmentAt !== undefined) data.judgmentAt = new Date(dto.judgmentAt);
+    if (dto.hearingAt !== undefined) data.hearingAt = toLegalDateUtc(dto.hearingAt);
+    if (dto.judgmentAt !== undefined) data.judgmentAt = toLegalDateUtc(dto.judgmentAt);
     if (dto.reconsiderationRequestedAt !== undefined)
       data.reconsiderationRequestedAt = new Date(dto.reconsiderationRequestedAt);
     if (dto.reconsiderationOutcomeAt !== undefined)
@@ -611,7 +627,7 @@ export class JudicialReviewService {
     if (dto.hennellyExplanation !== undefined) data.hennellyExplanation = dto.hennellyExplanation;
     if (dto.extensionOutcome !== undefined) data.extensionOutcome = dto.extensionOutcome;
     if (dto.leaveDecidedAt !== undefined) data.leaveDecidedAt = new Date(dto.leaveDecidedAt);
-    if (dto.leaveOrderAt !== undefined) data.leaveOrderAt = new Date(dto.leaveOrderAt);
+    if (dto.leaveOrderAt !== undefined) data.leaveOrderAt = toLegalDateUtc(dto.leaveOrderAt);
     if (dto.leaveGranted !== undefined) data.leaveGranted = dto.leaveGranted;
     if (dto.applicationAllowed !== undefined) data.applicationAllowed = dto.applicationAllowed;
     if (dto.redeterminationDecidedAt !== undefined)
@@ -628,6 +644,9 @@ export class JudicialReviewService {
         entityId: matterId,
         newValues: { updatedFields: Object.keys(dto) },
       });
+      // Most edited fields are deadline anchors (aljrFiledAt, rule9ResponseAt,
+      // decidingOfficeLocation, …) — recompute inside the same transaction.
+      await this.deadlines.recomputeDeadlines(matterId, user.id, tx);
       return next;
     });
   }

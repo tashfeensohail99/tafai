@@ -25,7 +25,7 @@ datasource db {
   //   sales        (reserved) commissions, quotas, sales-specific analytics
   //   client_portal (reserved) future client self-service tables
   //   public       Prisma's _prisma_migrations only
-  schemas   = ["public", "core", "audit", "crm", "processing", "finance", "ai", "sales", "client_portal", "whatsapp"]
+  schemas   = ["public", "core", "audit", "crm", "processing", "finance", "ai", "sales", "client_portal", "whatsapp", "legal"]
 }
 
 // =============================================================================
@@ -5100,4 +5100,741 @@ model WhatsAppDailyReportLog {
 
   @@map("daily_report_log")
   @@schema("whatsapp")
+}
+
+// =============================================================================
+// JUDICIAL REVIEW (legal schema) — Federal Court JR module (PR 1 foundation)
+// =============================================================================
+
+enum JrIntakeType {
+  INTERNAL
+  EXTERNAL
+
+  @@schema("legal")
+}
+
+enum JrDecidingOfficeLocation {
+  IN_CANADA
+  OUTSIDE_CANADA
+  UNKNOWN
+
+  @@schema("legal")
+}
+
+enum JrDecisionMaker {
+  VISA_OFFICER
+  IRCC_IN_CANADA
+  CPC
+  CBSA
+  ID
+  IAD
+  RAD
+  RPD
+  OTHER
+
+  @@schema("legal")
+}
+
+enum JrRoute {
+  UNDETERMINED
+  FEDERAL_COURT
+  IAD
+  RAD
+  NO_RECOURSE
+  REAPPLY_INSTEAD
+
+  @@schema("legal")
+}
+
+enum JrMatterStage {
+  INTAKE
+  ROUTE_DETERMINED
+  MERITS_REVIEW // counsel forms a view on the file
+  COUNSEL_DECLINED // non-terminal — re-refer loop
+  RETAINED // counsel engaged; drafting begins
+  REQUIRES_EXTENSION_REQUEST // non-terminal — gates RETAINED → FILED
+  FILED // ALJR filed; Rule 9 / perfection run as artifacts + dates
+  LEAVE_GRANTED
+  CLIENT_UNRESPONSIVE // non-terminal, aging counter; returns to previousStage
+  REDETERMINATION // settled or allowed; additional-submissions window is open
+  CLOSED // terminal — closeReason carries the outcome
+
+  @@schema("legal")
+}
+
+enum JrCloseReason {
+  REFERRED_IAD
+  REFERRED_RAD
+  REFERRED_REAPPLICATION
+  NO_RECOURSE
+  COUNSEL_DECLINED_NO_ALTERNATIVE
+  CLIENT_DECLINED_AFTER_REVIEW
+  WITHDRAWN_ON_INSTRUCTIONS
+  CLIENT_UNRESPONSIVE_ABANDONED
+  DEADLINE_MISSED_NOT_FILED
+  EXTENSION_REFUSED
+  LEAVE_REFUSED
+  SETTLED_REDETERMINATION // ← a WIN (worked example). Never report as a loss.
+  ALLOWED_AT_HEARING // ← a WIN
+  DISMISSED_AT_HEARING
+  REDETERMINATION_APPROVED // ← the real end of the pipeline
+  REDETERMINATION_REFUSED // ⇒ successor matter, fresh clock
+  SUCCESSOR_MATTER_OPENED
+
+  @@schema("legal")
+}
+
+/// The artifact lifecycle. THE spine of this module.
+enum JrArtifactStatus {
+  DRAFT
+  INTERNAL_QA
+  COUNSEL_REVIEW
+  COUNSEL_CHANGES_REQUESTED
+  COUNSEL_APPROVED
+  FILED
+  SERVED
+  SUPERSEDED
+
+  @@schema("legal")
+}
+
+enum JrArtifactType {
+  // — Client Application Documents (the original refused application) —
+  ORIGINAL_APPLICATION_FORM // IMM5621, IMM5739, …
+  PASSPORT
+  PROOF_OF_FUNDS
+  ORIGINAL_COVER_LETTER
+  SUPPORTING_EVIDENCE
+  REFUSAL_LETTER
+  GCMS_NOTES
+  // — Judicial Review Files —
+  ALJR_FORM_IR1
+  ALJR_STAMPED_FILED
+  CERTIFICATE_OF_SERVICE
+  PROOF_OF_SERVICE
+  RULE_9_RESPONSE
+  AR_AFFIDAVIT
+  MEMORANDUM_OF_ARGUMENT
+  APPLICANTS_RECORD
+  APPLICANTS_RECORD_TOC
+  APPLICANTS_RECORD_BACKPAGE
+  ANONYMITY_REQUEST
+  REPLY_MEMORANDUM
+  LEAVE_ORDER
+  CERTIFIED_TRIBUNAL_RECORD
+  // — Settlement —
+  DOJ_SETTLEMENT_OFFER
+  NOTICE_OF_DISCONTINUANCE // Form 166, Rule 166
+  CONSENT_JUDGMENT
+  JUDGMENT_AND_REASONS
+  // — Redetermination —
+  ADDITIONAL_SUBMISSIONS
+  REDETERMINATION_DECISION
+  // — Engagement —
+  ENGAGEMENT_LETTER
+  MERITS_ASSESSMENT
+  ALTERNATIVES_SHEET
+  OTHER
+
+  @@schema("legal")
+}
+
+/// Mirrors the folder structure the team already uses.
+enum JrArtifactFolder {
+  CLIENT_APPLICATION_DOCUMENTS
+  JUDICIAL_REVIEW_FILES
+  JUDICIAL_REVIEW_RAW // the "Raw Files" working area
+  SETTLEMENT
+  REDETERMINATION
+  ENGAGEMENT
+
+  @@schema("legal")
+}
+
+enum JrRule9ResponseType {
+  REASONS_PRODUCED
+  NO_REASONS_NOTICE
+
+  @@schema("legal")
+}
+
+enum JrSettlementStage {
+  PRE_PERFECTION
+  PRE_LEAVE
+  POST_LEAVE
+  AT_HEARING
+
+  @@schema("legal")
+}
+
+enum JrSettlementArtifact {
+  NOTICE_OF_DISCONTINUANCE
+  CONSENT_JUDGMENT
+
+  @@schema("legal")
+}
+
+enum JrCertifiedQuestionStatus {
+  NOT_SOUGHT
+  PROPOSED
+  REFUSED
+  CERTIFIED
+
+  @@schema("legal")
+}
+
+enum JrCounselRetainerScope {
+  LEAVE_ONLY
+  FULL
+
+  @@schema("legal")
+}
+
+enum JrMeritsRecommendation {
+  FILE_JR
+  REAPPLY
+  RECONSIDER
+  APPEAL_IAD
+  APPEAL_RAD
+  DECLINE
+
+  @@schema("legal")
+}
+
+enum JrAtipStatute {
+  PRIVACY_ACT
+  ATIA
+
+  @@schema("legal")
+}
+
+enum JrAtipRequester {
+  SELF
+  FIRM
+  SPONSOR
+
+  @@schema("legal")
+}
+
+enum JrDocumentRecordStatus {
+  ON_RECORD
+  NEW
+  UNKNOWN
+
+  @@schema("legal")
+}
+
+enum JrNewEvidenceJustification {
+  GENERAL_BACKGROUND
+  PROCEDURAL_FAIRNESS
+  ABSENCE_OF_EVIDENCE
+  OTHER_EXPLAIN
+
+  @@schema("legal")
+}
+
+enum JrRuleVerificationStatus {
+  UNVERIFIED
+  VERIFIED
+  SUPERSEDED
+
+  @@schema("legal")
+}
+
+enum JrDeadlineStatus {
+  PENDING
+  MET
+  MISSED
+  WAIVED
+  NOT_APPLICABLE
+
+  @@schema("legal")
+}
+
+enum JrSponsorshipRelationship {
+  NONE
+  SPOUSE_OR_PARTNER
+  CHILD
+  PARENT_OR_GRANDPARENT
+  OTHER_FAMILY
+
+  @@schema("legal")
+}
+
+enum JrInadmissibilityGround {
+  NONE
+  MISREPRESENTATION
+  SECURITY
+  HUMAN_RIGHTS
+  SANCTIONS
+  SERIOUS_CRIMINALITY
+  ORGANIZED_CRIMINALITY
+  MEDICAL
+  FINANCIAL
+  OTHER
+
+  @@schema("legal")
+}
+
+enum JrGround {
+  INADEQUATE_REASONS
+  IGNORED_EVIDENCE
+  PF_NO_FAIRNESS_LETTER
+  PF_EXTRINSIC_EVIDENCE
+  UNREASONABLE_CREDIBILITY
+  FETTERED_DISCRETION
+  MISAPPREHENSION_OF_EVIDENCE
+  AUTOMATION_CHINOOK
+  REWEIGHING_DISAGREEMENT_WEAK
+  OTHER
+
+  @@schema("legal")
+}
+
+/// A Federal Court judicial review matter. Distinct from ProcessingCase: its own
+/// lifecycle, its own counsel of record, its own money, its own external key
+/// (the Federal Court file number, format IMM-#####-YY).
+model JrMatter {
+  id           String  @id @default(uuid())
+  matterNumber String  @unique // JR-YYYY-NNNNN
+  /// Style of cause as it appears on the court file, e.g. "NAVID v. MCI".
+  styleOfCause String? @db.VarChar(200)
+
+  // ---- identity: reuse, never duplicate --------------------------------
+  clientId      String // crm.Client.id (bare id, no FK)
+  leadId        String // REQUIRED — Agreement.leadId is non-null
+  branchId      String?
+  intakeType    JrIntakeType
+  originCaseId  String? // processing.ProcessingCase.id — INTERNAL only
+  priorMatterId String? // self-ref: successor matter
+
+  // ---- assignment ------------------------------------------------------
+  assignedAssociateUserId String? // core.UserAccount.id — NOT Employee.id
+  createdByUserId         String
+  updatedByUserId         String?
+
+  // ---- stage -----------------------------------------------------------
+  stage               JrMatterStage  @default(INTAKE)
+  stageEnteredAt      DateTime       @default(now())
+  previousStage       JrMatterStage?
+  unresponsiveSinceAt DateTime?
+  closeReason         JrCloseReason?
+  closedAt            DateTime?
+
+  // ---- the decision under review ---------------------------------------
+  decisionMaker            JrDecisionMaker
+  applicationType          String                   @db.VarChar(80)
+  decisionLetterDate       DateTime?                @db.Date // worked example: 2025-05-14
+  decisionCommunicatedAt   DateTime? // THE CLOCK ANCHOR
+  decisionCommunicatedNote String?                  @db.VarChar(400) // chain of custody
+  /// 15 vs 60 turns on THIS. Default UNKNOWN. UNKNOWN computes as 15 days.
+  /// ASSERTED ON THE FILED FORM IR-1 — changing it after filing is material.
+  decidingOfficeLocation   JrDecidingOfficeLocation @default(UNKNOWN)
+  decidingOfficeSourceNote String?                  @db.VarChar(400) // required when != UNKNOWN
+  decisionMakerOffice      String?                  @db.VarChar(120) // analytics column
+  decisionMakerOfficerRef  String?                  @db.VarChar(80) // analytics column
+  refusalGrounds           JrGround[]
+
+  // ---- route determination (IRPA s.63 / s.64(3) / s.110(2) tree) -------
+  route                   JrRoute                    @default(UNDETERMINED)
+  routeDeterminedByUserId String?
+  routeDeterminedAt       DateTime?
+  appealRightExhausted    Boolean                    @default(false) // IRPA s.72(2)(a) — hard gate
+  sponsorshipRelationship JrSponsorshipRelationship?
+  inadmissibilityGround   JrInadmissibilityGround?
+  routeReasoning          String?                    @db.VarChar(1000)
+
+  // ---- deadline engine -------------------------------------------------
+  deadlineRuleSetVersion Int
+
+  // ---- conflict review (INTERNAL escalations) --------------------------
+  conflictReviewRequired        Boolean   @default(false)
+  originalFilerUserId           String?
+  conflictReviewClearedAt       DateTime?
+  conflictReviewClearedByUserId String?
+  conflictReviewNote            String?   @db.VarChar(1000)
+
+  // ---- counsel ---------------------------------------------------------
+  counselOfRecordId             String? // JrCounsel.id
+  counselRetainerScope          JrCounselRetainerScope? // FCR 119(2)
+  counselRetainerSignedAt       DateTime?
+  counselFeeQuoted              Decimal?                @db.Decimal(12, 2)
+  counselFeeCurrency            String?                 @db.VarChar(3)
+  solicitorOfRecordAt           DateTime? // stamped when the signed ALJR is FILED
+  counselCeasedActingAt         DateTime?
+  form124EFiled                 Boolean                 @default(false)
+  /// FCIRPR r.5(1)(j). Defaults to counsel of record.
+  paidPreparerName              String?                 @db.VarChar(200)
+  paidPreparerAddress           String?                 @db.VarChar(400)
+  paidPreparerPhone             String?                 @db.VarChar(40)
+  /// TRUE when TIS authored substantive content — which, on this operating
+  /// model, is the normal case. Drives the r.5(1)(j) disclosure prompt.
+  internalSubstantiveAuthorship Boolean                 @default(true)
+  meritsRecommendation          JrMeritsRecommendation?
+  meritsAssessedByCounselId     String?
+  meritsAssessedAt              DateTime?
+  expectationsAcknowledgedAt    DateTime?
+  alternativesSheetSignedAt     DateTime?
+
+  // ---- Federal Court file ---------------------------------------------
+  courtFileNumber   String? @db.VarChar(30) // IMM-#####-YY — master external key
+  registryOffice    String? @db.VarChar(40) // worked example: TOR
+  neutralCitation   String? @db.VarChar(40)
+  presidingJudge    String? @db.VarChar(120) // analytics column
+  hearingCity       String? @db.VarChar(80)
+  hearingLanguage   String? @db.VarChar(20)
+  // Respondent's counsel — captured from the Notice of Appearance / DOJ letter.
+  dojCounselName    String? @db.VarChar(120)
+  dojCounselEmail   String? @db.VarChar(200)
+  dojRegionalOffice String? @db.VarChar(120) // e.g. "Ontario Regional Office"
+  dojFileNumber     String? @db.VarChar(60) // the LEX number
+
+  // ---- procedural dated fields (the deadline engine keys off these) ----
+  extensionRequested  Boolean @default(false)
+  hennellyIntention   String? @db.VarChar(1000)
+  hennellyMerit       String? @db.VarChar(1000)
+  hennellyPrejudice   String? @db.VarChar(1000)
+  hennellyExplanation String? @db.VarChar(1000)
+  extensionOutcome    String? @db.VarChar(40)
+
+  aljrFiledAt               DateTime? // worked example: 2025-07-11
+  aljrServedAt              DateTime?
+  reasonsPleadedAsReceived  Boolean? // the IR-1 field that forks Rule 9
+  proofOfServiceFiledAt     DateTime?
+  noaReceivedAt             DateTime?
+  rule9RequestedAt          DateTime?
+  rule9ResponseAt           DateTime? // worked example: 2025-09-03
+  rule9ResponseType         JrRule9ResponseType?
+  rule9RespondingOffice     String?                   @db.VarChar(120) // worked example: "CPC-Ottawa"
+  // ⚠ an in-Canada office on a 60-day file
+  anonymityOrderRequestedAt DateTime?
+  affidavitDraftSentAt      DateTime?
+  affidavitSwornAt          DateTime?
+  affidavitReceivedAt       DateTime?
+  perfectedAt               DateTime?
+  applicantRecordServedAt   DateTime?
+  respondentMemoServedAt    DateTime? // triggers the r.13 reply clock
+  replyFiledAt              DateTime?
+  leaveDecidedAt            DateTime?
+  leaveGranted              Boolean?
+  leaveOrderAt              DateTime?
+  ctrDueAt                  DateTime? // read off the leave order
+  ctrReceivedAt             DateTime?
+  hearingAt                 DateTime?
+  judgmentAt                DateTime?
+  applicationAllowed        Boolean?
+  certifiedQuestionStatus   JrCertifiedQuestionStatus @default(NOT_SOUGHT)
+  certifiedQuestionText     String?
+
+  // ---- settlement (structured, per the canonical DOJ terms) ------------
+  settlementOfferedAt           DateTime? // worked example: 2025-11-17
+  settlementAgreedAt            DateTime?
+  settlementStage               JrSettlementStage?
+  settlementArtifact            JrSettlementArtifact?
+  /// (a) applicant serves + files a Notice of Discontinuance
+  termDiscontinuanceByApplicant Boolean               @default(false)
+  /// (b) Respondent sets aside the officer's decision
+  termDecisionSetAside          Boolean               @default(false)
+  /// (c) re-determined by a DIFFERENT officer
+  termDifferentOfficer          Boolean               @default(false)
+  /// (d) opportunity to make ADDITIONAL SUBMISSIONS — the successor trigger
+  termAdditionalSubmissions     Boolean               @default(false)
+  additionalSubmissionsDueAt    DateTime?             @db.Date
+  additionalSubmissionsOffice   String?               @db.VarChar(120)
+  /// (e) no costs to either party
+  termNoCosts                   Boolean               @default(false)
+  settlementTermsOther          String?
+
+  // ---- redetermination -------------------------------------------------
+  redeterminationStartedAt     DateTime?
+  additionalSubmissionsFiledAt DateTime?
+  redeterminationDecidedAt     DateTime?
+  redeterminationApproved      Boolean?
+  successorMatterId            String? // if refused again
+
+  // ---- parallel, explicitly NON-TOLLING -------------------------------
+  reconsiderationRequestedAt DateTime?
+  reconsiderationOutcomeAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  artifacts JrArtifact[]
+  deadlines JrDeadline[]
+  notes     JrNote[]
+  alerts    JrDeadlineAlert[]
+  auditLogs JrAuditLog[]
+  atip      JrAtipRequest[]
+
+  @@index([stage])
+  @@index([assignedAssociateUserId])
+  @@index([clientId])
+  @@index([leadId])
+  @@index([intakeType, stage])
+  @@index([courtFileNumber])
+  @@index([originCaseId])
+  @@map("jr_matters")
+  @@schema("legal")
+}
+
+/// A substantive work product or received document on a matter. TIS drafts;
+/// counsel reviews and signs; the artifact is filed and served. Each of those
+/// is a recorded transition, not an assumption.
+model JrArtifact {
+  id           String           @id @default(uuid())
+  matterId     String
+  artifactType JrArtifactType
+  /// Mirrors the team's existing folder structure.
+  folder       JrArtifactFolder
+  title        String           @db.VarChar(300)
+  status       JrArtifactStatus @default(DRAFT)
+  sortOrder    Int              @default(0) // r.10(2) mandatory order for the Applicant's Record
+
+  // ---- authorship (TIS side) -------------------------------------------
+  authorUserId       String?
+  internalQaByUserId String?
+  internalQaAt       DateTime?
+
+  // ---- THE COUNSEL APPROVAL GATE ---------------------------------------
+  /// The JrCounsel who reviewed. Nothing reaches FILED without this.
+  counselReviewedById           String?
+  /// The UserAccount who recorded counsel's review in the system (may be the
+  /// JR Head transcribing an email). Recorded for audit; does NOT make them
+  /// the reviewer.
+  counselReviewRecordedByUserId String?
+  counselReviewedAt             DateTime?
+  counselComments               String?
+  counselApprovedVersionId      String? // exactly which version was approved
+  changesRequestedAt            DateTime?
+  changesRequestedNote          String?
+
+  // ---- filing + service (per artifact, never one matter-level flag) ----
+  filedAt              DateTime?
+  registryStampedAt    DateTime?
+  courtDocumentNumber  String?   @db.VarChar(40)
+  servedAt             DateTime?
+  servedOn             String?   @db.VarChar(200) // "Minister of Citizenship and Immigration" / DOJ office
+  serviceMethod        String?   @db.VarChar(60) // PERSONAL | EMAIL | COURIER | REGISTRY_EFILE
+  proofOfServiceKey    String?   @db.VarChar(500) // the certificate / affidavit of service
+  serviceScreenshotKey String?   @db.VarChar(500) // the team keeps screenshots too — first-class
+
+  // ---- evidence rule ---------------------------------------------------
+  recordStatus             JrDocumentRecordStatus      @default(UNKNOWN)
+  newEvidenceJustification JrNewEvidenceJustification?
+  newEvidenceExplanation   String?                     @db.VarChar(1000)
+  /// Set when a NEW document is carried forward into the post-settlement
+  /// additional-submissions package, where it IS admissible.
+  carriedToRedetermination Boolean                     @default(false)
+
+  isPrivileged Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  matter   JrMatter            @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  versions JrArtifactVersion[]
+
+  @@index([matterId, folder, sortOrder])
+  @@index([matterId, status])
+  @@index([status, counselReviewedAt]) // the counsel-review queue
+  @@map("jr_artifacts")
+  @@schema("legal")
+}
+
+/// Append-only. Every save is a version; counsel approves a SPECIFIC version.
+model JrArtifactVersion {
+  id               String   @id @default(uuid())
+  artifactId       String
+  versionNumber    Int
+  storageKey       String   @db.VarChar(500) // StorageService; prefix jr/matters/${matterId}
+  fileName         String   @db.VarChar(300)
+  mimeType         String   @db.VarChar(120)
+  fileSizeBytes    Int
+  changeNote       String?  @db.VarChar(500)
+  uploadedByUserId String
+  isCurrent        Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  artifact JrArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@unique([artifactId, versionNumber])
+  @@index([artifactId, isCurrent])
+  @@map("jr_artifact_versions")
+  @@schema("legal")
+}
+
+/// The Canadian lawyer. Worked example: LSO ID 76888B, Mississauga ON.
+model JrCounsel {
+  id                      String    @id @default(uuid())
+  legalName               String    @db.VarChar(200)
+  firmName                String    @db.VarChar(200)
+  lawSocietyProvince      String    @db.VarChar(40) // "ON"
+  licenceNumber           String    @db.VarChar(60) // "76888B"
+  directoryUrl            String?   @db.VarChar(500)
+  email                   String    @db.VarChar(200)
+  phone                   String?   @db.VarChar(40)
+  addressForServiceCanada String    @db.VarChar(400)
+  /// v1: a date + an amber chip at 90 days + a quarterly task. NOT a cron.
+  goodStandingVerifiedAt  DateTime?
+  isActive                Boolean   @default(true)
+  notes                   String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@unique([lawSocietyProvince, licenceNumber])
+  @@map("jr_counsel")
+  @@schema("legal")
+}
+
+/// Versioned, dated deadline rules. A Special Order is a DATA change, not a deploy.
+model JrDeadlineRule {
+  id                 String                   @id @default(uuid())
+  ruleSetVersion     Int
+  milestoneKey       String                   @db.VarChar(60)
+  /// Discriminator where the period varies (ALJR_FILING: IN_CANADA /
+  /// OUTSIDE_CANADA / UNKNOWN). NULL where unconditional.
+  variantKey         String?                  @db.VarChar(40)
+  baseDays           Int
+  /// MILESTONE-SCOPED. The +45 / +90 rows carry milestoneKey='RULE_10_PERFECTION'
+  /// and nothing else.
+  modifierDays       Int                      @default(0)
+  offsetDirection    String                   @default("AFTER") @db.VarChar(10) // AFTER | BEFORE
+  effectiveFrom      DateTime                 @db.Date
+  effectiveTo        DateTime?                @db.Date
+  authorityCitation  String                   @db.VarChar(200)
+  sourceUrl          String                   @db.VarChar(500)
+  verificationStatus JrRuleVerificationStatus @default(UNVERIFIED)
+  verifiedByUserId   String?
+  verifiedAt         DateTime?
+  notes              String?
+  createdAt          DateTime                 @default(now())
+
+  @@unique([ruleSetVersion, milestoneKey, variantKey])
+  @@index([milestoneKey, effectiveFrom])
+  @@map("jr_deadline_rules")
+  @@schema("legal")
+}
+
+/// One computed deadline. Stores the DATE and the RULE ROW that produced it.
+model JrDeadline {
+  id                 String           @id @default(uuid())
+  matterId           String
+  milestoneKey       String           @db.VarChar(60)
+  /// Free-text label — used by UNDERLYING_DOC_EXPIRY rows ("Medical exam",
+  /// "Police certificate", "LMIA", "Letter of acceptance", "Passport").
+  label              String?          @db.VarChar(120)
+  anchorDate         DateTime
+  anchorField        String           @db.VarChar(60)
+  computedDueAt      DateTime
+  ruleId             String
+  ruleSetVersion     Int
+  status             JrDeadlineStatus @default(PENDING)
+  satisfiedAt        DateTime?
+  overriddenDueAt    DateTime?
+  overrideReason     String?          @db.VarChar(500)
+  overriddenByUserId String?
+  isFatal            Boolean          @default(false) // ALJR_FILING, RULE_10_PERFECTION
+  /// FALSE until the governing rule row is VERIFIED. Client-facing renders throw.
+  quotableToClient   Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  matter             JrMatter         @relation(fields: [matterId], references: [id], onDelete: Cascade)
+
+  @@unique([matterId, milestoneKey, label])
+  @@index([status, computedDueAt])
+  @@index([matterId])
+  @@map("jr_deadlines")
+  @@schema("legal")
+}
+
+/// JR's own reminder ledger. crm.ClientReminder.caseId is a REQUIRED non-null FK
+/// to ProcessingCase — JR physically cannot write to it.
+model JrDeadlineAlert {
+  id              String    @id @default(uuid())
+  matterId        String
+  deadlineId      String?
+  tier            String    @db.VarChar(20)
+  channel         String    @db.VarChar(20) // EMAIL | BELL | WHATSAPP
+  recipientUserId String?
+  sentAt          DateTime?
+  deliveryStatus  String    @default("PENDING") @db.VarChar(20)
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+  matter          JrMatter  @relation(fields: [matterId], references: [id], onDelete: Cascade)
+
+  @@unique([deadlineId, tier, channel, recipientUserId])
+  @@index([matterId])
+  @@map("jr_deadline_alerts")
+  @@schema("legal")
+}
+
+/// GCMS / ATIP tracking. Explicitly non-tolling.
+model JrAtipRequest {
+  id                   String          @id @default(uuid())
+  matterId             String
+  statute              JrAtipStatute   @default(PRIVACY_ACT) // free, lawful worldwide since 13 Jul 2022
+  requester            JrAtipRequester @default(SELF)
+  requestNumber        String?         @db.VarChar(60)
+  submittedAt          DateTime?       @db.Date
+  statutoryDueAt       DateTime?       @db.Date // submittedAt + 30d
+  extensionNoticeAt    DateTime?       @db.Date
+  receivedAt           DateTime?       @db.Date
+  isRedacted           Boolean         @default(false)
+  wetSignatureRequired Boolean         @default(false)
+  complaintFiledAt     DateTime?       @db.Date // OIC (ATIA) / OPC (Privacy Act)
+  createdAt            DateTime        @default(now())
+  matter               JrMatter        @relation(fields: [matterId], references: [id], onDelete: Cascade)
+
+  @@index([matterId])
+  @@map("jr_atip_requests")
+  @@schema("legal")
+}
+
+model JrNote {
+  id              String    @id @default(uuid())
+  matterId        String
+  content         String
+  noteType        String    @default("GENERAL") @db.VarChar(30) // GENERAL | COUNSEL_CORRESPONDENCE |
+  // DOJ_CORRESPONDENCE | CONFLICT_REVIEW |
+  // CLIENT_CALL | HEAD_ONLY
+  isPinned        Boolean   @default(false)
+  authorUserId    String
+  createdAt       DateTime  @default(now())
+  editedAt        DateTime?
+  deletedAt       DateTime?
+  deletedByUserId String?
+  matter          JrMatter  @relation(fields: [matterId], references: [id], onDelete: Cascade)
+
+  @@index([matterId])
+  @@map("jr_notes")
+  @@schema("legal")
+}
+
+/// Written INSIDE the same $transaction as the mutation. This is the record
+/// needed if a deadline is ever missed or an approval is ever questioned.
+model JrAuditLog {
+  id          String    @id @default(uuid())
+  matterId    String?
+  actorUserId String? // NULL for sweeper/automated writes
+  action      String    @db.VarChar(80) // 'matter_created' | 'stage_changed' |
+  // 'route_determined' | 'deciding_office_set' |
+  // 'artifact_submitted_for_review' |
+  // 'artifact_counsel_approved' |
+  // 'artifact_changes_requested' |
+  // 'artifact_filed' | 'artifact_served' |
+  // 'deadline_overridden' | 'counsel_assigned' |
+  // 'settlement_recorded' | 'successor_opened'
+  entityType  String    @db.VarChar(60)
+  entityId    String?
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?   @db.VarChar(60)
+  userAgent   String?   @db.VarChar(400)
+  createdAt   DateTime  @default(now())
+  matter      JrMatter? @relation(fields: [matterId], references: [id], onDelete: SetNull)
+
+  @@index([matterId, createdAt])
+  @@index([action])
+  @@map("jr_audit_logs")
+  @@schema("legal")
 }

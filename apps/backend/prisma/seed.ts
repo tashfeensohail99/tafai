@@ -130,6 +130,23 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'processing.checklist.manage', module: 'processing', description: 'Manage the document checklist templates' },
   { key: 'processing.report.view', module: 'processing', description: 'View processing reports + dashboards' },
   { key: 'processing.report.export', module: 'processing', description: 'Export processing reports as CSV' },
+  // Judicial Review (Federal Court JR module)
+  { key: 'jr.portal.view', module: 'jr', description: 'Access the Judicial Review portal' },
+  { key: 'jr.matter.view_assigned', module: 'jr', description: 'Read matters assigned to me' },
+  { key: 'jr.matter.view_all', module: 'jr', description: 'Read every JR matter (manager key)' },
+  { key: 'jr.matter.create', module: 'jr', description: 'Create a JR matter' },
+  { key: 'jr.matter.assign', module: 'jr', description: 'Keep or delegate a matter to an associate' },
+  { key: 'jr.matter.update_stage', module: 'jr', description: 'Advance a matter through the stage machine' },
+  { key: 'jr.route.determine', module: 'jr', description: 'Set route, deciding-office location, appeal-right-exhausted' },
+  { key: 'jr.deadline.override', module: 'jr', description: 'Manually override a computed deadline (reason mandatory)' },
+  { key: 'jr.counsel.manage', module: 'jr', description: 'CRUD counsel; set counsel of record' },
+  { key: 'jr.artifact.view', module: 'jr', description: 'Read artifacts + versions; mint signed URLs' },
+  { key: 'jr.artifact.author', module: 'jr', description: 'Create artifacts, upload versions, move DRAFT <-> INTERNAL_QA' },
+  { key: 'jr.artifact.submit_to_counsel', module: 'jr', description: 'Move an artifact INTERNAL_QA -> COUNSEL_REVIEW' },
+  { key: 'jr.artifact.record_counsel_review', module: 'jr', description: "Record counsel's approval or change request" },
+  { key: 'jr.artifact.file', module: 'jr', description: 'Move an artifact COUNSEL_APPROVED -> FILED -> SERVED' },
+  { key: 'jr.note.create', module: 'jr', description: 'Write a JR note' },
+  { key: 'jr.rules.manage', module: 'jr', description: 'Edit deadline rules; set verificationStatus = VERIFIED' },
 ];
 
 const SYSTEM_ROLES: {
@@ -279,6 +296,26 @@ const SYSTEM_ROLES: {
     displayName: 'Marketing',
     description: 'Marketing and lead source tracking',
     permissionKeys: ['leads.view_all', 'reports.view'],
+  },
+  {
+    name: 'jr_head',
+    displayName: 'JR Head',
+    description: 'Judicial Review head — sees all matters and assigns them to associates',
+    permissionKeys: [
+      'jr.portal.view', 'jr.matter.view_assigned', 'jr.matter.view_all', 'jr.matter.create',
+      'jr.matter.assign', 'jr.matter.update_stage', 'jr.route.determine', 'jr.deadline.override',
+      'jr.counsel.manage', 'jr.artifact.view', 'jr.artifact.author', 'jr.artifact.submit_to_counsel',
+      'jr.artifact.record_counsel_review', 'jr.artifact.file', 'jr.note.create', 'jr.rules.manage',
+    ],
+  },
+  {
+    name: 'jr_associate',
+    displayName: 'JR Associate',
+    description: 'Judicial Review associate — works the matters assigned to them',
+    permissionKeys: [
+      'jr.portal.view', 'jr.matter.view_assigned', 'jr.matter.update_stage',
+      'jr.artifact.view', 'jr.artifact.author', 'jr.artifact.submit_to_counsel', 'jr.note.create',
+    ],
   },
   {
     name: 'client',

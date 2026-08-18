@@ -1,8 +1,10 @@
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -11,7 +13,19 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { JrArtifactFolder, JrArtifactType, JrIntakeType, JrMatterStage } from '@prisma/client';
+import {
+  JrArtifactFolder,
+  JrArtifactType,
+  JrCloseReason,
+  JrCounselRetainerScope,
+  JrDecidingOfficeLocation,
+  JrInadmissibilityGround,
+  JrIntakeType,
+  JrMatterStage,
+  JrMeritsRecommendation,
+  JrRule9ResponseType,
+  JrSponsorshipRelationship,
+} from '@prisma/client';
 
 /**
  * Query filters for GET /jr/matters. The global ValidationPipe runs with
@@ -129,4 +143,371 @@ export class ServeArtifactDto {
   @IsString()
   @MaxLength(500)
   serviceScreenshotKey?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Matter stage machine + route tree DTOs (PR 3). Every property is decorated —
+// the global ValidationPipe runs forbidNonWhitelisted, so an undecorated field
+// 400s. Fields carried here are the per-transition inputs the §6.2 gates read;
+// fields owned by other endpoints (route/merits/counsel/conflict/updateMatter)
+// are NOT accepted here.
+// ---------------------------------------------------------------------------
+
+/** PATCH /jr/matters/:matterId/stage — the gated stage machine (§6.1 + §6.2). */
+export class ChangeStageDto {
+  @IsEnum(JrMatterStage)
+  targetStage!: JrMatterStage;
+
+  /** Required for any → CLOSED. */
+  @IsOptional()
+  @IsEnum(JrCloseReason)
+  closeReason?: JrCloseReason;
+
+  // RETAINED → FILED: asserted on the filed Form IR-1.
+  @IsOptional()
+  @IsEnum(JrDecidingOfficeLocation)
+  decidingOfficeLocation?: JrDecidingOfficeLocation;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  decidingOfficeSourceNote?: string;
+
+  // → REQUIRES_EXTENSION_REQUEST: the four Hennelly narrative fields.
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyIntention?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyMerit?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyPrejudice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyExplanation?: string;
+
+  // FILED → LEAVE_GRANTED.
+  @IsOptional()
+  @IsDateString()
+  leaveDecidedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  leaveOrderAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  leaveGranted?: boolean;
+
+  // REDETERMINATION → CLOSED.
+  @IsOptional()
+  @IsDateString()
+  redeterminationDecidedAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  redeterminationApproved?: boolean;
+}
+
+/** POST /jr/matters/:matterId/route — decision-tree submission (§6.4). */
+export class DetermineRouteDto {
+  @IsOptional()
+  @IsEnum(JrSponsorshipRelationship)
+  sponsorshipRelationship?: JrSponsorshipRelationship;
+
+  @IsOptional()
+  @IsEnum(JrInadmissibilityGround)
+  inadmissibilityGround?: JrInadmissibilityGround;
+
+  /** IRPA s.72(2)(a) — filing where an IAD appeal lies is fatal. */
+  @IsBoolean()
+  appealRightExhausted!: boolean;
+
+  /** RPD only: an s.110(2) exclusion applies (→ Federal Court, not the RAD). */
+  @IsOptional()
+  @IsBoolean()
+  rpdS110Exclusion?: boolean;
+
+  /** VISA_OFFICER/IRCC/CPC/CBSA: does an s.63 appeal right lie? */
+  @IsOptional()
+  @IsBoolean()
+  hasS63AppealRight?: boolean;
+
+  /** Citizenship Act refusal — v1 rejects (s.22.1, 30-day, not IRPA 15/60). */
+  @IsOptional()
+  @IsBoolean()
+  isCitizenshipMatter?: boolean;
+}
+
+/** PATCH /jr/matters/:matterId/assign — keep (assign to self) or delegate. */
+export class AssignMatterDto {
+  @IsUUID()
+  assignedAssociateUserId!: string;
+}
+
+/** POST /jr/matters/:matterId/merits — record counsel's merits view. */
+export class RecordMeritsDto {
+  @IsEnum(JrMeritsRecommendation)
+  meritsRecommendation!: JrMeritsRecommendation;
+
+  /** A JrCounsel.id — validated to exist + be active. */
+  @IsUUID()
+  meritsAssessedByCounselId!: string;
+}
+
+/** POST /jr/matters/:matterId/conflict-review — clear conflict review. */
+export class ClearConflictReviewDto {
+  @IsString()
+  @MaxLength(1000)
+  note!: string;
+}
+
+/** POST /jr/matters/:matterId/counsel — set counsel of record + retainer scope. */
+export class SetCounselOfRecordDto {
+  /** A JrCounsel.id — validated to exist + be active. */
+  @IsUUID()
+  counselOfRecordId!: string;
+
+  @IsEnum(JrCounselRetainerScope)
+  counselRetainerScope!: JrCounselRetainerScope;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  counselFeeQuoted?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(3)
+  counselFeeCurrency?: string;
+
+  @IsOptional()
+  @IsDateString()
+  counselRetainerSignedAt?: string;
+}
+
+/**
+ * PATCH /jr/matters/:matterId — edit ONLY non-gated fields (court file number,
+ * DOJ counsel + LEX number, hearing details, procedural dates). Never touches
+ * stage / route / counselOfRecordId / decidingOfficeLocation — those go through
+ * their own gated endpoints.
+ */
+export class UpdateMatterDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  courtFileNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  registryOffice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  neutralCitation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  presidingJudge?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  hearingCity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  hearingLanguage?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dojCounselName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dojCounselEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dojRegionalOffice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  dojFileNumber?: string;
+
+  /** The IR-1 field that forks Rule 9. */
+  @IsOptional()
+  @IsBoolean()
+  reasonsPleadedAsReceived?: boolean;
+
+  @IsOptional()
+  @IsEnum(JrRule9ResponseType)
+  rule9ResponseType?: JrRule9ResponseType;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  rule9RespondingOffice?: string;
+
+  // ---- procedural dated fields (the deadline engine keys off these) ----
+  @IsOptional()
+  @IsDateString()
+  aljrFiledAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  aljrServedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  noaReceivedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  rule9RequestedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  rule9ResponseAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  anonymityOrderRequestedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  affidavitDraftSentAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  affidavitSwornAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  affidavitReceivedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  perfectedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  applicantRecordServedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  respondentMemoServedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  replyFiledAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  ctrDueAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  ctrReceivedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  hearingAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  judgmentAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  reconsiderationRequestedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  reconsiderationOutcomeAt?: string;
+
+  // ---- determination / outcome fields the stage-machine gates read ----
+  /** Asserted on the filed IR-1 (must be != UNKNOWN with a source note to FILE). */
+  @IsOptional()
+  @IsEnum(JrDecidingOfficeLocation)
+  decidingOfficeLocation?: JrDecidingOfficeLocation;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  decidingOfficeSourceNote?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expectationsAcknowledgedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  alternativesSheetSignedAt?: string;
+
+  // Hennelly extension narratives — all four required to REQUIRES_EXTENSION_REQUEST.
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyIntention?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyMerit?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyPrejudice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyExplanation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  extensionOutcome?: string;
+
+  @IsOptional()
+  @IsDateString()
+  leaveDecidedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  leaveOrderAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  leaveGranted?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  applicationAllowed?: boolean;
+
+  @IsOptional()
+  @IsDateString()
+  redeterminationDecidedAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  redeterminationApproved?: boolean;
 }

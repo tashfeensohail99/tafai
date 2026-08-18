@@ -292,18 +292,32 @@ export class JrArtifactsService {
       changeNote,
     );
 
-    const wasChangesRequested = artifact.status === 'COUNSEL_CHANGES_REQUESTED';
+    // A new version INVALIDATES any counsel review already recorded OR in flight.
+    // Once the content changes, an earlier approval — or an in-progress review
+    // whose subject just changed under counsel — can no longer stand. Any of
+    // COUNSEL_REVIEW / COUNSEL_APPROVED / COUNSEL_CHANGES_REQUESTED drops back to
+    // a clean DRAFT with the approval cleared, so counsel can only ever approve
+    // the version that stays current through review — the whole point of the
+    // gate. (Resetting from COUNSEL_REVIEW is what stops a version swapped in
+    // mid-review from being approved as though counsel had seen it.)
+    const invalidatesReview =
+      artifact.status === 'COUNSEL_REVIEW' ||
+      artifact.status === 'COUNSEL_APPROVED' ||
+      artifact.status === 'COUNSEL_CHANGES_REQUESTED';
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const data: Prisma.JrArtifactUpdateInput = wasChangesRequested
+      const data: Prisma.JrArtifactUpdateInput = invalidatesReview
         ? {
             status: 'DRAFT',
             counselApprovedVersionId: null,
             counselReviewedById: null,
             counselReviewedAt: null,
+            changesRequestedAt: null,
+            changesRequestedNote: null,
+            counselComments: null,
           }
         : {};
-      const next = wasChangesRequested
+      const next = invalidatesReview
         ? await tx.jrArtifact.update({ where: { id: artifactId }, data })
         : artifact;
       await this.writeAudit(tx, {
@@ -316,7 +330,7 @@ export class JrArtifactsService {
           versionId: version.id,
           versionNumber: version.versionNumber,
           status: next.status,
-          approvalCleared: wasChangesRequested,
+          approvalCleared: invalidatesReview,
         },
       });
       return next;
@@ -478,16 +492,26 @@ export class JrArtifactsService {
 
   /** COUNSEL_APPROVED → FILED. The counsel-approval gate runs FIRST. */
   async fileArtifact(artifactId: string, dto: FileArtifactDto, user: RequestUser): Promise<JrArtifact> {
-    const artifact = await this.resolveArtifact(artifactId);
-    await this.jr.assertMatterAccess(artifact.matterId, user);
-
-    const current = await this.currentVersion(artifactId);
-    this.assertFilable(artifact, current?.id ?? null);
+    const pre = await this.resolveArtifact(artifactId);
+    await this.jr.assertMatterAccess(pre.matterId, user);
 
     const filedAt = dto.filedAt ? new Date(dto.filedAt) : new Date();
     const registryStampedAt = dto.registryStampedAt ? new Date(dto.registryStampedAt) : filedAt;
 
     return this.prisma.$transaction(async (tx) => {
+      // Re-read the artifact + its current version INSIDE the transaction and run
+      // the gate here, so a version uploaded concurrently between an outside
+      // check and this write can't slip a never-approved version to FILED.
+      const artifact = await tx.jrArtifact.findFirst({ where: { id: artifactId, deletedAt: null } });
+      if (!artifact) throw new NotFoundException('Artifact not found');
+      const current = await tx.jrArtifactVersion.findFirst({ where: { artifactId, isCurrent: true } });
+      // Nothing with no stored content may be filed — even received types (which
+      // skip the counsel gate) must carry an uploaded version.
+      if (!current) {
+        throw new UnprocessableEntityException('Cannot file: the artifact has no uploaded version.');
+      }
+      this.assertFilable(artifact, current.id);
+
       const next = await tx.jrArtifact.update({
         where: { id: artifactId },
         data: {

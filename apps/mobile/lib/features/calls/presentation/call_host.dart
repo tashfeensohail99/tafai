@@ -92,13 +92,22 @@ class _CallHostState extends ConsumerState<CallHost>
       // starved and dropped. It is ended in the controller's teardown.
       markCallkitConnected(call.callId);
       final ctrl = ref.read(callControllerProvider.notifier);
-      ctrl.prepareIncoming(CallIncoming(
+      final incoming = CallIncoming(
         callId: call.callId,
         from: call.from,
         leadName: call.leadName,
         leadId: call.leadId,
         threadId: call.threadId,
-      ));
+      );
+      // A DIFFERENT call accepted from the CallKit screen while one is already
+      // live (backgrounded call-waiting): end the current call first, then take
+      // this one. Accepting straight into prepareIncoming used to overwrite the
+      // live call's state and strand its media leg.
+      if (cur.isActive && cur.callId != call.callId) {
+        ctrl.switchToCall(incoming);
+        return;
+      }
+      ctrl.prepareIncoming(incoming);
       ctrl.acceptIncoming();
     };
     // CallKit "Decline" / ended / timeout → reject on the backend.

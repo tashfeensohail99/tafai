@@ -50,6 +50,11 @@ class CallOverlay extends ConsumerWidget {
     return (a + b).toUpperCase();
   }
 
+  String _waitingName(CallIncoming w) {
+    final n = (w.leadName ?? '').trim();
+    return n.isNotEmpty ? n : w.from;
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(callControllerProvider);
@@ -67,11 +72,22 @@ class CallOverlay extends ConsumerWidget {
         right: 0,
         child: SafeArea(
           bottom: false,
-          child: _MinimizedCallBar(
-            state: s,
-            onRestore: () =>
-                ref.read(callMinimizedProvider.notifier).state = false,
-            onHangup: ctrl.hangup,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (s.waiting != null)
+                _WaitingCallBanner(
+                  name: _waitingName(s.waiting!),
+                  onAccept: ctrl.acceptWaiting,
+                  onDecline: ctrl.declineWaiting,
+                ),
+              _MinimizedCallBar(
+                state: s,
+                onRestore: () =>
+                    ref.read(callMinimizedProvider.notifier).state = false,
+                onHangup: ctrl.hangup,
+              ),
+            ],
           ),
         ),
       );
@@ -90,6 +106,14 @@ class CallOverlay extends ConsumerWidget {
           child: SafeArea(
             child: Column(
               children: [
+                // Call-waiting: a 2nd call arrived while this one is live — show
+                // the WhatsApp-style banner at the top so the rep can act on it.
+                if (s.waiting != null)
+                  _WaitingCallBanner(
+                    name: _waitingName(s.waiting!),
+                    onAccept: ctrl.acceptWaiting,
+                    onDecline: ctrl.declineWaiting,
+                  ),
                 // Minimize the call → use the app (open the chat, reply) while
                 // it keeps running (#2). Incoming rings stay full-screen.
                 if (!isRinging)
@@ -368,6 +392,110 @@ class _MinimizedCallBar extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// WhatsApp-style call-waiting banner: a 2nd inbound call arrived while the rep
+/// is already on a call. Shown at the top over the live call. Decline rejects
+/// just the new call; the green button ends the current call and answers this one.
+class _WaitingCallBanner extends StatelessWidget {
+  final String name;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+  const _WaitingCallBanner({
+    required this.name,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      child: Material(
+        color: const Color(0xFF0F2A1C), // deep green — distinct from the call surface
+        borderRadius: BorderRadius.circular(14),
+        elevation: 8,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+          child: Row(
+            children: [
+              const Icon(Icons.phone_callback,
+                  color: Color(0xFF4ADE80), size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15),
+                    ),
+                    const Text(
+                      'Incoming WhatsApp call',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _MiniCallButton(
+                icon: Icons.call_end,
+                color: AppTokens.statusDanger,
+                tooltip: 'Decline',
+                onTap: onDecline,
+              ),
+              const SizedBox(width: 10),
+              _MiniCallButton(
+                icon: Icons.call,
+                color: AppTokens.statusSuccess,
+                tooltip: 'End current & accept',
+                onTap: onAccept,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniCallButton extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String tooltip;
+  final VoidCallback onTap;
+  const _MiniCallButton({
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: color,
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: SizedBox(
+            width: 46,
+            height: 46,
+            child: Icon(icon, color: Colors.white, size: 22),
           ),
         ),
       ),

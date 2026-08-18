@@ -100,8 +100,23 @@ class CallController extends StateNotifier<CallState> {
     switch (e) {
       case CallIncoming():
         _log('socket: incoming ${e.callId}');
-        // Already on a call → ignore (web behaviour). The backend will time out.
-        if (state.isActive) return;
+        // Already on a call → CALL-WAITING. Don't drop the second call (the old
+        // behaviour silently ignored it and let the backend time out). Surface
+        // it as a WhatsApp-style in-app banner over the live call so the rep can
+        // End & Accept or Decline. In-app banner (not a 2nd CallKit screen) so
+        // we don't hand a second call to the self-managed Telecom session.
+        if (state.isActive) {
+          // Ignore a duplicate for the same call, or a 2nd waiting call while
+          // one is already banner-queued (first-come-first-shown).
+          if (e.callId == state.callId ||
+              (state.waiting != null && state.waiting!.callId != e.callId)) {
+            return;
+          }
+          if (state.waiting?.callId == e.callId) return; // already showing it
+          _log('call-waiting: 2nd call ${e.callId} while on ${state.callId}');
+          state = state.copyWith(waiting: e);
+          return;
+        }
         // Ring NATIVELY via CallKit for a real phone-call experience (system
         // ringtone, full-screen over the lock screen). This is the foreground
         // path; the FCM background handler shows the same CallKit screen when
@@ -121,6 +136,12 @@ class CallController extends StateNotifier<CallState> {
       case CallEnded():
         _log('socket: ended ${e.callId} (active=${state.callId})');
         unawaited(endCallkit(e.callId));
+        // A waiting (call-waiting) caller hung up before the rep acted → drop
+        // the banner, leave the live call untouched.
+        if (state.waiting?.callId == e.callId) {
+          _log('call-waiting: waiting call ${e.callId} cancelled');
+          state = state.copyWith(clearWaiting: true);
+        }
         if (e.callId == state.callId) {
           _teardown(reason: 'Call ended');
         }
@@ -349,7 +370,15 @@ class CallController extends StateNotifier<CallState> {
       _fail('Microphone permission is required to answer.');
       return;
     }
-    unawaited(_acquireLocks()); // fire-and-forget — don't serialize on it
+    // Hold the wake-lock + start the foreground service BEFORE we touch the
+    // audio device. On a cold start from doze (phone in a pocket, screen off),
+    // letting WebRTC bring up its audio engine + capture the mic while the
+    // process is still waking is what produces the ~7% "answered but silent"
+    // calls (#251). Awaiting here — rather than fire-and-forget — guarantees the
+    // CPU/Wi-Fi locks and the phoneCall|microphone FGS are live before
+    // getUserMedia and _createPeer run. Costs ~100ms of connect time; buys a
+    // warm audio path. _acquireLocks is self-guarded and never throws.
+    await _acquireLocks();
 
     // Watchdog: the rep has answered, so media must come up within the window.
     // Nothing else auto-terminates a wedged pickup — the ring timeout was just
@@ -441,6 +470,43 @@ class CallController extends StateNotifier<CallState> {
 
   Future<void> decline() async {
     await _safeReject();
+  }
+
+  // ── Call-waiting (a 2nd inbound call while already on one) ──────────────────
+
+  /// End & Accept the waiting (banner) call: hang up the current call, then ring
+  /// + answer the one that was waiting.
+  Future<void> acceptWaiting() async {
+    final w = state.waiting;
+    if (w == null) return;
+    await switchToCall(w);
+  }
+
+  /// Decline just the waiting call — reject its Meta leg, keep the live call.
+  Future<void> declineWaiting() async {
+    final w = state.waiting;
+    if (w == null) return;
+    _log('call-waiting: declining ${w.callId}');
+    state = state.copyWith(clearWaiting: true);
+    try {
+      await _api.reject(w.callId);
+    } catch (_) {}
+  }
+
+  /// Tear down the current call and take [next] instead. Used by the in-app
+  /// call-waiting banner AND by CallHost when a DIFFERENT call is accepted from
+  /// the native CallKit screen while one is already live (backgrounded
+  /// call-waiting) — without this the second accept clobbered the live call's
+  /// state, leaving a zombie leg.
+  Future<void> switchToCall(CallIncoming next) async {
+    _log('call-waiting: End & Accept ${next.callId} (ending ${state.callId})');
+    await hangup(); // ends the current call (media + backend) — schedules reset
+    // hangup() scheduled a return-to-idle; cancel it so it can't wipe the call
+    // we're about to bring up.
+    _endReset?.cancel();
+    _endReset = null;
+    prepareIncoming(next);
+    await acceptIncoming();
   }
 
   /// Decline a specific call id — used when CallKit's Decline is pressed and the
@@ -1224,6 +1290,7 @@ class CallController extends StateNotifier<CallState> {
       errorText: error ? reason : null,
       muted: false,
       speakerOn: false,
+      clearWaiting: true, // any call-waiting banner goes with the call
     );
     _endReset?.cancel();
     _endReset = Timer(const Duration(milliseconds: 1400), () {

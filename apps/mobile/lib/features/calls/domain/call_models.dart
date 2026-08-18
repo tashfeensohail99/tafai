@@ -79,6 +79,11 @@ class CallState {
   final int durationSeconds;
   final String? errorText;
 
+  /// A SECOND inbound call that arrived while this one is already active
+  /// (call-waiting). Surfaced as a WhatsApp-style banner over the live call —
+  /// the rep can End & Accept it or Decline. Null when there's no waiting call.
+  final CallIncoming? waiting;
+
   const CallState({
     required this.phase,
     this.direction,
@@ -91,6 +96,7 @@ class CallState {
     this.speakerOn = false,
     this.durationSeconds = 0,
     this.errorText,
+    this.waiting,
   });
 
   const CallState.idle() : this(phase: CallPhase.idle);
@@ -116,6 +122,8 @@ class CallState {
     int? durationSeconds,
     String? errorText,
     bool clearError = false,
+    CallIncoming? waiting,
+    bool clearWaiting = false,
   }) {
     return CallState(
       phase: phase ?? this.phase,
@@ -129,6 +137,7 @@ class CallState {
       speakerOn: speakerOn ?? this.speakerOn,
       durationSeconds: durationSeconds ?? this.durationSeconds,
       errorText: clearError ? null : (errorText ?? this.errorText),
+      waiting: clearWaiting ? null : (waiting ?? this.waiting),
     );
   }
 

@@ -55,7 +55,12 @@ export class JudicialReviewService {
     return this.assertMatterAccess(matterId, user);
   }
 
-  private async assertMatterAccess(matterId: string, user: RequestUser): Promise<JrMatter> {
+  /**
+   * Enforce per-matter access and return the matter. Public so the artifact
+   * lifecycle service can gate every artifact mutation on the owning matter
+   * (never relies on list scoping alone — #253/#255).
+   */
+  async assertMatterAccess(matterId: string, user: RequestUser): Promise<JrMatter> {
     const matter = await this.prisma.jrMatter.findFirst({ where: { id: matterId } });
     if (!matter) throw new NotFoundException('Matter not found');
     if (user.permissions.includes('jr.matter.view_all')) return matter;

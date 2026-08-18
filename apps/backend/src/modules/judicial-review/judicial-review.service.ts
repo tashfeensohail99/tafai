@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -149,7 +150,19 @@ export class JudicialReviewService {
         target === 'CLOSED'
           ? { stage: target, closeReason: dto.closeReason! }
           : { stage: target };
-      const next = await tx.jrMatter.update({ where: { id: matterId }, data });
+      // Optimistic-concurrency guard: the WHERE stage=current is evaluated
+      // atomically with the write, so two concurrent transitions from the same
+      // stage can't both land — the loser matches 0 rows and is rejected.
+      const applied = await tx.jrMatter.updateMany({
+        where: { id: matterId, stage: current },
+        data: data as Prisma.JrMatterUpdateManyMutationInput,
+      });
+      if (applied.count === 0) {
+        throw new ConflictException(
+          `This matter is no longer in ${current} (its stage changed while you were working). Reload and try again.`,
+        );
+      }
+      const next = await tx.jrMatter.findFirstOrThrow({ where: { id: matterId } });
       await this.writeMatterAudit(tx, {
         matterId,
         actorUserId: user.id,
@@ -582,6 +595,29 @@ export class JudicialReviewService {
       data.reconsiderationRequestedAt = new Date(dto.reconsiderationRequestedAt);
     if (dto.reconsiderationOutcomeAt !== undefined)
       data.reconsiderationOutcomeAt = new Date(dto.reconsiderationOutcomeAt);
+    // Determination / outcome fields the stage-machine gates read (so the
+    // pipeline is actually reachable past MERITS_REVIEW).
+    if (dto.decidingOfficeLocation !== undefined)
+      data.decidingOfficeLocation = dto.decidingOfficeLocation;
+    if (dto.decidingOfficeSourceNote !== undefined)
+      data.decidingOfficeSourceNote = dto.decidingOfficeSourceNote;
+    if (dto.expectationsAcknowledgedAt !== undefined)
+      data.expectationsAcknowledgedAt = new Date(dto.expectationsAcknowledgedAt);
+    if (dto.alternativesSheetSignedAt !== undefined)
+      data.alternativesSheetSignedAt = new Date(dto.alternativesSheetSignedAt);
+    if (dto.hennellyIntention !== undefined) data.hennellyIntention = dto.hennellyIntention;
+    if (dto.hennellyMerit !== undefined) data.hennellyMerit = dto.hennellyMerit;
+    if (dto.hennellyPrejudice !== undefined) data.hennellyPrejudice = dto.hennellyPrejudice;
+    if (dto.hennellyExplanation !== undefined) data.hennellyExplanation = dto.hennellyExplanation;
+    if (dto.extensionOutcome !== undefined) data.extensionOutcome = dto.extensionOutcome;
+    if (dto.leaveDecidedAt !== undefined) data.leaveDecidedAt = new Date(dto.leaveDecidedAt);
+    if (dto.leaveOrderAt !== undefined) data.leaveOrderAt = new Date(dto.leaveOrderAt);
+    if (dto.leaveGranted !== undefined) data.leaveGranted = dto.leaveGranted;
+    if (dto.applicationAllowed !== undefined) data.applicationAllowed = dto.applicationAllowed;
+    if (dto.redeterminationDecidedAt !== undefined)
+      data.redeterminationDecidedAt = new Date(dto.redeterminationDecidedAt);
+    if (dto.redeterminationApproved !== undefined)
+      data.redeterminationApproved = dto.redeterminationApproved;
 
     return this.prisma.$transaction(async (tx) => {
       const next = await tx.jrMatter.update({ where: { id: matterId }, data });
@@ -660,6 +696,17 @@ export class JudicialReviewService {
     user: RequestUser,
   ): Promise<JrMatter> {
     const matter = await this.assertMatterAccess(matterId, user);
+    // Independence can only be verified when we know who the original filer was.
+    // For an INTERNAL escalation (the only kind that needs conflict review) the
+    // original filer is recorded at intake; if it's missing, refuse to clear
+    // rather than let the check pass vacuously (a null originalFilerUserId would
+    // otherwise make `user.id === null` always false → the filer half inert).
+    if (matter.intakeType === 'INTERNAL' && !matter.originalFilerUserId) {
+      throw new UnprocessableEntityException(
+        'Conflict review cannot be cleared: the original filer is not recorded on this matter, so ' +
+          'independence cannot be verified. (It is set at internal-escalation intake.)',
+      );
+    }
     if (
       user.id === matter.originalFilerUserId ||
       user.id === matter.assignedAssociateUserId

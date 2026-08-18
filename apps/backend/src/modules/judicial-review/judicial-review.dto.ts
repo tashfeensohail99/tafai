@@ -441,4 +441,73 @@ export class UpdateMatterDto {
   @IsOptional()
   @IsDateString()
   reconsiderationOutcomeAt?: string;
+
+  // ---- determination / outcome fields the stage-machine gates read ----
+  /** Asserted on the filed IR-1 (must be != UNKNOWN with a source note to FILE). */
+  @IsOptional()
+  @IsEnum(JrDecidingOfficeLocation)
+  decidingOfficeLocation?: JrDecidingOfficeLocation;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  decidingOfficeSourceNote?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expectationsAcknowledgedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  alternativesSheetSignedAt?: string;
+
+  // Hennelly extension narratives — all four required to REQUIRES_EXTENSION_REQUEST.
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyIntention?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyMerit?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyPrejudice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  hennellyExplanation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  extensionOutcome?: string;
+
+  @IsOptional()
+  @IsDateString()
+  leaveDecidedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  leaveOrderAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  leaveGranted?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  applicationAllowed?: boolean;
+
+  @IsOptional()
+  @IsDateString()
+  redeterminationDecidedAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  redeterminationApproved?: boolean;
 }

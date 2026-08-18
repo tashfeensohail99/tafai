@@ -18,6 +18,7 @@ import {
   Split,
   Sparkles,
   TrendingUp,
+  UserCheck,
   Users,
   X,
 } from 'lucide-react';
@@ -70,6 +71,7 @@ const NAV: DrawerMenuItem[] = [
   { label: 'Meta Ads', href: '/marketing/ads', icon: Megaphone, caption: 'Every ad, status & routing' },
   { label: 'Campaigns', href: '/marketing/campaigns', icon: Layers, caption: 'Campaign → ad set → ad' },
   { label: 'Leads', href: '/marketing/leads', icon: Users, caption: 'Meta-sourced leads' },
+  { label: 'Leads by Rep', href: '/marketing/leads-by-rep', icon: UserCheck, caption: 'Leads received per rep' },
   { label: 'By Program', href: '/marketing/programs', icon: PieChart, caption: 'Responses per C11 / JR / Visit' },
   { label: 'Lead Routing', href: '/marketing/routing', icon: Split, caption: 'Islamabad / Lahore / Both' },
   { label: 'Performance', href: '/marketing/performance', icon: TrendingUp, caption: 'CPL, CTR, ROAS by ad' },

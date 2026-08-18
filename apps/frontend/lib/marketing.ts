@@ -132,6 +132,30 @@ export function getMarketingCampaigns(opts: ListOpts = {}): Promise<MarketingCam
   return apiFetch<MarketingCampaignsResponse>(`/admin/marketing/campaigns${qs}`);
 }
 
+/* ------------------------------------------------------------------ leads by rep ---------- */
+
+export interface MarketingRepLeads {
+  employeeId: string;
+  name: string;
+  isActive: boolean;
+  total: number; // all leads received in the window
+  fromAds: number; // subset attributed to a Meta ad
+  other: number; // total − fromAds (WhatsApp walk-ins, UAN, imports, …)
+}
+
+export interface MarketingLeadsByRepResponse {
+  window: MarketingWindow;
+  reps: MarketingRepLeads[];
+  unassigned: number;
+  totals: { total: number; fromAds: number; other: number };
+}
+
+/** Per-rep count of leads RECEIVED in the window. Counts only — no money. */
+export function getMarketingLeadsByRep(days?: number): Promise<MarketingLeadsByRepResponse> {
+  const qs = buildQuery({ days });
+  return apiFetch<MarketingLeadsByRepResponse>(`/admin/marketing/leads-by-rep${qs}`);
+}
+
 /* ------------------------------------------------------------------ alerts + health (1F) --- */
 
 export type MarketingAlertSeverity = 'critical' | 'warning' | 'info';

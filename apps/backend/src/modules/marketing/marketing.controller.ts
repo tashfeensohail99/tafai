@@ -77,6 +77,17 @@ export class MarketingController {
     return this.svc.getLeadsByProgram(q.days);
   }
 
+  /**
+   * Leads RECEIVED per rep in the window — the per-employee lead-volume monitor
+   * the marketing team asked for. Counts only (total + ad-sourced split); no
+   * revenue, no client/agreement data, no lead-level PII.
+   */
+  @Get('leads-by-rep')
+  @RequirePermissions('marketing.view')
+  leadsByRep(@Query() q: WindowQuery) {
+    return this.svc.getLeadsByRep(q.days);
+  }
+
   // Phase 1F — Alerts + Health, both read-only, both marketing.view.
   @Get('alerts')
   @RequirePermissions('marketing.view')

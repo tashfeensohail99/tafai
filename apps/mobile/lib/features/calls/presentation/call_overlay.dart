@@ -424,7 +424,7 @@ class _WaitingCallBanner extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
           child: Row(
             children: [
-              const Icon(Icons.phone_callback,
+              const Icon(Icons.phone_in_talk,
                   color: Color(0xFF4ADE80), size: 22),
               const SizedBox(width: 12),
               Expanded(

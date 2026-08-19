@@ -14,7 +14,9 @@ import '../../../core/update/app_update.dart';
 import '../../../core/update/forced_update_screen.dart';
 import '../../appointments/presentation/appointments_screen.dart';
 import '../../calls/data/call_permissions.dart';
+import '../../calls/domain/call_history.dart';
 import '../../calls/presentation/call_setup_screen.dart';
+import '../../calls/presentation/calls_screen.dart';
 import '../../dashboard/presentation/dashboard_screen.dart';
 import '../../leads/presentation/leads_list_screen.dart';
 import '../../followups/presentation/followups_screen.dart';
@@ -53,6 +55,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     // title still uses the natural plural `label`.
     _TabDef('Appointments', Icons.event_outlined, Icons.event, navLabel: 'Appointment'),
     _TabDef('Chat', Icons.chat_bubble_outline, Icons.chat_bubble),
+    _TabDef('Calls', Icons.phone_outlined, Icons.call),
   ];
 
   @override
@@ -61,6 +64,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     // Keep the bell badge live without sockets (FCM covers real-time later).
     _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       ref.invalidate(unreadCountProvider);
+      ref.invalidate(myMissedCallCountProvider);
     });
     // First run after login: if call permissions aren't set up, walk the rep
     // through them so incoming calls ring properly. Shown at most once/launch.
@@ -118,6 +122,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     final user = ref.watch(currentUserProvider);
     final index = ref.watch(shellIndexProvider('sales'));
     final unread = ref.watch(unreadCountProvider).valueOrNull ?? 0;
+    final missedCalls = ref.watch(myMissedCallCountProvider).valueOrNull ?? 0;
 
     // Compulsory update gate — once a newer build is published, the app is
     // blocked until the agent installs it, so the whole team stays current.
@@ -252,6 +257,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 FollowUpsScreen(),
                 AppointmentsScreen(),
                 InboxScreen(),
+                CallsScreen(),
               ],
             ),
           ),
@@ -293,8 +299,12 @@ class _AppShellState extends ConsumerState<AppShell> {
           destinations: [
             for (final t in _tabs)
               NavigationDestination(
-                icon: Icon(t.icon),
-                selectedIcon: Icon(t.selectedIcon),
+                icon: t.label == 'Calls' && missedCalls > 0
+                    ? Badge.count(count: missedCalls, child: Icon(t.icon))
+                    : Icon(t.icon),
+                selectedIcon: t.label == 'Calls' && missedCalls > 0
+                    ? Badge.count(count: missedCalls, child: Icon(t.selectedIcon))
+                    : Icon(t.selectedIcon),
                 label: t.navLabel ?? t.label,
               ),
           ],

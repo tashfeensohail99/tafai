@@ -10,6 +10,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Phone,
   PhoneCall,
   Sparkles,
   Users,
@@ -32,7 +33,7 @@ import { NotificationsBell } from './NotificationsBell';
 import { PresencePill } from '@/components/whatsapp/PresencePill';
 import { PresenceWarnings } from '@/components/whatsapp/PresenceWarnings';
 import { logout as sessionLogout, useSession } from '@/lib/session';
-import { setMyPresence } from '@/lib/whatsapp';
+import { setMyPresence, getMyMissedCallCount } from '@/lib/whatsapp';
 import { fetchMySalesStats, type MySalesStats } from '@/lib/sales-api';
 import { fetchAgreementReviewCounts } from '@/lib/agreements';
 
@@ -53,10 +54,17 @@ const EmployeeSessionContext = createContext<EmployeeSessionContextValue | null>
 
 // Badges are filled from the live /leads/my-stats counts (null until loaded —
 // no badge shown rather than a stale placeholder number).
-function buildSalesNav(stats: MySalesStats | null): DrawerMenuItem[] {
+function buildSalesNav(stats: MySalesStats | null, missedCalls: number): DrawerMenuItem[] {
   return [
     { label: 'Dashboard', href: '/sales', icon: LayoutDashboard, caption: 'Workspace overview' },
     { label: 'WhatsApp Inbox', href: '/sales/inbox', icon: MessageSquare, caption: 'Your assigned chats' },
+    {
+      label: 'Calls',
+      href: '/sales/calls',
+      icon: Phone,
+      caption: 'Missed & answered calls',
+      ...(missedCalls > 0 ? { badge: missedCalls } : {}),
+    },
     { label: 'WhatsApp Status', href: '/sales/status', icon: Sparkles, caption: 'Post to WA Status (pilot)' },
     { label: 'CSV Leads', href: '/sales/csv-leads', icon: FileSpreadsheet, caption: 'From spreadsheet uploads' },
     {
@@ -83,6 +91,7 @@ function buildSalesNav(stats: MySalesStats | null): DrawerMenuItem[] {
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/sales') return { title: 'Sales Dashboard', subtitle: 'Your daily command center' };
   if (pathname.startsWith('/sales/inbox')) return { title: 'WhatsApp Inbox', subtitle: 'Your assigned conversations' };
+  if (pathname.startsWith('/sales/calls')) return { title: 'Calls', subtitle: 'Your missed and answered calls' };
   if (pathname.startsWith('/sales/status')) return { title: 'WhatsApp Status', subtitle: 'Compose, schedule, and track Status posts' };
   if (pathname.startsWith('/sales/csv-leads')) return { title: 'CSV Leads', subtitle: 'Leads from spreadsheet uploads' };
   if (pathname.startsWith('/sales/leads/')) return { title: 'Lead Profile', subtitle: 'Edit progress, priority, and next action' };
@@ -121,6 +130,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [stats, setStats] = useState<MySalesStats | null>(null);
   const [changesCount, setChangesCount] = useState(0);
+  const [missedCalls, setMissedCalls] = useState(0);
 
   // Live sidebar counters. Fetched once on auth and then refreshed in the
   // background every 60s — NOT on every navigation. Refetching on `pathname`
@@ -141,6 +151,12 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
       fetchAgreementReviewCounts()
         .then((c) => {
           if (!cancelled) setChangesCount(c.salesChangesRequested);
+        })
+        .catch(() => {});
+      // Missed-call badge on the Calls nav item (last 24h).
+      getMyMissedCallCount()
+        .then((r) => {
+          if (!cancelled) setMissedCalls(r.count);
         })
         .catch(() => {});
     };
@@ -226,7 +242,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
           <div className="sos-sidebar__nav sos-scroll">
             <div className="sos-nav-section">Workspace</div>
             <DrawerMenu
-              items={buildSalesNav(stats).map((it) =>
+              items={buildSalesNav(stats, missedCalls).map((it) =>
                 it.href === '/sales/agreements' && changesCount ? { ...it, badge: changesCount } : it,
               )}
               onNavigate={() => setMobileOpen(false)}

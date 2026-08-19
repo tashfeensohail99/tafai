@@ -55,7 +55,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     // title still uses the natural plural `label`.
     _TabDef('Appointments', Icons.event_outlined, Icons.event, navLabel: 'Appointment'),
     _TabDef('Chat', Icons.chat_bubble_outline, Icons.chat_bubble),
-    _TabDef('Calls', Icons.phone_outlined, Icons.phone),
+    _TabDef('Calls', Icons.phone_outlined, Icons.call),
   ];
 
   @override

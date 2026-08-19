@@ -83,7 +83,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(
               children: [
-                Icon(Icons.call_missed,
+                Icon(Icons.call_received,
                     color: AppTokens.statusDanger, size: 20),
                 const SizedBox(width: 10),
                 Expanded(
@@ -243,7 +243,9 @@ class _CallRow extends StatelessWidget {
     Color dirColor;
     String dirLabel;
     if (missed) {
-      dirIcon = Icons.call_missed;
+      // call_missed isn't in the shipped release font (would render as a box in
+      // a Shorebird patch) — a RED call_received + the "Missed" label conveys it.
+      dirIcon = Icons.call_received;
       dirColor = AppTokens.statusDanger;
       dirLabel = 'Missed';
     } else if (item.isInbound) {
@@ -313,7 +315,7 @@ class _CallRow extends StatelessWidget {
             const SizedBox(width: 8),
             IconButton(
               tooltip: 'Call back',
-              icon: Icon(Icons.phone, color: AppTokens.statusSuccess),
+              icon: Icon(Icons.call, color: AppTokens.statusSuccess),
               onPressed: () => onCallBack(item),
             ),
           ],
@@ -334,7 +336,7 @@ class _EmptyState extends StatelessWidget {
     return ListView(
       children: [
         const SizedBox(height: 90),
-        Icon(Icons.phone_disabled,
+        Icon(Icons.call,
             size: 46, color: Theme.of(context).hintColor),
         const SizedBox(height: 12),
         Center(

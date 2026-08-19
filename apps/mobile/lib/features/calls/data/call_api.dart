@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/errors/error_mapper.dart';
+import '../domain/call_history.dart';
 
 /// REST client for the WhatsApp call-control endpoints (controller prefix
 /// `/whatsapp/calls`, all behind JwtAuthGuard). Mirrors the web CallDock's
@@ -111,6 +112,48 @@ class CallApi {
       await _c.post<dynamic>('/whatsapp/calls/$callId/stats', data: stats);
     } on DioException catch (_) {
       // best-effort; losing a CDR sample is fine, never surface
+    }
+  }
+
+  /// GET /whatsapp/calls/mine → the rep's own call log (assigned or answered).
+  /// filter via [direction] (INBOUND/OUTBOUND) and [status] (MISSED/ENDED/…).
+  Future<CallHistoryPage> myCalls({
+    int limit = 60,
+    DateTime? before,
+    String? direction,
+    String? status,
+  }) async {
+    try {
+      final res = await _c.get<Map<String, dynamic>>(
+        '/whatsapp/calls/mine',
+        queryParameters: {
+          'limit': limit,
+          if (before != null) 'before': before.toUtc().toIso8601String(),
+          if (direction != null) 'direction': direction,
+          if (status != null) 'status': status,
+        },
+      );
+      final items = (res.data?['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((m) => CallHistoryItem.fromJson(
+              m.map((k, v) => MapEntry(k.toString(), v))))
+          .toList();
+      final nb = res.data?['nextBefore'] as String?;
+      return CallHistoryPage(items, nb != null ? DateTime.tryParse(nb) : null);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// GET /whatsapp/calls/mine/missed-count → { count } for the Calls-tab badge.
+  /// Best-effort: a failure yields 0 so the badge never blocks the shell.
+  Future<int> myMissedCount() async {
+    try {
+      final res =
+          await _c.get<Map<String, dynamic>>('/whatsapp/calls/mine/missed-count');
+      return (res.data?['count'] as num?)?.toInt() ?? 0;
+    } on DioException catch (_) {
+      return 0;
     }
   }
 

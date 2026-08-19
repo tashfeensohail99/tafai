@@ -7,6 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// shell's IndexedStack and crash it). Exposed so deep-links (e.g. tapping a
 /// notification) can switch tabs from anywhere.
 ///
-/// Sales tabs: 0=Home 1=Leads 2=Follow-ups 3=Appointments 4=Chat.
+/// Sales tabs: 0=Home 1=Leads 2=Follow-ups 3=Appointments 4=Chat 5=Calls.
 final shellIndexProvider =
     StateProvider.family<int, String>((ref, shellId) => 0);

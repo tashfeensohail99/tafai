@@ -1,11 +1,14 @@
 import { Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
+import { LeadsModule } from '../leads/leads.module';
 import { JudicialReviewService } from './judicial-review.service';
 import { JudicialReviewController } from './judicial-review.controller';
 import { JrArtifactsService } from './jr-artifacts.service';
 import { JrArtifactsController } from './jr-artifacts.controller';
 import { JrDeadlinesService } from './jr-deadlines.service';
 import { JrDeadlinesController } from './jr-deadlines.controller';
+import { JrIntakeService } from './jr-intake.service';
+import { JrIntakeController } from './jr-intake.controller';
 
 /**
  * Judicial Review (Federal Court JR) module — PR 1 foundation. Owns the `legal`
@@ -18,9 +21,14 @@ import { JrDeadlinesController } from './jr-deadlines.controller';
  * @Global — no explicit import needed.
  */
 @Module({
-  imports: [StorageModule],
-  providers: [JrDeadlinesService, JudicialReviewService, JrArtifactsService],
-  controllers: [JudicialReviewController, JrArtifactsController, JrDeadlinesController],
-  exports: [JudicialReviewService, JrArtifactsService, JrDeadlinesService],
+  imports: [StorageModule, LeadsModule],
+  providers: [JrDeadlinesService, JudicialReviewService, JrArtifactsService, JrIntakeService],
+  controllers: [
+    JudicialReviewController,
+    JrArtifactsController,
+    JrDeadlinesController,
+    JrIntakeController,
+  ],
+  exports: [JudicialReviewService, JrArtifactsService, JrDeadlinesService, JrIntakeService],
 })
 export class JudicialReviewModule {}

@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsBooleanString,
   IsDateString,
+  IsEmail,
   IsEnum,
   IsIn,
   IsInt,
@@ -21,6 +22,7 @@ import {
   JrCloseReason,
   JrCounselRetainerScope,
   JrDecidingOfficeLocation,
+  JrDecisionMaker,
   JrInadmissibilityGround,
   JrIntakeType,
   JrMatterStage,
@@ -569,4 +571,101 @@ export class DeadlineBoardQueryDto {
   @Min(1)
   @Max(500)
   take?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Intake (PR 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /jr/matters — open a NEW (EXTERNAL) matter for a decision the client
+ * brings in from outside our own processing. Identity is reused, never
+ * duplicated: pass exactly one of `attachToClientId` (an existing client),
+ * `attachToLeadId` (an existing lead to convert), or the new-client trio
+ * (`firstName`+`lastName`+`phone`). A new-client create THROWS 409
+ * DUPLICATE_PHONE/EMAIL on a collision — the caller retries with attachTo*.
+ */
+export class CreateExternalMatterDto {
+  @IsEnum(JrDecisionMaker)
+  decisionMaker!: JrDecisionMaker;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  applicationType!: string;
+
+  /** THE CLOCK ANCHOR — normalized to its legal calendar day at the write boundary. */
+  @IsDateString()
+  decisionCommunicatedAt!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(400)
+  decisionCommunicatedNote!: string;
+
+  @IsOptional()
+  @IsDateString()
+  decisionLetterDate?: string;
+
+  @IsOptional()
+  @IsEnum(JrDecidingOfficeLocation)
+  decidingOfficeLocation?: JrDecidingOfficeLocation;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  styleOfCause?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  // ---- new-client intake (firstName + lastName + phone together) ----------
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  // ---- attach to existing identity (exactly one) --------------------------
+  @IsOptional()
+  @IsUUID()
+  attachToLeadId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  attachToClientId?: string;
+}
+
+/**
+ * POST /jr/matters/from-case/:caseId — escalate a REFUSED ProcessingCase to an
+ * INTERNAL JR matter. Client + lead are reused from the case; conflict review is
+ * required (the original filer cannot clear it later, §6.5).
+ */
+export class EscalateCaseDto {
+  @IsEnum(JrDecisionMaker)
+  decisionMaker!: JrDecisionMaker;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  applicationType!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  decisionCommunicatedNote?: string;
 }

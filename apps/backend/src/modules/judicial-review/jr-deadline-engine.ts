@@ -3,6 +3,13 @@ import { JrDeadlineRule, JrMatter } from '@prisma/client';
 import { rollForwardIfClosed } from './jr-registry-calendar';
 
 /**
+ * The active deadline rule-set version stamped on every new matter. Bump when a
+ * Special Order ships a new versioned rule set (historical matters keep their
+ * version).
+ */
+export const CURRENT_DEADLINE_RULE_SET_VERSION = 1;
+
+/**
  * The Federal Court JR deadline engine (§7.2), as a pure module. Given a matter's
  * anchor dates and the active, versioned deadline RULES, it emits one
  * {@link ComputedDeadline} per applicable milestone. It is framework-free apart

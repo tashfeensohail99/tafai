@@ -269,7 +269,10 @@ class _AppShellState extends ConsumerState<AppShell> {
           surfaceTintColor: Colors.transparent,
           indicatorColor: Colors.white.withValues(alpha: 0.16),
           height: 64,
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          // Show the label only on the SELECTED tab (icon-only for the rest) —
+          // frees the horizontal space so the bar holds 6+ tabs cleanly instead
+          // of cramping five labels across the width.
+          labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
           labelTextStyle: WidgetStateProperty.resolveWith((states) {
             final selected = states.contains(WidgetState.selected);
             return TextStyle(

@@ -30,7 +30,9 @@ export class JrIntakeController {
 
   @Post('from-case/:caseId')
   @RequirePermissions('jr.matter.create')
-  @Audit({ idParam: 'caseId', entityType: 'JrMatter', category: 'MUTATION', severity: 'HIGH' })
+  // The global-audit entity is the ProcessingCase being acted on (idParam=caseId);
+  // the created matter is recorded separately in JrAuditLog (action matter_created).
+  @Audit({ idParam: 'caseId', entityType: 'ProcessingCase', category: 'MUTATION', severity: 'HIGH' })
   escalateFromCase(
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @Body() dto: EscalateCaseDto,

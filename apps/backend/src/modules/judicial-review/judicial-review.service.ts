@@ -617,6 +617,12 @@ export class JudicialReviewService {
       data.decidingOfficeLocation = dto.decidingOfficeLocation;
     if (dto.decidingOfficeSourceNote !== undefined)
       data.decidingOfficeSourceNote = dto.decidingOfficeSourceNote;
+    // The ALJR anchor — normalized to its legal calendar day (the recompute at the
+    // end of this method re-drives the fatal clock off the corrected value).
+    if (dto.decisionCommunicatedAt !== undefined)
+      data.decisionCommunicatedAt = toLegalDateUtc(dto.decisionCommunicatedAt);
+    if (dto.decisionCommunicatedNote !== undefined)
+      data.decisionCommunicatedNote = dto.decisionCommunicatedNote;
     if (dto.expectationsAcknowledgedAt !== undefined)
       data.expectationsAcknowledgedAt = new Date(dto.expectationsAcknowledgedAt);
     if (dto.alternativesSheetSignedAt !== undefined)

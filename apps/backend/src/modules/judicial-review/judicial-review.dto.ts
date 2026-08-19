@@ -457,6 +457,21 @@ export class UpdateMatterDto {
   @MaxLength(400)
   decidingOfficeSourceNote?: string;
 
+  /**
+   * The ALJR clock anchor. Correctable after intake (e.g. an escalation seeded a
+   * DRAFT from the case's decision date, or the wrong date was entered) — the
+   * matter cannot leave INTAKE without it. Normalized to its legal calendar day;
+   * updateMatter recomputes deadlines, so correcting it re-drives the fatal clock.
+   */
+  @IsOptional()
+  @IsDateString()
+  decisionCommunicatedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  decisionCommunicatedNote?: string;
+
   @IsOptional()
   @IsDateString()
   expectationsAcknowledgedAt?: string;
@@ -663,6 +678,17 @@ export class EscalateCaseDto {
   @IsNotEmpty()
   @MaxLength(80)
   applicationType!: string;
+
+  /**
+   * The ALJR clock anchor — the day the client was notified of the refusal.
+   * Optional: if omitted, a DRAFT is seeded from the case's authority-decision
+   * date (which is the officer's decision date, not the notification date). If
+   * the case has neither, supply it here or later via updateMatter — the matter
+   * cannot leave INTAKE without it.
+   */
+  @IsOptional()
+  @IsDateString()
+  decisionCommunicatedAt?: string;
 
   @IsOptional()
   @IsString()

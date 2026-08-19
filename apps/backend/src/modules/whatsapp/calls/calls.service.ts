@@ -547,9 +547,11 @@ export class WhatsAppCallsService {
     before?: Date;
     direction?: string;
     status?: string;
+    /** Extra WHERE, AND-merged — used to rep-scope the in-app "Calls" tab. */
+    scope?: Prisma.WhatsAppCallWhereInput;
   }) {
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
-    const where: Prisma.WhatsAppCallWhereInput = {};
+    const where: Prisma.WhatsAppCallWhereInput = { ...(opts.scope ?? {}) };
     if (opts.direction) where.direction = opts.direction;
     if (opts.status) where.status = opts.status;
     if (opts.before) where.createdAt = { lt: opts.before };
@@ -662,6 +664,48 @@ export class WhatsAppCallsService {
 
     const nextBefore = rows.length === limit ? rows[rows.length - 1].createdAt : null;
     return { items, nextBefore };
+  }
+
+  /**
+   * Rep-scoped call history for the in-app "Calls" tab — the calls this user is
+   * the ASSIGNED rep for, or the one who ANSWERED (incl. the employee-less admin
+   * console account, keyed by userId). Same shape as listHistory.
+   */
+  async listMine(userId: string, opts: { limit?: number; before?: Date; direction?: string; status?: string }) {
+    const scope = await this.myCallScope(userId);
+    return this.listHistory({ ...opts, scope });
+  }
+
+  /**
+   * Count of the rep's own MISSED inbound calls in the recent window — powers
+   * the unread "missed calls" badge on the Calls tab. Assigned-to-me only (a
+   * rep's accountability is the calls routed to them). Returns 0 for a user
+   * with no Employee row (e.g. the admin console).
+   */
+  async myMissedCount(userId: string, hours = 24): Promise<{ count: number; hours: number }> {
+    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
+    if (!emp) return { count: 0, hours };
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const count = await this.prisma.whatsAppCall.count({
+      where: {
+        direction: 'INBOUND',
+        status: 'MISSED',
+        assignedEmployeeId: emp.id,
+        createdAt: { gte: since },
+      },
+    });
+    return { count, hours };
+  }
+
+  /** OR of the ways a user "owns" a call: assigned rep, answering rep, or the
+   *  answering user account (admin console has no Employee row). */
+  private async myCallScope(userId: string): Promise<Prisma.WhatsAppCallWhereInput> {
+    const emp = await this.prisma.employee.findFirst({ where: { userId }, select: { id: true } });
+    const or: Prisma.WhatsAppCallWhereInput[] = [{ answeredByUserId: userId }];
+    if (emp) {
+      or.push({ assignedEmployeeId: emp.id }, { answeredByEmployeeId: emp.id });
+    }
+    return { OR: or };
   }
 
   /** KPI counters for the calls history header. Timezone-independent. */

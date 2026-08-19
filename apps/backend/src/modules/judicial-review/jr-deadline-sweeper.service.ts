@@ -71,6 +71,10 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(JrDeadlineSweeperService.name);
   private static readonly INTERVAL_MS = 60 * 60 * 1000; // hourly — these are fatal
   private static readonly BATCH = 200;
+  /** A PENDING alert claim unconfirmed this long is treated as crash-stranded and
+   *  reclaimed (deleted so the next pass re-sends). Well under the hourly cadence,
+   *  well over a normal dispatch (seconds). */
+  private static readonly STALE_CLAIM_MS = 15 * 60 * 1000;
   private timer: ReturnType<typeof setInterval> | null = null;
   private bootTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
@@ -110,9 +114,32 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async sweep(): Promise<void> {
+    const now = new Date();
+    const notifyEnabled = process.env.JR_NOTIFY_ENABLED !== 'false';
+
+    // Self-heal: a claim left PENDING by a crash/restart mid-dispatch would block
+    // its (deadline,tier,channel,recipient) from ever re-sending (the unique makes
+    // re-claim a P2002). Drop such rows once they're older than STALE_CLAIM_MS so
+    // the normal pass re-claims + re-sends them — critical for a final OVERDUE/T-1
+    // tier that has no successor. SENT/FAILED rows are never touched. A row younger
+    // than the threshold may be mid-flight right now, so it is left alone.
+    if (notifyEnabled) {
+      await this.prisma.jrDeadlineAlert.deleteMany({
+        where: {
+          deliveryStatus: 'PENDING',
+          createdAt: { lt: new Date(now.getTime() - JrDeadlineSweeperService.STALE_CLAIM_MS) },
+        },
+      });
+    }
+
     // Resolve the standing recipient lists ONCE per pass.
     const heads = await this.resolveRole('jr_head');
     const admins = await this.resolveRoleIn(['admin', 'super_admin']);
+    if (notifyEnabled && heads.length === 0) {
+      this.log.warn(
+        'JR sweep: no ACTIVE jr_head user — Head-level deadline alerts will reach nobody. Assign the JR Head role.',
+      );
+    }
     const assocCache = new Map<string, Recipient | null>();
 
     const deadlines = await this.prisma.jrDeadline.findMany({
@@ -130,52 +157,72 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
         },
       },
     });
+    if (deadlines.length === JrDeadlineSweeperService.BATCH) {
+      this.log.warn(
+        `JR sweep: batch cap (${JrDeadlineSweeperService.BATCH}) hit — furthest-out deadlines deferred to the next pass (soonest are covered first).`,
+      );
+    }
 
-    const notifyEnabled = process.env.JR_NOTIFY_ENABLED !== 'false';
-    const now = new Date();
     const ctx: DispatchCtx = { heads, admins, assocCache, now };
 
-    // SEQUENTIAL — no Promise.all (the session pool is only 15 connections).
+    // SEQUENTIAL — no Promise.all (the session pool is only 15 connections). Each
+    // deadline is isolated: a poison row logs and is skipped, never aborting the batch.
     for (const d of deadlines) {
-      const effectiveDue = d.overriddenDueAt ?? d.computedDueAt;
-      const daysUntil = Math.round((this.utcMidnight(effectiveDue) - this.utcMidnight(now)) / DAY);
+      try {
+        const effectiveDue = d.overriddenDueAt ?? d.computedDueAt;
+        const daysUntil = Math.round(
+          (this.utcMidnight(effectiveDue) - this.utcMidnight(now)) / DAY,
+        );
 
-      // ---- alerting (silenced by JR_NOTIFY_ENABLED=false) ----
-      if (notifyEnabled) {
-        const active = resolveActiveTier(configKeyForDeadline(d), daysUntil);
-        if (active) {
-          await this.dispatchTier(
-            {
-              deadlineId: d.id,
-              matterId: d.matterId ?? d.matter.id,
-              matterNumber: d.matter.matterNumber,
-              styleOfCause: d.matter.styleOfCause,
-              assignedAssociateUserId: d.matter.assignedAssociateUserId,
-              milestoneKey: d.milestoneKey,
-              isFatal: d.isFatal,
-              quotableToClient: d.quotableToClient,
-              effectiveDue,
-            },
-            active,
-            ctx,
-          );
+        // ---- alerting (silenced by JR_NOTIFY_ENABLED=false) ----
+        if (notifyEnabled) {
+          const active = resolveActiveTier(configKeyForDeadline(d), daysUntil);
+          if (active) {
+            // The batch is a snapshot; a deadline satisfied since load must not be
+            // alerted on (don't cry wolf on an already-MET deadline).
+            const fresh = await this.prisma.jrDeadline.findUnique({
+              where: { id: d.id },
+              select: { status: true },
+            });
+            if (fresh?.status === 'PENDING') {
+              await this.dispatchTier(
+                {
+                  deadlineId: d.id,
+                  matterId: d.matterId ?? d.matter.id,
+                  matterNumber: d.matter.matterNumber,
+                  styleOfCause: d.matter.styleOfCause,
+                  assignedAssociateUserId: d.matter.assignedAssociateUserId,
+                  milestoneKey: d.milestoneKey,
+                  isFatal: d.isFatal,
+                  quotableToClient: d.quotableToClient,
+                  effectiveDue,
+                },
+                active,
+                ctx,
+              );
+            }
+          }
         }
-      }
 
-      // ---- overdue flip (ALWAYS, independent of alerting) ----
-      if (daysUntil < 0) {
-        // Atomic claim — only the tick/replica that wins the flip records it.
-        const res = await this.prisma.jrDeadline.updateMany({
-          where: { id: d.id, status: 'PENDING' },
-          data: { status: 'MISSED' },
-        });
-        if (res.count === 1) {
-          this.log.warn(
-            `JR deadline MISSED: ${d.milestoneKey} on matter ${d.matter.matterNumber} (due ${effectiveDue
-              .toISOString()
-              .slice(0, 10)})`,
-          );
+        // ---- overdue flip (ALWAYS, independent of alerting) ----
+        if (daysUntil < 0) {
+          // Atomic claim — only the tick/replica that wins the flip records it.
+          const res = await this.prisma.jrDeadline.updateMany({
+            where: { id: d.id, status: 'PENDING' },
+            data: { status: 'MISSED' },
+          });
+          if (res.count === 1) {
+            this.log.warn(
+              `JR deadline MISSED: ${d.milestoneKey} on matter ${d.matter.matterNumber} (due ${effectiveDue
+                .toISOString()
+                .slice(0, 10)})`,
+            );
+          }
         }
+      } catch (e) {
+        this.log.warn(
+          `JR sweep: deadline ${d.id} (${d.milestoneKey}) skipped: ${(e as Error).message}`,
+        );
       }
     }
 
@@ -200,6 +247,7 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
           deadlines: { some: { isFatal: true, status: 'PENDING', computedDueAt: { lte: cutoff } } },
         },
       },
+      take: JrDeadlineSweeperService.BATCH,
       select: {
         id: true,
         title: true,
@@ -209,10 +257,10 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
             matterNumber: true,
             styleOfCause: true,
             assignedAssociateUserId: true,
+            // Fetch ALL fatal PENDING deadlines (not take:1 by computedDueAt) so the
+            // "nearest" is chosen by EFFECTIVE due date, override-aware, in JS.
             deadlines: {
               where: { isFatal: true, status: 'PENDING' },
-              orderBy: { computedDueAt: 'asc' },
-              take: 1,
               select: {
                 id: true,
                 computedDueAt: true,
@@ -226,35 +274,42 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
+    // Tier carries the calendar day so a fresh row is claimable each day (daily
+    // re-nudge). Kept ≤ VarChar(20): "STUCK-2026-08-19" = 16 chars.
     const dayKey = now.toISOString().slice(0, 10);
     for (const a of stuck) {
-      const nearest = a.matter.deadlines[0];
-      if (!nearest) continue;
-      const effectiveDue = nearest.overriddenDueAt ?? nearest.computedDueAt;
-      // Re-check in JS: an override may have pushed the real due date past the window.
-      if (effectiveDue.getTime() > cutoff.getTime()) continue;
+      try {
+        const nearest = a.matter.deadlines
+          .map((x) => ({ x, eff: x.overriddenDueAt ?? x.computedDueAt }))
+          .sort((p, q) => p.eff.getTime() - q.eff.getTime())[0];
+        if (!nearest) continue;
+        // An override may have pushed the real (effective) due date past the window.
+        if (nearest.eff.getTime() > cutoff.getTime()) continue;
 
-      const active: ActiveTier = {
-        tier: `ARTIFACT_STUCK_${dayKey}`,
-        recipients: ['HEAD', 'ASSOCIATE'],
-        channels: ['BELL', 'EMAIL'],
-      };
-      await this.dispatchTier(
-        {
-          deadlineId: nearest.id,
-          matterId: a.matterId,
-          matterNumber: a.matter.matterNumber,
-          styleOfCause: a.matter.styleOfCause,
-          assignedAssociateUserId: a.matter.assignedAssociateUserId,
-          milestoneKey: nearest.milestoneKey,
-          isFatal: true,
-          quotableToClient: nearest.quotableToClient,
-          effectiveDue,
-          artifactTitle: a.title,
-        },
-        active,
-        ctx,
-      );
+        const active: ActiveTier = {
+          tier: `STUCK-${dayKey}`,
+          recipients: ['HEAD', 'ASSOCIATE'],
+          channels: ['BELL', 'EMAIL'],
+        };
+        await this.dispatchTier(
+          {
+            deadlineId: nearest.x.id,
+            matterId: a.matterId,
+            matterNumber: a.matter.matterNumber,
+            styleOfCause: a.matter.styleOfCause,
+            assignedAssociateUserId: a.matter.assignedAssociateUserId,
+            milestoneKey: nearest.x.milestoneKey,
+            isFatal: true,
+            quotableToClient: nearest.x.quotableToClient,
+            effectiveDue: nearest.eff,
+            artifactTitle: a.title,
+          },
+          active,
+          ctx,
+        );
+      } catch (e) {
+        this.log.warn(`JR sweep: stuck-artifact ${a.id} skipped: ${(e as Error).message}`);
+      }
     }
   }
 
@@ -283,7 +338,15 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
         if (assoc) resolved.set(assoc.userId, assoc);
       }
     }
-    if (resolved.size === 0) return;
+    if (resolved.size === 0) {
+      // A warning that reaches nobody is worse than a loud log — surface it,
+      // escalated for a fatal deadline (per the architecture doc).
+      this.log.warn(
+        `JR ${target.isFatal ? 'FATAL ' : ''}alert ${active.tier} for ${target.milestoneKey} on matter ` +
+          `${target.matterNumber} reached NO recipient (empty head/admin/associate set).`,
+      );
+      return;
+    }
 
     // Copy for the tier + milestone + due date.
     const dueDateLabel = target.effectiveDue.toISOString().slice(0, 10);
@@ -357,7 +420,12 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
             channel,
             recipientUserId: recipient.userId,
           },
-          data: { deliveryStatus: ok === false ? 'FAILED' : 'SENT', sentAt: new Date() },
+          data: {
+            deliveryStatus: ok === false ? 'FAILED' : 'SENT',
+            sentAt: new Date(),
+            errorMessage:
+              ok === false ? 'email send returned false (SMTP unconfigured or send failed)' : null,
+          },
         });
       }
     }

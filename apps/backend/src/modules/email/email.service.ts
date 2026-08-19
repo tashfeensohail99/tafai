@@ -784,6 +784,56 @@ export class EmailService {
       html: baseTemplate('Clients imported into Processing', content),
     });
   }
+
+  /**
+   * A Federal-Court JR deadline is approaching (or overdue) — internal staff
+   * warning fired by the JR deadline sweeper. `isFatal` gets a red banner (a
+   * missed ALJR filing / perfection is unrecoverable); `provisional` flags a
+   * deadline whose governing rule row is not yet counsel-verified, so nobody
+   * quotes the date to a client on the strength of it. Gated in the caller by
+   * JR_NOTIFY_ENABLED.
+   */
+  async sendJrDeadlineWarning(opts: {
+    to: string;
+    recipientName: string;
+    matterNumber: string;
+    styleOfCause?: string | null;
+    milestone: string;
+    tier: string;
+    dueDateLabel: string;
+    daysLabel: string;
+    isFatal: boolean;
+    provisional: boolean;
+  }): Promise<boolean> {
+    const fatalBanner = opts.isFatal
+      ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px;margin-bottom:20px;">
+           <p style="margin:0;font-size:13px;font-weight:700;color:#b91c1c;line-height:1.6;">FATAL deadline — a missed date here cannot be recovered. Act now.</p>
+         </div>`
+      : '';
+    const provisionalNote = opts.provisional
+      ? `<p style="margin:0 0 18px;font-size:12px;color:#b45309;font-weight:600;">[PROVISIONAL — rule not yet verified] Do not quote this date to the client until the governing rule is confirmed.</p>`
+      : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">JR deadline ${escHtml(opts.tier)} — ${escHtml(opts.daysLabel)}</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.recipientName)}, a Judicial Review deadline on matter <b>${escHtml(opts.matterNumber)}</b> needs attention.</p>
+      ${fatalBanner}
+      ${provisionalNote}
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Matter', opts.matterNumber)}
+          ${infoRow('Style of cause', opts.styleOfCause)}
+          ${infoRow('Milestone', opts.milestone)}
+          ${infoRow('Due date', opts.dueDateLabel)}
+          ${infoRow('Status', `${opts.tier} · ${opts.daysLabel}`)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/jr/deadlines" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open JR deadlines &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `${opts.isFatal ? 'FATAL ' : ''}JR deadline ${opts.tier} — ${opts.milestone} (${opts.matterNumber})`,
+      html: baseTemplate('JR deadline warning', content),
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

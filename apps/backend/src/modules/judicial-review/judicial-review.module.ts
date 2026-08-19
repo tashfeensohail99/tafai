@@ -9,6 +9,7 @@ import { JrDeadlinesService } from './jr-deadlines.service';
 import { JrDeadlinesController } from './jr-deadlines.controller';
 import { JrIntakeService } from './jr-intake.service';
 import { JrIntakeController } from './jr-intake.controller';
+import { JrDeadlineSweeperService } from './jr-deadline-sweeper.service';
 
 /**
  * Judicial Review (Federal Court JR) module — PR 1 foundation. Owns the `legal`
@@ -22,7 +23,13 @@ import { JrIntakeController } from './jr-intake.controller';
  */
 @Module({
   imports: [StorageModule, LeadsModule],
-  providers: [JrDeadlinesService, JudicialReviewService, JrArtifactsService, JrIntakeService],
+  providers: [
+    JrDeadlinesService,
+    JudicialReviewService,
+    JrArtifactsService,
+    JrIntakeService,
+    JrDeadlineSweeperService,
+  ],
   controllers: [
     JudicialReviewController,
     JrArtifactsController,

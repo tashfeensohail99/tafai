@@ -651,6 +651,45 @@ export function requestCallPermission(threadId: string): Promise<{ ok: boolean }
   });
 }
 
+/** One row in the rep's Calls view — a past call they own (assigned/answered). */
+export interface RepCallItem {
+  id: string;
+  direction: string; // INBOUND | OUTBOUND
+  status: string; // ENDED | MISSED | ANSWERED | RINGING | FAILED
+  phone: string | null;
+  contactName: string | null;
+  contactType: 'lead' | 'client' | null;
+  leadId: string | null;
+  clientId: string | null;
+  threadId: string | null;
+  durationSeconds: number | null;
+  createdAt: string;
+  hasRecording: boolean;
+}
+
+export interface RepCallsResponse {
+  items: RepCallItem[];
+  nextBefore: string | null;
+}
+
+/** The rep's own call log (assigned or answered) — GET /whatsapp/calls/mine. */
+export function getMyCalls(
+  opts: { limit?: number; before?: string; direction?: string; status?: string } = {},
+): Promise<RepCallsResponse> {
+  const q = new URLSearchParams();
+  if (opts.limit) q.set('limit', String(opts.limit));
+  if (opts.before) q.set('before', opts.before);
+  if (opts.direction) q.set('direction', opts.direction);
+  if (opts.status) q.set('status', opts.status);
+  const s = q.toString();
+  return apiFetch(`/whatsapp/calls/mine${s ? `?${s}` : ''}`);
+}
+
+/** Missed-inbound count (last 24h) for the sidebar badge. */
+export function getMyMissedCallCount(): Promise<{ count: number; hours: number }> {
+  return apiFetch(`/whatsapp/calls/mine/missed-count`);
+}
+
 export function sendTemplate(threadId: string, input: {
   templateName: string;
   language: string;

@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS "legal"."jr_work_reports" (
     CONSTRAINT "jr_work_reports_pkey" PRIMARY KEY ("id")
 );
 -- DB-level double-click idempotency: one DRAFT per (subject, period).
-CREATE UNIQUE INDEX IF NOT EXISTS "jr_work_reports_subjectAssociateUserId_periodFrom_periodTo_status_key" ON "legal"."jr_work_reports" ("subjectAssociateUserId","periodFrom","periodTo","status");
+CREATE UNIQUE INDEX IF NOT EXISTS "jr_work_reports_subject_period_status_key" ON "legal"."jr_work_reports" ("subjectAssociateUserId","periodFrom","periodTo","status");
 CREATE INDEX IF NOT EXISTS "jr_work_reports_subjectAssociateUserId_idx" ON "legal"."jr_work_reports" ("subjectAssociateUserId");
 CREATE INDEX IF NOT EXISTS "jr_work_reports_status_idx" ON "legal"."jr_work_reports" ("status");
 

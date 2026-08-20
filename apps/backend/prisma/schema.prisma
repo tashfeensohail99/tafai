@@ -5927,7 +5927,7 @@ model JrWorkReport {
   attachments JrWorkReportAttachment[]
 
   // DB-level double-click idempotency: one DRAFT per (subject, period).
-  @@unique([subjectAssociateUserId, periodFrom, periodTo, status])
+  @@unique([subjectAssociateUserId, periodFrom, periodTo, status], map: "jr_work_reports_subject_period_status_key")
   @@index([subjectAssociateUserId])
   @@index([status])
   @@map("jr_work_reports")

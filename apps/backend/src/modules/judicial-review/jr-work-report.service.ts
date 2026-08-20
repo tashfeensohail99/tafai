@@ -96,7 +96,7 @@ export class JrWorkReportService {
     const existing = await this.prisma.jrWorkReport.findFirst({
       where: { subjectAssociateUserId, periodFrom, periodTo, status: 'DRAFT' },
     });
-    if (existing) return this.hydrate(existing);
+    if (existing) return this.hydrate(existing, canViewAll);
 
     let report: JrWorkReport;
     try {
@@ -120,12 +120,12 @@ export class JrWorkReportService {
         const winner = await this.prisma.jrWorkReport.findFirst({
           where: { subjectAssociateUserId, periodFrom, periodTo, status: 'DRAFT' },
         });
-        if (winner) return this.hydrate(winner);
+        if (winner) return this.hydrate(winner, canViewAll);
       }
       throw err;
     }
 
-    return this.hydrate(report);
+    return this.hydrate(report, canViewAll);
   }
 
   /**
@@ -136,7 +136,7 @@ export class JrWorkReportService {
     const report = await this.prisma.jrWorkReport.findUnique({ where: { id } });
     if (!report) throw new NotFoundException('Work report not found');
     this.assertReadable(report, user);
-    return this.hydrate(report);
+    return this.hydrate(report, user.permissions.includes(VIEW_ALL));
   }
 
   /**
@@ -243,7 +243,7 @@ export class JrWorkReportService {
         content: this.escapeHtml(dto.content),
       },
     });
-    return this.hydrate(report);
+    return this.hydrate(report, user.permissions.includes(VIEW_ALL));
   }
 
   async deleteNote(
@@ -265,7 +265,7 @@ export class JrWorkReportService {
       where: { id: noteId },
       data: { deletedAt: new Date() },
     });
-    return this.hydrate(report);
+    return this.hydrate(report, user.permissions.includes(VIEW_ALL));
   }
 
   // ---------------------------------------------------------------------------
@@ -288,8 +288,15 @@ export class JrWorkReportService {
     }
   }
 
-  /** Recompute the body + reload enrichments for a report. */
-  private async hydrate(report: JrWorkReport): Promise<HydratedWorkReport> {
+  /**
+   * Recompute the body + reload enrichments for a report. `canViewAll` is the
+   * LIVE reader's permission (NOT report.canViewAllAtCompile) — it gates whether
+   * HEAD_ONLY case notes appear, so a non-view_all subject reading a report a Head
+   * compiled about them never sees HEAD_ONLY material (which is hidden from them
+   * everywhere else). canViewAllAtCompile is retained only to reproduce the frozen
+   * 10C snapshot, never for live-read gating.
+   */
+  private async hydrate(report: JrWorkReport, canViewAll: boolean): Promise<HydratedWorkReport> {
     // Inclusive window: [periodFrom 00:00:00 UTC, periodTo 23:59:59.999 UTC].
     const from = new Date(report.periodFrom);
     const to = new Date(report.periodTo.getTime() + DAY_MS - 1);
@@ -298,7 +305,7 @@ export class JrWorkReportService {
       subjectAssociateUserId: report.subjectAssociateUserId,
       periodFrom: from,
       periodTo: to,
-      canViewAll: report.canViewAllAtCompile,
+      canViewAll,
     });
 
     const notes = await this.prisma.jrWorkReportNote.findMany({

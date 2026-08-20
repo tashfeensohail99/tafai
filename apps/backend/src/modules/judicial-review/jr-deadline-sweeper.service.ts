@@ -143,7 +143,9 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
     const assocCache = new Map<string, Recipient | null>();
 
     const deadlines = await this.prisma.jrDeadline.findMany({
-      where: { status: 'PENDING' },
+      // Skip CLOSED matters: a closed file's leftover PENDING deadlines must not be
+      // alerted on or flipped to MISSED (no close path retires them).
+      where: { status: 'PENDING', matter: { stage: { not: 'CLOSED' } } },
       orderBy: { computedDueAt: 'asc' },
       take: JrDeadlineSweeperService.BATCH,
       include: {
@@ -244,6 +246,7 @@ export class JrDeadlineSweeperService implements OnModuleInit, OnModuleDestroy {
         status: 'COUNSEL_REVIEW',
         deletedAt: null,
         matter: {
+          stage: { not: 'CLOSED' },
           deadlines: { some: { isFatal: true, status: 'PENDING', computedDueAt: { lte: cutoff } } },
         },
       },

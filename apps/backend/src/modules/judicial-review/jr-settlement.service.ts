@@ -9,6 +9,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { JudicialReviewService } from './judicial-review.service';
+import { JrDeadlinesService } from './jr-deadlines.service';
 import { OpenSuccessorDto, RecordSettlementDto } from './judicial-review.dto';
 import { CURRENT_DEADLINE_RULE_SET_VERSION, toLegalDateUtc } from './jr-deadline-engine';
 
@@ -33,6 +34,7 @@ export class JrSettlementService {
     private readonly prisma: PrismaService,
     private readonly numbering: NumberingService,
     private readonly jr: JudicialReviewService,
+    private readonly deadlines: JrDeadlinesService,
   ) {}
 
   /**
@@ -47,6 +49,14 @@ export class JrSettlementService {
     user: RequestUser,
   ): Promise<JrMatter> {
     const matter = await this.jr.assertMatterAccess(matterId, user);
+
+    // A settlement only exists once the ALJR is filed — refuse to record terms (and
+    // create a live alerting deadline) on a pre-filing or terminal matter.
+    if (!['FILED', 'LEAVE_GRANTED', 'REDETERMINATION'].includes(matter.stage)) {
+      throw new UnprocessableEntityException(
+        'Settlement terms can only be recorded once the ALJR is FILED (through LEAVE_GRANTED / REDETERMINATION).',
+      );
+    }
 
     // An additional-submissions settlement is worthless without the DOJ letter's
     // deadline — require it (unless one is already on the matter from an earlier
@@ -90,38 +100,40 @@ export class JrSettlementService {
     if (dto.dojFileNumber !== undefined) data.dojFileNumber = dto.dojFileNumber;
 
     // The additional-submissions deadline after this write: the value just
-    // supplied, else whatever was already on the matter.
+    // supplied, else whatever was already on the matter. The TERM flag governs
+    // whether that deadline should exist at all.
     const effectiveDue = dto.additionalSubmissionsDueAt
       ? toLegalDateUtc(dto.additionalSubmissionsDueAt)
       : matter.additionalSubmissionsDueAt;
+    const effectiveTerm = dto.termAdditionalSubmissions ?? matter.termAdditionalSubmissions;
 
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.jrMatter.update({ where: { id: matterId }, data });
 
-      // Keep a matching sentinel JrDeadline in sync so the sweeper
-      // (jr-alert-tiers ADDITIONAL_SUBMISSIONS) surfaces the DOJ letter's date.
-      // Mirrors addUnderlyingDocWatch's non-computed sentinel pattern.
-      if (effectiveDue) {
-        const rule = await tx.jrDeadlineRule.findFirst({
-          where: {
-            ruleSetVersion: matter.deadlineRuleSetVersion,
-            milestoneKey: 'ADDITIONAL_SUBMISSIONS',
-          },
-        });
-        if (!rule) {
-          throw new UnprocessableEntityException(
-            'No ADDITIONAL_SUBMISSIONS rule seeded — run scripts/seed-jr-deadline-rules.ts.',
-          );
-        }
-        const existing = await tx.jrDeadline.findFirst({
-          where: { matterId, milestoneKey: 'ADDITIONAL_SUBMISSIONS', label: null },
-        });
+      const existing = await tx.jrDeadline.findFirst({
+        where: { matterId, milestoneKey: 'ADDITIONAL_SUBMISSIONS', label: null },
+      });
+      if (effectiveTerm === true && effectiveDue) {
+        // Keep a matching sentinel JrDeadline in sync so the sweeper
+        // (jr-alert-tiers ADDITIONAL_SUBMISSIONS) surfaces the DOJ letter's date.
+        // Mirrors addUnderlyingDocWatch's non-computed sentinel pattern.
         if (existing) {
           await tx.jrDeadline.update({
             where: { id: existing.id },
             data: { anchorDate: effectiveDue, computedDueAt: effectiveDue },
           });
         } else {
+          const rule = await tx.jrDeadlineRule.findFirst({
+            where: {
+              ruleSetVersion: matter.deadlineRuleSetVersion,
+              milestoneKey: 'ADDITIONAL_SUBMISSIONS',
+            },
+          });
+          if (!rule) {
+            throw new UnprocessableEntityException(
+              'No ADDITIONAL_SUBMISSIONS rule seeded — run scripts/seed-jr-deadline-rules.ts.',
+            );
+          }
           await tx.jrDeadline.create({
             data: {
               matterId,
@@ -138,6 +150,14 @@ export class JrSettlementService {
             },
           });
         }
+      } else if (existing && existing.status === 'PENDING') {
+        // The additional-submissions term no longer applies (e.g. a dropped offer)
+        // — retire the sentinel so the sweeper stops chasing a deadline for a term
+        // that no longer exists.
+        await tx.jrDeadline.update({
+          where: { id: existing.id },
+          data: { status: 'NOT_APPLICABLE' },
+        });
       }
 
       await this.writeMatterAudit(tx, {
@@ -226,17 +246,30 @@ export class JrSettlementService {
         newValues: { intakeType: 'INTERNAL', priorMatterId: source.id },
       });
 
-      await tx.jrMatter.update({
-        where: { id: source.id },
+      // Atomic claim: only one of two concurrent open-successor calls may close the
+      // source (the where re-asserts every precondition). A lost race throws and
+      // rolls the whole tx back — including the successor just created above; one
+      // wasted (gapless-not-required) JR number is acceptable.
+      const claim = await tx.jrMatter.updateMany({
+        where: {
+          id: source.id,
+          successorMatterId: null,
+          stage: 'REDETERMINATION',
+          redeterminationApproved: false,
+        },
         data: {
           successorMatterId: successor.id,
           previousStage: 'REDETERMINATION',
           stage: 'CLOSED',
+          stageEnteredAt: new Date(),
           closeReason: 'SUCCESSOR_MATTER_OPENED',
           closedAt: new Date(),
           updatedByUserId: user.id,
         },
       });
+      if (claim.count !== 1) {
+        throw new ConflictException('A successor matter has already been opened for this matter.');
+      }
       await this.writeMatterAudit(tx, {
         matterId: source.id,
         actorUserId: user.id,
@@ -248,6 +281,10 @@ export class JrSettlementService {
           closeReason: 'SUCCESSOR_MATTER_OPENED',
         },
       });
+
+      // The successor's fresh 15/60 clock is already running from the refusal date —
+      // compute its deadlines now so the sweeper surfaces them immediately.
+      await this.deadlines.recomputeDeadlines(successor.id, user.id, tx);
 
       // NOTE: auto-copying the source's carriedToRedetermination artifacts into
       // the successor (§11.2) is DEFERRED — it needs a StorageService byte-copy;

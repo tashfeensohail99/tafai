@@ -609,6 +609,13 @@ export class JrArtifactsService {
         'New evidence can only be carried once the matter is in REDETERMINATION.',
       );
     }
+    // Carrying marks a document as NEW evidence; an ON_RECORD document (part of the
+    // original certified record) is not new and must not be relabelled.
+    if (artifact.recordStatus === 'ON_RECORD') {
+      throw new BadRequestException(
+        'An on-record document (part of the original certified record) cannot be carried as new evidence.',
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const next = await tx.jrArtifact.update({

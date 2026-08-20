@@ -1,14 +1,12 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { UserPlus, UserMinus, Copy, Check, Loader2, Search, X, Mail, ShieldCheck, Users, UserCheck, MessageCircle } from 'lucide-react';
-import { PageHeader, GlassCard, MetricCard, PrimaryButton, SecondaryButton } from '@/components/sales-v2/ui';
-import { FormInput, FormSelect } from '@/components/sales-v2/ui/FormFields';
+import { UserPlus, UserMinus, Copy, Check, Loader2, Search, Mail, ShieldCheck, Users, UserCheck, MessageCircle } from 'lucide-react';
 import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { useHrSession } from '../layout/HrShell';
-import { initials, avatarGradient, th, td, StatusPill } from './ui';
+import { Avatar, Pill, Modal } from './ui';
 import {
   getHrConfig, getHrDirectory, suggestEmail, onboardEmployee, offboardEmployee,
   getDepartments, getBranches, getDesignations, getRoles,
@@ -58,82 +56,71 @@ export default function HrDirectory() {
   const inPool = rows?.filter((r) => r.whatsappInboxMember).length ?? 0;
 
   return (
-    <div className="sos-stack" style={{ gap: 20 }}>
-      <PageHeader
-        eyebrow="Human Resources"
-        title="Team"
-        description="Onboard staff with a business email in one step, and manage the directory."
-        actions={can('hr.onboard') ? (
-          <PrimaryButton iconLeft={<UserPlus size={16} />} onClick={() => setShowAdd(true)}>Add employee</PrimaryButton>
+    <div className="hr-console">
+      <div className="hr-head">
+        <div>
+          <div className="hr-eyebrow">Human Resources</div>
+          <h1 className="hr-h1">Team</h1>
+          <div className="hr-lede">Onboard staff with a business email in one step, and manage the directory.</div>
+        </div>
+        {can('hr.onboard') ? (
+          <button className="hr-btn hr-btn--primary" onClick={() => setShowAdd(true)}><UserPlus size={16} /> Add employee</button>
         ) : null}
-      />
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }}>
-        <MetricCard label="Total staff" value={rows?.length ?? 0} tone="info" Icon={Users} hint="All employee profiles" />
-        <MetricCard label="Active" value={active} tone="success" Icon={UserCheck} hint="Currently enabled" />
-        <MetricCard label="In WhatsApp pool" value={inPool} tone="accent" Icon={MessageCircle} hint="Round-robin lead pool" />
       </div>
 
-      <GlassCard variant="panel" padded={false}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--sos-divider)', flexWrap: 'wrap' }}>
-          <div className="sos-input-group" style={{ maxWidth: 340, flex: 1, minWidth: 220 }}>
-            <span className="sos-input-group__icon"><Search size={15} /></span>
-            <input className="sos-input" placeholder="Search name, code, email…" value={search}
+      <div className="hr-stats">
+        <Stat ico="indigo" Icon={Users} value={rows?.length ?? 0} label="Total staff" hint="All employee profiles" />
+        <Stat ico="ok" Icon={UserCheck} value={active} label="Active" hint="Currently enabled" />
+        <Stat ico="brand" Icon={MessageCircle} value={inPool} label="In WhatsApp pool" hint="Round-robin lead pool" />
+      </div>
+
+      <div className="hr-panel">
+        <div className="hr-panel__head">
+          <div className="hr-panel__title">All employees <span>{rows?.length ?? ''}</span></div>
+          <div className="hr-search">
+            <Search size={15} />
+            <input placeholder="Search name, code, email…" value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && load(search.trim() || undefined)} />
           </div>
-          <SecondaryButton size="sm" onClick={() => load(search.trim() || undefined)}>Search</SecondaryButton>
-          {rows ? <span style={{ marginLeft: 'auto', color: 'var(--sos-text-muted)', fontSize: 13 }}>{rows.length} employees</span> : null}
         </div>
 
         {err ? <div style={{ padding: 20 }}><ErrorState message={err} onRetry={() => load(search.trim() || undefined)} /></div>
           : !rows ? <div style={{ padding: 20 }}><LoadingState /></div>
-          : rows.length === 0 ? <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--sos-text-muted)' }}>No employees found.</div>
+          : rows.length === 0 ? <div className="hr-empty">No employees found.</div>
           : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse' }}>
-                <thead><tr style={{ background: 'var(--sos-surface-1)' }}>
-                  {['Employee', 'Code', 'Department', 'Branch', 'Designation', 'Ext', 'Status', ''].map((h) => <th key={h} style={th}>{h}</th>)}
-                </tr></thead>
+            <div className="hr-tbl-wrap">
+              <table className="hr-table">
+                <thead><tr>{['Employee', 'Code', 'Department', 'Branch', 'Ext', 'Status', ''].map((h) => <th key={h}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {rows.map((r) => {
-                    const full = `${r.firstName} ${r.lastName}`;
-                    return (
-                      <tr key={r.id} style={{ borderBottom: '1px solid var(--sos-divider)', transition: 'background 140ms' }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--sos-surface-hover, var(--sos-surface-2))')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
-                        <td style={td}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: avatarGradient(full), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                              {initials(r.firstName, r.lastName)}
-                            </div>
-                            <div style={{ minWidth: 0 }}>
-                              <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap' }}>{full}</div>
-                              <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 240 }}>{r.user?.email ?? '—'}</div>
-                            </div>
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>
+                        <div className="hr-who">
+                          <Avatar name={`${r.firstName} ${r.lastName}`} />
+                          <div style={{ minWidth: 0 }}>
+                            <b>{r.firstName} {r.lastName}</b>
+                            <small>{r.user?.email ?? '—'}</small>
                           </div>
-                        </td>
-                        <td style={{ ...td, color: 'var(--sos-text-muted)', whiteSpace: 'nowrap' }}>{r.employeeCode ?? '—'}</td>
-                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.department?.name ?? '—'}</td>
-                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.branch?.name ?? '—'}</td>
-                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.designation?.name ?? '—'}</td>
-                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.pbxExtension ?? '—'}</td>
-                        <td style={td}><StatusPill tone={r.isActive ? 'success' : 'neutral'}>{r.isActive ? 'Active' : 'Inactive'}</StatusPill></td>
-                        <td style={{ ...td, textAlign: 'right' }}>
-                          {can('hr.offboard') && r.isActive ? (
-                            <button className="sos-icon-btn" title="Offboard" onClick={() => setOffboardTarget(r)} style={{ color: 'var(--sos-status-danger)' }}>
-                              <UserMinus size={16} />
-                            </button>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </div>
+                      </td>
+                      <td className="hr-mono">{r.employeeCode ?? '—'}</td>
+                      <td className="hr-cell-strong">{r.department?.name ?? '—'}</td>
+                      <td className="hr-cell-strong">{r.branch?.name ?? '—'}</td>
+                      <td className="hr-mono">{r.pbxExtension ?? '—'}</td>
+                      <td><Pill tone={r.isActive ? 'ok' : 'neutral'}>{r.isActive ? 'Active' : 'Inactive'}</Pill></td>
+                      <td style={{ textAlign: 'right' }}>
+                        {can('hr.offboard') && r.isActive ? (
+                          <button className="hr-iconbtn" title="Offboard" onClick={() => setOffboardTarget(r)}><UserMinus size={15} /></button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           )}
-      </GlassCard>
+      </div>
 
       {showAdd ? (
         <AddEmployeeModal mailConfigured={mailConfigured} depts={depts} branches={branches} designations={designations} roles={roles}
@@ -143,6 +130,17 @@ export default function HrDirectory() {
         <OffboardModal employee={offboardTarget} onClose={() => setOffboardTarget(null)}
           onDone={() => { setOffboardTarget(null); void load(search.trim() || undefined); }} />
       ) : null}
+    </div>
+  );
+}
+
+function Stat({ ico, Icon, value, label, hint }: { ico: string; Icon: React.ComponentType<{ size?: number }>; value: number | string; label: string; hint: string }) {
+  return (
+    <div className="hr-stat">
+      <div className={`hr-stat__ico hr-i-${ico}`}><Icon size={17} /></div>
+      <div className="hr-stat__v">{value}</div>
+      <div className="hr-stat__l">{label}</div>
+      <div className="hr-stat__h">{hint}</div>
     </div>
   );
 }
@@ -180,53 +178,55 @@ function AddEmployeeModal({ mailConfigured, depts, branches, designations, roles
     finally { setSubmitting(false); }
   };
 
+  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div className="hr-field"><label className="hr-label">{label}</label>{children}</div>
+  );
+
   return (
-    <ModalShell title={result ? 'Employee created' : 'Add employee'} onClose={result ? onDone : onClose} wide={!result}>
-      {result ? <CredentialCard title={`${result.name} created · ${result.employeeCode}`} email={result.email} password={result.password}
+    <Modal title={result ? 'Employee created' : 'Add employee'} onClose={result ? onDone : onClose} wide={!result}>
+      {result ? (
+        <CredentialCard title={`${result.name} created · ${result.employeeCode}`} email={result.email} password={result.password}
           note={result.mailboxCreated ? 'Mailbox created on MXRoute — same password works for the inbox and the CRM login.' : 'CRM login only (no mailbox created).'} onDone={onDone} />
-        : (
-          <div className="sos-stack" style={{ gap: 14 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <FormInput label="First name" required value={form.firstName} onChange={(e) => set('firstName', e.target.value)} onBlur={previewEmail} />
-              <FormInput label="Last name" required value={form.lastName} onChange={(e) => set('lastName', e.target.value)} />
-            </div>
-            <div style={{ background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-sm)', padding: 14, border: '1px solid var(--sos-border-subtle)' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: mailConfigured ? 'pointer' : 'not-allowed', opacity: mailConfigured ? 1 : 0.5, fontSize: 14, fontWeight: 600 }}>
-                <input type="checkbox" checked={!!form.generateBusinessEmail} disabled={!mailConfigured}
-                  onChange={(e) => { set('generateBusinessEmail', e.target.checked); if (e.target.checked) void previewEmail(); }} />
-                <Mail size={15} /> Generate business email (MXRoute)
-              </label>
-              {!mailConfigured ? <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 6 }}>Email provisioning not configured.</div>
-                : form.generateBusinessEmail ? (
-                  <div style={{ fontSize: 13, marginTop: 8, color: 'var(--sos-text-secondary)' }}>Will create: <strong style={{ color: 'var(--sos-text-primary)' }}>{emailPreview ?? '…enter first name'}</strong>
-                    <span style={{ color: 'var(--sos-text-muted)' }}> — password auto-generated, shown once.</span></div>
-                ) : <div style={{ marginTop: 8 }}><FormInput label="Email" type="email" value={form.email} onChange={(e) => set('email', e.target.value)} /></div>}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <FormSelect label="Department" value={form.departmentId} onChange={(e) => set('departmentId', e.target.value)} placeholder="Select…" options={depts.map((d) => ({ value: d.id, label: d.name }))} />
-              <FormSelect label="Branch" value={form.branchId} onChange={(e) => set('branchId', e.target.value)} placeholder="Select…" options={branches.map((b) => ({ value: b.id, label: b.name }))} />
-              <FormSelect label="Designation" value={form.designationId} onChange={(e) => set('designationId', e.target.value)} placeholder="Select…" options={designations.map((d) => ({ value: d.id, label: d.name }))} />
-              <FormSelect label="Role" value={form.roleNames?.[0] ?? ''} onChange={(e) => set('roleNames', e.target.value ? [e.target.value] : [])} placeholder="Select…" options={roles.map((r) => ({ value: r.name, label: r.displayName }))} />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-              <FormInput label="Phone" value={form.phone} onChange={(e) => set('phone', e.target.value)} />
-              <FormInput label="Telenor extension" value={form.pbxExtension} onChange={(e) => set('pbxExtension', e.target.value)} />
-              <FormInput label="Joining date" type="date" value={form.joiningDate} onChange={(e) => set('joiningDate', e.target.value)} />
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
-              <input type="checkbox" checked={!!form.whatsappInboxMember} onChange={(e) => set('whatsappInboxMember', e.target.checked)} />
-              Add to the WhatsApp lead inbox (round-robin pool)
-            </label>
-            {error ? <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>{error}</div> : null}
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <SecondaryButton onClick={onClose} disabled={submitting}>Cancel</SecondaryButton>
-              <PrimaryButton onClick={submit} disabled={submitting} iconLeft={submitting ? <Loader2 size={16} className="sos-spin" /> : <UserPlus size={16} />}>
-                {submitting ? 'Creating…' : 'Create employee'}
-              </PrimaryButton>
-            </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Fld label="First name"><input className="hr-input" value={form.firstName} onChange={(e) => set('firstName', e.target.value)} onBlur={previewEmail} /></Fld>
+            <Fld label="Last name"><input className="hr-input" value={form.lastName} onChange={(e) => set('lastName', e.target.value)} /></Fld>
           </div>
-        )}
-    </ModalShell>
+          <div style={{ background: 'var(--hr-panel-2)', borderRadius: 'var(--hr-radius-sm)', padding: 14, border: '1px solid var(--hr-line)' }}>
+            <label className="hr-check" style={{ fontWeight: 700, opacity: mailConfigured ? 1 : 0.5, cursor: mailConfigured ? 'pointer' : 'not-allowed' }}>
+              <input type="checkbox" checked={!!form.generateBusinessEmail} disabled={!mailConfigured}
+                onChange={(e) => { set('generateBusinessEmail', e.target.checked); if (e.target.checked) void previewEmail(); }} />
+              <Mail size={15} /> Generate business email (MXRoute)
+            </label>
+            {!mailConfigured ? <div style={{ fontSize: 12, color: 'var(--hr-muted)', marginTop: 6 }}>Email provisioning not configured.</div>
+              : form.generateBusinessEmail ? (
+                <div style={{ fontSize: 13, marginTop: 8, color: 'var(--hr-text-2)' }}>Will create: <strong style={{ color: 'var(--hr-text)' }}>{emailPreview ?? '…enter first name'}</strong>
+                  <span style={{ color: 'var(--hr-muted)' }}> — password auto-generated, shown once.</span></div>
+              ) : <div style={{ marginTop: 8 }}><Fld label="Email"><input className="hr-input" type="email" value={form.email} onChange={(e) => set('email', e.target.value)} /></Fld></div>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Fld label="Department"><select className="hr-select" value={form.departmentId} onChange={(e) => set('departmentId', e.target.value)}><option value="">Select…</option>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Fld>
+            <Fld label="Branch"><select className="hr-select" value={form.branchId} onChange={(e) => set('branchId', e.target.value)}><option value="">Select…</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Fld>
+            <Fld label="Designation"><select className="hr-select" value={form.designationId} onChange={(e) => set('designationId', e.target.value)}><option value="">Select…</option>{designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Fld>
+            <Fld label="Role"><select className="hr-select" value={form.roleNames?.[0] ?? ''} onChange={(e) => set('roleNames', e.target.value ? [e.target.value] : [])}><option value="">Select…</option>{roles.map((r) => <option key={r.id} value={r.name}>{r.displayName}</option>)}</select></Fld>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <Fld label="Phone"><input className="hr-input" value={form.phone} onChange={(e) => set('phone', e.target.value)} /></Fld>
+            <Fld label="Telenor extension"><input className="hr-input" value={form.pbxExtension} onChange={(e) => set('pbxExtension', e.target.value)} /></Fld>
+            <Fld label="Joining date"><input className="hr-input" type="date" value={form.joiningDate} onChange={(e) => set('joiningDate', e.target.value)} /></Fld>
+          </div>
+          <label className="hr-check"><input type="checkbox" checked={!!form.whatsappInboxMember} onChange={(e) => set('whatsappInboxMember', e.target.checked)} /> Add to the WhatsApp lead inbox (round-robin pool)</label>
+          {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 2 }}>
+            <button className="hr-btn hr-btn--ghost" onClick={onClose} disabled={submitting}>Cancel</button>
+            <button className="hr-btn hr-btn--primary" onClick={submit} disabled={submitting}>
+              {submitting ? <Loader2 size={16} className="hr-spin" /> : <UserPlus size={16} />}{submitting ? 'Creating…' : 'Create employee'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -241,22 +241,19 @@ function OffboardModal({ employee, onClose, onDone }: { employee: HrEmployee; on
     catch (e) { setError(e instanceof Error ? e.message : 'Offboard failed'); setBusy(false); }
   };
   return (
-    <ModalShell title={`Offboard ${employee.firstName} ${employee.lastName}`} onClose={onClose}>
-      <div className="sos-stack" style={{ gap: 14 }}>
-        <p style={{ fontSize: 14, color: 'var(--sos-text-secondary)' }}>Disables their CRM login immediately and revokes active sessions. Their data stays intact.</p>
+    <Modal title={`Offboard ${employee.firstName} ${employee.lastName}`} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <p style={{ fontSize: 14, color: 'var(--hr-text-2)', margin: 0 }}>Disables their CRM login immediately and revokes active sessions. Their data stays intact.</p>
         {onDomain ? (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
-            <input type="checkbox" checked={deleteMailbox} onChange={(e) => setDeleteMailbox(e.target.checked)} />
-            Also permanently delete the mailbox <code>{employee.user?.email}</code>
-          </label>
-        ) : <div style={{ fontSize: 13, color: 'var(--sos-text-muted)' }}>No MXRoute mailbox on this account to remove.</div>}
-        {error ? <div style={{ color: 'var(--sos-status-danger)', fontSize: 13 }}>{error}</div> : null}
+          <label className="hr-check"><input type="checkbox" checked={deleteMailbox} onChange={(e) => setDeleteMailbox(e.target.checked)} /> Also permanently delete the mailbox <code style={{ color: 'var(--hr-text)' }}>{employee.user?.email}</code></label>
+        ) : <div style={{ fontSize: 13, color: 'var(--hr-muted)' }}>No MXRoute mailbox on this account to remove.</div>}
+        {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <SecondaryButton onClick={onClose} disabled={busy}>Cancel</SecondaryButton>
-          <button className="sos-btn sos-btn--danger" onClick={run} disabled={busy}>{busy ? 'Offboarding…' : 'Offboard'}</button>
+          <button className="hr-btn hr-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="hr-btn hr-btn--danger" onClick={run} disabled={busy}>{busy ? 'Offboarding…' : 'Offboard'}</button>
         </div>
       </div>
-    </ModalShell>
+    </Modal>
   );
 }
 
@@ -265,40 +262,21 @@ export function CredentialCard({ title, email, password, note, onDone }: { title
   const copy = (label: string, value: string) => void navigator.clipboard.writeText(value).then(() => { setCopied(label); setTimeout(() => setCopied(null), 1500); });
   const both = `Email: ${email}\nPassword: ${password}\nLogin: https://tashfeengroup.com/login`;
   const Row = ({ label, value }: { label: string; value: string }) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0' }}>
-      <span style={{ width: 90, color: 'var(--sos-text-muted)', fontSize: 13 }}>{label}</span>
-      <code style={{ flex: 1, fontSize: 14, wordBreak: 'break-all', color: 'var(--sos-text-primary)' }}>{value}</code>
-      <button className="sos-icon-btn" title="Copy" onClick={() => copy(label, value)}>{copied === label ? <Check size={15} /> : <Copy size={15} />}</button>
-    </div>
+    <div className="hr-cred"><span>{label}</span><code>{value}</code>
+      <button className="hr-iconbtn" title="Copy" onClick={() => copy(label, value)}>{copied === label ? <Check size={15} /> : <Copy size={15} />}</button></div>
   );
   return (
-    <div className="sos-stack" style={{ gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--sos-status-success)' }}><ShieldCheck size={18} /> <strong>{title}</strong></div>
-      <div style={{ background: 'var(--sos-status-warning-soft, rgba(255,196,0,0.08))', border: '1px solid var(--sos-status-warning-border, rgba(255,196,0,0.35))', borderRadius: 'var(--sos-radius-sm)', padding: 14 }}>
-        <div style={{ fontSize: 13, marginBottom: 6, fontWeight: 600, color: 'var(--sos-text-primary)' }}>⚠ Save these now — the password is shown only once.</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--hr-ok)', fontWeight: 700 }}><ShieldCheck size={18} /> {title}</div>
+      <div className="hr-note">
+        <div style={{ fontSize: 13, marginBottom: 6, fontWeight: 700, color: 'var(--hr-text)' }}>⚠ Save these now — the password is shown only once.</div>
         <Row label="Email" value={email} />
         <Row label="Password" value={password} />
-        <div style={{ fontSize: 12, color: 'var(--sos-text-muted)', marginTop: 4 }}>{note}</div>
+        <div style={{ fontSize: 12, color: 'var(--hr-muted)', marginTop: 4 }}>{note}</div>
       </div>
       <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between' }}>
-        <SecondaryButton onClick={() => copy('both', both)} iconLeft={copied === 'both' ? <Check size={16} /> : <Copy size={16} />}>{copied === 'both' ? 'Copied' : 'Copy all'}</SecondaryButton>
-        <PrimaryButton onClick={onDone}>Done</PrimaryButton>
-      </div>
-    </div>
-  );
-}
-
-export function ModalShell({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <div onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
-      <div className="sos-glass" onClick={(e) => e.stopPropagation()}
-        style={{ width: '100%', maxWidth: wide ? 640 : 460, maxHeight: '90vh', overflowY: 'auto', padding: 22 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--sos-text-primary)' }}>{title}</h2>
-          <button className="sos-icon-btn" onClick={onClose}><X size={18} /></button>
-        </div>
-        {children}
+        <button className="hr-btn hr-btn--ghost" onClick={() => copy('both', both)}>{copied === 'both' ? <Check size={16} /> : <Copy size={16} />} {copied === 'both' ? 'Copied' : 'Copy all'}</button>
+        <button className="hr-btn hr-btn--primary" onClick={onDone}>Done</button>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import './tokens.css';
 @import './sales-os.css';
+@import './hr-console.css';
 
 /* =========================================================
    Tafsheen — global resets and base typography.

@@ -14,6 +14,8 @@ import { RolesModule } from './modules/roles/roles.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
 import { EmployeesModule } from './modules/employees/employees.module';
+import { DesignationsModule } from './modules/designations/designations.module';
+import { HrModule } from './modules/hr/hr.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { ActivityTimelineModule } from './modules/activity-timeline/activity-timeline.module';
 import { StorageModule } from './modules/storage/storage.module';
@@ -81,6 +83,8 @@ import { JudicialReviewModule } from './modules/judicial-review/judicial-review.
     PermissionsModule,
     DepartmentsModule,
     EmployeesModule,
+    DesignationsModule,
+    HrModule,
     BranchesModule,
     ServicesModule,
     CountriesModule,

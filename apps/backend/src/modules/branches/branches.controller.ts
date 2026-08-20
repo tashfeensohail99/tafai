@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
-import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { RequirePermissions, RequireAnyPermissions } from '../../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { BranchesService } from './branches.service';
@@ -22,7 +22,7 @@ export class BranchesController {
   constructor(private readonly branchesService: BranchesService) {}
 
   @Get()
-  @RequirePermissions('settings.manage')
+  @RequireAnyPermissions('settings.manage', 'hr.view', 'employees.view_all')
   findAll() {
     return this.branchesService.findAll();
   }

@@ -51,6 +51,14 @@ export class JudicialReviewController {
     return this.jr.listMatters(query, user);
   }
 
+  // Declared BEFORE `@Get(':id')` so the static `associates` path wins over the
+  // `:id` UUID param route. Powers the Head console's assign dropdown.
+  @Get('associates')
+  @RequirePermissions('jr.matter.assign')
+  associates() {
+    return this.jr.listAssociates();
+  }
+
   @Get(':id')
   @RequirePermissions('jr.portal.view')
   get(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {

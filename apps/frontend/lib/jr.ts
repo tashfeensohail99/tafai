@@ -231,6 +231,41 @@ export function fetchJrAssociates(): Promise<JrAssociate[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Create a new (EXTERNAL) matter — POST /jr/matters (createExternalMatter).
+// Identity: exactly one of the new-client trio (firstName+lastName+phone),
+// attachToLeadId, or attachToClientId. A new-client create THROWS 409
+// DUPLICATE_PHONE/EMAIL on a collision (caller retries with attachTo*).
+// Requires the `jr.matter.create` permission.
+// ---------------------------------------------------------------------------
+
+export interface CreateJrMatterInput {
+  // identity (new client)
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  // or attach
+  attachToLeadId?: string;
+  attachToClientId?: string;
+  // matter
+  decisionMaker: string;
+  applicationType: string;
+  decisionCommunicatedAt: string;
+  decisionCommunicatedNote: string;
+  decisionLetterDate?: string;
+  decidingOfficeLocation?: string;
+  styleOfCause?: string;
+  branchId?: string;
+}
+
+export function createJrMatter(input: CreateJrMatterInput): Promise<JrMatter> {
+  return apiFetch<JrMatter>('/jr/matters', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Display helpers
 // ---------------------------------------------------------------------------
 

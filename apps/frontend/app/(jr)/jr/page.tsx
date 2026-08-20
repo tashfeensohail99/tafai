@@ -5,6 +5,7 @@ import type { Route } from 'next';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  FilePlus2,
   FolderKanban,
   Loader2,
   Scale,
@@ -19,10 +20,16 @@ import {
   StatusBadge,
   EmptyState,
   PrimaryButton,
+  SecondaryButton,
+  Field,
+  FormInput,
+  FormSelect,
+  FormTextarea,
 } from '@/components/sales-v2/ui';
 import { useJrSession } from '@/components/layout/JrShell';
 import {
   assignJrMatter,
+  createJrMatter,
   fetchJrAssociates,
   fetchJrBoard,
   fetchJrMatters,
@@ -31,6 +38,7 @@ import {
   jrHumanize,
   jrStageLabel,
   jrStageTone,
+  type CreateJrMatterInput,
   type JrAssociate,
   type JrBoardRow,
   type JrMatter,
@@ -61,6 +69,26 @@ const STAGES: JrMatterStage[] = [
 ];
 
 const INTAKE_TYPES: JrIntakeType[] = ['EXTERNAL', 'INTERNAL'];
+
+// The 9 JrDecisionMaker enum values (backend judicial-review.dto.ts).
+const DECISION_MAKER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'VISA_OFFICER', label: 'Visa officer' },
+  { value: 'IRCC_IN_CANADA', label: 'IRCC (in Canada)' },
+  { value: 'CPC', label: 'CPC (Case Processing Centre)' },
+  { value: 'CBSA', label: 'CBSA' },
+  { value: 'ID', label: 'Immigration Division (ID)' },
+  { value: 'IAD', label: 'Immigration Appeal Division (IAD)' },
+  { value: 'RAD', label: 'Refugee Appeal Division (RAD)' },
+  { value: 'RPD', label: 'Refugee Protection Division (RPD)' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+// JrDecidingOfficeLocation — drives the 15/60-day fatal clock.
+const DECIDING_OFFICE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'IN_CANADA', label: 'In Canada (15-day clock)' },
+  { value: 'OUTSIDE_CANADA', label: 'Outside Canada (60-day clock)' },
+  { value: 'UNKNOWN', label: 'Unknown (treated as 15)' },
+];
 
 const GRID =
   'minmax(150px, 1.2fr) minmax(200px, 2fr) minmax(140px, 1.1fr) 120px minmax(180px, 1.4fr) 120px';
@@ -130,10 +158,193 @@ function AssignControl({
   );
 }
 
+// ---------------------------------------------------------------------------
+// New Matter modal (Head only) — opens a NEW EXTERNAL matter for a decision the
+// client brings in from outside our processing. v1 supports the new-client path
+// only; a duplicate phone/email 409s and the message surfaces inline.
+// ---------------------------------------------------------------------------
+function NewMatterModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [decisionMaker, setDecisionMaker] = useState('OTHER');
+  const [applicationType, setApplicationType] = useState('Judicial Review');
+  const [decidingOfficeLocation, setDecidingOfficeLocation] = useState('UNKNOWN');
+  const [decisionCommunicatedAt, setDecisionCommunicatedAt] = useState('');
+  const [decisionCommunicatedNote, setDecisionCommunicatedNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit =
+    firstName.trim() !== '' &&
+    lastName.trim() !== '' &&
+    phone.trim() !== '' &&
+    decisionMaker !== '' &&
+    applicationType.trim() !== '' &&
+    decisionCommunicatedAt !== '' &&
+    decisionCommunicatedNote.trim() !== '';
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canSubmit || saving) return;
+    setSaving(true);
+    setError(null);
+    const input: CreateJrMatterInput = {
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      phone: phone.trim(),
+      decisionMaker,
+      applicationType: applicationType.trim(),
+      decisionCommunicatedAt,
+      decisionCommunicatedNote: decisionCommunicatedNote.trim(),
+      decidingOfficeLocation,
+      ...(email.trim() ? { email: email.trim() } : {}),
+    };
+    try {
+      await createJrMatter(input);
+      onCreated();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create matter');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.6)',
+        zIndex: 200,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+      }}
+      onClick={(e) => e.target === e.currentTarget && !saving && onClose()}
+    >
+      <GlassCard
+        variant="strong"
+        padded="lg"
+        style={{ width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}
+      >
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={onClose}
+          disabled={saving}
+          style={{ position: 'absolute', top: 16, right: 16, background: 'transparent', border: 'none', color: 'var(--sos-text-muted)', cursor: saving ? 'not-allowed' : 'pointer', padding: 6, zIndex: 1 }}
+        >
+          <X size={16} />
+        </button>
+
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--sos-brand-primary-strong)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <FilePlus2 size={13} /> New judicial review matter
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Open a matter</div>
+          <div style={{ fontSize: 13, color: 'var(--sos-text-muted)', marginTop: 3 }}>
+            External decision the client brings in from outside our processing.
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Client */}
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Client
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormInput label="First name" required value={firstName} onChange={(e) => setFirstName(e.target.value)} maxLength={120} />
+            <FormInput label="Last name" required value={lastName} onChange={(e) => setLastName(e.target.value)} maxLength={120} />
+          </div>
+          <FormInput
+            label="Phone"
+            required
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            maxLength={40}
+            hint="If this client already exists you'll get a 'duplicate' message — that path comes later."
+          />
+          <FormInput label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+
+          {/* Matter */}
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
+            Matter
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormSelect
+              label="Decision maker"
+              required
+              value={decisionMaker}
+              onChange={(e) => setDecisionMaker(e.target.value)}
+              options={DECISION_MAKER_OPTIONS}
+            />
+            <FormInput label="Application type" required value={applicationType} onChange={(e) => setApplicationType(e.target.value)} maxLength={80} />
+          </div>
+          <FormSelect
+            label="Deciding office location"
+            value={decidingOfficeLocation}
+            onChange={(e) => setDecidingOfficeLocation(e.target.value)}
+            options={DECIDING_OFFICE_OPTIONS}
+            hint="15 days in-Canada / 60 outside / UNKNOWN treated as 15"
+          />
+          <Field
+            label="Decision communicated to client"
+            required
+            hint="The day the client was notified of the refusal — this starts the fatal clock."
+          >
+            <input
+              type="date"
+              className="sos-input"
+              value={decisionCommunicatedAt}
+              onChange={(e) => setDecisionCommunicatedAt(e.target.value)}
+            />
+          </Field>
+          <FormTextarea
+            label="Chain of custody note"
+            required
+            value={decisionCommunicatedNote}
+            onChange={(e) => setDecisionCommunicatedNote(e.target.value)}
+            maxLength={400}
+            rows={3}
+            placeholder="e.g. refusal letter dated 2026-08-01, received by client on 2026-08-05 by email."
+          />
+
+          {error ? (
+            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12.5 }}>
+              {error}
+            </div>
+          ) : null}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+            <SecondaryButton type="button" onClick={onClose} disabled={saving}>Cancel</SecondaryButton>
+            <PrimaryButton
+              type="submit"
+              disabled={!canSubmit || saving}
+              iconLeft={saving ? <Loader2 size={14} className="sos-spin" /> : <FilePlus2 size={14} />}
+            >
+              {saving ? 'Creating…' : 'Create matter'}
+            </PrimaryButton>
+          </div>
+        </form>
+      </GlassCard>
+    </div>
+  );
+}
+
 export default function JrMattersPage() {
   const { user, mode } = useJrSession();
   const canAssign = user.permissions.includes('jr.matter.assign');
+  const canCreate = user.permissions.includes('jr.matter.create');
 
+  const [newMatterOpen, setNewMatterOpen] = useState(false);
   const [matters, setMatters] = useState<JrMatter[]>([]);
   const [board, setBoard] = useState<JrBoardRow[]>([]);
   const [associates, setAssociates] = useState<JrAssociate[]>([]);
@@ -234,7 +445,24 @@ export default function JrMattersPage() {
             ? 'Every JR matter, the awaiting-assignment queue, and the fatal-deadline strip.'
             : 'The judicial review matters assigned to you.'
         }
+        actions={
+          canCreate ? (
+            <PrimaryButton onClick={() => setNewMatterOpen(true)} iconLeft={<FilePlus2 size={15} />}>
+              New Matter
+            </PrimaryButton>
+          ) : undefined
+        }
       />
+
+      {newMatterOpen ? (
+        <NewMatterModal
+          onClose={() => setNewMatterOpen(false)}
+          onCreated={() => {
+            setNewMatterOpen(false);
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      ) : null}
 
       {/* Metrics */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>

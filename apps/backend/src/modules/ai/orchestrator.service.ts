@@ -110,13 +110,28 @@ const OFFICE_CLOSE_HOUR = 18; // 18:00 (6 PM); bookable window is [09:00, 18:00)
 const OFFICE_HOURS = 'Monday–Saturday, 9 AM–6 PM (Pakistan time)';
 const OFFICE_ADDRESS =
   'Office No. 3029B, 3rd Floor, World Trade Centre, Giga Mall, Sector F, DHA Phase 2, Islamabad';
-// Lahore branch — open and staffed (opened 2026-07-10). Office-visit BOOKINGS
-// still resolve to the Islamabad address below (line ~1019) — Lahore isn't
-// wired into the appointment engine as a selectable venue — but the bot may
-// freely tell clients the Lahore address/location below when asked.
+// Lahore branch — open and staffed (opened 2026-07-10). Office-visit bookings
+// now resolve per-city via officeAddressFor() below, so a Lahore client is no
+// longer sent the Islamabad address.
 const LAHORE_OFFICE_ADDRESS =
   'Office #201 & 202, 2nd Floor, Haly Tower, Sector R DHA Phase 2, Lahore, 54000';
 const LAHORE_OFFICE_MAPS_URL = 'https://share.google/HY79OU4AQwXBS3oRt';
+
+/**
+ * Which office an IN-PERSON consultation is booked at. The confirmation carries
+ * this address, so defaulting everyone to Islamabad sent Lahore clients to the
+ * wrong CITY. Preference: the city the customer actually named, else the branch
+ * of the rep who owns the lead (ad routing already sends Lahore ads to the
+ * Lahore desk), else Islamabad — the historic default.
+ */
+function officeAddressFor(rawText: string | null | undefined, branchName: string | null): string {
+  const text = (rawText ?? '').toLowerCase();
+  const has = (...needles: string[]) => needles.some((n) => text.includes(n));
+  if (has('lahore', 'lhr', 'لاہور')) return LAHORE_OFFICE_ADDRESS;
+  if (has('islamabad', 'isb', 'rawalpindi', 'اسلام')) return OFFICE_ADDRESS;
+  if (branchName && branchName.toLowerCase().includes('lahore')) return LAHORE_OFFICE_ADDRESS;
+  return OFFICE_ADDRESS;
+}
 
 /**
  * Clamp a proposed slot into office hours AND working days. Before opening →
@@ -968,6 +983,8 @@ export class OrchestratorService {
               id: true,
               firstName: true,
               lastName: true,
+              // Which office an in-person booking should point at.
+              branch: { select: { name: true } },
               user: { select: { id: true, email: true } },
             },
           },
@@ -1017,7 +1034,10 @@ export class OrchestratorService {
               durationMinutes,
               // Office visits carry the office address so the confirmation tells
               // the client exactly where to come; calls/Meets have no location.
-              location: opts.modality === 'IN_PERSON' ? OFFICE_ADDRESS : null,
+              location:
+                opts.modality === 'IN_PERSON'
+                  ? officeAddressFor(opts.rawText, lead.assignedEmployee?.branch?.name ?? null)
+                  : null,
               notes: `Auto-booked by AI assistant. Client said: "${opts.rawText}"`,
             },
             select: { id: true, scheduledAt: true, durationMinutes: true, appointmentType: true },
@@ -1514,7 +1534,8 @@ export class OrchestratorService {
       `10. The initial CONSULTATION IS FREE. If the customer asks about a consultation / booking / meeting fee, or "kya consultation ki fees hai", tell them the consultation is free — there is no charge to talk to us. NEVER say or imply the consultation is paid. (Service/case fees for the actual work are only discussed during that free consultation.)`,
       ``,
       `KNOWN FACTS YOU MAY ALWAYS USE`,
-      `- Offices: Pakistan — Islamabad: ${OFFICE_ADDRESS}. Lahore: ${LAHORE_OFFICE_ADDRESS} — this branch is OPEN now. If a customer asks for the Lahore office address, directions, or location, give the address above AND this Google Maps link: ${LAHORE_OFFICE_MAPS_URL}. Plus an office in Canada. We do NOT have a Karachi office — never mention one.`,
+      `- Offices in Pakistan (BOTH are open and staffed): ISLAMABAD — ${OFFICE_ADDRESS}. LAHORE — ${LAHORE_OFFICE_ADDRESS} (Google Maps: ${LAHORE_OFFICE_MAPS_URL}). Plus an office in Canada. We do NOT have a Karachi office — never mention one.`,
+      `- ADDRESS RULE — which office to give: (a) the customer NAMES a city (Lahore / Islamabad / "Isb", or a nearby area) -> give ONLY that city's office, and for Lahore always include its Google Maps link; (b) they ask about location WITHOUT naming a city ("where is your office", "address", "location", "office kahan hai", "daftar kidhar hai") -> give BOTH offices, Islamabad AND Lahore, then ask which one is convenient for them. NEVER give only Islamabad when no city was named — we have two Pakistan offices and the customer may be in either city.`,
       `- Office hours: ${OFFICE_HOURS} for the Pakistan office. Phone, Google Meet, and office-visit consultations are all booked within these hours.`,
       `- Phone: +92 335-000-1111  ·  Email: info@tashfeenimmigrationsolutions.com`,
       `- Services: Canadian work permits & PR (C11, ICT, SUV, LMIA, RCIP), USA (E2, EB2-NIW), Judicial Review, Visit visas (Canada/UK/Schengen).`,

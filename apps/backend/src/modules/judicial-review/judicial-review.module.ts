@@ -9,6 +9,8 @@ import { JrDeadlinesService } from './jr-deadlines.service';
 import { JrDeadlinesController } from './jr-deadlines.controller';
 import { JrIntakeService } from './jr-intake.service';
 import { JrIntakeController } from './jr-intake.controller';
+import { JrSettlementService } from './jr-settlement.service';
+import { JrSettlementController } from './jr-settlement.controller';
 import { JrDeadlineSweeperService } from './jr-deadline-sweeper.service';
 
 /**
@@ -28,6 +30,7 @@ import { JrDeadlineSweeperService } from './jr-deadline-sweeper.service';
     JudicialReviewService,
     JrArtifactsService,
     JrIntakeService,
+    JrSettlementService,
     JrDeadlineSweeperService,
   ],
   controllers: [
@@ -35,7 +38,14 @@ import { JrDeadlineSweeperService } from './jr-deadline-sweeper.service';
     JrArtifactsController,
     JrDeadlinesController,
     JrIntakeController,
+    JrSettlementController,
   ],
-  exports: [JudicialReviewService, JrArtifactsService, JrDeadlinesService, JrIntakeService],
+  exports: [
+    JudicialReviewService,
+    JrArtifactsService,
+    JrDeadlinesService,
+    JrIntakeService,
+    JrSettlementService,
+  ],
 })
 export class JudicialReviewModule {}

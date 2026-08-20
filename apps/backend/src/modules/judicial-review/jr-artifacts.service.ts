@@ -17,6 +17,7 @@ import { RequestUser } from '../../common/types/auth.types';
 import { StorageService } from '../storage/storage.service';
 import { JudicialReviewService } from './judicial-review.service';
 import {
+  CarryToRedeterminationDto,
   CounselReviewDto,
   CreateArtifactDto,
   FileArtifactDto,
@@ -584,6 +585,58 @@ export class JrArtifactsService {
           serviceMethod: dto.serviceMethod,
           servedAt: servedAt.toISOString(),
           derivedMatterProofOfServiceFiledAt: isAljr ? servedAt.toISOString() : null,
+        },
+      });
+      return next;
+    });
+  }
+
+  /**
+   * Mark a NEW artifact as carried into the post-settlement additional-submissions
+   * package (§11.2), where fresh evidence IS admissible. Only once the matter is in
+   * REDETERMINATION; stamps recordStatus=NEW and, optionally, the new-evidence
+   * justification/explanation.
+   */
+  async carryToRedetermination(
+    artifactId: string,
+    dto: CarryToRedeterminationDto,
+    user: RequestUser,
+  ): Promise<JrArtifact> {
+    const artifact = await this.resolveArtifact(artifactId);
+    const matter = await this.jr.assertMatterAccess(artifact.matterId, user);
+    if (matter.stage !== 'REDETERMINATION') {
+      throw new UnprocessableEntityException(
+        'New evidence can only be carried once the matter is in REDETERMINATION.',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const next = await tx.jrArtifact.update({
+        where: { id: artifactId },
+        data: {
+          carriedToRedetermination: true,
+          recordStatus: 'NEW',
+          ...(dto.newEvidenceJustification !== undefined
+            ? { newEvidenceJustification: dto.newEvidenceJustification }
+            : {}),
+          ...(dto.newEvidenceExplanation !== undefined
+            ? { newEvidenceExplanation: dto.newEvidenceExplanation }
+            : {}),
+        },
+      });
+      await this.writeAudit(tx, {
+        matterId: artifact.matterId,
+        actorUserId: user.id,
+        action: 'artifact_carried_to_redetermination',
+        entityId: artifactId,
+        oldValues: {
+          carriedToRedetermination: artifact.carriedToRedetermination,
+          recordStatus: artifact.recordStatus,
+        },
+        newValues: {
+          carriedToRedetermination: true,
+          recordStatus: 'NEW',
+          newEvidenceJustification: dto.newEvidenceJustification ?? null,
         },
       });
       return next;

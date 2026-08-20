@@ -27,7 +27,10 @@ import {
   JrIntakeType,
   JrMatterStage,
   JrMeritsRecommendation,
+  JrNewEvidenceJustification,
   JrRule9ResponseType,
+  JrSettlementArtifact,
+  JrSettlementStage,
   JrSponsorshipRelationship,
 } from '@prisma/client';
 
@@ -694,4 +697,141 @@ export class EscalateCaseDto {
   @IsString()
   @MaxLength(400)
   decisionCommunicatedNote?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Settlement + successor-matter chain + carried evidence (PR 6). Every property
+// is decorated — the global ValidationPipe runs forbidNonWhitelisted, so an
+// undecorated field 400s.
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /jr/matters/:matterId/settlement — record the structured DOJ settlement
+ * terms (§6.2). Every field is optional: a settlement firms up incrementally, so
+ * the terms are recorded as they land. Recording them makes the FILED |
+ * LEAVE_GRANTED → REDETERMINATION gate satisfiable; it never changes the stage
+ * itself (that is changeMatterStage's job).
+ */
+export class RecordSettlementDto {
+  @IsOptional()
+  @IsDateString()
+  settlementOfferedAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  settlementAgreedAt?: string;
+
+  @IsOptional()
+  @IsEnum(JrSettlementStage)
+  settlementStage?: JrSettlementStage;
+
+  @IsOptional()
+  @IsEnum(JrSettlementArtifact)
+  settlementArtifact?: JrSettlementArtifact;
+
+  /** (a) applicant serves + files a Notice of Discontinuance. */
+  @IsOptional()
+  @IsBoolean()
+  termDiscontinuanceByApplicant?: boolean;
+
+  /** (b) Respondent sets aside the officer's decision. */
+  @IsOptional()
+  @IsBoolean()
+  termDecisionSetAside?: boolean;
+
+  /** (c) re-determined by a DIFFERENT officer. */
+  @IsOptional()
+  @IsBoolean()
+  termDifferentOfficer?: boolean;
+
+  /** (d) opportunity to make ADDITIONAL SUBMISSIONS — the successor trigger. */
+  @IsOptional()
+  @IsBoolean()
+  termAdditionalSubmissions?: boolean;
+
+  /** (e) no costs to either party. */
+  @IsOptional()
+  @IsBoolean()
+  termNoCosts?: boolean;
+
+  /** The deadline from the DOJ letter — required when termAdditionalSubmissions. */
+  @IsOptional()
+  @IsDateString()
+  additionalSubmissionsDueAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  additionalSubmissionsOffice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  settlementTermsOther?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dojCounselName?: string;
+
+  @IsOptional()
+  @IsEmail()
+  dojCounselEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dojRegionalOffice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  dojFileNumber?: string;
+}
+
+/**
+ * POST /jr/matters/:matterId/open-successor — open a fresh-clock successor matter
+ * after a redetermination was decided and REFUSED (§6.2). All fields optional:
+ * each defaults from the source matter.
+ */
+export class OpenSuccessorDto {
+  /** The refusal-notification date — the fresh 15/60 clock anchor. */
+  @IsOptional()
+  @IsDateString()
+  decisionCommunicatedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  decisionCommunicatedNote?: string;
+
+  @IsOptional()
+  @IsEnum(JrDecisionMaker)
+  decisionMaker?: JrDecisionMaker;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  applicationType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  styleOfCause?: string;
+}
+
+/**
+ * POST /jr/artifacts/:artifactId/carry-to-redetermination — mark a NEW artifact as
+ * carried into the post-settlement additional-submissions package (§11.2), where
+ * new evidence IS admissible.
+ */
+export class CarryToRedeterminationDto {
+  @IsOptional()
+  @IsEnum(JrNewEvidenceJustification)
+  newEvidenceJustification?: JrNewEvidenceJustification;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  newEvidenceExplanation?: string;
 }

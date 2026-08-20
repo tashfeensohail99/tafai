@@ -21,6 +21,7 @@ import { AuditDocumentAccess } from '../../common/decorators/audit-document-acce
 import { RequestUser } from '../../common/types/auth.types';
 import { JrArtifactsService } from './jr-artifacts.service';
 import {
+  CarryToRedeterminationDto,
   CounselReviewDto,
   CreateArtifactDto,
   FileArtifactDto,
@@ -142,6 +143,17 @@ export class JrArtifactsController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.artifacts.serveArtifact(artifactId, dto, user);
+  }
+
+  @Post('artifacts/:artifactId/carry-to-redetermination')
+  @RequirePermissions('jr.artifact.author')
+  @Audit({ idParam: 'artifactId', entityType: 'JrArtifact', category: 'MUTATION', severity: 'MEDIUM' })
+  carryToRedetermination(
+    @Param('artifactId', ParseUUIDPipe) artifactId: string,
+    @Body() dto: CarryToRedeterminationDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.artifacts.carryToRedetermination(artifactId, dto, user);
   }
 
   @Delete('artifacts/:artifactId')

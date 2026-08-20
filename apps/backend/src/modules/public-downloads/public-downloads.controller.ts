@@ -12,6 +12,11 @@ import { StorageService } from '../storage/storage.service';
  * the fallback for older 32-bit devices.
  */
 export const APP_APK_KEY = 'app/tafai-arm64-v8a.apk';
+
+/** Signed-URL lifetime for the APK download. Deliberately long (1h): a ~100MB
+ *  APK over slow mobile data outlives the 5-minute default, and an expiry
+ *  mid-download yields a truncated, uninstallable file. */
+const APK_URL_TTL_SECONDS = 3600;
 export const APP_APK_V7A_KEY = 'app/tafai-armeabi-v7a.apk';
 export const APP_INFO_KEY = 'app/latest.json';
 
@@ -59,7 +64,13 @@ export class PublicDownloadsController {
     if (!(await this.storage.exists(key))) {
       throw new NotFoundException('No app build has been published yet');
     }
-    let url = await this.storage.getSignedUrl(key);
+    // 1 HOUR, not the 5-minute default: the APK is ~100MB and reps download it
+    // over Pakistani mobile data, where it can take far longer than 5 minutes.
+    // When the default TTL expired mid-download the phone's download manager
+    // retried against a dead URL and saved a TRUNCATED file — which Android
+    // rejects with "App not installed / package appears to be invalid".
+    // This build is a PUBLIC download, so a long-lived link leaks nothing.
+    let url = await this.storage.getSignedUrl(key, APK_URL_TTL_SECONDS);
     // Supabase signed URLs accept ?download=<name> to force a sensible
     // save-as filename instead of the storage key.
     if (url.includes('/storage/v1/object/sign/')) {

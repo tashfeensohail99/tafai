@@ -11,7 +11,7 @@ import {
 import { DepartmentsService } from './departments.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
-import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { RequirePermissions, RequireAnyPermissions } from '../../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { CreateDepartmentDto, UpdateDepartmentDto } from './departments.dto';
@@ -25,7 +25,7 @@ export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
   @Get()
-  @RequirePermissions('settings.manage')
+  @RequireAnyPermissions('settings.manage', 'hr.view', 'employees.view_all')
   findAll() {
     return this.departmentsService.findAll();
   }

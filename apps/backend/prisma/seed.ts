@@ -25,6 +25,11 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'employees.view_all', module: 'employees', description: 'View all employees' },
   { key: 'employees.create', module: 'employees', description: 'Create employee profiles' },
   { key: 'employees.update', module: 'employees', description: 'Update employee profiles' },
+  // HR
+  { key: 'hr.view', module: 'hr', description: 'View the HR module + employee directory' },
+  { key: 'hr.onboard', module: 'hr', description: 'Onboard staff (create account + business email)' },
+  { key: 'hr.offboard', module: 'hr', description: 'Offboard staff (disable login + optional mailbox delete)' },
+  { key: 'hr.manage', module: 'hr', description: 'Manage designations + employee HR fields' },
   // Attendance & payroll (camera-attendance integration)
   { key: 'attendance.view', module: 'attendance', description: 'View attendance + camera integration' },
   // Leads
@@ -166,6 +171,15 @@ const SYSTEM_ROLES: {
     displayName: 'Admin',
     description: 'Administrative access excluding system settings override',
     permissionKeys: PERMISSIONS.filter((p) => p.module !== 'audit').map((p) => p.key),
+  },
+  {
+    name: 'hr',
+    displayName: 'HR',
+    description: 'Human resources — onboard/offboard staff, business email, directory',
+    permissionKeys: [
+      'hr.view', 'hr.onboard', 'hr.offboard', 'hr.manage',
+      'employees.view_all', 'employees.create', 'employees.update',
+    ],
   },
   {
     name: 'sales_manager',

@@ -4,7 +4,18 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowLeft, Loader2, CalendarClock, Pencil, User, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Loader2,
+  CalendarClock,
+  Pencil,
+  User,
+  X,
+  GitBranch,
+  Signpost,
+  History,
+} from 'lucide-react';
 import {
   GlassCard,
   PageHeader,
@@ -23,26 +34,40 @@ import { DocumentsPanel } from '@/components/jr/DocumentsPanel';
 import { NotesPanel } from '@/components/jr/NotesPanel';
 import {
   assignJrMatter,
+  changeJrStage,
+  determineJrRoute,
   fetchJrArtifacts,
   fetchJrAssociates,
   fetchJrMatter,
   fetchJrMatterDeadlines,
+  fetchJrMatterHistory,
   updateJrMatter,
   jrDueInfo,
   jrFmtDate,
   jrHumanize,
   jrStageLabel,
   jrStageTone,
+  jrCloseReasonLabel,
+  jrRouteLabel,
+  JR_STAGE_TRANSITIONS,
+  JR_CLOSE_REASON_OPTIONS,
+  JR_SPONSORSHIP_OPTIONS,
+  JR_INADMISSIBILITY_OPTIONS,
+  type ChangeStagePayload,
+  type DetermineRoutePayload,
   type JrArtifactsGrouped,
   type JrAssociate,
   type JrDeadlineRow,
+  type JrHistoryRow,
   type JrMatter,
 } from '@/lib/jr';
 
 /**
- * JR matter detail — read-only for v1 (the only mutation is assigning an
- * associate, gated by `jr.matter.assign`). Overview + deadlines + grouped
- * artifacts. All three reads are matter-access-checked server-side.
+ * JR matter detail console. Overview + client + gated actions (advance stage,
+ * determine route, assign, edit case details) + deadlines + grouped artifacts +
+ * notes + a read-only activity timeline. Every mutation control is gated on the
+ * same permission the backend endpoint requires, and every read is
+ * matter-access-checked server-side.
  */
 
 function deadlineStatusTone(status: string): BadgeTone {
@@ -365,16 +390,503 @@ function DetailAssignControl({
   );
 }
 
+// A compact checkbox row that pairs the box with a label + optional hint.
+function CheckboxField({
+  label,
+  checked,
+  onChange,
+  hint,
+  disabled,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  hint?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: disabled ? 'default' : 'pointer' }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ marginTop: 2 }}
+      />
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: 13, color: 'var(--sos-text-primary)' }}>{label}</span>
+        {hint ? <span style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>{hint}</span> : null}
+      </span>
+    </label>
+  );
+}
+
+const errorBoxStyle: React.CSSProperties = {
+  padding: '8px 12px',
+  borderRadius: 8,
+  background: 'var(--sos-status-danger-soft)',
+  border: '1px solid var(--sos-status-danger-border)',
+  color: 'var(--sos-status-danger)',
+  fontSize: 12.5,
+};
+
+// ---------------------------------------------------------------------------
+// Stage advancement — the gated §6.1 stage machine (jr.matter.update_stage).
+// Offers ONLY the forward transitions the frozen map allows from the current
+// stage; conditionally reveals the gate fields the chosen target needs. The
+// per-transition §6.2 GATES live server-side — a rejected move surfaces the
+// backend message verbatim; the console never replicates the gate logic.
+// ---------------------------------------------------------------------------
+function StageAdvanceCard({ matter, onChanged }: { matter: JrMatter; onChanged: () => void }) {
+  const targets = JR_STAGE_TRANSITIONS[matter.stage] ?? [];
+  const [target, setTarget] = useState('');
+  const [closeReason, setCloseReason] = useState('');
+  const [decidingOfficeLocation, setDecidingOfficeLocation] = useState('');
+  const [decidingOfficeSourceNote, setDecidingOfficeSourceNote] = useState('');
+  const [hennellyIntention, setHennellyIntention] = useState('');
+  const [hennellyMerit, setHennellyMerit] = useState('');
+  const [hennellyPrejudice, setHennellyPrejudice] = useState('');
+  const [hennellyExplanation, setHennellyExplanation] = useState('');
+  const [leaveDecidedAt, setLeaveDecidedAt] = useState('');
+  const [leaveOrderAt, setLeaveOrderAt] = useState('');
+  const [leaveGranted, setLeaveGranted] = useState(false);
+  const [redeterminationDecidedAt, setRedeterminationDecidedAt] = useState('');
+  const [redeterminationApproved, setRedeterminationApproved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // The IR-1 deciding-office gate only bites when the office is still UNKNOWN.
+  const needDecidingOffice = asStr(matter.decidingOfficeLocation) === 'UNKNOWN';
+  const fromRedetermination = matter.stage === 'REDETERMINATION';
+
+  function reset() {
+    setTarget('');
+    setCloseReason('');
+    setDecidingOfficeLocation('');
+    setDecidingOfficeSourceNote('');
+    setHennellyIntention('');
+    setHennellyMerit('');
+    setHennellyPrejudice('');
+    setHennellyExplanation('');
+    setLeaveDecidedAt('');
+    setLeaveOrderAt('');
+    setLeaveGranted(false);
+    setRedeterminationDecidedAt('');
+    setRedeterminationApproved(false);
+    setError(null);
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (saving) return;
+    if (!target) {
+      setError('Choose a target stage.');
+      return;
+    }
+    if (target === 'CLOSED' && !closeReason) {
+      setError('A close reason is required to close a matter.');
+      return;
+    }
+    if (
+      target === 'FILED' &&
+      needDecidingOffice &&
+      (!decidingOfficeLocation || !decidingOfficeSourceNote.trim())
+    ) {
+      setError('Set the deciding office location and a source note before filing.');
+      return;
+    }
+
+    const payload: ChangeStagePayload = { targetStage: target as JrMatter['stage'] };
+    if (target === 'CLOSED') {
+      payload.closeReason = closeReason;
+      if (fromRedetermination) {
+        if (redeterminationDecidedAt) payload.redeterminationDecidedAt = redeterminationDecidedAt;
+        payload.redeterminationApproved = redeterminationApproved;
+      }
+    }
+    if (target === 'FILED' && needDecidingOffice) {
+      payload.decidingOfficeLocation = decidingOfficeLocation;
+      payload.decidingOfficeSourceNote = decidingOfficeSourceNote;
+    }
+    if (target === 'REQUIRES_EXTENSION_REQUEST') {
+      payload.hennellyIntention = hennellyIntention;
+      payload.hennellyMerit = hennellyMerit;
+      payload.hennellyPrejudice = hennellyPrejudice;
+      payload.hennellyExplanation = hennellyExplanation;
+    }
+    if (target === 'LEAVE_GRANTED') {
+      if (leaveDecidedAt) payload.leaveDecidedAt = leaveDecidedAt;
+      if (leaveOrderAt) payload.leaveOrderAt = leaveOrderAt;
+      payload.leaveGranted = leaveGranted;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await changeJrStage(matter.id, payload);
+      reset();
+      onChanged();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to change stage');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const targetOptions = targets.map((t) => ({ value: t, label: jrStageLabel(t) }));
+
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <GitBranch size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Advance stage</div>
+      </div>
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <FormSelect
+          label="Move to stage"
+          value={target}
+          onChange={(e) => {
+            setTarget(e.target.value);
+            setError(null);
+          }}
+          options={targetOptions}
+          placeholder="Select a target stage…"
+          hint={`Current: ${jrStageLabel(matter.stage)}`}
+        />
+
+        {target === 'CLOSED' ? (
+          <FormSelect
+            label="Close reason"
+            value={closeReason}
+            onChange={(e) => setCloseReason(e.target.value)}
+            options={JR_CLOSE_REASON_OPTIONS}
+            placeholder="Select a close reason…"
+            required
+          />
+        ) : null}
+
+        {target === 'CLOSED' && fromRedetermination ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'center' }}>
+            <Field label="Redetermination decided (optional)">
+              <input
+                type="date"
+                className="sos-input"
+                value={redeterminationDecidedAt}
+                onChange={(e) => setRedeterminationDecidedAt(e.target.value)}
+              />
+            </Field>
+            <CheckboxField
+              label="Redetermination approved"
+              checked={redeterminationApproved}
+              onChange={setRedeterminationApproved}
+            />
+          </div>
+        ) : null}
+
+        {target === 'FILED' && needDecidingOffice ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormSelect
+              label="Deciding office location"
+              value={decidingOfficeLocation}
+              onChange={(e) => setDecidingOfficeLocation(e.target.value)}
+              options={DECIDING_OFFICE_OPTIONS.filter((o) => o.value !== 'UNKNOWN')}
+              placeholder="Select…"
+              required
+            />
+            <FormInput
+              label="Deciding office source note"
+              value={decidingOfficeSourceNote}
+              onChange={(e) => setDecidingOfficeSourceNote(e.target.value)}
+              maxLength={400}
+              required
+            />
+          </div>
+        ) : null}
+
+        {target === 'REQUIRES_EXTENSION_REQUEST' ? (
+          <>
+            <FormTextarea
+              label="Hennelly — continuing intention"
+              value={hennellyIntention}
+              onChange={(e) => setHennellyIntention(e.target.value)}
+              maxLength={1000}
+              rows={2}
+            />
+            <FormTextarea
+              label="Hennelly — arguable merit"
+              value={hennellyMerit}
+              onChange={(e) => setHennellyMerit(e.target.value)}
+              maxLength={1000}
+              rows={2}
+            />
+            <FormTextarea
+              label="Hennelly — no prejudice to respondent"
+              value={hennellyPrejudice}
+              onChange={(e) => setHennellyPrejudice(e.target.value)}
+              maxLength={1000}
+              rows={2}
+            />
+            <FormTextarea
+              label="Hennelly — reasonable explanation for the delay"
+              value={hennellyExplanation}
+              onChange={(e) => setHennellyExplanation(e.target.value)}
+              maxLength={1000}
+              rows={2}
+            />
+          </>
+        ) : null}
+
+        {target === 'LEAVE_GRANTED' ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Field label="Leave decided date">
+                <input
+                  type="date"
+                  className="sos-input"
+                  value={leaveDecidedAt}
+                  onChange={(e) => setLeaveDecidedAt(e.target.value)}
+                />
+              </Field>
+              <Field label="Leave order date">
+                <input
+                  type="date"
+                  className="sos-input"
+                  value={leaveOrderAt}
+                  onChange={(e) => setLeaveOrderAt(e.target.value)}
+                />
+              </Field>
+            </div>
+            <CheckboxField label="Leave granted" checked={leaveGranted} onChange={setLeaveGranted} />
+          </>
+        ) : null}
+
+        {error ? <div style={errorBoxStyle}>{error}</div> : null}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <PrimaryButton
+            type="submit"
+            disabled={saving || !target}
+            iconLeft={saving ? <Loader2 size={14} className="sos-spin" /> : <GitBranch size={14} />}
+          >
+            {saving ? 'Saving…' : 'Advance stage'}
+          </PrimaryButton>
+        </div>
+      </form>
+    </GlassCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Route determination — the §6.4 decision tree (jr.route.determine). Shows the
+// form while the route is UNDETERMINED; once determined, shows the route +
+// reasoning with a "Re-determine" toggle. A citizenship matter is rejected by
+// the backend (BadRequest) — that message is surfaced verbatim.
+// ---------------------------------------------------------------------------
+function RouteDeterminationCard({ matter, onChanged }: { matter: JrMatter; onChanged: () => void }) {
+  const determined = asStr(matter.route) !== '' && matter.route !== 'UNDETERMINED';
+  const [editing, setEditing] = useState(!determined);
+  const [appealRightExhausted, setAppealRightExhausted] = useState(false);
+  const [sponsorshipRelationship, setSponsorshipRelationship] = useState('NONE');
+  const [inadmissibilityGround, setInadmissibilityGround] = useState('NONE');
+  const [rpdS110Exclusion, setRpdS110Exclusion] = useState(false);
+  const [hasS63AppealRight, setHasS63AppealRight] = useState(false);
+  const [isCitizenshipMatter, setIsCitizenshipMatter] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (saving) return;
+    const payload: DetermineRoutePayload = {
+      appealRightExhausted,
+      sponsorshipRelationship,
+      inadmissibilityGround,
+      rpdS110Exclusion,
+      hasS63AppealRight,
+      isCitizenshipMatter,
+    };
+    setSaving(true);
+    setError(null);
+    try {
+      await determineJrRoute(matter.id, payload);
+      setEditing(false);
+      onChanged();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to determine route');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Signpost size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Route determination</div>
+        </div>
+        {determined ? (
+          editing ? (
+            <SecondaryButton type="button" onClick={() => setEditing(false)} disabled={saving} iconLeft={<X size={14} />}>
+              Cancel
+            </SecondaryButton>
+          ) : (
+            <SecondaryButton type="button" onClick={() => setEditing(true)} iconLeft={<Pencil size={14} />}>
+              Re-determine
+            </SecondaryButton>
+          )
+        ) : null}
+      </div>
+
+      {determined && !editing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div>
+            <StatusBadge tone="accent" size="sm">{jrRouteLabel(matter.route)}</StatusBadge>
+          </div>
+          {asStr(matter.routeReasoning) ? (
+            <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', lineHeight: 1.5 }}>
+              {asStr(matter.routeReasoning)}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <CheckboxField
+            label="Appeal right exhausted"
+            checked={appealRightExhausted}
+            onChange={setAppealRightExhausted}
+            hint="IRPA s.72(2)(a) — filing where an IAD appeal still lies is fatal."
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormSelect
+              label="Sponsorship relationship"
+              value={sponsorshipRelationship}
+              onChange={(e) => setSponsorshipRelationship(e.target.value)}
+              options={JR_SPONSORSHIP_OPTIONS}
+            />
+            <FormSelect
+              label="Inadmissibility ground"
+              value={inadmissibilityGround}
+              onChange={(e) => setInadmissibilityGround(e.target.value)}
+              options={JR_INADMISSIBILITY_OPTIONS}
+            />
+          </div>
+          <CheckboxField
+            label="RPD s.110(2) exclusion applies"
+            checked={rpdS110Exclusion}
+            onChange={setRpdS110Exclusion}
+            hint="RPD only → Federal Court, not the RAD."
+          />
+          <CheckboxField
+            label="An s.63 appeal right lies"
+            checked={hasS63AppealRight}
+            onChange={setHasS63AppealRight}
+            hint="Visa officer / IRCC / CPC / CBSA."
+          />
+          <CheckboxField
+            label="Citizenship Act matter"
+            checked={isCitizenshipMatter}
+            onChange={setIsCitizenshipMatter}
+            hint="Citizenship matters are rejected in v1 (s.22.1, 30-day, not IRPA 15/60)."
+          />
+
+          {error ? <div style={errorBoxStyle}>{error}</div> : null}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            {determined ? (
+              <SecondaryButton type="button" onClick={() => setEditing(false)} disabled={saving}>
+                Cancel
+              </SecondaryButton>
+            ) : null}
+            <PrimaryButton
+              type="submit"
+              disabled={saving}
+              iconLeft={saving ? <Loader2 size={14} className="sos-spin" /> : <Signpost size={14} />}
+            >
+              {saving ? 'Saving…' : 'Determine route'}
+            </PrimaryButton>
+          </div>
+        </form>
+      )}
+    </GlassCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Activity timeline — read-only render of the JrAuditLog rows, newest-first.
+// A best-effort one-line diff is shown when the row's old/new values carry a
+// stage or route change; otherwise just the action + who + when.
+// ---------------------------------------------------------------------------
+function summarizeHistoryDiff(row: JrHistoryRow): string | null {
+  const oldV = (row.oldValues ?? null) as Record<string, unknown> | null;
+  const newV = (row.newValues ?? null) as Record<string, unknown> | null;
+  const parts: string[] = [];
+  const describe = (
+    key: 'stage' | 'route',
+    label: (v: string) => string,
+    heading: string,
+  ) => {
+    const n = newV?.[key];
+    if (n === undefined || n === null) return;
+    const o = oldV?.[key];
+    if (o != null && String(o) === String(n)) return;
+    parts.push(o != null ? `${heading}: ${label(String(o))} → ${label(String(n))}` : `${heading}: ${label(String(n))}`);
+  };
+  describe('stage', jrStageLabel, 'Stage');
+  describe('route', jrRouteLabel, 'Route');
+  return parts.length ? parts.join(' · ') : null;
+}
+
+function TimelineCard({ history }: { history: JrHistoryRow[] }) {
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <History size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Activity timeline</div>
+      </div>
+      {history.length === 0 ? (
+        <EmptyState Icon={History} title="No activity yet" description="Stage, route and edit events will appear here." />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {history.map((row) => {
+            const diff = summarizeHistoryDiff(row);
+            return (
+              <div
+                key={row.id}
+                style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-2)' }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--sos-text-primary)' }}>
+                    {jrHumanize(row.action)}
+                  </div>
+                  {diff ? (
+                    <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>{diff}</div>
+                  ) : null}
+                  <div style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>
+                    {row.actorName ?? 'System'} · {jrFmtDate(row.createdAt)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
 export default function JrMatterDetailPage() {
   const params = useParams<{ matterId: string }>();
   const matterId = params.matterId;
   const { user } = useJrSession();
   const canAssign = user.permissions.includes('jr.matter.assign');
   const canEdit = user.permissions.includes('jr.matter.update_stage');
+  const canDetermineRoute = user.permissions.includes('jr.route.determine');
 
   const [matter, setMatter] = useState<JrMatter | null>(null);
   const [deadlines, setDeadlines] = useState<JrDeadlineRow[]>([]);
   const [artifacts, setArtifacts] = useState<JrArtifactsGrouped>({ folders: [] });
+  const [history, setHistory] = useState<JrHistoryRow[]>([]);
   const [associates, setAssociates] = useState<JrAssociate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -399,12 +911,14 @@ export default function JrMatterDetailPage() {
       fetchJrMatter(matterId),
       fetchJrMatterDeadlines(matterId),
       fetchJrArtifacts(matterId),
+      fetchJrMatterHistory(matterId),
     ])
-      .then(([m, d, a]) => {
+      .then(([m, d, a, h]) => {
         if (cancelled) return;
         setMatter(m);
         setDeadlines(d);
         setArtifacts(a);
+        setHistory(h);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -530,6 +1044,17 @@ export default function JrMatterDetailPage() {
         </div>
       </GlassCard>
 
+      {/* Advance stage (gated on jr.matter.update_stage; only when the current
+          stage has forward transitions). */}
+      {canEdit && (JR_STAGE_TRANSITIONS[matter.stage]?.length ?? 0) > 0 ? (
+        <StageAdvanceCard matter={matter} onChanged={() => setReloadKey((k) => k + 1)} />
+      ) : null}
+
+      {/* Route determination (gated on jr.route.determine). */}
+      {canDetermineRoute ? (
+        <RouteDeterminationCard matter={matter} onChanged={() => setReloadKey((k) => k + 1)} />
+      ) : null}
+
       {/* Edit case details (gated) */}
       {canEdit ? (
         <EditCaseDetailsCard matter={matter} onSaved={() => setReloadKey((k) => k + 1)} />
@@ -597,6 +1122,9 @@ export default function JrMatterDetailPage() {
         canModerate={user.permissions.includes('jr.matter.view_all')}
         currentUserId={user.id}
       />
+
+      {/* Activity timeline (read-only) */}
+      <TimelineCard history={history} />
     </div>
   );
 }

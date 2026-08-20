@@ -275,6 +275,86 @@ export function assignJrMatter(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Gated stage machine (§6.1 map + §6.2 gates) + route decision tree (§6.4).
+// The per-transition GATES live server-side (JudicialReviewService) — the
+// console never replicates them; it surfaces the backend's message verbatim on
+// a rejected move. `ChangeStagePayload` carries `targetStage` plus every
+// optional gate input a specific transition reads (mirrors ChangeStageDto).
+// ---------------------------------------------------------------------------
+
+export interface ChangeStagePayload {
+  targetStage: JrMatterStage;
+  /** Required for any → CLOSED. */
+  closeReason?: string;
+  // RETAINED → FILED: asserted on the filed Form IR-1.
+  decidingOfficeLocation?: string;
+  decidingOfficeSourceNote?: string;
+  // → REQUIRES_EXTENSION_REQUEST: the four Hennelly narrative fields.
+  hennellyIntention?: string;
+  hennellyMerit?: string;
+  hennellyPrejudice?: string;
+  hennellyExplanation?: string;
+  // FILED → LEAVE_GRANTED.
+  leaveDecidedAt?: string;
+  leaveOrderAt?: string;
+  leaveGranted?: boolean;
+  // REDETERMINATION → CLOSED.
+  redeterminationDecidedAt?: string;
+  redeterminationApproved?: boolean;
+}
+
+export interface DetermineRoutePayload {
+  /** IRPA s.72(2)(a) — REQUIRED. Filing where an IAD appeal lies is fatal. */
+  appealRightExhausted: boolean;
+  sponsorshipRelationship?: string;
+  inadmissibilityGround?: string;
+  rpdS110Exclusion?: boolean;
+  hasS63AppealRight?: boolean;
+  /** Citizenship Act refusal — v1 rejects (backend throws BadRequest). */
+  isCitizenshipMatter?: boolean;
+}
+
+export interface JrHistoryRow {
+  id: string;
+  action: string;
+  actorName: string | null;
+  createdAt: string;
+  oldValues: unknown;
+  newValues: unknown;
+}
+
+/** PATCH /jr/matters/:matterId/stage — the gated stage machine. */
+export function changeJrStage(
+  matterId: string,
+  payload: ChangeStagePayload,
+): Promise<JrMatter> {
+  return apiFetch<JrMatter>(`/jr/matters/${matterId}/stage`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}
+
+/** POST /jr/matters/:matterId/route — the §6.4 route decision tree. */
+export function determineJrRoute(
+  matterId: string,
+  payload: DetermineRoutePayload,
+): Promise<JrMatter> {
+  return apiFetch<JrMatter>(`/jr/matters/${matterId}/route`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}
+
+/** GET /jr/matters/:matterId/history — the matter's activity timeline. */
+export function fetchJrMatterHistory(matterId: string): Promise<JrHistoryRow[]> {
+  return apiFetch<JrHistoryRow[]>(`/jr/matters/${matterId}/history`, {
+    cache: 'no-store',
+  });
+}
+
 export function fetchJrBoard(
   q: { fatalOnly?: boolean; take?: number } = {},
 ): Promise<JrBoardRow[]> {
@@ -487,6 +567,85 @@ export const JR_STAGE_LABEL: Record<JrMatterStage, string> = {
 
 export function jrStageLabel(stage: string): string {
   return (JR_STAGE_LABEL as Record<string, string>)[stage] ?? stage;
+}
+
+/**
+ * The frozen §6.1 forward-transition map, mirrored VERBATIM from the backend's
+ * `JR_ALLOWED_TRANSITIONS` (apps/backend/.../jr-stage-machine.ts). The console
+ * offers ONLY these targets; the backend re-checks the map and enforces the
+ * §6.2 gates. CLIENT_UNRESPONSIVE / CLOSED carry no forward targets here (the
+ * former is handled by mark-unresponsive/resume, the latter is terminal).
+ */
+export const JR_STAGE_TRANSITIONS: Record<string, string[]> = {
+  INTAKE: ['ROUTE_DETERMINED', 'CLOSED'],
+  ROUTE_DETERMINED: ['MERITS_REVIEW', 'CLOSED'],
+  MERITS_REVIEW: ['RETAINED', 'COUNSEL_DECLINED', 'CLOSED'],
+  COUNSEL_DECLINED: ['MERITS_REVIEW', 'CLOSED'],
+  RETAINED: ['FILED', 'REQUIRES_EXTENSION_REQUEST', 'CLOSED'],
+  REQUIRES_EXTENSION_REQUEST: ['FILED', 'CLOSED'],
+  FILED: ['LEAVE_GRANTED', 'REDETERMINATION', 'CLOSED'],
+  LEAVE_GRANTED: ['REDETERMINATION', 'CLOSED'],
+  REDETERMINATION: ['CLOSED'],
+  CLIENT_UNRESPONSIVE: [],
+  CLOSED: [],
+};
+
+/** JrCloseReason enum values (backend schema.prisma `legal` schema). */
+export const JR_CLOSE_REASON_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'REFERRED_IAD', label: 'Referred to IAD' },
+  { value: 'REFERRED_RAD', label: 'Referred to RAD' },
+  { value: 'REFERRED_REAPPLICATION', label: 'Referred to reapplication' },
+  { value: 'NO_RECOURSE', label: 'No recourse' },
+  { value: 'COUNSEL_DECLINED_NO_ALTERNATIVE', label: 'Counsel declined — no alternative' },
+  { value: 'CLIENT_DECLINED_AFTER_REVIEW', label: 'Client declined after review' },
+  { value: 'WITHDRAWN_ON_INSTRUCTIONS', label: 'Withdrawn on instructions' },
+  { value: 'CLIENT_UNRESPONSIVE_ABANDONED', label: 'Client unresponsive — abandoned' },
+  { value: 'DEADLINE_MISSED_NOT_FILED', label: 'Deadline missed — not filed' },
+  { value: 'EXTENSION_REFUSED', label: 'Extension refused' },
+  { value: 'LEAVE_REFUSED', label: 'Leave refused' },
+  { value: 'SETTLED_REDETERMINATION', label: 'Settled — redetermination (win)' },
+  { value: 'ALLOWED_AT_HEARING', label: 'Allowed at hearing (win)' },
+  { value: 'DISMISSED_AT_HEARING', label: 'Dismissed at hearing' },
+  { value: 'REDETERMINATION_APPROVED', label: 'Redetermination approved' },
+  { value: 'REDETERMINATION_REFUSED', label: 'Redetermination refused' },
+  { value: 'SUCCESSOR_MATTER_OPENED', label: 'Successor matter opened' },
+];
+
+/** JrSponsorshipRelationship enum values (optional; NONE is the empty choice). */
+export const JR_SPONSORSHIP_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'NONE', label: 'None' },
+  { value: 'SPOUSE_OR_PARTNER', label: 'Spouse or partner' },
+  { value: 'CHILD', label: 'Child' },
+  { value: 'PARENT_OR_GRANDPARENT', label: 'Parent or grandparent' },
+  { value: 'OTHER_FAMILY', label: 'Other family' },
+];
+
+/** JrInadmissibilityGround enum values (optional; NONE is the empty choice). */
+export const JR_INADMISSIBILITY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'NONE', label: 'None' },
+  { value: 'MISREPRESENTATION', label: 'Misrepresentation' },
+  { value: 'SECURITY', label: 'Security' },
+  { value: 'HUMAN_RIGHTS', label: 'Human or international rights violations' },
+  { value: 'SANCTIONS', label: 'Sanctions' },
+  { value: 'SERIOUS_CRIMINALITY', label: 'Serious criminality' },
+  { value: 'ORGANIZED_CRIMINALITY', label: 'Organized criminality' },
+  { value: 'MEDICAL', label: 'Medical' },
+  { value: 'FINANCIAL', label: 'Financial' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+/** Humanise a JrCloseReason value (falls back to the raw key). */
+export function jrCloseReasonLabel(value: string | null | undefined): string {
+  if (!value) return '';
+  return (
+    JR_CLOSE_REASON_OPTIONS.find((o) => o.value === value)?.label ?? jrHumanize(value)
+  );
+}
+
+/** Humanise a JrRoute value (falls back to the raw key). */
+export function jrRouteLabel(value: string | null | undefined): string {
+  if (!value) return '';
+  return jrHumanize(value);
 }
 
 export function jrStageTone(stage: string): BadgeTone {

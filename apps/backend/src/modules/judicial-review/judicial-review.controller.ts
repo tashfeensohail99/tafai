@@ -65,6 +65,17 @@ export class JudicialReviewController {
     return this.jr.getMatterDetail(id, user);
   }
 
+  // The matter's activity timeline (JrAuditLog). Access is re-checked in the
+  // service; mirrors the same `jr.portal.view` permission as the detail read.
+  @Get(':matterId/history')
+  @RequirePermissions('jr.portal.view')
+  history(
+    @Param('matterId', ParseUUIDPipe) matterId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.jr.getMatterHistory(matterId, user);
+  }
+
   // ---- The gated stage machine + route tree --------------------------------
 
   @Patch(':matterId/stage')

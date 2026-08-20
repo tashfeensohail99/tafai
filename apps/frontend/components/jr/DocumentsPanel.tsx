@@ -213,10 +213,19 @@ function ArtifactRow({
 
   async function openVersion(versionId: string) {
     setError(null);
+    // Open the tab SYNCHRONOUSLY in the click handler so the browser keeps the
+    // user-gesture context (window.open after an `await` is pop-up-blocked, and
+    // Safari blocks it unconditionally). The signed URL is set once it resolves.
+    const tab = window.open('about:blank', '_blank');
     try {
       const { url } = await fetchJrArtifactVersionUrl(artifact.id, versionId);
-      window.open(url, '_blank', 'noopener');
+      if (tab && !tab.closed) {
+        tab.location.href = url;
+      } else {
+        window.location.href = url;
+      }
     } catch (e: unknown) {
+      if (tab && !tab.closed) tab.close();
       setError(errMessage(e));
     }
   }

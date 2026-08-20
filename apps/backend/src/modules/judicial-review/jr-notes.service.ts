@@ -16,6 +16,14 @@ import { CreateJrNoteDto, UpdateJrNoteDto } from './judicial-review.dto';
 const MAX_NOTE_FILE_BYTES = 25 * 1024 * 1024;
 
 /**
+ * Ceiling on inline voice-note transcription. A normal recording (≤120 s cap on
+ * the client, ~1–2 MB) transcribes in a few seconds; this only trips on a
+ * pathologically slow Whisper call or a large raw-API upload, and just saves the
+ * note without a transcript rather than holding the request open.
+ */
+const TRANSCRIBE_TIMEOUT_MS = 60_000;
+
+/**
  * Audio containers a browser MediaRecorder / mobile recorder can realistically
  * emit. `video/webm` is deliberately included — some browsers label an audio-only
  * MediaRecorder blob that way (§workspace note-taking).
@@ -68,8 +76,17 @@ export class JrNotesService {
   /** List a matter's notes (excludes soft-deleted), pinned first then newest. */
   async listForMatter(matterId: string, user: RequestUser) {
     await this.jr.assertMatterAccess(matterId, user);
+    // HEAD_ONLY notes are Head-private: only a user with the cross-matter
+    // view_all permission (the JR Head) may read them. Mirrors Processing's
+    // MANAGER_ONLY read filter (processing.service.ts getNotes) so an associate
+    // never sees a note the Head recorded privately on a matter assigned to them.
+    const canViewHeadOnly = user.permissions?.includes('jr.matter.view_all') ?? false;
     const notes = await this.prisma.jrNote.findMany({
-      where: { matterId, deletedAt: null },
+      where: {
+        matterId,
+        deletedAt: null,
+        ...(!canViewHeadOnly ? { noteType: { not: 'HEAD_ONLY' } } : {}),
+      },
       orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
       include: { attachments: { orderBy: { createdAt: 'asc' } } },
     });
@@ -128,21 +145,25 @@ export class JrNotesService {
       file!.originalname,
     );
 
-    // Best-effort transcription — a missed read just leaves transcript null.
-    const tr = await this.openai.transcribe(file!.buffer, file!.originalname || 'note.webm');
+    // Best-effort transcription, bounded so a pathologically slow Whisper call
+    // can't hold the upload request open long enough for a client/proxy timeout —
+    // which would let the note commit while the user sees an error and re-submits
+    // a duplicate. On timeout (or any failure) the note just saves with no
+    // transcript.
+    const tr = await this.transcribeBounded(
+      file!.buffer,
+      file!.originalname || 'note.webm',
+      TRANSCRIBE_TIMEOUT_MS,
+    );
 
-    const note = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.jrNote.create({
-        data: {
-          matterId,
-          content: opts.content ?? '',
-          noteType: 'GENERAL',
-          authorUserId: user.id,
-        },
-      });
-      await tx.jrNoteAttachment.create({
-        data: {
-          noteId: created.id,
+    const note = await this.commitOrCleanup(uploaded.key, (tx) =>
+      this.createNoteWithAttachment(tx, {
+        matterId,
+        content: opts.content ?? '',
+        authorUserId: user.id,
+        action: 'note_voice_added',
+        auditValues: { transcribed: !!tr },
+        attachment: {
           kind: 'AUDIO',
           storageKey: uploaded.key,
           fileName: file!.originalname || 'voice-note',
@@ -152,16 +173,8 @@ export class JrNotesService {
           transcript: tr?.text ?? null,
           transcriptLang: tr ? 'ur' : null,
         },
-      });
-      await this.writeAudit(tx, {
-        matterId,
-        actorUserId: user.id,
-        action: 'note_voice_added',
-        entityId: created.id,
-        newValues: { transcribed: !!tr },
-      });
-      return created;
-    });
+      }),
+    );
 
     return this.enrichOne(note.id);
   }
@@ -183,34 +196,22 @@ export class JrNotesService {
       file!.originalname,
     );
 
-    const note = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.jrNote.create({
-        data: {
-          matterId,
-          content: opts.content ?? '',
-          noteType: 'GENERAL',
-          authorUserId: user.id,
-        },
-      });
-      await tx.jrNoteAttachment.create({
-        data: {
-          noteId: created.id,
+    const note = await this.commitOrCleanup(uploaded.key, (tx) =>
+      this.createNoteWithAttachment(tx, {
+        matterId,
+        content: opts.content ?? '',
+        authorUserId: user.id,
+        action: 'note_image_added',
+        auditValues: { hasImage: true },
+        attachment: {
           kind: 'IMAGE',
           storageKey: uploaded.key,
           fileName: file!.originalname || 'image',
           mimeType: uploaded.mimeType,
           fileSizeBytes: uploaded.sizeBytes,
         },
-      });
-      await this.writeAudit(tx, {
-        matterId,
-        actorUserId: user.id,
-        action: 'note_image_added',
-        entityId: created.id,
-        newValues: { hasImage: true },
-      });
-      return created;
-    });
+      }),
+    );
 
     return this.enrichOne(note.id);
   }
@@ -363,6 +364,95 @@ export class JrNotesService {
         ),
       })),
     );
+  }
+
+  /**
+   * Create a JrNote + its single attachment + the audit row in one transaction.
+   * Shared by createVoice/createImage so both write identically.
+   */
+  private async createNoteWithAttachment(
+    tx: Prisma.TransactionClient,
+    input: {
+      matterId: string;
+      content: string;
+      authorUserId: string;
+      action: string;
+      auditValues: Prisma.InputJsonValue;
+      attachment: {
+        kind: 'AUDIO' | 'IMAGE';
+        storageKey: string;
+        fileName: string;
+        mimeType: string;
+        fileSizeBytes: number;
+        durationMs?: number | null;
+        transcript?: string | null;
+        transcriptLang?: string | null;
+      };
+    },
+  ) {
+    const created = await tx.jrNote.create({
+      data: {
+        matterId: input.matterId,
+        content: input.content,
+        noteType: 'GENERAL',
+        authorUserId: input.authorUserId,
+      },
+    });
+    await tx.jrNoteAttachment.create({
+      data: {
+        noteId: created.id,
+        kind: input.attachment.kind,
+        storageKey: input.attachment.storageKey,
+        fileName: input.attachment.fileName,
+        mimeType: input.attachment.mimeType,
+        fileSizeBytes: input.attachment.fileSizeBytes,
+        durationMs: input.attachment.durationMs ?? null,
+        transcript: input.attachment.transcript ?? null,
+        transcriptLang: input.attachment.transcriptLang ?? null,
+      },
+    });
+    await this.writeAudit(tx, {
+      matterId: input.matterId,
+      actorUserId: input.authorUserId,
+      action: input.action,
+      entityId: created.id,
+      newValues: input.auditValues,
+    });
+    return created;
+  }
+
+  /**
+   * Run a note-creating transaction whose storage object was already uploaded.
+   * If the transaction fails, delete the now-orphaned object (best-effort) before
+   * rethrowing, so a DB error never leaks unreferenced bytes.
+   */
+  private async commitOrCleanup<T>(
+    storageKey: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.prisma.$transaction(work);
+    } catch (err) {
+      await this.storage.delete(storageKey).catch(() => undefined);
+      throw err;
+    }
+  }
+
+  /** Best-effort transcription with a hard timeout (see TRANSCRIBE_TIMEOUT_MS). */
+  private async transcribeBounded(
+    buffer: Buffer,
+    filename: string,
+    ms: number,
+  ): Promise<{ text: string; latencyMs: number } | null> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), ms);
+    });
+    try {
+      return await Promise.race([this.openai.transcribe(buffer, filename), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private assertUploadable(

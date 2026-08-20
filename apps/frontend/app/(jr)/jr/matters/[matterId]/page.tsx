@@ -431,14 +431,21 @@ export default function JrMatterDetailPage() {
     </Link>
   );
 
-  if (loading) {
+  // Only blank to the full-page spinner on the INITIAL load. A refetch (a
+  // reloadKey bump from a DocumentsPanel action) keeps the loaded content on
+  // screen so it never unmounts NotesPanel — which would discard an unsaved
+  // voice clip / typed draft / pasted images — or reset scroll.
+  if (loading && !matter) {
     return (
       <div style={{ padding: 48, textAlign: 'center', color: 'var(--sos-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
         <Loader2 size={16} className="sos-spin" /> Loading matter…
       </div>
     );
   }
-  if (error || !matter) {
+  // Blank to the error card only when there is no matter to show (initial-load
+  // failure). A failed refetch after the matter is already loaded keeps the
+  // stale-but-valid content rather than wiping the workspace.
+  if (!matter) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <PageHeader title="Matter" actions={backLink} />

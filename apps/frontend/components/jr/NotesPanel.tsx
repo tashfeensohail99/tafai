@@ -161,6 +161,7 @@ function TextComposer({ matterId, onCreated }: { matterId: string; onCreated: ()
 // ---------------------------------------------------------------------------
 function VoiceComposer({ matterId, onCreated }: { matterId: string; onCreated: () => void }) {
   const [recording, setRecording] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [recordingSecs, setRecordingSecs] = useState(0);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -173,6 +174,10 @@ function VoiceComposer({ matterId, onCreated }: { matterId: string; onCreated: (
   const chunksRef = useRef<BlobPart[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewUrlRef = useRef<string | null>(null);
+  // Ref guard (not just state) so a rapid double-click can't start a second
+  // recorder before the first getUserMedia resolves — a state flag updates too
+  // late to block the synchronous second click, orphaning the first hot mic.
+  const startingRef = useRef(false);
 
   const clearPreview = useCallback(() => {
     if (previewUrlRef.current) {
@@ -194,6 +199,11 @@ function VoiceComposer({ matterId, onCreated }: { matterId: string; onCreated: (
   }, []);
 
   const startRecording = useCallback(async () => {
+    // Re-entry guard: ignore a second activation while the first is still
+    // acquiring the mic or already recording.
+    if (recording || startingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
     setError(null);
     clearPreview();
     try {
@@ -243,8 +253,11 @@ function VoiceComposer({ matterId, onCreated }: { matterId: string; onCreated: (
       }, 1000);
     } catch {
       setError('Microphone access denied. Allow microphone in your browser settings.');
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
     }
-  }, [clearPreview, stopRecording]);
+  }, [recording, clearPreview, stopRecording]);
 
   const cancelRecording = useCallback(() => {
     if (timerRef.current) {
@@ -359,8 +372,13 @@ function VoiceComposer({ matterId, onCreated }: { matterId: string; onCreated: (
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div>
-            <PrimaryButton type="button" onClick={startRecording} iconLeft={<Mic size={14} />}>
-              Record voice note
+            <PrimaryButton
+              type="button"
+              onClick={startRecording}
+              disabled={starting}
+              iconLeft={starting ? <Loader2 size={14} className="sos-spin" /> : <Mic size={14} />}
+            >
+              {starting ? 'Starting…' : 'Record voice note'}
             </PrimaryButton>
           </div>
           {error ? (
@@ -434,15 +452,22 @@ function ImageComposer({ matterId, onCreated }: { matterId: string; onCreated: (
     if (!images.length || saving) return;
     setSaving(true);
     setError(null);
+    const cap = caption.trim() || undefined;
+    const pending = [...images];
     try {
-      for (const img of images) {
+      for (const img of pending) {
         // eslint-disable-next-line no-await-in-loop
         await createJrImageNote(matterId, img.file, {
           fileName: img.file.name || 'image.png',
-          content: caption.trim() || undefined,
+          content: cap,
         });
+        // Drop each image from state as soon as it's saved, so a mid-loop failure
+        // leaves ONLY the un-uploaded images in the composer — a retry then never
+        // re-uploads (and duplicates) the ones that already succeeded.
+        URL.revokeObjectURL(img.url);
+        setImages((prev) => prev.filter((p) => p !== img));
       }
-      clearImages();
+      setCaption('');
       onCreated();
     } catch (e: unknown) {
       setError(errMessage(e));

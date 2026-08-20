@@ -129,7 +129,16 @@ export class StorageService {
     return { key, bucket: this.bucket, sizeBytes: buffer.length, mimeType };
   }
 
-  async getSignedUrl(key: string): Promise<string> {
+  /**
+   * Signed download URL. [expiresInSeconds] overrides the default TTL for a
+   * single call — needed for LARGE public downloads (the ~100MB APK): the
+   * 5-minute default expires MID-DOWNLOAD on slow mobile data, and when the
+   * phone's download manager retries/resumes against the now-dead URL it saves
+   * a TRUNCATED file, which Android then rejects with "package appears to be
+   * invalid". Private document URLs keep the short default.
+   */
+  async getSignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
+    const expiresIn = expiresInSeconds ?? this.signedUrlExpires;
     if (this.mode === 'local') {
       return `/storage/local/${encodeURIComponent(key)}`;
     }
@@ -143,7 +152,7 @@ export class StorageService {
             Authorization: `Bearer ${this.supabaseServiceKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ expiresIn: this.signedUrlExpires }),
+          body: JSON.stringify({ expiresIn }),
         },
       );
       if (!res.ok) {
@@ -155,7 +164,7 @@ export class StorageService {
     }
 
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
-    return getSignedUrl(this.s3, command, { expiresIn: this.signedUrlExpires });
+    return getSignedUrl(this.s3, command, { expiresIn });
   }
 
   /**

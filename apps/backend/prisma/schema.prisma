@@ -5872,3 +5872,105 @@ model JrAuditLog {
   @@map("jr_audit_logs")
   @@schema("legal")
 }
+
+// ─── Associate work-report subsystem (§11.7, PR 10A) ─────────────────────────
+// The report BODY is never stored — it is recompiled on every read from
+// JrAuditLog (see JrWorkReportCompileService). Only the parameters, the manual
+// enrichments and — at finalize (10C) — a frozen PDF snapshot persist.
+
+enum JrWorkReportStatus {
+  DRAFT // body regenerates live, enrichments editable
+  FINALIZED // body frozen into the PDF, enrichments locked
+
+  @@schema("legal")
+}
+
+enum JrWorkReportAttachmentKind {
+  IMAGE
+  VOICE_NOTE
+
+  @@schema("legal")
+}
+
+enum JrTranscriptStatus {
+  PENDING
+  DONE
+  FAILED
+
+  @@schema("legal")
+}
+
+/// A JR associate's work report for a period. Holds ONLY the parameters +
+/// provenance + (at finalize) the frozen copy — the body itself is never stored,
+/// it is recompiled live from JrAuditLog on every read.
+model JrWorkReport {
+  id                     String             @id @default(uuid())
+  /// core.UserAccount.id of the associate the report is ABOUT (resolved
+  /// server-side; a non-view_all caller can only ever be themselves).
+  subjectAssociateUserId String
+  periodFrom             DateTime           @db.Date
+  periodTo               DateTime           @db.Date
+  /// Whether the compiler was allowed to include HEAD_ONLY material — captured at
+  /// create time so the frozen snapshot (10C) is reproducible.
+  canViewAllAtCompile    Boolean            @default(false)
+  status                 JrWorkReportStatus @default(DRAFT)
+  /// NULL until finalize (10C). A durable storage key, NEVER a signed URL.
+  frozenPdfKey           String?            @db.VarChar(500)
+  frozenPdfSha256        String?            @db.VarChar(64)
+  snapshotMeta           Json?
+  matterIdsSnapshot      Json?
+  createdByUserId        String
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  notes       JrWorkReportNote[]
+  attachments JrWorkReportAttachment[]
+
+  // DB-level double-click idempotency: one DRAFT per (subject, period).
+  @@unique([subjectAssociateUserId, periodFrom, periodTo, status])
+  @@index([subjectAssociateUserId])
+  @@index([status])
+  @@map("jr_work_reports")
+  @@schema("legal")
+}
+
+/// Report-level typed note (cross-client narrative). Author-attributed,
+/// DRAFT-only, soft-deleted.
+model JrWorkReportNote {
+  id           String       @id @default(uuid())
+  reportId     String
+  authorUserId String
+  content      String       @db.Text
+  createdAt    DateTime     @default(now())
+  deletedAt    DateTime?
+  report       JrWorkReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@map("jr_work_report_notes")
+  @@schema("legal")
+}
+
+/// An image or voice-note enrichment on a report. CREATED here (10A) so 10B needs
+/// no migration; only WRITTEN by 10B (upload + transcription).
+model JrWorkReportAttachment {
+  id                      String                     @id @default(uuid())
+  reportId                String
+  kind                    JrWorkReportAttachmentKind
+  /// A durable storage key, NEVER a signed URL.
+  storageKey              String                     @db.VarChar(500)
+  mimeType                String?                    @db.VarChar(120)
+  durationMs              Int?
+  audioCodecExt           String?                    @db.VarChar(20)
+  /// Roman Urdu, persisted on first transcription success (10B).
+  transcript              String?                    @db.Text
+  transcriptStatus        JrTranscriptStatus         @default(PENDING)
+  sourceWhatsAppMessageId String?                    @db.VarChar(120)
+  createdByUserId         String
+  createdAt               DateTime                   @default(now())
+  deletedAt               DateTime?
+  report                  JrWorkReport               @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@map("jr_work_report_attachments")
+  @@schema("legal")
+}

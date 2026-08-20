@@ -308,6 +308,25 @@ export class SetCounselOfRecordDto {
  * their own gated endpoints.
  */
 export class UpdateMatterDto {
+  // ---- case-identity fields (editable from the console detail form) ----
+  @IsOptional()
+  @IsEnum(JrDecisionMaker)
+  decisionMaker?: JrDecisionMaker;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  applicationType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  styleOfCause?: string;
+
+  @IsOptional()
+  @IsDateString()
+  decisionLetterDate?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(30)

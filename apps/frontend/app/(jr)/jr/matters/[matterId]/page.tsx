@@ -4,13 +4,18 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowLeft, FileText, Loader2, CalendarClock } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, FileText, Loader2, CalendarClock, Pencil, User, X } from 'lucide-react';
 import {
   GlassCard,
   PageHeader,
   StatusBadge,
   EmptyState,
   PrimaryButton,
+  SecondaryButton,
+  Field,
+  FormInput,
+  FormSelect,
+  FormTextarea,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { useJrSession } from '@/components/layout/JrShell';
@@ -20,6 +25,7 @@ import {
   fetchJrAssociates,
   fetchJrMatter,
   fetchJrMatterDeadlines,
+  updateJrMatter,
   jrDueInfo,
   jrFmtDate,
   jrHumanize,
@@ -72,6 +78,38 @@ function artifactStatusTone(status: string): BadgeTone {
   }
 }
 
+// The 9 JrDecisionMaker enum values (backend judicial-review.dto.ts).
+const DECISION_MAKER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'VISA_OFFICER', label: 'Visa officer' },
+  { value: 'IRCC_IN_CANADA', label: 'IRCC (in Canada)' },
+  { value: 'CPC', label: 'CPC (Case Processing Centre)' },
+  { value: 'CBSA', label: 'CBSA' },
+  { value: 'ID', label: 'Immigration Division (ID)' },
+  { value: 'IAD', label: 'Immigration Appeal Division (IAD)' },
+  { value: 'RAD', label: 'Refugee Appeal Division (RAD)' },
+  { value: 'RPD', label: 'Refugee Protection Division (RPD)' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+// JrDecidingOfficeLocation — drives the 15/60-day fatal clock.
+const DECIDING_OFFICE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'IN_CANADA', label: 'In Canada (15-day clock)' },
+  { value: 'OUTSIDE_CANADA', label: 'Outside Canada (60-day clock)' },
+  { value: 'UNKNOWN', label: 'Unknown (treated as 15)' },
+];
+
+/** Normalise an ISO date/datetime to the YYYY-MM-DD an <input type="date"> wants. */
+function toDateInput(v: unknown): string {
+  if (!v) return '';
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString().slice(0, 10);
+}
+
+function asStr(v: unknown): string {
+  return typeof v === 'string' ? v : '';
+}
+
 function DefRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -80,6 +118,212 @@ function DefRow({ label, children }: { label: string; children: ReactNode }) {
       </span>
       <span style={{ fontSize: 13.5, color: 'var(--sos-text-primary)' }}>{children}</span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Edit case details — the non-gated field editor (gated on jr.matter.update_stage).
+// Setting decisionCommunicatedAt is what starts the fatal deadline clock, so a
+// successful save refetches the matter (bumps reloadKey) and the ALJR deadline
+// then appears in the Deadlines section below.
+// ---------------------------------------------------------------------------
+function EditCaseDetailsCard({
+  matter,
+  onSaved,
+}: {
+  matter: JrMatter;
+  onSaved: () => void;
+}) {
+  const init = useMemo(
+    () => ({
+      styleOfCause: asStr(matter.styleOfCause),
+      decisionMaker: asStr(matter.decisionMaker) || 'OTHER',
+      applicationType: asStr(matter.applicationType),
+      decidingOfficeLocation: asStr(matter.decidingOfficeLocation) || 'UNKNOWN',
+      decidingOfficeSourceNote: asStr(matter.decidingOfficeSourceNote),
+      decisionCommunicatedAt: toDateInput(matter.decisionCommunicatedAt),
+      decisionCommunicatedNote: asStr(matter.decisionCommunicatedNote),
+      decisionLetterDate: toDateInput(matter.decisionLetterDate),
+      courtFileNumber: asStr(matter.courtFileNumber),
+    }),
+    [matter],
+  );
+
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(init);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function open() {
+    setForm(init);
+    setError(null);
+    setEditing(true);
+  }
+
+  function set<K extends keyof typeof form>(key: K, value: string) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (saving) return;
+
+    const patch: Record<string, unknown> = {};
+    if (form.styleOfCause !== init.styleOfCause) patch.styleOfCause = form.styleOfCause;
+    if (form.decisionMaker !== init.decisionMaker) patch.decisionMaker = form.decisionMaker;
+    if (form.applicationType !== init.applicationType) patch.applicationType = form.applicationType;
+    if (form.decidingOfficeLocation !== init.decidingOfficeLocation)
+      patch.decidingOfficeLocation = form.decidingOfficeLocation;
+    if (form.decidingOfficeSourceNote !== init.decidingOfficeSourceNote)
+      patch.decidingOfficeSourceNote = form.decidingOfficeSourceNote;
+    // Date fields: send the YYYY-MM-DD straight through (backend normalises to the
+    // legal calendar day). A cleared date is not sent — the clock anchor can't be
+    // nulled from here.
+    if (form.decisionCommunicatedAt && form.decisionCommunicatedAt !== init.decisionCommunicatedAt)
+      patch.decisionCommunicatedAt = form.decisionCommunicatedAt;
+    if (form.decisionCommunicatedNote !== init.decisionCommunicatedNote)
+      patch.decisionCommunicatedNote = form.decisionCommunicatedNote;
+    if (form.decisionLetterDate && form.decisionLetterDate !== init.decisionLetterDate)
+      patch.decisionLetterDate = form.decisionLetterDate;
+    if (form.courtFileNumber !== init.courtFileNumber) patch.courtFileNumber = form.courtFileNumber;
+
+    if (Object.keys(patch).length === 0) {
+      setEditing(false);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await updateJrMatter(matter.id, patch);
+      setEditing(false);
+      onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to save changes');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: editing ? 14 : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Pencil size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Case details</div>
+        </div>
+        {editing ? (
+          <SecondaryButton type="button" onClick={() => setEditing(false)} disabled={saving} iconLeft={<X size={14} />}>
+            Cancel
+          </SecondaryButton>
+        ) : (
+          <SecondaryButton type="button" onClick={open} iconLeft={<Pencil size={14} />}>
+            Edit case details
+          </SecondaryButton>
+        )}
+      </div>
+
+      {!editing ? (
+        <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', marginTop: 10 }}>
+          Set the refusal-notification date, decision maker and other case details. The
+          refusal-notification date starts the fatal deadline clock.
+        </div>
+      ) : (
+        <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <FormInput
+            label="Style of cause"
+            value={form.styleOfCause}
+            onChange={(e) => set('styleOfCause', e.target.value)}
+            maxLength={200}
+            placeholder="e.g. NAVID v. MCI"
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormSelect
+              label="Decision maker"
+              value={form.decisionMaker}
+              onChange={(e) => set('decisionMaker', e.target.value)}
+              options={DECISION_MAKER_OPTIONS}
+            />
+            <FormInput
+              label="Application type"
+              value={form.applicationType}
+              onChange={(e) => set('applicationType', e.target.value)}
+              maxLength={80}
+            />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormSelect
+              label="Deciding office location"
+              value={form.decidingOfficeLocation}
+              onChange={(e) => set('decidingOfficeLocation', e.target.value)}
+              options={DECIDING_OFFICE_OPTIONS}
+              hint="15 days in-Canada / 60 outside / UNKNOWN treated as 15"
+            />
+            <FormInput
+              label="Deciding office source note"
+              value={form.decidingOfficeSourceNote}
+              onChange={(e) => set('decidingOfficeSourceNote', e.target.value)}
+              maxLength={400}
+            />
+          </div>
+          <Field
+            label="Refusal notification date (starts the deadline clock)"
+            hint="The day the client was notified of the refusal — this starts the fatal clock."
+          >
+            <input
+              type="date"
+              className="sos-input"
+              value={form.decisionCommunicatedAt}
+              onChange={(e) => set('decisionCommunicatedAt', e.target.value)}
+            />
+          </Field>
+          <FormTextarea
+            label="Refusal notification note"
+            value={form.decisionCommunicatedNote}
+            onChange={(e) => set('decisionCommunicatedNote', e.target.value)}
+            maxLength={400}
+            rows={3}
+            placeholder="e.g. refusal letter dated 2026-08-01, received by client on 2026-08-05 by email."
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Decision letter date (optional)">
+              <input
+                type="date"
+                className="sos-input"
+                value={form.decisionLetterDate}
+                onChange={(e) => set('decisionLetterDate', e.target.value)}
+              />
+            </Field>
+            <FormInput
+              label="Court file number (optional)"
+              value={form.courtFileNumber}
+              onChange={(e) => set('courtFileNumber', e.target.value)}
+              maxLength={30}
+              placeholder="IMM-#####-YY"
+            />
+          </div>
+
+          {error ? (
+            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12.5 }}>
+              {error}
+            </div>
+          ) : null}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <SecondaryButton type="button" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </SecondaryButton>
+            <PrimaryButton
+              type="submit"
+              disabled={saving}
+              iconLeft={saving ? <Loader2 size={14} className="sos-spin" /> : undefined}
+            >
+              {saving ? 'Saving…' : 'Save changes'}
+            </PrimaryButton>
+          </div>
+        </form>
+      )}
+    </GlassCard>
   );
 }
 
@@ -144,6 +388,7 @@ export default function JrMatterDetailPage() {
   const matterId = params.matterId;
   const { user } = useJrSession();
   const canAssign = user.permissions.includes('jr.matter.assign');
+  const canEdit = user.permissions.includes('jr.matter.update_stage');
 
   const [matter, setMatter] = useState<JrMatter | null>(null);
   const [deadlines, setDeadlines] = useState<JrDeadlineRow[]>([]);
@@ -238,6 +483,28 @@ export default function JrMatterDetailPage() {
         actions={backLink}
       />
 
+      {/* Client */}
+      <GlassCard variant="panel" padded="md">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <User size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Client</div>
+        </div>
+        {matter.client ? (
+          <>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: 10 }}>
+              {`${matter.client.firstName} ${matter.client.lastName}`.trim() || '—'}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+              <DefRow label="Phone">{matter.client.phone ?? '—'}</DefRow>
+              <DefRow label="Email">{matter.client.email ?? '—'}</DefRow>
+              <DefRow label="Reference code">{matter.client.referenceCode}</DefRow>
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: 13.5, color: 'var(--sos-text-muted)' }}>Client record not found.</div>
+        )}
+      </GlassCard>
+
       {/* Overview */}
       <GlassCard variant="panel" padded="md">
         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: 14 }}>Overview</div>
@@ -273,6 +540,11 @@ export default function JrMatterDetailPage() {
           </DefRow>
         </div>
       </GlassCard>
+
+      {/* Edit case details (gated) */}
+      {canEdit ? (
+        <EditCaseDetailsCard matter={matter} onSaved={() => setReloadKey((k) => k + 1)} />
+      ) : null}
 
       {/* Deadlines */}
       <GlassCard variant="panel" padded="md">

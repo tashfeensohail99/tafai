@@ -62,7 +62,7 @@ export class JudicialReviewController {
   @Get(':id')
   @RequirePermissions('jr.portal.view')
   get(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
-    return this.jr.getMatter(id, user);
+    return this.jr.getMatterDetail(id, user);
   }
 
   // ---- The gated stage machine + route tree --------------------------------

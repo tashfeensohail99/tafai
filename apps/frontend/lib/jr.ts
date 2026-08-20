@@ -77,6 +77,19 @@ export interface JrMatter {
   courtFileNumber: string | null;
   createdAt: string;
   updatedAt: string;
+  // List enrichment — GET /jr/matters joins the (relation-less) crm.Client so
+  // rows can show who each matter is for.
+  clientName?: string | null;
+  clientPhone?: string | null;
+  clientReferenceCode?: string | null;
+  // Detail enrichment — GET /jr/matters/:id returns the client record inline.
+  client?: {
+    firstName: string;
+    lastName: string;
+    phone: string | null;
+    email: string | null;
+    referenceCode: string;
+  } | null;
   // Wide row — everything else is optional/loose (present but not rendered here).
   [key: string]: unknown;
 }
@@ -186,6 +199,23 @@ export function fetchJrMatters(q: ListMattersQuery = {}): Promise<JrMatter[]> {
 
 export function fetchJrMatter(id: string): Promise<JrMatter> {
   return apiFetch<JrMatter>(`/jr/matters/${id}`, { cache: 'no-store' });
+}
+
+/**
+ * Edit a matter's non-gated case details (style of cause, decision maker,
+ * refusal-notification date, court file number, …). PATCH /jr/matters/:id —
+ * requires `jr.matter.update_stage`. The backend recomputes deadlines in-tx, so
+ * setting decisionCommunicatedAt makes the ALJR deadline appear on refetch.
+ */
+export function updateJrMatter(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<JrMatter> {
+  return apiFetch<JrMatter>(`/jr/matters/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+    cache: 'no-store',
+  });
 }
 
 export function assignJrMatter(

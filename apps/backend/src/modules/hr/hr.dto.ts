@@ -84,6 +84,35 @@ export class OffboardEmployeeDto {
   deleteMailbox?: boolean;
 }
 
+export class UpdateEmployeeDto {
+  @IsOptional() @IsString() @MaxLength(100)
+  firstName?: string;
+
+  @IsOptional() @IsString() @MaxLength(100)
+  lastName?: string;
+
+  @IsOptional() @IsUUID()
+  departmentId?: string | null;
+
+  @IsOptional() @IsUUID()
+  branchId?: string | null;
+
+  @IsOptional() @IsUUID()
+  designationId?: string | null;
+
+  @IsOptional() @IsString() @MaxLength(30)
+  phone?: string | null;
+
+  @IsOptional() @IsString() @MaxLength(10)
+  pbxExtension?: string | null;
+
+  @IsOptional() @IsBoolean()
+  whatsappInboxMember?: boolean;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  roleNames?: string[];
+}
+
 export class ProvisionMailboxDto {
   // Target employee. Optional when creating a standalone mailbox by localPart.
   @IsOptional() @IsUUID()

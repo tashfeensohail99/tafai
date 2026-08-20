@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Mail, MailCheck, MailWarning, MailX, Loader2, KeyRound, Wand2, Plus, Link2, ShieldCheck } from 'lucide-react';
+import { Mail, MailCheck, MailWarning, MailX, Loader2, KeyRound, Wand2, Plus } from 'lucide-react';
 import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
@@ -55,7 +55,7 @@ export default function EmailAccountsPage() {
         <div>
           <div className="hr-eyebrow">Human Resources</div>
           <h1 className="hr-h1">Email Accounts</h1>
-          <div className="hr-lede">Business email status across the team · @{domain}. Create missing mailboxes, activate dormant ones, or link an existing one to a login.</div>
+          <div className="hr-lede">Business email status across the team · @{domain}. Create a new mailbox where one is missing, or reset the password on one that already exists.</div>
         </div>
         {can('hr.onboard') && data?.configured ? (
           <button className="hr-btn hr-btn--primary" onClick={() => setShowNew(true)}><Plus size={16} /> New mailbox</button>
@@ -94,7 +94,7 @@ export default function EmailAccountsPage() {
       <div className="hr-stats">
         <FilterStat ico="ok" Icon={MailCheck} value={data?.counts.linked ?? 0} label="Active business email" hint="Login is their @domain email"
           sel={filter === null} onClick={() => setFilter(null)} />
-        <FilterStat ico="warn" Icon={MailWarning} value={data?.counts.unlinked ?? 0} label="Mailbox unused" hint="Exists — just link it to a login"
+        <FilterStat ico="warn" Icon={MailWarning} value={data?.counts.unlinked ?? 0} label="Mailbox unused" hint="Mailbox exists — reset the password to hand it over"
           sel={filter === 'unlinked'} onClick={() => setFilter((f) => (f === 'unlinked' ? null : 'unlinked'))} />
         <FilterStat ico="bad" Icon={MailX} value={data?.counts.missing ?? 0} label="No email" hint="Needs a mailbox"
           sel={filter === 'missing'} onClick={() => setFilter((f) => (f === 'missing' ? null : 'missing'))} />
@@ -124,9 +124,9 @@ export default function EmailAccountsPage() {
                         <td><Pill tone={s.tone}>{s.label}</Pill></td>
                         <td style={{ textAlign: 'right' }}>
                           {can('hr.onboard') && data.configured ? (
-                            r.status === 'missing' ? <button className="hr-rowbtn hr-rowbtn--go" onClick={() => setTarget(r)}><Wand2 size={14} /> Create</button>
-                              : r.status === 'unlinked' ? <button className="hr-rowbtn hr-rowbtn--go" onClick={() => setTarget(r)}><Link2 size={14} /> Use as login</button>
-                              : <button className="hr-iconbtn" title="Reset password" onClick={() => setTarget(r)}><KeyRound size={15} /></button>
+                            r.status === 'missing'
+                              ? <button className="hr-rowbtn hr-rowbtn--go" onClick={() => setTarget(r)}><Wand2 size={14} /> Create</button>
+                              : <button className="hr-rowbtn" onClick={() => setTarget(r)}><KeyRound size={14} /> Reset password</button>
                           ) : null}
                         </td>
                       </tr>
@@ -158,62 +158,44 @@ function FilterStat({ ico, Icon, value, label, hint, sel, onClick }: {
   );
 }
 
-/** Small success panel for an action that changed no password (a pure link). */
-function LinkedCard({ email, onDone }: { email: string; onDone: () => void }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--hr-ok)', fontWeight: 700 }}><ShieldCheck size={18} /> Linked</div>
-      <p style={{ margin: 0, fontSize: 14, color: 'var(--hr-text-2)' }}>
-        <strong style={{ color: 'var(--hr-text)' }}>{email}</strong> is now their CRM login. The mailbox and its existing password were left untouched.
-      </p>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="hr-btn hr-btn--primary" onClick={onDone}>Done</button></div>
-    </div>
-  );
-}
-
 function ProvisionModal({ row, onClose, onDone }: { row: EmailAccountRow; onClose: () => void; onDone: () => void }) {
-  const [resetPw, setResetPw] = useState(false); // for unlinked: also reset the existing mailbox password
+  const isCreate = row.status === 'missing';
+  const [setAsLogin, setSetAsLogin] = useState(false); // create: don't touch the login unless HR opts in
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ProvisionResult | null>(null);
 
-  const title = row.status === 'missing' ? 'Create mailbox' : row.status === 'unlinked' ? 'Use as login' : 'Reset password';
-  const cta = row.status === 'missing' ? 'Create' : row.status === 'unlinked' ? (resetPw ? 'Link + reset password' : 'Set as login') : 'Reset password';
-
   const run = async () => {
     setBusy(true); setError(null);
     try {
-      const opts =
-        row.status === 'missing' ? { employeeId: row.employeeId, setAsLogin: true }
-          : row.status === 'unlinked' ? { employeeId: row.employeeId, setAsLogin: true, resetPassword: resetPw }
-            : { employeeId: row.employeeId, setAsLogin: false, resetPassword: true };
+      const opts = isCreate
+        ? { employeeId: row.employeeId, setAsLogin }
+        : { employeeId: row.employeeId, resetPassword: true, setAsLogin: false };
       setResult(await provisionMailbox(opts));
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed'); setBusy(false); }
   };
 
   return (
-    <Modal title={result ? 'Done' : `${title} · ${row.name}`} onClose={result ? onDone : onClose}>
+    <Modal title={result ? 'Done' : `${isCreate ? 'Create mailbox' : 'Reset password'} · ${row.name}`} onClose={result ? onDone : onClose}>
       {result ? (
-        result.password ? (
-          <CredentialCard
-            title={`${row.name} · ${result.action === 'created' ? 'mailbox created' : 'password reset'}${result.loginUpdated ? ' · login updated' : ''}`}
-            email={result.email} password={result.password}
-            note="Hand this to the employee. Same password works for the mailbox and (if set) the CRM login." onDone={onDone} />
-        ) : <LinkedCard email={result.email} onDone={onDone} />
+        <CredentialCard
+          title={`${row.name} · ${result.action === 'created' ? 'mailbox created' : 'password reset'}${result.loginUpdated ? ' · login updated' : ''}`}
+          email={result.email} password={result.password ?? ''}
+          note="Hand this to the employee. Same password works for the mailbox and (if set) the CRM login." onDone={onDone} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 14, color: 'var(--hr-text-2)', margin: 0 }}>
-            {row.status === 'missing' && <>Create <strong style={{ color: 'var(--hr-text)' }}>{row.suggestion}</strong> on MXRoute with a fresh password.</>}
-            {row.status === 'unlinked' && <>The mailbox <strong style={{ color: 'var(--hr-text)' }}>{row.mailbox}</strong> already exists. Set it as their CRM login (they currently log in with <code style={{ color: 'var(--hr-text)' }}>{row.loginEmail}</code>). The mailbox password stays as it is.</>}
-            {row.status === 'linked' && <>Reset the password for <strong style={{ color: 'var(--hr-text)' }}>{row.mailbox}</strong>.</>}
+            {isCreate
+              ? <>Create <strong style={{ color: 'var(--hr-text)' }}>{row.suggestion}</strong> on MXRoute with a fresh password.</>
+              : <>Reset the password for <strong style={{ color: 'var(--hr-text)' }}>{row.mailbox}</strong>. The address stays the same; you’ll get a new password to hand over.</>}
           </p>
-          {row.status === 'unlinked' ? (
-            <label className="hr-check"><input type="checkbox" checked={resetPw} onChange={(e) => setResetPw(e.target.checked)} /> Also reset the mailbox password (if they don’t know it)</label>
+          {isCreate ? (
+            <label className="hr-check"><input type="checkbox" checked={setAsLogin} onChange={(e) => setSetAsLogin(e.target.checked)} /> Also set this as their CRM login <span style={{ color: 'var(--hr-muted)' }}>(currently {row.loginEmail})</span></label>
           ) : null}
           {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button className="hr-btn hr-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
-            <button className="hr-btn hr-btn--primary" onClick={run} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <Mail size={16} />} {busy ? 'Working…' : cta}</button>
+            <button className="hr-btn hr-btn--primary" onClick={run} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : isCreate ? <Wand2 size={16} /> : <KeyRound size={16} />} {busy ? 'Working…' : isCreate ? 'Create' : 'Reset password'}</button>
           </div>
         </div>
       )}

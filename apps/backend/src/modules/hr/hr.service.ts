@@ -356,12 +356,68 @@ export class HrService {
         pbxExtension: true,
         whatsappInboxMember: true,
         joiningDate: true,
-        user: { select: { email: true, phone: true, status: true } },
-        department: { select: { name: true } },
-        branch: { select: { name: true } },
-        designation: { select: { name: true } },
+        user: {
+          select: {
+            email: true, phone: true, status: true,
+            userRoles: { select: { role: { select: { name: true, displayName: true } } } },
+          },
+        },
+        department: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true } },
+        designation: { select: { id: true, name: true } },
       },
       orderBy: [{ isActive: 'desc' }, { firstName: 'asc' }],
     });
+  }
+
+  /** Edit an existing employee's HR fields (+ optional role reassignment). */
+  async updateEmployee(
+    id: string,
+    dto: {
+      firstName?: string; lastName?: string;
+      departmentId?: string | null; branchId?: string | null; designationId?: string | null;
+      phone?: string | null; pbxExtension?: string | null; whatsappInboxMember?: boolean;
+      roleNames?: string[];
+    },
+    actorUserId: string,
+  ) {
+    const emp = await this.prisma.employee.findUnique({ where: { id }, select: { id: true, userId: true } });
+    if (!emp) throw new NotFoundException('Employee not found');
+
+    const has = (k: keyof typeof dto) => Object.prototype.hasOwnProperty.call(dto, k);
+    await this.prisma.employee.update({
+      where: { id },
+      data: {
+        ...(dto.firstName !== undefined ? { firstName: dto.firstName } : {}),
+        ...(dto.lastName !== undefined ? { lastName: dto.lastName } : {}),
+        ...(has('departmentId') ? { departmentId: dto.departmentId || null } : {}),
+        ...(has('branchId') ? { branchId: dto.branchId || null } : {}),
+        ...(has('designationId') ? { designationId: dto.designationId || null } : {}),
+        ...(has('pbxExtension') ? { pbxExtension: dto.pbxExtension || null } : {}),
+        ...(dto.whatsappInboxMember !== undefined ? { whatsappInboxMember: dto.whatsappInboxMember } : {}),
+      },
+    });
+
+    if (has('phone')) {
+      await this.prisma.userAccount.update({ where: { id: emp.userId }, data: { phone: dto.phone || null } });
+    }
+
+    // Role reassignment: replace the user's roles with the chosen set.
+    if (dto.roleNames) {
+      const roles = await this.prisma.role.findMany({ where: { name: { in: dto.roleNames }, isActive: true }, select: { id: true } });
+      await this.prisma.userRole.deleteMany({ where: { userId: emp.userId } });
+      if (roles.length) {
+        await this.prisma.userRole.createMany({ data: roles.map((r) => ({ userId: emp.userId, roleId: r.id })), skipDuplicates: true });
+      }
+    }
+
+    await this.audit.log({
+      actorUserId,
+      action: AuditAction.USER_UPDATED,
+      entityType: 'Employee',
+      entityId: id,
+      newValues: { edited: Object.keys(dto) },
+    });
+    return { id, updated: true };
   }
 }

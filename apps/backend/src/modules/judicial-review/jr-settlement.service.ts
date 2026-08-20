@@ -10,6 +10,7 @@ import { NumberingService } from '../../common/numbering/numbering.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { JudicialReviewService } from './judicial-review.service';
 import { JrDeadlinesService } from './jr-deadlines.service';
+import { JrNotificationsService } from './jr-notifications.service';
 import { OpenSuccessorDto, RecordSettlementDto } from './judicial-review.dto';
 import { CURRENT_DEADLINE_RULE_SET_VERSION, toLegalDateUtc } from './jr-deadline-engine';
 
@@ -35,6 +36,7 @@ export class JrSettlementService {
     private readonly numbering: NumberingService,
     private readonly jr: JudicialReviewService,
     private readonly deadlines: JrDeadlinesService,
+    private readonly jrNotifications: JrNotificationsService,
   ) {}
 
   /**
@@ -107,7 +109,7 @@ export class JrSettlementService {
       : matter.additionalSubmissionsDueAt;
     const effectiveTerm = dto.termAdditionalSubmissions ?? matter.termAdditionalSubmissions;
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.jrMatter.update({ where: { id: matterId }, data });
 
       const existing = await tx.jrDeadline.findFirst({
@@ -173,6 +175,20 @@ export class JrSettlementService {
       });
       return updated;
     });
+
+    // Notify the JR Head(s) + assigned associate that a settlement was recorded
+    // (§11.5). Fired AFTER commit, fire-and-forget — never breaks the record.
+    void this.jrNotifications
+      .settlementRecorded({
+        id: updated.id,
+        matterNumber: updated.matterNumber,
+        styleOfCause: updated.styleOfCause,
+        assignedAssociateUserId: updated.assignedAssociateUserId,
+        additionalSubmissionsDueAt: updated.additionalSubmissionsDueAt,
+      })
+      .catch(() => {});
+
+    return updated;
   }
 
   /**

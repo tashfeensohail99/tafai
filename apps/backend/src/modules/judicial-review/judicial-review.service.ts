@@ -22,6 +22,7 @@ import {
 import { JR_ALLOWED_TRANSITIONS, JR_TERMINAL_STAGES } from './jr-stage-machine';
 import { CitizenshipMatterError, determineRoute as computeRoute } from './jr-route-tree';
 import { JrDeadlinesService } from './jr-deadlines.service';
+import { JrNotificationsService } from './jr-notifications.service';
 import { toLegalDateUtc } from './jr-deadline-engine';
 
 /**
@@ -34,6 +35,7 @@ export class JudicialReviewService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly deadlines: JrDeadlinesService,
+    private readonly jrNotifications: JrNotificationsService,
   ) {}
 
   /**
@@ -751,8 +753,8 @@ export class JudicialReviewService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const next = await tx.jrMatter.update({
+    const next = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.jrMatter.update({
         where: { id: matterId },
         data: { assignedAssociateUserId: dto.assignedAssociateUserId, updatedByUserId: user.id },
       });
@@ -764,8 +766,21 @@ export class JudicialReviewService {
         oldValues: { assignedAssociateUserId: matter.assignedAssociateUserId },
         newValues: { assignedAssociateUserId: dto.assignedAssociateUserId },
       });
-      return next;
+      return updated;
     });
+
+    // Fire-and-forget the assignment nudge AFTER the tx commits (§11.5). Self-
+    // assigns are skipped inside the service; a failure here never breaks assign.
+    void this.jrNotifications
+      .matterAssigned(
+        { id: next.id, matterNumber: next.matterNumber, styleOfCause: next.styleOfCause },
+        dto.assignedAssociateUserId,
+        user.id,
+        user.email,
+      )
+      .catch(() => {});
+
+    return next;
   }
 
   /**

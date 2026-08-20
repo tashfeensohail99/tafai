@@ -14,6 +14,7 @@ import { JrIntakeController } from './jr-intake.controller';
 import { JrSettlementService } from './jr-settlement.service';
 import { JrSettlementController } from './jr-settlement.controller';
 import { JrDeadlineSweeperService } from './jr-deadline-sweeper.service';
+import { JrNotificationsService } from './jr-notifications.service';
 
 /**
  * Judicial Review (Federal Court JR) module — PR 1 foundation. Owns the `legal`
@@ -35,6 +36,7 @@ import { JrDeadlineSweeperService } from './jr-deadline-sweeper.service';
     JrIntakeService,
     JrSettlementService,
     JrDeadlineSweeperService,
+    JrNotificationsService,
   ],
   controllers: [
     JudicialReviewController,

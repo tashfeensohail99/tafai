@@ -834,6 +834,129 @@ export class EmailService {
       html: baseTemplate('JR deadline warning', content),
     });
   }
+
+  /**
+   * A JR matter was assigned (or reassigned) to an internal caseworker — an
+   * email nudge to the new owner (paired with an in-app bell). Recipients are
+   * INTERNAL CRM users only. Gated in the caller by JR_NOTIFY_ENABLED (§11.5).
+   */
+  async sendJrMatterAssigned(opts: {
+    to: string;
+    recipientName: string;
+    matterId: string;
+    matterNumber: string;
+    styleOfCause?: string | null;
+    assignedByName: string;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">A Judicial Review matter was assigned to you</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.recipientName)}, matter <b>${escHtml(opts.matterNumber)}</b> is now assigned to you. Please review the file and take the next steps.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Matter', opts.matterNumber)}
+          ${infoRow('Style of cause', opts.styleOfCause)}
+          ${infoRow('Assigned by', opts.assignedByName)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/jr/matters/${encodeURIComponent(opts.matterId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open matter &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `JR matter assigned to you — ${opts.matterNumber}`,
+      html: baseTemplate('JR matter assigned', content),
+    });
+  }
+
+  /**
+   * A JR artifact entered COUNSEL_REVIEW and is awaiting counsel's review —
+   * emails the JR Head(s). Internal only. Gated by JR_NOTIFY_ENABLED (§11.5).
+   */
+  async sendJrArtifactAwaitingCounsel(opts: {
+    to: string;
+    recipientName: string;
+    matterId: string;
+    matterNumber: string;
+    styleOfCause?: string | null;
+    artifactTitle: string;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">An artifact is awaiting counsel review</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.recipientName)}, "${escHtml(opts.artifactTitle)}" on matter <b>${escHtml(opts.matterNumber)}</b> has been submitted and is awaiting counsel review.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Matter', opts.matterNumber)}
+          ${infoRow('Style of cause', opts.styleOfCause)}
+          ${infoRow('Artifact', opts.artifactTitle)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/jr/matters/${encodeURIComponent(opts.matterId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open matter &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `JR artifact awaiting counsel review — ${opts.matterNumber}`,
+      html: baseTemplate('JR artifact awaiting counsel review', content),
+    });
+  }
+
+  /**
+   * Counsel reviewed a JR artifact and requested changes — emails the author +
+   * JR Head(s) so the artifact is reworked. Internal only. Gated by
+   * JR_NOTIFY_ENABLED (§11.5).
+   */
+  async sendJrCounselChangesRequested(opts: {
+    to: string;
+    recipientName: string;
+    matterId: string;
+    matterNumber: string;
+    styleOfCause?: string | null;
+    artifactTitle: string;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Counsel requested changes</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.recipientName)}, counsel reviewed "${escHtml(opts.artifactTitle)}" on matter <b>${escHtml(opts.matterNumber)}</b> and requested changes. Please rework and resubmit for review.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Matter', opts.matterNumber)}
+          ${infoRow('Style of cause', opts.styleOfCause)}
+          ${infoRow('Artifact', opts.artifactTitle)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/jr/matters/${encodeURIComponent(opts.matterId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open matter &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `JR counsel requested changes — ${opts.matterNumber}`,
+      html: baseTemplate('JR counsel requested changes', content),
+    });
+  }
+
+  /**
+   * A settlement was recorded on a JR matter — emails the JR Head(s) + assigned
+   * associate. `additionalSubmissionsDueLabel` may be '—'. Internal only. Gated
+   * by JR_NOTIFY_ENABLED (§11.5).
+   */
+  async sendJrSettlementRecorded(opts: {
+    to: string;
+    recipientName: string;
+    matterId: string;
+    matterNumber: string;
+    styleOfCause?: string | null;
+    additionalSubmissionsDueLabel: string;
+  }): Promise<boolean> {
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">A settlement was recorded</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">Hi ${escHtml(opts.recipientName)}, settlement terms were recorded on matter <b>${escHtml(opts.matterNumber)}</b>. Review the terms and any additional-submissions deadline.</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Matter', opts.matterNumber)}
+          ${infoRow('Style of cause', opts.styleOfCause)}
+          ${infoRow('Additional submissions due', opts.additionalSubmissionsDueLabel)}
+        </table>
+      </div>
+      <a href="https://tashfeengroup.com/jr/matters/${encodeURIComponent(opts.matterId)}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Open matter &rarr;</a>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `JR settlement recorded — ${opts.matterNumber}`,
+      html: baseTemplate('JR settlement recorded', content),
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

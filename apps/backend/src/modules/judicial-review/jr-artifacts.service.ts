@@ -16,6 +16,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { StorageService } from '../storage/storage.service';
 import { JudicialReviewService } from './judicial-review.service';
+import { JrNotificationsService } from './jr-notifications.service';
 import {
   CarryToRedeterminationDto,
   CounselReviewDto,
@@ -93,6 +94,7 @@ export class JrArtifactsService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly jr: JudicialReviewService,
+    private readonly jrNotifications: JrNotificationsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -421,8 +423,8 @@ export class JrArtifactsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const next = await tx.jrArtifact.update({
+    const next = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.jrArtifact.update({
         where: { id: artifactId },
         data: { status: 'COUNSEL_REVIEW' },
       });
@@ -434,13 +436,21 @@ export class JrArtifactsService {
         oldValues: { status: artifact.status },
         // The review SUBJECT: exactly which version counsel is looking at.
         newValues: {
-          status: next.status,
+          status: updated.status,
           reviewSubjectVersionId: current.id,
           reviewSubjectVersionNumber: current.versionNumber,
         },
       });
-      return next;
+      return updated;
     });
+
+    // Nudge the JR Head(s) that an artifact is awaiting counsel (§11.5). Fired
+    // AFTER commit, fire-and-forget — never blocks or breaks the submission.
+    void this.notifyMatter(artifact.matterId, (matter) =>
+      this.jrNotifications.artifactAwaitingCounsel(matter, artifact.title),
+    );
+
+    return next;
   }
 
   /** COUNSEL_REVIEW → COUNSEL_APPROVED | COUNSEL_CHANGES_REQUESTED. */
@@ -501,8 +511,8 @@ export class JrArtifactsService {
     }
 
     // REQUEST_CHANGES
-    return this.prisma.$transaction(async (tx) => {
-      const next = await tx.jrArtifact.update({
+    const next = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.jrArtifact.update({
         where: { id: artifactId },
         data: {
           status: 'COUNSEL_CHANGES_REQUESTED',
@@ -519,13 +529,22 @@ export class JrArtifactsService {
         entityId: artifactId,
         oldValues: { status: artifact.status },
         newValues: {
-          status: next.status,
+          status: updated.status,
           counselId: dto.counselId,
           changesRequestedNote: dto.changesRequestedNote ?? null,
         },
       });
-      return next;
+      return updated;
     });
+
+    // Nudge the artifact author + JR Head(s) to rework it (§11.5). Only on the
+    // CHANGES_REQUESTED branch; the APPROVE branch above sends nothing. Fired
+    // after commit, fire-and-forget.
+    void this.notifyMatter(artifact.matterId, (matter) =>
+      this.jrNotifications.counselChangesRequested(matter, artifact.title, artifact.authorUserId),
+    );
+
+    return next;
   }
 
   /** COUNSEL_APPROVED → FILED. The counsel-approval gate runs FIRST. */
@@ -750,6 +769,33 @@ export class JrArtifactsService {
     });
     if (!artifact) throw new NotFoundException('Artifact not found');
     return artifact;
+  }
+
+  /**
+   * Load a matter's identity ({ id, matterNumber, styleOfCause }) and hand it to
+   * a JR-notification dispatcher. Fire-and-forget and self-contained: any failure
+   * (missing matter, notify error) is swallowed so it can never affect the
+   * artifact mutation that produced the event (§11.5).
+   */
+  private notifyMatter(
+    matterId: string,
+    dispatch: (matter: {
+      id: string;
+      matterNumber: string;
+      styleOfCause: string | null;
+    }) => Promise<void>,
+  ): void {
+    void (async () => {
+      try {
+        const matter = await this.prisma.jrMatter.findUnique({
+          where: { id: matterId },
+          select: { id: true, matterNumber: true, styleOfCause: true },
+        });
+        if (matter) await dispatch(matter);
+      } catch {
+        /* notifications are best-effort — never surface to the caller */
+      }
+    })();
   }
 
   private async currentVersion(artifactId: string): Promise<JrArtifactVersion | null> {

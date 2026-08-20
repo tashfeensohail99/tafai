@@ -254,47 +254,68 @@ export class HrService {
    * already exists (activating a dormant one). Returns the credentials ONCE.
    */
   async provisionMailbox(
-    dto: { employeeId: string; setAsLogin?: boolean },
+    dto: { employeeId?: string; localPart?: string; setAsLogin?: boolean; resetPassword?: boolean },
     actorUserId: string,
   ) {
-    const emp = await this.prisma.employee.findUnique({
-      where: { id: dto.employeeId },
-      select: { id: true, firstName: true, lastName: true, userId: true, user: { select: { email: true } } },
-    });
-    if (!emp) throw new NotFoundException('Employee not found');
-
     const domain = this.mail.domain;
+    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9.]/g, '');
+
+    let emp: { id: string; firstName: string; lastName: string; userId: string; user: { email: string } | null } | null = null;
+    if (dto.employeeId) {
+      emp = await this.prisma.employee.findUnique({
+        where: { id: dto.employeeId },
+        select: { id: true, firstName: true, lastName: true, userId: true, user: { select: { email: true } } },
+      });
+      if (!emp) throw new NotFoundException('Employee not found');
+    }
+    if (!emp && !dto.localPart) {
+      throw new BadRequestException('Provide an employee or a mailbox name.');
+    }
+
     const boxes = new Set(await this.mail.listLocalParts());
-    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const loginLocal = (emp.user?.email ?? '').toLowerCase().split('@')[0] ?? '';
 
-    // Prefer an existing name-matching mailbox; otherwise allocate a fresh one.
-    const existing = [loginLocal, norm(emp.firstName), `${norm(emp.firstName)}.${norm(emp.lastName)}`]
-      .filter(Boolean)
-      .find((c) => boxes.has(c));
-    const localPart = existing ?? (await this.mail.allocateLocalPart(emp.firstName));
+    // Resolve which local-part we're acting on.
+    let localPart: string;
+    if (dto.localPart) {
+      localPart = norm(dto.localPart);
+      if (!localPart) throw new BadRequestException('That mailbox name has no usable letters.');
+    } else {
+      const loginLocal = (emp!.user?.email ?? '').toLowerCase().split('@')[0] ?? '';
+      localPart =
+        [loginLocal, norm(emp!.firstName), `${norm(emp!.firstName)}.${norm(emp!.lastName)}`]
+          .filter(Boolean)
+          .find((c) => boxes.has(c)) ?? (await this.mail.allocateLocalPart(emp!.firstName));
+    }
     const email = `${localPart}@${domain}`;
-    const password = this.generatePassword();
+    const exists = boxes.has(localPart);
+    const wantReset = dto.resetPassword ?? true;
 
-    let action: 'created' | 'reset';
-    if (existing) {
+    // Decide the mailbox action.
+    //  - exists + don't reset  → LINK ONLY (mailbox untouched, no new password)
+    //  - exists + reset        → reset its password
+    //  - doesn't exist         → create it
+    let action: 'created' | 'reset' | 'linked';
+    let password: string | null = null;
+    if (exists && !wantReset) {
+      action = 'linked';
+    } else if (exists) {
+      password = this.generatePassword();
       await this.mail.resetPassword(localPart, password);
       action = 'reset';
     } else {
+      password = this.generatePassword();
       await this.mail.createMailbox(localPart, password);
       action = 'created';
     }
 
-    // Optionally switch the CRM login to the business email.
+    // Optionally point the employee's CRM login at this business email.
     let loginUpdated = false;
-    if (dto.setAsLogin && (emp.user?.email ?? '').toLowerCase() !== email) {
+    if (dto.setAsLogin && emp && (emp.user?.email ?? '').toLowerCase() !== email) {
       const clash = await this.prisma.userAccount.findFirst({
         where: { email: { equals: email, mode: 'insensitive' }, id: { not: emp.userId } },
         select: { id: true },
       });
-      if (clash) {
-        throw new BadRequestException(`${email} is already another account's login.`);
-      }
+      if (clash) throw new BadRequestException(`${email} is already another account's login.`);
       await this.prisma.userAccount.update({ where: { id: emp.userId }, data: { email } });
       loginUpdated = true;
     }
@@ -302,12 +323,12 @@ export class HrService {
     await this.audit.log({
       actorUserId,
       action: AuditAction.USER_UPDATED,
-      entityType: 'Employee',
-      entityId: emp.id,
+      entityType: emp ? 'Employee' : 'Mailbox',
+      entityId: emp?.id ?? email,
       newValues: { mailbox: email, mailboxAction: action, loginUpdated },
     });
 
-    return { employeeId: emp.id, email, password, action, loginUpdated };
+    return { employeeId: emp?.id ?? null, email, password, action, loginUpdated };
   }
 
   /** HR directory — active + inactive employees with the fields HR cares about. */

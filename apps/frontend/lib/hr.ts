@@ -92,18 +92,24 @@ export interface EmailAccountsResult {
   rows: EmailAccountRow[];
 }
 export interface ProvisionResult {
-  employeeId: string;
+  employeeId: string | null;
   email: string;
-  password: string;
-  action: 'created' | 'reset';
+  password: string | null;
+  action: 'created' | 'reset' | 'linked';
   loginUpdated: boolean;
+}
+export interface ProvisionOpts {
+  employeeId?: string;
+  localPart?: string;
+  setAsLogin?: boolean;
+  resetPassword?: boolean;
 }
 
 export const getEmailAccounts = () =>
   apiFetch<EmailAccountsResult>('/hr/email-accounts', { cache: 'no-store' });
 
-export const provisionMailbox = (employeeId: string, setAsLogin: boolean) =>
-  apiFetch<ProvisionResult>('/hr/provision-mailbox', json({ employeeId, setAsLogin }));
+export const provisionMailbox = (opts: ProvisionOpts) =>
+  apiFetch<ProvisionResult>('/hr/provision-mailbox', json(opts));
 
 // Dropdown sources (list endpoints accept hr.view).
 export const getDepartments = () => apiFetch<NamedRecord[]>('/departments', { cache: 'no-store' });

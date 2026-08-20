@@ -152,6 +152,9 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'jr.artifact.file', module: 'jr', description: 'Move an artifact COUNSEL_APPROVED -> FILED -> SERVED' },
   { key: 'jr.note.create', module: 'jr', description: 'Write a JR note' },
   { key: 'jr.rules.manage', module: 'jr', description: 'Edit deadline rules; set verificationStatus = VERIFIED' },
+  { key: 'jr.report.generate', module: 'jr', description: 'Compile + read own work report; add report notes' },
+  { key: 'jr.report.view_all', module: 'jr', description: 'Pick any associate as the report subject; see all reports (Head key)' },
+  { key: 'jr.report.share', module: 'jr', description: 'Email a finalized work report outbound (Head key)' },
 ];
 
 const SYSTEM_ROLES: {
@@ -320,6 +323,7 @@ const SYSTEM_ROLES: {
       'jr.matter.assign', 'jr.matter.update_stage', 'jr.route.determine', 'jr.deadline.override',
       'jr.counsel.manage', 'jr.artifact.view', 'jr.artifact.author', 'jr.artifact.submit_to_counsel',
       'jr.artifact.record_counsel_review', 'jr.artifact.file', 'jr.note.create', 'jr.rules.manage',
+      'jr.report.generate', 'jr.report.view_all', 'jr.report.share',
     ],
   },
   {
@@ -329,6 +333,7 @@ const SYSTEM_ROLES: {
     permissionKeys: [
       'jr.portal.view', 'jr.matter.view_assigned', 'jr.matter.update_stage',
       'jr.artifact.view', 'jr.artifact.author', 'jr.artifact.submit_to_counsel', 'jr.note.create',
+      'jr.report.generate',
     ],
   },
   {

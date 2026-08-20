@@ -2,7 +2,7 @@
  * Safe, idempotent production sync for the Judicial Review module (PR 1).
  *
  * `prisma db seed` is NOT safe in prod (creates demo data), so this does ONLY
- * the additive part: upsert the 16 `jr.*` permissions, ensure the `jr_head` and
+ * the additive part: upsert the 19 `jr.*` permissions, ensure the `jr_head` and
  * `jr_associate` roles exist, and grant. No deletes — safe to run repeatedly,
  * and it tolerates a missing role (prod has no sales_manager, etc.).
  * Mirrors scripts/sync-marketing-perms.ts.
@@ -39,6 +39,10 @@ const PERMS = [
   { key: 'jr.artifact.file', module: 'jr', description: 'Move an artifact COUNSEL_APPROVED -> FILED -> SERVED' },
   { key: 'jr.note.create', module: 'jr', description: 'Write a JR note' },
   { key: 'jr.rules.manage', module: 'jr', description: 'Edit deadline rules; set verificationStatus = VERIFIED' },
+  // Associate work-report subsystem (§11.7, PR 10A)
+  { key: 'jr.report.generate', module: 'jr', description: 'Compile + read own work report; add report notes' },
+  { key: 'jr.report.view_all', module: 'jr', description: 'Pick any associate as the report subject; see all reports (Head key)' },
+  { key: 'jr.report.share', module: 'jr', description: 'Email a finalized work report outbound (Head key)' },
 ];
 
 const JR_KEYS = PERMS.map((p) => p.key);
@@ -53,6 +57,8 @@ const ASSOCIATE_KEYS = [
   'jr.artifact.author',
   'jr.artifact.submit_to_counsel',
   'jr.note.create',
+  // An associate can compile + read their OWN work report (but not view_all/share).
+  'jr.report.generate',
 ];
 
 const GRANTS: Record<string, string[]> = {
@@ -123,7 +129,7 @@ async function main() {
     }
   }
 
-  console.log('\ndone — jr_head / jr_associate roles + 16 jr.* keys synced');
+  console.log('\ndone — jr_head / jr_associate roles + 19 jr.* keys synced');
   console.log('NEXT: in /admin/users, create each login and tick "JR Head" or "JR Associate".');
   console.log('NOTE: already-signed-in users must re-login (or wait ~15 min) to pick up the role.');
 }

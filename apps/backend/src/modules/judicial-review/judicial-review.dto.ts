@@ -32,6 +32,7 @@ import {
   JrSettlementArtifact,
   JrSettlementStage,
   JrSponsorshipRelationship,
+  JrWorkReportStatus,
 } from '@prisma/client';
 
 /**
@@ -890,4 +891,52 @@ export class UpdateJrNoteDto {
   @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
   @IsBoolean()
   isPinned?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Associate work-report subsystem (§11.7, PR 10A). Every property is decorated —
+// the global ValidationPipe runs forbidNonWhitelisted, so an undecorated field
+// 400s.
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /jr/reports — compile a work report for a period. `subjectAssociateId` is
+ * resolved SERVER-SIDE: a caller without jr.report.view_all has it forced to their
+ * own id (never merely rejected), so it is optional here.
+ */
+export class CreateWorkReportDto {
+  /** A core.UserAccount.id — the associate the report is about (Head only). */
+  @IsOptional()
+  @IsUUID()
+  subjectAssociateId?: string;
+
+  /** Inclusive period start (calendar day). */
+  @IsDateString()
+  periodFrom!: string;
+
+  /** Inclusive period end (calendar day). */
+  @IsDateString()
+  periodTo!: string;
+}
+
+/** GET /jr/reports — list filters. */
+export class ListWorkReportsQueryDto {
+  @IsOptional()
+  @IsEnum(JrWorkReportStatus)
+  status?: JrWorkReportStatus;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  take?: number;
+}
+
+/** POST /jr/reports/:id/notes — a report-level narrative note (DRAFT-only). */
+export class CreateWorkReportNoteDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4000)
+  content!: string;
 }

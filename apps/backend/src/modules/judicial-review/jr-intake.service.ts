@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { JrMatter, Prisma } from '@prisma/client';
+import { FinanceHandoverStatus, JrMatter, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NumberingService } from '../../common/numbering/numbering.service';
 import { RequestUser } from '../../common/types/auth.types';
@@ -252,6 +252,101 @@ export class JrIntakeService {
           originCaseId: kase.id,
           originalFilerUserId: kase.assignedOfficerId ?? null,
         },
+      });
+      return matter;
+    });
+  }
+
+  /**
+   * Open an EXTERNAL matter from a PAID Judicial Review agreement (service code
+   * JR_RESUBMISSION) that Finance is handing over. This is the going-forward
+   * replacement for mis-routing a JR client into Processing: same finance button,
+   * same permission, but the file lands in the JR Head's queue instead of a
+   * ProcessingCase. Called by ProcessingService.createFromHandover when it detects
+   * a JR service.
+   *
+   * Identity resolution (convertToClient) runs OUTSIDE the tx and the matter
+   * number is minted BEFORE it — same two hard rules as the other intake paths.
+   * The matter + handover-status flip + provenance note + audit are one atomic tx.
+   * Idempotency is real: the findFirst check plus the @unique on financeHandoverId.
+   */
+  async createFromHandover(financeHandoverId: string, user: RequestUser): Promise<JrMatter> {
+    // 1. Load the handover + its lead.
+    const handover = await this.prisma.financeHandover.findUnique({
+      where: { id: financeHandoverId },
+      include: { lead: true },
+    });
+    if (!handover) {
+      throw new NotFoundException('Finance handover not found');
+    }
+
+    // 2. Only a verified-payment handover may be routed (mirrors processing).
+    if (handover.status !== FinanceHandoverStatus.PAYMENT_VERIFIED) {
+      throw new BadRequestException(
+        `Handover must be in PAYMENT_VERIFIED status to send to JR. Current status: ${handover.status}`,
+      );
+    }
+
+    // 3. Defensive: this path is ONLY for Judicial Review agreements.
+    if (handover.lead.serviceInterest !== 'JR_RESUBMISSION') {
+      throw new BadRequestException(
+        'This handover is not a Judicial Review (JR_RESUBMISSION) agreement.',
+      );
+    }
+
+    // 4. Idempotency — one JR matter per handover. The @unique on
+    //    financeHandoverId also guards a race between two simultaneous sends.
+    if (await this.prisma.jrMatter.findFirst({ where: { financeHandoverId } })) {
+      throw new ConflictException('A JR matter has already been opened for this handover.');
+    }
+
+    // 5. Resolve the client BEFORE the tx (convertToClient writes audit/timeline
+    //    on a separate connection and must not run inside an interactive $transaction).
+    const { client } = await this.leads.convertToClient(handover.leadId, user.id);
+
+    // 6. Mint the matter number (NumberingService is not tx-aware — call before).
+    const matterNumber = await this.numbering.next('JR');
+
+    // 7. Write the matter, flip the handover, seed the provenance note + audit atomically.
+    return this.prisma.$transaction(async (tx) => {
+      const matter = await tx.jrMatter.create({
+        data: {
+          matterNumber,
+          clientId: client.id,
+          leadId: handover.leadId,
+          branchId: handover.lead.branchId ?? null,
+          intakeType: 'EXTERNAL',
+          decisionMaker: 'OTHER',
+          applicationType: 'Judicial Review',
+          financeHandoverId,
+          deadlineRuleSetVersion: CURRENT_DEADLINE_RULE_SET_VERSION,
+          createdByUserId: user.id,
+          // No clock anchor yet — the Head records the decision/refusal date
+          // later, which starts the 15/60-day filing clock (mirrors JR import).
+          decisionCommunicatedAt: null,
+          // decidingOfficeLocation defaults to UNKNOWN.
+        },
+      });
+      await tx.financeHandover.update({
+        where: { id: financeHandoverId },
+        data: { status: FinanceHandoverStatus.SENT_TO_JR },
+      });
+      await tx.jrNote.create({
+        data: {
+          matterId: matter.id,
+          authorUserId: user.id,
+          content:
+            'Matter opened from a paid Judicial Review agreement (finance handover ' +
+            financeHandoverId +
+            '). Set the decision/refusal date to start the filing clock.',
+        },
+      });
+      await this.writeMatterAudit(tx, {
+        matterId: matter.id,
+        actorUserId: user.id,
+        action: 'matter_created',
+        entityId: matter.id,
+        newValues: { intakeType: 'EXTERNAL', matterNumber, financeHandoverId },
       });
       return matter;
     });

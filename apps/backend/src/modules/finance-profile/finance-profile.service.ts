@@ -339,12 +339,30 @@ export class FinanceProfileService {
     const verifiedReadyHandover = handovers.find(
       (h) => h.status === FinanceHandoverStatus.PAYMENT_VERIFIED,
     );
+    // Judicial Review agreements route to a JrMatter (JR Head's queue) instead of
+    // a ProcessingCase — same button, same permission, different target. The
+    // "already sent" signal for JR is an opened JrMatter keyed on one of this
+    // file's handover ids (JrMatter.financeHandoverId is a bare cross-schema id).
+    const isJudicialReview = lead.serviceInterest === 'JR_RESUBMISSION';
+    const handoverIds = handovers.map((h) => h.id);
+    const jrMatter =
+      isJudicialReview && handoverIds.length > 0
+        ? await this.prisma.jrMatter.findFirst({
+            where: { financeHandoverId: { in: handoverIds } },
+            select: { id: true },
+          })
+        : null;
+    const alreadySent = isJudicialReview ? !!jrMatter : !!realProcessingCase;
     const sendToProcessing = {
-      ready: !!verifiedReadyHandover && !realProcessingCase,
+      ready: !!verifiedReadyHandover && !alreadySent,
       handoverId: verifiedReadyHandover?.id ?? null,
-      alreadySent: !!realProcessingCase,
-      reason: realProcessingCase
-        ? 'Already in processing.'
+      alreadySent,
+      isJudicialReview,
+      target: (isJudicialReview ? 'JR' : 'PROCESSING') as 'JR' | 'PROCESSING',
+      reason: alreadySent
+        ? isJudicialReview
+          ? 'Already opened as a JR matter.'
+          : 'Already in processing.'
         : !verifiedReadyHandover
           ? 'Verify a payment first to enable.'
           : null,

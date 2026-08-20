@@ -592,10 +592,13 @@ describe('Processing Module (e2e)', () => {
       .send({ financeHandoverId: handover.id, priority: 'NORMAL' })
       .expect(201);
 
-    const processingCaseId = intakeRes.body.id as string;
+    // createFromHandover returns a discriminated union — a normal service opens a
+    // ProcessingCase under { kind: 'processing', case }. (JR_RESUBMISSION would
+    // return { kind: 'jr', matter } instead, but this scenario is a normal service.)
+    const processingCaseId = intakeRes.body.case.id as string;
     scenario.processingCaseIds.push(processingCaseId);
 
-    expect(intakeRes.body.stage).toBe(ProcessingCaseStage.INTAKE_PENDING);
+    expect(intakeRes.body.case.stage).toBe(ProcessingCaseStage.INTAKE_PENDING);
 
     // 7. Acknowledge intake → moves to DOCUMENTS_COLLECTION
     await request(server)

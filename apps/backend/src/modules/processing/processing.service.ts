@@ -21,6 +21,7 @@ import {
   InboundDocumentSource,
   InboundDocumentStatus,
   FinanceHandoverStatus,
+  JrMatter,
   Prisma,
   ProcessingCasePriority,
   ProcessingCaseStage,
@@ -49,6 +50,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ActivityTimelineService } from '../activity-timeline/activity-timeline.service';
 import { StorageService } from '../storage/storage.service';
 import { LeadsService } from '../leads/leads.service';
+import { JrIntakeService } from '../judicial-review/jr-intake.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FinanceService } from '../finance/finance.service';
@@ -304,6 +306,20 @@ export interface ImportResult {
   committed?: { created: number; skipped: number; failed: number };
 }
 
+/** The full ProcessingCase payload createFromHandover returns for a normal case. */
+type HandoverProcessingCase = Prisma.ProcessingCaseGetPayload<{
+  include: { financeHandover: true; lead: true; client: true };
+}>;
+
+/**
+ * Result of Finance's "Send to Processing" handover. Discriminated by `kind`:
+ * a normal service opens a ProcessingCase (`processing`); a Judicial Review
+ * agreement (JR_RESUBMISSION) opens a JrMatter in the JR Head's queue (`jr`).
+ */
+export type HandoverResult =
+  | { kind: 'processing'; case: HandoverProcessingCase }
+  | { kind: 'jr'; matter: JrMatter };
+
 @Injectable()
 export class ProcessingService {
   private readonly logger = new Logger(ProcessingService.name);
@@ -340,6 +356,11 @@ export class ProcessingService {
     // In-app notifications — used to alert teammates @mentioned in a case note.
     // NotificationsModule is @Global() so no extra module import is needed.
     private readonly notifications: NotificationsService,
+    // JR intake — a paid JR_RESUBMISSION agreement is routed to a JrMatter in the
+    // JR Head's queue instead of a ProcessingCase. JudicialReviewModule exports
+    // JrIntakeService; ProcessingModule imports it (no cycle — the JR module does
+    // not import ProcessingModule).
+    private readonly jrIntake: JrIntakeService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -507,9 +528,7 @@ export class ProcessingService {
    * Rule 1: handover must exist with PAYMENT_VERIFIED status.
    * Rule 1 corollary: only one processing case per handover.
    */
-  async createFromHandover(dto: CreateProcessingCaseDto, user: RequestUser): Promise<Prisma.ProcessingCaseGetPayload<{
-    include: { financeHandover: true; lead: true; client: true }
-  }>> {
+  async createFromHandover(dto: CreateProcessingCaseDto, user: RequestUser): Promise<HandoverResult> {
     const handover = await this.prisma.financeHandover.findUnique({
       where: { id: dto.financeHandoverId },
       include: { lead: true },
@@ -545,6 +564,16 @@ export class ProcessingService {
           'Sales must reclassify the lead to one of the coded service types before this case can move to Processing.',
       );
     }
+
+    // Judicial Review agreements are NOT processing cases — they open a JrMatter
+    // in the JR Head's queue instead (same finance button, same permission). Fork
+    // here, before any ProcessingCase is created, so JR clients stop being
+    // mis-routed into Processing.
+    if (service === 'JR_RESUBMISSION') {
+      const matter = await this.jrIntake.createFromHandover(dto.financeHandoverId, user);
+      return { kind: 'jr', matter };
+    }
+
     const targetCountry = handover.lead.targetCountry ?? 'Unknown';
 
     const processingCase = await this.prisma.$transaction(async (tx) => {
@@ -631,7 +660,7 @@ export class ProcessingService {
       void this.notifyManagersCaseFromFinance(processingCase).catch(() => {});
     }
 
-    return processingCase;
+    return { kind: 'processing', case: processingCase };
   }
 
   /**

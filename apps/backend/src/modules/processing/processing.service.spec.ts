@@ -45,7 +45,9 @@ function makeHandover(overrides: Partial<Record<string, unknown>> = {}) {
     financeNotes: null,
     lead: {
       id: 'lead-1',
-      serviceInterest: 'Work Permit',
+      // Canonical code (SERVICE_TYPE_CODES) — createFromHandover rejects a
+      // non-canonical serviceInterest before it reaches the transaction.
+      serviceInterest: 'WORK_PERMIT',
       targetCountry: 'Canada',
       convertedClientId: null,
       branchId: null,
@@ -127,13 +129,18 @@ function buildService() {
   const auditMock = { log: jest.fn() };
   const storageMock = { getSignedUrl: jest.fn().mockResolvedValue('https://signed-url') };
   const timelineMock = { record: jest.fn().mockResolvedValue(undefined) };
+  // Lead→Client conversion — createFromHandover's processing path calls this
+  // inside the tx. Default resolves a client so the happy path can run.
+  const leadsMock = { convertToClient: jest.fn().mockResolvedValue({ client: { id: 'client-1' } }) };
+  // JR intake — only the JR_RESUBMISSION fork calls it; the processing path never does.
+  const jrIntakeMock = { createFromHandover: jest.fn() };
 
   const service = new ProcessingService(
     prismaMock as any,
     auditMock as any,
     storageMock as any,
     timelineMock as any,
-    {} as any, // leadsService mock
+    leadsMock as any, // leadsService mock
     { add: jest.fn() } as any, // outbound WhatsApp queue mock
     { enqueue: jest.fn() } as any, // DocumentAiService mock (D2)
     { explodeBundleToInbound: jest.fn().mockResolvedValue(0) } as any, // DocumentIntakeService mock (P2)
@@ -141,9 +148,10 @@ function buildService() {
     { createInvoice: jest.fn(), recordPayment: jest.fn(), verifyPayment: jest.fn() } as any, // FinanceService mock (NC)
     { convertToBase: jest.fn() } as any, // FxService mock (NC)
     { create: jest.fn() } as any, // NotificationsService mock (note mentions)
+    jrIntakeMock as any, // JrIntakeService mock (JR_RESUBMISSION fork)
   );
 
-  return { service, prismaMock, auditMock, storageMock, timelineMock };
+  return { service, prismaMock, auditMock, storageMock, timelineMock, leadsMock, jrIntakeMock };
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +212,7 @@ describe('ProcessingService — Rule 1: Finance Gate (createFromHandover)', () =
       const txMock = {
         processingCase: { create: jest.fn().mockResolvedValue(expectedCase) },
         financeHandover: { update: jest.fn().mockResolvedValue({}) },
+        client: { update: jest.fn().mockResolvedValue({}) },
         processingAuditLog: { create: jest.fn().mockResolvedValue({}) },
       };
       return cb(txMock);
@@ -214,8 +223,41 @@ describe('ProcessingService — Rule 1: Finance Gate (createFromHandover)', () =
       makeUser(),
     );
 
-    expect(result.id).toBe('new-case-1');
+    // New discriminated-union shape: a normal service opens a ProcessingCase.
+    expect(result.kind).toBe('processing');
+    if (result.kind !== 'processing') throw new Error('expected processing result');
+    expect(result.case.id).toBe('new-case-1');
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes a JR_RESUBMISSION handover to a JrMatter instead of a ProcessingCase', async () => {
+    const { service, prismaMock, jrIntakeMock } = buildService();
+    const matter = { id: 'jr-matter-1', matterNumber: 'JR-2026-00001' };
+
+    prismaMock.financeHandover.findUnique.mockResolvedValue(
+      makeHandover({
+        lead: {
+          id: 'lead-1',
+          serviceInterest: 'JR_RESUBMISSION',
+          targetCountry: 'Canada',
+          convertedClientId: null,
+          branchId: null,
+        },
+      }),
+    );
+    prismaMock.processingCase.findUnique.mockResolvedValue(null); // no existing case
+    jrIntakeMock.createFromHandover.mockResolvedValue(matter);
+
+    const result = await service.createFromHandover({ financeHandoverId: 'handover-1' }, makeUser());
+
+    expect(result.kind).toBe('jr');
+    if (result.kind !== 'jr') throw new Error('expected jr result');
+    expect(result.matter).toBe(matter);
+    // JR intake was invoked with the handover id + acting user…
+    expect(jrIntakeMock.createFromHandover).toHaveBeenCalledWith('handover-1', expect.any(Object));
+    // …and NO ProcessingCase was opened (the fork returns before the tx).
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(prismaMock.processingCase.create).not.toHaveBeenCalled();
   });
 });
 

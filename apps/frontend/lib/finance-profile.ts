@@ -275,17 +275,19 @@ export function getExpenseReceiptUrl(id: string): Promise<{ url: string; fileNam
 // ─── Send to Processing (finance → processing handover) ───────────────────
 
 /**
- * Finance manually hands a customer's file over to the Processing team after
- * verifying payment. Posts to /processing/intake which opens a ProcessingCase,
- * converts the lead → client (if not already), and marks the FinanceHandover
- * as SENT_TO_PROCESSING so the customer profile flips into "already sent".
+ * Finance manually hands a customer's file over after verifying payment. Posts to
+ * /processing/intake, which converts the lead → client and then EITHER opens a
+ * ProcessingCase (normal service → { kind: 'processing' }, handover → SENT_TO_PROCESSING)
+ * OR, for a Judicial Review agreement (JR_RESUBMISSION), opens a JrMatter in the JR
+ * Head's queue ({ kind: 'jr' }, handover → SENT_TO_JR). The caller discards the body
+ * and re-reads the profile; the return type mirrors the backend union for honesty.
  */
 export function sendCaseToProcessing(payload: {
   financeHandoverId: string;
   priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
   financeHandoverNote?: string;
-}): Promise<{ id: string }> {
-  return apiFetch<{ id: string }>('/processing/intake', {
+}): Promise<{ kind: 'processing'; case: { id: string } } | { kind: 'jr'; matter: { id: string } }> {
+  return apiFetch<{ kind: 'processing'; case: { id: string } } | { kind: 'jr'; matter: { id: string } }>('/processing/intake', {
     method: 'POST',
     body: JSON.stringify(payload),
     cache: 'no-store',

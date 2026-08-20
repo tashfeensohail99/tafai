@@ -236,6 +236,20 @@ const RULES: SeedRule[] = [
     effectiveFrom: EARLY,
     notes: 'sentinel rule for the expiry-watch endpoint',
   },
+  {
+    milestoneKey: 'ADDITIONAL_SUBMISSIONS',
+    variantKey: null,
+    baseDays: 0,
+    modifierDays: 0,
+    offsetDirection: 'AFTER',
+    verificationStatus: 'VERIFIED',
+    authorityCitation: 'Settlement terms (human-entered, per the DOJ letter)',
+    sourceUrl: PRACTICE_GUIDELINES,
+    effectiveFrom: EARLY,
+    notes:
+      'Sentinel for the post-settlement additional-submissions deadline — the date is entered ' +
+      'from the DOJ settlement letter, not computed.',
+  },
 ];
 
 async function main() {

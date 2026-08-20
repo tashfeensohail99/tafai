@@ -678,6 +678,46 @@ export class JudicialReviewService {
     });
   }
 
+  /**
+   * Assignable JR roster — every active user account holding a JR role
+   * (associate or head). Powers the Head console's assign dropdown. Mirrors
+   * ProcessingService.listProcessingOfficers: UserAccount has no name column,
+   * so the human name lives on the Employee relation (falls back to the email
+   * handle for accounts with no employee record).
+   */
+  async listAssociates(): Promise<
+    Array<{ id: string; email: string; name: string; primaryRole: string }>
+  > {
+    const users = await this.prisma.userAccount.findMany({
+      where: {
+        status: 'ACTIVE',
+        deletedAt: null,
+        userRoles: {
+          some: { role: { name: { in: ['jr_associate', 'jr_head'] } } },
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        employee: { select: { firstName: true, lastName: true } },
+        userRoles: { select: { role: { select: { name: true } } } },
+      },
+    });
+
+    return users
+      .map((u) => {
+        const employeeName = u.employee
+          ? `${u.employee.firstName} ${u.employee.lastName}`.trim()
+          : '';
+        const name = employeeName || u.email;
+        const roles = u.userRoles.map((r) => r.role.name);
+        const primaryRole =
+          roles.find((r) => r.startsWith('jr_')) ?? 'jr_associate';
+        return { id: u.id, email: u.email, name, primaryRole };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   /** Record counsel's merits view + recommendation (counsel must be live). */
   async recordMerits(matterId: string, dto: RecordMeritsDto, user: RequestUser): Promise<JrMatter> {
     const matter = await this.assertMatterAccess(matterId, user);

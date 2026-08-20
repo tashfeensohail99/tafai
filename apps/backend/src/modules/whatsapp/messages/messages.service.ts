@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
@@ -27,6 +28,16 @@ const FFMPEG_BIN = 'ffmpeg';
 // ffprobe ships in the same alpine `ffmpeg` apk package — used to read a
 // video's duration so we can target a bitrate that lands under WhatsApp's cap.
 const FFPROBE_BIN = 'ffprobe';
+
+// A rep's phone occasionally records a voice note that runs the full duration
+// but captures NO audio — another app is holding the mic, an OEM mic-privacy
+// toggle is on, or the mic hardware is failing. The .ogg is a normal length
+// but ~1-3 KB and measures ~-91 dB (pure digital silence); the client then
+// receives a voice note with no voice. We measure the transcoded note's peak
+// level and refuse to send a silent one so the rep re-records. Real speech
+// peaks far above this (a normal note maxes around -12 dB); -70 dB only ever
+// trips on effectively-silent capture, so a genuinely quiet note still sends.
+const VOICE_SILENCE_MAX_DB = -70;
 
 // WhatsApp Cloud API media ceilings (Meta-enforced, per message type):
 //   • inline video   → 16 MB  (a video over this can't be sent as a video)
@@ -1043,7 +1054,23 @@ export class WhatsAppMessagesService {
         this.logger.debug(
           `Transcoded voice note from ${input.mimeType} → audio/ogg (${input.file.length} → ${uploadBuffer.length} bytes)`,
         );
+        // Reject a note whose mic captured nothing (see VOICE_SILENCE_MAX_DB).
+        // Thrown as BadRequest so the sender gets an immediate, actionable
+        // message and re-records — instead of the client receiving silence.
+        const peakDb = await this.measureVoicePeakDb(uploadBuffer);
+        if (peakDb !== null && peakDb <= VOICE_SILENCE_MAX_DB) {
+          this.logger.warn(
+            `Silent voice note blocked: thread=${thread.id} sender=${senderEmployeeId} peak=${peakDb}dB bytes=${uploadBuffer.length}`,
+          );
+          throw new BadRequestException(
+            'This voice note has no sound — your microphone did not pick up any audio. Please check your mic and record again.',
+          );
+        }
       } catch (err) {
+        // A deliberate HTTP error (e.g. the silent-note BadRequest above) is
+        // already the message we want the sender to see — pass it through
+        // rather than masking it as a generic transcode failure.
+        if (err instanceof HttpException) throw err;
         // A voice note that can't be transcoded cannot be delivered — the
         // raw blob is guaranteed to 131053 on Meta's side. Fail loudly now
         // so the agent gets an immediate, actionable error instead of a
@@ -1213,6 +1240,11 @@ export class WhatsAppMessagesService {
         // Store the normalised mime type so streamMedia serves the correct
         // Content-Type and the processor knows the actual uploaded format.
         mediaMimeType: uploadMimeType,
+        // Actual delivered byte size (post-transcode for voice). Was never
+        // recorded before, which hid a fleet of silent 1-3 KB voice notes;
+        // storing it makes size-based monitoring possible without re-reading
+        // the object from storage.
+        mediaSizeBytes: uploadBuffer.length,
         body: input.caption ?? null,
         // Mark as a voice note so the outbound worker sends voice:true (Meta
         // renders waveform + auto-play). By this point a voice note is
@@ -1546,6 +1578,41 @@ export class WhatsAppMessagesService {
    * Meta requires this exact format for voice notes (voice: true messages).
    * Falls back gracefully — callers should catch and upload the original.
    */
+  /**
+   * Peak loudness of an audio buffer in dBFS, via ffmpeg's `volumedetect`.
+   * Used to catch a voice note whose mic captured only silence (see
+   * VOICE_SILENCE_MAX_DB). Returns null if the measurement can't be taken —
+   * the caller then fails OPEN (sends the note) rather than blocking a
+   * legitimate message on a diagnostic hiccup.
+   */
+  private async measureVoicePeakDb(ogg: Buffer): Promise<number | null> {
+    const tmpIn = join(tmpdir(), `vn-vol-${randomUUID()}.ogg`);
+    try {
+      await writeFile(tmpIn, ogg);
+      // volumedetect prints to stderr; -f null discards the decoded output.
+      const { stderr } = await execFileAsync(FFMPEG_BIN, [
+        '-hide_banner',
+        '-i', tmpIn,
+        '-af', 'volumedetect',
+        '-f', 'null',
+        '-',
+      ]);
+      // e.g. "[Parsed_volumedetect_0 @ ..] max_volume: -12.4 dB"
+      const m = /max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/.exec(String(stderr));
+      return m ? parseFloat(m[1]) : null;
+    } catch (e) {
+      // execFile rejects with stderr on the object; parse it if present so a
+      // real (non-error) volumedetect run still yields a reading.
+      const stderr = (e as { stderr?: unknown }).stderr;
+      const m = stderr ? /max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/.exec(String(stderr)) : null;
+      if (m) return parseFloat(m[1]);
+      this.logger.warn(`measureVoicePeakDb failed — sending note unchecked: ${(e as Error).message}`);
+      return null;
+    } finally {
+      await unlink(tmpIn).catch(() => {});
+    }
+  }
+
   private async transcodeVoiceToOgg(input: Buffer): Promise<Buffer> {
     const tmpIn = join(tmpdir(), `vn-in-${randomUUID()}`);
     const tmpOut = join(tmpdir(), `vn-out-${randomUUID()}.ogg`);

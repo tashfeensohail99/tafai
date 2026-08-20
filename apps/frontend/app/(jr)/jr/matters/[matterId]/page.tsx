@@ -191,8 +191,9 @@ export default function JrMatterDetailPage() {
 
   const assignedName = useMemo(() => {
     if (!matter?.assignedAssociateUserId) return null;
+    if (matter.assignedAssociateUserId === user.id) return 'You';
     return associates.find((a) => a.id === matter.assignedAssociateUserId)?.name ?? 'Assigned';
-  }, [matter, associates]);
+  }, [matter, associates, user.id]);
 
   const backLink = (
     <Link
@@ -259,12 +260,13 @@ export default function JrMatterDetailPage() {
           </DefRow>
           <DefRow label="Court file number">{matter.courtFileNumber ?? '—'}</DefRow>
           <DefRow label="Assigned associate">
-            {assignedName ? (
-              assignedName
-            ) : canAssign && associates.length > 0 ? (
+            {canAssign && associates.length > 0 ? (
+              // Always assignable/RE-assignable for a Head (control pre-selects current).
               <DetailAssignControl matter={matter} associates={associates} onAssigned={() => setReloadKey((k) => k + 1)} />
-            ) : matter.assignedAssociateUserId ? (
-              'Assigned'
+            ) : assignedName ? (
+              assignedName
+            ) : canAssign ? (
+              <span style={{ color: 'var(--sos-text-muted)' }}>No associates — create JR logins</span>
             ) : (
               <StatusBadge tone="warning" size="sm">Unassigned</StatusBadge>
             )}

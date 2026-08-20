@@ -416,10 +416,16 @@ export default function JrMattersPage() {
                       </StatusBadge>
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      {assignedName ? (
-                        <span style={{ fontSize: 13, color: 'var(--sos-text-secondary)' }}>{assignedName}</span>
-                      ) : canAssign && associates.length > 0 ? (
+                      {canAssign && associates.length > 0 ? (
+                        // Always assignable for a Head — the control pre-selects the
+                        // current assignee, so this also RE-assigns an assigned matter.
                         <AssignControl matter={m} associates={associates} onAssigned={() => setReloadKey((k) => k + 1)} />
+                      ) : assignedName ? (
+                        <span style={{ fontSize: 13, color: 'var(--sos-text-secondary)' }}>{assignedName}</span>
+                      ) : canAssign ? (
+                        <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>
+                          No associates — create JR logins
+                        </span>
                       ) : (
                         <StatusBadge tone="warning" size="sm">Unassigned</StatusBadge>
                       )}

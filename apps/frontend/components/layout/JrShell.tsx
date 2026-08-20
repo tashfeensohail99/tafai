@@ -30,23 +30,11 @@ import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import { destinationForUser, logout as sessionLogout, useSession } from '@/lib/session';
 
-// Staff roles allowed into the JR console. Matches the old prototype's
-// STAFF_ROLES exactly (clients excluded). Backend endpoints are the real
-// authority; this gate just keeps non-staff out of the shell entirely.
-const STAFF_ROLES = new Set<string>([
-  'super_admin',
-  'admin',
-  'jr',
-  'jr_head',
-  'jr_associate',
-  'sales',
-  'finance',
-  'processing',
-  'processing_manager',
-  'documentation',
-  'reception',
-  'marketing',
-]);
+// The console is gated on the real `jr.portal.view` permission (held by
+// jr_head / jr_associate / admin / super_admin), NOT a broad role allowlist —
+// otherwise sales/finance/etc. land in a console where every backend call 403s.
+// Backend endpoints remain the real authority; this just keeps non-JR staff out.
+const JR_PORTAL_PERMISSION = 'jr.portal.view';
 
 export interface JrUser {
   id: string;
@@ -123,7 +111,7 @@ export function JrShell({ children }: { children: ReactNode }) {
       return;
     }
     if (session.status === 'authed') {
-      const ok = session.user.roles.some((r) => STAFF_ROLES.has(r));
+      const ok = session.user.permissions.includes(JR_PORTAL_PERMISSION);
       if (!ok) router.replace(destinationForUser(session.user));
     }
   }, [session, router]);
@@ -157,8 +145,8 @@ export function JrShell({ children }: { children: ReactNode }) {
     );
   }
   if (session.status !== 'authed' || !sessionValue) return null;
-  // Bounce guard: authed but not staff — the effect above is redirecting.
-  if (!sessionValue.user.roles.some((r) => STAFF_ROLES.has(r))) return null;
+  // Bounce guard: authed but without JR portal access — the effect is redirecting.
+  if (!sessionValue.user.permissions.includes(JR_PORTAL_PERMISSION)) return null;
 
   const user = sessionValue.user;
   const logout = sessionValue.logout;

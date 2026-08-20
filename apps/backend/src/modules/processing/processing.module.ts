@@ -6,6 +6,7 @@ import { StorageModule } from '../storage/storage.module';
 import { ActivityTimelineModule } from '../activity-timeline/activity-timeline.module';
 import { LeadsModule } from '../leads/leads.module';
 import { FinanceModule } from '../finance/finance.module';
+import { JudicialReviewModule } from '../judicial-review/judicial-review.module';
 import { ProcessingController } from './processing.controller';
 import { ProcessingService } from './processing.service';
 import { DatabankController } from './databank/databank.controller';
@@ -30,6 +31,11 @@ import { ClientNudgeService } from './client-nudge.service';
     // payment + receipt) via the Finance engine. FinanceModule exports
     // FinanceService; no cycle (Finance imports Cases/Leads, not Processing).
     FinanceModule,
+    // A paid JR_RESUBMISSION agreement is routed to a JrMatter (JR Head's queue)
+    // instead of a ProcessingCase. JudicialReviewModule exports JrIntakeService;
+    // no cycle — the JR module imports StorageModule + LeadsModule only, never
+    // ProcessingModule.
+    JudicialReviewModule,
     ConfigModule,
     // Phase D2 — document-AI assessment queue (Redis root is the @Global
     // WhatsAppQueuesModule; we just register our own queue name here). The

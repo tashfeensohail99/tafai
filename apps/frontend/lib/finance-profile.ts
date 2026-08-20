@@ -140,6 +140,11 @@ export interface FinanceCustomerProfile {
     ready: boolean;
     handoverId: string | null;
     alreadySent: boolean;
+    /** True for a Judicial Review (JR_RESUBMISSION) file — routes to a JrMatter
+     *  in the JR Head's queue, not a ProcessingCase. Drives the button label. */
+    isJudicialReview: boolean;
+    /** Where the handover goes: 'JR' (JR Head's queue) or 'PROCESSING'. */
+    target: 'JR' | 'PROCESSING';
     reason: string | null;
   };
   expenses: FinanceProfileExpense[];

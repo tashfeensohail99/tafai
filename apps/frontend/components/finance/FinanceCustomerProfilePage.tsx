@@ -499,7 +499,11 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
     setNotice(null);
     try {
       await sendCaseToProcessing({ financeHandoverId: data.sendToProcessing.handoverId });
-      setNotice('Sent to Processing — the case is now in the processing queue.');
+      setNotice(
+        data.sendToProcessing.target === 'JR'
+          ? "Opened as a JR matter — it's now in the Judicial Review Head's queue."
+          : 'Sent to Processing — the case is now in the processing queue.',
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not hand the file over to Processing');
@@ -637,7 +641,11 @@ export function FinanceCustomerProfilePage({ leadId }: { leadId: string }) {
                   onClick={() => void handleSendToProcessing()}
                   disabled={!data.sendToProcessing.ready || busy !== null}
                 >
-                  {busy === 'to-processing' ? 'Sending…' : 'Send to Processing'}
+                  {busy === 'to-processing'
+                    ? 'Sending…'
+                    : data.sendToProcessing.target === 'JR'
+                      ? 'Send to JR'
+                      : 'Send to Processing'}
                 </PrimaryButton>
               </span>
             )}

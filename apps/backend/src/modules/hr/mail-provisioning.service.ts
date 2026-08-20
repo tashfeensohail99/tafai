@@ -136,6 +136,21 @@ export class MailProvisioningService {
     return email;
   }
 
+  /** Reset an EXISTING mailbox's password (used to "activate" a dormant inbox). */
+  async resetPassword(localPart: string, password: string): Promise<void> {
+    this.assertConfigured();
+    const res = await this.call(
+      { action: 'modify', domain: this.domain, user: localPart, passwd: password, passwd2: password },
+      'POST',
+    );
+    if (res.get('error') !== '0') {
+      const msg = res.get('text') || res.get('details') || 'unknown error';
+      this.log.error(`resetPassword ${localPart}@${this.domain} failed: ${msg}`);
+      throw new BadRequestException(`Could not reset mailbox password: ${msg}`);
+    }
+    this.log.log(`Reset password for mailbox ${localPart}@${this.domain}`);
+  }
+
   /** Permanently delete a mailbox (offboarding). Idempotent-ish: logs on failure. */
   async deleteMailbox(localPart: string): Promise<void> {
     this.assertConfigured();

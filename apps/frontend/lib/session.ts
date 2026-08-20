@@ -199,7 +199,7 @@ export function logout() {
 export function destinationForUser(user: SessionUser): string {
   const roles = new Set(user.roles);
   if (roles.has('super_admin') || roles.has('admin')) return '/admin';
-  if (roles.has('hr')) return '/admin/hr';
+  if (roles.has('hr')) return '/hr';
   if (roles.has('client')) return '/portal/case';
   if (roles.has('sales')) return '/sales';
   if (roles.has('finance')) return '/finance';

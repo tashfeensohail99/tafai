@@ -33,7 +33,6 @@ import {
   UserRoundCog,
   Users,
   UsersRound,
-  IdCard,
   Wrench,
   X,
 } from 'lucide-react';
@@ -91,7 +90,6 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
     items: [
       { label: 'Users', href: '/admin/users', icon: UserRoundCog, caption: 'Accounts & access', permissionKey: 'users.view_all' },
       { label: 'Employees', href: '/admin/employees', icon: UsersRound, caption: 'Profiles & WhatsApp pool', permissionKey: 'employees.view_all' },
-      { label: 'HR', href: '/admin/hr', icon: IdCard, caption: 'Onboard staff + business email', permissionKey: 'hr.view' },
       { label: 'Camera Enrollments', href: '/admin/attendance', icon: ScanFace, caption: 'Approve camera walk-ins', permissionKey: 'employees.view_all' },
       { label: 'Attendance', href: '/admin/attendance-log', icon: Clock, caption: 'Daily attendance & manual marking', permissionKey: 'employees.view_all' },
       { label: 'Payroll', href: '/admin/payroll', icon: FileSpreadsheet, caption: 'Attendance rules, leave & payslips', permissionKey: 'employees.view_all' },
@@ -154,7 +152,6 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/users')) return { title: 'Users', subtitle: 'Accounts & access control' };
   if (pathname.startsWith('/admin/audit')) return { title: 'Activity Logs', subtitle: 'Audit trail' };
   if (pathname.startsWith('/admin/employees')) return { title: 'Employees', subtitle: 'Profiles & WhatsApp pool' };
-  if (pathname.startsWith('/admin/hr')) return { title: 'HR', subtitle: 'Onboard staff + business email' };
   if (pathname.startsWith('/admin/attendance-log')) return { title: 'Attendance', subtitle: 'Daily attendance & manual marking' };
   if (pathname.startsWith('/admin/payroll')) return { title: 'Payroll & Attendance', subtitle: 'Rules engine, leave & payslips' };
   if (pathname.startsWith('/admin/attendance')) return { title: 'Camera Enrollments', subtitle: 'Approve camera-enrolled walk-ins' };

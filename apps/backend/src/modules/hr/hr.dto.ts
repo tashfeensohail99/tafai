@@ -83,3 +83,12 @@ export class OffboardEmployeeDto {
   @IsOptional() @IsBoolean()
   deleteMailbox?: boolean;
 }
+
+export class ProvisionMailboxDto {
+  @IsUUID()
+  employeeId!: string;
+
+  // Also switch the employee's CRM login to their business email.
+  @IsOptional() @IsBoolean()
+  setAsLogin?: boolean;
+}

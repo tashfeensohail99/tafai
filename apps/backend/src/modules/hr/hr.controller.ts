@@ -2,9 +2,12 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
+  Param,
   Query,
   UseGuards,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
@@ -12,7 +15,7 @@ import { RequirePermissions } from '../../common/decorators/require-permissions.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { HrService } from './hr.service';
-import { OnboardEmployeeDto, OffboardEmployeeDto, ProvisionMailboxDto } from './hr.dto';
+import { OnboardEmployeeDto, OffboardEmployeeDto, ProvisionMailboxDto, UpdateEmployeeDto } from './hr.dto';
 
 @Controller('hr')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -45,6 +48,13 @@ export class HrController {
   @RequirePermissions('hr.onboard')
   onboard(@Body() dto: OnboardEmployeeDto, @CurrentUser() user: RequestUser) {
     return this.hr.onboard(dto, user.id);
+  }
+
+  /** Edit an existing employee's details (+ optional role change). */
+  @Patch('employee/:id')
+  @RequirePermissions('hr.onboard')
+  updateEmployee(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateEmployeeDto, @CurrentUser() user: RequestUser) {
+    return this.hr.updateEmployee(id, dto, user.id);
   }
 
   /** Disable a login (+ optional mailbox delete). */

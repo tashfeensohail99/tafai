@@ -1,16 +1,16 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { UserPlus, UserMinus, Copy, Check, Loader2, Search, Mail, ShieldCheck, Users, UserCheck, MessageCircle } from 'lucide-react';
+import { UserPlus, UserMinus, Copy, Check, Loader2, Search, Mail, ShieldCheck, Users, UserCheck, MessageCircle, Pencil } from 'lucide-react';
 import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { useHrSession } from '../layout/HrShell';
 import { Avatar, Pill, Modal } from './ui';
 import {
-  getHrConfig, getHrDirectory, suggestEmail, onboardEmployee, offboardEmployee,
+  getHrConfig, getHrDirectory, suggestEmail, onboardEmployee, offboardEmployee, updateEmployee,
   getDepartments, getBranches, getDesignations, getRoles,
-  type HrEmployee, type OnboardPayload, type OnboardResult, type NamedRecord, type RoleRecord,
+  type HrEmployee, type OnboardPayload, type OnboardResult, type NamedRecord, type RoleRecord, type UpdateEmployeePayload,
 } from '@/lib/hr';
 
 const EMPTY_FORM: OnboardPayload = {
@@ -33,6 +33,7 @@ export default function HrDirectory() {
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [offboardTarget, setOffboardTarget] = useState<HrEmployee | null>(null);
+  const [editTarget, setEditTarget] = useState<HrEmployee | null>(null);
 
   const load = useCallback(async (q?: string) => {
     try { setErr(null); setRows(await getHrDirectory(q)); }
@@ -110,9 +111,14 @@ export default function HrDirectory() {
                       <td className="hr-mono">{r.pbxExtension ?? '—'}</td>
                       <td><Pill tone={r.isActive ? 'ok' : 'neutral'}>{r.isActive ? 'Active' : 'Inactive'}</Pill></td>
                       <td style={{ textAlign: 'right' }}>
-                        {can('hr.offboard') && r.isActive ? (
-                          <button className="hr-iconbtn" title="Offboard" onClick={() => setOffboardTarget(r)}><UserMinus size={15} /></button>
-                        ) : null}
+                        <div style={{ display: 'inline-flex', gap: 6 }}>
+                          {can('hr.onboard') ? (
+                            <button className="hr-iconbtn hr-iconbtn--edit" title="Edit" onClick={() => setEditTarget(r)}><Pencil size={15} /></button>
+                          ) : null}
+                          {can('hr.offboard') && r.isActive ? (
+                            <button className="hr-iconbtn" title="Offboard" onClick={() => setOffboardTarget(r)}><UserMinus size={15} /></button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -126,11 +132,79 @@ export default function HrDirectory() {
         <AddEmployeeModal mailConfigured={mailConfigured} depts={depts} branches={branches} designations={designations} roles={roles}
           onClose={() => setShowAdd(false)} onDone={() => { setShowAdd(false); void load(search.trim() || undefined); }} />
       ) : null}
+      {editTarget ? (
+        <EditEmployeeModal employee={editTarget} depts={depts} branches={branches} designations={designations} roles={roles}
+          onClose={() => setEditTarget(null)} onDone={() => { setEditTarget(null); void load(search.trim() || undefined); }} />
+      ) : null}
       {offboardTarget ? (
         <OffboardModal employee={offboardTarget} onClose={() => setOffboardTarget(null)}
           onDone={() => { setOffboardTarget(null); void load(search.trim() || undefined); }} />
       ) : null}
     </div>
+  );
+}
+
+function EditEmployeeModal({ employee, depts, branches, designations, roles, onClose, onDone }: {
+  employee: HrEmployee; depts: NamedRecord[]; branches: NamedRecord[]; designations: NamedRecord[]; roles: RoleRecord[];
+  onClose: () => void; onDone: () => void;
+}) {
+  const [form, setForm] = useState({
+    firstName: employee.firstName, lastName: employee.lastName,
+    departmentId: employee.department?.id ?? '', branchId: employee.branch?.id ?? '',
+    designationId: employee.designation?.id ?? '', roleName: employee.user?.userRoles?.[0]?.role.name ?? '',
+    phone: employee.user?.phone ?? '', pbxExtension: employee.pbxExtension ?? '',
+    whatsappInboxMember: employee.whatsappInboxMember,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
+
+  const save = async () => {
+    setError(null);
+    if (!form.firstName.trim() || !form.lastName.trim()) { setError('First and last name are required.'); return; }
+    setBusy(true);
+    try {
+      const payload: UpdateEmployeePayload = {
+        firstName: form.firstName.trim(), lastName: form.lastName.trim(),
+        departmentId: form.departmentId || null, branchId: form.branchId || null, designationId: form.designationId || null,
+        phone: form.phone.trim() || null, pbxExtension: form.pbxExtension.trim() || null,
+        whatsappInboxMember: form.whatsappInboxMember,
+        ...(form.roleName ? { roleNames: [form.roleName] } : {}),
+      };
+      await updateEmployee(employee.id, payload);
+      onDone();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Save failed'); setBusy(false); }
+  };
+
+  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div className="hr-field"><label className="hr-label">{label}</label>{children}</div>
+  );
+
+  return (
+    <Modal title={`Edit · ${employee.firstName} ${employee.lastName}`} onClose={onClose} wide>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Fld label="First name"><input className="hr-input" value={form.firstName} onChange={(e) => set('firstName', e.target.value)} /></Fld>
+          <Fld label="Last name"><input className="hr-input" value={form.lastName} onChange={(e) => set('lastName', e.target.value)} /></Fld>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Fld label="Department"><select className="hr-select" value={form.departmentId} onChange={(e) => set('departmentId', e.target.value)}><option value="">Unassigned</option>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Fld>
+          <Fld label="Branch"><select className="hr-select" value={form.branchId} onChange={(e) => set('branchId', e.target.value)}><option value="">Unassigned</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Fld>
+          <Fld label="Designation"><select className="hr-select" value={form.designationId} onChange={(e) => set('designationId', e.target.value)}><option value="">Unassigned</option>{designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Fld>
+          <Fld label="Role"><select className="hr-select" value={form.roleName} onChange={(e) => set('roleName', e.target.value)}><option value="">Keep current</option>{roles.map((r) => <option key={r.id} value={r.name}>{r.displayName}</option>)}</select></Fld>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Fld label="Phone"><input className="hr-input" value={form.phone} onChange={(e) => set('phone', e.target.value)} /></Fld>
+          <Fld label="Telenor extension"><input className="hr-input" value={form.pbxExtension} onChange={(e) => set('pbxExtension', e.target.value)} /></Fld>
+        </div>
+        <label className="hr-check"><input type="checkbox" checked={form.whatsappInboxMember} onChange={(e) => set('whatsappInboxMember', e.target.checked)} /> WhatsApp lead inbox (round-robin pool)</label>
+        {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 2 }}>
+          <button className="hr-btn hr-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="hr-btn hr-btn--primary" onClick={save} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <Check size={16} />} {busy ? 'Saving…' : 'Save changes'}</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

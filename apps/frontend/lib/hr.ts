@@ -15,11 +15,31 @@ export interface HrEmployee {
   pbxExtension: string | null;
   whatsappInboxMember: boolean;
   joiningDate: string | null;
-  user: { email: string; phone: string | null; status: string } | null;
-  department: { name: string } | null;
-  branch: { name: string } | null;
-  designation: { name: string } | null;
+  user: {
+    email: string; phone: string | null; status: string;
+    userRoles?: { role: { name: string; displayName: string } }[];
+  } | null;
+  department: { id: string; name: string } | null;
+  branch: { id: string; name: string } | null;
+  designation: { id: string; name: string } | null;
 }
+
+export interface UpdateEmployeePayload {
+  firstName?: string;
+  lastName?: string;
+  departmentId?: string | null;
+  branchId?: string | null;
+  designationId?: string | null;
+  phone?: string | null;
+  pbxExtension?: string | null;
+  whatsappInboxMember?: boolean;
+  roleNames?: string[];
+}
+
+export const updateEmployee = (id: string, payload: UpdateEmployeePayload) =>
+  apiFetch<{ id: string; updated: boolean }>(`/hr/employee/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
 
 export interface OnboardPayload {
   firstName: string;

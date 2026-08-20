@@ -141,6 +141,7 @@
 .hr-iconbtn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--hr-line); background: var(--hr-panel-2); color: var(--hr-muted); cursor: pointer; display: grid; place-items: center; transition: color .15s, border-color .15s; }
 .hr-iconbtn:hover { color: var(--hr-bad); border-color: var(--hr-bad-line); }
 .hr-iconbtn svg { width: 15px; height: 15px; }
+.hr-iconbtn--edit:hover { color: var(--hr-brand-strong); border-color: var(--hr-brand-line); }
 
 .hr-empty { padding: 48px 24px; text-align: center; color: var(--hr-muted); font-size: 14px; }
 

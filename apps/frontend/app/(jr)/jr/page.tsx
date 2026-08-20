@@ -586,7 +586,7 @@ export default function JrMattersPage() {
         <div style={{ overflowX: 'auto' }}>
           <div style={{ minWidth: 980 }}>
             <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 14, padding: '9px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--sos-border-subtle)' }}>
-              <span>Matter</span>
+              <span>Client / matter</span>
               <span>Style of cause</span>
               <span>Stage</span>
               <span>Intake</span>
@@ -625,9 +625,10 @@ export default function JrMattersPage() {
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <div style={{ minWidth: 0 }}>
-                      <Link href={`/jr/matters/${m.id}` as Route} style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', textDecoration: 'none' }}>
-                        {m.matterNumber}
+                      <Link href={`/jr/matters/${m.id}` as Route} style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--sos-text-primary)', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {m.clientName || m.styleOfCause || '—'}
                       </Link>
+                      <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{m.matterNumber}</div>
                       {m.courtFileNumber ? (
                         <div style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{m.courtFileNumber}</div>
                       ) : null}

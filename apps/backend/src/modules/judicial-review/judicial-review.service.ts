@@ -42,7 +42,18 @@ export class JudicialReviewService {
    * constraint is ALWAYS ANDed in via an AND: [] array so an added filter can
    * never silently drop it (the double-OR-spread leak, #253).
    */
-  async listMatters(query: ListMattersQueryDto, user: RequestUser): Promise<JrMatter[]> {
+  async listMatters(
+    query: ListMattersQueryDto,
+    user: RequestUser,
+  ): Promise<
+    Array<
+      JrMatter & {
+        clientName: string | null;
+        clientPhone: string | null;
+        clientReferenceCode: string | null;
+      }
+    >
+  > {
     const scopeConstraint: Prisma.JrMatterWhereInput = user.permissions.includes(
       'jr.matter.view_all',
     )
@@ -66,16 +77,71 @@ export class JudicialReviewService {
       AND: [scopeConstraint, ...filters],
     };
 
-    return this.prisma.jrMatter.findMany({
+    const matters = await this.prisma.jrMatter.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: query.take ?? 50,
+    });
+
+    // clientId is a bare crm.Client id (no Prisma relation) — enrich the rows
+    // with a name/phone/reference in ONE batched query so the console can show
+    // who each matter is for (never a per-row lookup).
+    const clientIds = [...new Set(matters.map((m) => m.clientId).filter(Boolean))];
+    const clients = clientIds.length
+      ? await this.prisma.client.findMany({
+          where: { id: { in: clientIds } },
+          select: { id: true, firstName: true, lastName: true, phone: true, referenceCode: true },
+        })
+      : [];
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+
+    return matters.map((m) => {
+      const c = clientById.get(m.clientId);
+      return {
+        ...m,
+        clientName: c ? `${c.firstName} ${c.lastName}`.trim() : null,
+        clientPhone: c?.phone ?? null,
+        clientReferenceCode: c?.referenceCode ?? null,
+      };
     });
   }
 
   /** Load a single matter, enforcing per-matter access. */
   async getMatter(matterId: string, user: RequestUser): Promise<JrMatter> {
     return this.assertMatterAccess(matterId, user);
+  }
+
+  /**
+   * Load a single matter together with its (relation-less) crm.Client for the
+   * console detail view. clientId is a bare Client id, so the client is fetched
+   * separately — returns null if the client row is gone.
+   */
+  async getMatterDetail(
+    matterId: string,
+    user: RequestUser,
+  ): Promise<
+    JrMatter & {
+      client: {
+        firstName: string;
+        lastName: string;
+        phone: string | null;
+        email: string | null;
+        referenceCode: string;
+      } | null;
+    }
+  > {
+    const matter = await this.assertMatterAccess(matterId, user);
+    const client = await this.prisma.client.findFirst({
+      where: { id: matter.clientId },
+      select: {
+        firstName: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        referenceCode: true,
+      },
+    });
+    return { ...matter, client: client ?? null };
   }
 
   /**
@@ -567,6 +633,12 @@ export class JudicialReviewService {
     await this.assertMatterAccess(matterId, user);
 
     const data: Prisma.JrMatterUpdateInput = { updatedByUserId: user.id };
+    // Case-identity fields editable from the console detail form.
+    if (dto.styleOfCause !== undefined) data.styleOfCause = dto.styleOfCause;
+    if (dto.decisionMaker !== undefined) data.decisionMaker = dto.decisionMaker;
+    if (dto.applicationType !== undefined) data.applicationType = dto.applicationType;
+    if (dto.decisionLetterDate !== undefined)
+      data.decisionLetterDate = new Date(dto.decisionLetterDate);
     if (dto.courtFileNumber !== undefined) data.courtFileNumber = dto.courtFileNumber;
     if (dto.registryOffice !== undefined) data.registryOffice = dto.registryOffice;
     if (dto.neutralCitation !== undefined) data.neutralCitation = dto.neutralCitation;

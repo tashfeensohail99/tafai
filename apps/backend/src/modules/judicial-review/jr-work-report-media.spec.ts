@@ -105,12 +105,16 @@ function build(opts: { report?: any; attachment?: any } = {}) {
     delete: jest.fn().mockResolvedValue(undefined),
   };
   const openai = { transcribe: jest.fn() };
+  const pdf = { render: jest.fn(), renderHtml: jest.fn() };
+  const email = { sendJrWorkReport: jest.fn().mockResolvedValue(true) };
 
   const service = new JrWorkReportService(
     prisma as any,
     compiler as any,
     storage as any,
     openai as any,
+    pdf as any,
+    email as any,
   );
   return { service, prisma, storage, openai, attachmentCreate, attachmentUpdate };
 }

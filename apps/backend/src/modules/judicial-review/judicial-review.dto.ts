@@ -1063,3 +1063,19 @@ export class CreateWorkReportNoteDto {
   @MaxLength(4000)
   content!: string;
 }
+
+/**
+ * POST /jr/reports/:id/email — email the report PDF outbound (jr.report.share).
+ * `emails` is optional; when omitted the report is sent to the caller. An
+ * optional short covering `note` is included in the email body.
+ */
+export class EmailWorkReportDto {
+  @IsOptional()
+  @IsEmail({}, { each: true })
+  emails?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  note?: string;
+}

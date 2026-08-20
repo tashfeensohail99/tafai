@@ -7,10 +7,12 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -23,6 +25,7 @@ import { JrWorkReportService } from './jr-work-report.service';
 import {
   CreateWorkReportDto,
   CreateWorkReportNoteDto,
+  EmailWorkReportDto,
   ListWorkReportsQueryDto,
 } from './judicial-review.dto';
 
@@ -147,5 +150,52 @@ export class JrWorkReportController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.reports.deleteAttachment(id, attachmentId, user);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render / finalize / email (§11.7, PR 10C)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Freeze a DRAFT into an immutable PDF snapshot (own-or-view_all + DRAFT-only).
+   * captureBody:false so the compiled client work never reaches the org AuditLog.
+   */
+  @Post(':id/finalize')
+  @RequirePermissions('jr.report.generate')
+  @Audit({ idParam: 'id', entityType: 'JrWorkReport', category: 'MUTATION', severity: 'LOW', captureBody: false })
+  finalize(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    return this.reports.finalize(id, user);
+  }
+
+  /**
+   * Stream the report PDF inline (own-or-view_all). A FINALIZED report streams
+   * the frozen snapshot; a DRAFT renders live. NO @Audit — a plain read, so the
+   * compiled work-product is never auto-captured (mirrors the GET handlers).
+   */
+  @Get(':id/pdf')
+  @RequirePermissions('jr.report.generate')
+  async pdf(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { buffer, fileName } = await this.reports.renderPdf(id, user);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  }
+
+  /** Email the report PDF outbound (Head only — jr.report.share). */
+  @Post(':id/email')
+  @RequirePermissions('jr.report.share')
+  @Audit({ idParam: 'id', entityType: 'JrWorkReport', category: 'MUTATION', severity: 'MEDIUM', captureBody: false })
+  email(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: EmailWorkReportDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reports.emailReport(id, dto, user);
   }
 }

@@ -15,7 +15,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   JrArtifactFolder,
   JrArtifactType,
@@ -853,4 +853,41 @@ export class CarryToRedeterminationDto {
   @IsString()
   @MaxLength(1000)
   newEvidenceExplanation?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Case-workspace notes (text/voice/image). Every property is decorated — the
+// global ValidationPipe runs forbidNonWhitelisted, so an undecorated field 400s.
+// Voice/image notes carry their file + optional caption via multipart and are
+// NOT validated through a DTO class (see JrNotesController).
+// ---------------------------------------------------------------------------
+
+/** POST /jr/matters/:matterId/notes — a text note (noteType defaults GENERAL). */
+export class CreateJrNoteDto {
+  @IsString()
+  @MaxLength(5000)
+  content!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  noteType?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @IsBoolean()
+  isPinned?: boolean;
+}
+
+/** PATCH /jr/notes/:noteId — edit a note's body and/or pin state. */
+export class UpdateJrNoteDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  content?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @IsBoolean()
+  isPinned?: boolean;
 }

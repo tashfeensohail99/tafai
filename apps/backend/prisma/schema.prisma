@@ -5803,10 +5803,39 @@ model JrNote {
   editedAt        DateTime?
   deletedAt       DateTime?
   deletedByUserId String?
-  matter          JrMatter  @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  matter          JrMatter           @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  attachments     JrNoteAttachment[]
 
   @@index([matterId])
   @@map("jr_notes")
+  @@schema("legal")
+}
+
+/// A text/voice/image attachment on a JR note. Voice clips carry a best-effort
+/// Roman-Urdu transcript (Whisper + transliteration) captured at upload time.
+model JrNoteAttachment {
+  id             String               @id @default(uuid())
+  noteId         String
+  kind           JrNoteAttachmentKind
+  storageKey     String
+  fileName       String
+  mimeType       String               @db.VarChar(120)
+  fileSizeBytes  Int
+  durationMs     Int?
+  transcript     String?
+  transcriptLang String?              @db.VarChar(20)
+  createdAt      DateTime             @default(now())
+  note           JrNote               @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@map("jr_note_attachments")
+  @@schema("legal")
+}
+
+enum JrNoteAttachmentKind {
+  AUDIO
+  IMAGE
+
   @@schema("legal")
 }
 

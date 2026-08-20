@@ -137,17 +137,62 @@ export interface JrDeadlineRow {
 // Artifacts (grouped by display folder)
 // ---------------------------------------------------------------------------
 
+export interface JrArtifactVersion {
+  id: string;
+  versionNumber: number;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  changeNote: string | null;
+  isCurrent: boolean;
+  createdAt: string;
+}
+
 export interface JrArtifactSummary {
   id: string;
   artifactType: string;
   title: string;
   status: JrArtifactStatus;
   sortOrder: number;
+  displayFolder?: string;
+  versions?: JrArtifactVersion[];
+  currentVersionId?: string | null;
   [key: string]: unknown;
 }
 
 export interface JrArtifactsGrouped {
   folders: Array<{ folder: string; artifacts: JrArtifactSummary[] }>;
+}
+
+// ---------------------------------------------------------------------------
+// Case-workspace notes (text / voice / image)
+// ---------------------------------------------------------------------------
+
+export interface JrNoteAttachment {
+  id: string;
+  kind: 'AUDIO' | 'IMAGE';
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  durationMs: number | null;
+  transcript: string | null;
+  url: string | null;
+}
+
+export interface JrNote {
+  id: string;
+  content: string;
+  noteType: string;
+  isPinned: boolean;
+  authorUserId: string;
+  authorName: string;
+  createdAt: string;
+  editedAt: string | null;
+  attachments: JrNoteAttachment[];
+}
+
+export interface JrNotesResponse {
+  notes: JrNote[];
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +295,133 @@ export function fetchJrArtifacts(matterId: string): Promise<JrArtifactsGrouped> 
   return apiFetch<JrArtifactsGrouped>(`/jr/matters/${matterId}/artifacts`, {
     cache: 'no-store',
   });
+}
+
+// ---------------------------------------------------------------------------
+// Artifact authoring — create a DRAFT, upload versions, download, lifecycle
+// ---------------------------------------------------------------------------
+
+/** POST /jr/matters/:matterId/artifacts — creates a DRAFT artifact. */
+export function createJrArtifact(
+  matterId: string,
+  body: { artifactType: string; folder: string; title: string; sortOrder?: number },
+): Promise<JrArtifactSummary> {
+  return apiFetch<JrArtifactSummary>(`/jr/matters/${matterId}/artifacts`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * POST /jr/artifacts/:artifactId/versions — multipart upload of a new version.
+ * apiFetch passes FormData through untouched (no Content-Type header, no JSON body).
+ */
+export function uploadJrArtifactVersion(
+  artifactId: string,
+  file: File | Blob,
+  changeNote?: string,
+  fileName?: string,
+): Promise<{ artifact: JrArtifactSummary; version: JrArtifactVersion }> {
+  const fd = new FormData();
+  fd.append('file', file, fileName ?? (file as File).name ?? 'document');
+  if (changeNote) fd.append('changeNote', changeNote);
+  return apiFetch<{ artifact: JrArtifactSummary; version: JrArtifactVersion }>(
+    `/jr/artifacts/${artifactId}/versions`,
+    { method: 'POST', body: fd },
+  );
+}
+
+/** GET /jr/artifacts/:artifactId/versions/:versionId/url — a short-lived signed URL. */
+export function fetchJrArtifactVersionUrl(
+  artifactId: string,
+  versionId: string,
+): Promise<{ url: string; fileName: string; mimeType: string }> {
+  return apiFetch<{ url: string; fileName: string; mimeType: string }>(
+    `/jr/artifacts/${artifactId}/versions/${versionId}/url`,
+    { cache: 'no-store' },
+  );
+}
+
+/** POST /jr/artifacts/:artifactId/internal-qa — DRAFT → INTERNAL_QA. */
+export function jrArtifactInternalQa(artifactId: string): Promise<JrArtifactSummary> {
+  return apiFetch<JrArtifactSummary>(`/jr/artifacts/${artifactId}/internal-qa`, {
+    method: 'POST',
+  });
+}
+
+/** POST /jr/artifacts/:artifactId/submit — INTERNAL_QA → COUNSEL_REVIEW. */
+export function jrSubmitArtifactToCounsel(artifactId: string): Promise<JrArtifactSummary> {
+  return apiFetch<JrArtifactSummary>(`/jr/artifacts/${artifactId}/submit`, {
+    method: 'POST',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Case-workspace notes — read + create (text/voice/image) + edit + delete
+// ---------------------------------------------------------------------------
+
+export function fetchJrNotes(matterId: string): Promise<JrNotesResponse> {
+  return apiFetch<JrNotesResponse>(`/jr/matters/${matterId}/notes`, {
+    cache: 'no-store',
+  });
+}
+
+/** POST /jr/matters/:matterId/notes — a text note. */
+export function createJrTextNote(
+  matterId: string,
+  body: { content: string; noteType?: string; isPinned?: boolean },
+): Promise<JrNote> {
+  return apiFetch<JrNote>(`/jr/matters/${matterId}/notes`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** POST /jr/matters/:matterId/notes/voice — multipart voice note (+ optional caption). */
+export function createJrVoiceNote(
+  matterId: string,
+  blob: Blob,
+  opts: { fileName: string; durationMs?: number; content?: string },
+): Promise<JrNote> {
+  const fd = new FormData();
+  fd.append('file', blob, opts.fileName);
+  if (opts.content) fd.append('content', opts.content);
+  if (opts.durationMs != null) fd.append('durationMs', String(opts.durationMs));
+  return apiFetch<JrNote>(`/jr/matters/${matterId}/notes/voice`, {
+    method: 'POST',
+    body: fd,
+  });
+}
+
+/** POST /jr/matters/:matterId/notes/image — multipart image note (+ optional caption). */
+export function createJrImageNote(
+  matterId: string,
+  file: File | Blob,
+  opts: { fileName: string; content?: string },
+): Promise<JrNote> {
+  const fd = new FormData();
+  fd.append('file', file, opts.fileName);
+  if (opts.content) fd.append('content', opts.content);
+  return apiFetch<JrNote>(`/jr/matters/${matterId}/notes/image`, {
+    method: 'POST',
+    body: fd,
+  });
+}
+
+/** PATCH /jr/notes/:noteId — edit body and/or pin state. */
+export function updateJrNote(
+  noteId: string,
+  patch: { content?: string; isPinned?: boolean },
+): Promise<JrNote> {
+  return apiFetch<JrNote>(`/jr/notes/${noteId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+/** DELETE /jr/notes/:noteId. */
+export function deleteJrNote(noteId: string): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(`/jr/notes/${noteId}`, { method: 'DELETE' });
 }
 
 export function fetchJrCounselQueue(): Promise<JrCounselQueueRow[]> {
@@ -375,3 +547,55 @@ export function jrDueInfo(
   if (days <= 3) return { label: `Due in ${days}d`, tone: 'warning' };
   return { label: `Due in ${days}d`, tone: 'neutral' };
 }
+
+// ---------------------------------------------------------------------------
+// Add-document form option lists (mirror the Prisma JrArtifactFolder /
+// JrArtifactType enums). Folder labels are hand-written (the enum values don't
+// humanise cleanly); artifact-type labels reuse jrHumanize for consistency.
+// ---------------------------------------------------------------------------
+
+export const JR_ARTIFACT_FOLDER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'CLIENT_APPLICATION_DOCUMENTS', label: 'Client application documents' },
+  { value: 'JUDICIAL_REVIEW_FILES', label: 'Judicial review files' },
+  { value: 'JUDICIAL_REVIEW_RAW', label: 'Judicial review — raw/working' },
+  { value: 'SETTLEMENT', label: 'Settlement' },
+  { value: 'REDETERMINATION', label: 'Redetermination' },
+  { value: 'ENGAGEMENT', label: 'Engagement' },
+];
+
+const JR_ARTIFACT_TYPE_VALUES: string[] = [
+  'ORIGINAL_APPLICATION_FORM',
+  'PASSPORT',
+  'PROOF_OF_FUNDS',
+  'ORIGINAL_COVER_LETTER',
+  'SUPPORTING_EVIDENCE',
+  'REFUSAL_LETTER',
+  'GCMS_NOTES',
+  'ALJR_FORM_IR1',
+  'ALJR_STAMPED_FILED',
+  'CERTIFICATE_OF_SERVICE',
+  'PROOF_OF_SERVICE',
+  'RULE_9_RESPONSE',
+  'AR_AFFIDAVIT',
+  'MEMORANDUM_OF_ARGUMENT',
+  'APPLICANTS_RECORD',
+  'APPLICANTS_RECORD_TOC',
+  'APPLICANTS_RECORD_BACKPAGE',
+  'ANONYMITY_REQUEST',
+  'REPLY_MEMORANDUM',
+  'LEAVE_ORDER',
+  'CERTIFIED_TRIBUNAL_RECORD',
+  'DOJ_SETTLEMENT_OFFER',
+  'NOTICE_OF_DISCONTINUANCE',
+  'CONSENT_JUDGMENT',
+  'JUDGMENT_AND_REASONS',
+  'ADDITIONAL_SUBMISSIONS',
+  'REDETERMINATION_DECISION',
+  'ENGAGEMENT_LETTER',
+  'MERITS_ASSESSMENT',
+  'ALTERNATIVES_SHEET',
+  'OTHER',
+];
+
+export const JR_ARTIFACT_TYPE_OPTIONS: Array<{ value: string; label: string }> =
+  JR_ARTIFACT_TYPE_VALUES.map((value) => ({ value, label: jrHumanize(value) }));

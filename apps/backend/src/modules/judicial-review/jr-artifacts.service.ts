@@ -116,11 +116,48 @@ export class JrArtifactsService {
     await this.jr.assertMatterAccess(matterId, user);
     const artifacts = await this.listForMatter(matterId);
 
-    const byFolder = new Map<JrArtifactFolder, (JrArtifact & { displayFolder: JrArtifactFolder })[]>();
+    // Load every version for these artifacts in one query, then group by artifact
+    // so the frontend can render version chips + download without an N+1 fetch.
+    const versions = artifacts.length
+      ? await this.prisma.jrArtifactVersion.findMany({
+          where: { artifactId: { in: artifacts.map((a) => a.id) } },
+          orderBy: { versionNumber: 'desc' },
+        })
+      : [];
+    const versionsByArtifact = new Map<string, JrArtifactVersion[]>();
+    for (const v of versions) {
+      const list = versionsByArtifact.get(v.artifactId) ?? [];
+      list.push(v);
+      versionsByArtifact.set(v.artifactId, list);
+    }
+    const toVersionSummary = (v: JrArtifactVersion) => ({
+      id: v.id,
+      versionNumber: v.versionNumber,
+      fileName: v.fileName,
+      mimeType: v.mimeType,
+      fileSizeBytes: v.fileSizeBytes,
+      changeNote: v.changeNote,
+      isCurrent: v.isCurrent,
+      createdAt: v.createdAt,
+    });
+
+    type GroupedArtifact = JrArtifact & {
+      displayFolder: JrArtifactFolder;
+      versions: ReturnType<typeof toVersionSummary>[];
+      currentVersionId: string | null;
+    };
+
+    const byFolder = new Map<JrArtifactFolder, GroupedArtifact[]>();
     for (const a of artifacts) {
       const displayFolder = this.displayFolder(a);
+      const artifactVersions = versionsByArtifact.get(a.id) ?? [];
       const list = byFolder.get(displayFolder) ?? [];
-      list.push({ ...a, displayFolder });
+      list.push({
+        ...a,
+        displayFolder,
+        versions: artifactVersions.map(toVersionSummary),
+        currentVersionId: artifactVersions.find((v) => v.isCurrent)?.id ?? null,
+      });
       byFolder.set(displayFolder, list);
     }
 

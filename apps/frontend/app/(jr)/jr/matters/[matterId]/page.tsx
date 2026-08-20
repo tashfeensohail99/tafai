@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowLeft, FileText, Loader2, CalendarClock, Pencil, User, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2, CalendarClock, Pencil, User, X } from 'lucide-react';
 import {
   GlassCard,
   PageHeader,
@@ -19,6 +19,8 @@ import {
   type BadgeTone,
 } from '@/components/sales-v2/ui';
 import { useJrSession } from '@/components/layout/JrShell';
+import { DocumentsPanel } from '@/components/jr/DocumentsPanel';
+import { NotesPanel } from '@/components/jr/NotesPanel';
 import {
   assignJrMatter,
   fetchJrArtifacts,
@@ -55,26 +57,6 @@ function deadlineStatusTone(status: string): BadgeTone {
     case 'PENDING':
     default:
       return 'info';
-  }
-}
-
-function artifactStatusTone(status: string): BadgeTone {
-  switch (status) {
-    case 'COUNSEL_APPROVED':
-    case 'FILED':
-    case 'SERVED':
-      return 'success';
-    case 'COUNSEL_REVIEW':
-      return 'info';
-    case 'COUNSEL_CHANGES_REQUESTED':
-      return 'warning';
-    case 'SUPERSEDED':
-      return 'neutral';
-    case 'INTERNAL_QA':
-      return 'accent';
-    case 'DRAFT':
-    default:
-      return 'neutral';
   }
 }
 
@@ -449,14 +431,21 @@ export default function JrMatterDetailPage() {
     </Link>
   );
 
-  if (loading) {
+  // Only blank to the full-page spinner on the INITIAL load. A refetch (a
+  // reloadKey bump from a DocumentsPanel action) keeps the loaded content on
+  // screen so it never unmounts NotesPanel — which would discard an unsaved
+  // voice clip / typed draft / pasted images — or reset scroll.
+  if (loading && !matter) {
     return (
       <div style={{ padding: 48, textAlign: 'center', color: 'var(--sos-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
         <Loader2 size={16} className="sos-spin" /> Loading matter…
       </div>
     );
   }
-  if (error || !matter) {
+  // Blank to the error card only when there is no matter to show (initial-load
+  // failure). A failed refetch after the matter is already loaded keeps the
+  // stale-but-valid content rather than wiping the workspace.
+  if (!matter) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <PageHeader title="Matter" actions={backLink} />
@@ -592,46 +581,22 @@ export default function JrMatterDetailPage() {
         )}
       </GlassCard>
 
-      {/* Artifacts */}
-      <GlassCard variant="panel" padded="md">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <FileText size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Artifacts</div>
-        </div>
-        {artifacts.folders.length === 0 ? (
-          <EmptyState
-            Icon={FileText}
-            title="No artifacts yet"
-            description="Documents and court filings will appear here as they are authored."
-          />
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {artifacts.folders.map((folder) => (
-              <div key={folder.folder}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                  {jrHumanize(folder.folder)}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {folder.artifacts.map((a) => (
-                    <div
-                      key={a.id}
-                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-2)' }}
-                    >
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--sos-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {a.title}
-                      </span>
-                      <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{jrHumanize(a.artifactType)}</span>
-                      <StatusBadge tone={artifactStatusTone(a.status)} size="sm" dot={false}>
-                        {jrHumanize(a.status)}
-                      </StatusBadge>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </GlassCard>
+      {/* Documents (authoring + versioning + lifecycle) */}
+      <DocumentsPanel
+        matterId={matterId}
+        artifacts={artifacts}
+        canAuthor={user.permissions.includes('jr.artifact.author')}
+        canSubmit={user.permissions.includes('jr.artifact.submit_to_counsel')}
+        onChanged={() => setReloadKey((k) => k + 1)}
+      />
+
+      {/* Notes (text / voice / image) */}
+      <NotesPanel
+        matterId={matterId}
+        canCreate={user.permissions.includes('jr.note.create')}
+        canModerate={user.permissions.includes('jr.matter.view_all')}
+        currentUserId={user.id}
+      />
     </div>
   );
 }

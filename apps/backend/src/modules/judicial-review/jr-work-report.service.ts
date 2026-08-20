@@ -8,6 +8,8 @@ import {
 import { JrWorkReport, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
+import { StorageService } from '../storage/storage.service';
+import { OpenAiService } from '../ai/openai.service';
 import { toLegalDateUtc } from './jr-deadline-engine';
 import {
   JrWorkReportCompileService,
@@ -21,6 +23,43 @@ import {
 
 const VIEW_ALL = 'jr.report.view_all';
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Images / voice notes are small; 25 MB is ample for either (mirrors jr-notes). */
+const MAX_ATTACHMENT_FILE_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Ceiling on inline voice-note transcription. A normal recording transcribes in
+ * a few seconds; this only trips on a pathologically slow Whisper call and just
+ * saves the attachment with transcriptStatus=FAILED rather than holding the
+ * request open (mirrors {@link JrNotesService}).
+ */
+const TRANSCRIBE_TIMEOUT_MS = 60_000;
+
+/**
+ * Audio containers a browser MediaRecorder / mobile recorder can realistically
+ * emit. `video/webm` is deliberately included — some browsers label an audio-only
+ * MediaRecorder blob that way (mirrors jr-notes.service.ts).
+ */
+const AUDIO_MIME_TYPES = new Set<string>([
+  'audio/webm',
+  'audio/ogg',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/x-m4a',
+  'audio/aac',
+  'audio/3gpp',
+  'video/webm',
+]);
+
+const IMAGE_MIME_TYPES = new Set<string>([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'image/tiff',
+]);
 
 /** The hydrated report shape returned by create/getById. */
 export interface HydratedWorkReport {
@@ -67,6 +106,8 @@ export class JrWorkReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly compiler: JrWorkReportCompileService,
+    private readonly storage: StorageService,
+    private readonly openai: OpenAiService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -269,6 +310,154 @@ export class JrWorkReportService {
   }
 
   // ---------------------------------------------------------------------------
+  // Media enrichments (§11.7, PR 10B) — image + voice notes, DRAFT-only
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Attach an image (screenshot / photo) to a DRAFT report. The object is
+   * uploaded first, then the row is written; if the DB write fails the now-
+   * orphaned object is deleted best-effort so a failed create never leaks bytes.
+   * Only a durable storageKey is stored — reads mint a fresh signed URL on demand.
+   */
+  async addImage(
+    reportId: string,
+    file: Express.Multer.File | undefined,
+    user: RequestUser,
+  ): Promise<HydratedWorkReport> {
+    const report = await this.prisma.jrWorkReport.findUnique({ where: { id: reportId } });
+    if (!report) throw new NotFoundException('Work report not found');
+    this.assertReadable(report, user);
+    this.assertDraft(report);
+    this.assertUploadable(file, IMAGE_MIME_TYPES);
+
+    const uploaded = await this.storage.upload(
+      file!.buffer,
+      file!.mimetype,
+      `jr/work-reports/${reportId}`,
+      file!.originalname,
+    );
+
+    try {
+      await this.prisma.jrWorkReportAttachment.create({
+        data: {
+          reportId,
+          kind: 'IMAGE',
+          storageKey: uploaded.key,
+          mimeType: uploaded.mimeType,
+          createdByUserId: user.id,
+        },
+      });
+    } catch (err) {
+      await this.storage.delete(uploaded.key).catch(() => undefined);
+      throw err;
+    }
+
+    return this.hydrate(report, user.permissions.includes(VIEW_ALL));
+  }
+
+  /**
+   * Attach a voice note to a DRAFT report. The clip is uploaded, then transcribed
+   * best-effort inline (Whisper + Roman-Urdu; bounded by a timeout race, never
+   * throws): a non-null transcript → transcriptStatus DONE, null/timeout → FAILED.
+   * DB-write failure deletes the orphaned object (mirrors {@link addImage}).
+   */
+  async addVoice(
+    reportId: string,
+    file: Express.Multer.File | undefined,
+    user: RequestUser,
+  ): Promise<HydratedWorkReport> {
+    const report = await this.prisma.jrWorkReport.findUnique({ where: { id: reportId } });
+    if (!report) throw new NotFoundException('Work report not found');
+    this.assertReadable(report, user);
+    this.assertDraft(report);
+    this.assertUploadable(file, AUDIO_MIME_TYPES);
+
+    const uploaded = await this.storage.upload(
+      file!.buffer,
+      file!.mimetype,
+      `jr/work-reports/${reportId}`,
+      file!.originalname,
+    );
+
+    const tr = await this.transcribeBounded(
+      file!.buffer,
+      file!.originalname || 'voice-note.webm',
+      TRANSCRIBE_TIMEOUT_MS,
+    );
+
+    try {
+      await this.prisma.jrWorkReportAttachment.create({
+        data: {
+          reportId,
+          kind: 'VOICE_NOTE',
+          storageKey: uploaded.key,
+          mimeType: uploaded.mimeType,
+          durationMs: null,
+          audioCodecExt: this.fileExt(file!.originalname),
+          transcript: tr?.text ?? null,
+          transcriptStatus: tr ? 'DONE' : 'FAILED',
+          createdByUserId: user.id,
+        },
+      });
+    } catch (err) {
+      await this.storage.delete(uploaded.key).catch(() => undefined);
+      throw err;
+    }
+
+    return this.hydrate(report, user.permissions.includes(VIEW_ALL));
+  }
+
+  /**
+   * Soft-delete an attachment on a DRAFT report. The reportId match is the IDOR
+   * guard — a stranger's attachmentId under this report 404s. The storage object
+   * is intentionally KEPT (soft-delete only, no bytes are removed).
+   */
+  async deleteAttachment(
+    reportId: string,
+    attachmentId: string,
+    user: RequestUser,
+  ): Promise<HydratedWorkReport> {
+    const report = await this.prisma.jrWorkReport.findUnique({ where: { id: reportId } });
+    if (!report) throw new NotFoundException('Work report not found');
+    this.assertReadable(report, user);
+    this.assertDraft(report);
+
+    const attachment = await this.prisma.jrWorkReportAttachment.findFirst({
+      where: { id: attachmentId, reportId, deletedAt: null },
+    });
+    if (!attachment) throw new NotFoundException('Attachment not found');
+
+    await this.prisma.jrWorkReportAttachment.update({
+      where: { id: attachmentId },
+      data: { deletedAt: new Date() },
+    });
+    return this.hydrate(report, user.permissions.includes(VIEW_ALL));
+  }
+
+  /**
+   * Mint a short-lived signed URL for an attachment. Reads are allowed on a
+   * FINALIZED report too (NO assertDraft), so this only checks own-or-view_all.
+   * The reportId match is the IDOR guard (§11.7 correction). The raw storageKey
+   * is never returned.
+   */
+  async attachmentSignedUrl(
+    reportId: string,
+    attachmentId: string,
+    user: RequestUser,
+  ): Promise<{ url: string }> {
+    const report = await this.prisma.jrWorkReport.findUnique({ where: { id: reportId } });
+    if (!report) throw new NotFoundException('Work report not found');
+    this.assertReadable(report, user);
+
+    const attachment = await this.prisma.jrWorkReportAttachment.findFirst({
+      where: { id: attachmentId, reportId, deletedAt: null },
+    });
+    if (!attachment) throw new NotFoundException('Attachment not found');
+
+    return { url: await this.storage.getSignedUrl(attachment.storageKey) };
+  }
+
+  // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 
@@ -372,5 +561,50 @@ export class JrWorkReportService {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  /** Size + MIME allowlist guard for an uploaded attachment (mirrors jr-notes). */
+  private assertUploadable(
+    file: Express.Multer.File | undefined,
+    allowed: Set<string>,
+  ): asserts file is Express.Multer.File {
+    if (!file) {
+      throw new BadRequestException(
+        'No file provided. Use multipart/form-data with field name "file".',
+      );
+    }
+    if (file.size > MAX_ATTACHMENT_FILE_BYTES) {
+      throw new BadRequestException('File exceeds the 25 MB limit.');
+    }
+    if (!allowed.has(file.mimetype)) {
+      throw new BadRequestException(
+        `Files of type ${file.mimetype} are not allowed. Allowed: ${[...allowed].join(', ')}.`,
+      );
+    }
+  }
+
+  /** Best-effort transcription with a hard timeout (see TRANSCRIBE_TIMEOUT_MS). */
+  private async transcribeBounded(
+    buffer: Buffer,
+    filename: string,
+    ms: number,
+  ): Promise<{ text: string; latencyMs: number } | null> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), ms);
+    });
+    try {
+      return await Promise.race([this.openai.transcribe(buffer, filename), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** Lower-cased file extension (capped to the column width), or null. */
+  private fileExt(filename?: string): string | null {
+    if (!filename) return null;
+    const dot = filename.lastIndexOf('.');
+    if (dot < 0 || dot === filename.length - 1) return null;
+    return filename.slice(dot + 1).toLowerCase().slice(0, 20);
   }
 }

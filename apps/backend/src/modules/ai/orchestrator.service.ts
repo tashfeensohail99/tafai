@@ -110,6 +110,7 @@ const OFFICE_CLOSE_HOUR = 18; // 18:00 (6 PM); bookable window is [09:00, 18:00)
 const OFFICE_HOURS = 'Monday–Saturday, 9 AM–6 PM (Pakistan time)';
 const OFFICE_ADDRESS =
   'Office No. 3029B, 3rd Floor, World Trade Centre, Giga Mall, Sector F, DHA Phase 2, Islamabad';
+const OFFICE_MAPS_URL = 'https://share.google/De1yKn2FilNfLzTTh';
 // Lahore branch — open and staffed (opened 2026-07-10). Office-visit bookings
 // now resolve per-city via officeAddressFor() below, so a Lahore client is no
 // longer sent the Islamabad address.
@@ -127,10 +128,12 @@ const LAHORE_OFFICE_MAPS_URL = 'https://share.google/HY79OU4AQwXBS3oRt';
 function officeAddressFor(rawText: string | null | undefined, branchName: string | null): string {
   const text = (rawText ?? '').toLowerCase();
   const has = (...needles: string[]) => needles.some((n) => text.includes(n));
-  if (has('lahore', 'lhr', 'لاہور')) return LAHORE_OFFICE_ADDRESS;
-  if (has('islamabad', 'isb', 'rawalpindi', 'اسلام')) return OFFICE_ADDRESS;
-  if (branchName && branchName.toLowerCase().includes('lahore')) return LAHORE_OFFICE_ADDRESS;
-  return OFFICE_ADDRESS;
+  const lahore = `${LAHORE_OFFICE_ADDRESS} (Google Maps: ${LAHORE_OFFICE_MAPS_URL})`;
+  const islamabad = `${OFFICE_ADDRESS} (Google Maps: ${OFFICE_MAPS_URL})`;
+  if (has('lahore', 'lhr', 'لاہور')) return lahore;
+  if (has('islamabad', 'isb', 'rawalpindi', 'اسلام')) return islamabad;
+  if (branchName && branchName.toLowerCase().includes('lahore')) return lahore;
+  return islamabad;
 }
 
 /**
@@ -1534,8 +1537,8 @@ export class OrchestratorService {
       `10. The initial CONSULTATION IS FREE. If the customer asks about a consultation / booking / meeting fee, or "kya consultation ki fees hai", tell them the consultation is free — there is no charge to talk to us. NEVER say or imply the consultation is paid. (Service/case fees for the actual work are only discussed during that free consultation.)`,
       ``,
       `KNOWN FACTS YOU MAY ALWAYS USE`,
-      `- Offices in Pakistan (BOTH are open and staffed): ISLAMABAD — ${OFFICE_ADDRESS}. LAHORE — ${LAHORE_OFFICE_ADDRESS} (Google Maps: ${LAHORE_OFFICE_MAPS_URL}). Plus an office in Canada. We do NOT have a Karachi office — never mention one.`,
-      `- ADDRESS RULE — which office to give: (a) the customer NAMES a city (Lahore / Islamabad / "Isb", or a nearby area) -> give ONLY that city's office, and for Lahore always include its Google Maps link; (b) they ask about location WITHOUT naming a city ("where is your office", "address", "location", "office kahan hai", "daftar kidhar hai") -> give BOTH offices, Islamabad AND Lahore, then ask which one is convenient for them. NEVER give only Islamabad when no city was named — we have two Pakistan offices and the customer may be in either city.`,
+      `- Offices in Pakistan (BOTH are open and staffed): ISLAMABAD — ${OFFICE_ADDRESS} (Google Maps: ${OFFICE_MAPS_URL}). LAHORE — ${LAHORE_OFFICE_ADDRESS} (Google Maps: ${LAHORE_OFFICE_MAPS_URL}). Plus an office in Canada. We do NOT have a Karachi office — never mention one.`,
+      `- ADDRESS RULE — which office to give: (a) the customer NAMES a city (Lahore / Islamabad / "Isb", or a nearby area) -> give ONLY that city's office, and ALWAYS include that office's Google Maps link with the address; (b) they ask about location WITHOUT naming a city ("where is your office", "address", "location", "office kahan hai", "daftar kidhar hai") -> give BOTH offices, Islamabad AND Lahore, each with its own Google Maps link, then ask which one is convenient for them. NEVER give only Islamabad when no city was named — we have two Pakistan offices and the customer may be in either city.`,
       `- Office hours: ${OFFICE_HOURS} for the Pakistan office. Phone, Google Meet, and office-visit consultations are all booked within these hours.`,
       `- Phone: +92 335-000-1111  ·  Email: info@tashfeenimmigrationsolutions.com`,
       `- Services: Canadian work permits & PR (C11, ICT, SUV, LMIA, RCIP), USA (E2, EB2-NIW), Judicial Review, Visit visas (Canada/UK/Schengen).`,

@@ -76,6 +76,35 @@ export const offboardEmployee = (employeeId: string, deleteMailbox: boolean) =>
     json({ employeeId, deleteMailbox }),
   );
 
+export interface EmailAccountRow {
+  employeeId: string;
+  name: string;
+  branch: string | null;
+  loginEmail: string | null;
+  status: 'linked' | 'unlinked' | 'missing';
+  mailbox: string | null;
+  suggestion: string | null;
+}
+export interface EmailAccountsResult {
+  domain: string;
+  configured: boolean;
+  counts: { linked: number; unlinked: number; missing: number };
+  rows: EmailAccountRow[];
+}
+export interface ProvisionResult {
+  employeeId: string;
+  email: string;
+  password: string;
+  action: 'created' | 'reset';
+  loginUpdated: boolean;
+}
+
+export const getEmailAccounts = () =>
+  apiFetch<EmailAccountsResult>('/hr/email-accounts', { cache: 'no-store' });
+
+export const provisionMailbox = (employeeId: string, setAsLogin: boolean) =>
+  apiFetch<ProvisionResult>('/hr/provision-mailbox', json({ employeeId, setAsLogin }));
+
 // Dropdown sources (list endpoints accept hr.view).
 export const getDepartments = () => apiFetch<NamedRecord[]>('/departments', { cache: 'no-store' });
 export const getBranches = () => apiFetch<NamedRecord[]>('/branches', { cache: 'no-store' });

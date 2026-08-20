@@ -182,6 +182,134 @@ export class HrService {
     return { employeeId: emp.id, deactivated: true, mailboxDeleted };
   }
 
+  /**
+   * Business-email reconciliation: cross-references every active employee against
+   * the live MXRoute mailbox list and buckets them —
+   *   linked   : their CRM login IS a @domain address whose mailbox exists
+   *   unlinked : a name-matching mailbox EXISTS but they log in with another
+   *              address (the "has an email but never activated it" case)
+   *   missing  : no business mailbox at all
+   */
+  async emailAccounts() {
+    const domain = this.mail.domain;
+    const configured = this.mail.isConfigured();
+    const boxes = configured ? new Set(await this.mail.listLocalParts()) : new Set<string>();
+
+    const emps = await this.prisma.employee.findMany({
+      where: { isActive: true, deletedAt: null },
+      select: {
+        id: true, firstName: true, lastName: true,
+        branch: { select: { name: true } },
+        user: { select: { email: true } },
+      },
+      orderBy: [{ branch: { name: 'asc' } }, { firstName: 'asc' }],
+    });
+
+    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const rows = emps.map((e) => {
+      const email = (e.user?.email ?? '').toLowerCase();
+      const loginLocal = email.split('@')[0] ?? '';
+      const isBiz = email.endsWith(`@${domain}`);
+      const candidates = [loginLocal, norm(e.firstName), `${norm(e.firstName)}.${norm(e.lastName)}`].filter(Boolean);
+      const matched = candidates.find((c) => boxes.has(c));
+      let status: 'linked' | 'unlinked' | 'missing';
+      let mailbox: string | null = null;
+      if (isBiz && boxes.has(loginLocal)) { status = 'linked'; mailbox = email; }
+      else if (matched) { status = 'unlinked'; mailbox = `${matched}@${domain}`; }
+      else { status = 'missing'; mailbox = null; }
+      // Suggested local-part for a "missing" employee (clash-checked locally).
+      let suggestion: string | null = null;
+      if (status === 'missing') {
+        const base = norm(e.firstName) || norm(e.lastName);
+        let s = base;
+        for (let i = 2; base && boxes.has(s); i++) s = `${base}${i}`;
+        suggestion = base ? `${s}@${domain}` : null;
+      }
+      return {
+        employeeId: e.id,
+        name: `${e.firstName} ${e.lastName}`.trim(),
+        branch: e.branch?.name ?? null,
+        loginEmail: e.user?.email ?? null,
+        status,
+        mailbox,
+        suggestion,
+      };
+    });
+
+    return {
+      domain,
+      configured,
+      counts: {
+        linked: rows.filter((r) => r.status === 'linked').length,
+        unlinked: rows.filter((r) => r.status === 'unlinked').length,
+        missing: rows.filter((r) => r.status === 'missing').length,
+      },
+      rows,
+    };
+  }
+
+  /**
+   * Give an employee a working @domain mailbox and (optionally) make it their
+   * CRM login. Creates the mailbox if absent, or resets the password if it
+   * already exists (activating a dormant one). Returns the credentials ONCE.
+   */
+  async provisionMailbox(
+    dto: { employeeId: string; setAsLogin?: boolean },
+    actorUserId: string,
+  ) {
+    const emp = await this.prisma.employee.findUnique({
+      where: { id: dto.employeeId },
+      select: { id: true, firstName: true, lastName: true, userId: true, user: { select: { email: true } } },
+    });
+    if (!emp) throw new NotFoundException('Employee not found');
+
+    const domain = this.mail.domain;
+    const boxes = new Set(await this.mail.listLocalParts());
+    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const loginLocal = (emp.user?.email ?? '').toLowerCase().split('@')[0] ?? '';
+
+    // Prefer an existing name-matching mailbox; otherwise allocate a fresh one.
+    const existing = [loginLocal, norm(emp.firstName), `${norm(emp.firstName)}.${norm(emp.lastName)}`]
+      .filter(Boolean)
+      .find((c) => boxes.has(c));
+    const localPart = existing ?? (await this.mail.allocateLocalPart(emp.firstName));
+    const email = `${localPart}@${domain}`;
+    const password = this.generatePassword();
+
+    let action: 'created' | 'reset';
+    if (existing) {
+      await this.mail.resetPassword(localPart, password);
+      action = 'reset';
+    } else {
+      await this.mail.createMailbox(localPart, password);
+      action = 'created';
+    }
+
+    // Optionally switch the CRM login to the business email.
+    let loginUpdated = false;
+    if (dto.setAsLogin && (emp.user?.email ?? '').toLowerCase() !== email) {
+      const clash = await this.prisma.userAccount.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' }, id: { not: emp.userId } },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new BadRequestException(`${email} is already another account's login.`);
+      }
+      await this.prisma.userAccount.update({ where: { id: emp.userId }, data: { email } });
+      loginUpdated = true;
+    }
+
+    await this.audit.log({
+      actorUserId,
+      action: AuditAction.USER_UPDATED,
+      entityType: 'Employee',
+      entityId: emp.id,
+      newValues: { mailbox: email, mailboxAction: action, loginUpdated },
+    });
+
+    return { employeeId: emp.id, email, password, action, loginUpdated };
+  }
+
   /** HR directory — active + inactive employees with the fields HR cares about. */
   async directory(search?: string) {
     return this.prisma.employee.findMany({

@@ -12,7 +12,7 @@ import { RequirePermissions } from '../../common/decorators/require-permissions.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../common/types/auth.types';
 import { HrService } from './hr.service';
-import { OnboardEmployeeDto, OffboardEmployeeDto } from './hr.dto';
+import { OnboardEmployeeDto, OffboardEmployeeDto, ProvisionMailboxDto } from './hr.dto';
 
 @Controller('hr')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -52,5 +52,19 @@ export class HrController {
   @RequirePermissions('hr.offboard')
   offboard(@Body() dto: OffboardEmployeeDto, @CurrentUser() user: RequestUser) {
     return this.hr.offboard(dto, user.id);
+  }
+
+  /** Business-email reconciliation across the whole team. */
+  @Get('email-accounts')
+  @RequirePermissions('hr.view')
+  emailAccounts() {
+    return this.hr.emailAccounts();
+  }
+
+  /** Create or (re)activate an employee's business mailbox; optionally set it as their login. */
+  @Post('provision-mailbox')
+  @RequirePermissions('hr.onboard')
+  provisionMailbox(@Body() dto: ProvisionMailboxDto, @CurrentUser() user: RequestUser) {
+    return this.hr.provisionMailbox(dto, user.id);
   }
 }

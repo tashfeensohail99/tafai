@@ -85,10 +85,22 @@ export class OffboardEmployeeDto {
 }
 
 export class ProvisionMailboxDto {
-  @IsUUID()
-  employeeId!: string;
+  // Target employee. Optional when creating a standalone mailbox by localPart.
+  @IsOptional() @IsUUID()
+  employeeId?: string;
 
-  // Also switch the employee's CRM login to their business email.
+  // Explicit mailbox name (before @) — used to generate a brand-new custom
+  // mailbox (e.g. "careers"). When omitted, it's derived from the employee.
+  @IsOptional() @IsString() @MaxLength(64)
+  localPart?: string;
+
+  // Also switch the employee's CRM login to this business email.
   @IsOptional() @IsBoolean()
   setAsLogin?: boolean;
+
+  // Whether to (re)set the mailbox password. Default true. Pass false to LINK an
+  // already-existing mailbox as the login WITHOUT touching its password —
+  // the "it already exists, just use it" case.
+  @IsOptional() @IsBoolean()
+  resetPassword?: boolean;
 }

@@ -145,6 +145,64 @@ export class JudicialReviewService {
   }
 
   /**
+   * The matter's activity timeline for the console (the JrAuditLog rows). Access
+   * is re-checked FIRST (never relies on list scoping alone — #253/#255), then a
+   * single ordered read. Actor display names are batch-resolved in ONE
+   * userAccount query (never a per-row fan-out — the session pool is only 15).
+   */
+  async getMatterHistory(
+    matterId: string,
+    user: RequestUser,
+  ): Promise<
+    Array<{
+      id: string;
+      action: string;
+      actorName: string | null;
+      createdAt: Date;
+      oldValues: Prisma.JsonValue;
+      newValues: Prisma.JsonValue;
+    }>
+  > {
+    await this.assertMatterAccess(matterId, user);
+
+    const rows = await this.prisma.jrAuditLog.findMany({
+      where: { matterId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const actorIds = [
+      ...new Set(rows.map((r) => r.actorUserId).filter((id): id is string => !!id)),
+    ];
+    const actors = actorIds.length
+      ? await this.prisma.userAccount.findMany({
+          where: { id: { in: actorIds } },
+          select: {
+            id: true,
+            email: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+        })
+      : [];
+    const nameById = new Map(
+      actors.map((a) => {
+        const employeeName = a.employee
+          ? `${a.employee.firstName} ${a.employee.lastName}`.trim()
+          : '';
+        return [a.id, employeeName || a.email] as const;
+      }),
+    );
+
+    return rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      actorName: r.actorUserId ? nameById.get(r.actorUserId) ?? null : null,
+      createdAt: r.createdAt,
+      oldValues: r.oldValues,
+      newValues: r.newValues,
+    }));
+  }
+
+  /**
    * Enforce per-matter access and return the matter. Public so the artifact
    * lifecycle service can gate every artifact mutation on the owning matter
    * (never relies on list scoping alone — #253/#255).

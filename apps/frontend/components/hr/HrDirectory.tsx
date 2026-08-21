@@ -1,16 +1,16 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { UserPlus, UserMinus, Copy, Check, Loader2, Search, Mail, ShieldCheck, Users, UserCheck, MessageCircle, Pencil, KeyRound } from 'lucide-react';
+import { UserPlus, UserMinus, Copy, Check, Loader2, Search, Mail, ShieldCheck, Users, UserCheck, MessageCircle, Pencil, KeyRound, Send } from 'lucide-react';
 import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { useHrSession } from '../layout/HrShell';
 import { Avatar, Pill, Modal } from './ui';
 import {
-  getHrConfig, getHrDirectory, suggestEmail, onboardEmployee, offboardEmployee, updateEmployee, resetEmployeePassword,
+  getHrConfig, getHrDirectory, suggestEmail, onboardEmployee, offboardEmployee, updateEmployee, resetEmployeePassword, sendCredentials,
   getDepartments, getBranches, getDesignations, getRoles,
-  type HrEmployee, type OnboardPayload, type OnboardResult, type NamedRecord, type RoleRecord, type UpdateEmployeePayload, type ResetPasswordResult,
+  type HrEmployee, type OnboardPayload, type OnboardResult, type NamedRecord, type RoleRecord, type UpdateEmployeePayload, type ResetPasswordResult, type SendCredentialsPayload,
 } from '@/lib/hr';
 
 const EMPTY_FORM: OnboardPayload = {
@@ -193,7 +193,8 @@ function EditEmployeeModal({ employee, depts, branches, designations, roles, onC
     return (
       <Modal title="Password reset" onClose={onDone}>
         <CredentialCard title={`${resetResult.name} · password reset`} email={resetResult.email} password={resetResult.password}
-          note="Hand this to the employee — they’ll be signed out and asked to change it on next login." onDone={onDone} />
+          note="Hand this to the employee — they’ll be signed out and asked to change it on next login." onDone={onDone}
+          send={{ name: resetResult.name, crmEmail: resetResult.email, crmPassword: resetResult.password }} />
       </Modal>
     );
   }
@@ -298,7 +299,9 @@ function AddEmployeeModal({ mailConfigured, depts, branches, designations, roles
     <Modal title={result ? 'Employee created' : 'Add employee'} onClose={result ? onDone : onClose} wide={!result}>
       {result ? (
         <CredentialCard title={`${result.name} created · ${result.employeeCode}`} email={result.email} password={result.password}
-          note={result.mailboxCreated ? 'Mailbox created on MXRoute — same password works for the inbox and the CRM login.' : 'CRM login only (no mailbox created).'} onDone={onDone} />
+          note={result.mailboxCreated ? 'Mailbox created on MXRoute — same password works for the inbox and the CRM login.' : 'CRM login only (no mailbox created).'} onDone={onDone}
+          send={{ name: result.name, crmEmail: result.email, crmPassword: result.password,
+            mailboxEmail: result.mailboxCreated ? result.email : undefined, mailboxPassword: result.mailboxCreated ? result.password : undefined }} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -370,7 +373,10 @@ function OffboardModal({ employee, onClose, onDone }: { employee: HrEmployee; on
   );
 }
 
-export function CredentialCard({ title, email, password, note, onDone }: { title: string; email: string; password: string; note: string; onDone: () => void }) {
+export function CredentialCard({ title, email, password, note, onDone, send }: {
+  title: string; email: string; password: string; note: string; onDone: () => void;
+  send?: { name: string; crmEmail?: string; crmPassword?: string; mailboxEmail?: string; mailboxPassword?: string };
+}) {
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (label: string, value: string) => void navigator.clipboard.writeText(value).then(() => { setCopied(label); setTimeout(() => setCopied(null), 1500); });
   const both = `Email: ${email}\nPassword: ${password}\nLogin: https://tashfeengroup.com/login`;
@@ -387,10 +393,47 @@ export function CredentialCard({ title, email, password, note, onDone }: { title
         <Row label="Password" value={password} />
         <div style={{ fontSize: 12, color: 'var(--hr-muted)', marginTop: 4 }}>{note}</div>
       </div>
+      {send ? <SendCredentialsPanel send={send} defaultTo={send.crmEmail || send.mailboxEmail || email} /> : null}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between' }}>
         <button className="hr-btn hr-btn--ghost" onClick={() => copy('both', both)}>{copied === 'both' ? <Check size={16} /> : <Copy size={16} />} {copied === 'both' ? 'Copied' : 'Copy all'}</button>
         <button className="hr-btn hr-btn--primary" onClick={onDone}>Done</button>
       </div>
+    </div>
+  );
+}
+
+function SendCredentialsPanel({ send, defaultTo }: {
+  send: { name: string; crmEmail?: string; crmPassword?: string; mailboxEmail?: string; mailboxPassword?: string };
+  defaultTo: string;
+}) {
+  const [to, setTo] = useState(defaultTo);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      const payload: SendCredentialsPayload = { ...send, to: to.trim() || undefined };
+      const r = await sendCredentials(payload);
+      setDone(r.recipients.join(', '));
+    } catch (e) { setError(e instanceof Error ? e.message : 'Send failed'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div style={{ background: 'var(--hr-panel-2)', border: '1px solid var(--hr-line)', borderRadius: 'var(--hr-radius-sm)', padding: 12 }}>
+      {done ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--hr-ok)', fontSize: 13, fontWeight: 600 }}><Check size={15} /> Emailed to {done}</div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--hr-text-2)', marginBottom: 8 }}>Email these credentials + how to sign in</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="hr-input" style={{ flex: 1 }} placeholder="Recipient email (optional)" value={to} onChange={(e) => setTo(e.target.value)} />
+            <button className="hr-btn hr-btn--primary" onClick={submit} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <Send size={15} />} {busy ? 'Sending…' : 'Send'}</button>
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--hr-muted)', marginTop: 6 }}>Also CC’d to iffat@tashfeengroup.com and contact@summitautomates.com.</div>
+          {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 12.5, marginTop: 6 }}>{error}</div> : null}
+        </>
+      )}
     </div>
   );
 }

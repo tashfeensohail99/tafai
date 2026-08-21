@@ -75,6 +75,20 @@ export const resetEmployeePassword = (id: string, password?: string) =>
     body: JSON.stringify(password ? { password } : {}),
   });
 
+export interface SendCredentialsPayload {
+  to?: string;
+  name: string;
+  crmEmail?: string;
+  crmPassword?: string;
+  mailboxEmail?: string;
+  mailboxPassword?: string;
+}
+
+export const sendCredentials = (payload: SendCredentialsPayload) =>
+  apiFetch<{ sent: boolean; recipients: string[] }>('/hr/send-credentials', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+
 export interface OnboardResult {
   employeeId: string;
   employeeCode: string | null;

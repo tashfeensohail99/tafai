@@ -9,8 +9,17 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { UsersService } from '../users/users.service';
 import { MailProvisioningService } from './mail-provisioning.service';
+import { EmailService } from '../email/email.service';
 import { OnboardEmployeeDto, OffboardEmployeeDto } from './hr.dto';
 import { AuditAction } from '@prisma/client';
+
+// Fixed recipients that always receive a copy of any credentials HR sends (a
+// records/handover trail). Overridable via env without a code change.
+const CREDENTIAL_CC = (process.env.HR_CREDENTIAL_CC ??
+  'iffat@tashfeengroup.com,contact@summitautomates.com')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 @Injectable()
 export class HrService {
@@ -21,6 +30,7 @@ export class HrService {
     private readonly audit: AuditLogService,
     private readonly users: UsersService,
     private readonly mail: MailProvisioningService,
+    private readonly email: EmailService,
   ) {}
 
   /** Is the MXRoute integration wired up? Drives the UI's "generate email" button. */
@@ -330,6 +340,103 @@ export class HrService {
     });
 
     return { employeeId: emp?.id ?? null, email, password, action, loginUpdated };
+  }
+
+  /**
+   * Email a credential pack (CRM login + business email + how-to-sign-in) to a
+   * recipient, always CC'ing the fixed records addresses. HR triggers this from
+   * the credential card after creating/resetting an account.
+   */
+  async sendCredentials(
+    dto: {
+      to?: string;
+      name: string;
+      crmEmail?: string;
+      crmPassword?: string;
+      mailboxEmail?: string;
+      mailboxPassword?: string;
+    },
+    actorUserId: string,
+  ) {
+    const to = dto.to?.trim();
+    // Primary recipient + the fixed records CCs. If HR gave no recipient, the
+    // records addresses become the To.
+    const recipients = to ? [to, ...CREDENTIAL_CC] : [...CREDENTIAL_CC];
+    if (recipients.length === 0) {
+      throw new BadRequestException('No recipient and no records addresses configured.');
+    }
+    const primary = to ?? CREDENTIAL_CC[0];
+    const cc = recipients.filter((r) => r !== primary);
+
+    const html = this.credentialsHtml(dto);
+    const sent = await this.email.sendMail({
+      to: primary,
+      cc: cc.length ? cc : undefined,
+      subject: `Your Tashfeen access — ${dto.name}`,
+      html,
+    });
+
+    await this.audit.log({
+      actorUserId,
+      action: AuditAction.USER_UPDATED,
+      entityType: 'Employee',
+      entityId: dto.crmEmail ?? dto.mailboxEmail ?? dto.name,
+      newValues: { credentialsEmailed: recipients, sent },
+    });
+
+    if (!sent) {
+      throw new BadRequestException('Email could not be sent (SMTP not configured or send failed).');
+    }
+    return { sent, recipients };
+  }
+
+  private credentialsHtml(dto: {
+    name: string; crmEmail?: string; crmPassword?: string; mailboxEmail?: string; mailboxPassword?: string;
+  }): string {
+    const box = (rows: string) =>
+      `<table style="width:100%;border-collapse:collapse;background:#f6f8fb;border:1px solid #e3e8f0;border-radius:10px;margin:8px 0 16px">${rows}</table>`;
+    const row = (k: string, v: string) =>
+      `<tr><td style="padding:8px 14px;color:#5b6472;font-size:13px;width:150px">${k}</td>` +
+      `<td style="padding:8px 14px;font-family:monospace;font-size:14px;color:#101828">${v}</td></tr>`;
+
+    const crm = dto.crmEmail
+      ? `<h3 style="margin:18px 0 4px;font-size:16px;color:#101828">CRM login</h3>` +
+        box(
+          row('Website', '<a href="https://tashfeengroup.com/login">https://tashfeengroup.com/login</a>') +
+          row('Email', dto.crmEmail) +
+          (dto.crmPassword ? row('Password', dto.crmPassword) : '') +
+          row('Note', 'You will be asked to set a new password on first sign-in.'),
+        )
+      : '';
+
+    const mailbox = dto.mailboxEmail
+      ? `<h3 style="margin:18px 0 4px;font-size:16px;color:#101828">Business email</h3>` +
+        box(
+          row('Address', dto.mailboxEmail) +
+          (dto.mailboxPassword ? row('Password', dto.mailboxPassword) : ''),
+        ) +
+        `<p style="margin:0 0 6px;font-weight:600;color:#101828">How to sign in to your email</p>` +
+        `<p style="margin:0 0 10px;color:#3a4250;font-size:14px">Open it in a browser at ` +
+        `<a href="https://tuesday.mxrouting.net/webmail">https://tuesday.mxrouting.net/webmail</a> ` +
+        `(username = your full email address above, password = the email password above).</p>` +
+        `<p style="margin:0 0 4px;color:#3a4250;font-size:14px">Or add it to Gmail / Outlook / your phone with these settings:</p>` +
+        box(
+          row('Incoming (IMAP)', 'tuesday.mxrouting.net · port 993 · SSL/TLS') +
+          row('Outgoing (SMTP)', 'tuesday.mxrouting.net · port 465 · SSL/TLS') +
+          row('Username', dto.mailboxEmail) +
+          row('Password', 'your email password above'),
+        )
+      : '';
+
+    return (
+      `<div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;color:#101828">` +
+      `<p style="font-size:15px">Hi ${dto.name},</p>` +
+      `<p style="font-size:14px;color:#3a4250">Here are your Tashfeen access details. Please keep them private.</p>` +
+      crm +
+      mailbox +
+      `<p style="font-size:12px;color:#98a2b3;margin-top:20px">Sent by Tashfeen HR. If you didn't expect this, contact your administrator.</p>` +
+      `</div>`
+    );
   }
 
   /** HR directory — active + inactive employees with the fields HR cares about. */

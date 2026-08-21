@@ -5,7 +5,11 @@ import 'app_error.dart';
 AppError mapDioError(DioException e) {
   final status = e.response?.statusCode;
   final body = e.response?.data;
-  final rawMessage = body is Map ? body['message'] : null;
+  // Prefer `message`; fall back to `reason` (structured 409s like the
+  // duplicate-lead guard use `{ error, reason, match }` with no `message`),
+  // then `error`. Without this, a duplicate-lead 409 fell through to Dio's raw
+  // "invalid status code 409" string instead of "A lead … already exists.".
+  final rawMessage = body is Map ? (body['message'] ?? body['reason'] ?? body['error']) : null;
   // NestJS validation errors return `message` as a string[] — join them.
   final message = rawMessage is List
       ? rawMessage.map((m) => m.toString()).join('\n')

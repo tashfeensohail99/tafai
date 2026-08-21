@@ -17,6 +17,7 @@ import {
   History,
   Landmark,
   Check,
+  Database,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -34,6 +35,7 @@ import {
 import { useJrSession } from '@/components/layout/JrShell';
 import { DocumentsPanel } from '@/components/jr/DocumentsPanel';
 import { NotesPanel } from '@/components/jr/NotesPanel';
+import { JrDatabankTab } from '@/components/jr/JrDatabankTab';
 import {
   assignJrMatter,
   changeJrStage,
@@ -1263,6 +1265,7 @@ export default function JrMatterDetailPage() {
   const canEdit = user.permissions.includes('jr.matter.update_stage');
   const canDetermineRoute = user.permissions.includes('jr.route.determine');
   const canManageCounsel = user.permissions.includes('jr.counsel.manage');
+  const canViewDatabank = user.permissions.includes('jr.portal.view');
 
   const [matter, setMatter] = useState<JrMatter | null>(null);
   const [deadlines, setDeadlines] = useState<JrDeadlineRow[]>([]);
@@ -1504,6 +1507,23 @@ export default function JrMatterDetailPage() {
         canSubmit={user.permissions.includes('jr.artifact.submit_to_counsel')}
         onChanged={() => setReloadKey((k) => k + 1)}
       />
+
+      {/* Databank — the SAME per-client document repository the Processing team
+          uses. An escalated client's application docs surface here for the JR
+          associate. Shown only when the matter has a client + the user can view
+          the JR portal; the tab manages its own state (no reloadKey wiring). */}
+      {canViewDatabank && matter.clientId ? (
+        <GlassCard variant="panel" padded="md">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Database size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Databank</div>
+          </div>
+          <JrDatabankTab
+            clientId={matter.clientId}
+            clientName={matter.client ? `${matter.client.firstName} ${matter.client.lastName}`.trim() : undefined}
+          />
+        </GlassCard>
+      ) : null}
 
       {/* Notes (text / voice / image) */}
       <NotesPanel

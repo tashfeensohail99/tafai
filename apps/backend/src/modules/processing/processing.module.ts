@@ -10,6 +10,7 @@ import { JudicialReviewModule } from '../judicial-review/judicial-review.module'
 import { ProcessingController } from './processing.controller';
 import { ProcessingService } from './processing.service';
 import { DatabankController } from './databank/databank.controller';
+import { JrDatabankController } from './databank/jr-databank.controller';
 import { DatabankService } from './databank/databank.service';
 import { DOC_AI_QUEUE } from './document-ai/document-ai.contracts';
 import { DocumentParserClient } from './document-ai/document-parser.client';
@@ -43,7 +44,7 @@ import { ClientNudgeService } from './client-nudge.service';
     // DocIntakeProcessor below consumes it.
     BullModule.registerQueue({ name: DOC_AI_QUEUE }),
   ],
-  controllers: [ProcessingController, DatabankController],
+  controllers: [ProcessingController, DatabankController, JrDatabankController],
   providers: [
     ProcessingService,
     DatabankService,

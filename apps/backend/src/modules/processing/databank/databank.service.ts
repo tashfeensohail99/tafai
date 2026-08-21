@@ -62,9 +62,19 @@ export class DatabankService {
     const assigned = await this.prisma.processingCase.count({
       where: { clientId, assignedOfficerId: user.id },
     });
-    if (assigned === 0) {
-      throw new ForbiddenException('You are not assigned to this client');
-    }
+    if (assigned > 0) return;
+
+    // JR access to the SAME per-client databank (shared store): a jr_head
+    // (jr.matter.view_all) sees any client's databank; a JR associate sees a client
+    // they hold an ASSIGNED matter for — so an escalated client's application docs
+    // are available to the associate handling their Federal Court challenge.
+    if (user.permissions.includes('jr.matter.view_all')) return;
+    const jrAssigned = await this.prisma.jrMatter.count({
+      where: { clientId, assignedAssociateUserId: user.id },
+    });
+    if (jrAssigned > 0) return;
+
+    throw new ForbiddenException('You are not assigned to this client');
   }
 
   // ---------------------------------------------------------------------------

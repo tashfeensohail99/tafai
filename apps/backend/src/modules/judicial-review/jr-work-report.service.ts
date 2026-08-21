@@ -1,15 +1,21 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { JrWorkReport, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { StorageService } from '../storage/storage.service';
 import { OpenAiService } from '../ai/openai.service';
+import { EmailService } from '../email/email.service';
+import { JrWorkReportPdfService } from './jr-work-report-pdf.service';
 import { toLegalDateUtc } from './jr-deadline-engine';
 import {
   JrWorkReportCompileService,
@@ -18,6 +24,7 @@ import {
 import {
   CreateWorkReportDto,
   CreateWorkReportNoteDto,
+  EmailWorkReportDto,
   ListWorkReportsQueryDto,
 } from './judicial-review.dto';
 
@@ -103,11 +110,15 @@ export interface HydratedWorkReport {
  */
 @Injectable()
 export class JrWorkReportService {
+  private readonly logger = new Logger(JrWorkReportService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly compiler: JrWorkReportCompileService,
     private readonly storage: StorageService,
     private readonly openai: OpenAiService,
+    private readonly pdf: JrWorkReportPdfService,
+    private readonly email: EmailService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -458,6 +469,159 @@ export class JrWorkReportService {
   }
 
   // ---------------------------------------------------------------------------
+  // Render / finalize / email (§11.7, PR 10C)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Render the report as a branded PDF (own-or-view_all, enforced by getById).
+   * A FINALIZED report streams the FROZEN object so the served bytes are the
+   * immutable snapshot filed at finalize; a DRAFT renders the live body.
+   */
+  async renderPdf(id: string, user: RequestUser): Promise<{ buffer: Buffer; fileName: string }> {
+    const report = await this.prisma.jrWorkReport.findUnique({ where: { id } });
+    if (!report) throw new NotFoundException('Work report not found');
+    this.assertReadable(report, user);
+
+    // A PDF is a downloadable/emailable/shareable artifact — and a FINALIZED
+    // report's PDF is downloadable by the (non-view_all) subject. So HEAD_ONLY
+    // case-notes are NEVER rendered into a PDF; they stay a live, on-screen,
+    // view_all-only surface (mirrors finalize).
+    const hydrated = await this.hydrate(report, false);
+    const fileName = this.pdfFileName(hydrated);
+
+    if (report.status === 'FINALIZED' && report.frozenPdfKey) {
+      const { bytes } = await this.storage.download(report.frozenPdfKey);
+      return { buffer: bytes, fileName };
+    }
+    const buffer = await this.pdf.render(hydrated);
+    return { buffer, fileName };
+  }
+
+  /**
+   * Finalize a DRAFT report into an immutable, tamper-evident PDF snapshot.
+   *
+   * CORRECTION #1 (canonical): the PDF is rendered AND proven durable BEFORE the
+   * status is mutated. Render throws when Chromium is absent; the post-upload
+   * read-back throws in StorageService LOCAL mode (download is unsupported there)
+   * — so neither a zero-byte phantom nor an un-persisted stub can ever lock the
+   * enrichments. Only once real bytes have round-tripped do we flip to FINALIZED.
+   */
+  async finalize(id: string, user: RequestUser): Promise<HydratedWorkReport> {
+    const report = await this.prisma.jrWorkReport.findUnique({ where: { id } });
+    if (!report) throw new NotFoundException('Work report not found');
+    this.assertReadable(report, user);
+    this.assertDraft(report);
+
+    // Hydrate with HEAD_ONLY EXCLUDED: the frozen PDF is downloadable by the
+    // (non-view_all) subject and emailable to anyone, so it must never carry
+    // HEAD_ONLY case-notes — those stay a live, view_all-only, on-screen surface.
+    const hydrated = await this.hydrate(report, false);
+
+    // (a) Render first — throws without Chromium; a zero-byte render is refused.
+    const buffer = await this.pdf.render(hydrated);
+    if (!buffer || buffer.length === 0) {
+      throw new ServiceUnavailableException(
+        'Cannot finalize: the PDF engine produced no output. Finalize aborted (nothing was locked).',
+      );
+    }
+    const sha256 = createHash('sha256').update(buffer).digest('hex');
+    const frozenKey = `jr/work-reports/${id}/report-${Date.now()}-${sha256.slice(0, 8)}.pdf`;
+
+    // (b) Persist to a durable, caller-chosen key, then PROVE it round-trips.
+    // StorageService LOCAL mode makes download() throw here → status untouched.
+    await this.storage.uploadAt(frozenKey, buffer, 'application/pdf');
+    let readback: { bytes: Buffer };
+    try {
+      readback = await this.storage.download(frozenKey);
+    } catch (err) {
+      throw new ServiceUnavailableException(
+        'Cannot finalize: durable PDF storage is unavailable (local mode). Finalize aborted (nothing was locked). ' +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+    const readbackSha = createHash('sha256').update(readback.bytes).digest('hex');
+    if (readbackSha !== sha256) {
+      // Best-effort cleanup of the mismatched object; leave status DRAFT.
+      await this.storage.delete(frozenKey).catch(() => undefined);
+      throw new ServiceUnavailableException(
+        'Cannot finalize: the stored PDF did not match what was rendered. Finalize aborted (nothing was locked).',
+      );
+    }
+
+    // (c) Only now — with proven bytes — flip the status in one update.
+    const snapshotMeta: Prisma.InputJsonValue = {
+      subjectName: hydrated.report.subjectName ?? null,
+      period: {
+        from: hydrated.report.periodFrom.toISOString(),
+        to: hydrated.report.periodTo.toISOString(),
+      },
+      hasActivity: hydrated.body.hasActivity,
+      summary: hydrated.body.summary,
+      finalizedAt: new Date().toISOString(),
+    };
+    const matterIdsSnapshot: Prisma.InputJsonValue = hydrated.body.matters.map(
+      (m) => m.matterId,
+    );
+
+    let updated: JrWorkReport;
+    try {
+      updated = await this.prisma.jrWorkReport.update({
+        where: { id },
+        data: {
+          status: 'FINALIZED',
+          frozenPdfKey: frozenKey,
+          frozenPdfSha256: sha256,
+          snapshotMeta,
+          matterIdsSnapshot,
+        },
+      });
+    } catch (err) {
+      // The @@unique(subject, period, status) can collide if a FINALIZED report
+      // for the same (subject, period) already exists — surface it as a conflict.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException(
+          'A finalized report already exists for this associate and period.',
+        );
+      }
+      throw err;
+    }
+
+    this.logger.log(`Finalized work report ${id} → ${frozenKey} (${buffer.length} bytes)`);
+    return this.hydrate(updated, user.permissions.includes(VIEW_ALL));
+  }
+
+  /**
+   * Email the report PDF to explicit recipients (or the caller as the default).
+   * Gated at the controller by jr.report.share. getById enforces own-or-view_all.
+   */
+  async emailReport(
+    id: string,
+    dto: EmailWorkReportDto,
+    user: RequestUser,
+  ): Promise<{ sent: boolean; recipients: string[] }> {
+    const recipients = (dto.emails && dto.emails.length ? dto.emails : [user.email])
+      .map((e) => e.trim())
+      .filter(Boolean);
+    if (recipients.length === 0) {
+      throw new BadRequestException('No recipients — provide at least one email address.');
+    }
+
+    const hydrated = await this.getById(id, user);
+    const { buffer, fileName } = await this.renderPdf(id, user);
+
+    const sent = await this.email.sendJrWorkReport({
+      to: recipients,
+      subjectName: hydrated.report.subjectName ?? 'JR associate',
+      periodLabel: this.periodLabel(hydrated),
+      status: hydrated.report.status,
+      note: dto.note ?? null,
+      pdf: buffer,
+      fileName,
+    });
+    return { sent, recipients };
+  }
+
+  // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 
@@ -551,6 +715,20 @@ export class JrWorkReportService {
   ): string {
     const name = employee ? `${employee.firstName} ${employee.lastName}`.trim() : '';
     return name || email;
+  }
+
+  /** A short YYYY-MM-DD → YYYY-MM-DD period label for the PDF / email subject. */
+  private periodLabel(hydrated: HydratedWorkReport): string {
+    const from = hydrated.report.periodFrom.toISOString().slice(0, 10);
+    const to = hydrated.report.periodTo.toISOString().slice(0, 10);
+    return `${from} to ${to}`;
+  }
+
+  /** Deterministic download filename for the report PDF. */
+  private pdfFileName(hydrated: HydratedWorkReport): string {
+    const from = hydrated.report.periodFrom.toISOString().slice(0, 10);
+    const to = hydrated.report.periodTo.toISOString().slice(0, 10);
+    return `jr-work-report-${from}_${to}-${hydrated.report.id.slice(0, 8)}.pdf`;
   }
 
   /** HTML-escape narrative note content (rendered into the PDF in 10C). */

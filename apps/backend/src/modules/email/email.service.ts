@@ -957,6 +957,48 @@ export class EmailService {
       html: baseTemplate('JR settlement recorded', content),
     });
   }
+
+  /**
+   * Email a JR associate work report (§11.7, PR 10C) with the branded PDF
+   * attached. Outbound share is gated by jr.report.share at the controller.
+   */
+  async sendJrWorkReport(opts: {
+    to: string | string[];
+    subjectName: string;
+    periodLabel: string;
+    status: string;
+    note?: string | null;
+    pdf: Buffer;
+    fileName: string;
+  }): Promise<boolean> {
+    const statusLabel = opts.status === 'FINALIZED' ? 'Finalized' : 'Draft';
+    const noteBlock = opts.note
+      ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:24px;">
+           <p style="margin:0;font-size:13px;color:#334155;white-space:pre-wrap;line-height:1.6;">${escHtml(
+             opts.note,
+           )}</p>
+         </div>`
+      : '';
+    const content = `
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:700;color:#0f172a;">Judicial Review work report</h2>
+      <p style="margin:0 0 18px;font-size:14px;color:#64748b;">The ${statusLabel.toLowerCase()} work report for <b>${escHtml(
+        opts.subjectName,
+      )}</b> covering <b>${escHtml(opts.periodLabel)}</b> is attached as a PDF.</p>
+      ${noteBlock}
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:8px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          ${infoRow('Associate', opts.subjectName)}
+          ${infoRow('Period', opts.periodLabel)}
+          ${infoRow('Status', statusLabel)}
+        </table>
+      </div>`;
+    return this.sendMail({
+      to: opts.to,
+      subject: `JR work report — ${opts.subjectName} (${opts.periodLabel})`,
+      html: baseTemplate('JR work report', content),
+      attachments: [{ filename: opts.fileName, content: opts.pdf, contentType: 'application/pdf' }],
+    });
+  }
 }
 
 // ── Email HTML templates ───────────────────────────────────────────────────────

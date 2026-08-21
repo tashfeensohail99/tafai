@@ -7,6 +7,7 @@
 
 import {
   ClipboardList,
+  FileText,
   Gavel,
   Landmark,
   LogOut,
@@ -98,6 +99,14 @@ function buildJrNav(permissions: string[]): DrawerMenuItem[] {
       caption: 'Counsel directory + good standing',
     });
   }
+  if (permissions.includes('jr.report.generate')) {
+    items.push({
+      label: 'Work Reports',
+      href: '/jr/reports',
+      icon: FileText,
+      caption: 'Compile & file your work log',
+    });
+  }
   return items;
 }
 
@@ -106,6 +115,8 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/jr/board') return { title: 'Deadline Board', subtitle: 'Pending fatal & procedural deadlines' };
   if (pathname === '/jr/counsel-queue') return { title: 'Counsel Queue', subtitle: 'Artifacts awaiting counsel review' };
   if (pathname === '/jr/counsel') return { title: 'Counsel', subtitle: 'Counsel directory & good standing' };
+  if (pathname === '/jr/reports') return { title: 'Work Reports', subtitle: 'Compile & file your associate work log' };
+  if (pathname.startsWith('/jr/reports/')) return { title: 'Work Report', subtitle: 'Compiled activity for the period' };
   if (pathname.startsWith('/jr/matters/')) return { title: 'Matter', subtitle: 'Judicial review matter detail' };
   return { title: 'Judicial Review', subtitle: '' };
 }

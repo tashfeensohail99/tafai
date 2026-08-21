@@ -1,6 +1,6 @@
 'use client';
 
-import { apiFetch } from './api-client';
+import { apiFetch, apiFetchBlob } from './api-client';
 import type { BadgeTone } from '@/components/sales-v2/ui';
 
 /**
@@ -910,3 +910,235 @@ const JR_ARTIFACT_TYPE_VALUES: string[] = [
 
 export const JR_ARTIFACT_TYPE_OPTIONS: Array<{ value: string; label: string }> =
   JR_ARTIFACT_TYPE_VALUES.map((value) => ({ value, label: jrHumanize(value) }));
+
+// ---------------------------------------------------------------------------
+// Associate work-report subsystem (§11.7, PR 10) — `@Controller('jr/reports')`.
+// The body is NEVER stored: the backend recompiles it live on every read from
+// the JR audit log; only params + enrichments + (at finalize) a frozen PDF
+// persist. DRAFT = body live + enrichments editable; FINALIZED = read-only.
+// ---------------------------------------------------------------------------
+
+export type WorkReportStatus = 'DRAFT' | 'FINALIZED';
+
+/** Row shape from GET /jr/reports (the list). */
+export interface WorkReportListItem {
+  id: string;
+  subjectAssociateUserId: string;
+  periodFrom: string;
+  periodTo: string;
+  status: WorkReportStatus;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+/** A pickable report subject (GET /jr/reports/subjects). */
+export interface WorkReportSubject {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface WorkReportMatter {
+  matterId: string;
+  matterNumber: string | null;
+  styleOfCause: string | null;
+  stage: string | null;
+  clientId: string | null;
+  clientName: string | null;
+  clientReferenceCode: string | null;
+  isWin: boolean;
+  draftVersions: number;
+  actions: Array<{ action: string; entityId: string | null; createdAt: string }>;
+}
+
+export interface WorkReportBody {
+  subjectAssociateUserId: string;
+  period: { from: string; to: string };
+  generatedAt: string;
+  hasActivity: boolean;
+  summary: {
+    matterCount: number;
+    draftVersions: number;
+    submittedForReview: number;
+    approvals: number;
+    changesRequested: number;
+    filings: number;
+    caseNotes: number;
+    wins: number;
+  };
+  matters: WorkReportMatter[];
+  caseNotes: Array<{
+    id: string;
+    matterId: string;
+    noteType: string;
+    content: string;
+    createdAt: string;
+  }>;
+  deadlines: {
+    scope: 'matter-level';
+    onTime: number;
+    missed: number;
+    pending: number;
+    total: number;
+    items: Array<{
+      matterId: string;
+      milestoneKey: string;
+      label: string | null;
+      computedDueAt: string;
+      status: string;
+      isFatal: boolean;
+    }>;
+  };
+}
+
+export interface WorkReportNote {
+  id: string;
+  authorUserId: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface WorkReportAttachment {
+  id: string;
+  kind: 'IMAGE' | 'VOICE_NOTE' | string;
+  mimeType: string | null;
+  durationMs: number | null;
+  transcript: string | null;
+  transcriptStatus: 'PENDING' | 'DONE' | 'FAILED' | string;
+  createdAt: string;
+}
+
+/** The hydrated report returned by create / GET /jr/reports/:id. */
+export interface HydratedWorkReport {
+  report: {
+    id: string;
+    subjectAssociateUserId: string;
+    subjectName: string | null;
+    periodFrom: string;
+    periodTo: string;
+    status: WorkReportStatus;
+    canViewAllAtCompile: boolean;
+    createdByUserId: string;
+    createdAt: string;
+    updatedAt: string;
+    frozenPdfKey: string | null;
+    frozenPdfSha256: string | null;
+  };
+  body: WorkReportBody;
+  notes: WorkReportNote[];
+  attachments: WorkReportAttachment[];
+}
+
+/** POST /jr/reports — compile (or return the existing DRAFT for) a period. */
+export function createWorkReport(input: {
+  subjectAssociateId?: string;
+  periodFrom: string;
+  periodTo: string;
+}): Promise<HydratedWorkReport> {
+  return apiFetch<HydratedWorkReport>('/jr/reports', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** GET /jr/reports — list reports visible to the caller. */
+export function listWorkReports(
+  q: { status?: WorkReportStatus; take?: number } = {},
+): Promise<WorkReportListItem[]> {
+  const qs = new URLSearchParams();
+  if (q.status) qs.set('status', q.status);
+  if (q.take) qs.set('take', String(q.take));
+  const tail = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<WorkReportListItem[]>(`/jr/reports${tail}`, { cache: 'no-store' });
+}
+
+/** GET /jr/reports/subjects — the pickable-subject list. */
+export function fetchReportSubjects(): Promise<WorkReportSubject[]> {
+  return apiFetch<WorkReportSubject[]>('/jr/reports/subjects', { cache: 'no-store' });
+}
+
+/** GET /jr/reports/:id — hydrated report (live body + enrichments). */
+export function fetchWorkReport(id: string): Promise<HydratedWorkReport> {
+  return apiFetch<HydratedWorkReport>(`/jr/reports/${id}`, { cache: 'no-store' });
+}
+
+/** POST /jr/reports/:id/notes — a report-level narrative note (DRAFT-only). */
+export function addReportNote(id: string, content: string): Promise<HydratedWorkReport> {
+  return apiFetch<HydratedWorkReport>(`/jr/reports/${id}/notes`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+}
+
+/** DELETE /jr/reports/:id/notes/:noteId — soft-delete a report note (DRAFT-only). */
+export function deleteReportNote(id: string, noteId: string): Promise<HydratedWorkReport> {
+  return apiFetch<HydratedWorkReport>(`/jr/reports/${id}/notes/${noteId}`, {
+    method: 'DELETE',
+  });
+}
+
+/** POST /jr/reports/:id/attachments/image — multipart image upload (DRAFT-only). */
+export function uploadReportImage(id: string, file: File | Blob, fileName?: string): Promise<HydratedWorkReport> {
+  const fd = new FormData();
+  fd.append('file', file, fileName ?? (file as File).name ?? 'image.png');
+  return apiFetch<HydratedWorkReport>(`/jr/reports/${id}/attachments/image`, {
+    method: 'POST',
+    body: fd,
+  });
+}
+
+/** POST /jr/reports/:id/attachments/voice — multipart voice upload (DRAFT-only). */
+export function uploadReportVoice(id: string, file: File | Blob, fileName?: string): Promise<HydratedWorkReport> {
+  const fd = new FormData();
+  fd.append('file', file, fileName ?? (file as File).name ?? 'voice-note.webm');
+  return apiFetch<HydratedWorkReport>(`/jr/reports/${id}/attachments/voice`, {
+    method: 'POST',
+    body: fd,
+  });
+}
+
+/** DELETE /jr/reports/:id/attachments/:attId — soft-delete an attachment (DRAFT-only). */
+export function deleteReportAttachment(id: string, attId: string): Promise<HydratedWorkReport> {
+  return apiFetch<HydratedWorkReport>(`/jr/reports/${id}/attachments/${attId}`, {
+    method: 'DELETE',
+  });
+}
+
+/** GET /jr/reports/:id/attachments/:attId/signed-url — a short-lived signed URL. */
+export function reportAttachmentSignedUrl(id: string, attId: string): Promise<{ url: string }> {
+  return apiFetch<{ url: string }>(`/jr/reports/${id}/attachments/${attId}/signed-url`, {
+    cache: 'no-store',
+  });
+}
+
+/** POST /jr/reports/:id/finalize — freeze the report into an immutable PDF. */
+export function finalizeWorkReport(id: string): Promise<HydratedWorkReport> {
+  return apiFetch<HydratedWorkReport>(`/jr/reports/${id}/finalize`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+/** POST /jr/reports/:id/email — email the report PDF outbound (Head only). */
+export function emailWorkReport(
+  id: string,
+  payload: { emails?: string[]; note?: string } = {},
+): Promise<{ sent: boolean; recipients: string[] }> {
+  return apiFetch<{ sent: boolean; recipients: string[] }>(`/jr/reports/${id}/email`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Fetch the report PDF (authed) and open it in a new tab (mirrors openPayslipPdf). */
+export async function openWorkReportPdf(id: string): Promise<void> {
+  const blob = await apiFetchBlob(`/jr/reports/${id}/pdf`);
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** Tone for a work-report status badge. */
+export function workReportStatusTone(status: string): BadgeTone {
+  return status === 'FINALIZED' ? 'success' : 'warning';
+}

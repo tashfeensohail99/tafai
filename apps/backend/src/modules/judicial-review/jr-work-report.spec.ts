@@ -171,7 +171,16 @@ describe('JR work-report subsystem (§11.7, PR 10A)', () => {
       const compiler = { compileBody: jest.fn().mockResolvedValue({ hasActivity: false }) };
       const storage = {} as any;
       const openai = {} as any;
-      const service = new JrWorkReportService(prisma as any, compiler as any, storage, openai);
+      const pdf = {} as any;
+      const email = {} as any;
+      const service = new JrWorkReportService(
+        prisma as any,
+        compiler as any,
+        storage,
+        openai,
+        pdf,
+        email,
+      );
       return { service, create };
     }
 

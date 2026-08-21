@@ -16,6 +16,7 @@ import { JrSettlementController } from './jr-settlement.controller';
 import { JrDeadlineSweeperService } from './jr-deadline-sweeper.service';
 import { JrNotificationsService } from './jr-notifications.service';
 import { JrWorkReportCompileService } from './jr-work-report-compile.service';
+import { JrWorkReportPdfService } from './jr-work-report-pdf.service';
 import { JrWorkReportService } from './jr-work-report.service';
 import { JrWorkReportController } from './jr-work-report.controller';
 import { JrCounselService } from './jr-counsel.service';
@@ -43,6 +44,7 @@ import { JrCounselController } from './jr-counsel.controller';
     JrDeadlineSweeperService,
     JrNotificationsService,
     JrWorkReportCompileService,
+    JrWorkReportPdfService,
     JrWorkReportService,
     JrCounselService,
   ],

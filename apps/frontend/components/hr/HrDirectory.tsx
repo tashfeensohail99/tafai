@@ -159,13 +159,24 @@ function EditEmployeeModal({ employee, depts, branches, designations, roles, onC
   const [error, setError] = useState<string | null>(null);
   const [resetMode, setResetMode] = useState(false);
   const [resetPw, setResetPw] = useState('');
+  const [resetSendTo, setResetSendTo] = useState('');
+  const [resetEmailedTo, setResetEmailedTo] = useState<string | null>(null);
   const [resetResult, setResetResult] = useState<ResetPasswordResult | null>(null);
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   const doReset = async () => {
     setBusy(true); setError(null);
-    try { setResetResult(await resetEmployeePassword(employee.id, resetPw.trim() || undefined)); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Reset failed'); setBusy(false); }
+    try {
+      const r = await resetEmployeePassword(employee.id, resetPw.trim() || undefined);
+      setResetResult(r);
+      // If HR entered a recipient, also email the pack (+ records CCs) right away.
+      if (resetSendTo.trim()) {
+        try {
+          const s = await sendCredentials({ to: resetSendTo.trim(), name: r.name, crmEmail: r.email, crmPassword: r.password });
+          setResetEmailedTo(s.recipients.join(', '));
+        } catch { /* keep the card; HR can still send from the panel */ }
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Reset failed'); setBusy(false); }
   };
 
   const save = async () => {
@@ -192,6 +203,9 @@ function EditEmployeeModal({ employee, depts, branches, designations, roles, onC
   if (resetResult) {
     return (
       <Modal title="Password reset" onClose={onDone}>
+        {resetEmailedTo ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--hr-ok)', fontSize: 13, fontWeight: 600, marginBottom: 12 }}><Check size={15} /> Emailed to {resetEmailedTo}</div>
+        ) : null}
         <CredentialCard title={`${resetResult.name} · password reset`} email={resetResult.email} password={resetResult.password}
           note="Hand this to the employee — they’ll be signed out and asked to change it on next login." onDone={onDone}
           send={{ name: resetResult.name, crmEmail: resetResult.email, crmPassword: resetResult.password }} />
@@ -205,10 +219,12 @@ function EditEmployeeModal({ employee, depts, branches, designations, roles, onC
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ margin: 0, fontSize: 14, color: 'var(--hr-text-2)' }}>Set a new CRM login password. They’ll be signed out and asked to change it on next login.</p>
           <Fld label="New password"><input className="hr-input" type="text" placeholder="Leave blank to auto-generate a strong one" value={resetPw} onChange={(e) => setResetPw(e.target.value)} autoFocus /></Fld>
+          <Fld label="Email the details to (optional personal email)"><input className="hr-input" type="email" placeholder="e.g. haseeb.personal@gmail.com — leave blank to just show them" value={resetSendTo} onChange={(e) => setResetSendTo(e.target.value)} /></Fld>
+          <div style={{ fontSize: 11.5, color: 'var(--hr-muted)' }}>If filled, the login + sign-in details are emailed there (and CC’d to iffat@tashfeengroup.com, contact@summitautomates.com).</div>
           {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button className="hr-btn hr-btn--ghost" onClick={() => { setResetMode(false); setError(null); }} disabled={busy}>Back</button>
-            <button className="hr-btn hr-btn--primary" onClick={doReset} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <KeyRound size={16} />} {busy ? 'Resetting…' : 'Reset password'}</button>
+            <button className="hr-btn hr-btn--primary" onClick={doReset} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <KeyRound size={16} />} {busy ? 'Working…' : resetSendTo.trim() ? 'Reset & send' : 'Reset password'}</button>
           </div>
         </div>
       </Modal>
@@ -393,7 +409,7 @@ export function CredentialCard({ title, email, password, note, onDone, send }: {
         <Row label="Password" value={password} />
         <div style={{ fontSize: 12, color: 'var(--hr-muted)', marginTop: 4 }}>{note}</div>
       </div>
-      {send ? <SendCredentialsPanel send={send} defaultTo={send.crmEmail || send.mailboxEmail || email} /> : null}
+      {send ? <SendCredentialsPanel send={send} defaultTo="" /> : null}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between' }}>
         <button className="hr-btn hr-btn--ghost" onClick={() => copy('both', both)}>{copied === 'both' ? <Check size={16} /> : <Copy size={16} />} {copied === 'both' ? 'Copied' : 'Copy all'}</button>
         <button className="hr-btn hr-btn--primary" onClick={onDone}>Done</button>
@@ -425,9 +441,9 @@ function SendCredentialsPanel({ send, defaultTo }: {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--hr-ok)', fontSize: 13, fontWeight: 600 }}><Check size={15} /> Emailed to {done}</div>
       ) : (
         <>
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--hr-text-2)', marginBottom: 8 }}>Email these credentials + how to sign in</div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--hr-text-2)', marginBottom: 8 }}>Email the login + sign-in details</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input className="hr-input" style={{ flex: 1 }} placeholder="Recipient email (optional)" value={to} onChange={(e) => setTo(e.target.value)} />
+            <input className="hr-input" style={{ flex: 1 }} placeholder="Their personal email (blank = records addresses only)" value={to} onChange={(e) => setTo(e.target.value)} />
             <button className="hr-btn hr-btn--primary" onClick={submit} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <Send size={15} />} {busy ? 'Sending…' : 'Send'}</button>
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--hr-muted)', marginTop: 6 }}>Also CC’d to iffat@tashfeengroup.com and contact@summitautomates.com.</div>

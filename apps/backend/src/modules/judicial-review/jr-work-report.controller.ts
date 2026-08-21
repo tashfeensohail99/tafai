@@ -7,8 +7,12 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
@@ -21,6 +25,8 @@ import {
   CreateWorkReportNoteDto,
   ListWorkReportsQueryDto,
 } from './judicial-review.dto';
+
+const MAX_ATTACHMENT_FILE_BYTES = 25 * 1024 * 1024;
 
 /**
  * JR associate work-report endpoints (§11.7, PR 10A). Every handler carries an
@@ -88,5 +94,58 @@ export class JrWorkReportController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.reports.deleteNote(id, noteId, user);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Media enrichments (§11.7, PR 10B) — image + voice, DRAFT-only
+  // ---------------------------------------------------------------------------
+
+  /** Attach an image (screenshot / photo) to a DRAFT report (DRAFT-only). */
+  @Post(':id/attachments/image')
+  @RequirePermissions('jr.report.generate')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: MAX_ATTACHMENT_FILE_BYTES } }))
+  @Audit({ idParam: 'id', entityType: 'JrWorkReport', category: 'MUTATION', severity: 'LOW', captureBody: false })
+  addImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reports.addImage(id, file, user);
+  }
+
+  /** Attach a voice note (transcribed to Roman Urdu inline) to a DRAFT report. */
+  @Post(':id/attachments/voice')
+  @RequirePermissions('jr.report.generate')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: MAX_ATTACHMENT_FILE_BYTES } }))
+  @Audit({ idParam: 'id', entityType: 'JrWorkReport', category: 'MUTATION', severity: 'LOW', captureBody: false })
+  addVoice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reports.addVoice(id, file, user);
+  }
+
+  /** Mint a short-lived signed URL for an attachment (own-or-view_all; NO @Audit). */
+  @Get(':id/attachments/:attachmentId/signed-url')
+  @RequirePermissions('jr.report.generate')
+  attachmentSignedUrl(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reports.attachmentSignedUrl(id, attachmentId, user);
+  }
+
+  /** Soft-delete an attachment (DRAFT-only; reportId match is the IDOR guard). */
+  @Delete(':id/attachments/:attachmentId')
+  @RequirePermissions('jr.report.generate')
+  @Audit({ idParam: 'id', entityType: 'JrWorkReport', action: 'RECORD_DELETED', category: 'MUTATION', severity: 'LOW', captureBody: false })
+  deleteAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.reports.deleteAttachment(id, attachmentId, user);
   }
 }

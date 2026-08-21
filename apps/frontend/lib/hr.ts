@@ -59,7 +59,21 @@ export interface OnboardPayload {
   joiningDate?: string;
   whatsappInboxMember?: boolean;
   pbxExtension?: string;
+  password?: string;
 }
+
+export interface ResetPasswordResult {
+  employeeId: string;
+  name: string;
+  email: string;
+  password: string;
+}
+
+export const resetEmployeePassword = (id: string, password?: string) =>
+  apiFetch<ResetPasswordResult>(`/hr/employee/${id}/reset-password`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(password ? { password } : {}),
+  });
 
 export interface OnboardResult {
   employeeId: string;

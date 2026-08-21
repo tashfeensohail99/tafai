@@ -1,16 +1,16 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { UserPlus, UserMinus, Copy, Check, Loader2, Search, Mail, ShieldCheck, Users, UserCheck, MessageCircle, Pencil } from 'lucide-react';
+import { UserPlus, UserMinus, Copy, Check, Loader2, Search, Mail, ShieldCheck, Users, UserCheck, MessageCircle, Pencil, KeyRound } from 'lucide-react';
 import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { PermissionDeniedState } from '../shared/PermissionDeniedState';
 import { useHrSession } from '../layout/HrShell';
 import { Avatar, Pill, Modal } from './ui';
 import {
-  getHrConfig, getHrDirectory, suggestEmail, onboardEmployee, offboardEmployee, updateEmployee,
+  getHrConfig, getHrDirectory, suggestEmail, onboardEmployee, offboardEmployee, updateEmployee, resetEmployeePassword,
   getDepartments, getBranches, getDesignations, getRoles,
-  type HrEmployee, type OnboardPayload, type OnboardResult, type NamedRecord, type RoleRecord, type UpdateEmployeePayload,
+  type HrEmployee, type OnboardPayload, type OnboardResult, type NamedRecord, type RoleRecord, type UpdateEmployeePayload, type ResetPasswordResult,
 } from '@/lib/hr';
 
 const EMPTY_FORM: OnboardPayload = {
@@ -157,7 +157,16 @@ function EditEmployeeModal({ employee, depts, branches, designations, roles, onC
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetPw, setResetPw] = useState('');
+  const [resetResult, setResetResult] = useState<ResetPasswordResult | null>(null);
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
+
+  const doReset = async () => {
+    setBusy(true); setError(null);
+    try { setResetResult(await resetEmployeePassword(employee.id, resetPw.trim() || undefined)); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Reset failed'); setBusy(false); }
+  };
 
   const save = async () => {
     setError(null);
@@ -180,6 +189,31 @@ function EditEmployeeModal({ employee, depts, branches, designations, roles, onC
     <div className="hr-field"><label className="hr-label">{label}</label>{children}</div>
   );
 
+  if (resetResult) {
+    return (
+      <Modal title="Password reset" onClose={onDone}>
+        <CredentialCard title={`${resetResult.name} · password reset`} email={resetResult.email} password={resetResult.password}
+          note="Hand this to the employee — they’ll be signed out and asked to change it on next login." onDone={onDone} />
+      </Modal>
+    );
+  }
+
+  if (resetMode) {
+    return (
+      <Modal title={`Reset password · ${employee.firstName} ${employee.lastName}`} onClose={() => setResetMode(false)}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ margin: 0, fontSize: 14, color: 'var(--hr-text-2)' }}>Set a new CRM login password. They’ll be signed out and asked to change it on next login.</p>
+          <Fld label="New password"><input className="hr-input" type="text" placeholder="Leave blank to auto-generate a strong one" value={resetPw} onChange={(e) => setResetPw(e.target.value)} autoFocus /></Fld>
+          {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button className="hr-btn hr-btn--ghost" onClick={() => { setResetMode(false); setError(null); }} disabled={busy}>Back</button>
+            <button className="hr-btn hr-btn--primary" onClick={doReset} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <KeyRound size={16} />} {busy ? 'Resetting…' : 'Reset password'}</button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal title={`Edit · ${employee.firstName} ${employee.lastName}`} onClose={onClose} wide>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -199,9 +233,12 @@ function EditEmployeeModal({ employee, depts, branches, designations, roles, onC
         </div>
         <label className="hr-check"><input type="checkbox" checked={form.whatsappInboxMember} onChange={(e) => set('whatsappInboxMember', e.target.checked)} /> WhatsApp lead inbox (round-robin pool)</label>
         {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 2 }}>
-          <button className="hr-btn hr-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="hr-btn hr-btn--primary" onClick={save} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <Check size={16} />} {busy ? 'Saving…' : 'Save changes'}</button>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+          <button className="hr-btn hr-btn--ghost" onClick={() => { setError(null); setResetPw(''); setResetMode(true); }} disabled={busy}><KeyRound size={16} /> Reset password</button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="hr-btn hr-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+            <button className="hr-btn hr-btn--primary" onClick={save} disabled={busy}>{busy ? <Loader2 size={16} className="hr-spin" /> : <Check size={16} />} {busy ? 'Saving…' : 'Save changes'}</button>
+          </div>
         </div>
       </div>
     </Modal>
@@ -247,6 +284,7 @@ function AddEmployeeModal({ mailConfigured, depts, branches, designations, roles
         departmentId: form.departmentId || undefined, branchId: form.branchId || undefined,
         designationId: form.designationId || undefined, phone: form.phone?.trim() || undefined,
         pbxExtension: form.pbxExtension?.trim() || undefined, joiningDate: form.joiningDate || undefined,
+        password: form.password?.trim() || undefined,
       }));
     } catch (e) { setError(e instanceof Error ? e.message : 'Onboarding failed'); }
     finally { setSubmitting(false); }
@@ -290,6 +328,7 @@ function AddEmployeeModal({ mailConfigured, depts, branches, designations, roles
             <Fld label="Telenor extension"><input className="hr-input" value={form.pbxExtension} onChange={(e) => set('pbxExtension', e.target.value)} /></Fld>
             <Fld label="Joining date"><input className="hr-input" type="date" value={form.joiningDate} onChange={(e) => set('joiningDate', e.target.value)} /></Fld>
           </div>
+          <Fld label="Login password"><input className="hr-input" type="text" placeholder="Leave blank to auto-generate a strong one" value={form.password ?? ''} onChange={(e) => set('password', e.target.value)} /></Fld>
           <label className="hr-check"><input type="checkbox" checked={!!form.whatsappInboxMember} onChange={(e) => set('whatsappInboxMember', e.target.checked)} /> Add to the WhatsApp lead inbox (round-robin pool)</label>
           {error ? <div style={{ color: 'var(--hr-bad)', fontSize: 13 }}>{error}</div> : null}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 2 }}>

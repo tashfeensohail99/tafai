@@ -110,16 +110,13 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
       // Pull the (bounded) set of threads currently awaiting an agent reply
       // whose deadline is either already past or within the warn window.
       //
-      // CRITICAL: exclude already-breached threads. A breach sets
-      // responseBreached=true but does NOT clear responseDeadlineAt (only an
-      // agent reply clears it), so a breached-but-unanswered thread would
-      // otherwise stay in this window forever, doing nothing — the breach path
-      // needs !responseBreached and the warn path needs !isPast, and a breached
-      // thread satisfies neither. With `take: 500` and no ORDER BY, those inert
-      // rows accumulate and can starve genuinely-new threads out of the page,
-      // so warnings/breaches silently stop firing. Filtering them here keeps the
-      // working set to threads that still need action. (Does not affect the
-      // "overdue" KPI, which keys off responseDeadlineAt, not this query.)
+      // Exclude already-breached threads. A breach now CLEARS responseDeadlineAt
+      // (see the breach block below), so breached threads are already dropped by
+      // `not: null` — this `responseBreached: false` is a belt-and-braces guard.
+      // It keeps the working set to threads that still need action, protecting
+      // the `take: 500` page from inert rows starving genuinely-new threads.
+      // (Because breach clears the clock, the "overdue" KPI — which keys off
+      // responseDeadlineAt — no longer accumulates abandoned breached threads.)
       const pending = await this.prisma.whatsAppThread.findMany({
         where: {
           responseDeadlineAt: { not: null, lte: warnCutoff },
@@ -153,9 +150,18 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
 
         if (isPast && !t.responseBreached) {
           // Atomically claim the breach so concurrent sweeps can't double-count.
+          // Clearing the SLA clock in the SAME update retires this thread from
+          // the "overdue" KPI: the breach is tallied below, and the customer-
+          // waiting signal lives in `awaitingReply` (untouched), so an abandoned
+          // thread no longer inflates the overdue count forever.
           const flipped = await this.prisma.whatsAppThread.updateMany({
             where: { id: t.id, responseBreached: false },
-            data: { responseBreached: true },
+            data: {
+              responseBreached: true,
+              responseDeadlineAt: null,
+              responseDueSince: null,
+              responseWarned: false,
+            },
           });
           if (flipped.count === 1) {
             breaches++;

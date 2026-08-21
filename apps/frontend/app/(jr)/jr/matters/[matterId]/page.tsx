@@ -158,7 +158,11 @@ function EditCaseDetailsCard({
       styleOfCause: asStr(matter.styleOfCause),
       decisionMaker: asStr(matter.decisionMaker) || 'OTHER',
       applicationType: asStr(matter.applicationType),
-      decidingOfficeLocation: asStr(matter.decidingOfficeLocation) || 'UNKNOWN',
+      // Default to Outside Canada (60-day clock) — the norm for this firm's
+      // overseas visa refusals. Surfaced in the form so the team consciously
+      // confirms it (and switches to In Canada → 15 days) when logging the
+      // refusal date, which is what kills the false "fatal in 15 days" alarms.
+      decidingOfficeLocation: asStr(matter.decidingOfficeLocation) || 'OUTSIDE_CANADA',
       decidingOfficeSourceNote: asStr(matter.decidingOfficeSourceNote),
       decisionCommunicatedAt: toDateInput(matter.decisionCommunicatedAt),
       decisionCommunicatedNote: asStr(matter.decisionCommunicatedNote),
@@ -276,7 +280,7 @@ function EditCaseDetailsCard({
               value={form.decidingOfficeLocation}
               onChange={(e) => set('decidingOfficeLocation', e.target.value)}
               options={DECIDING_OFFICE_OPTIONS}
-              hint="15 days in-Canada / 60 outside / UNKNOWN treated as 15"
+              hint="Defaults to Outside Canada = 60-day filing clock (the norm for overseas visa refusals). Switch to In Canada ONLY if the decision was made in Canada — that is a 15-day fatal clock."
             />
             <FormInput
               label="Deciding office source note"

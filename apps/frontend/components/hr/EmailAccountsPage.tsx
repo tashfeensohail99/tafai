@@ -181,7 +181,9 @@ function ProvisionModal({ row, onClose, onDone }: { row: EmailAccountRow; onClos
         <CredentialCard
           title={`${row.name} · ${result.action === 'created' ? 'mailbox created' : 'password reset'}${result.loginUpdated ? ' · login updated' : ''}`}
           email={result.email} password={result.password ?? ''}
-          note="Hand this to the employee. Same password works for the mailbox and (if set) the CRM login." onDone={onDone} />
+          note="Hand this to the employee. Same password works for the mailbox and (if set) the CRM login." onDone={onDone}
+          send={result.password ? { name: row.name, mailboxEmail: result.email, mailboxPassword: result.password,
+            crmEmail: result.loginUpdated ? result.email : undefined, crmPassword: result.loginUpdated ? result.password : undefined } : undefined} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <p style={{ fontSize: 14, color: 'var(--hr-text-2)', margin: 0 }}>
@@ -211,6 +213,8 @@ function NewMailboxModal({ domain, staff, onClose, onDone }: { domain: string; s
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ProvisionResult | null>(null);
   const clean = localPart.toLowerCase().replace(/[^a-z0-9.]/g, '');
+  const assigned = staff.find((s) => s.id === employeeId);
+  const assignedName = assigned ? `${assigned.firstName} ${assigned.lastName}` : (result?.email ?? clean);
 
   const run = async () => {
     setError(null);
@@ -225,7 +229,9 @@ function NewMailboxModal({ domain, staff, onClose, onDone }: { domain: string; s
     <Modal title={result ? 'Mailbox created' : 'New mailbox'} onClose={result ? onDone : onClose}>
       {result ? (
         <CredentialCard title={`${result.email} created${result.loginUpdated ? ' · login updated' : ''}`} email={result.email} password={result.password ?? ''}
-          note={result.loginUpdated ? 'Same password works for the mailbox and the CRM login.' : 'Standalone mailbox — hand these to whoever will use it.'} onDone={onDone} />
+          note={result.loginUpdated ? 'Same password works for the mailbox and the CRM login.' : 'Standalone mailbox — hand these to whoever will use it.'} onDone={onDone}
+          send={result.password ? { name: assignedName, mailboxEmail: result.email, mailboxPassword: result.password,
+            crmEmail: result.loginUpdated ? result.email : undefined, crmPassword: result.loginUpdated ? result.password : undefined } : undefined} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="hr-field">

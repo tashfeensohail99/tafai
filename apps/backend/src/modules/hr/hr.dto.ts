@@ -118,6 +118,27 @@ export class UpdateEmployeeDto {
   roleNames?: string[];
 }
 
+export class SendCredentialsDto {
+  // Primary recipient (usually the employee). Fixed records addresses are always CC'd.
+  @IsOptional() @IsEmail()
+  to?: string;
+
+  @IsString() @IsNotEmpty() @MaxLength(120)
+  name!: string;
+
+  @IsOptional() @IsEmail()
+  crmEmail?: string;
+
+  @IsOptional() @IsString() @MaxLength(128)
+  crmPassword?: string;
+
+  @IsOptional() @IsEmail()
+  mailboxEmail?: string;
+
+  @IsOptional() @IsString() @MaxLength(128)
+  mailboxPassword?: string;
+}
+
 export class ResetPasswordDto {
   // New login password. Leave blank to auto-generate a strong one (shown once).
   @IsOptional() @IsString() @MinLength(8) @MaxLength(128)

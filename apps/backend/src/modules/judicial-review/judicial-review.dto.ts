@@ -302,6 +302,129 @@ export class SetCounselOfRecordDto {
   counselRetainerSignedAt?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Counsel directory CRUD (jr.counsel.manage). A JrCounsel is a lawyer/firm that
+// can be set as a matter's counsel of record or record its merits view. Every
+// property is decorated — the global ValidationPipe runs forbidNonWhitelisted,
+// so an undecorated field 400s.
+// ---------------------------------------------------------------------------
+
+/** POST /jr/counsel — create a counsel directory entry. */
+export class CreateCounselDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  legalName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  firmName!: string;
+
+  /** e.g. "ON" — a Canadian law-society province code. */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  lawSocietyProvince!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  licenceNumber!: string;
+
+  @IsEmail()
+  @MaxLength(200)
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(400)
+  addressForServiceCanada!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  directoryUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  notes?: string;
+}
+
+/** GET /jr/counsel — optional active-only filter. */
+export class ListCounselQueryDto {
+  @IsOptional()
+  @IsBooleanString()
+  activeOnly?: string;
+}
+
+/** PATCH /jr/counsel/:id — edit a counsel entry (all fields optional). */
+export class UpdateCounselDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  legalName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  firmName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  lawSocietyProvince?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  licenceNumber?: string;
+
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(200)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(400)
+  addressForServiceCanada?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  directoryUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  notes?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsDateString()
+  goodStandingVerifiedAt?: string;
+}
+
 /**
  * PATCH /jr/matters/:matterId — edit ONLY non-gated fields (court file number,
  * DOJ counsel + LEX number, hearing details, procedural dates). Never touches

@@ -15,6 +15,8 @@ import {
   GitBranch,
   Signpost,
   History,
+  Landmark,
+  Check,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -38,9 +40,12 @@ import {
   determineJrRoute,
   fetchJrArtifacts,
   fetchJrAssociates,
+  fetchJrCounsel,
   fetchJrMatter,
   fetchJrMatterDeadlines,
   fetchJrMatterHistory,
+  setCounselOfRecord,
+  recordMerits,
   updateJrMatter,
   jrDueInfo,
   jrFmtDate,
@@ -49,14 +54,19 @@ import {
   jrStageTone,
   jrCloseReasonLabel,
   jrRouteLabel,
+  jrMeritsLabel,
+  jrRetainerScopeLabel,
   JR_STAGE_TRANSITIONS,
   JR_CLOSE_REASON_OPTIONS,
   JR_SPONSORSHIP_OPTIONS,
   JR_INADMISSIBILITY_OPTIONS,
+  JR_RETAINER_SCOPE_OPTIONS,
+  JR_MERITS_OPTIONS,
   type ChangeStagePayload,
   type DetermineRoutePayload,
   type JrArtifactsGrouped,
   type JrAssociate,
+  type JrCounsel,
   type JrDeadlineRow,
   type JrHistoryRow,
   type JrMatter,
@@ -813,6 +823,376 @@ function RouteDeterminationCard({ matter, onChanged }: { matter: JrMatter; onCha
 }
 
 // ---------------------------------------------------------------------------
+// Counsel & retention — set counsel of record + record merits (jr.counsel.manage)
+// and drive the MERITS_REVIEW → RETAINED readiness checklist (§6.2). The five
+// rows are the exact server-side gate: merits = FILE_JR, counsel of record set,
+// an ENGAGEMENT_LETTER artifact exists, expectations acknowledged, alternatives
+// sheet signed. This card only records the inputs — advancing to RETAINED stays
+// the Stage card's job (the backend re-checks every gate).
+// ---------------------------------------------------------------------------
+
+// One checklist row with a ✓/✗ marker + label + optional detail/control.
+function ChecklistItem({
+  done,
+  label,
+  children,
+}: {
+  done: boolean;
+  label: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', background: 'var(--sos-surface-2)' }}>
+      <span
+        aria-hidden="true"
+        style={{
+          flexShrink: 0,
+          width: 20,
+          height: 20,
+          borderRadius: 999,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginTop: 1,
+          background: done ? 'var(--sos-status-success-soft)' : 'var(--sos-status-danger-soft)',
+          color: done ? 'var(--sos-status-success)' : 'var(--sos-status-danger)',
+          border: `1px solid ${done ? 'var(--sos-status-success-border)' : 'var(--sos-status-danger-border)'}`,
+        }}
+      >
+        {done ? <Check size={12} /> : <X size={12} />}
+      </span>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ fontSize: 13, color: 'var(--sos-text-primary)' }}>{label}</span>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function CounselRetentionCard({
+  matter,
+  artifacts,
+  onChanged,
+}: {
+  matter: JrMatter;
+  artifacts: JrArtifactsGrouped;
+  onChanged: () => void;
+}) {
+  const [counsel, setCounsel] = useState<JrCounsel[]>([]);
+
+  // Set-counsel-of-record form.
+  const [counselId, setCounselId] = useState(asStr(matter.counselOfRecordId));
+  const [retainerScope, setRetainerScope] = useState(asStr(matter.counselRetainerScope) || 'FULL');
+  const [feeQuoted, setFeeQuoted] = useState(
+    matter.counselFeeQuoted != null ? String(matter.counselFeeQuoted) : '',
+  );
+  const [feeCurrency, setFeeCurrency] = useState(asStr(matter.counselFeeCurrency));
+  const [retainerSignedAt, setRetainerSignedAt] = useState(toDateInput(matter.counselRetainerSignedAt));
+  const [savingCounsel, setSavingCounsel] = useState(false);
+  const [counselErr, setCounselErr] = useState<string | null>(null);
+
+  // Record-merits form.
+  const [meritsRec, setMeritsRec] = useState(asStr(matter.meritsRecommendation));
+  const [meritsCounselId, setMeritsCounselId] = useState(asStr(matter.meritsAssessedByCounselId));
+  const [savingMerits, setSavingMerits] = useState(false);
+  const [meritsErr, setMeritsErr] = useState<string | null>(null);
+
+  // Expectations / alternatives date setters.
+  const [expectationsAt, setExpectationsAt] = useState(toDateInput(matter.expectationsAcknowledgedAt));
+  const [alternativesAt, setAlternativesAt] = useState(toDateInput(matter.alternativesSheetSignedAt));
+  const [savingDates, setSavingDates] = useState<'expectations' | 'alternatives' | null>(null);
+  const [datesErr, setDatesErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchJrCounsel(true)
+      .then((list) => !cancelled && setCounsel(list))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const counselOptions = counsel.map((c) => ({
+    value: c.id,
+    label: `${c.legalName} — ${c.firmName} (${c.lawSocietyProvince} #${c.licenceNumber})`,
+  }));
+
+  const currentCounsel = useMemo(
+    () => counsel.find((c) => c.id === asStr(matter.counselOfRecordId)) ?? null,
+    [counsel, matter.counselOfRecordId],
+  );
+
+  // The five RETAINED-gate conditions (§6.2 changeMatterStage, verbatim).
+  const hasEngagementLetter = artifacts.folders.some((f) =>
+    f.artifacts.some((a) => a.artifactType === 'ENGAGEMENT_LETTER'),
+  );
+  const meritsIsFileJr = asStr(matter.meritsRecommendation) === 'FILE_JR';
+  const counselSet = !!asStr(matter.counselOfRecordId);
+  const expectationsDone = !!matter.expectationsAcknowledgedAt;
+  const alternativesDone = !!matter.alternativesSheetSignedAt;
+  const allReady =
+    meritsIsFileJr && counselSet && hasEngagementLetter && expectationsDone && alternativesDone;
+
+  async function submitCounsel(e: React.FormEvent) {
+    e.preventDefault();
+    if (savingCounsel) return;
+    if (!counselId) {
+      setCounselErr('Choose a counsel of record.');
+      return;
+    }
+    setSavingCounsel(true);
+    setCounselErr(null);
+    try {
+      const payload: Parameters<typeof setCounselOfRecord>[1] = {
+        counselOfRecordId: counselId,
+        counselRetainerScope: retainerScope,
+      };
+      const feeNum = Number(feeQuoted);
+      if (feeQuoted.trim() && !Number.isNaN(feeNum)) payload.counselFeeQuoted = feeNum;
+      if (feeCurrency.trim()) payload.counselFeeCurrency = feeCurrency.trim().toUpperCase();
+      if (retainerSignedAt) payload.counselRetainerSignedAt = retainerSignedAt;
+      await setCounselOfRecord(matter.id, payload);
+      onChanged();
+    } catch (err: unknown) {
+      setCounselErr(err instanceof Error ? err.message : 'Failed to set counsel of record');
+    } finally {
+      setSavingCounsel(false);
+    }
+  }
+
+  async function submitMerits(e: React.FormEvent) {
+    e.preventDefault();
+    if (savingMerits) return;
+    if (!meritsRec) {
+      setMeritsErr('Choose a merits recommendation.');
+      return;
+    }
+    if (!meritsCounselId) {
+      setMeritsErr('Choose the assessing counsel.');
+      return;
+    }
+    setSavingMerits(true);
+    setMeritsErr(null);
+    try {
+      await recordMerits(matter.id, {
+        meritsRecommendation: meritsRec,
+        meritsAssessedByCounselId: meritsCounselId,
+      });
+      onChanged();
+    } catch (err: unknown) {
+      setMeritsErr(err instanceof Error ? err.message : 'Failed to record merits');
+    } finally {
+      setSavingMerits(false);
+    }
+  }
+
+  async function saveDate(field: 'expectationsAcknowledgedAt' | 'alternativesSheetSignedAt') {
+    const value = field === 'expectationsAcknowledgedAt' ? expectationsAt : alternativesAt;
+    if (!value) {
+      setDatesErr('Pick a date first.');
+      return;
+    }
+    setSavingDates(field === 'expectationsAcknowledgedAt' ? 'expectations' : 'alternatives');
+    setDatesErr(null);
+    try {
+      await updateJrMatter(matter.id, { [field]: value });
+      onChanged();
+    } catch (err: unknown) {
+      setDatesErr(err instanceof Error ? err.message : 'Failed to save date');
+    } finally {
+      setSavingDates(null);
+    }
+  }
+
+  const noCounsel = counsel.length === 0;
+
+  return (
+    <GlassCard variant="panel" padded="md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+        <Landmark size={15} style={{ color: 'var(--sos-brand-primary-strong)' }} />
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sos-text-primary)' }}>Counsel &amp; retention</div>
+      </div>
+
+      {noCounsel ? (
+        <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', marginBottom: 14 }}>
+          No counsel in the directory yet. Add counsel on the Counsel page before setting a counsel of record.
+        </div>
+      ) : null}
+
+      {/* Counsel of record */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--sos-text-secondary)' }}>Counsel of record</div>
+        {currentCounsel ? (
+          <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>
+            <span style={{ color: 'var(--sos-text-primary)', fontWeight: 600 }}>{currentCounsel.legalName}</span>
+            {` · ${currentCounsel.firmName} · ${currentCounsel.lawSocietyProvince} #${currentCounsel.licenceNumber}`}
+            {matter.counselRetainerScope ? ` · ${jrRetainerScopeLabel(asStr(matter.counselRetainerScope))}` : ''}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>Not set.</div>
+        )}
+        <form onSubmit={submitCounsel} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 }}>
+          <FormSelect
+            label={counselSet ? 'Replace counsel of record' : 'Set counsel of record'}
+            value={counselId}
+            onChange={(e) => setCounselId(e.target.value)}
+            options={counselOptions}
+            placeholder="Select counsel…"
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormSelect
+              label="Retainer scope"
+              value={retainerScope}
+              onChange={(e) => setRetainerScope(e.target.value)}
+              options={JR_RETAINER_SCOPE_OPTIONS}
+            />
+            <Field label="Retainer signed (optional)">
+              <input
+                type="date"
+                className="sos-input"
+                value={retainerSignedAt}
+                onChange={(e) => setRetainerSignedAt(e.target.value)}
+              />
+            </Field>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormInput
+              label="Fee quoted (optional)"
+              type="number"
+              value={feeQuoted}
+              onChange={(e) => setFeeQuoted(e.target.value)}
+              placeholder="e.g. 6500"
+            />
+            <FormInput
+              label="Fee currency (optional)"
+              value={feeCurrency}
+              onChange={(e) => setFeeCurrency(e.target.value)}
+              maxLength={3}
+              placeholder="e.g. CAD"
+            />
+          </div>
+          {counselErr ? <div style={errorBoxStyle}>{counselErr}</div> : null}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <PrimaryButton
+              type="submit"
+              disabled={savingCounsel || !counselId}
+              iconLeft={savingCounsel ? <Loader2 size={14} className="sos-spin" /> : <Landmark size={14} />}
+            >
+              {savingCounsel ? 'Saving…' : counselSet ? 'Replace counsel' : 'Set counsel'}
+            </PrimaryButton>
+          </div>
+        </form>
+      </div>
+
+      {/* Merits recommendation */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--sos-text-secondary)' }}>Merits recommendation</div>
+        {asStr(matter.meritsRecommendation) ? (
+          <div style={{ fontSize: 12.5 }}>
+            <StatusBadge tone={meritsIsFileJr ? 'success' : 'neutral'} size="sm" dot={false}>
+              {jrMeritsLabel(asStr(matter.meritsRecommendation))}
+            </StatusBadge>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>Not recorded.</div>
+        )}
+        <form onSubmit={submitMerits} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <FormSelect
+              label="Recommendation"
+              value={meritsRec}
+              onChange={(e) => setMeritsRec(e.target.value)}
+              options={JR_MERITS_OPTIONS}
+              placeholder="Select…"
+              hint="Only FILE_JR satisfies the RETAINED gate."
+            />
+            <FormSelect
+              label="Assessed by counsel"
+              value={meritsCounselId}
+              onChange={(e) => setMeritsCounselId(e.target.value)}
+              options={counselOptions}
+              placeholder="Select counsel…"
+            />
+          </div>
+          {meritsErr ? <div style={errorBoxStyle}>{meritsErr}</div> : null}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <PrimaryButton
+              type="submit"
+              disabled={savingMerits || !meritsRec || !meritsCounselId}
+              iconLeft={savingMerits ? <Loader2 size={14} className="sos-spin" /> : <Check size={14} />}
+            >
+              {savingMerits ? 'Saving…' : 'Record merits'}
+            </PrimaryButton>
+          </div>
+        </form>
+      </div>
+
+      {/* Retention readiness checklist */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--sos-text-secondary)' }}>Retention readiness (drives RETAINED)</div>
+        <ChecklistItem done={meritsIsFileJr} label="Merits recommendation is FILE_JR" />
+        <ChecklistItem done={counselSet} label="Counsel of record set" />
+        <ChecklistItem
+          done={hasEngagementLetter}
+          label="Engagement letter uploaded"
+        >
+          {!hasEngagementLetter ? (
+            <span style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>
+              Upload an ENGAGEMENT_LETTER artifact in the Documents panel below.
+            </span>
+          ) : null}
+        </ChecklistItem>
+        <ChecklistItem done={expectationsDone} label="Expectations acknowledged">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="date"
+              className="sos-input"
+              value={expectationsAt}
+              onChange={(e) => setExpectationsAt(e.target.value)}
+              style={{ maxWidth: 190 }}
+            />
+            <PrimaryButton
+              type="button"
+              onClick={() => saveDate('expectationsAcknowledgedAt')}
+              disabled={savingDates === 'expectations' || !expectationsAt}
+              iconLeft={savingDates === 'expectations' ? <Loader2 size={13} className="sos-spin" /> : undefined}
+            >
+              {savingDates === 'expectations' ? '…' : 'Save'}
+            </PrimaryButton>
+          </div>
+        </ChecklistItem>
+        <ChecklistItem done={alternativesDone} label="Alternatives sheet signed">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="date"
+              className="sos-input"
+              value={alternativesAt}
+              onChange={(e) => setAlternativesAt(e.target.value)}
+              style={{ maxWidth: 190 }}
+            />
+            <PrimaryButton
+              type="button"
+              onClick={() => saveDate('alternativesSheetSignedAt')}
+              disabled={savingDates === 'alternatives' || !alternativesAt}
+              iconLeft={savingDates === 'alternatives' ? <Loader2 size={13} className="sos-spin" /> : undefined}
+            >
+              {savingDates === 'alternatives' ? '…' : 'Save'}
+            </PrimaryButton>
+          </div>
+        </ChecklistItem>
+        {datesErr ? <div style={errorBoxStyle}>{datesErr}</div> : null}
+        {allReady ? (
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--sos-status-success-soft)', border: '1px solid var(--sos-status-success-border)', color: 'var(--sos-status-success)', fontSize: 12.5 }}>
+            All retention conditions met — the Advance stage card can now move this matter to Retained.
+          </div>
+        ) : null}
+      </div>
+    </GlassCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Activity timeline — read-only render of the JrAuditLog rows, newest-first.
 // A best-effort one-line diff is shown when the row's old/new values carry a
 // stage or route change; otherwise just the action + who + when.
@@ -882,6 +1262,7 @@ export default function JrMatterDetailPage() {
   const canAssign = user.permissions.includes('jr.matter.assign');
   const canEdit = user.permissions.includes('jr.matter.update_stage');
   const canDetermineRoute = user.permissions.includes('jr.route.determine');
+  const canManageCounsel = user.permissions.includes('jr.counsel.manage');
 
   const [matter, setMatter] = useState<JrMatter | null>(null);
   const [deadlines, setDeadlines] = useState<JrDeadlineRow[]>([]);
@@ -1053,6 +1434,15 @@ export default function JrMatterDetailPage() {
       {/* Route determination (gated on jr.route.determine). */}
       {canDetermineRoute ? (
         <RouteDeterminationCard matter={matter} onChanged={() => setReloadKey((k) => k + 1)} />
+      ) : null}
+
+      {/* Counsel & retention (gated on jr.counsel.manage) — drives RETAINED. */}
+      {canManageCounsel ? (
+        <CounselRetentionCard
+          matter={matter}
+          artifacts={artifacts}
+          onChanged={() => setReloadKey((k) => k + 1)}
+        />
       ) : null}
 
       {/* Edit case details (gated) */}

@@ -75,6 +75,17 @@ export interface JrMatter {
   route: string;
   decisionCommunicatedAt: string | null;
   courtFileNumber: string | null;
+  // Retention / counsel gate (drives MERITS_REVIEW → RETAINED). Present on the
+  // raw Prisma row; typed here so the Counsel & retention card reads them cleanly.
+  counselOfRecordId: string | null;
+  counselRetainerScope: string | null;
+  counselRetainerSignedAt: string | null;
+  counselFeeQuoted: string | number | null;
+  counselFeeCurrency: string | null;
+  meritsRecommendation: string | null;
+  meritsAssessedByCounselId: string | null;
+  expectationsAcknowledgedAt: string | null;
+  alternativesSheetSignedAt: string | null;
   createdAt: string;
   updatedAt: string;
   // List enrichment — GET /jr/matters joins the (relation-less) crm.Client so
@@ -506,6 +517,147 @@ export function deleteJrNote(noteId: string): Promise<{ ok: true }> {
 
 export function fetchJrCounselQueue(): Promise<JrCounselQueueRow[]> {
   return apiFetch<JrCounselQueueRow[]>('/jr/counsel-queue', { cache: 'no-store' });
+}
+
+// ---------------------------------------------------------------------------
+// Counsel directory + retention (jr.counsel.manage). A JrCounsel can be set as a
+// matter's counsel of record or record its merits view — both of which the
+// MERITS_REVIEW → RETAINED gate reads. GET/POST /jr/counsel are the directory;
+// POST /jr/matters/:id/counsel + /merits are the matter-side setters.
+// ---------------------------------------------------------------------------
+
+/** A JrCounsel directory row (mirrors the Prisma `legal.jr_counsel` model). */
+export interface JrCounsel {
+  id: string;
+  legalName: string;
+  firmName: string;
+  lawSocietyProvince: string;
+  licenceNumber: string;
+  directoryUrl: string | null;
+  email: string;
+  phone: string | null;
+  addressForServiceCanada: string;
+  goodStandingVerifiedAt: string | null;
+  isActive: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateJrCounselInput {
+  legalName: string;
+  firmName: string;
+  lawSocietyProvince: string;
+  licenceNumber: string;
+  email: string;
+  addressForServiceCanada: string;
+  directoryUrl?: string;
+  phone?: string;
+  notes?: string;
+}
+
+export interface UpdateJrCounselInput {
+  legalName?: string;
+  firmName?: string;
+  lawSocietyProvince?: string;
+  licenceNumber?: string;
+  email?: string;
+  addressForServiceCanada?: string;
+  directoryUrl?: string;
+  phone?: string;
+  notes?: string;
+  isActive?: boolean;
+  goodStandingVerifiedAt?: string;
+}
+
+/** GET /jr/counsel — the counsel directory (optionally active-only). */
+export function fetchJrCounsel(activeOnly = false): Promise<JrCounsel[]> {
+  const tail = activeOnly ? '?activeOnly=true' : '';
+  return apiFetch<JrCounsel[]>(`/jr/counsel${tail}`, { cache: 'no-store' });
+}
+
+/** POST /jr/counsel — create a counsel directory entry. */
+export function createJrCounsel(input: CreateJrCounselInput): Promise<JrCounsel> {
+  return apiFetch<JrCounsel>('/jr/counsel', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** PATCH /jr/counsel/:id — edit a counsel entry (deactivate / mark good-standing / edit). */
+export function updateJrCounsel(
+  id: string,
+  patch: UpdateJrCounselInput,
+): Promise<JrCounsel> {
+  return apiFetch<JrCounsel>(`/jr/counsel/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export interface SetCounselOfRecordPayload {
+  counselOfRecordId: string;
+  counselRetainerScope: string;
+  counselFeeQuoted?: number;
+  counselFeeCurrency?: string;
+  counselRetainerSignedAt?: string;
+}
+
+/** POST /jr/matters/:matterId/counsel — set counsel of record + retainer scope. */
+export function setCounselOfRecord(
+  matterId: string,
+  payload: SetCounselOfRecordPayload,
+): Promise<JrMatter> {
+  return apiFetch<JrMatter>(`/jr/matters/${matterId}/counsel`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}
+
+export interface RecordMeritsPayload {
+  meritsRecommendation: string;
+  meritsAssessedByCounselId: string;
+}
+
+/** POST /jr/matters/:matterId/merits — record counsel's merits recommendation. */
+export function recordMerits(
+  matterId: string,
+  payload: RecordMeritsPayload,
+): Promise<JrMatter> {
+  return apiFetch<JrMatter>(`/jr/matters/${matterId}/merits`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+}
+
+/** JrCounselRetainerScope enum values. */
+export const JR_RETAINER_SCOPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'LEAVE_ONLY', label: 'Leave only' },
+  { value: 'FULL', label: 'Full (leave + application)' },
+];
+
+/** JrMeritsRecommendation enum values. */
+export const JR_MERITS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'FILE_JR', label: 'File JR' },
+  { value: 'REAPPLY', label: 'Reapply' },
+  { value: 'RECONSIDER', label: 'Request reconsideration' },
+  { value: 'APPEAL_IAD', label: 'Appeal to IAD' },
+  { value: 'APPEAL_RAD', label: 'Appeal to RAD' },
+  { value: 'DECLINE', label: 'Decline' },
+];
+
+/** Humanise a JrMeritsRecommendation value (falls back to the raw key). */
+export function jrMeritsLabel(value: string | null | undefined): string {
+  if (!value) return '';
+  return JR_MERITS_OPTIONS.find((o) => o.value === value)?.label ?? jrHumanize(value);
+}
+
+/** Humanise a JrCounselRetainerScope value (falls back to the raw key). */
+export function jrRetainerScopeLabel(value: string | null | undefined): string {
+  if (!value) return '';
+  return JR_RETAINER_SCOPE_OPTIONS.find((o) => o.value === value)?.label ?? jrHumanize(value);
 }
 
 export function fetchJrAssociates(): Promise<JrAssociate[]> {

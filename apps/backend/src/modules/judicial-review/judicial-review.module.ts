@@ -18,6 +18,8 @@ import { JrNotificationsService } from './jr-notifications.service';
 import { JrWorkReportCompileService } from './jr-work-report-compile.service';
 import { JrWorkReportService } from './jr-work-report.service';
 import { JrWorkReportController } from './jr-work-report.controller';
+import { JrCounselService } from './jr-counsel.service';
+import { JrCounselController } from './jr-counsel.controller';
 
 /**
  * Judicial Review (Federal Court JR) module — PR 1 foundation. Owns the `legal`
@@ -42,6 +44,7 @@ import { JrWorkReportController } from './jr-work-report.controller';
     JrNotificationsService,
     JrWorkReportCompileService,
     JrWorkReportService,
+    JrCounselService,
   ],
   controllers: [
     JudicialReviewController,
@@ -51,6 +54,7 @@ import { JrWorkReportController } from './jr-work-report.controller';
     JrIntakeController,
     JrSettlementController,
     JrWorkReportController,
+    JrCounselController,
   ],
   exports: [
     JudicialReviewService,

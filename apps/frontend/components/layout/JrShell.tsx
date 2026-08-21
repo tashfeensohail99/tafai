@@ -8,6 +8,7 @@
 import {
   ClipboardList,
   Gavel,
+  Landmark,
   LogOut,
   Menu,
   Scale,
@@ -68,6 +69,7 @@ function buildJrNav(permissions: string[]): DrawerMenuItem[] {
     permissions.includes('jr.matter.view_assigned') ||
     permissions.includes('jr.matter.view_all');
   const canViewAll = permissions.includes('jr.matter.view_all');
+  const canManageCounsel = permissions.includes('jr.counsel.manage');
 
   const items: DrawerMenuItem[] = [
     { label: 'Matters', href: '/jr', icon: Scale, caption: 'Judicial review caseload' },
@@ -88,6 +90,14 @@ function buildJrNav(permissions: string[]): DrawerMenuItem[] {
       caption: 'Artifacts awaiting counsel review',
     });
   }
+  if (canManageCounsel) {
+    items.push({
+      label: 'Counsel',
+      href: '/jr/counsel',
+      icon: Landmark,
+      caption: 'Counsel directory + good standing',
+    });
+  }
   return items;
 }
 
@@ -95,6 +105,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/jr') return { title: 'Judicial Review', subtitle: 'Federal Court JR caseload' };
   if (pathname === '/jr/board') return { title: 'Deadline Board', subtitle: 'Pending fatal & procedural deadlines' };
   if (pathname === '/jr/counsel-queue') return { title: 'Counsel Queue', subtitle: 'Artifacts awaiting counsel review' };
+  if (pathname === '/jr/counsel') return { title: 'Counsel', subtitle: 'Counsel directory & good standing' };
   if (pathname.startsWith('/jr/matters/')) return { title: 'Matter', subtitle: 'Judicial review matter detail' };
   return { title: 'Judicial Review', subtitle: '' };
 }

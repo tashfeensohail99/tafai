@@ -76,7 +76,8 @@ export class HrService {
    * one call. Returns the credentials ONCE so HR can hand them to the new hire.
    */
   async onboard(dto: OnboardEmployeeDto, actorUserId: string) {
-    const password = this.generatePassword();
+    // HR may set a password explicitly; otherwise generate a strong one.
+    const password = dto.password?.trim() || this.generatePassword();
 
     // 1) Resolve the email — generate a mailbox, or use a supplied address.
     let email: string;
@@ -368,6 +369,29 @@ export class HrService {
       },
       orderBy: [{ isActive: 'desc' }, { firstName: 'asc' }],
     });
+  }
+
+  /**
+   * Reset an employee's CRM LOGIN password. HR may set one explicitly, else a
+   * strong one is generated. Revokes active sessions and forces a change on
+   * next login (reuses UsersService.resetPassword). Returns the new password once.
+   */
+  async resetPassword(employeeId: string, password: string | undefined, actorUserId: string) {
+    const emp = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { id: true, userId: true, firstName: true, lastName: true, user: { select: { email: true } } },
+    });
+    if (!emp) throw new NotFoundException('Employee not found');
+
+    const newPassword = password?.trim() || this.generatePassword();
+    await this.users.resetPassword(emp.userId, newPassword, actorUserId);
+
+    return {
+      employeeId: emp.id,
+      name: `${emp.firstName} ${emp.lastName}`.trim(),
+      email: emp.user?.email ?? '',
+      password: newPassword,
+    };
   }
 
   /** Edit an existing employee's HR fields (+ optional role reassignment). */

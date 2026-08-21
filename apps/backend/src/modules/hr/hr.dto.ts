@@ -7,6 +7,7 @@ import {
   IsUUID,
   IsArray,
   MaxLength,
+  MinLength,
   IsDateString,
   IsIn,
 } from 'class-validator';
@@ -37,6 +38,10 @@ export class OnboardEmployeeDto {
   // Roles to grant (e.g. ["sales"]). Matched by name against active roles.
   @IsOptional() @IsArray() @IsString({ each: true })
   roleNames?: string[];
+
+  // Login password. Leave blank to auto-generate a strong one (shown once).
+  @IsOptional() @IsString() @MinLength(8) @MaxLength(128)
+  password?: string;
 
   @IsOptional() @IsUUID()
   departmentId?: string;
@@ -111,6 +116,12 @@ export class UpdateEmployeeDto {
 
   @IsOptional() @IsArray() @IsString({ each: true })
   roleNames?: string[];
+}
+
+export class ResetPasswordDto {
+  // New login password. Leave blank to auto-generate a strong one (shown once).
+  @IsOptional() @IsString() @MinLength(8) @MaxLength(128)
+  password?: string;
 }
 
 export class ProvisionMailboxDto {

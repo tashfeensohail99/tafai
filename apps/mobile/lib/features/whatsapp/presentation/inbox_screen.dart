@@ -79,7 +79,13 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
 
   void _toggleDue() => ref
       .read(inboxFilterProvider.notifier)
-      .update((f) => f.copyWith(followUpDue: !f.followUpDue));
+      .update((f) => f.copyWith(followUpDue: !f.followUpDue, followUpUpcoming: false));
+
+  /// "Upcoming" = OPEN follow-up set for later. Mutually exclusive with Due so
+  /// the two chips read as a simple either/or.
+  void _toggleUpcoming() => ref
+      .read(inboxFilterProvider.notifier)
+      .update((f) => f.copyWith(followUpUpcoming: !f.followUpUpcoming, followUpDue: false));
 
   /// Archived/Blocked are "show ONLY these" views. Tapping the chip selects
   /// that tab; tapping it again returns to All. They also clear the Due chip,
@@ -88,6 +94,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       ref.read(inboxFilterProvider.notifier).update((f) => f.copyWith(
             tab: f.tab == view ? WaTab.all : view,
             followUpDue: false,
+            followUpUpcoming: false,
           ));
 
   /// Disposition funnel: pick one of the 10 dispositions (or "Any") to narrow
@@ -352,6 +359,15 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                     selectedColor: AppTokens.statusWarning,
                   ),
                 if (stats.followUpDue > 0 || filter.followUpDue)
+                  const SizedBox(width: AppTokens.space2),
+                if (stats.followUpUpcoming > 0 || filter.followUpUpcoming)
+                  CrmFilterChip(
+                    label: 'Upcoming',
+                    count: stats.followUpUpcoming,
+                    selected: filter.followUpUpcoming,
+                    onTap: _toggleUpcoming,
+                  ),
+                if (stats.followUpUpcoming > 0 || filter.followUpUpcoming)
                   const SizedBox(width: AppTokens.space2),
                 CrmFilterChip(
                   label: 'Archived',

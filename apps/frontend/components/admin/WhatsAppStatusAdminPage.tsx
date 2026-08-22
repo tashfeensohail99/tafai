@@ -341,7 +341,7 @@ function ComposerCard(props: {
   onScheduledAtChange: (v: string) => void;
   onSubmit: (initialState: 'DRAFT' | 'SCHEDULED' | 'POSTED') => void;
   onClear: () => void;
-  fileInputRef: React.RefObject<HTMLInputElement>;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   const isVideo = props.file?.type.startsWith('video/');

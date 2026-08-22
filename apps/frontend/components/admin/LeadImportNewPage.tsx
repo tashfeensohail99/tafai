@@ -159,7 +159,7 @@ export function LeadImportNewPage() {
         if (f.key === 'phone') continue;
         const v = mapping[f.key];
         if (v && v.trim()) {
-          (cleanMapping as Record<string, string>)[f.key] = v;
+          cleanMapping[f.key] = v;
         }
       }
       const batch = await startImport(file, {

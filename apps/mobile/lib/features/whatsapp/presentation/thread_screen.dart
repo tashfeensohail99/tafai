@@ -786,6 +786,14 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
           encoder: AudioEncoder.opus,
           numChannels: 1,
           sampleRate: 48000,
+          // Pin the capture source to the raw mic. The plugin default
+          // (defaultSource) is remapped by some OEM ROMs, and VOICE_COMMUNICATION
+          // runs the VoIP AEC/AGC/NS pipeline that can attenuate to near-silence
+          // on some Xiaomi/HyperOS builds — the exact "silent voice note" symptom.
+          // MIC is the plugin-recommended source for a one-way voice note.
+          androidConfig: AndroidRecordConfig(
+            audioSource: AndroidAudioSource.mic,
+          ),
         ),
         path: path,
       );

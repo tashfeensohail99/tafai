@@ -471,9 +471,13 @@ export class WhatsAppCallsService {
   async sweepStaleCalls(): Promise<{ ringingMissed: number; orphansEnded: number }> {
     const now = Date.now();
     const RING_TTL_MS = 90_000;
-    // 4 missed 15s beats — margin over the 30s sweep + 15s beat so a brief
-    // network blip on a LIVE call can't trip a false orphan-termination.
-    const HEARTBEAT_STALE_MS = 60_000;
+    // 12 missed 15s beats. Raised from 60s: on mobile the periodic client
+    // heartbeat is a Dart timer that power-saving OEMs SUSPEND while the screen
+    // is off (phone held to the ear / idle) during a call — so a perfectly live
+    // call went >60s without a beat and this sweeper terminated it, which the
+    // app only surfaced as a "call dropped" when the screen came back on. 180s
+    // tolerates a normal screen-off stretch; the media path (native) stays up.
+    const HEARTBEAT_STALE_MS = 180_000;
     const HARD_TTL_MS = 3 * 60 * 60 * 1000;
 
     const missed = await this.prisma.whatsAppCall.updateMany({

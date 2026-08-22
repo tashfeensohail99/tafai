@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -81,6 +81,12 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
  * WhatsApp-style unified inbox — full-height split layout matching WhatsApp Web.
  * Left: contact list with search + filter tabs. Right: live chat panel.
  */
+// Coming back to the inbox after visiting another page should keep the rep's
+// place in the chat list. The list scrolls in an inner container that remounts
+// (scrollTop 0) on return, so we remember the last scrollTop module-scoped and
+// restore it once the rows have painted.
+let savedInboxScrollTop = 0;
+
 export default function SalesInboxPage() {
   const [filter, setFilter] = useState<Filter>('ALL');
   // "Due (N)" chip toggle — when on, the list is filtered to chats whose lead
@@ -121,6 +127,10 @@ export default function SalesInboxPage() {
   // Focused by the header "+" (new chat) — WhatsApp's "+" opens contact search;
   // ours jumps the rep straight into the search box to find the contact.
   const searchRef = useRef<HTMLInputElement>(null);
+  // The scrollable thread-list container + a one-shot guard so we restore the
+  // saved scroll position exactly once per mount (not on every filter reload).
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const inboxScrollRestored = useRef(false);
   const { socket } = useWhatsAppSocket();
   const isMobile = useIsMobile();
   const session = useSession();
@@ -238,6 +248,18 @@ export default function SalesInboxPage() {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // Restore the remembered scroll position once the chat rows are painted, once
+  // per mount — so returning from another page lands the rep where they were
+  // instead of at the top. Later filter/tab reloads are exempt (guard ref).
+  useLayoutEffect(() => {
+    if (inboxScrollRestored.current) return;
+    if (loading || items.length === 0) return;
+    inboxScrollRestored.current = true;
+    if (savedInboxScrollTop > 0 && listScrollRef.current) {
+      listScrollRef.current.scrollTop = savedInboxScrollTop;
+    }
+  }, [loading, items.length]);
+
   // #4 content search: find chats by what was SAID (message text). Fires on the
   // same debounced query, only in the working tabs (Archived/Blocked are their
   // own views). Cleared when the query is too short. Cancels stale responses so
@@ -285,6 +307,7 @@ export default function SalesInboxPage() {
   const onListScroll = useCallback(
     (e: UIEvent<HTMLDivElement>) => {
       const el = e.currentTarget;
+      savedInboxScrollTop = el.scrollTop; // remember for restore-on-return
       if (nextCursor && !loadingMore && el.scrollHeight - el.scrollTop - el.clientHeight < 280) {
         void loadMore();
       }
@@ -946,6 +969,7 @@ export default function SalesInboxPage() {
 
         {/* Thread list */}
         <div
+          ref={listScrollRef}
           onScroll={onListScroll}
           style={{
             flex: 1,

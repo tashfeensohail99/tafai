@@ -48,6 +48,7 @@ import { phoneMatches } from '@/lib/phone-search';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { DISPOSITION_LABEL } from '@/lib/whatsapp';
 import { Modal } from '@/components/whatsapp/Modal';
+import { AddFollowUpModal } from '@/components/whatsapp/AddFollowUpModal';
 
 /** Tone for the WhatsApp-CRM disposition chip — positive outcomes green,
  *  at-risk amber, dead-ends red/neutral. Mirrors the inbox colours. */
@@ -270,6 +271,9 @@ export function SalesLeadsPage() {
   const [query, setQuery] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [df, setDf] = useState<DetailFilters>(EMPTY_FILTERS);
+  // Add-follow-up popup opened straight from a lead card — no navigation, so
+  // the rep never loses their scroll position in the list.
+  const [followUpTarget, setFollowUpTarget] = useState<Lead | null>(null);
   const activeFilterCount = Object.values(df).filter(Boolean).length;
   const scrollRestored = useRef(false);
 
@@ -385,6 +389,13 @@ export function SalesLeadsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <AddFollowUpModal
+        open={followUpTarget != null}
+        onClose={() => setFollowUpTarget(null)}
+        leadId={followUpTarget?.id ?? null}
+        defaultAssigneeId={null}
+        onCreated={() => setFollowUpTarget(null)}
+      />
       <PageHeader
         eyebrow="Assigned queue"
         title={<>Every lead with a name, a stage, and a next move.</>}
@@ -591,7 +602,7 @@ export function SalesLeadsPage() {
           }}
         >
           {filtered.map((lead) => (
-            <LeadCard key={lead.id} lead={lead} />
+            <LeadCard key={lead.id} lead={lead} onAddFollowUp={setFollowUpTarget} />
           ))}
         </section>
       )}
@@ -640,7 +651,7 @@ function FilterSelect({
   );
 }
 
-function LeadCard({ lead }: { lead: Lead }) {
+function LeadCard({ lead, onAddFollowUp }: { lead: Lead; onAddFollowUp: (lead: Lead) => void }) {
   const assignedLabel =
     lead.assignmentType === 'ADMIN'
       ? `Admin · ${lead.assignedBy ?? 'Unassigned'}`
@@ -841,6 +852,39 @@ function LeadCard({ lead }: { lead: Lead }) {
             </div>
           ) : null}
         </div>
+        {/* Add follow-up without leaving the list — opens the popup in place so
+            the rep keeps their scroll. A <span role=button> (not <button>) since
+            this sits inside the card's <Link> (a button there is invalid HTML). */}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAddFollowUp(lead); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              e.stopPropagation();
+              onAddFollowUp(lead);
+            }
+          }}
+          style={{
+            marginTop: '10px',
+            width: '100%',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+            padding: '9px 12px',
+            borderRadius: 'var(--sos-radius-sm)',
+            border: '1px solid var(--sos-brand-primary-border)',
+            background: 'transparent',
+            color: 'var(--sos-brand-primary-strong)',
+            fontSize: '12.5px',
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          <CalendarClock size={14} /> Add follow-up
+        </span>
       </GlassCard>
     </Link>
   );

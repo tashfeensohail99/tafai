@@ -51,6 +51,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import { AddFollowUpModal } from '@/components/whatsapp/AddFollowUpModal';
 import {
   type Lead,
   type Appointment,
@@ -541,7 +542,11 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
       ) : null}
 
       {tab === 'FOLLOWUPS' ? (
-        <FollowUpsTab leadFollowUps={leadFollowUps} />
+        <FollowUpsTab
+          leadFollowUps={leadFollowUps}
+          leadId={leadId}
+          onCreated={() => fetchFollowUps(leadId).then(setLeadFollowUps).catch(() => {})}
+        />
       ) : null}
 
       {tab === 'APPOINTMENTS' ? (
@@ -1476,9 +1481,14 @@ function StagePill({
 
 function FollowUpsTab({
   leadFollowUps,
+  leadId,
+  onCreated,
 }: {
   leadFollowUps: FollowUp[];
+  leadId: string;
+  onCreated: () => void;
 }) {
+  const [addOpen, setAddOpen] = useState(false);
   return (
     <GlassCard variant="strong" padded="lg">
       <div
@@ -1500,13 +1510,21 @@ function FollowUpsTab({
             calls, WhatsApp, and visits.
           </p>
         </div>
-        <ButtonLink
-          href={'/sales/follow-ups' as Route}
-          variant="secondary"
-          iconRight={<ArrowRight size={14} />}
-        >
-          Open queue
-        </ButtonLink>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <PrimaryButton
+            onClick={() => setAddOpen(true)}
+            iconLeft={<CalendarPlus size={14} />}
+          >
+            Add follow-up
+          </PrimaryButton>
+          <ButtonLink
+            href={'/sales/follow-ups' as Route}
+            variant="secondary"
+            iconRight={<ArrowRight size={14} />}
+          >
+            Open queue
+          </ButtonLink>
+        </div>
       </div>
 
       <div
@@ -1609,6 +1627,13 @@ function FollowUpsTab({
           ))
         )}
       </div>
+      <AddFollowUpModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        leadId={leadId}
+        defaultAssigneeId={null}
+        onCreated={() => { setAddOpen(false); onCreated(); }}
+      />
     </GlassCard>
   );
 }

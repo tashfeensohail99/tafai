@@ -86,6 +86,10 @@ export default function SalesInboxPage() {
   // "Due (N)" chip toggle — when on, the list is filtered to chats whose lead
   // has an OPEN follow-up due/overdue now (combines with the active tab).
   const [followUpDueOnly, setFollowUpDueOnly] = useState(false);
+  // "Upcoming" chip toggle — chats whose lead has an OPEN follow-up set for
+  // LATER (dueAt in the future). Mutually exclusive with the Due toggle so the
+  // two chips read as a simple either/or.
+  const [followUpUpcomingOnly, setFollowUpUpcomingOnly] = useState(false);
   // Disposition funnel — when set, the list is scoped to chats whose lead
   // carries this sales disposition (stacks with the active tab). Mirrors the
   // mobile inbox's disposition filter chip.
@@ -157,7 +161,7 @@ export default function SalesInboxPage() {
   useEffect(() => {
     pagesRef.current = 1;
     setNextCursor(null);
-  }, [filter, debouncedSearch, followUpDueOnly, dispositionFilter]);
+  }, [filter, debouncedSearch, followUpDueOnly, followUpUpcomingOnly, dispositionFilter]);
 
   // Server-side filter per tab. Open = "a human has replied" (contacted);
   // Uncontacted = "no human has ever replied"; All = no filter. The "Due (N)"
@@ -177,11 +181,15 @@ export default function SalesInboxPage() {
               : filter === 'BLOCKED'
                 ? { blocked: true as const }
                 : { contacted: true as const };
-      const withDue = followUpDueOnly ? { ...base, followUpDue: true as const } : base;
+      const withDue = followUpDueOnly
+        ? { ...base, followUpDue: true as const }
+        : followUpUpcomingOnly
+          ? { ...base, followUpUpcoming: true as const }
+          : base;
       // Disposition stacks (AND) on top of whichever tab is active.
       return dispositionFilter ? { ...withDue, disposition: dispositionFilter } : withDue;
     },
-    [filter, followUpDueOnly, dispositionFilter],
+    [filter, followUpDueOnly, followUpUpcomingOnly, dispositionFilter],
   );
 
   // Fetch just the tab counts without reloading the thread list.
@@ -558,7 +566,7 @@ export default function SalesInboxPage() {
     if (!stats) return null;
     // While the "Due follow-ups" overlay is on, the list is a filtered subset
     // that doesn't match any tab total — hide the "of M" so it's not misleading.
-    if (followUpDueOnly) return null;
+    if (followUpDueOnly || followUpUpcomingOnly) return null;
     switch (filter) {
       case 'ALL': return stats.total - stats.uncontacted; // engaged only
       case 'UNREAD': return stats.unreadEngaged;
@@ -567,7 +575,7 @@ export default function SalesInboxPage() {
       case 'BLOCKED': return stats.blocked;
       default: return null;
     }
-  }, [stats, filter, followUpDueOnly]);
+  }, [stats, filter, followUpDueOnly, followUpUpcomingOnly]);
 
   // Live count for each chip badge — real DB totals from stats, with a
   // page-based fallback while stats are still loading.
@@ -824,7 +832,7 @@ export default function SalesInboxPage() {
             OPEN follow-up due/overdue right now; tap to pull up exactly those
             (layered on top of the active tab). Only rendered when there's
             something due, or while the filter is active so it can be cleared. */}
-        {(followUpDueOnly || (stats?.followUpDue ?? 0) > 0) ? (
+        {(followUpDueOnly || followUpUpcomingOnly || (stats?.followUpDue ?? 0) > 0 || (stats?.followUpUpcoming ?? 0) > 0) ? (
           <div
             style={{
               display: 'flex',
@@ -838,7 +846,7 @@ export default function SalesInboxPage() {
           >
             <button
               type="button"
-              onClick={() => setFollowUpDueOnly((v) => !v)}
+              onClick={() => { setFollowUpDueOnly((v) => !v); setFollowUpUpcomingOnly(false); }}
               title="Show only chats with a follow-up due or overdue"
               style={{
                 display: 'inline-flex',
@@ -856,9 +864,33 @@ export default function SalesInboxPage() {
             >
               ⏰ Due follow-ups{stats ? ` (${stats.followUpDue})` : ''}
             </button>
+            <button
+              type="button"
+              onClick={() => { setFollowUpUpcomingOnly((v) => !v); setFollowUpDueOnly(false); }}
+              title="Show only chats with a follow-up scheduled for later"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 10px',
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: `1px solid ${followUpUpcomingOnly ? 'var(--wa-accent)' : 'var(--sos-border-subtle)'}`,
+                background: followUpUpcomingOnly ? 'var(--wa-accent)' : 'transparent',
+                color: followUpUpcomingOnly ? '#fff' : 'var(--sos-text-secondary)',
+              }}
+            >
+              🗓️ Upcoming{stats ? ` (${stats.followUpUpcoming})` : ''}
+            </button>
             {followUpDueOnly ? (
               <span style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>
                 showing chats with a follow-up due — tap to clear
+              </span>
+            ) : followUpUpcomingOnly ? (
+              <span style={{ fontSize: 11.5, color: 'var(--sos-text-muted)' }}>
+                showing chats with an upcoming follow-up — tap to clear
               </span>
             ) : null}
           </div>

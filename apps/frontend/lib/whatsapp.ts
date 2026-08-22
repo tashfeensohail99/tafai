@@ -289,6 +289,8 @@ export function listThreads(opts: {
   unread?: boolean;
   /** "Due (N)" chip — only chats whose lead has an OPEN follow-up due/overdue now. */
   followUpDue?: boolean;
+  /** "Upcoming (N)" chip — only chats whose lead has an OPEN follow-up set for later. */
+  followUpUpcoming?: boolean;
   /** "Archived" tab — show ONLY archived threads (status=ARCHIVED). When this
    *  and `blocked` are both unset, the default list EXCLUDES archived/blocked. */
   archived?: boolean;
@@ -425,6 +427,7 @@ export interface ThreadStats {
   uncontacted: number;
   /** "Due (N)" — chats whose lead has an OPEN follow-up due/overdue right now. */
   followUpDue: number;
+  followUpUpcoming: number;
   /** "Archived" — threads whose status is ARCHIVED. */
   archived: number;
   /** "Blocked" — threads whose contact (Lead/Client) is blocked. */

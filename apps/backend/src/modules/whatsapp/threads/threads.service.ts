@@ -47,6 +47,11 @@ interface ThreadListOptions {
    * regardless of the active tab.
    */
   followUpDue?: boolean;
+  /**
+   * "Upcoming (N)" chip — chats whose lead has an OPEN follow-up scheduled for
+   * LATER (dueAt in the future). Forward-looking complement of followUpDue.
+   */
+  followUpUpcoming?: boolean;
   /** Admin filter: only threads whose lead is assigned to this employee. */
   employeeId?: string;
   /**
@@ -320,6 +325,14 @@ export class WhatsAppThreadsService {
       // due or overdue right now. Live relation query — always accurate, no
       // denormalized field to keep in sync.
       and.push({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: new Date() } } } } } });
+    }
+
+    if (opts.followUpUpcoming) {
+      // "Upcoming (N)" chip: chats whose lead has an OPEN CRM follow-up scheduled
+      // for LATER (dueAt in the future). Mirrors followUpDue (dueAt <= now) so a
+      // rep can see follow-ups they've set BEFORE those come due — the gap that
+      // made scheduled follow-ups feel like they vanished from the inbox.
+      and.push({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { gt: new Date() } } } } } });
     }
 
     // Archived / blocked are OPT-IN views. The DEFAULT list (neither flag set)
@@ -752,6 +765,8 @@ export class WhatsAppThreadsService {
     uncontacted: number;
     /** Chats whose lead has an OPEN follow-up due/overdue now — powers "Due (N)". */
     followUpDue: number;
+    /** Chats whose lead has an OPEN follow-up set for later — powers "Upcoming (N)". */
+    followUpUpcoming: number;
     /** Threads parked as ARCHIVED — powers the "Archived" chip. */
     archived: number;
     /** Threads whose contact (lead OR client) is blocked — powers the "Blocked" chip. */
@@ -764,7 +779,7 @@ export class WhatsAppThreadsService {
     const empty = {
       total: 0, active: 0, resolved: 0, unassigned: 0, slaBreached: 0, unread: 0,
       unreadEngaged: 0,
-      awaitingReply: 0, uncontacted: 0, followUpDue: 0, archived: 0, blocked: 0,
+      awaitingReply: 0, uncontacted: 0, followUpDue: 0, followUpUpcoming: 0, archived: 0, blocked: 0,
       approaching: 0, overdue: 0,
       slaScore: null as number | null, slaScoreScope: null as 'self' | 'org' | null,
     };
@@ -935,13 +950,19 @@ export class WhatsAppThreadsService {
     // Archived/blocked chips ride alongside — both are cheap indexed counts
     // (whatsapp.threads.status; crm.{leads,clients}.blockedAt) scoped to the
     // caller via the same `base` filter the other counts use.
-    const [followUpDue, archived, blocked, unreadEngaged] = await Promise.all([
+    const [followUpDue, followUpUpcoming, archived, blocked, unreadEngaged] = await Promise.all([
       // Use andLive (not and) so the "Due (N)" chip excludes ARCHIVED / blocked /
       // JUNK-DEAD threads — exactly as the Due LIST does (list()'s default
       // branch). Otherwise a JUNK/DEAD lead with an open due follow-up would be
       // counted by the badge but hidden from the list (count ≠ rows).
       this.prisma.whatsAppThread.count({
         where: andLive({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
+      }),
+      // "Upcoming (N)" — OPEN follow-up scheduled for later (dueAt in the future).
+      // andLive so the badge count matches the Upcoming LIST (active, non-blocked,
+      // non-JUNK/DEAD) exactly, just like the Due count above.
+      this.prisma.whatsAppThread.count({
+        where: andLive({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { gt: now } } } } } }),
       }),
       this.prisma.whatsAppThread.count({ where: and({ status: 'ARCHIVED' }) }),
       this.prisma.whatsAppThread.count({
@@ -962,7 +983,7 @@ export class WhatsAppThreadsService {
 
     return {
       total, active, resolved, unassigned, slaBreached, unread, unreadEngaged,
-      awaitingReply, uncontacted, followUpDue, archived, blocked,
+      awaitingReply, uncontacted, followUpDue, followUpUpcoming, archived, blocked,
       approaching, overdue, slaScore, slaScoreScope,
     };
   }

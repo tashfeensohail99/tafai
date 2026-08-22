@@ -117,6 +117,15 @@ class ListThreadsDto {
   followUpDue?: boolean;
 
   /**
+   * "Upcoming (N)" chip: only threads whose lead has an OPEN CRM follow-up
+   * scheduled for later (dueAt in the future). Validate as a real boolean.
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  followUpUpcoming?: boolean;
+
+  /**
    * "Archived" view: show ONLY archived threads (status=ARCHIVED). When NEITHER
    * archived nor blocked is set the default list EXCLUDES both. Validated as a
    * real boolean (see the @Transform note above — runs before validation).

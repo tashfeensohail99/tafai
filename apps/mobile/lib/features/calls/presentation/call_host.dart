@@ -61,6 +61,16 @@ class _CallHostState extends ConsumerState<CallHost>
     if (state == AppLifecycleState.resumed) {
       ref.read(realtimeServiceProvider).ensureConnected();
     }
+    // A live call's periodic 15s heartbeat is suspended by the OS while the
+    // screen is off (proximity/idle) during a call. Poke one at the pause AND
+    // resume boundaries so the backend stale-call sweeper doesn't terminate a
+    // call that merely went quiet for a screen-off stretch — the "turn the
+    // screen back on and the call has dropped" bug.
+    if (state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      ref.read(callControllerProvider.notifier).pokeHeartbeat();
+    }
   }
 
   /// Fresh access token for the socket handshake. Pings /auth/me first so the

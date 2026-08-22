@@ -1319,6 +1319,22 @@ class CallController extends StateNotifier<CallState> {
   }
 
   /// Force a hard reset (e.g. on logout).
+  /// Fire an out-of-band heartbeat NOW if a call is live. Called from CallHost
+  /// on app pause/resume: power-saving OEMs suspend the periodic 15s Dart
+  /// heartbeat timer while the screen is off (proximity/idle) during a call, so
+  /// without this the backend stale-call sweeper can terminate a perfectly live
+  /// call after the screen has been dark a while — the "turn the screen back on
+  /// and the call has dropped" bug. Cheap + fire-and-forget; the guard mirrors
+  /// the periodic timer so it never pings a stale/ended call.
+  void pokeHeartbeat() {
+    final cid = state.callId;
+    if (cid != null &&
+        (state.phase == CallPhase.inCall ||
+            state.phase == CallPhase.reconnecting)) {
+      unawaited(_api.heartbeat(cid));
+    }
+  }
+
   void reset() {
     _teardown(reason: '', terminal: true);
     _endReset?.cancel();

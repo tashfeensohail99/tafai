@@ -7,6 +7,7 @@ class ThreadStats {
   final int uncontacted;
   final int awaitingReply;
   final int followUpDue;
+  final int followUpUpcoming;
   final int unread;
   /// Funnel "Unread" = unread AND a human has replied (engaged only). A
   /// never-contacted lead stays in Uncontacted, not here.
@@ -20,6 +21,7 @@ class ThreadStats {
     required this.uncontacted,
     required this.awaitingReply,
     required this.followUpDue,
+    this.followUpUpcoming = 0,
     required this.unread,
     required this.resolved,
     this.unreadEngaged = 0,
@@ -46,6 +48,7 @@ class ThreadStats {
         uncontacted: asInt(j['uncontacted']),
         awaitingReply: asInt(j['awaitingReply']),
         followUpDue: asInt(j['followUpDue']),
+        followUpUpcoming: asInt(j['followUpUpcoming']),
         unread: asInt(j['unread']),
         unreadEngaged: asInt(j['unreadEngaged']),
         resolved: asInt(j['resolved']),

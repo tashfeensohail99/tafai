@@ -15,6 +15,10 @@ class WaFilter {
   final WaTab tab;
   final String search;
   final bool followUpDue;
+  /// "Upcoming" chip — chats whose lead has an OPEN follow-up set for LATER
+  /// (dueAt in the future). Forward-looking complement of [followUpDue];
+  /// mutually exclusive with it in the UI.
+  final bool followUpUpcoming;
   /// Sales-disposition funnel. Null = no disposition filter (any). When set,
   /// the list is narrowed to chats whose lead carries this disposition, on TOP
   /// of the active tab. `clearDisposition:true` on copyWith resets it to null.
@@ -23,6 +27,7 @@ class WaFilter {
     this.tab = WaTab.all,
     this.search = '',
     this.followUpDue = false,
+    this.followUpUpcoming = false,
     this.disposition,
   });
 
@@ -30,6 +35,7 @@ class WaFilter {
     WaTab? tab,
     String? search,
     bool? followUpDue,
+    bool? followUpUpcoming,
     String? disposition,
     bool clearDisposition = false,
   }) =>
@@ -37,6 +43,7 @@ class WaFilter {
         tab: tab ?? this.tab,
         search: search ?? this.search,
         followUpDue: followUpDue ?? this.followUpDue,
+        followUpUpcoming: followUpUpcoming ?? this.followUpUpcoming,
         disposition: clearDisposition ? null : (disposition ?? this.disposition),
       );
 
@@ -46,10 +53,12 @@ class WaFilter {
       other.tab == tab &&
       other.search == search &&
       other.followUpDue == followUpDue &&
+      other.followUpUpcoming == followUpUpcoming &&
       other.disposition == disposition;
 
   @override
-  int get hashCode => Object.hash(tab, search, followUpDue, disposition);
+  int get hashCode =>
+      Object.hash(tab, search, followUpDue, followUpUpcoming, disposition);
 }
 
 final inboxFilterProvider = StateProvider<WaFilter>((_) => const WaFilter());
@@ -141,6 +150,13 @@ class ThreadsController extends StateNotifier<ThreadsState> {
       ? true
       : null;
 
+  /// The Upcoming chip, like Due, only applies to the live lists.
+  bool? get _upcomingFlag => (_filter.followUpUpcoming &&
+          _filter.tab != WaTab.archived &&
+          _filter.tab != WaTab.blocked)
+      ? true
+      : null;
+
   Future<void> load() async {
     state = const ThreadsState(loading: true);
     try {
@@ -152,6 +168,7 @@ class ThreadsController extends StateNotifier<ThreadsState> {
         archived: f.archived,
         blocked: f.blocked,
         followUpDue: _dueFlag,
+        followUpUpcoming: _upcomingFlag,
         disposition: _filter.disposition,
         search: _filter.search,
       );
@@ -182,6 +199,7 @@ class ThreadsController extends StateNotifier<ThreadsState> {
         archived: f.archived,
         blocked: f.blocked,
         followUpDue: _dueFlag,
+        followUpUpcoming: _upcomingFlag,
         disposition: _filter.disposition,
         search: _filter.search,
         cursor: state.nextCursor,

@@ -368,7 +368,9 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
       >
         <GhostButton
           iconLeft={<ArrowLeft size={15} />}
-          onClick={() => router.push('/sales/leads')}
+          // scroll:false so Next doesn't jump the leads list to the top on this
+          // forward navigation — the list restores the rep's saved scroll itself.
+          onClick={() => router.push('/sales/leads', { scroll: false })}
         >
           Back to Assigned Leads
         </GhostButton>

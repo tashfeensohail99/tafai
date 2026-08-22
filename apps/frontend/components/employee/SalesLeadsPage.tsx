@@ -649,6 +649,9 @@ function LeadCard({ lead }: { lead: Lead }) {
   return (
     <Link
       href={`/sales/leads/${lead.id}` as Route}
+      // Capture the exact scroll offset at click time so returning to the list
+      // restores it (the continuous listener can miss it if navigation scrolls).
+      onClick={() => { savedLeadsScrollY = window.scrollY; }}
       style={{ textDecoration: 'none', display: 'block' }}
     >
       <GlassCard variant="default" hover padded="md">

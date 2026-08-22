@@ -220,6 +220,34 @@ class ThreadsController extends StateNotifier<ThreadsState> {
   }
 
   Future<void> refresh() => load();
+
+  /// Reload from the server WITHOUT clearing the list or flashing the loader, so
+  /// the ListView — and the rep's scroll position — stays put. Used on return
+  /// from a thread: a reply may have changed the row, but the list must not
+  /// blank out and jump back to the top (the loader replaces the whole list).
+  Future<void> quietReload() async {
+    try {
+      final f = _tabFlags;
+      final page = await _repo.listThreads(
+        contacted: f.contacted,
+        uncontacted: f.uncontacted,
+        unread: f.unread,
+        archived: f.archived,
+        blocked: f.blocked,
+        followUpDue: _dueFlag,
+        followUpUpcoming: _upcomingFlag,
+        disposition: _filter.disposition,
+        search: _filter.search,
+      );
+      state = ThreadsState(
+        items: page.items,
+        nextCursor: page.nextCursor,
+        loading: false,
+      );
+    } catch (_) {
+      // Keep the current list on failure — never blank the inbox on this reload.
+    }
+  }
 }
 
 final threadsControllerProvider = StateNotifierProvider.autoDispose

@@ -174,7 +174,10 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
         .push(MaterialPageRoute(builder: (_) => ThreadScreen(thread: t)));
     if (!mounted) return;
     final filter = ref.read(inboxFilterProvider);
-    ref.read(threadsControllerProvider(filter).notifier).refresh();
+    // quietReload (not refresh) so the list is NOT cleared to a loader on the
+    // way back — that blanked the list and threw the rep to the top. This keeps
+    // the ListView mounted, so their scroll position survives.
+    ref.read(threadsControllerProvider(filter).notifier).quietReload();
     ref.invalidate(threadStatsProvider);
   }
 

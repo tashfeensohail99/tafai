@@ -1,7 +1,7 @@
 'use client';
 // Sales OS — Assigned Leads (premium dark glass redesign).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
@@ -252,22 +252,65 @@ function StatBox({
   );
 }
 
+// Returning from a lead detail should land the rep exactly where they were.
+// This page scrolls on the WINDOW and refetches on mount, so without help the
+// list remounts short (loading spinner) and the browser lands at the top. We
+// keep the last list + the last window scroll offset module-scoped (survives the
+// remount) so the list renders instantly on Back and we restore the offset.
+let cachedLeads: Lead[] | null = null;
+let savedLeadsScrollY = 0;
+
 export function SalesLeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [leads, setLeads] = useState<Lead[]>(cachedLeads ?? []);
+  // No loading spinner when we already have a cached list — render it instantly
+  // so the page has its full height for the scroll restore to land into.
+  const [loading, setLoading] = useState(cachedLeads == null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<FilterKey>('ALL');
   const [query, setQuery] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [df, setDf] = useState<DetailFilters>(EMPTY_FILTERS);
   const activeFilterCount = Object.values(df).filter(Boolean).length;
+  const scrollRestored = useRef(false);
 
   useEffect(() => {
+    let alive = true;
+    // Always refetch for freshness; when we have a cache we do it in the
+    // background (loading already false) so the list never blanks on return.
     fetchLeads()
-      .then(setLeads)
-      .catch((e) => setError(e?.message ?? 'Failed to load leads'))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!alive) return;
+        cachedLeads = data;
+        setLeads(data);
+      })
+      .catch((e) => {
+        if (alive && cachedLeads == null) setError(e?.message ?? 'Failed to load leads');
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
+
+  // Continuously remember the window scroll offset so we can put the rep back
+  // exactly where they were after they open a lead and press Back.
+  useEffect(() => {
+    const onScroll = () => {
+      savedLeadsScrollY = window.scrollY;
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Restore the saved offset once the rows are painted (page tall enough to
+  // scroll). Runs once per mount, before paint — no visible jump.
+  useLayoutEffect(() => {
+    if (scrollRestored.current || leads.length === 0) return;
+    scrollRestored.current = true;
+    if (savedLeadsScrollY > 0) window.scrollTo(0, savedLeadsScrollY);
+  }, [leads.length]);
 
   // Distinct country / service values present in the data — drive the
   // dropdowns so they only ever show options that match real leads.
@@ -335,7 +378,7 @@ export function SalesLeadsPage() {
       <EmptyState
         title="Could not load leads"
         description={error}
-        action={<PrimaryButton onClick={() => { setError(null); setLoading(true); fetchLeads().then(setLeads).catch((e) => setError(e?.message ?? 'Failed')).finally(() => setLoading(false)); }}>Retry</PrimaryButton>}
+        action={<PrimaryButton onClick={() => { setError(null); setLoading(true); fetchLeads().then((d) => { cachedLeads = d; setLeads(d); }).catch((e) => setError(e?.message ?? 'Failed')).finally(() => setLoading(false)); }}>Retry</PrimaryButton>}
       />
     );
   }

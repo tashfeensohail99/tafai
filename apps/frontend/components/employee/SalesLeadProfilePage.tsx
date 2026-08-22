@@ -21,6 +21,7 @@ import {
   CalendarPlus,
   Check,
   CheckCircle2,
+  CircleAlert,
   ClipboardList,
   Clock4,
   Copy,
@@ -332,6 +333,7 @@ export function SalesLeadProfilePage({ leadId }: { leadId: string }) {
   }
 
   function handleReset() {
+    if (!lead) return;
     setStage(lead.stage);
     setPriority(lead.priority);
     setNextAction(lead.nextAction);
@@ -1473,7 +1475,7 @@ function StagePill({
 function FollowUpsTab({
   leadFollowUps,
 }: {
-  leadFollowUps: typeof MOCK_FOLLOWUPS;
+  leadFollowUps: FollowUp[];
 }) {
   return (
     <GlassCard variant="strong" padded="lg">
@@ -1612,7 +1614,7 @@ function FollowUpsTab({
 function AppointmentsTab({
   leadAppointments,
 }: {
-  leadAppointments: typeof MOCK_APPOINTMENTS;
+  leadAppointments: Appointment[];
 }) {
   return (
     <GlassCard variant="strong" padded="lg">

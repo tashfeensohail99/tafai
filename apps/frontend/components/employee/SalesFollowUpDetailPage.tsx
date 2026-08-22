@@ -244,6 +244,7 @@ export function SalesFollowUpDetailPage({ followUpId }: { followUpId: string }) 
   }
 
   function handleReset() {
+    if (!followUp) return;
     setStatus(followUp.status);
     setSla(followUp.slaStatus);
     setDueAt(new Date(followUp.dueAt).toISOString().slice(0, 16));

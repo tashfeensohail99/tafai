@@ -44,6 +44,13 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Forgot-password: an inline panel that emails a reset LINK (never the
+  // password itself — passwords are hashed and can't be re-sent). Backend:
+  // POST /auth/password/reset-request → creates a token → email.sendPasswordReset.
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotState, setForgotState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [forgotMsg, setForgotMsg] = useState('');
 
   function pickRole(next: Role) {
     setRole(next);
@@ -61,6 +68,39 @@ export default function LoginPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
       setLoading(false);
+    }
+  }
+
+  async function handleForgot() {
+    const target = forgotEmail.trim();
+    if (!target.includes('@')) {
+      setForgotState('error');
+      setForgotMsg('Enter your work email address — the reset link is emailed to you.');
+      return;
+    }
+    setForgotState('sending');
+    setForgotMsg('');
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+      const res = await fetch(`${apiBase}/auth/password/reset-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: target }),
+      });
+      if (res.ok) {
+        // Anti-enumeration: the endpoint always succeeds whether or not the
+        // email is registered, so we show the same message either way.
+        setForgotState('sent');
+        setForgotMsg(
+          `If ${target} is a registered account, a password-reset link is on its way. Check your inbox (and spam).`,
+        );
+      } else {
+        setForgotState('error');
+        setForgotMsg('Please double-check the email address and try again.');
+      }
+    } catch {
+      setForgotState('error');
+      setForgotMsg('Could not reach the server. Please try again in a moment.');
     }
   }
 
@@ -300,6 +340,12 @@ export default function LoginPage() {
                 </label>
                 <button
                   type="button"
+                  onClick={() => {
+                    setForgotEmail(email.includes('@') ? email.trim() : '');
+                    setForgotState('idle');
+                    setForgotMsg('');
+                    setForgotOpen(true);
+                  }}
                   style={{
                     padding: '2px 4px',
                     fontSize: 12,
@@ -345,6 +391,81 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
+
+            {forgotOpen ? (
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 12,
+                  border: '1px solid var(--sos-border-subtle)',
+                  background: 'var(--sos-surface-1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--sos-text-primary)' }}>
+                  Reset your password
+                </div>
+                {forgotState === 'sent' ? (
+                  <>
+                    <p style={{ fontSize: 12.5, color: 'var(--sos-text-muted)', margin: 0, lineHeight: 1.5 }}>
+                      {forgotMsg}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setForgotOpen(false)}
+                      className="sos-btn"
+                      style={{ alignSelf: 'flex-start', padding: '7px 12px', fontSize: 12.5, background: 'transparent', border: '1px solid var(--sos-border-subtle)', color: 'var(--sos-text-muted)' }}
+                    >
+                      Back to sign in
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: 12, color: 'var(--sos-text-faint)', margin: 0 }}>
+                      We&apos;ll email you a secure link to set a new password.
+                    </p>
+                    <input
+                      type="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      className="sos-input"
+                      placeholder="you@tashfeen.com"
+                      autoComplete="email"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleForgot();
+                        }
+                      }}
+                    />
+                    {forgotState === 'error' && forgotMsg ? (
+                      <p style={{ fontSize: 12, color: 'var(--sos-status-danger)', margin: 0 }}>{forgotMsg}</p>
+                    ) : null}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => void handleForgot()}
+                        disabled={forgotState === 'sending'}
+                        className="sos-btn sos-btn--primary"
+                        style={{ flex: 1, padding: '9px 14px', fontSize: 13 }}
+                      >
+                        {forgotState === 'sending' ? 'Sending…' : 'Send reset link'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForgotOpen(false)}
+                        className="sos-btn"
+                        style={{ padding: '9px 14px', fontSize: 13, background: 'transparent', border: '1px solid var(--sos-border-subtle)', color: 'var(--sos-text-muted)' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : null}
 
             <label className="mt-1 flex items-center gap-2 text-[13px]" style={{ color: 'var(--sos-text-muted)' }}>
               <input type="checkbox" className="h-3.5 w-3.5 accent-indigo-600" />

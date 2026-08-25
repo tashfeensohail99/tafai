@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
-import { IsBooleanString, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsBooleanString, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
@@ -16,6 +16,16 @@ class WindowQuery {
   @Min(1)
   @Max(365)
   days?: number;
+
+  // Explicit date window (YYYY-MM-DD). When BOTH are present they override
+  // `days`; a single day is from === to. Trailing-days is used otherwise.
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD' })
+  from?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'to must be YYYY-MM-DD' })
+  to?: string;
 }
 
 class ListQuery extends WindowQuery {
@@ -66,7 +76,7 @@ export class MarketingController {
   @Get('leads')
   @RequirePermissions('marketing.view')
   leadsByAd(@Query() q: ListQuery) {
-    return this.svc.getLeadsByAd(q.days, q.includeIdle === 'true');
+    return this.svc.getLeadsByAd(q.days, q.includeIdle === 'true', q.from, q.to);
   }
 
   /** Responses grouped by program (C11 / JR / Visit Visa / …), classified from
@@ -85,7 +95,7 @@ export class MarketingController {
   @Get('leads-by-rep')
   @RequirePermissions('marketing.view')
   leadsByRep(@Query() q: WindowQuery) {
-    return this.svc.getLeadsByRep(q.days);
+    return this.svc.getLeadsByRep(q.days, q.from, q.to);
   }
 
   // Phase 1F — Alerts + Health, both read-only, both marketing.view.

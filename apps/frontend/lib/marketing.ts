@@ -114,7 +114,39 @@ export interface MarketingCampaignsResponse {
 
 export interface ListOpts {
   days?: number;
+  from?: string; // YYYY-MM-DD — with `to`, an explicit window overriding days
+  to?: string;
   includeIdle?: boolean;
+}
+
+/**
+ * The window a Marketing page is currently showing: either a trailing-days
+ * quick pick (Today / 7d / 30d / 90d) or an explicit custom date range.
+ * Shared by the RangePicker and the leads pages.
+ */
+export type MarketingRange =
+  | { mode: 'days'; days: number }
+  | { mode: 'custom'; from: string; to: string };
+
+/** Flatten a range into the query params the API accepts. */
+export function rangeParams(range: MarketingRange): { days?: number; from?: string; to?: string } {
+  return range.mode === 'custom' ? { from: range.from, to: range.to } : { days: range.days };
+}
+
+/** Human label for headers/copy, e.g. "today", "last 30 days", "1 Aug → 15 Aug". */
+export function describeRange(range: MarketingRange): string {
+  if (range.mode === 'custom') {
+    return range.from === range.to ? fmtDay(range.from) : `${fmtDay(range.from)} → ${fmtDay(range.to)}`;
+  }
+  if (range.days === 1) return 'today';
+  return `last ${range.days} days`;
+}
+
+function fmtDay(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d) return ymd;
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${d} ${MONTHS[m - 1]} ${y}`;
 }
 
 export function getMarketingOverview(days?: number): Promise<MarketingOverview> {
@@ -151,8 +183,10 @@ export interface MarketingLeadsByRepResponse {
 }
 
 /** Per-rep count of leads RECEIVED in the window. Counts only — no money. */
-export function getMarketingLeadsByRep(days?: number): Promise<MarketingLeadsByRepResponse> {
-  const qs = buildQuery({ days });
+export function getMarketingLeadsByRep(
+  opts: { days?: number; from?: string; to?: string } = {},
+): Promise<MarketingLeadsByRepResponse> {
+  const qs = buildQuery({ days: opts.days, from: opts.from, to: opts.to });
   return apiFetch<MarketingLeadsByRepResponse>(`/admin/marketing/leads-by-rep${qs}`);
 }
 
@@ -270,7 +304,12 @@ export interface MarketingLeadsByAdResponse {
 }
 
 export function getMarketingLeadsByAd(opts: ListOpts = {}): Promise<MarketingLeadsByAdResponse> {
-  const qs = buildQuery({ days: opts.days, includeIdle: opts.includeIdle ? 'true' : undefined });
+  const qs = buildQuery({
+    days: opts.days,
+    from: opts.from,
+    to: opts.to,
+    includeIdle: opts.includeIdle ? 'true' : undefined,
+  });
   return apiFetch<MarketingLeadsByAdResponse>(`/admin/marketing/leads${qs}`);
 }
 

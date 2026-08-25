@@ -3,8 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Info, Search } from 'lucide-react';
 import { GlassCard, PageHeader } from '@/components/sales-v2/ui';
-import { WindowPicker } from '@/components/marketing/WindowPicker';
-import { fmtInt, fmtPct, getMarketingLeadsByRep, type MarketingLeadsByRepResponse } from '@/lib/marketing';
+import { RangePicker } from '@/components/marketing/RangePicker';
+import {
+  describeRange,
+  fmtInt,
+  getMarketingLeadsByRep,
+  rangeParams,
+  type MarketingLeadsByRepResponse,
+  type MarketingRange,
+} from '@/lib/marketing';
 
 /**
  * Leads received per rep — the per-employee lead-volume monitor the marketing
@@ -12,7 +19,7 @@ import { fmtInt, fmtPct, getMarketingLeadsByRep, type MarketingLeadsByRepRespons
  * revenue, no client/agreement data. Server enforces the same via marketing.view.
  */
 export default function MarketingLeadsByRepPage() {
-  const [days, setDays] = useState(30);
+  const [range, setRange] = useState<MarketingRange>({ mode: 'days', days: 30 });
   const [data, setData] = useState<MarketingLeadsByRepResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +29,7 @@ export default function MarketingLeadsByRepPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getMarketingLeadsByRep(days)
+    getMarketingLeadsByRep(rangeParams(range))
       .then((res) => {
         if (!cancelled) setData(res);
       })
@@ -35,7 +42,7 @@ export default function MarketingLeadsByRepPage() {
     return () => {
       cancelled = true;
     };
-  }, [days]);
+  }, [range]);
 
   const reps = useMemo(() => {
     const all = data?.reps ?? [];
@@ -63,7 +70,7 @@ export default function MarketingLeadsByRepPage() {
       <PageHeader
         eyebrow="Marketing"
         title="Leads by rep"
-        description={`How many leads each rep received in the last ${days} days, and how many came from our Meta ads.`}
+        description={`How many leads each rep received (${describeRange(range)}), and how many came from our Meta ads.`}
       />
 
       <GlassCard variant="default">
@@ -106,7 +113,7 @@ export default function MarketingLeadsByRepPage() {
             }}
           />
         </div>
-        <WindowPicker value={days} onChange={setDays} />
+        <RangePicker value={range} onChange={setRange} />
       </div>
 
       {error ? (

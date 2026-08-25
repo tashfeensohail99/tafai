@@ -55,15 +55,56 @@ export class MarketingService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Normalize a `days` argument into an inclusive [from, to] date window. */
-  private resolveWindow(daysArg: number | undefined): { from: Date; to: Date; toEnd: Date; days: number } {
-    const days = Math.max(1, Math.min(365, daysArg ?? 30));
+  /**
+   * Normalize the requested window into an inclusive [from, to] date range.
+   *
+   * Two modes:
+   *  - trailing-days (default): `daysArg` → the last N days ending today.
+   *  - explicit range: pass BOTH `fromArg` and `toArg` as `YYYY-MM-DD` and the
+   *    window is exactly that span (a single day if from === to). Reversed
+   *    dates are swapped, a future `to` is clamped to today, and the span is
+   *    capped at 365 days so the SQL stays bounded.
+   * A lone `fromArg`/`toArg` (only one side) is ignored and we fall back to days.
+   */
+  private resolveWindow(
+    daysArg?: number,
+    fromArg?: string,
+    toArg?: string,
+  ): { from: Date; to: Date; toEnd: Date; days: number } {
+    const DAY = 24 * 60 * 60 * 1000;
     const now = new Date();
-    // Anchor "to" at end-of-today (UTC) so today's activity is included.
-    const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const from = new Date(to.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-    const toEnd = new Date(to.getTime() + 24 * 60 * 60 * 1000);
-    return { from, to, toEnd, days };
+    // Anchor at end-of-today (UTC) so today's activity is included.
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    let from = this.parseYmd(fromArg);
+    let to = this.parseYmd(toArg);
+    if (from && to) {
+      if (from.getTime() > to.getTime()) [from, to] = [to, from]; // tolerate reversed input
+      if (to.getTime() > today.getTime()) to = today; // no future
+      let span = Math.round((to.getTime() - from.getTime()) / DAY) + 1;
+      if (span > 365) {
+        from = new Date(to.getTime() - 364 * DAY);
+        span = 365;
+      }
+      const toEnd = new Date(to.getTime() + DAY);
+      return { from, to, toEnd, days: span };
+    }
+
+    const days = Math.max(1, Math.min(365, daysArg ?? 30));
+    const toDefault = today;
+    const fromDefault = new Date(toDefault.getTime() - (days - 1) * DAY);
+    const toEnd = new Date(toDefault.getTime() + DAY);
+    return { from: fromDefault, to: toDefault, toEnd, days };
+  }
+
+  /** Parse a strict `YYYY-MM-DD` string into a UTC midnight Date, or null. */
+  private parseYmd(s?: string): Date | null {
+    if (!s) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+    if (!m) return null;
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    // Reject impossible dates (e.g. 2026-02-31 rolls over) by round-tripping.
+    return Number.isNaN(d.getTime()) || this.ymd(d) !== `${m[1]}-${m[2]}-${m[3]}` ? null : d;
   }
 
   private ymd(d: Date): string {
@@ -562,8 +603,8 @@ export class MarketingService {
    * Rows with zero activity in the window are hidden unless includeIdle.
    * Ordered by revenue desc (best ROI first), then leads desc.
    */
-  async getLeadsByAd(daysArg?: number, includeIdle = false) {
-    const { from, to, toEnd, days } = this.resolveWindow(daysArg);
+  async getLeadsByAd(daysArg?: number, includeIdle = false, fromArg?: string, toArg?: string) {
+    const { from, to, toEnd, days } = this.resolveWindow(daysArg, fromArg, toArg);
     const fromStr = this.ymd(from);
     const toStr = this.ymd(to);
 
@@ -750,8 +791,8 @@ export class MarketingService {
    * see how much of each rep's intake their own campaigns drive vs everything
    * else (WhatsApp walk-ins, UAN calls, imports, …).
    */
-  async getLeadsByRep(daysArg?: number) {
-    const { from, to, toEnd, days } = this.resolveWindow(daysArg);
+  async getLeadsByRep(daysArg?: number, fromArg?: string, toArg?: string) {
+    const { from, to, toEnd, days } = this.resolveWindow(daysArg, fromArg, toArg);
 
     const [rows, unassignedRow] = await Promise.all([
       this.prisma.$queryRawUnsafe<Array<{ id: string; total: bigint; fromAds: bigint }>>(

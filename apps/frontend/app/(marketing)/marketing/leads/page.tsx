@@ -4,18 +4,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Info, Search } from 'lucide-react';
 import { GlassCard, PageHeader } from '@/components/sales-v2/ui';
 import { StatusPill } from '@/components/marketing/StatusPill';
-import { WindowPicker } from '@/components/marketing/WindowPicker';
+import { RangePicker } from '@/components/marketing/RangePicker';
 import {
+  describeRange,
   fmtInt,
   fmtPct,
   getMarketingLeadsByAd,
+  rangeParams,
   type MarketingLeadsByAdRow,
+  type MarketingRange,
 } from '@/lib/marketing';
 
 type SortKey = 'roas' | 'conversations' | 'clients' | 'convRate';
 
 export default function MarketingLeadsPage() {
-  const [days, setDays] = useState(30);
+  const [range, setRange] = useState<MarketingRange>({ mode: 'days', days: 30 });
   const [rows, setRows] = useState<MarketingLeadsByAdRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +30,7 @@ export default function MarketingLeadsPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getMarketingLeadsByAd({ days, includeIdle })
+    getMarketingLeadsByAd({ ...rangeParams(range), includeIdle })
       .then((res) => {
         if (!cancelled) setRows(res.ads);
       })
@@ -40,7 +43,7 @@ export default function MarketingLeadsPage() {
     return () => {
       cancelled = true;
     };
-  }, [days, includeIdle]);
+  }, [range, includeIdle]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -78,7 +81,7 @@ export default function MarketingLeadsPage() {
       <PageHeader
         eyebrow="Marketing"
         title="Leads by ad"
-        description={`Conversations and return on ad spend for every Meta ad in the last ${days} days. Aggregated at the ad level — no individual lead details, no absolute amounts.`}
+        description={`Conversations and return on ad spend for every Meta ad — ${describeRange(range)}. Aggregated at the ad level — no individual lead details, no absolute amounts.`}
       />
 
       {/* Aggregate-only privacy note */}
@@ -123,7 +126,7 @@ export default function MarketingLeadsPage() {
             <input type="checkbox" checked={includeIdle} onChange={(e) => setIncludeIdle(e.target.checked)} />
             Include idle
           </label>
-          <WindowPicker value={days} onChange={setDays} />
+          <RangePicker value={range} onChange={setRange} />
         </div>
       </div>
 

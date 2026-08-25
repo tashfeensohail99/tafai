@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { getAccessToken } from './auth-client';
+import { refreshTokens } from './session';
 import { getThreadListItem, type ThreadListItem } from './whatsapp';
 
 /**
@@ -37,7 +38,25 @@ function ensureSocket(): Socket | null {
   singleton = io(apiBase(), {
     path: WS_PATH,
     transports: ['websocket'],
-    auth: { token },
+    // auth as a FUNCTION so EVERY (re)connection reads the CURRENT token from
+    // storage. socket.io captures a static `auth` object once at creation, so
+    // after a drop (e.g. a backend deploy) the client kept retrying forever with
+    // the ORIGINAL — by then expired — token → "jwt expired", a silent inbox
+    // (no rings, no live updates) until the rep manually refreshed the page.
+    // Same class of bug the mobile app fixed in July.
+    auth: (cb: (data: { token: string }) => void) => cb({ token: getAccessToken() ?? '' }),
+  });
+  // If the stored token is itself stale (nothing refreshed it recently), an auth
+  // failure forces a refresh so the NEXT reconnection attempt carries a fresh
+  // token instead of looping on the expired one.
+  let refreshing = false;
+  singleton.on('connect_error', (err: Error) => {
+    if (!refreshing && /jwt|auth|unauthor/i.test(err.message ?? '')) {
+      refreshing = true;
+      void refreshTokens().finally(() => {
+        refreshing = false;
+      });
+    }
   });
   return singleton;
 }

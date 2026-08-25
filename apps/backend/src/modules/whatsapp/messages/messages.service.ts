@@ -50,6 +50,7 @@ const WA_DOCUMENT_MAX_BYTES = 100 * 1024 * 1024;
 // bitrate variance can't push the result back over the line.
 const VIDEO_TARGET_BYTES = 14 * 1024 * 1024;
 import {
+  ChannelPlatform,
   Prisma,
   WhatsAppChannelStatus,
   WhatsAppMessageDirection,
@@ -200,7 +201,11 @@ export class WhatsAppMessagesService {
 
     const thread = await this.thread(caller, input.threadId);
     const now = new Date();
-    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+    // WhatsApp requires a template outside the 24h window. Messenger/Instagram
+    // have no templates — a human rep replies via the HUMAN_AGENT tag (≤7 days),
+    // applied by the outbound processor — so they are not blocked here.
+    const isSocial = thread.platform !== ChannelPlatform.WHATSAPP;
+    if (!isSocial && (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime())) {
       throw new BadRequestException(
         '24-hour customer-service window has expired. Use a template message instead.',
       );
@@ -540,7 +545,11 @@ export class WhatsAppMessagesService {
     }
     const thread = await this.thread(caller, input.threadId);
     const now = new Date();
-    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+    // WhatsApp requires a template outside the 24h window. Messenger/Instagram
+    // have no templates — a human rep replies via the HUMAN_AGENT tag (≤7 days),
+    // applied by the outbound processor — so they are not blocked here.
+    const isSocial = thread.platform !== ChannelPlatform.WHATSAPP;
+    if (!isSocial && (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime())) {
       throw new BadRequestException(
         '24-hour customer-service window has expired. Use a template message instead.',
       );
@@ -582,7 +591,11 @@ export class WhatsAppMessagesService {
     }
     const thread = await this.thread(caller, input.threadId);
     const now = new Date();
-    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+    // WhatsApp requires a template outside the 24h window. Messenger/Instagram
+    // have no templates — a human rep replies via the HUMAN_AGENT tag (≤7 days),
+    // applied by the outbound processor — so they are not blocked here.
+    const isSocial = thread.platform !== ChannelPlatform.WHATSAPP;
+    if (!isSocial && (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime())) {
       throw new BadRequestException(
         '24-hour customer-service window has expired. Use a template message instead.',
       );
@@ -637,7 +650,11 @@ export class WhatsAppMessagesService {
     }
     const thread = await this.thread(caller, input.threadId);
     const now = new Date();
-    if (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime()) {
+    // WhatsApp requires a template outside the 24h window. Messenger/Instagram
+    // have no templates — a human rep replies via the HUMAN_AGENT tag (≤7 days),
+    // applied by the outbound processor — so they are not blocked here.
+    const isSocial = thread.platform !== ChannelPlatform.WHATSAPP;
+    if (!isSocial && (!thread.windowExpiresAt || thread.windowExpiresAt.getTime() <= now.getTime())) {
       throw new BadRequestException(
         '24-hour customer-service window has expired. Use a template message instead.',
       );
@@ -1808,6 +1825,7 @@ export class WhatsAppMessagesService {
       select: {
         id: true,
         channelId: true,
+        platform: true,
         leadId: true,
         clientId: true,
         windowExpiresAt: true,

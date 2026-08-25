@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
 import {
+  ChannelPlatform,
   LeadStatus,
   WhatsAppMessageStatus,
   WhatsAppMessageType,
@@ -13,6 +14,7 @@ import { StorageService } from '../../../storage/storage.service';
 import { OpenAiService } from '../../../ai/openai.service';
 import { WhatsAppMetaClientFactory } from '../../meta/client.factory';
 import { MetaApiError, type MetaSendResponse } from '../../meta/cloud-client';
+import type { MessengerCloudClient, MessengerAttachmentType } from '../../meta/messenger-client';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
 import {
   WHATSAPP_QUEUE,
@@ -59,6 +61,7 @@ export class OutboundMessageProcessor extends WorkerHost {
           select: {
             id: true,
             waContactId: true,
+            windowExpiresAt: true,
             firstAgentReplyAt: true,
             slaDeadlineAt: true,
             responseDeadlineAt: true,
@@ -91,9 +94,19 @@ export class OutboundMessageProcessor extends WorkerHost {
       // try block — the message rotted in SENDING with no errorCode, BullMQ
       // retried 5× silently and gave up. Keep it inside so the FAIL branch
       // below stamps a real diagnosis on the message.
-      const client = this.metaFactory.forChannel(message.channel);
       const to = message.thread.waContactId;
-      const res = await this.dispatchSend(client, message, to);
+      // Platform fork: Messenger/Instagram threads go out via the Page Send API
+      // (PSID recipient, HUMAN_AGENT tag outside the 24h window); WhatsApp is
+      // byte-identical to before.
+      const res =
+        message.channel.platform !== ChannelPlatform.WHATSAPP
+          ? await this.dispatchMessengerSend(
+              this.metaFactory.forMessengerChannel(message.channel),
+              message,
+              to,
+              !!message.thread.windowExpiresAt && message.thread.windowExpiresAt.getTime() > Date.now(),
+            )
+          : await this.dispatchSend(this.metaFactory.forChannel(message.channel), message, to);
       const waMessageId = res.messages?.[0]?.id ?? null;
       const now = new Date();
 
@@ -385,6 +398,44 @@ export class OutboundMessageProcessor extends WorkerHost {
         .catch(() => undefined);
     }
     this.log.log(`failed-voice ${message.id}: transcript attached (${text.length} chars)`);
+  }
+
+  /** Deliver an outbound message over the Facebook Messenger Page Send API. */
+  private async dispatchMessengerSend(
+    client: MessengerCloudClient,
+    message: { type: WhatsAppMessageType; body: string | null; mediaUrl: string | null },
+    to: string,
+    withinWindow: boolean,
+  ): Promise<MetaSendResponse> {
+    const opts = withinWindow ? undefined : { humanAgent: true };
+    switch (message.type) {
+      case WhatsAppMessageType.TEXT:
+        return client.sendText(to, message.body ?? '', opts);
+      case WhatsAppMessageType.IMAGE:
+      case WhatsAppMessageType.VIDEO:
+      case WhatsAppMessageType.AUDIO:
+      case WhatsAppMessageType.DOCUMENT: {
+        // Messenger has no media_id upload flow — it fetches a URL. http(s) →
+        // send as-is; otherwise it's a durable storage key we sign fresh.
+        const url = message.mediaUrl?.startsWith('http')
+          ? message.mediaUrl
+          : message.mediaUrl
+            ? await this.storage.getSignedUrl(message.mediaUrl)
+            : null;
+        if (!url) throw new Error('Messenger media send has no resolvable URL');
+        const ATT_MAP: Record<string, MessengerAttachmentType> = {
+          [WhatsAppMessageType.IMAGE]: 'image',
+          [WhatsAppMessageType.VIDEO]: 'video',
+          [WhatsAppMessageType.AUDIO]: 'audio',
+          [WhatsAppMessageType.DOCUMENT]: 'file',
+        };
+        return client.sendAttachment(to, ATT_MAP[message.type], url, opts);
+      }
+      default:
+        // Template / reaction / location / contacts have no Messenger equivalent;
+        // the inbox hides those controls for Messenger threads (next PR).
+        throw new Error(`Messenger does not support sending ${message.type}`);
+    }
   }
 
   private async dispatchSend(

@@ -16,7 +16,7 @@ import {
 import type { Response } from 'express';
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { LeadDisposition } from '@prisma/client';
+import { ChannelPlatform, LeadDisposition } from '@prisma/client';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import {
@@ -166,6 +166,13 @@ class ListThreadsDto {
    */
   @IsOptional() @IsEnum(LeadDisposition) disposition?: LeadDisposition;
 
+  /**
+   * "WhatsApp | Messenger" inbox tab. Restricts the list to one platform.
+   * Absent = all platforms. Declared (not free-form) so an unknown value 400s at
+   * validation rather than silently returning everything.
+   */
+  @IsOptional() @IsEnum(ChannelPlatform) platform?: ChannelPlatform;
+
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() cursor?: string;
 
@@ -192,6 +199,11 @@ class ListThreadsDto {
   @Min(1)
   @Max(100)
   limit?: number;
+}
+
+class StatsQueryDto {
+  /** Scope the inbox counters to one platform ("WhatsApp | Messenger" tab). */
+  @IsOptional() @IsEnum(ChannelPlatform) platform?: ChannelPlatform;
 }
 
 class ReassignThreadDto {
@@ -261,9 +273,9 @@ export class WhatsAppThreadsController {
    */
   @Get('stats')
   @RequireAnyPermissions('whatsapp.view_inbox', 'whatsapp.view_all_inboxes')
-  async stats(@CurrentUser() user: RequestUser) {
+  async stats(@CurrentUser() user: RequestUser, @Query() q: StatsQueryDto) {
     const caller = await this.buildCallerContext(user);
-    return this.threads.stats(caller);
+    return this.threads.stats(caller, q.platform);
   }
 
   /**

@@ -44,7 +44,7 @@ import { InfoHint } from '@/components/common/InfoHint';
 import { DispositionChip } from '@/components/whatsapp/DispositionChip';
 import { DispositionPickerModal } from '@/components/whatsapp/DispositionPickerModal';
 import { DispositionFilterChip } from '@/components/whatsapp/DispositionFilterChip';
-import type { LeadDisposition } from '@/lib/whatsapp';
+import type { LeadDisposition, ChannelPlatform } from '@/lib/whatsapp';
 
 /** Hook: track viewport width so we can switch to single-pane on mobile. */
 function useIsMobile(threshold = 1024): boolean {
@@ -89,6 +89,9 @@ let savedInboxScrollTop = 0;
 
 export default function SalesInboxPage() {
   const [filter, setFilter] = useState<Filter>('ALL');
+  // "WhatsApp | Messenger" top-level tab. Restricts the whole inbox (list +
+  // counts) to one platform. Defaults to WhatsApp — the primary channel.
+  const [platform, setPlatform] = useState<ChannelPlatform>('WHATSAPP');
   // "Due (N)" chip toggle — when on, the list is filtered to chats whose lead
   // has an OPEN follow-up due/overdue now (combines with the active tab).
   const [followUpDueOnly, setFollowUpDueOnly] = useState(false);
@@ -197,9 +200,11 @@ export default function SalesInboxPage() {
           ? { ...base, followUpUpcoming: true as const }
           : base;
       // Disposition stacks (AND) on top of whichever tab is active.
-      return dispositionFilter ? { ...withDue, disposition: dispositionFilter } : withDue;
+      const withDisp = dispositionFilter ? { ...withDue, disposition: dispositionFilter } : withDue;
+      // Platform tab restricts the whole list to WhatsApp or Messenger.
+      return { ...withDisp, platform };
     },
-    [filter, followUpDueOnly, followUpUpcomingOnly, dispositionFilter],
+    [filter, followUpDueOnly, followUpUpcomingOnly, dispositionFilter, platform],
   );
 
   // Fetch just the tab counts without reloading the thread list.
@@ -208,11 +213,11 @@ export default function SalesInboxPage() {
   const refreshStats = useCallback(async () => {
     lastStatsFetchRef.current = Date.now();
     try {
-      setStats(await getThreadStats());
+      setStats(await getThreadStats(platform));
     } catch {
       /* non-critical — existing counts stay */
     }
-  }, []);
+  }, [platform]);
   // Activity-driven refresh, throttled: a burst of incoming messages fires
   // onActivity once per socket event across EVERY open inbox — that synchronized
   // stats stampede was ~85% of all DB time. One refresh per 15s is plenty for
@@ -563,10 +568,14 @@ export default function SalesInboxPage() {
       if (pinned.length === 0) return rows;
       return [...pinned, ...rows.filter((t) => !t.isPinnedByMe)];
     };
-    if (filter === 'ARCHIVED') return items.filter((t) => t.status === 'ARCHIVED');
+    // Guard the render to the active platform tab too. The server already
+    // filters, but a realtime patch could transiently splice a wrong-platform
+    // row before the next reconcile re-fetches.
+    const scoped = items.filter((t) => t.platform === platform);
+    if (filter === 'ARCHIVED') return scoped.filter((t) => t.status === 'ARCHIVED');
     // BLOCKED rows arrive pre-filtered from the server; trust the loaded page.
-    if (filter === 'BLOCKED') return items;
-    const active = items.filter((t) => t.status !== 'ARCHIVED');
+    if (filter === 'BLOCKED') return scoped;
+    const active = scoped.filter((t) => t.status !== 'ARCHIVED');
     if (filter === 'UNCONTACTED') return pinnedFirst(active.filter((t) => t.lastHumanReplyAt == null));
     if (filter === 'UNREAD') {
       // Funnel Unread = engaged (a human replied) AND unread. Keep the currently-
@@ -579,7 +588,7 @@ export default function SalesInboxPage() {
     // ALL = engaged only (a human has replied). New leads live in Uncontacted
     // until a rep replies. Keep the open chat visible even if it isn't engaged.
     return pinnedFirst(active.filter((t) => t.lastHumanReplyAt != null || t.id === activeId));
-  }, [items, filter, activeId]);
+  }, [items, filter, activeId, platform]);
 
   // #4 content search — are we in a message-content search? Message matches are
   // shown in a separate "Messages" section, deduped against the name-match list
@@ -668,6 +677,52 @@ export default function SalesInboxPage() {
           overflow: 'hidden',
         }}
       >
+        {/* Platform switch: WhatsApp | Messenger */}
+        <div
+          style={{
+            display: 'flex',
+            gap: 6,
+            padding: '10px 12px',
+            background: 'var(--wa-panel-header)',
+            borderBottom: '1px solid var(--sos-border-subtle)',
+            flexShrink: 0,
+          }}
+        >
+          {(['WHATSAPP', 'MESSENGER'] as const).map((p) => {
+            const active = platform === p;
+            const brand = p === 'WHATSAPP' ? 'var(--wa-accent)' : '#0084FF';
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => {
+                  if (platform === p) return;
+                  setPlatform(p);
+                  setActiveId(null); // clear the open chat when switching channel
+                }}
+                style={{
+                  flex: 1,
+                  padding: '8px 10px',
+                  borderRadius: 9,
+                  border: `1px solid ${active ? brand : 'var(--sos-border-subtle)'}`,
+                  background: active ? brand : 'var(--sos-surface-1)',
+                  color: active ? '#fff' : 'var(--sos-text-secondary)',
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 7,
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1 }}>{p === 'WHATSAPP' ? '🟢' : '💬'}</span>
+                {p === 'WHATSAPP' ? 'WhatsApp' : 'Messenger'}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Header */}
         <div
           style={{
@@ -1127,7 +1182,7 @@ export default function SalesInboxPage() {
         >
           <MessageSquare size={56} strokeWidth={0.8} />
           <div style={{ fontSize: 18, fontWeight: 500, color: 'var(--sos-text-secondary)' }}>
-            WhatsApp Inbox
+            {platform === 'MESSENGER' ? 'Messenger Inbox' : 'WhatsApp Inbox'}
           </div>
           <div style={{ fontSize: 13, maxWidth: 280, textAlign: 'center' }}>
             Select a conversation from the list to start messaging

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { LeadDisposition, WhatsAppAssignmentReason, type Prisma } from '@prisma/client';
+import { ChannelPlatform, LeadDisposition, WhatsAppAssignmentReason, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { WhatsAppMetaClientFactory } from '../meta/client.factory';
 
@@ -79,6 +79,12 @@ interface ThreadListOptions {
    * can deliberately pull up their Junk/Dead pile.
    */
   disposition?: LeadDisposition;
+  /**
+   * Platform tab ('WHATSAPP' | 'MESSENGER' | 'INSTAGRAM') — the "WhatsApp |
+   * Messenger" inbox switch. Absent = all platforms (back-compat for callers
+   * that don't send it). Stacks (AND) with every other filter.
+   */
+  platform?: ChannelPlatform;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -376,6 +382,12 @@ export class WhatsAppThreadsService {
       // A to-one relation match, so a client-only thread (lead null) is
       // correctly excluded. Composes (AND) with the tab/search filters.
       and.push({ lead: { is: { disposition: opts.disposition } } });
+    }
+
+    if (opts.platform) {
+      // "WhatsApp | Messenger" tab — restrict to one platform. Backed by the
+      // threads_platform_lastHumanActivityAt composite index.
+      and.push({ platform: opts.platform });
     }
 
     if (opts.search) {
@@ -767,7 +779,10 @@ export class WhatsAppThreadsService {
   >();
   private static readonly STATS_TTL_MS = 20_000;
 
-  async stats(caller: CallerContext): ReturnType<WhatsAppThreadsService['computeStats']> {
+  async stats(
+    caller: CallerContext,
+    platform?: ChannelPlatform,
+  ): ReturnType<WhatsAppThreadsService['computeStats']> {
     // Key = everything computeStats' output depends on: the scope branch it
     // takes + the employee whose assigned-set/slaScore it computes. userId is
     // deliberately NOT in the key (stats read nothing else user-specific), so
@@ -780,7 +795,7 @@ export class WhatsAppThreadsService {
         : caller.canViewProcessingScope
           ? 'proc'
           : 'emp';
-    const key = `${scope}:${caller.employeeId ?? 'none'}`;
+    const key = `${scope}:${caller.employeeId ?? 'none'}:${platform ?? 'all'}`;
     const now = Date.now();
     const hit = this.statsCache.get(key);
     if (hit && hit.expires > now) return hit.promise;
@@ -788,7 +803,7 @@ export class WhatsAppThreadsService {
     if (this.statsCache.size > 300) {
       for (const [k, v] of this.statsCache) if (v.expires <= now) this.statsCache.delete(k);
     }
-    const promise = this.computeStats(caller).catch((err) => {
+    const promise = this.computeStats(caller, platform).catch((err) => {
       // Never cache a failure — drop the entry so the next caller retries.
       this.statsCache.delete(key);
       throw err;
@@ -797,7 +812,7 @@ export class WhatsAppThreadsService {
     return promise;
   }
 
-  private async computeStats(caller: CallerContext): Promise<{
+  private async computeStats(caller: CallerContext, platform?: ChannelPlatform): Promise<{
     total: number;
     active: number;
     resolved: number;
@@ -854,6 +869,10 @@ export class WhatsAppThreadsService {
         { leadId: null, client: { assignedEmployeeId: caller.employeeId, deletedAt: null } },
       ];
     }
+    // Platform tab ("WhatsApp | Messenger") — folds into the shared base so every
+    // Prisma-count path below is scoped to the active platform. The raw-SQL badge
+    // path adds the same predicate separately (see `scope` below).
+    if (platform) base.platform = platform;
 
     const and = (extra: Prisma.WhatsAppThreadWhereInput): Prisma.WhatsAppThreadWhereInput => ({
       AND: [base, extra],
@@ -932,6 +951,12 @@ export class WhatsAppThreadsService {
       // threads stay in — IS DISTINCT FROM handles the NULLs correctly).
       scope += ` AND t.status::text <> 'ARCHIVED' AND l."blockedAt" IS NULL AND (t."clientId" IS NULL OR c."blockedAt" IS NULL)`;
       scope += ` AND l."disposition"::text IS DISTINCT FROM 'JUNK' AND l."disposition"::text IS DISTINCT FROM 'DEAD'`;
+      // Platform tab — same predicate the Prisma base filter applies, bound as a
+      // parameter (compared as text so we don't need the enum cast on the param).
+      if (platform) {
+        params.push(platform);
+        scope += ` AND t.platform::text = $${params.length}`;
+      }
       const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, number | bigint | null>>>(
         `SELECT
            count(*)::int AS total,

@@ -5,6 +5,8 @@ import { apiFetch, buildQuery } from './api-client';
 // ---- Shared types -------------------------------------------------------
 
 export type WhatsAppThreadStatus = 'OPEN' | 'PENDING' | 'RESOLVED' | 'ARCHIVED';
+/** Which Meta messaging product a thread belongs to — the "WhatsApp | Messenger" inbox tab. */
+export type ChannelPlatform = 'WHATSAPP' | 'MESSENGER' | 'INSTAGRAM';
 export type WhatsAppMessageDirection = 'INBOUND' | 'OUTBOUND';
 export type WhatsAppMessageStatus =
   | 'QUEUED'
@@ -103,6 +105,8 @@ export function getLeadDispositionHistory(leadId: string): Promise<DispositionHi
 export interface ThreadListItem {
   id: string;
   status: WhatsAppThreadStatus;
+  /** Which platform this chat is on — drives the "WhatsApp | Messenger" tab. */
+  platform: ChannelPlatform;
   waContactId: string;
   windowExpiresAt: string | null;
   firstInboundAt: string | null;
@@ -299,6 +303,8 @@ export function listThreads(opts: {
   /** Disposition funnel — only threads whose LEAD carries this sales disposition.
    *  Stacks (AND) with the tab + search. Client-only threads never match. */
   disposition?: LeadDisposition;
+  /** "WhatsApp | Messenger" inbox tab — restrict to one platform. Absent = all. */
+  platform?: ChannelPlatform;
   /** Admin: filter to one agent's assigned conversations. */
   employeeId?: string;
   search?: string;
@@ -448,13 +454,15 @@ export interface ThreadStats {
  * table, NOT derived from the (paginated) thread list. Use this instead of
  * `items.length`, which only ever reflects the loaded page.
  */
-export function getThreadStats(): Promise<ThreadStats> {
+export function getThreadStats(platform?: ChannelPlatform): Promise<ThreadStats> {
   // no-store: the tab-count badges (All / Open / Pending / Resolved) must
   // reflect the live DB. Without this they ride apiFetch's 10s GET cache, so
   // the count a realtime refresh fetches right after an agent replies can be
   // the stale pre-reply value — making "Pending" look stuck even though the
   // replied chat already left the queue. Counts are cheap; always fetch fresh.
-  return apiFetch<ThreadStats>('/whatsapp/threads/stats', { cache: 'no-store' });
+  return apiFetch<ThreadStats>(`/whatsapp/threads/stats${platform ? `?platform=${platform}` : ''}`, {
+    cache: 'no-store',
+  });
 }
 
 export function reassignThread(

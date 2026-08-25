@@ -1,10 +1,12 @@
 import { Logger } from '@nestjs/common';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { createDecipheriv } from 'node:crypto';
 import type { Job, Queue } from 'bullmq';
 import {
   AuditAction,
   AuditCategory,
   AuditSeverity,
+  ChannelPlatform,
   FollowUpPriority,
   LeadStatus,
   WhatsAppMessageDirection,
@@ -145,6 +147,43 @@ const WINDOW_DURATION_MS = 24 * 60 * 60 * 1000;
  *   3. Capture error detail if FAILED.
  *   4. Publish realtime fanout.
  */
+// ---- Facebook Messenger webhook payload types (subset) --------------------
+// Messenger conversational events arrive on the SAME app + callback URL as
+// WhatsApp / Lead Ads, but with object='page' and an entry[].messaging[] array
+// (NOT entry[].changes[]). Each messaging event is one inbound message,
+// postback, or referral for one Page-Scoped user id (PSID). Instagram Direct
+// uses the identical shape with object='instagram' (added in a later PR).
+interface MessengerReferral {
+  ref?: string;
+  ad_id?: string;
+  source?: string; // 'ADS' | 'SHORTLINK' | 'CUSTOMER_CHAT_PLUGIN' | ...
+  type?: string; // 'OPEN_THREAD'
+  ads_context_data?: { ad_title?: string; post_id?: string };
+}
+interface MessengerAttachment {
+  type: string; // 'image' | 'video' | 'audio' | 'file' | 'location' | 'fallback' | 'template'
+  payload?: { url?: string; title?: string; coordinates?: { lat: number; long: number } };
+}
+interface MessengerMessagingEvent {
+  sender?: { id: string };
+  recipient?: { id: string };
+  timestamp?: number; // epoch MILLISECONDS (unlike WhatsApp's seconds)
+  message?: {
+    mid: string;
+    text?: string;
+    is_echo?: boolean;
+    attachments?: MessengerAttachment[];
+    quick_reply?: { payload?: string };
+    referral?: MessengerReferral;
+  };
+  postback?: { mid?: string; title?: string; payload?: string; referral?: MessengerReferral };
+  referral?: MessengerReferral;
+}
+interface MessengerWebhookPayload {
+  object: string; // 'page' (Messenger) | 'instagram' (IG Direct)
+  entry?: Array<{ id: string; time?: number; messaging?: MessengerMessagingEvent[] }>;
+}
+
 @Processor(WHATSAPP_QUEUE.WEBHOOK_INGEST, { concurrency: 8 })
 export class WebhookIngestProcessor extends WorkerHost {
   private readonly log = new Logger(WebhookIngestProcessor.name);
@@ -227,6 +266,28 @@ export class WebhookIngestProcessor extends WorkerHost {
     // 'leadgen' change. Fork those onto the meta-leadgen queue instead of
     // dropping them as "unsupported".
     if ((payload as { object?: string })?.object === 'page') {
+      // object='page' carries TWO unrelated event kinds on this single webhook URL:
+      //   • Lead Ads  → entry[].changes[].field='leadgen'  → forked to the leadgen queue
+      //   • Messenger → entry[].messaging[]                 → conversational, handled here
+      // Distinguish by the presence of a messaging[] array so Messenger chats are
+      // NOT mis-routed into the lead-form processor (which would silently drop them).
+      const mp = payload as unknown as MessengerWebhookPayload;
+      const hasMessaging = (mp.entry ?? []).some(
+        (e) => Array.isArray(e.messaging) && e.messaging.length > 0,
+      );
+      if (hasMessaging) {
+        try {
+          await this.handleMessengerPayload(mp);
+        } catch (err) {
+          this.log.error(`messenger ingest failed for ${webhookEventId}: ${(err as Error).message}`);
+          throw err; // let BullMQ retry
+        }
+        await this.prisma.whatsAppWebhookEvent.update({
+          where: { id: webhookEventId },
+          data: { processedAt: new Date() },
+        });
+        return;
+      }
       try {
         await this.metaLeadgenQueue.add(
           'leadgen',
@@ -1769,6 +1830,285 @@ export class WebhookIngestProcessor extends WorkerHost {
       });
     }
   }
+
+  // ─── Facebook Messenger ingestion ───────────────────────────────────────────
+  // Mirrors the WhatsApp inbound path (resolve/create lead → upsert thread →
+  // write message → assign → realtime fanout) but keyed off the Page-Scoped user
+  // id (PSID) instead of a phone number. A Messenger lead has NO phone, so it
+  // gets a `messenger-<psid>` placeholder (letter-containing, so the phone dedupe
+  // never matches it) and identity is the (channel, PSID) pair.
+  //
+  // DORMANT until (a) a MESSENGER channel row exists and (b) the Page's webhook is
+  // subscribed. Until then no page carries a channel, so this returns with no
+  // side effects — safe to ship ahead of go-live.
+  private readonly psidLocks = new Map<string, Promise<void>>();
+
+  private async handleMessengerPayload(payload: MessengerWebhookPayload): Promise<void> {
+    for (const entry of payload.entry ?? []) {
+      const pageId = entry.id;
+      const channel = await this.prisma.whatsAppChannel.findFirst({
+        where: { pageId, platform: ChannelPlatform.MESSENGER, status: 'ACTIVE' },
+        select: { id: true, accessTokenEnc: true },
+      });
+      if (!channel) {
+        this.log.warn(`no MESSENGER channel for page ${pageId} — dropping messaging event`);
+        continue;
+      }
+      for (const ev of entry.messaging ?? []) {
+        try {
+          await this.ingestMessengerEvent(channel, ev);
+        } catch (err) {
+          this.log.error(`messenger event failed (page ${pageId}): ${(err as Error).message}`);
+        }
+      }
+    }
+  }
+
+  private async ingestMessengerEvent(
+    channel: { id: string; accessTokenEnc: string },
+    ev: MessengerMessagingEvent,
+  ): Promise<void> {
+    const psid = ev.sender?.id;
+    if (!psid) return;
+    if (ev.message?.is_echo) return; // our own outbound, echoed back
+
+    const referral = ev.message?.referral ?? ev.postback?.referral ?? ev.referral ?? null;
+    const hasContent = !!(ev.message?.text || ev.message?.attachments?.length || ev.postback);
+    if (!hasContent && !referral) return; // delivery/read receipt — nothing to do
+
+    const now = new Date();
+    const windowExpiresAt = new Date(now.getTime() + WINDOW_DURATION_MS);
+    const mid = ev.message?.mid ?? ev.postback?.mid ?? null;
+
+    // Normalise the Messenger referral to the CTWA shape so `teamForReferral`
+    // (which keys off `source_id`) routes a Messenger ad through the SAME
+    // AdRoutingRule engine as a WhatsApp ad.
+    const adReferral: Prisma.InputJsonValue | undefined = referral
+      ? {
+          source_id: referral.ad_id ?? null,
+          source_type: 'ad',
+          source: referral.source ?? 'ADS',
+          ref: referral.ref ?? null,
+          headline: referral.ads_context_data?.ad_title ?? null,
+          platform: 'MESSENGER',
+        }
+      : undefined;
+    const adReferralUpdate = adReferral ? { adReferral, adReferralAt: now } : {};
+
+    // Resolve/create the lead under a per-PSID lock so two events from the same
+    // brand-new contact can't both create a lead (the orphan-lead race).
+    const { leadId, clientId, createdLead } = await this.withPsidLock(psid, async () => {
+      const existing = await this.prisma.whatsAppThread.findUnique({
+        where: { channelId_waContactId: { channelId: channel.id, waContactId: psid } },
+        select: { leadId: true, clientId: true },
+      });
+      if (existing && (existing.leadId || existing.clientId)) {
+        return { leadId: existing.leadId, clientId: existing.clientId, createdLead: false };
+      }
+      const branch = await this.prisma.branch.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      const profile = await this.fetchMessengerProfile(channel, psid);
+      const { firstName, lastName } = splitMessengerName(profile, psid);
+      const referenceCode = await generateLeadReferenceCode(this.prisma);
+      const newLead = await this.prisma.lead.create({
+        data: {
+          referenceCode,
+          firstName,
+          lastName,
+          phone: `messenger-${psid}`,
+          sourceChannel: 'messenger',
+          status: LeadStatus.NEW,
+          ...(branch ? { branchId: branch.id } : {}),
+        },
+        select: { id: true },
+      });
+      return { leadId: newLead.id as string, clientId: null as string | null, createdLead: true };
+    });
+
+    if (createdLead && leadId) {
+      void this.audit
+        .log({
+          action: AuditAction.LEAD_CREATED,
+          entityType: 'Lead',
+          entityId: leadId,
+          category: AuditCategory.WEBHOOK,
+          severity: AuditSeverity.HIGH,
+          metadata: { source: 'messenger_inbound', psidLast4: psid.slice(-4) },
+        })
+        .catch(() => undefined);
+    }
+
+    const thread = await this.prisma.whatsAppThread.upsert({
+      where: { channelId_waContactId: { channelId: channel.id, waContactId: psid } },
+      create: {
+        channelId: channel.id,
+        platform: ChannelPlatform.MESSENGER,
+        leadId,
+        clientId,
+        waContactId: psid,
+        windowExpiresAt,
+        firstInboundAt: now,
+        lastMessageAt: now,
+        lastMessagePreview: decodeMessengerEvent(ev).preview,
+        unreadCount: 1,
+        lastCustomerMessageAt: now,
+        lastHumanActivityAt: now,
+        awaitingReply: true,
+        ...adReferralUpdate,
+      },
+      update: {
+        ...(leadId && { leadId }),
+        ...(clientId && { clientId }),
+        windowExpiresAt,
+        lastMessageAt: now,
+        lastMessagePreview: decodeMessengerEvent(ev).preview,
+        unreadCount: { increment: 1 },
+        lastCustomerMessageAt: now,
+        lastHumanActivityAt: now,
+        awaitingReply: true,
+        status: 'OPEN',
+        ...adReferralUpdate,
+      },
+      select: { id: true },
+    });
+
+    // First-touch ad attribution on the lead (survives lead→client conversion).
+    if (leadId && referral?.ad_id) {
+      const lead = await this.prisma.lead.findUnique({ where: { id: leadId }, select: { metaAdId: true } });
+      if (lead && !lead.metaAdId) {
+        const spend = await this.prisma.adSpendDaily.findFirst({
+          where: { adId: referral.ad_id },
+          orderBy: { date: 'desc' },
+          select: { adName: true, campaignId: true, campaignName: true },
+        });
+        await this.prisma.lead.update({
+          where: { id: leadId },
+          data: {
+            metaSource: 'messenger-ad',
+            metaAdId: referral.ad_id,
+            metaAdName: spend?.adName ?? null,
+            metaCampaignId: spend?.campaignId ?? null,
+            metaCampaignName: spend?.campaignName ?? null,
+          },
+        });
+      }
+    }
+
+    const decoded = decodeMessengerEvent(ev);
+
+    // Write the message row (skip for a pure referral/receipt with no mid).
+    if (decoded.hasMessage && mid) {
+      const dupe = await this.prisma.whatsAppMessage.findUnique({ where: { waMessageId: mid }, select: { id: true } });
+      if (!dupe) {
+        const message = await this.prisma.whatsAppMessage.create({
+          data: {
+            threadId: thread.id,
+            channelId: channel.id,
+            leadId,
+            clientId,
+            waMessageId: mid,
+            direction: WhatsAppMessageDirection.INBOUND,
+            type: decoded.type,
+            status: WhatsAppMessageStatus.RECEIVED,
+            body: decoded.body,
+            payload: decoded.payload as Prisma.InputJsonValue,
+            // Messenger inbound media is a signed, EXPIRING URL. Stored as-is for
+            // now; a URL-based rehost (mirroring MediaDownloadProcessor) lands with
+            // the outbound/media PR so old media doesn't 404.
+            mediaUrl: decoded.mediaUrl,
+            ...(adReferral ? { adReferral } : {}),
+            createdAt: ev.timestamp ? new Date(ev.timestamp) : now,
+          },
+          select: { id: true },
+        });
+
+        await this.timeline.record({
+          entityType: clientId ? 'Client' : 'Lead',
+          entityId: (clientId ?? leadId)!,
+          leadId: leadId ?? undefined,
+          clientId: clientId ?? undefined,
+          eventType: createdLead ? 'WHATSAPP_LEAD_CREATED' : 'WHATSAPP_MESSAGE_RECEIVED',
+          description: createdLead
+            ? `New Messenger lead (${psid})`
+            : `Messenger message: ${(decoded.body ?? '[' + decoded.type.toLowerCase() + ']').slice(0, 80)}`,
+          metadata: { channelId: channel.id, threadId: thread.id, messageId: message.id, type: decoded.type, platform: 'MESSENGER' },
+        });
+
+        const org = await this.prisma.organization.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+        if (org) {
+          await this.publisher.publishToOrg(org.id, WHATSAPP_WS_EVENTS.MESSAGE_NEW, {
+            threadId: thread.id,
+            leadId,
+            clientId,
+            messageId: message.id,
+            direction: 'INBOUND',
+          });
+        }
+      }
+    }
+
+    // Reuse the shared round-robin engine. Branch-scoped Messenger defaulting
+    // (→ Islamabad) is layered on in the distribution PR; here it uses the same
+    // path as WhatsApp (ad-rule team if the referral matches, else whole pool).
+    try {
+      await this.assignment.ensureAssigned(thread.id);
+    } catch (err) {
+      this.log.error(`messenger assignment failed for thread ${thread.id}: ${(err as Error).message}`);
+    }
+  }
+
+  /** Per-PSID in-process serialization (mirrors withPhoneLock for Messenger). */
+  private async withPsidLock<T>(psid: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.psidLocks.get(psid) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((r) => (release = r));
+    this.psidLocks.set(psid, prev.then(() => next));
+    await prev.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.psidLocks.get(psid) === next) this.psidLocks.delete(psid);
+    }
+  }
+
+  /** Best-effort Facebook profile fetch for a PSID. Never throws. */
+  private async fetchMessengerProfile(
+    channel: { accessTokenEnc: string },
+    psid: string,
+  ): Promise<{ first_name?: string; last_name?: string } | null> {
+    try {
+      const token = this.resolveMessengerToken(channel);
+      if (!token) return null;
+      const ver = process.env.META_GRAPH_API_VERSION || 'v21.0';
+      const res = await fetch(
+        `https://graph.facebook.com/${ver}/${encodeURIComponent(psid)}?fields=first_name,last_name&access_token=${encodeURIComponent(token)}`,
+      );
+      if (!res.ok) return null;
+      return (await res.json()) as { first_name?: string; last_name?: string };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resolve the Page access token: env override, else decrypt the channel token. */
+  private resolveMessengerToken(channel: { accessTokenEnc: string }): string | null {
+    const env = process.env.META_PAGE_ACCESS_TOKEN;
+    if (env && env.trim()) return env.trim();
+    const key = process.env.WHATSAPP_ENCRYPTION_KEY;
+    if (!key || !/^[0-9a-fA-F]{64}$/.test(key)) return null;
+    try {
+      const [ivB64, dataB64, tagB64] = channel.accessTokenEnc.split(':');
+      if (!ivB64 || !dataB64 || !tagB64) return null;
+      const decipher = createDecipheriv('aes-256-gcm', Buffer.from(key, 'hex'), Buffer.from(ivB64, 'base64'));
+      decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+      return Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64')), decipher.final()]).toString('utf8');
+    } catch {
+      return null;
+    }
+  }
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -1861,4 +2201,55 @@ function decodeIncoming(msg: MetaMessage): {
         mediaMeta: null,
       };
   }
+}
+
+// ---- Messenger helpers ----------------------------------------------------
+
+function splitMessengerName(
+  profile: { first_name?: string; last_name?: string } | null,
+  psid: string,
+): { firstName: string; lastName: string } {
+  const first = profile?.first_name?.trim();
+  const last = profile?.last_name?.trim();
+  if (first || last) return { firstName: first || 'Messenger', lastName: last || '' };
+  // No profile (private/unavailable) — a stable placeholder the rep can rename.
+  return { firstName: 'Messenger', lastName: psid.slice(-4) };
+}
+
+function decodeMessengerEvent(ev: MessengerMessagingEvent): {
+  hasMessage: boolean;
+  type: WhatsAppMessageType;
+  body: string | null;
+  preview: string;
+  payload: Record<string, unknown> | null;
+  mediaUrl: string | null;
+} {
+  const m = ev.message;
+  if (m?.text) {
+    return { hasMessage: true, type: WhatsAppMessageType.TEXT, body: m.text, preview: m.text.slice(0, 140), payload: null, mediaUrl: null };
+  }
+  const att = m?.attachments?.[0];
+  if (att) {
+    const ATT_MAP: Record<string, WhatsAppMessageType> = {
+      image: WhatsAppMessageType.IMAGE,
+      video: WhatsAppMessageType.VIDEO,
+      audio: WhatsAppMessageType.AUDIO,
+      file: WhatsAppMessageType.DOCUMENT,
+      location: WhatsAppMessageType.LOCATION,
+    };
+    return {
+      hasMessage: true,
+      type: ATT_MAP[att.type] ?? WhatsAppMessageType.UNSUPPORTED,
+      body: null,
+      preview: `[${att.type}]`,
+      payload: { attachment: att },
+      mediaUrl: att.payload?.url ?? null,
+    };
+  }
+  if (ev.postback) {
+    const body = ev.postback.title ?? ev.postback.payload ?? '[postback]';
+    return { hasMessage: true, type: WhatsAppMessageType.SYSTEM, body, preview: body.slice(0, 140), payload: { postback: ev.postback }, mediaUrl: null };
+  }
+  // Pure referral / receipt — thread gets updated for attribution, no message row.
+  return { hasMessage: false, type: WhatsAppMessageType.UNSUPPORTED, body: null, preview: '[referral]', payload: null, mediaUrl: null };
 }

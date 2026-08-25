@@ -1,6 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react';
+import { usePathname } from 'next/navigation';
 import {
   Archive,
   ArchiveRestore,
@@ -89,9 +90,11 @@ let savedInboxScrollTop = 0;
 
 export default function SalesInboxPage() {
   const [filter, setFilter] = useState<Filter>('ALL');
-  // "WhatsApp | Messenger" top-level tab. Restricts the whole inbox (list +
-  // counts) to one platform. Defaults to WhatsApp — the primary channel.
-  const [platform, setPlatform] = useState<ChannelPlatform>('WHATSAPP');
+  // Platform is driven by the route: /sales/messenger renders the Messenger
+  // inbox, every other inbox route is WhatsApp. Each is its own main-menu item,
+  // so the whole page (list + counts + sends) scopes to that one channel.
+  const pathname = usePathname();
+  const platform: ChannelPlatform = pathname?.includes('/sales/messenger') ? 'MESSENGER' : 'WHATSAPP';
   // "Due (N)" chip toggle — when on, the list is filtered to chats whose lead
   // has an OPEN follow-up due/overdue now (combines with the active tab).
   const [followUpDueOnly, setFollowUpDueOnly] = useState(false);
@@ -677,52 +680,6 @@ export default function SalesInboxPage() {
           overflow: 'hidden',
         }}
       >
-        {/* Platform switch: WhatsApp | Messenger */}
-        <div
-          style={{
-            display: 'flex',
-            gap: 6,
-            padding: '10px 12px',
-            background: 'var(--wa-panel-header)',
-            borderBottom: '1px solid var(--sos-border-subtle)',
-            flexShrink: 0,
-          }}
-        >
-          {(['WHATSAPP', 'MESSENGER'] as const).map((p) => {
-            const active = platform === p;
-            const brand = p === 'WHATSAPP' ? 'var(--wa-accent)' : '#0084FF';
-            return (
-              <button
-                key={p}
-                type="button"
-                onClick={() => {
-                  if (platform === p) return;
-                  setPlatform(p);
-                  setActiveId(null); // clear the open chat when switching channel
-                }}
-                style={{
-                  flex: 1,
-                  padding: '8px 10px',
-                  borderRadius: 9,
-                  border: `1px solid ${active ? brand : 'var(--sos-border-subtle)'}`,
-                  background: active ? brand : 'var(--sos-surface-1)',
-                  color: active ? '#fff' : 'var(--sos-text-secondary)',
-                  fontWeight: 700,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 7,
-                }}
-              >
-                <span style={{ fontSize: 15, lineHeight: 1 }}>{p === 'WHATSAPP' ? '🟢' : '💬'}</span>
-                {p === 'WHATSAPP' ? 'WhatsApp' : 'Messenger'}
-              </button>
-            );
-          })}
-        </div>
-
         {/* Header */}
         <div
           style={{

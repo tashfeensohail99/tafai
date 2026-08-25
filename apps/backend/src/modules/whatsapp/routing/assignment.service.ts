@@ -39,6 +39,7 @@
 import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  ChannelPlatform,
   PresenceStatus,
   WhatsAppAssignmentReason,
   type Prisma,
@@ -165,6 +166,9 @@ export class WhatsAppAssignmentService {
         id: true,
         slaDeadlineAt: true,
         firstInboundAt: true,
+        // Platform drives the channel-default routing fallback (Messenger/
+        // Instagram threads with no ad rule → the channel's default team).
+        platform: true,
         // Click-to-WhatsApp ad attribution — drives the ad-specific routing
         // override below (referral.source_id → fixed sub-team).
         adReferral: true,
@@ -234,7 +238,18 @@ export class WhatsAppAssignmentService {
     // crm.ad_routing_rules — see AdRoutingRulesService. Not applied to live
     // calls: a call must still ring the next available rep anywhere.
     const adTeam = opts?.forLiveCall ? null : await this.routingRules.teamForReferral(thread.adReferral);
-    const basePool = adTeam ? eligible.filter((e) => adTeam.has(e.id)) : eligible;
+    // Channel default: a Messenger/Instagram thread with NO ad-specific rule
+    // routes to the platform's default team (marketing-editable → Islamabad by
+    // default) instead of the whole org pool. An ad rule still wins over this.
+    const channelTeam =
+      !adTeam && !opts?.forLiveCall && thread.platform && thread.platform !== ChannelPlatform.WHATSAPP
+        ? await this.routingRules.teamForChannel(thread.platform)
+        : null;
+    // The effective restriction: ad rule (most specific) → channel default →
+    // none. Its own per-desk cursor gives each restricted team its own clean
+    // round-robin lane (so Messenger→Islamabad rotates independently).
+    const restrictTeam = adTeam ?? channelTeam;
+    const basePool = restrictTeam ? eligible.filter((e) => restrictTeam.has(e.id)) : eligible;
 
     // NEW-lead pool = basePool restricted to ONLINE (Away/Offline agents don't
     // receive new leads). A live inbound call can't wait for the sweeper, so if
@@ -245,7 +260,7 @@ export class WhatsAppAssignmentService {
     const pool = onlinePool.length > 0 ? onlinePool : opts?.forLiveCall ? basePool : [];
     if (pool.length === 0) {
       this.log.log(
-        { leadId: lead.id, basePool: basePool.length, adRestricted: !!adTeam, forLiveCall: !!opts?.forLiveCall },
+        { leadId: lead.id, basePool: basePool.length, restricted: !!restrictTeam, forLiveCall: !!opts?.forLiveCall },
         'assignment: no eligible agent to receive this lead — leaving unassigned (sweeper will pick up)',
       );
       return unassigned(lead.id);
@@ -256,7 +271,7 @@ export class WhatsAppAssignmentService {
     // the single org-wide cursor that every pool + channel otherwise shares —
     // that shared cursor kept collapsing the pick to the desk's first member.
     // The default whole-pool path keeps using the org cursor, unchanged.
-    const deskKey = adTeam ? poolKeyOf(basePool.map((e) => e.id)) : null;
+    const deskKey = restrictTeam ? poolKeyOf(basePool.map((e) => e.id)) : null;
     const rrCursor = deskKey
       ? await this.readPoolCursor(deskKey, opts?.cache)
       : org.rrCursorEmployeeId;

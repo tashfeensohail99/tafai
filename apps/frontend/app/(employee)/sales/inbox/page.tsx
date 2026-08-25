@@ -204,13 +204,23 @@ export default function SalesInboxPage() {
 
   // Fetch just the tab counts without reloading the thread list.
   // Used by the realtime reconcile so counts stay live without full refetches.
+  const lastStatsFetchRef = useRef(0);
   const refreshStats = useCallback(async () => {
+    lastStatsFetchRef.current = Date.now();
     try {
       setStats(await getThreadStats());
     } catch {
       /* non-critical — existing counts stay */
     }
   }, []);
+  // Activity-driven refresh, throttled: a burst of incoming messages fires
+  // onActivity once per socket event across EVERY open inbox — that synchronized
+  // stats stampede was ~85% of all DB time. One refresh per 15s is plenty for
+  // badge counts; the 30s reconcile + backend-side stats cache cover the rest.
+  const refreshStatsThrottled = useCallback(() => {
+    if (Date.now() - lastStatsFetchRef.current < 15_000) return;
+    void refreshStats();
+  }, [refreshStats]);
 
   const reload = useCallback(async (opts?: { background?: boolean }) => {
     if (!opts?.background) setLoading(true);
@@ -385,11 +395,11 @@ export default function SalesInboxPage() {
       return debouncedSearch ? threadMatchesSearch(row, debouncedSearch) : true;
     },
     reconcile: () => void reload({ background: true }),
-    // Keep the tab counts (All / Open / Pending / Resolved) live with each
-    // burst of activity — so replying to a chat drops "Pending" within a
-    // beat, not only on the slow 30s reconcile. refreshStats() fetches the
-    // real DB totals (now no-store) without reloading the whole list.
-    onActivity: () => void refreshStats(),
+    // Keep the tab counts roughly live with activity — throttled to one fetch
+    // per 15s (see refreshStatsThrottled): per-message stats refreshes across
+    // every open inbox were the dominant DB load. Badges may lag a burst by up
+    // to ~15s; the 30s reconcile and backend stats cache cover the rest.
+    onActivity: refreshStatsThrottled,
   });
 
   // Stable handler so memo(ThreadRow) skips re-rendering unaffected rows when

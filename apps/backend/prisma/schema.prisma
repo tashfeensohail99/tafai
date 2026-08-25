@@ -1025,6 +1025,10 @@ model RoutingCursor {
 enum AdRoutingTargetType {
   AD
   CAMPAIGN
+  // Channel-level default: route ALL leads from a platform (targetId =
+  // 'MESSENGER' | 'INSTAGRAM') to a branch/team when no ad- or campaign-level
+  // rule matches. Used for the Messenger inbox default (→ Islamabad).
+  CHANNEL
 
   @@schema("crm")
 }

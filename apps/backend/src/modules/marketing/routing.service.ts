@@ -29,6 +29,9 @@ export class AdRoutingRulesService {
     adToEmployees: Map<string, ReadonlySet<string>>;
     /** Campaign id → set of eligible employee ids. */
     campaignToEmployees: Map<string, ReadonlySet<string>>;
+    /** Platform ('MESSENGER' | 'INSTAGRAM') → set of eligible employee ids.
+     *  The channel-level default team, consulted when no ad/campaign rule matches. */
+    channelToEmployees: Map<string, ReadonlySet<string>>;
     /** Ad id → its campaign id (from meta_ads), so an AD lookup can fall
      *  through to a CAMPAIGN rule without a second DB round-trip. */
     adToCampaign: Map<string, string>;
@@ -115,6 +118,19 @@ export class AdRoutingRulesService {
     return null;
   }
 
+  /**
+   * The channel-level DEFAULT team for a platform ('MESSENGER' | 'INSTAGRAM'),
+   * or `null` if none is configured (→ whole eligible pool). Consulted by the
+   * assignment loop only AFTER an ad/campaign rule misses, so a specific ad rule
+   * always still wins over the channel default.
+   */
+  async teamForChannel(platform: string): Promise<ReadonlySet<string> | null> {
+    if (!platform) return null;
+    const snap = await this.getSnap();
+    const team = snap.channelToEmployees.get(platform);
+    return team && team.size > 0 ? team : null;
+  }
+
   /** Cache snapshot — returned if fresh, otherwise rebuilt (single-flight). */
   private async getSnap() {
     const now = Date.now();
@@ -183,18 +199,20 @@ export class AdRoutingRulesService {
 
     const adToEmployees = new Map<string, ReadonlySet<string>>();
     const campaignToEmployees = new Map<string, ReadonlySet<string>>();
+    const channelToEmployees = new Map<string, ReadonlySet<string>>();
     for (const r of rules) {
       const team = new Set<string>();
       for (const b of r.branchIds) for (const id of employeesByBranch.get(b) ?? []) team.add(id);
       for (const id of r.employeeIds) if (activeEmployeeIds.has(id)) team.add(id);
       if (r.targetType === 'AD') adToEmployees.set(r.targetId, team);
-      else campaignToEmployees.set(r.targetId, team);
+      else if (r.targetType === 'CAMPAIGN') campaignToEmployees.set(r.targetId, team);
+      else channelToEmployees.set(r.targetId, team); // CHANNEL — platform default
     }
 
     const adToCampaign = new Map<string, string>();
     for (const a of ads) adToCampaign.set(a.adId, a.campaignId);
 
-    this.snap = { adToEmployees, campaignToEmployees, adToCampaign, builtAt: Date.now() };
+    this.snap = { adToEmployees, campaignToEmployees, channelToEmployees, adToCampaign, builtAt: Date.now() };
     this.log.debug?.(
       `Ad-routing snapshot: ${adToEmployees.size} ad rules · ${campaignToEmployees.size} campaign rules · ${adToCampaign.size} ads`,
     );

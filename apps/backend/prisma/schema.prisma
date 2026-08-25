@@ -4035,6 +4035,18 @@ enum WhatsAppChannelStatus {
   @@schema("whatsapp")
 }
 
+// Which Meta messaging product a channel/thread belongs to. The inbox was built
+// WhatsApp-only; this discriminator lets the same channel/thread/message tables
+// carry Facebook Messenger and Instagram Direct too. Existing rows default to
+// WHATSAPP so nothing changes behaviourally.
+enum ChannelPlatform {
+  WHATSAPP
+  MESSENGER
+  INSTAGRAM
+
+  @@schema("whatsapp")
+}
+
 enum WhatsAppMessageDirection {
   INBOUND
   OUTBOUND
@@ -4148,6 +4160,13 @@ model WhatsAppChannel {
   wabaId             String
   phoneNumberId      String                @unique
   displayNumber      String
+  // Which Meta product this channel is. WhatsApp channels keep phoneNumberId as
+  // their external key; MESSENGER/INSTAGRAM channels are keyed by pageId instead
+  // (phoneNumberId still holds a value — the page id — to satisfy the NOT NULL/
+  // unique constraint, but pageId is the authoritative id the webhook resolves on).
+  platform           ChannelPlatform       @default(WHATSAPP)
+  // Facebook Page id for MESSENGER / INSTAGRAM channels; null for WhatsApp.
+  pageId             String?               @unique
   // AES-256-GCM ciphertext of the access token. Format: iv:ciphertext:tag (base64).
   accessTokenEnc     String
   // Optional per-channel webhook verify token (overrides org default).
@@ -4268,11 +4287,17 @@ model WhatsAppCall {
 model WhatsAppThread {
   id                String               @id @default(uuid())
   channelId         String
+  // Denormalized from the channel so the inbox can filter by product (the
+  // "WhatsApp | Messenger" tab) without a join. Kept in sync with the channel's
+  // platform on thread create. Existing rows default to WHATSAPP.
+  platform          ChannelPlatform      @default(WHATSAPP)
   // The thread belongs to a Lead until conversion, then a Client. Always one
   // of these two is non-null; both may be set during conversion.
   leadId            String?              @unique
   clientId          String?
-  // WhatsApp's wa_id (E.164 without leading +). Indexed for fast inbound lookup.
+  // WhatsApp's wa_id (E.164 without leading +) for WhatsApp; the user's PSID
+  // (Messenger) or IGSID (Instagram) for those platforms. Indexed for fast
+  // inbound lookup; the (channelId, waContactId) unique still holds per platform.
   waContactId       String
   // 24-hour customer-service window. Outbound outside this window MUST be a
   // template message. Set/refreshed on every inbound.
@@ -4390,6 +4415,9 @@ model WhatsAppThread {
   // The inbox primary sort is lastHumanActivityAt DESC (newest real message on
   // top; bot nudges excluded) — this index backs it.
   @@index([lastHumanActivityAt(sort: Desc)])
+  // The "WhatsApp | Messenger" inbox tab filters by platform and keeps the same
+  // primary sort — this composite serves the per-platform list/stats queries.
+  @@index([platform, lastHumanActivityAt(sort: Desc)])
   // Stats endpoint counts responseDeadlineAt three ways (set / overdue /
   // approaching) on every load (SLA timer).
   @@index([responseDeadlineAt])

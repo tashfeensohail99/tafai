@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageCircle,
   MessageSquare,
   Phone,
   PhoneCall,
@@ -58,6 +59,7 @@ function buildSalesNav(stats: MySalesStats | null, missedCalls: number): DrawerM
   return [
     { label: 'Dashboard', href: '/sales', icon: LayoutDashboard, caption: 'Workspace overview' },
     { label: 'WhatsApp Inbox', href: '/sales/inbox', icon: MessageSquare, caption: 'Your assigned chats' },
+    { label: 'Messenger', href: '/sales/messenger', icon: MessageCircle, caption: 'Facebook Messenger chats' },
     {
       label: 'Calls',
       href: '/sales/calls',
@@ -90,6 +92,7 @@ function buildSalesNav(stats: MySalesStats | null, missedCalls: number): DrawerM
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/sales') return { title: 'Sales Dashboard', subtitle: 'Your daily command center' };
+  if (pathname.startsWith('/sales/messenger')) return { title: 'Messenger', subtitle: 'Your assigned Messenger chats' };
   if (pathname.startsWith('/sales/inbox')) return { title: 'WhatsApp Inbox', subtitle: 'Your assigned conversations' };
   if (pathname.startsWith('/sales/calls')) return { title: 'Calls', subtitle: 'Your missed and answered calls' };
   if (pathname.startsWith('/sales/status')) return { title: 'WhatsApp Status', subtitle: 'Compose, schedule, and track Status posts' };

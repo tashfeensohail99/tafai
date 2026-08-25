@@ -750,8 +750,54 @@ export class WhatsAppThreadsService {
    *                     every agent, so the dashboard shows a useful team
    *                     number instead of a meaningless 100.
    *   slaScoreScope   — 'self' | 'org' | null, so the UI can label it right.
+   *
+   * CACHED (20s TTL, single-flight, per caller-scope). The raw computation
+   * (computeStats) fires ~15 COUNT aggregates over the whole threads table.
+   * Every open inbox calls this on load, every 30s, on window focus AND on
+   * every incoming message — measured at ~85% of ALL database exec time, with
+   * synchronized bursts (every rep's inbox reacting to the same inbound at
+   * once) piling queries up at peak hours: the "CRM is slow" complaints.
+   * Badge counts don't need per-second accuracy, so one result per scope is
+   * shared for STATS_TTL_MS, and concurrent callers in a burst await the SAME
+   * in-flight computation instead of each scanning the table.
    */
-  async stats(caller: CallerContext): Promise<{
+  private readonly statsCache = new Map<
+    string,
+    { expires: number; promise: ReturnType<WhatsAppThreadsService['computeStats']> }
+  >();
+  private static readonly STATS_TTL_MS = 20_000;
+
+  async stats(caller: CallerContext): ReturnType<WhatsAppThreadsService['computeStats']> {
+    // Key = everything computeStats' output depends on: the scope branch it
+    // takes + the employee whose assigned-set/slaScore it computes. userId is
+    // deliberately NOT in the key (stats read nothing else user-specific), so
+    // e.g. all view-all admins share one entry — the heaviest computation runs
+    // once per TTL for the whole admin console.
+    const scope = caller.canViewAll
+      ? 'all'
+      : caller.canViewFinanceScope
+        ? 'fin'
+        : caller.canViewProcessingScope
+          ? 'proc'
+          : 'emp';
+    const key = `${scope}:${caller.employeeId ?? 'none'}`;
+    const now = Date.now();
+    const hit = this.statsCache.get(key);
+    if (hit && hit.expires > now) return hit.promise;
+    // Opportunistic prune so the map stays bounded (one entry per active scope).
+    if (this.statsCache.size > 300) {
+      for (const [k, v] of this.statsCache) if (v.expires <= now) this.statsCache.delete(k);
+    }
+    const promise = this.computeStats(caller).catch((err) => {
+      // Never cache a failure — drop the entry so the next caller retries.
+      this.statsCache.delete(key);
+      throw err;
+    });
+    this.statsCache.set(key, { expires: now + WhatsAppThreadsService.STATS_TTL_MS, promise });
+    return promise;
+  }
+
+  private async computeStats(caller: CallerContext): Promise<{
     total: number;
     active: number;
     resolved: number;

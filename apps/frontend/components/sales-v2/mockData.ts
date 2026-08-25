@@ -580,7 +580,9 @@ function formatSalesDate(iso: string, options: Intl.DateTimeFormatOptions) {
 }
 
 function formatRelative(iso: string, referenceMs: number) {
-  const diffMs = new Date(iso).getTime() - referenceMs;
+  const targetMs = new Date(iso).getTime();
+  if (Number.isNaN(targetMs)) return '';
+  const diffMs = targetMs - referenceMs;
   const abs = Math.abs(diffMs);
   const minutes = Math.round(abs / 60000);
   const hours = Math.round(abs / 3600000);
@@ -616,8 +618,17 @@ export function fmtLongDate(iso: string) {
   return formatSalesDate(iso, { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
+// Relative time for LIVE data — measured against the real current time.
+//
+// This previously measured against a frozen MOCK_REFERENCE_MS (2026-05-09), so
+// every real timestamp on the sales pages (follow-up dueAt, lead assignedAt,
+// SLA, appointments) drifted by the number of days elapsed since that anchor —
+// e.g. a follow-up added yesterday rendered as "~100d ago". All live callers
+// want "relative to now"; no live surface renders the static MOCK_* arrays that
+// the frozen anchor was for, so this now always uses Date.now().
+// `fmtRelativeToNow` remains as an explicit alias.
 export function fmtRelative(iso: string) {
-  return formatRelative(iso, MOCK_REFERENCE_MS);
+  return formatRelative(iso, Date.now());
 }
 
 export function fmtRelativeToNow(iso: string) {

@@ -513,47 +513,65 @@ export class HrService {
     name: string; crmEmail?: string; crmPassword?: string; mailboxEmail?: string; mailboxPassword?: string;
   }): string {
     const box = (rows: string) =>
-      `<table style="width:100%;border-collapse:collapse;background:#f6f8fb;border:1px solid #e3e8f0;border-radius:10px;margin:8px 0 16px">${rows}</table>`;
+      `<table style="width:100%;border-collapse:collapse;background:#f6f8fb;border:1px solid #e3e8f0;border-radius:10px;margin:8px 0 14px">${rows}</table>`;
     const row = (k: string, v: string) =>
-      `<tr><td style="padding:8px 14px;color:#5b6472;font-size:13px;width:150px">${k}</td>` +
-      `<td style="padding:8px 14px;font-family:monospace;font-size:14px;color:#101828">${v}</td></tr>`;
+      `<tr><td style="padding:8px 14px;color:#5b6472;font-size:13px;width:150px;vertical-align:top">${k}</td>` +
+      `<td style="padding:8px 14px;font-family:monospace;font-size:14px;color:#101828;word-break:break-all">${v}</td></tr>`;
+    const heading = (n: string, t: string) =>
+      `<h3 style="margin:24px 0 6px;font-size:16px;color:#101828">` +
+      `<span style="display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;background:#1d4ed8;color:#ffffff;border-radius:11px;font-size:12px;margin-right:8px">${n}</span>${t}</h3>`;
+    const sub = (t: string) => `<p style="margin:12px 0 4px;font-weight:600;font-size:14px;color:#101828">${t}</p>`;
+    const p = (t: string) => `<p style="margin:0 0 8px;color:#3a4250;font-size:14px;line-height:1.5">${t}</p>`;
+    const link = (href: string, label?: string) =>
+      `<a href="${href}" style="color:#1d4ed8;text-decoration:none">${label ?? href}</a>`;
 
+    // Section 1 — CRM: how to sign in on both web and the Android app.
     const crm = dto.crmEmail
-      ? `<h3 style="margin:18px 0 4px;font-size:16px;color:#101828">CRM login</h3>` +
+      ? heading('1', 'Your CRM account') +
         box(
-          row('Website', '<a href="https://tashfeengroup.com/login">https://tashfeengroup.com/login</a>') +
           row('Email', dto.crmEmail) +
           (dto.crmPassword ? row('Password', dto.crmPassword) : '') +
-          row('Note', 'You will be asked to set a new password on first sign-in.'),
+          row('Note', 'You will be asked to set your own password on first sign-in.'),
+        ) +
+        sub('On a computer (web)') +
+        p(`Go to ${link('https://tashfeengroup.com/login')} and sign in with the email and password above.`) +
+        sub('On your phone (Android app)') +
+        p(
+          `Open ${link('https://tashfeengroup.com/downloads')} on your phone, tap <b>Download the app</b>, ` +
+          `install it, then open <b>Tashfeen CRM</b> and sign in with the <b>same</b> email and password.`,
         )
       : '';
 
+    // Section 2 — business email: webmail in a browser + IMAP/SMTP for phone/Outlook.
     const mailbox = dto.mailboxEmail
-      ? `<h3 style="margin:18px 0 4px;font-size:16px;color:#101828">Business email</h3>` +
+      ? heading(dto.crmEmail ? '2' : '1', 'Your business email') +
         box(
-          row('Address', dto.mailboxEmail) +
+          row('Email address', dto.mailboxEmail) +
           (dto.mailboxPassword ? row('Password', dto.mailboxPassword) : ''),
         ) +
-        `<p style="margin:0 0 6px;font-weight:600;color:#101828">How to sign in to your email</p>` +
-        `<p style="margin:0 0 10px;color:#3a4250;font-size:14px">Open it in a browser at ` +
-        `<a href="https://tuesday.mxrouting.net/webmail">https://tuesday.mxrouting.net/webmail</a> ` +
-        `(username = your full email address above, password = the email password above).</p>` +
-        `<p style="margin:0 0 4px;color:#3a4250;font-size:14px">Or add it to Gmail / Outlook / your phone with these settings:</p>` +
+        sub('In a web browser (webmail)') +
+        p(
+          `Go to ${link('https://tuesday.mxrouting.net/webmail')} — the username is your full email address above, ` +
+          `and the password is the email password above.`,
+        ) +
+        sub('On your phone or in Outlook / Gmail (IMAP)') +
+        p('Add a new mail account, choose "Other" / "IMAP", and use these settings:') +
         box(
-          row('Incoming (IMAP)', 'tuesday.mxrouting.net · port 993 · SSL/TLS') +
-          row('Outgoing (SMTP)', 'tuesday.mxrouting.net · port 465 · SSL/TLS') +
+          row('Incoming (IMAP)', 'tuesday.mxrouting.net &middot; port 993 &middot; SSL/TLS') +
+          row('Outgoing (SMTP)', 'tuesday.mxrouting.net &middot; port 465 &middot; SSL/TLS') +
           row('Username', dto.mailboxEmail) +
-          row('Password', 'your email password above'),
-        )
+          row('Password', 'the email password above'),
+        ) +
+        p('Tip: change your email password after your first sign-in (in webmail, go to Settings then Password).')
       : '';
 
     return (
       `<div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;color:#101828">` +
-      `<p style="font-size:15px">Hi ${dto.name},</p>` +
-      `<p style="font-size:14px;color:#3a4250">Here are your Tashfeen access details. Please keep them private.</p>` +
+      `<p style="font-size:16px;font-weight:600;margin:0 0 6px">Hi ${dto.name},</p>` +
+      `<p style="font-size:14px;color:#3a4250;line-height:1.5;margin:0 0 4px">Welcome to Tashfeen. Below is everything you need to sign in to the CRM and your company email — on both computer and phone. Please keep these details private.</p>` +
       crm +
       mailbox +
-      `<p style="font-size:12px;color:#98a2b3;margin-top:20px">Sent by Tashfeen HR. If you didn't expect this, contact your administrator.</p>` +
+      `<p style="font-size:12px;color:#98a2b3;margin-top:24px;border-top:1px solid #eef1f5;padding-top:12px">Sent by Tashfeen HR. If you weren't expecting this, contact your administrator.</p>` +
       `</div>`
     );
   }

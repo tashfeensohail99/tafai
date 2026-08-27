@@ -52,10 +52,26 @@ export class EmailService {
     });
   }
 
-  async sendMail(opts: SendMailOptions): Promise<boolean> {
+  /** Whether SMTP is configured (host + user + pass present). Lets callers tell
+   *  "not set up" apart from "tried to send and the provider rejected it". */
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /**
+   * Send and REPORT the outcome — including the real provider reason on failure.
+   * Use this (over `sendMail`) whenever the caller needs to surface WHY a send
+   * failed: `notConfigured` distinguishes a missing SMTP setup from a genuine
+   * send failure, and `error` carries the actual SMTP response (e.g.
+   * "554 5.7.1 Disabled by user from hPanel", "535 auth failed", a bad
+   * recipient) instead of it being swallowed into a server log.
+   */
+  async sendMailResult(
+    opts: SendMailOptions,
+  ): Promise<{ ok: boolean; error?: string; notConfigured?: boolean }> {
     if (!this.enabled || !this.transporter) {
       this.logger.warn(`Email skipped (SMTP not configured): "${opts.subject}" → ${String(opts.to)}`);
-      return false;
+      return { ok: false, notConfigured: true, error: 'SMTP is not configured (SMTP_HOST/USER/PASS are unset).' };
     }
     try {
       const joinList = (v?: string | string[]) =>
@@ -73,11 +89,20 @@ export class EmailService {
         ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
       });
       this.logger.log(`Email sent: "${opts.subject}" → ${String(opts.to)} (${info.messageId})`);
-      return true;
+      return { ok: true };
     } catch (err) {
-      this.logger.error(`Email send failed: "${opts.subject}" → ${String(opts.to)}`, err);
-      return false;
+      // nodemailer puts the SMTP server's reply on `.response`; fall back to `.message`.
+      const e = err as { response?: string; message?: string };
+      const reason = (e?.response || e?.message || 'unknown error').toString().trim();
+      this.logger.error(`Email send failed: "${opts.subject}" → ${String(opts.to)}: ${reason}`, err as Error);
+      return { ok: false, error: reason };
     }
+  }
+
+  /** Fire-and-forget send: returns only whether it succeeded (real reason is
+   *  logged). Callers that must show the reason should use `sendMailResult`. */
+  async sendMail(opts: SendMailOptions): Promise<boolean> {
+    return (await this.sendMailResult(opts)).ok;
   }
 
   // ── Convenience templates ──────────────────────────────────────────────────

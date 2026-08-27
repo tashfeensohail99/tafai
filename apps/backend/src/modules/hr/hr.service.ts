@@ -3,6 +3,7 @@ import {
   Logger,
   BadRequestException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -11,7 +12,7 @@ import { UsersService } from '../users/users.service';
 import { MailProvisioningService } from './mail-provisioning.service';
 import { EmailService } from '../email/email.service';
 import { OnboardEmployeeDto, OffboardEmployeeDto } from './hr.dto';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 
 // Fixed recipients that always receive a copy of any credentials HR sends (a
 // records/handover trail). Overridable via env without a code change.
@@ -74,11 +75,15 @@ export class HrService {
     const pick = (s: string) => s[randomInt(s.length)];
     let pw = pick(upper) + pick(lower) + pick(digit) + pick(sym);
     for (let i = 0; i < 10; i++) pw += pick(all);
-    // Shuffle so the guaranteed classes aren't always in the first 4 slots.
-    return pw
-      .split('')
-      .sort(() => randomInt(3) - 1)
-      .join('');
+    // Uniform Fisher–Yates shuffle (CSPRNG) so the guaranteed classes aren't
+    // always in the first 4 slots — a `sort()` with a random comparator does
+    // NOT produce a uniform permutation.
+    const a = pw.split('');
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = randomInt(i + 1);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a.join('');
   }
 
   /**
@@ -88,6 +93,12 @@ export class HrService {
   async onboard(dto: OnboardEmployeeDto, actorUserId: string) {
     // HR may set a password explicitly; otherwise generate a strong one.
     const password = dto.password?.trim() || this.generatePassword();
+
+    // 0) Validate FK references BEFORE any side effect. A stale/deleted dropdown
+    //    id passes @IsUUID() but would only fail at employee.create — i.e. AFTER
+    //    the mailbox + login account are already created, orphaning both. Fail
+    //    here so nothing gets created.
+    await this.assertRefsExist(dto);
 
     // 1) Resolve the email — generate a mailbox, or use a supplied address.
     let email: string;
@@ -103,6 +114,14 @@ export class HrService {
       email = dto.email.toLowerCase();
     }
 
+    const rollbackMailbox = async () => {
+      if (!mailboxCreated) return;
+      const localPart = email.split('@')[0];
+      await this.mail.deleteMailbox(localPart).catch((err) =>
+        this.log.error(`rollback deleteMailbox ${localPart} failed: ${(err as Error).message}`),
+      );
+    };
+
     // 2) Create the login account (hashes password, attaches roles, audits).
     //    If this fails after a mailbox was created, roll the mailbox back so we
     //    don't leave an orphaned inbox.
@@ -113,44 +132,31 @@ export class HrService {
         actorUserId,
       );
     } catch (e) {
-      if (mailboxCreated) {
-        const localPart = email.split('@')[0];
-        await this.mail.deleteMailbox(localPart).catch((err) =>
-          this.log.error(`rollback deleteMailbox ${localPart} failed: ${(err as Error).message}`),
-        );
-      }
+      await rollbackMailbox();
       throw e;
     }
 
-    // 3) Create the employee profile with an auto employee code + HR fields.
-    const employeeCode = await this.nextEmployeeCode();
-    const emp = await this.prisma.employee.create({
-      data: {
-        userId: user.id,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        employeeCode,
-        departmentId: dto.departmentId,
-        branchId: dto.branchId,
-        designationId: dto.designationId,
-        gender: dto.gender,
-        dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
-        nationalId: dto.nationalId,
-        passportNumber: dto.passportNumber,
-        nationality: dto.nationality,
-        joiningDate: dto.joiningDate ? new Date(dto.joiningDate) : undefined,
-        whatsappInboxMember: dto.whatsappInboxMember ?? false,
-        pbxExtension: dto.pbxExtension,
-      },
-      select: { id: true, employeeCode: true, firstName: true, lastName: true },
-    });
+    // 3) Create the employee profile. If this fails, COMPENSATE: delete the
+    //    just-created login account (a fresh account's only child rows are its
+    //    userRoles, which cascade) AND the mailbox — otherwise both are orphaned
+    //    and the unique email blocks HR from ever retrying this person.
+    let emp: { id: string; employeeCode: string | null; firstName: string; lastName: string };
+    try {
+      emp = await this.createEmployeeProfile(user.id, dto);
+    } catch (e) {
+      await this.prisma.userAccount.delete({ where: { id: user.id } }).catch((err) =>
+        this.log.error(`rollback delete user ${user.id} failed: ${(err as Error).message}`),
+      );
+      await rollbackMailbox();
+      throw this.toCleanError(e);
+    }
 
     await this.audit.log({
       actorUserId,
       action: AuditAction.USER_CREATED,
       entityType: 'Employee',
       entityId: emp.id,
-      newValues: { employeeCode, email, mailboxCreated, name: `${dto.firstName} ${dto.lastName}` },
+      newValues: { employeeCode: emp.employeeCode, email, mailboxCreated, name: `${dto.firstName} ${dto.lastName}` },
     });
 
     // Credentials are returned ONCE — never stored in plaintext.
@@ -162,6 +168,69 @@ export class HrService {
       password,
       mailboxCreated,
     };
+  }
+
+  /** Verify any provided department/branch/designation ids actually exist, so a
+   *  stale dropdown id fails cleanly (400) before any mailbox/account is made. */
+  private async assertRefsExist(dto: OnboardEmployeeDto): Promise<void> {
+    if (dto.departmentId && (await this.prisma.department.count({ where: { id: dto.departmentId } })) === 0) {
+      throw new BadRequestException('Selected department no longer exists — refresh and try again.');
+    }
+    if (dto.branchId && (await this.prisma.branch.count({ where: { id: dto.branchId } })) === 0) {
+      throw new BadRequestException('Selected branch no longer exists — refresh and try again.');
+    }
+    if (dto.designationId && (await this.prisma.designation.count({ where: { id: dto.designationId } })) === 0) {
+      throw new BadRequestException('Selected designation no longer exists — refresh and try again.');
+    }
+  }
+
+  /** Create the employee profile, retrying on a concurrent employeeCode
+   *  collision (the TIS-#### sequence is deliberately not row-locked). */
+  private async createEmployeeProfile(userId: string, dto: OnboardEmployeeDto) {
+    for (let attempt = 0; ; attempt++) {
+      const employeeCode = await this.nextEmployeeCode();
+      try {
+        return await this.prisma.employee.create({
+          data: {
+            userId,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            employeeCode,
+            departmentId: dto.departmentId,
+            branchId: dto.branchId,
+            designationId: dto.designationId,
+            gender: dto.gender,
+            dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
+            nationalId: dto.nationalId,
+            passportNumber: dto.passportNumber,
+            nationality: dto.nationality,
+            joiningDate: dto.joiningDate ? new Date(dto.joiningDate) : undefined,
+            whatsappInboxMember: dto.whatsappInboxMember ?? false,
+            pbxExtension: dto.pbxExtension,
+          },
+          select: { id: true, employeeCode: true, firstName: true, lastName: true },
+        });
+      } catch (e) {
+        const target =
+          e instanceof Prisma.PrismaClientKnownRequestError ? e.meta?.target : undefined;
+        const targetStr = Array.isArray(target) ? target.join(',') : String(target ?? '');
+        const isCodeCollision =
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2002' &&
+          /employeecode/i.test(targetStr);
+        if (isCodeCollision && attempt < 4) continue; // recompute the next code and retry
+        throw e;
+      }
+    }
+  }
+
+  /** Map raw Prisma constraint errors to a clean 400 instead of a leaked 500. */
+  private toCleanError(e: unknown): unknown {
+    if (e instanceof Prisma.PrismaClientKnownRequestError) {
+      if (e.code === 'P2003') return new BadRequestException('A selected department, branch, or designation is invalid.');
+      if (e.code === 'P2002') return new BadRequestException('That employee already exists (duplicate code or email).');
+    }
+    return e;
   }
 
   /** Disable the CRM login (+ optionally delete the mailbox). */
@@ -359,35 +428,85 @@ export class HrService {
     actorUserId: string,
   ) {
     const to = dto.to?.trim();
-    // Primary recipient + the fixed records CCs. If HR gave no recipient, the
-    // records addresses become the To.
-    const recipients = to ? [to, ...CREDENTIAL_CC] : [...CREDENTIAL_CC];
-    if (recipients.length === 0) {
+    if (!to && CREDENTIAL_CC.length === 0) {
       throw new BadRequestException('No recipient and no records addresses configured.');
     }
-    const primary = to ?? CREDENTIAL_CC[0];
-    const cc = recipients.filter((r) => r !== primary);
 
-    const html = this.credentialsHtml(dto);
-    const sent = await this.email.sendMail({
-      to: primary,
-      cc: cc.length ? cc : undefined,
-      subject: `Your Tashfeen access — ${dto.name}`,
-      html,
-    });
+    // The full pack (with plaintext passwords) goes ONLY to the new hire. The
+    // fixed records addresses get a passwords-REDACTED "credentials issued"
+    // notice — secrets must not sit in a shared/external records inbox. If HR
+    // gave no hire address, this is an explicit records-only issuance, so the
+    // pack goes to the records addresses as the sole recipient.
+    let result: { ok: boolean; error?: string; notConfigured?: boolean };
+    let recipients: string[];
+    if (to) {
+      recipients = [to];
+      result = await this.email.sendMailResult({
+        to,
+        subject: `Your Tashfeen access — ${dto.name}`,
+        html: this.credentialsHtml(dto),
+      });
+      // Best-effort records notice (no secrets) — never fail the op on this.
+      if (result.ok && CREDENTIAL_CC.length) {
+        await this.email
+          .sendMail({
+            to: CREDENTIAL_CC,
+            subject: `Credentials issued — ${dto.name}`,
+            html: this.credentialsIssuedNotice(dto),
+          })
+          .catch(() => undefined);
+      }
+    } else {
+      recipients = [...CREDENTIAL_CC];
+      result = await this.email.sendMailResult({
+        to: CREDENTIAL_CC,
+        subject: `Your Tashfeen access — ${dto.name}`,
+        html: this.credentialsHtml(dto),
+      });
+    }
 
     await this.audit.log({
       actorUserId,
       action: AuditAction.USER_UPDATED,
       entityType: 'Employee',
       entityId: dto.crmEmail ?? dto.mailboxEmail ?? dto.name,
-      newValues: { credentialsEmailed: recipients, sent },
+      newValues: {
+        credentialsEmailedTo: recipients,
+        recordsNotified: Boolean(to && CREDENTIAL_CC.length),
+        sent: result.ok,
+      },
     });
 
-    if (!sent) {
-      throw new BadRequestException('Email could not be sent (SMTP not configured or send failed).');
+    if (!result.ok) {
+      if (result.notConfigured) {
+        throw new ServiceUnavailableException(
+          'Email is not configured on the server (SMTP_HOST/USER/PASS). Ask an admin to set it up.',
+        );
+      }
+      // Surface the REAL provider reason (bad recipient, 554/535, connection…)
+      // instead of the old catch-all "SMTP not configured or send failed".
+      throw new BadRequestException(`Email could not be sent: ${result.error ?? 'the mail server rejected the message.'}`);
     }
-    return { sent, recipients };
+    return { sent: result.ok, recipients };
+  }
+
+  /** Records-copy notice: confirms credentials were issued, WITHOUT any password. */
+  private credentialsIssuedNotice(dto: { name: string; crmEmail?: string; mailboxEmail?: string }): string {
+    const line = (k: string, v?: string) =>
+      v
+        ? `<tr><td style="padding:6px 14px;color:#5b6472;font-size:13px;width:140px">${k}</td>` +
+          `<td style="padding:6px 14px;font-size:14px;color:#101828">${v}</td></tr>`
+        : '';
+    return (
+      `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#101828">` +
+      `<p style="font-size:15px">Credentials were issued for <strong>${dto.name}</strong>.</p>` +
+      `<table style="width:100%;border-collapse:collapse;background:#f6f8fb;border:1px solid #e3e8f0;border-radius:10px;margin:8px 0 16px">` +
+      line('CRM login', dto.crmEmail) +
+      line('Business email', dto.mailboxEmail) +
+      `</table>` +
+      `<p style="font-size:13px;color:#5b6472">Passwords were sent directly to the recipient and are intentionally omitted here. This copy is for your records.</p>` +
+      `</div>`
+    );
   }
 
   private credentialsHtml(dto: {

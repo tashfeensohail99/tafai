@@ -371,7 +371,16 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
     const tickMin = WhatsAppSlaSweeperService.INTERVAL_MS / 60_000;
 
     const emps = await this.prisma.employee.findMany({
-      where: { isActive: true, whatsappInboxMember: true, deletedAt: null, user: { status: 'ACTIVE' } },
+      // presenceLocked reps are admin-paused and PINNED offline on purpose —
+      // exclude them so the sweeper never accrues offline minutes, docks SLA
+      // points, emails/pings them, or lists them in the daily presence report.
+      where: {
+        isActive: true,
+        whatsappInboxMember: true,
+        deletedAt: null,
+        presenceLocked: false,
+        user: { status: 'ACTIVE' },
+      },
       select: {
         id: true, firstName: true, lastName: true,
         presenceStatus: true, presenceChangedAt: true,
@@ -502,7 +511,16 @@ export class WhatsAppSlaSweeperService implements OnModuleInit, OnModuleDestroy 
     if (existing > 0) return;
 
     const emps = await this.prisma.employee.findMany({
-      where: { isActive: true, whatsappInboxMember: true, deletedAt: null, user: { status: 'ACTIVE' } },
+      // presenceLocked reps are admin-paused and PINNED offline on purpose —
+      // exclude them so the sweeper never accrues offline minutes, docks SLA
+      // points, emails/pings them, or lists them in the daily presence report.
+      where: {
+        isActive: true,
+        whatsappInboxMember: true,
+        deletedAt: null,
+        presenceLocked: false,
+        user: { status: 'ACTIVE' },
+      },
       select: {
         id: true,
         firstName: true,

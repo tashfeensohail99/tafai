@@ -249,7 +249,14 @@ export class WhatsAppAssignmentService {
     // none. Its own per-desk cursor gives each restricted team its own clean
     // round-robin lane (so Messenger→Islamabad rotates independently).
     const restrictTeam = adTeam ?? channelTeam;
-    const basePool = restrictTeam ? eligible.filter((e) => restrictTeam.has(e.id)) : eligible;
+    // Paused reps (`presenceLocked`) are wound-down for NEW leads: they stay in
+    // `eligible`/`eligibleIds` above so their EXISTING chats are retained and
+    // honored, but they're dropped here so the round-robin never hands them a
+    // new one (and, being OFFLINE, they'd be filtered by the online gate too —
+    // this also covers the live-call fallback that ignores presence).
+    const basePool = (restrictTeam ? eligible.filter((e) => restrictTeam.has(e.id)) : eligible).filter(
+      (e) => !e.presenceLocked,
+    );
 
     // NEW-lead pool = basePool restricted to ONLINE (Away/Offline agents don't
     // receive new leads). A live inbound call can't wait for the sweeper, so if
@@ -503,7 +510,7 @@ export class WhatsAppAssignmentService {
   private async loadEligibleEmployees(
     tx: Prisma.TransactionClient,
     _organizationId: string,
-  ): Promise<{ id: string; presenceStatus: PresenceStatus }[]> {
+  ): Promise<{ id: string; presenceStatus: PresenceStatus; presenceLocked: boolean }[]> {
     const rows = await tx.employee.findMany({
       where: {
         isActive: true,
@@ -522,7 +529,10 @@ export class WhatsAppAssignmentService {
       orderBy: { id: 'asc' },
       // presenceStatus drives the ONLINE-only gate for NEW leads (Away/Offline
       // agents are skipped for new assignments but keep their existing chats).
-      select: { id: true, presenceStatus: true },
+      // presenceLocked is the admin "pause new leads" switch — such reps stay in
+      // this eligible set (so their existing chats are retained) but are dropped
+      // from the NEW-lead pool by the caller.
+      select: { id: true, presenceStatus: true, presenceLocked: true },
     });
     return rows;
   }

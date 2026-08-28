@@ -43,6 +43,7 @@ export class WhatsAppPresenceService {
         lastActivityAt: true,
         presenceChangedAt: true,
         whatsappInboxMember: true,
+        presenceLocked: true,
       },
     });
     if (!emp) throw new NotFoundException('No employee profile for this user');
@@ -59,17 +60,22 @@ export class WhatsAppPresenceService {
       effective: WhatsAppPresenceService.computeEffective(emp),
       lastActivityAt: emp.lastActivityAt,
       presenceChangedAt: emp.presenceChangedAt,
+      // When true the topbar toggle is locked OFFLINE (admin paused new leads).
+      presenceLocked: emp.presenceLocked,
     };
   }
 
   /** Agent toggles their explicit presence. */
   async setExplicit(userId: string, status: PresenceStatus): Promise<void> {
     const emp = await this.employeeFor(userId);
+    // A presence-locked (admin-paused) rep is pinned OFFLINE: ignore any attempt
+    // — theirs or the app's — to flip back online, so "no new leads" sticks.
+    const effective = emp.presenceLocked ? PresenceStatus.OFFLINE : status;
     const now = new Date();
     await this.prisma.employee.update({
       where: { id: emp.id },
       data: {
-        presenceStatus: status,
+        presenceStatus: effective,
         presenceChangedAt: now,
       },
     });
@@ -109,6 +115,7 @@ export class WhatsAppPresenceService {
         lastName: true,
         whatsappInboxMember: true,
         presenceStatus: true,
+        presenceLocked: true,
         lastActivityAt: true,
         skills: true,
         user: { select: { email: true } },
@@ -126,6 +133,7 @@ export class WhatsAppPresenceService {
       name: `${r.firstName} ${r.lastName}`.trim(),
       email: r.user.email,
       whatsappInboxMember: r.whatsappInboxMember,
+      presenceLocked: r.presenceLocked,
       skills: r.skills,
       explicit: r.presenceStatus,
       effective: WhatsAppPresenceService.computeEffective({

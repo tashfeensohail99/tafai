@@ -91,6 +91,11 @@ export class LeadAssignmentService {
       const eligible = await tx.employee.findMany({
         where: {
           ...LeadAssignmentService.ELIGIBLE_WHERE,
+          // Skip reps the admin has paused from NEW leads. Only the auto
+          // round-robin honors this — the manual pickers (listEligibleAgents /
+          // isEligibleAgent) deliberately still include them, so a human can
+          // hand-assign a lead to a paused rep on purpose.
+          presenceLocked: false,
           ...(selectedAgentIds.length > 0 ? { id: { in: selectedAgentIds } } : {}),
         },
         orderBy: { id: 'asc' },

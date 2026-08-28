@@ -1339,6 +1339,14 @@ model Employee {
   lastActivityAt      DateTime?
   // Last time the user explicitly flipped their presence.
   presenceChangedAt   DateTime?
+  // Admin "pause new leads" switch (wind a rep down without losing their book).
+  // When true the rep is PINNED OFFLINE — they can't self-toggle back online —
+  // AND is excluded from every NEW-lead round-robin pool (the live WhatsApp /
+  // Messenger engine and the async CSV / Meta engine). Their EXISTING assigned
+  // leads are retained and keep routing to them, and a human can still manually
+  // assign/refer a lead to them. Also exempts them from the presence-
+  // accountability sweeper, since being offline here is intentional, not a lapse.
+  presenceLocked      Boolean        @default(false)
   // Skill tags used as a soft preference by the routing engine. Examples:
   // ["UK","Canada","StudentVisa","WorkPermit"].
   skills              String[]       @default([])

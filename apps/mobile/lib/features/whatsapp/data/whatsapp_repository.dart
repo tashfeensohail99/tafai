@@ -550,6 +550,7 @@ class WhatsappRepository {
     required String filePath,
     String? fileName,
     String? caption,
+    String? idempotencyKey,
   }) async {
     try {
       final form = FormData.fromMap({
@@ -561,6 +562,9 @@ class WhatsappRepository {
           contentType: _mediaTypeFor(fileName ?? filePath),
         ),
         if (caption != null && caption.isNotEmpty) 'caption': caption,
+        // Stored @unique server-side — a retry of a landed-but-timed-out
+        // upload collapses instead of delivering the media twice.
+        if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
       });
       final res = await _c.post<Map<String, dynamic>>(
         '/whatsapp/threads/$threadId/messages/media',

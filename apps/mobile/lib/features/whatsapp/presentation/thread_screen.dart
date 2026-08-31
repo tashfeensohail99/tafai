@@ -209,6 +209,12 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   }
 
   void _sendErrToast(Object err) {
+    // StateError = a retry that can never succeed (the local attachment file
+    // is gone) — show the accurate message, not "tap to retry".
+    if (err is StateError) {
+      _toast(err.message);
+      return;
+    }
     _toast(err is AppError
         ? '${messageForError(err)} — tap the message to retry.'
         : 'Message not sent — tap it to retry.');
@@ -778,41 +784,37 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     );
     if (caption == null || !mounted) return; // cancelled in the preview
 
-    setState(() => _sending = true);
-    // Videos are transcoded/compressed server-side to fit WhatsApp, which can
-    // take a little while for a large clip — tell the rep it's working so a
-    // slow send doesn't read as a hang (and doesn't tempt a duplicate re-send).
-    if (isVideo && mounted) {
+    // OPTIMISTIC (Patch 8): the bubble appears immediately with a local
+    // preview and the multipart upload reconciles in the background — the
+    // composer is never frozen (a big video used to lock it for minutes).
+    // Failure keeps the file and flips the bubble to FAILED for tap-to-retry.
+    if (isVideo) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
             'Optimizing your video for WhatsApp — large clips can take up to a '
             'minute. It will send automatically when ready.',
           ),
-          duration: Duration(minutes: 3),
+          duration: Duration(seconds: 8),
         ),
       );
     }
-    try {
-      final msg = await ref.read(whatsappRepositoryProvider).sendMedia(
-            _threadId,
-            filePath: path,
-            fileName: picked.name,
-            caption: caption.isEmpty ? null : caption,
-          );
-      if (isVideo && mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      }
-      ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
-      _jumpToBottom(animate: true);
-    } on AppError catch (e) {
-      if (isVideo && mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      }
-      _toast(messageForError(e));
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+    final type = isVideo
+        ? 'VIDEO'
+        : imageExts.contains(ext)
+            ? 'IMAGE'
+            : 'DOCUMENT';
+    final fut = ref
+        .read(messagesControllerProvider(_threadId).notifier)
+        .sendMediaOptimistic(
+          filePath: path,
+          type: type,
+          fileName: picked.name,
+          caption: caption.isEmpty ? null : caption,
+        );
+    _jumpToBottom(animate: true);
+    final err = await fut;
+    if (mounted && err != null) _sendErrToast(err);
   }
 
   // ── Voice notes ────────────────────────────────────────────────────────────
@@ -895,24 +897,21 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     } catch (_) {}
     if (path == null || !mounted) return;
 
-    setState(() => _sending = true);
-    try {
-      final msg = await ref.read(whatsappRepositoryProvider).sendMedia(
-            _threadId,
-            filePath: path,
-            fileName: 'voice-note.ogg',
-          );
-      ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
-      _jumpToBottom(animate: true);
-    } on AppError catch (e) {
-      _toast(messageForError(e));
-    } finally {
-      try {
-        final f = File(path);
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
-      if (mounted) setState(() => _sending = false);
-    }
+    // OPTIMISTIC (Patch 8): bubble appears immediately, upload reconciles in
+    // the background. The recording is deleted ONLY on success — a failed
+    // voice note used to be deleted unconditionally, destroying the rep's
+    // only copy; now it stays on disk and the FAILED bubble retries it.
+    final fut = ref
+        .read(messagesControllerProvider(_threadId).notifier)
+        .sendMediaOptimistic(
+          filePath: path,
+          type: 'AUDIO',
+          fileName: 'voice-note.ogg',
+          deleteOnSuccess: true,
+        );
+    _jumpToBottom(animate: true);
+    final err = await fut;
+    if (mounted && err != null) _sendErrToast(err);
   }
 
   String get _voiceLabel {
@@ -2001,13 +2000,20 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
   bool get _isAudio =>
       widget.message.type == 'AUDIO' || widget.message.type == 'VOICE';
 
+  /// Optimistic temp bubble (Patch 8) — renders from its LOCAL file; the
+  /// server knows nothing about this id yet, so a signed-URL fetch would 404.
+  bool get _isLocalTemp =>
+      widget.message.id.startsWith('temp-') &&
+      widget.message.payload?['localPath'] is String;
+
   @override
   void initState() {
     super.initState();
-    if (_isImage) _fetchUrl();
+    if (_isImage && !_isLocalTemp) _fetchUrl();
   }
 
   Future<String?> _fetchUrl({bool forceRefresh = false}) async {
+    if (_isLocalTemp) return null;
     if (!forceRefresh && _url != null) return _url;
     final cached = _mediaUrlCache[widget.message.id];
     if (!forceRefresh &&
@@ -2032,6 +2038,9 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
   }
 
   Future<void> _open() async {
+    // Still uploading (or failed) — nothing server-side to open yet. A FAILED
+    // temp's tap is the outer retry gesture; don't swallow it with a snackbar.
+    if (_isLocalTemp) return;
     final url = _url ?? await _fetchUrl();
     if (url == null) {
       if (mounted) {
@@ -2056,6 +2065,61 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
   Widget build(BuildContext context) {
     final m = widget.message;
     final caption = (m.body?.isNotEmpty ?? false) ? m.body : null;
+
+    // Optimistic temp media (Patch 8): render from the local file, no
+    // GestureDetector of our own — a FAILED temp's tap must reach the outer
+    // bubble gesture (tap-to-retry), and there is nothing to "open" yet.
+    if (_isLocalTemp) {
+      final localPath = m.payload!['localPath'] as String;
+      final label = m.isFailed ? 'Not sent — tap to retry' : 'Sending…';
+      if (_isImage && File(localPath).existsSync()) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(
+                File(localPath),
+                width: 230,
+                cacheWidth: 720,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    _box(Icons.broken_image_outlined, label),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(label,
+                style: TextStyle(
+                    color: widget.fg.withValues(alpha: 0.8),
+                    fontSize: AppTokens.fontSizeXs)),
+            if (caption != null) ...[
+              const SizedBox(height: 2),
+              Text(caption,
+                  style: TextStyle(
+                      color: widget.fg,
+                      fontSize: AppTokens.fontSizeSm,
+                      height: 1.35)),
+            ],
+          ],
+        );
+      }
+      // Video/doc/voice temps: the sending/failed box — WITH the caption, so
+      // a rep watching a long video upload can still see what they wrote.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _box(Icons.schedule, label),
+          if (caption != null) ...[
+            const SizedBox(height: 4),
+            Text(caption,
+                style: TextStyle(
+                    color: widget.fg,
+                    fontSize: AppTokens.fontSizeSm,
+                    height: 1.35)),
+          ],
+        ],
+      );
+    }
 
     if (_isImage) {
       return GestureDetector(
@@ -2530,6 +2594,67 @@ class _FailedTranscriptState extends ConsumerState<_FailedTranscript> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Pushed INSTANTLY when a "new WhatsApp message" notification is tapped
+/// (Patch 8). The old flow awaited a full getThread round trip BEFORE pushing
+/// anything — 1-3s of dead air on mobile data, and a silent no-op on failure.
+/// This screen responds to the tap immediately, fetches the thread itself,
+/// swaps in the real [ThreadScreen], and offers Retry on error.
+class ThreadLoaderScreen extends ConsumerStatefulWidget {
+  final String threadId;
+  const ThreadLoaderScreen({super.key, required this.threadId});
+
+  @override
+  ConsumerState<ThreadLoaderScreen> createState() => _ThreadLoaderScreenState();
+}
+
+class _ThreadLoaderScreenState extends ConsumerState<ThreadLoaderScreen> {
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final t = await ref
+          .read(whatsappRepositoryProvider)
+          .getThread(widget.threadId);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => ThreadScreen(thread: t)),
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = e);
+    }
+  }
+
+  void _retry() {
+    setState(() => _error = null);
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Opening chat…')),
+      body: Center(
+        child: _error == null
+            ? const CircularProgressIndicator()
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Could not open this chat.'),
+                  const SizedBox(height: 12),
+                  FilledButton(onPressed: _retry, child: const Text('Retry')),
+                ],
+              ),
       ),
     );
   }

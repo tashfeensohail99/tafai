@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/wa_message.dart';
@@ -498,9 +500,82 @@ class MessagesController extends StateNotifier<MessagesState> {
     );
   }
 
+  /// OPTIMISTIC media/voice send: the bubble (local preview / "Sending…")
+  /// appears immediately and the composer is NEVER frozen — the multipart
+  /// upload (up to minutes for a big video) reconciles in the background,
+  /// controller-owned like text sends. On failure the bubble flips FAILED and
+  /// the FILE IS KEPT for tap-to-retry (failed voice notes used to be deleted
+  /// forever). `deleteOnSuccess` is for our own temp recordings (voice notes);
+  /// picked gallery files are never touched.
+  Future<Object?> sendMediaOptimistic({
+    required String filePath,
+    required String type, // IMAGE | VIDEO | AUDIO | DOCUMENT
+    String? fileName,
+    String? caption,
+    bool deleteOnSuccess = false,
+  }) {
+    final tempId =
+        'temp-${DateTime.now().microsecondsSinceEpoch}-${_tempSeq++}';
+    append(ChatMessage(
+      id: tempId,
+      direction: 'OUTBOUND',
+      type: type,
+      status: 'QUEUED',
+      body: caption,
+      idempotencyKey: tempId,
+      payload: {
+        'localPath': filePath,
+        if (fileName != null) 'localFileName': fileName,
+        if (deleteOnSuccess) 'deleteOnSuccess': true,
+      },
+      createdAt: DateTime.now(),
+    ));
+    return _postMedia(
+      tempId: tempId,
+      filePath: filePath,
+      fileName: fileName,
+      caption: caption,
+      deleteOnSuccess: deleteOnSuccess,
+    );
+  }
+
+  Future<Object?> _postMedia({
+    required String tempId,
+    required String filePath,
+    String? fileName,
+    String? caption,
+    bool deleteOnSuccess = false,
+  }) async {
+    try {
+      if (!File(filePath).existsSync()) {
+        // Retry after the picker/temp file was purged — nothing to upload.
+        setTempStatus(tempId, 'FAILED');
+        return StateError('Attachment is no longer available on this phone.');
+      }
+      final msg = await _repo.sendMedia(
+        _threadId,
+        filePath: filePath,
+        fileName: fileName,
+        caption: caption,
+        idempotencyKey: tempId,
+      );
+      replaceTemp(tempId, msg);
+      if (deleteOnSuccess) {
+        try {
+          final f = File(filePath);
+          if (f.existsSync()) f.deleteSync();
+        } catch (_) {}
+      }
+      return null;
+    } catch (e) {
+      setTempStatus(tempId, 'FAILED');
+      return e;
+    }
+  }
+
   /// Tap-to-retry of a FAILED temp bubble — same tempId, so the SAME
   /// idempotencyKey, so the backend collapses a retry whose first attempt
-  /// actually landed.
+  /// actually landed. Media temps re-upload their kept local file.
   Future<Object?> retryTemp(String tempId) {
     ChatMessage? temp;
     for (final m in state.items) {
@@ -510,6 +585,23 @@ class MessagesController extends StateNotifier<MessagesState> {
       }
     }
     if (temp == null) return Future.value();
+    final localPath = temp.payload?['localPath'] as String?;
+    if (localPath != null) {
+      if (!File(localPath).existsSync()) {
+        // Unwinnable retry — don't flash "Sending…" first; leave it FAILED
+        // and let the screen surface the accurate message.
+        return Future.value(
+            StateError('Attachment is no longer available on this phone.'));
+      }
+      setTempStatus(tempId, 'QUEUED');
+      return _postMedia(
+        tempId: tempId,
+        filePath: localPath,
+        fileName: temp.payload?['localFileName'] as String?,
+        caption: temp.body,
+        deleteOnSuccess: temp.payload?['deleteOnSuccess'] == true,
+      );
+    }
     setTempStatus(tempId, 'QUEUED');
     return _postText(
       tempId: tempId,

@@ -45,6 +45,14 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> {
   Timer? _pollTimer;
 
+  /// Tabs the rep has actually visited (Patch 8). IndexedStack used to mount
+  /// ALL six screens eagerly at startup — a ~12-request burst over a high-RTT
+  /// link that starved the visible screen's own fetches. Unvisited tabs are
+  /// now placeholders until first tapped; once visited they stay mounted so
+  /// their state (scroll, filters, live subscriptions) survives tab switches
+  /// exactly as before.
+  final Set<int> _visited = {};
+
   static const _tabs = <_TabDef>[
     _TabDef('Home', Icons.home_outlined, Icons.home),
     _TabDef('Leads', Icons.people_alt_outlined, Icons.people_alt),
@@ -249,17 +257,24 @@ class _AppShellState extends ConsumerState<AppShell> {
       body: Column(
         children: [
           Expanded(
-            child: IndexedStack(
-              index: index,
-              children: const [
+            child: Builder(builder: (_) {
+              _visited.add(index);
+              const screens = <Widget>[
                 DashboardScreen(),
                 LeadsListScreen(),
                 FollowUpsScreen(),
                 AppointmentsScreen(),
                 InboxScreen(),
                 CallsScreen(),
-              ],
-            ),
+              ];
+              return IndexedStack(
+                index: index,
+                children: [
+                  for (var i = 0; i < screens.length; i++)
+                    _visited.contains(i) ? screens[i] : const SizedBox.shrink(),
+                ],
+              );
+            }),
           ),
         ],
       ),

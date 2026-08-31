@@ -10,7 +10,6 @@ import '../../whatsapp/data/whatsapp_providers.dart'
         clearWhatsappSessionCaches,
         messagesControllerProvider,
         threadsControllerProvider;
-import '../../whatsapp/data/whatsapp_repository.dart';
 import '../../whatsapp/presentation/thread_screen.dart';
 import '../application/call_controller.dart';
 import '../data/call_api.dart';
@@ -49,7 +48,11 @@ class _CallHostState extends ConsumerState<CallHost>
       final push = CallPushService.instance;
       push.replayPendingAccept();
       push.checkColdStartAccept();
-      push.replayPendingThreadOpen();
+      // NOTE: replayPendingThreadOpen deliberately NOT here (Patch 8). On a
+      // cold start this post-frame runs while the router still shows the
+      // splash; a route pushed now is destroyed by the auth redirect and the
+      // tap silently lands on the dashboard. It replays from _sync once the
+      // session is restored and the shell has replaced the splash.
     });
   }
 
@@ -148,17 +151,14 @@ class _CallHostState extends ConsumerState<CallHost>
       ref.read(callControllerProvider.notifier).rejectById(callId);
     };
     // "New WhatsApp message" notification tapped → open that chat directly.
-    push.onOpenThread = (threadId) async {
-      try {
-        final t =
-            await ref.read(whatsappRepositoryProvider).getThread(threadId);
-        rootNavigatorKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => ThreadScreen(thread: t)),
-        );
-      } catch (_) {
-        // Thread fetch failed (offline / signed out) — the app still opens
-        // on the inbox, which is an acceptable fallback.
-      }
+    // Patch 8: push a lightweight loader route IMMEDIATELY — the tap used to
+    // produce NOTHING for a full network round trip (1-3s dead air on mobile
+    // data) and silently did nothing at all on failure. The loader fetches
+    // the thread itself, swaps in the real screen, and shows Retry on error.
+    push.onOpenThread = (threadId) {
+      rootNavigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => ThreadLoaderScreen(threadId: threadId)),
+      );
     };
     // NOTE: the cold-start accept replay (replayPendingAccept /
     // checkColdStartAccept) is deliberately NOT here — _wirePush runs in
@@ -174,6 +174,15 @@ class _CallHostState extends ConsumerState<CallHost>
       // session starts from an empty cache (and a fresh epoch).
       clearWhatsappSessionCaches();
       realtime.start(_freshToken);
+      // Cold-start notification tap: replay the buffered thread-open only now
+      // — after auth resolved — and give the router a beat to swap the splash
+      // for the shell, so the pushed chat route isn't torn down by the
+      // redirect (it used to be, silently landing the rep on the dashboard).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future<void>.delayed(const Duration(milliseconds: 250), () {
+          CallPushService.instance.replayPendingThreadOpen();
+        });
+      });
       // Ensure the controller is alive so it subscribes to call events.
       ref.read(callControllerProvider.notifier);
       // Register this device for high-priority call pushes (no-op until an FCM

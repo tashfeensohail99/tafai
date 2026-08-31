@@ -28,6 +28,7 @@ import {
   Field,
 } from '@/components/sales-v2/ui';
 import { CountrySelect } from '@/components/shared/CountrySelect';
+import { ApiClientError } from '@/lib/api-client';
 import { PICKABLE_SERVICE_TYPES } from '@/lib/service-types';
 import {
   createManualClientCase,
@@ -57,6 +58,53 @@ const outcomeRowStyle: CSSProperties = {
 
 function isValidEmail(v: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+}
+
+/** Duplicate-guard payload from the backend's ensureUniqueLead 409. */
+interface DuplicateDetails {
+  error?: string;
+  reason?: string;
+  match?: {
+    kind?: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    referenceCode?: string;
+    assignedFirst?: string | null;
+    assignedLast?: string | null;
+  };
+}
+
+/**
+ * Turn a create failure into something a processing manager can act on.
+ * The dedup guard's 409 otherwise surfaces as "Request failed with status 409"
+ * — a dead end that got reported as "cannot create client". Spell out WHICH
+ * record holds the number/email and what to do about it.
+ */
+function formatCreateError(e: unknown): string {
+  if (e instanceof ApiClientError && e.status === 409) {
+    const d = (e.details ?? {}) as DuplicateDetails;
+    const m = d.match;
+    if ((d.error === 'DUPLICATE_PHONE' || d.error === 'DUPLICATE_EMAIL') && m) {
+      const what = d.error === 'DUPLICATE_PHONE' ? 'phone number' : 'email';
+      const who = [m.firstName, m.lastName].filter(Boolean).join(' ') || 'an existing record';
+      const ref = m.referenceCode ? ` (${m.referenceCode})` : '';
+      const rep = [m.assignedFirst, m.assignedLast].filter(Boolean).join(' ');
+      const owner = rep ? `, assigned to ${rep}` : '';
+      const kind = m.kind === 'client' ? 'client' : 'lead';
+      const advice =
+        m.kind === 'client'
+          ? 'Open that client record instead of creating a new one.'
+          : d.error === 'DUPLICATE_PHONE'
+            ? 'You can create the client WITHOUT the phone (add it later), or ask an admin to reconcile that lead first.'
+            : 'Use a different email, or ask an admin to reconcile that lead first.';
+      return `This ${what} already belongs to ${kind} “${who}”${ref}${owner}. ${advice}`;
+    }
+  }
+  if (e instanceof Error && e.message === 'Failed to fetch') {
+    return 'Could not reach the server — check your connection and try again in a moment.';
+  }
+  return e instanceof Error ? e.message : 'Failed to create client';
 }
 
 export function ProcessingCreateClientPage() {
@@ -134,7 +182,7 @@ export function ProcessingCreateClientPage() {
       });
       setDone({ result, name: `${firstName.trim()} ${lastName.trim()}` });
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to create client');
+      setError(formatCreateError(e));
     } finally {
       setSubmitting(false);
     }

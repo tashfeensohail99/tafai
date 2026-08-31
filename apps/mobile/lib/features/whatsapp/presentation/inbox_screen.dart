@@ -8,6 +8,7 @@ import '../../../core/theme/tokens.dart';
 import '../../../core/util/format.dart';
 import '../../../core/widgets/app_states.dart';
 import '../../../core/widgets/premium_ui.dart';
+import '../../calls/data/realtime_service.dart';
 import '../data/whatsapp_providers.dart';
 import '../data/whatsapp_repository.dart';
 import '../domain/wa_stats.dart';
@@ -32,9 +33,59 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
   List<MessageSearchResult> _msgResults = const [];
   bool _msgBusy = false;
   String _query = '';
+  // Patch 7: realtime message events → debounced quiet list refresh, so the
+  // inbox is no longer BLIND to other chats' new messages while the rep is
+  // looking at it. Trailing 6s debounce keeps a busy org from turning this
+  // into a refetch storm.
+  StreamSubscription<RealtimeMessageEvent>? _rtSub;
+  Timer? _rtDebounce;
+  DateTime _lastRtReload = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastStatsInvalidate = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Floor between socket-triggered list reloads: events are ORG-wide, so a
+  /// busy hour must not turn every foregrounded inbox into a refetch
+  /// treadmill on the (unindexed) top-N list sort. A floor-rejected fire
+  /// RE-ARMS itself for the remainder, so the trailing update of a burst
+  /// always lands once the floor opens — never silently dropped.
+  static const _rtReloadFloor = Duration(seconds: 45);
+
+  void _fireRtReload() {
+    _rtDebounce = null;
+    if (!mounted) return;
+    final since = DateTime.now().difference(_lastRtReload);
+    if (since < _rtReloadFloor) {
+      _rtDebounce = Timer(_rtReloadFloor - since, _fireRtReload);
+      return;
+    }
+    _lastRtReload = DateTime.now();
+    final filter = ref.read(inboxFilterProvider);
+    ref.read(threadsControllerProvider(filter).notifier).quietReload();
+    // Badges: the server caches stats for 60s, so invalidating faster than
+    // that only burns mobile-network round trips for identical payloads.
+    if (DateTime.now().difference(_lastStatsInvalidate).inSeconds >= 60) {
+      _lastStatsInvalidate = DateTime.now();
+      ref.invalidate(threadStatsProvider);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _rtSub = ref.read(realtimeServiceProvider).messageEvents.listen((_) {
+      if (!mounted) return;
+      // Buried under an open thread → skip; the existing return-from-thread
+      // quietReload covers the catch-up, and the thread screen has its own
+      // live path.
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+      _rtDebounce ??= Timer(const Duration(seconds: 6), _fireRtReload);
+    });
+  }
 
   @override
   void dispose() {
+    _rtSub?.cancel();
+    _rtDebounce?.cancel();
     _debounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();

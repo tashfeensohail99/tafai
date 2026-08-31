@@ -18,9 +18,22 @@ import '../domain/call_models.dart';
 /// access token expired every reconnect was rejected ("Unauthorized") and the
 /// app silently stopped receiving incoming-call rings. Each retry now awaits
 /// [_tokenProvider] for a FRESH token first.
+/// Thin org-room WhatsApp message/thread event. Payloads carry IDS ONLY (the
+/// backend publishes {threadId, messageId, ...}) — consumers refetch what they
+/// need (the thread screen runs a delta syncTail, the inbox a quietReload), so
+/// there is no payload-shape coupling to the server.
+class RealtimeMessageEvent {
+  /// 'new' (whatsapp.message.new) | 'status' (whatsapp.message.status) |
+  /// 'thread' (whatsapp.thread.updated).
+  final String kind;
+  final String? threadId;
+  const RealtimeMessageEvent(this.kind, this.threadId);
+}
+
 class RealtimeService {
   io.Socket? _socket;
   final _events = StreamController<RealtimeCallEvent>.broadcast();
+  final _messageEvents = StreamController<RealtimeMessageEvent>.broadcast();
   bool _connected = false;
   bool _enabled = false;
   bool _connecting = false;
@@ -30,6 +43,11 @@ class RealtimeService {
 
   /// Broadcast stream of inbound call signaling events.
   Stream<RealtimeCallEvent> get events => _events.stream;
+
+  /// Broadcast stream of WhatsApp message/thread events (org room). The
+  /// gateway already fans these out to every connected agent — the app just
+  /// never listened before Patch 7; messaging rode a 5s poll instead.
+  Stream<RealtimeMessageEvent> get messageEvents => _messageEvents.stream;
 
   bool get isConnected => _connected;
 
@@ -50,6 +68,21 @@ class RealtimeService {
       _retryAttempt = 0;
       _connect();
     }
+  }
+
+  /// The socket may be a ZOMBIE: an OEM background-freeze can kill the TCP
+  /// connection without the client noticing for up to the engine's ping
+  /// timeout (~45s), during which `isConnected` is a stale true — so
+  /// [ensureConnected] no-ops and consumers (the thread poll's 20s relaxed
+  /// cadence, call rings) trust a dead pipe. Called after a LONG background
+  /// stretch: drop the flag and rebuild the connection outright (forceNew
+  /// tears the old socket down); a healthy reconnect re-proves liveness in
+  /// one round trip.
+  void markSuspect() {
+    if (!_enabled) return;
+    _connected = false;
+    _retryAttempt = 0;
+    _connect();
   }
 
   Future<void> _connect() async {
@@ -109,6 +142,19 @@ class RealtimeService {
         if (map != null) _events.add(CallEnded.fromJson(map));
       });
 
+      socket.on('whatsapp.message.new', (data) {
+        _messageEvents.add(
+            RealtimeMessageEvent('new', _asMap(data)?['threadId']?.toString()));
+      });
+      socket.on('whatsapp.message.status', (data) {
+        _messageEvents.add(RealtimeMessageEvent(
+            'status', _asMap(data)?['threadId']?.toString()));
+      });
+      socket.on('whatsapp.thread.updated', (data) {
+        _messageEvents.add(RealtimeMessageEvent(
+            'thread', _asMap(data)?['threadId']?.toString()));
+      });
+
       socket.connect();
       _socket = socket;
     } finally {
@@ -149,6 +195,7 @@ class RealtimeService {
   void dispose() {
     disconnect();
     _events.close();
+    _messageEvents.close();
   }
 
   static Map<String, dynamic>? _asMap(dynamic data) {

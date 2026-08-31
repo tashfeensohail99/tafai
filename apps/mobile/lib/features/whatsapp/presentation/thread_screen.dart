@@ -16,6 +16,7 @@ import '../../../core/util/format.dart';
 import '../../../core/util/launchers.dart';
 import '../../../core/widgets/app_states.dart';
 import '../../calls/application/call_controller.dart';
+import '../../calls/data/realtime_service.dart';
 import '../../leads/data/leads_repository.dart';
 import '../../leads/presentation/lead_detail_screen.dart';
 import '../data/whatsapp_providers.dart';
@@ -57,8 +58,13 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   Timer? _voiceTick;
 
   // Live status ticks (sent → delivered → read) + new inbound, while the
-  // thread is open. The thread has no socket, so we quietly poll the tail.
+  // thread is open. Realtime socket events (Patch 7) are the primary trigger;
+  // this poll is the safety net (20s while the socket is live, 5s without it).
   Timer? _statusPoll;
+  int _pollTick = 0;
+  StreamSubscription<RealtimeMessageEvent>? _rtSub;
+  // Coalesces a burst of socket events into ONE delta fetch.
+  Timer? _rtKick;
 
   String get _threadId => widget.thread.id;
 
@@ -85,13 +91,33 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     });
     // Poll the tail every 5s so outgoing ticks advance and new inbound
     // messages appear without a manual pull-to-refresh.
+    // Live path (Patch 7): the app-wide realtime socket already receives the
+    // org's message events — react to THIS thread's with a coalesced delta
+    // syncTail, so inbound messages + ticks land in ~sub-second instead of
+    // waiting out the poll. Ids-only payloads: we always refetch, never trust
+    // the frame body.
+    _rtSub = ref.read(realtimeServiceProvider).messageEvents.listen((e) {
+      if (!mounted || e.threadId != _threadId) return;
+      _rtKick ??= Timer(const Duration(milliseconds: 350), () {
+        _rtKick = null;
+        if (!mounted) return;
+        ref.read(messagesControllerProvider(_threadId).notifier).syncTail();
+      });
+    });
     // NOTE: deliberately NOT gated on _sending — the poll's merge is id-keyed
     // and temp-aware, so it is safe while a send is in flight, and pausing it
     // used to freeze even INBOUND updates for the whole duration of a media
     // upload.
     _statusPoll = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (!mounted) return;
-      ref.read(messagesControllerProvider(_threadId).notifier).syncTail();
+      _pollTick++;
+      // With a healthy socket the event stream drives updates — the poll
+      // drops to a 20s safety net (every 4th tick). Socket down (background
+      // freeze, flaky network) → full 5s cadence, exactly as before.
+      final socketLive = ref.read(realtimeServiceProvider).isConnected;
+      if (!socketLive || _pollTick % 4 == 0) {
+        ref.read(messagesControllerProvider(_threadId).notifier).syncTail();
+      }
       // syncTail refreshes MESSAGES only, not the thread — so the 24-hour
       // window state would stay frozen at its initial value. When it's showing
       // CLOSED, also poll the thread: an inbound reply reopens the window on
@@ -115,6 +141,8 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
 
   @override
   void dispose() {
+    _rtSub?.cancel();
+    _rtKick?.cancel();
     _statusPoll?.cancel();
     _voiceTick?.cancel();
     final rec = _voiceRec;

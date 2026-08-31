@@ -87,11 +87,70 @@ class ThreadsState {
   bool get hasMore => nextCursor != null;
 }
 
+// --- Session caches (stale-while-revalidate) -------------------------------
+// In-memory snapshots of recently-viewed lists so reopening paints INSTANTLY
+// instead of blanking to a spinner: the controller seeds from the cache and
+// quietly revalidates in the background. Bounded LRU; wiped on logout via
+// [clearWhatsappSessionCaches].
+const _kThreadsCacheMax = 8;
+const _kMessagesCacheMax = 12;
+final _threadsCache = <WaFilter, ThreadsState>{};
+final _messagesCache = <String, MessagesState>{};
+
+/// Session epoch. Controllers capture it at construction and their dispose()
+/// snapshot is DROPPED if it has moved on — without this, the logout wipe is
+/// defeated: the wipe runs synchronously on the auth flip while the WhatsApp
+/// screens are still mounted, and their controllers' dispose() would re-insert
+/// the logged-out rep's threads/messages right after the clear.
+int _cacheEpoch = 0;
+
+void _lruPut<K, V>(Map<K, V> cache, K key, V value, int max) {
+  cache.remove(key);
+  cache[key] = value;
+  while (cache.length > max) {
+    cache.remove(cache.keys.first);
+  }
+}
+
+/// Wipe the per-session WhatsApp caches (called on BOTH sides of an auth
+/// change so the next account on this device can never see the previous rep's
+/// threads). Bumping the epoch also invalidates in-flight dispose snapshots.
+void clearWhatsappSessionCaches() {
+  _cacheEpoch++;
+  _threadsCache.clear();
+  _messagesCache.clear();
+}
+
 class ThreadsController extends StateNotifier<ThreadsState> {
   final WhatsappRepository _repo;
   final WaFilter _filter;
-  ThreadsController(this._repo, this._filter) : super(const ThreadsState()) {
-    load();
+  final int _epoch = _cacheEpoch;
+  ThreadsController(this._repo, this._filter)
+      : super(_threadsCache[_filter] ?? const ThreadsState()) {
+    if (state.loading || state.items.isEmpty) {
+      load();
+    } else {
+      // Warm open (tab/chip revisit) — stale rows paint immediately, the
+      // fresh page swaps in quietly underneath.
+      quietReload();
+    }
+  }
+
+  @override
+  void dispose() {
+    final s = state;
+    // Skip: stale-epoch snapshots (logged-out session), transient states, and
+    // search results (per-keystroke filters would churn the LRU with entries
+    // that are never revisited by the exact same string).
+    if (_epoch == _cacheEpoch &&
+        _filter.search.isEmpty &&
+        !s.loading &&
+        !s.loadingMore &&
+        s.error == null &&
+        s.items.isNotEmpty) {
+      _lruPut(_threadsCache, _filter, s, _kThreadsCacheMax);
+    }
+    super.dispose();
   }
 
   ({bool? contacted, bool? uncontacted, bool? unread, bool? archived, bool? blocked})
@@ -290,11 +349,33 @@ class MessagesController extends StateNotifier<MessagesState> {
   /// a timed-out send can never double-deliver to the customer.
   static int _tempSeq = 0;
 
+  final int _epoch = _cacheEpoch;
+
   MessagesController(this._repo, this._threadId,
       {KeepAliveLink Function()? acquireKeepAlive})
       : _acquireKeepAlive = acquireKeepAlive,
-        super(const MessagesState()) {
-    load();
+        super(_messagesCache[_threadId] ?? const MessagesState()) {
+    if (state.loading || state.items.isEmpty) {
+      load();
+    } else {
+      // Warm reopen — cached page paints instantly (no spinner), then the
+      // delta syncTail reconciles anything that changed while we were away
+      // (its saturation branch rebases on the fresh tail if a LOT did).
+      syncTail();
+    }
+  }
+
+  @override
+  void dispose() {
+    final s = state;
+    if (_epoch == _cacheEpoch &&
+        !s.loading &&
+        !s.loadingOlder &&
+        s.error == null &&
+        s.items.isNotEmpty) {
+      _lruPut(_messagesCache, _threadId, s, _kMessagesCacheMax);
+    }
+    super.dispose();
   }
 
   static bool _isTemp(ChatMessage m) => m.id.startsWith('temp-');
@@ -542,17 +623,34 @@ class MessagesController extends StateNotifier<MessagesState> {
       }
       // No server row at all (first send still in flight) → full page.
       // 1s back-off because the backend cursor is strictly `createdAt >`.
-      var latest = await _repo.messages(
+      final latest = await _repo.messages(
         _threadId,
         after: anchor?.subtract(const Duration(seconds: 1)),
       );
       if (latest.length >= 50) {
         // Delta page SATURATED (backend serves the oldest 50 after the
-        // cursor): the true tail may lie past the cutoff. Re-sync with a
-        // plain newest-page fetch so new inbound can never be starved —
-        // this is exactly the pre-delta behavior, paid only when needed.
+        // cursor) — >50 rows arrived since the anchor, so a merged view could
+        // hide a silent GAP between the delta window and the true tail (the
+        // classic case: a warm open seeded from an hours-old cache). Don't
+        // merge disjoint windows: REBASE the list on a fresh contiguous
+        // newest page, keeping only unresolved optimistic temps. "Load older"
+        // re-fetches history contiguously from there.
         final tail = await _repo.messages(_threadId);
-        latest = [...latest, ...tail];
+        if (tail.isEmpty || !mounted) return;
+        final echoed = <String>{
+          for (final m in tail)
+            if (m.idempotencyKey != null) m.idempotencyKey!,
+        };
+        final temps = state.items
+            .where((m) => _isTemp(m) && !echoed.contains(m.id))
+            .toList();
+        state = MessagesState(
+          items: [...tail, ...temps]..sort(_order),
+          loading: false,
+          hasOlder: tail.length >= 50,
+        );
+        _syncTempLink();
+        return;
       }
       if (latest.isEmpty) return;
       // A server row echoing a temp bubble's idempotencyKey IS that send —

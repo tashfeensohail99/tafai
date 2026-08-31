@@ -5,6 +5,11 @@ import '../../../core/auth/auth_controller.dart';
 import '../../../core/auth/token_storage.dart';
 import '../../../core/router/app_router.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../whatsapp/data/whatsapp_providers.dart'
+    show
+        clearWhatsappSessionCaches,
+        messagesControllerProvider,
+        threadsControllerProvider;
 import '../../whatsapp/data/whatsapp_repository.dart';
 import '../../whatsapp/presentation/thread_screen.dart';
 import '../application/call_controller.dart';
@@ -54,12 +59,30 @@ class _CallHostState extends ConsumerState<CallHost>
     super.dispose();
   }
 
+  DateTime? _pausedAt;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // OEMs (XOS etc.) freeze the socket while backgrounded — make sure we're
     // connected again the moment the rep comes back, or rings never arrive.
+    // After a LONG background stretch the socket may be a ZOMBIE (TCP dead,
+    // isConnected still true until the ~45s ping timeout) — force a rebuild
+    // so the thread poll / rings never trust a dead pipe; a quick screen
+    // flick keeps the healthy socket via the cheap ensureConnected path.
     if (state == AppLifecycleState.resumed) {
-      ref.read(realtimeServiceProvider).ensureConnected();
+      final pausedFor = _pausedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(_pausedAt!);
+      _pausedAt = null;
+      final rt = ref.read(realtimeServiceProvider);
+      if (pausedFor > const Duration(seconds: 30)) {
+        rt.markSuspect();
+      } else {
+        rt.ensureConnected();
+      }
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _pausedAt ??= DateTime.now();
     }
     // A live call's periodic 15s heartbeat is suspended by the OS while the
     // screen is off (proximity/idle) during a call. Poke one at the pause AND
@@ -146,6 +169,10 @@ class _CallHostState extends ConsumerState<CallHost>
   void _sync(AuthState s) {
     final realtime = ref.read(realtimeServiceProvider);
     if (s.isAuthenticated) {
+      // Belt-and-braces vs the dispose-ordering leak: even if a straggler
+      // controller from a previous session snapshotted something, the new
+      // session starts from an empty cache (and a fresh epoch).
+      clearWhatsappSessionCaches();
       realtime.start(_freshToken);
       // Ensure the controller is alive so it subscribes to call events.
       ref.read(callControllerProvider.notifier);
@@ -155,6 +182,13 @@ class _CallHostState extends ConsumerState<CallHost>
     } else {
       realtime.disconnect();
       ref.read(callControllerProvider.notifier).reset();
+      // Next account on this device must never see this rep's cached threads.
+      // The epoch bump also voids the dispose-snapshots of controllers that
+      // are still tearing down, and invalidating the families dismantles any
+      // controller a pending-send keepAlive link was pinning past logout.
+      clearWhatsappSessionCaches();
+      ref.invalidate(messagesControllerProvider);
+      ref.invalidate(threadsControllerProvider);
     }
   }
 

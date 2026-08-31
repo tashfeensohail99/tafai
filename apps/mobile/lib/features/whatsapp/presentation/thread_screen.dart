@@ -85,8 +85,12 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
     });
     // Poll the tail every 5s so outgoing ticks advance and new inbound
     // messages appear without a manual pull-to-refresh.
+    // NOTE: deliberately NOT gated on _sending — the poll's merge is id-keyed
+    // and temp-aware, so it is safe while a send is in flight, and pausing it
+    // used to freeze even INBOUND updates for the whole duration of a media
+    // upload.
     _statusPoll = Timer.periodic(const Duration(seconds: 5), (_) async {
-      if (!mounted || _sending) return;
+      if (!mounted) return;
       ref.read(messagesControllerProvider(_threadId).notifier).syncTail();
       // syncTail refreshes MESSAGES only, not the thread — so the 24-hour
       // window state would stay frozen at its initial value. When it's showing
@@ -139,27 +143,47 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
   /// set, a quote bar shows above the composer and the next send links to it.
   ChatMessage? _replyingTo;
 
+  /// OPTIMISTIC text send — the bubble appears and the composer clears
+  /// IMMEDIATELY (exactly like web's WhatsAppChatPanel). The POST reconciles
+  /// in the background, OWNED BY THE CONTROLLER (which keeps itself alive), so
+  /// popping back to the inbox right after sending can never lose a message:
+  /// the backend queues the actual Meta delivery on a worker anyway, so
+  /// blocking the composer on the round trip never made delivery faster.
+  /// Failure flips the bubble to FAILED with tap-to-retry.
   Future<void> _send() async {
     final text = _composer.text.trim();
-    if (text.isEmpty || _sending) return;
+    if (text.isEmpty) return;
     HapticFeedback.lightImpact();
     final replyTo = _replyingTo;
-    setState(() => _sending = true);
-    try {
-      final msg = await ref.read(whatsappRepositoryProvider).sendText(
-            _threadId,
-            text,
-            contextWaMessageId: replyTo?.waMessageId,
-          );
-      ref.read(messagesControllerProvider(_threadId).notifier).append(msg);
-      _composer.clear();
-      if (mounted) setState(() => _replyingTo = null);
-      _jumpToBottom(animate: true);
-    } on AppError catch (e) {
-      _toast(messageForError(e));
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+    _composer.clear();
+    setState(() => _replyingTo = null);
+    final fut = ref
+        .read(messagesControllerProvider(_threadId).notifier)
+        .sendTextOptimistic(
+          body: text,
+          contextWaMessageId: replyTo?.waMessageId,
+        );
+    _jumpToBottom(animate: true);
+    final err = await fut;
+    if (mounted && err != null) _sendErrToast(err);
+  }
+
+  /// Tap a FAILED optimistic bubble → send it again (same idempotencyKey, so
+  /// a retry whose first attempt actually landed can never double-deliver).
+  void _retryTempSend(ChatMessage temp) {
+    HapticFeedback.lightImpact();
+    ref
+        .read(messagesControllerProvider(_threadId).notifier)
+        .retryTemp(temp.id)
+        .then((err) {
+      if (mounted && err != null) _sendErrToast(err);
+    });
+  }
+
+  void _sendErrToast(Object err) {
+    _toast(err is AppError
+        ? '${messageForError(err)} — tap the message to retry.'
+        : 'Message not sent — tap it to retry.');
   }
 
   /// "Replying to …" bar shown above the composer when a reply target is set.
@@ -1350,6 +1374,10 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             ),
           ),
           child: GestureDetector(
+            // Tap a FAILED optimistic bubble to retry the send.
+            onTap: (msg.id.startsWith('temp-') && msg.isFailed)
+                ? () => _retryTempSend(msg)
+                : null,
             // Long-press a delivered message to react with an emoji, WhatsApp-style.
             onLongPress: (msg.waMessageId != null &&
                     !msg.isFailed &&
@@ -2014,6 +2042,10 @@ class _MediaContentState extends ConsumerState<_MediaContent> {
                       imageUrl: _url!,
                       cacheKey: m.id,
                       width: 230,
+                      // Decode at bubble size (230lp × ~3x DPR), not source
+                      // resolution — a full-res photo is ~7MB of RGBA for a
+                      // thumbnail slot and thrashes the image cache.
+                      memCacheWidth: 720,
                       fit: BoxFit.cover,
                       errorWidget: (_, __, ___) => _box(
                           Icons.broken_image_outlined, 'Photo unavailable'),

@@ -777,7 +777,10 @@ export class WhatsAppThreadsService {
     string,
     { expires: number; promise: ReturnType<WhatsAppThreadsService['computeStats']> }
   >();
-  private static readonly STATS_TTL_MS = 20_000;
+  // 60s: badge counts don't need per-second accuracy, and each miss now runs a
+  // single scan (see computeStats). A longer TTL further thins the synchronized
+  // peak-hour bursts that drove the "CRM is slow" reports.
+  private static readonly STATS_TTL_MS = 60_000;
 
   async stats(
     caller: CallerContext,
@@ -914,7 +917,9 @@ export class WhatsAppThreadsService {
     const financeScoped = caller.canViewFinanceScope && !caller.canViewAll;
     let total: number, active: number, slaBreached: number, unread: number,
       unassigned: number, awaitingReply: number, uncontacted: number,
-      overdue: number, approaching: number, resolved: number;
+      overdue: number, approaching: number, resolved: number,
+      unreadEngaged: number, followUpDue: number, followUpUpcoming: number,
+      archived: number, blocked: number;
 
     if (financeScoped) {
       [total, active, slaBreached, unread, unassigned, awaitingReply, uncontacted, overdue, approaching, resolved] =
@@ -932,46 +937,71 @@ export class WhatsAppThreadsService {
           this.prisma.whatsAppThread.count({ where: andLive({ responseDeadlineAt: { gt: now, lte: warnCutoff } }) }),
           this.prisma.whatsAppThread.count({ where: andLive({ status: 'RESOLVED' }) }),
         ]);
+      // Finance scope is a small id-array, so the follow-up/archived/blocked
+      // chips stay as cheap per-count queries here (the hot agent/admin path
+      // folds them into the single scan below instead).
+      [followUpDue, followUpUpcoming, archived, blocked, unreadEngaged] = await Promise.all([
+        this.prisma.whatsAppThread.count({ where: andLive({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }) }),
+        this.prisma.whatsAppThread.count({ where: andLive({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { gt: now } } } } } }) }),
+        this.prisma.whatsAppThread.count({ where: and({ status: 'ARCHIVED' }) }),
+        this.prisma.whatsAppThread.count({ where: and({ OR: [{ lead: { is: { blockedAt: { not: null } } } }, { client: { is: { blockedAt: { not: null } } } }] }) }),
+        this.prisma.whatsAppThread.count({ where: andLive({ unreadCount: { gt: 0 }, lastHumanReplyAt: { not: null } }) }),
+      ]);
     } else {
-      // Mirrors the `base`/`and` filter above: exclude soft-deleted leads
-      // (lead-less threads kept), and for a plain agent restrict to their own
-      // assigned leads. $1=now, $2=warnCutoff, $3=employeeId (agent only).
+      // ONE scan backs EVERY badge. Scope = the caller's visible set (mirrors
+      // the Prisma `base`): non-deleted leads (lead-less threads kept), the
+      // rep's own assigned leads / assigned non-deleted clients when they can't
+      // view all, and the active platform tab. $1=now, $2=warnCutoff,
+      // $3=employeeId (agent only), then platform.
       const params: unknown[] = [now, warnCutoff];
       let scope = 'l."deletedAt" IS NULL';
       if (!caller.canViewAll) {
         params.push(caller.employeeId);
-        // Rep scope mirrors list(): their assigned leads OR lead-less threads
-        // for their assigned clients (converted contacts). c is LEFT JOINed
-        // below, so a client thread (leadId NULL) matches on c."assignedEmployeeId".
-        scope += ` AND (l."assignedEmployeeId" = $${params.length} OR (t."leadId" IS NULL AND c."assignedEmployeeId" = $${params.length}))`;
+        // Rep scope mirrors list()/base: their assigned leads OR lead-less
+        // threads for their assigned (non-deleted) clients. c is LEFT JOINed.
+        scope += ` AND (l."assignedEmployeeId" = $${params.length} OR (t."leadId" IS NULL AND c."assignedEmployeeId" = $${params.length} AND c."deletedAt" IS NULL))`;
       }
-      // Mirror list()'s default working inbox: exclude ARCHIVED threads and
-      // BLOCKED contacts so the All/Open/Uncontacted badge counts match the rows.
-      // Also drop JUNK/DEAD-dispositioned leads (null disposition + lead-less
-      // threads stay in — IS DISTINCT FROM handles the NULLs correctly).
-      scope += ` AND t.status::text <> 'ARCHIVED' AND l."blockedAt" IS NULL AND (t."clientId" IS NULL OR c."blockedAt" IS NULL)`;
-      scope += ` AND l."disposition"::text IS DISTINCT FROM 'JUNK' AND l."disposition"::text IS DISTINCT FROM 'DEAD'`;
-      // Platform tab — same predicate the Prisma base filter applies, bound as a
-      // parameter (compared as text so we don't need the enum cast on the param).
       if (platform) {
         params.push(platform);
         scope += ` AND t.platform::text = $${params.length}`;
       }
+      // "Working inbox" predicate (list()'s default branch): not ARCHIVED, not a
+      // BLOCKED contact, not a JUNK/DEAD lead. Applied PER-BADGE as a FILTER so
+      // this same scan also feeds the Archived / Blocked chips, which live
+      // OUTSIDE the working set. Constant SQL — no user input, safe to inline.
+      const work =
+        `t.status::text <> 'ARCHIVED' AND l."blockedAt" IS NULL` +
+        ` AND (t."clientId" IS NULL OR c."blockedAt" IS NULL)` +
+        ` AND l."disposition"::text IS DISTINCT FROM 'JUNK'` +
+        ` AND l."disposition"::text IS DISTINCT FROM 'DEAD'`;
+      // Follow-up flags per thread via ONE indexed LATERAL (follow_ups.leadId) —
+      // replaces the two relation-count queries that each re-scanned the whole
+      // thread set. bool_or over no rows → NULL → treated as false by the FILTER.
       const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, number | bigint | null>>>(
         `SELECT
-           count(*)::int AS total,
-           count(*) FILTER (WHERE t.status::text = 'OPEN')::int AS active,
-           count(*) FILTER (WHERE t."slaBreached")::int AS "slaBreached",
-           count(*) FILTER (WHERE t."unreadCount" > 0)::int AS unread,
-           count(*) FILTER (WHERE l.id IS NOT NULL AND l."assignedEmployeeId" IS NULL)::int AS unassigned,
-           count(*) FILTER (WHERE t."awaitingReply" AND t."lastHumanReplyAt" IS NOT NULL)::int AS "awaitingReply",
-           count(*) FILTER (WHERE t."lastHumanReplyAt" IS NULL)::int AS uncontacted,
-           count(*) FILTER (WHERE t."responseDeadlineAt" IS NOT NULL AND t."responseDeadlineAt" <= $1)::int AS overdue,
-           count(*) FILTER (WHERE t."responseDeadlineAt" > $1 AND t."responseDeadlineAt" <= $2)::int AS approaching,
-           count(*) FILTER (WHERE t.status::text = 'RESOLVED')::int AS resolved
+           count(*) FILTER (WHERE ${work})::int AS total,
+           count(*) FILTER (WHERE (${work}) AND t.status::text = 'OPEN')::int AS active,
+           count(*) FILTER (WHERE (${work}) AND t."slaBreached")::int AS "slaBreached",
+           count(*) FILTER (WHERE (${work}) AND t."unreadCount" > 0)::int AS unread,
+           count(*) FILTER (WHERE (${work}) AND l.id IS NOT NULL AND l."assignedEmployeeId" IS NULL)::int AS unassigned,
+           count(*) FILTER (WHERE (${work}) AND t."awaitingReply" AND t."lastHumanReplyAt" IS NOT NULL)::int AS "awaitingReply",
+           count(*) FILTER (WHERE (${work}) AND t."lastHumanReplyAt" IS NULL)::int AS uncontacted,
+           count(*) FILTER (WHERE (${work}) AND t."responseDeadlineAt" IS NOT NULL AND t."responseDeadlineAt" <= $1)::int AS overdue,
+           count(*) FILTER (WHERE (${work}) AND t."responseDeadlineAt" > $1 AND t."responseDeadlineAt" <= $2)::int AS approaching,
+           count(*) FILTER (WHERE (${work}) AND t.status::text = 'RESOLVED')::int AS resolved,
+           count(*) FILTER (WHERE (${work}) AND t."unreadCount" > 0 AND t."lastHumanReplyAt" IS NOT NULL)::int AS "unreadEngaged",
+           count(*) FILTER (WHERE (${work}) AND fu.due)::int AS "followUpDue",
+           count(*) FILTER (WHERE (${work}) AND fu.upcoming)::int AS "followUpUpcoming",
+           count(*) FILTER (WHERE t.status::text = 'ARCHIVED')::int AS archived,
+           count(*) FILTER (WHERE l."blockedAt" IS NOT NULL OR c."blockedAt" IS NOT NULL)::int AS blocked
          FROM whatsapp.threads t
          LEFT JOIN crm.leads l ON l.id = t."leadId"
          LEFT JOIN crm.clients c ON c.id = t."clientId"
+         LEFT JOIN LATERAL (
+           SELECT bool_or(f.status::text = 'OPEN' AND f."dueAt" <= $1) AS due,
+                  bool_or(f.status::text = 'OPEN' AND f."dueAt" >  $1) AS upcoming
+           FROM crm.follow_ups f WHERE f."leadId" = l.id
+         ) fu ON true
          WHERE ${scope}`,
         ...params,
       );
@@ -980,7 +1010,9 @@ export class WhatsAppThreadsService {
       total = num(r.total); active = num(r.active); slaBreached = num(r.slaBreached);
       unread = num(r.unread); unassigned = num(r.unassigned); awaitingReply = num(r.awaitingReply);
       uncontacted = num(r.uncontacted); overdue = num(r.overdue); approaching = num(r.approaching);
-      resolved = num(r.resolved);
+      resolved = num(r.resolved); unreadEngaged = num(r.unreadEngaged);
+      followUpDue = num(r.followUpDue); followUpUpcoming = num(r.followUpUpcoming);
+      archived = num(r.archived); blocked = num(r.blocked);
     }
 
     // SLA score. Admins / managers (canViewAll) get the ORG-WIDE aggregate so
@@ -1014,43 +1046,6 @@ export class WhatsAppThreadsService {
         slaScoreScope = 'self';
       }
     }
-
-    // "Due (N)" chip: chats whose lead has an OPEN CRM follow-up due/overdue now.
-    // A separate live relation count (cheap — follow_ups is indexed on dueAt and
-    // status) so it's always accurate without a denormalized field to maintain.
-    // Archived/blocked chips ride alongside — both are cheap indexed counts
-    // (whatsapp.threads.status; crm.{leads,clients}.blockedAt) scoped to the
-    // caller via the same `base` filter the other counts use.
-    const [followUpDue, followUpUpcoming, archived, blocked, unreadEngaged] = await Promise.all([
-      // Use andLive (not and) so the "Due (N)" chip excludes ARCHIVED / blocked /
-      // JUNK-DEAD threads — exactly as the Due LIST does (list()'s default
-      // branch). Otherwise a JUNK/DEAD lead with an open due follow-up would be
-      // counted by the badge but hidden from the list (count ≠ rows).
-      this.prisma.whatsAppThread.count({
-        where: andLive({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { lte: now } } } } } }),
-      }),
-      // "Upcoming (N)" — OPEN follow-up scheduled for later (dueAt in the future).
-      // andLive so the badge count matches the Upcoming LIST (active, non-blocked,
-      // non-JUNK/DEAD) exactly, just like the Due count above.
-      this.prisma.whatsAppThread.count({
-        where: andLive({ lead: { is: { followUps: { some: { status: 'OPEN', dueAt: { gt: now } } } } } }),
-      }),
-      this.prisma.whatsAppThread.count({ where: and({ status: 'ARCHIVED' }) }),
-      this.prisma.whatsAppThread.count({
-        where: and({
-          OR: [
-            { lead: { is: { blockedAt: { not: null } } } },
-            { client: { is: { blockedAt: { not: null } } } },
-          ],
-        }),
-      }),
-      // Funnel "Unread" = engaged (a human has replied) AND unread. Uses andLive
-      // so it matches the Unread chip's list (active, non-blocked). A brand-new
-      // lead stays in Uncontacted, never here.
-      this.prisma.whatsAppThread.count({
-        where: andLive({ unreadCount: { gt: 0 }, lastHumanReplyAt: { not: null } }),
-      }),
-    ]);
 
     return {
       total, active, resolved, unassigned, slaBreached, unread, unreadEngaged,

@@ -1273,7 +1273,9 @@ export class WhatsAppMessagesService {
             ? WhatsAppMessageType.DOCUMENT
             : WhatsAppMessageType.AUDIO;
 
-    const message = await this.prisma.whatsAppMessage.create({
+    let message;
+    try {
+      message = await this.prisma.whatsAppMessage.create({
       data: {
         threadId: thread.id,
         channelId: thread.channelId,
@@ -1315,7 +1317,33 @@ export class WhatsAppMessagesService {
         idempotencyKey: input.idempotencyKey ?? randomUUID(),
       },
       select: this.publicSelect(),
-    });
+      });
+    } catch (err) {
+      // Client retry of a media send whose FIRST attempt already landed (the
+      // mobile optimistic composer re-posts with the SAME idempotencyKey after
+      // a timeout). Same collapse as sendText: return the existing row — the
+      // customer must never receive the media twice. The duplicate transcode/
+      // upload above is wasted work, but correctness comes first.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002' &&
+        input.idempotencyKey
+      ) {
+        const existing = await this.prisma.whatsAppMessage.findUnique({
+          where: { idempotencyKey: input.idempotencyKey },
+          select: this.publicSelect(),
+        });
+        if (existing && existing.threadId === thread.id) {
+          await this.outboundQueue.add(
+            'send',
+            { messageId: existing.id },
+            { jobId: existing.id },
+          );
+          return existing;
+        }
+      }
+      throw err;
+    }
 
     await this.outboundQueue.add(
       'send',

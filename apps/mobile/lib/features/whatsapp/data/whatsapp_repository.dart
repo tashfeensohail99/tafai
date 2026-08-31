@@ -201,8 +201,15 @@ class WhatsappRepository {
 
   /// POST /whatsapp/threads/:id/messages/text — only inside the 24h window
   /// (else 400 → use a template).
+  ///
+  /// `idempotencyKey` (stored @unique server-side) makes a retry of the SAME
+  /// send collapse instead of double-delivering to the customer — the
+  /// optimistic composer passes its temp-bubble id here and reuses it on
+  /// tap-to-retry. Timeout is tightened for text: the UI is optimistic, so a
+  /// dead network should flip the bubble to FAILED in seconds, not sit on the
+  /// shared 30s default.
   Future<ChatMessage> sendText(String threadId, String body,
-      {String? contextWaMessageId}) async {
+      {String? contextWaMessageId, String? idempotencyKey}) async {
     try {
       final res = await _c.post<Map<String, dynamic>>(
         '/whatsapp/threads/$threadId/messages/text',
@@ -210,7 +217,9 @@ class WhatsappRepository {
           'body': body,
           if (contextWaMessageId != null)
             'contextWaMessageId': contextWaMessageId,
+          if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
         },
+        options: Options(receiveTimeout: const Duration(seconds: 20)),
       );
       return ChatMessage.fromJson(res.data!);
     } on DioException catch (e) {

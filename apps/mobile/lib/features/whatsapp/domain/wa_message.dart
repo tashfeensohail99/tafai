@@ -14,6 +14,10 @@ class ChatMessage {
   final String? errorTitle;
   final String? waMessageId; // Meta's id — the key a reply quotes
   final String? repliedToWaMessageId; // set when this message quotes another
+  /// Client-supplied dedupe key. The optimistic sender sets it to the temp
+  /// bubble's id, so a poll row echoing it identifies "my own send" and the
+  /// temp bubble can be dropped without waiting for the POST response.
+  final String? idempotencyKey;
   /// Raw Meta JSON for structured types (location / contacts / reaction /
   /// interactive). Same shape the backend stores for inbound + outbound.
   final Map<String, dynamic>? payload;
@@ -36,6 +40,7 @@ class ChatMessage {
     this.errorTitle,
     this.waMessageId,
     this.repliedToWaMessageId,
+    this.idempotencyKey,
     this.payload,
     required this.createdAt,
     this.sentAt,
@@ -79,6 +84,7 @@ class ChatMessage {
         errorTitle: asStringOrNull(j['errorTitle']),
         waMessageId: asStringOrNull(j['waMessageId']),
         repliedToWaMessageId: asStringOrNull(j['repliedToWaMessageId']),
+        idempotencyKey: asStringOrNull(j['idempotencyKey']),
         payload: j['payload'] is Map<String, dynamic>
             ? j['payload'] as Map<String, dynamic>
             : null,

@@ -213,22 +213,51 @@ export class WhatsAppMessagesService {
 
     const senderEmployeeId = this.resolveSenderEmployeeId(caller, thread);
 
-    const message = await this.prisma.whatsAppMessage.create({
-      data: {
-        threadId: thread.id,
-        channelId: thread.channelId,
-        leadId: thread.leadId,
-        clientId: thread.clientId,
-        direction: WhatsAppMessageDirection.OUTBOUND,
-        type: WhatsAppMessageType.TEXT,
-        status: WhatsAppMessageStatus.QUEUED,
-        body,
-        sentByEmployeeId: senderEmployeeId,
-        repliedToWaMessageId: input.contextWaMessageId ?? null,
-        idempotencyKey: input.idempotencyKey ?? randomUUID(),
-      },
-      select: this.publicSelect(),
-    });
+    let message;
+    try {
+      message = await this.prisma.whatsAppMessage.create({
+        data: {
+          threadId: thread.id,
+          channelId: thread.channelId,
+          leadId: thread.leadId,
+          clientId: thread.clientId,
+          direction: WhatsAppMessageDirection.OUTBOUND,
+          type: WhatsAppMessageType.TEXT,
+          status: WhatsAppMessageStatus.QUEUED,
+          body,
+          sentByEmployeeId: senderEmployeeId,
+          repliedToWaMessageId: input.contextWaMessageId ?? null,
+          idempotencyKey: input.idempotencyKey ?? randomUUID(),
+        },
+        select: this.publicSelect(),
+      });
+    } catch (err) {
+      // Client retry of a send whose FIRST attempt already landed (the mobile
+      // optimistic composer re-posts with the SAME idempotencyKey after a
+      // timeout). Collapse to the existing row instead of 500ing — the
+      // customer must never receive the message twice. The queue add below is
+      // jobId-keyed, so re-running it for the existing row is a no-op when the
+      // first attempt already enqueued (and a repair when it died beforehand).
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002' &&
+        input.idempotencyKey
+      ) {
+        const existing = await this.prisma.whatsAppMessage.findUnique({
+          where: { idempotencyKey: input.idempotencyKey },
+          select: this.publicSelect(),
+        });
+        if (existing && existing.threadId === thread.id) {
+          await this.outboundQueue.add(
+            'send',
+            { messageId: existing.id },
+            { jobId: existing.id },
+          );
+          return existing;
+        }
+      }
+      throw err;
+    }
 
     await this.outboundQueue.add(
       'send',
@@ -1878,6 +1907,9 @@ export class WhatsAppMessagesService {
       sentByEmployeeId: true,
       waMessageId: true,
       repliedToWaMessageId: true,
+      // Echoed so the mobile optimistic sender can match a poll-delivered row
+      // to its own temp bubble (client sets the key to the temp bubble's id).
+      idempotencyKey: true,
       errorCode: true,
       errorTitle: true,
       sentAt: true,

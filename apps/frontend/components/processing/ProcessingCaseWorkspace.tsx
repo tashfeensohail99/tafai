@@ -83,6 +83,7 @@ import { CancelCaseModal } from './CancelCaseModal';
 import { CloseCaseModal } from './CloseCaseModal';
 import { CorrectionsTab } from './tabs/CorrectionsTab';
 import { MilestonesTab } from './tabs/MilestonesTab';
+import { CaseTabBar } from './CaseTabBar';
 import { DatabankTab } from './tabs/DatabankTab';
 import { SubmissionPackagePanel } from './SubmissionPackagePanel';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
@@ -606,63 +607,14 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
 
         {/* Full-width tab panel */}
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0' }}>
-          {/* Tab bar */}
-          <div style={{ display: 'flex', gap: '2px', padding: '4px', background: 'var(--sos-surface-2)', borderRadius: 'var(--sos-radius-md)', marginBottom: '12px', overflowX: 'auto' }}>
-            {TABS.map((tab) => {
-              const Icon = tab.Icon;
-              const isActive = activeTab === tab.key;
-              // The active tab is always "seen", so it never shows a badge.
-              const newCount = isActive ? 0 : (tabActivity[tab.key] ?? 0);
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => switchTab(tab.key)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '7px 14px',
-                    borderRadius: 'calc(var(--sos-radius-md) - 2px)',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: isActive ? 600 : 500,
-                    color: isActive ? 'var(--sos-brand-primary-strong)' : 'var(--sos-text-muted)',
-                    background: isActive ? 'var(--sos-brand-primary-soft)' : 'transparent',
-                    transition: 'all 150ms',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <Icon size={13} />
-                  {tab.label}
-                  {newCount > 0 ? (
-                    <span
-                      aria-label={`${newCount} new`}
-                      title={`${newCount} new since you last looked`}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        minWidth: '16px',
-                        height: '16px',
-                        padding: '0 5px',
-                        marginLeft: '1px',
-                        borderRadius: '8px',
-                        fontSize: '10px',
-                        fontWeight: 700,
-                        lineHeight: 1,
-                        color: '#fff',
-                        background: 'var(--sos-status-danger)',
-                      }}
-                    >
-                      {newCount > 99 ? '99+' : newCount}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
+          {/* Tab bar — horizontally scrollable (arrows + fades + wheel), since
+              the ~12 tabs overflow on a laptop. See CaseTabBar. */}
+          <CaseTabBar
+            tabs={TABS}
+            activeKey={activeTab}
+            onSelect={(k) => switchTab(k as TabKey)}
+            badgeFor={(k) => tabActivity[k as TabKey] ?? 0}
+          />
 
           {/* Tab content */}
           {activeTab === 'milestones' && <MilestonesTab c={c} />}

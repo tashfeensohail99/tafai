@@ -1347,6 +1347,11 @@ model Employee {
   // assign/refer a lead to them. Also exempts them from the presence-
   // accountability sweeper, since being offline here is intentional, not a lapse.
   presenceLocked      Boolean        @default(false)
+  // Admin "daily new-lead cap": at most N fresh leads/day (PKT). NULL = no cap.
+  // Unlike presenceLocked (a full pause), a capped rep DOES receive leads — just
+  // no more than this many per day — so an admin can ease a rep back in. Honored
+  // by both round-robin engines; existing chats and manual assignment are exempt.
+  dailyLeadCap        Int?
   // Skill tags used as a soft preference by the routing engine. Examples:
   // ["UK","Canada","StudentVisa","WorkPermit"].
   skills              String[]       @default([])
@@ -1579,6 +1584,10 @@ model Lead {
   @@index([email])
   @@index([status])
   @@index([assignedEmployeeId])
+  // Serves the per-rep daily-cap COUNT (assignedEmployeeId + createdAt >= PKT
+  // midnight) as a bounded range-scan of just today's rows, instead of scanning
+  // a busy rep's whole lead history each assignment. See common/routing/daily-lead-cap.
+  @@index([assignedEmployeeId, createdAt])
   @@index([branchId])
   @@index([referralPartnerId])
   @@index([preferredEmployeeId])

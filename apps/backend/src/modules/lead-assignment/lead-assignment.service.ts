@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cappedOutEmployeeIds } from '../../common/routing/daily-lead-cap';
 
 /**
  * Shared round-robin lead → sales-employee assignment.
@@ -86,9 +87,18 @@ export class LeadAssignmentService {
     return !!hit;
   }
 
-  async pickNextAgent(selectedAgentIds: string[] = []): Promise<string | null> {
+  /**
+   * @param opts.ignoreDailyCap skip the per-rep daily new-lead cap. Set ONLY for
+   *   a LIVE ringing customer (Telenor Smart Office inbound call) — a call must
+   *   still reach a rep even if they've hit their proactive-lead quota. Every
+   *   proactive channel (CSV, Meta, walk-in, API create) leaves this false.
+   */
+  async pickNextAgent(
+    selectedAgentIds: string[] = [],
+    opts?: { ignoreDailyCap?: boolean },
+  ): Promise<string | null> {
     return this.prisma.$transaction(async (tx) => {
-      const eligible = await tx.employee.findMany({
+      const pool = await tx.employee.findMany({
         where: {
           ...LeadAssignmentService.ELIGIBLE_WHERE,
           // Skip reps the admin has paused from NEW leads. Only the auto
@@ -99,8 +109,15 @@ export class LeadAssignmentService {
           ...(selectedAgentIds.length > 0 ? { id: { in: selectedAgentIds } } : {}),
         },
         orderBy: { id: 'asc' },
-        select: { id: true },
+        select: { id: true, dailyLeadCap: true },
       });
+      // Drop reps who've hit their per-rep DAILY cap today (same rule the live
+      // engine applies) so this async channel can't overshoot it either. Manual
+      // pickers above are intentionally NOT filtered — a human override wins —
+      // and a live inbound call passes ignoreDailyCap so a ringing customer is
+      // never stranded by the cap.
+      const cappedOut = opts?.ignoreDailyCap ? new Set<string>() : await cappedOutEmployeeIds(tx, pool);
+      const eligible = pool.filter((e) => !cappedOut.has(e.id));
       if (eligible.length === 0) return null;
 
       const org = await tx.organization.findFirst({ orderBy: { createdAt: 'asc' } });

@@ -47,6 +47,7 @@ import {
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AdRoutingRulesService } from '../../marketing/routing.service';
 import { computeSlaDeadline, type BusinessHours } from './business-hours';
+import { cappedOutEmployeeIds } from '../../../common/routing/daily-lead-cap';
 
 // Ad-specific routing was a hard-coded LAHORE_DESK+AD_ROUTING map until Phase
 // 1E. The map now lives in `crm.ad_routing_rules` and is administered from
@@ -214,6 +215,15 @@ export class WhatsAppAssignmentService {
     const eligible = await this.loadEligibleEmployees(this.prisma, org.organizationId);
     const eligibleIds = new Set(eligible.map((e) => e.id));
 
+    // Per-rep DAILY new-lead cap: reps who've already hit their quota today are
+    // dropped from the NEW-lead pool below (they stay in `eligible` so existing
+    // chats are retained, exactly like presenceLocked). A live inbound CALL is
+    // exempt — a ringing customer must still reach a rep; the cap only throttles
+    // proactive lead distribution. Zero extra queries unless someone has a cap.
+    const cappedOutIds = opts?.forLiveCall
+      ? new Set<string>()
+      : await cappedOutEmployeeIds(this.prisma, eligible);
+
     // Already assigned to a still-eligible agent → keep it. Presence (Away/
     // Offline) does NOT drop an existing chat; we only re-route if the assignee
     // was deactivated / removed from the inbox pool / suspended.
@@ -249,13 +259,14 @@ export class WhatsAppAssignmentService {
     // none. Its own per-desk cursor gives each restricted team its own clean
     // round-robin lane (so Messenger→Islamabad rotates independently).
     const restrictTeam = adTeam ?? channelTeam;
-    // Paused reps (`presenceLocked`) are wound-down for NEW leads: they stay in
+    // Paused reps (`presenceLocked`) AND reps who've hit their daily cap today
+    // (`cappedOutIds`) are wound-down for NEW leads: they stay in
     // `eligible`/`eligibleIds` above so their EXISTING chats are retained and
     // honored, but they're dropped here so the round-robin never hands them a
-    // new one (and, being OFFLINE, they'd be filtered by the online gate too —
+    // new one (a paused rep, being OFFLINE, is also filtered by the online gate —
     // this also covers the live-call fallback that ignores presence).
     const basePool = (restrictTeam ? eligible.filter((e) => restrictTeam.has(e.id)) : eligible).filter(
-      (e) => !e.presenceLocked,
+      (e) => !e.presenceLocked && !cappedOutIds.has(e.id),
     );
 
     // NEW-lead pool = basePool restricted to ONLINE (Away/Offline agents don't
@@ -510,7 +521,9 @@ export class WhatsAppAssignmentService {
   private async loadEligibleEmployees(
     tx: Prisma.TransactionClient,
     _organizationId: string,
-  ): Promise<{ id: string; presenceStatus: PresenceStatus; presenceLocked: boolean }[]> {
+  ): Promise<
+    { id: string; presenceStatus: PresenceStatus; presenceLocked: boolean; dailyLeadCap: number | null }[]
+  > {
     const rows = await tx.employee.findMany({
       where: {
         isActive: true,
@@ -532,7 +545,11 @@ export class WhatsAppAssignmentService {
       // presenceLocked is the admin "pause new leads" switch — such reps stay in
       // this eligible set (so their existing chats are retained) but are dropped
       // from the NEW-lead pool by the caller.
-      select: { id: true, presenceStatus: true, presenceLocked: true },
+      // dailyLeadCap: per-rep "at most N new leads/day" throttle (NULL = none).
+      // The caller drops reps who've hit it from the NEW-lead pool (see
+      // cappedOutEmployeeIds) while — like presenceLocked — keeping them in this
+      // eligible set so their existing chats are retained.
+      select: { id: true, presenceStatus: true, presenceLocked: true, dailyLeadCap: true },
     });
     return rows;
   }

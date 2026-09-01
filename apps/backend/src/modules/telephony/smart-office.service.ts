@@ -229,7 +229,11 @@ export class SmartOfficeService {
     ).map((e) => e.id);
     if (extRepIds.length === 0) return null;
 
-    const assigneeId = await this.leadAssignment.pickNextAgent(extRepIds);
+    // ignoreDailyCap: this is a LIVE ringing call. The per-rep daily new-lead cap
+    // throttles proactive lead distribution, not answering a customer who is
+    // calling right now — a capped rep must still be reachable, and an all-capped
+    // pool must not leave the caller unrouted.
+    const assigneeId = await this.leadAssignment.pickNextAgent(extRepIds, { ignoreDailyCap: true });
     if (!assigneeId) return null;
 
     const emp = await this.prisma.employee.findUnique({

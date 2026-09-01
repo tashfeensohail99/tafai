@@ -1752,20 +1752,23 @@ export class WhatsAppMessagesService {
           '-i', tmpIn,
           '-vn',          // never carry a video/cover-art stream into Ogg
           '-map', '0:a:0', // first audio stream only
-          // ── 131053 hardening (2026-09-01) ──────────────────────────────
-          // Meta's send-time processor started rejecting (≈2026-08-27) Ogg
-          // files carrying a stream-level language tag + a non-zero start
-          // offset — the exact byte-shape every WEB (WebM/MediaRecorder)
-          // recording produced: ffmpeg's Matroska demuxer defaults a missing
-          // Language to 'eng' and the Ogg muxer copies it into OpusTags,
-          // while the capture latency leaks in as a start offset. Forensics
-          // on real rejected vs delivered files: 8/8 failed had (eng)+offset,
-          // 4/4 delivered had neither. All four flags are no-ops on already-
-          // clean (mobile Ogg) input, so the happy path is untouched.
+          // ── 131053 hardening (2026-09-01, PROVEN root cause) ───────────
+          // Meta's send-time processor (since ≈2026-08-27) rejects Opus
+          // streams with TIMELINE DISCONTINUITIES: the web recorder
+          // (MediaRecorder) drops audio chunks when the browser stutters,
+          // leaving ~50ms mid-stream timestamp gaps that a plain re-encode
+          // faithfully PRESERVES — which is why replaying/re-encoding the
+          // same bytes kept failing. Proven end-to-end on a real rejected
+          // recording (2 gaps at 19.2s/33.4s → failed 6×; gap-filled version
+          // of the SAME audio → DELIVERED). aresample=async=1 stretches/
+          // squeezes-in silence so the output is gapless by construction;
+          // first_pts=0 also zeroes the start offset. Metadata strips kill
+          // the WebM-inherited stream language tag ('eng') for good measure.
+          // All flags are no-ops on clean continuous (mobile Ogg) input.
           '-map_metadata', '-1',      // drop global metadata
           '-map_metadata:s', '-1',    // drop per-stream metadata
-          '-metadata:s:a:0', 'language=', // belt-and-braces: clear track language
-          '-af', 'asetpts=PTS-STARTPTS',  // zero the timeline (pre-encoder — safe for Opus pre-skip)
+          '-metadata:s:a:0', 'language=', // clear track language tag
+          '-af', 'aresample=async=1:first_pts=0', // fill gaps → gapless timeline from t=0
           // ───────────────────────────────────────────────────────────────
           '-c:a', 'libopus',
           '-ac', '1',     // mono (Meta voice-note requirement)

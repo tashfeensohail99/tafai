@@ -94,6 +94,32 @@ export class WhatsAppDailyReportService implements OnModuleInit, OnModuleDestroy
         return;
       }
 
+      // Outbound-media failure monitor (runs once per day with the report
+      // claim): the 2026-08-27 incident — Meta suddenly rejecting web-recorded
+      // voice notes with 131053 — burned for days as reps' quiet red bubbles
+      // before anyone correlated it. Surface the daily count loudly so a
+      // regression is a log alert the same morning.
+      try {
+        const failedMedia = await this.prisma.whatsAppMessage.count({
+          where: {
+            direction: 'OUTBOUND',
+            status: 'FAILED',
+            type: { in: ['AUDIO', 'IMAGE', 'VIDEO', 'DOCUMENT'] },
+            createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) },
+          },
+        });
+        if (failedMedia > 5) {
+          this.log.error(
+            `[MEDIA-FAIL-ALERT] ${failedMedia} outbound media messages FAILED in the last 24h — ` +
+              `check errorCode distribution (131053 = Meta rejected the file shape; see diag-131053-detail.ts).`,
+          );
+        } else {
+          this.log.log(`Outbound media failures last 24h: ${failedMedia}.`);
+        }
+      } catch {
+        // Monitoring must never block the report.
+      }
+
       if (report.totals.texted === 0) {
         this.log.log(`No WhatsApp activity for ${reportDate}; marker written, no emails sent.`);
         return;

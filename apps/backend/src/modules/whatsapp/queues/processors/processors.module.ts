@@ -11,6 +11,7 @@ import { CsvDripProcessor } from './csv-drip.processor';
 import { CsvDripService } from '../../drip/csv-drip.service';
 import { CsvDripBackfillRunner } from '../../drip/csv-drip-backfill.runner';
 import { OutboundOrphanDrainerService } from './outbound-orphan-drainer.service';
+import { FailedVoiceTranscriberService } from '../failed-voice-transcriber.service';
 
 // StorageModule is imported here so AiReplyProcessor can pull voice-note
 // audio bytes from S3/Supabase before transcribing via Whisper. Without
@@ -34,6 +35,9 @@ import { OutboundOrphanDrainerService } from './outbound-orphan-drainer.service'
     // status without a Redis job (typical when a maintenance script wrote
     // them from outside the VPC and couldn't reach internal Redis).
     OutboundOrphanDrainerService,
+    // Failed-voice "Send as text" transcript — shared by the outbound worker's
+    // catch AND the status-webhook failed branch (where 131053 really lands).
+    FailedVoiceTranscriberService,
   ],
 })
 export class WhatsAppProcessorsModule {}

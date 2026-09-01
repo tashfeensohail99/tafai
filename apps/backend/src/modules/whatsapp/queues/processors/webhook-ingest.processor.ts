@@ -24,6 +24,7 @@ import { NotificationsService } from '../../../notifications/notifications.servi
 import { PushService } from '../../../push/push.service';
 import { WhatsAppAssignmentService } from '../../routing/assignment.service';
 import { WhatsAppRealtimePublisher } from '../../realtime/publisher.service';
+import { FailedVoiceTranscriberService } from '../failed-voice-transcriber.service';
 import { computeSlaDeadline, type BusinessHours } from '../../routing/business-hours';
 import {
   WHATSAPP_QUEUE,
@@ -209,6 +210,9 @@ export class WebhookIngestProcessor extends WorkerHost {
     private readonly notifications: NotificationsService,
     private readonly assignment: WhatsAppAssignmentService,
     private readonly publisher: WhatsAppRealtimePublisher,
+    // Failed-voice "Send as text" transcript — must hang off the STATUS
+    // webhook, not just the outbound worker (see ingestStatus).
+    private readonly failedVoice: FailedVoiceTranscriberService,
     // Central audit log — a brand-new lead auto-created on first WhatsApp
     // contact bypasses HTTP, so the global AuditInterceptor never sees it.
     // Log it explicitly so inbound-created leads appear in the audit trail.
@@ -1788,7 +1792,20 @@ export class WebhookIngestProcessor extends WorkerHost {
   private async ingestStatus(st: MetaStatus): Promise<void> {
     const message = await this.prisma.whatsAppMessage.findUnique({
       where: { waMessageId: st.id },
-      select: { id: true, threadId: true, leadId: true, clientId: true },
+      // type/mediaUrl/mediaMimeType/payload feed the failed-voice transcriber
+      // below — the common voice failure (131053) arrives HERE as a status
+      // webhook (the send API accepted the message), never in the outbound
+      // worker's catch, so this is the only place that can trigger it.
+      select: {
+        id: true,
+        threadId: true,
+        leadId: true,
+        clientId: true,
+        type: true,
+        mediaUrl: true,
+        mediaMimeType: true,
+        payload: true,
+      },
     });
     if (!message) {
       this.log.debug(`status for unknown wamid ${st.id} — likely race`);
@@ -1817,6 +1834,13 @@ export class WebhookIngestProcessor extends WorkerHost {
       data.pricingCategory = st.pricing.category;
     }
     await this.prisma.whatsAppMessage.update({ where: { id: message.id }, data });
+
+    // A voice note that Meta rejected post-acceptance (131053 & co) gets its
+    // Whisper transcript attached so the rep can "Send as text" instead of
+    // re-recording. Fire-and-forget — the service logs every bail-out.
+    if (st.status === 'failed') {
+      void this.failedVoice.transcribe(message);
+    }
 
     const org = await this.prisma.organization.findFirst({
       orderBy: { createdAt: 'asc' },

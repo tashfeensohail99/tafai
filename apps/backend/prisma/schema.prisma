@@ -3917,11 +3917,46 @@ model ProcessingNote {
   deletedAt       DateTime?
   deletedByUserId String?
 
-  case      ProcessingCase @relation(fields: [caseId], references: [id])
-  createdBy UserAccount    @relation("ProcessingNoteCreatedBy", fields: [createdByUserId], references: [id])
+  case        ProcessingCase             @relation(fields: [caseId], references: [id])
+  createdBy   UserAccount                @relation("ProcessingNoteCreatedBy", fields: [createdByUserId], references: [id])
+  attachments ProcessingNoteAttachment[]
 
   @@index([caseId])
   @@map("processing_notes")
+  @@schema("processing")
+}
+
+enum ProcessingNoteAttachmentKind {
+  IMAGE // photo / screenshot — rendered as a thumbnail + lightbox
+  VOICE // recorded voice note — rendered as an audio player (stored as mp3)
+  FILE // any other attachment — rendered as a download chip
+
+  @@schema("processing")
+}
+
+/// A file attached to a processing case note — voice notes, screenshots,
+/// images, or any document the team wants to pin to the conversation without
+/// it becoming a formal checklist document. Bytes live in object storage
+/// (StorageService); the row holds the key + metadata. Cascade-deletes with
+/// its note; a soft-deleted note keeps its attachment rows for the audit trail
+/// (the note's deletedAt already hides it from the list).
+model ProcessingNoteAttachment {
+  id           String                       @id @default(uuid())
+  noteId       String
+  kind         ProcessingNoteAttachmentKind
+  storageKey   String
+  mimeType     String
+  sizeBytes    Int
+  originalName String?
+  /// Voice-note length in milliseconds (ffprobe), for the player UI. Null for
+  /// non-audio attachments.
+  durationMs   Int?
+  createdAt    DateTime                     @default(now())
+
+  note ProcessingNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@map("processing_note_attachments")
   @@schema("processing")
 }
 

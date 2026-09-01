@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -8,7 +9,12 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
+import { execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import * as bcrypt from 'bcrypt';
 import {
   AuthorityDecision,
@@ -25,6 +31,7 @@ import {
   Prisma,
   ProcessingCasePriority,
   ProcessingCaseStage,
+  ProcessingNoteAttachmentKind,
   ProcessingNoteType,
   ProcessingTaskStatus,
   TimelineEventType,
@@ -33,6 +40,12 @@ import {
   WhatsAppMessageType,
   WhatsAppThreadStatus,
 } from '@prisma/client';
+
+// System ffmpeg/ffprobe (alpine apk) — same binaries the WhatsApp media path
+// uses; here they normalise a recorded voice note to a universally-playable mp3.
+const FFMPEG_BIN = 'ffmpeg';
+const FFPROBE_BIN = 'ffprobe';
+const execFileAsync = promisify(execFile);
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RequestUser } from '../../common/types/auth.types';
 import { isCanonicalServiceCode } from '../../common/service-types';
@@ -4026,6 +4039,17 @@ export class ProcessingService {
       },
       include: {
         createdBy: { select: { id: true, email: true } },
+        attachments: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            kind: true,
+            mimeType: true,
+            sizeBytes: true,
+            originalName: true,
+            durationMs: true,
+          },
+        },
       },
       orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
     });
@@ -4091,18 +4115,71 @@ export class ProcessingService {
     }
   }
 
-  async createNote(caseId: string, dto: CreateProcessingNoteDto, user: RequestUser) {
+  async createNote(
+    caseId: string,
+    dto: CreateProcessingNoteDto,
+    user: RequestUser,
+    files?: Express.Multer.File[],
+  ) {
     await this.assertCaseAccessById(caseId, user);
-    const note = await this.prisma.processingNote.create({
-      data: {
-        caseId,
-        content: dto.content,
-        noteType: dto.noteType ?? ProcessingNoteType.GENERAL,
-        mentions: dto.mentions ?? [],
-        createdByUserId: user.id,
-      },
-      include: { createdBy: { select: { id: true, email: true } } },
-    });
+    const content = dto.content?.trim() ?? '';
+    const attachments = files ?? [];
+    // A note must carry SOMETHING — text or at least one attachment (a bare
+    // voice note / screenshot is a legitimate note with no words).
+    if (!content && attachments.length === 0) {
+      throw new BadRequestException('A note needs text or at least one attachment.');
+    }
+
+    // Process every attachment BEFORE opening the write: transcode voice to a
+    // universally-playable mp3, upload the bytes, and read back its length. Any
+    // single-file failure aborts the whole note so we never persist a note that
+    // references bytes that aren't there.
+    const prepared: Array<{
+      kind: ProcessingNoteAttachmentKind;
+      storageKey: string;
+      mimeType: string;
+      sizeBytes: number;
+      originalName: string | null;
+      durationMs: number | null;
+    }> = [];
+    for (const f of attachments) {
+      prepared.push(await this.prepareNoteAttachment(caseId, f));
+    }
+
+    let note;
+    try {
+      note = await this.prisma.processingNote.create({
+        data: {
+          caseId,
+          content,
+          noteType: dto.noteType ?? ProcessingNoteType.GENERAL,
+          mentions: dto.mentions ?? [],
+          createdByUserId: user.id,
+          ...(prepared.length ? { attachments: { create: prepared } } : {}),
+        },
+        include: {
+          createdBy: { select: { id: true, email: true } },
+          // Curated select — never return the internal storageKey on the wire
+          // (identical to getNotes).
+          attachments: {
+            orderBy: { createdAt: 'asc' },
+            select: {
+              id: true,
+              kind: true,
+              mimeType: true,
+              sizeBytes: true,
+              originalName: true,
+              durationMs: true,
+            },
+          },
+        },
+      });
+    } catch (err) {
+      // The bytes were uploaded before this write; the note never persisted, so
+      // delete them rather than leaking orphaned objects in storage.
+      await Promise.all(prepared.map((p) => this.storage.delete(p.storageKey).catch(() => undefined)));
+      throw err;
+    }
 
     await this.prisma.processingAuditLog.create({
       data: {
@@ -4111,7 +4188,7 @@ export class ProcessingService {
         action: 'note_added',
         entityType: 'processing_note',
         entityId: note.id,
-        newValues: { noteType: note.noteType },
+        newValues: { noteType: note.noteType, attachments: prepared.length },
       },
     });
 
@@ -4119,10 +4196,141 @@ export class ProcessingService {
       mentionIds: dto.mentions ?? [],
       authorId: user.id,
       caseId,
-      snippet: dto.content,
+      // Give a mentioned colleague something to see even on a wordless note.
+      snippet: content || (prepared[0]?.kind === 'VOICE' ? '🎤 voice note' : '📎 attachment'),
     });
 
     return note;
+  }
+
+  /**
+   * Classify an uploaded note file, transcode voice to mp3 (so it plays in
+   * every browser, not just the one that recorded it), push the bytes to
+   * object storage, and return the row to persist. Never trusts the client's
+   * declared MIME beyond the audio/image/other split.
+   */
+  private async prepareNoteAttachment(
+    caseId: string,
+    file: Express.Multer.File,
+  ): Promise<{
+    kind: ProcessingNoteAttachmentKind;
+    storageKey: string;
+    mimeType: string;
+    sizeBytes: number;
+    originalName: string | null;
+    durationMs: number | null;
+  }> {
+    const baseMime = (file.mimetype || '').split(';')[0].trim().toLowerCase();
+    const originalName = file.originalname || null;
+
+    if (baseMime.startsWith('audio/') || file.originalname?.toLowerCase().startsWith('voice-note')) {
+      // VOICE: transcode to mono 64k mp3 (universal playback) + read duration.
+      const { mp3, durationMs } = await this.transcodeNoteVoiceToMp3(file.buffer);
+      const up = await this.storage.upload(mp3, 'audio/mpeg', `processing/note-attachments/${caseId}`, 'voice-note.mp3');
+      return {
+        kind: ProcessingNoteAttachmentKind.VOICE,
+        storageKey: up.key,
+        mimeType: 'audio/mpeg',
+        sizeBytes: mp3.length,
+        originalName,
+        durationMs,
+      };
+    }
+
+    // Only inline-render KNOWN-SAFE raster images. Everything else — including
+    // image/svg+xml (which can carry <script>) — is a FILE the user must
+    // deliberately open, so untrusted markup never auto-renders in the tab.
+    const SAFE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/heic', 'image/heif', 'image/bmp']);
+    const kind = SAFE_IMAGE_MIMES.has(baseMime)
+      ? ProcessingNoteAttachmentKind.IMAGE
+      : ProcessingNoteAttachmentKind.FILE;
+    const up = await this.storage.upload(
+      file.buffer,
+      baseMime || 'application/octet-stream',
+      `processing/note-attachments/${caseId}`,
+      originalName ?? 'attachment',
+    );
+    return {
+      kind,
+      storageKey: up.key,
+      mimeType: baseMime || 'application/octet-stream',
+      sizeBytes: file.buffer.length,
+      originalName,
+      durationMs: null,
+    };
+  }
+
+  /** Transcode any recorded audio (Chrome webm/opus, Safari mp4/aac, …) to a
+   *  small mono mp3 that every browser's <audio> can play, and return its
+   *  duration in ms. Fail-loud: a note voice attachment that can't be encoded
+   *  is rejected so the rep re-records rather than saving an unplayable blob. */
+  private async transcodeNoteVoiceToMp3(input: Buffer): Promise<{ mp3: Buffer; durationMs: number | null }> {
+    const tmpIn = join(tmpdir(), `pn-in-${randomUUID()}`);
+    const tmpOut = join(tmpdir(), `pn-out-${randomUUID()}.mp3`);
+    try {
+      await writeFile(tmpIn, input);
+      try {
+        await execFileAsync(FFMPEG_BIN, [
+          '-hide_banner', '-y',
+          '-i', tmpIn,
+          '-vn', '-map', '0:a:0',
+          '-c:a', 'libmp3lame', '-ac', '1', '-b:a', '64k',
+          '-f', 'mp3',
+          tmpOut,
+        ]);
+      } catch (e) {
+        const stderr = (e as { stderr?: unknown }).stderr;
+        const tail = stderr ? ` — ${String(stderr).trim().split('\n').slice(-1)[0]}` : ` — ${(e as Error).message}`;
+        throw new BadGatewayException(`Voice note could not be processed${tail}`);
+      }
+      const mp3 = await readFile(tmpOut);
+      if (mp3.length < 64) throw new BadGatewayException('Voice note transcode produced no audio.');
+      let durationMs: number | null = null;
+      try {
+        const { stdout } = await execFileAsync(FFPROBE_BIN, [
+          '-v', 'error', '-show_entries', 'format=duration',
+          '-of', 'default=noprint_wrappers=1:nokey=1', tmpOut,
+        ]);
+        const sec = parseFloat(String(stdout).trim());
+        if (Number.isFinite(sec) && sec > 0) durationMs = Math.round(sec * 1000);
+      } catch { /* duration is cosmetic — never block the send on it */ }
+      return { mp3, durationMs };
+    } finally {
+      await unlink(tmpIn).catch(() => {});
+      await unlink(tmpOut).catch(() => {});
+    }
+  }
+
+  /**
+   * Short-lived signed URL for a note attachment's bytes. Case-scoped access:
+   * whoever can see the case's notes can see its attachments. Used by the
+   * Notes tab to render an <img>/<audio> or offer a download.
+   */
+  async getNoteAttachmentUrl(caseId: string, attachmentId: string, user: RequestUser) {
+    await this.assertCaseAccessById(caseId, user);
+    const att = await this.prisma.processingNoteAttachment.findUnique({
+      where: { id: attachmentId },
+      select: {
+        id: true, storageKey: true, mimeType: true, originalName: true,
+        note: { select: { caseId: true, noteType: true } },
+      },
+    });
+    if (!att || att.note.caseId !== caseId) {
+      throw new NotFoundException('Attachment not found on this case');
+    }
+    // Mirror the getNotes visibility rule: a MANAGER_ONLY note's attachments
+    // are managers-only too (defence-in-depth — never let a leaked/held
+    // attachment id bypass the note-level filter).
+    if (
+      att.note.noteType === ProcessingNoteType.MANAGER_ONLY &&
+      !user.permissions.includes('processing.note.view_all')
+    ) {
+      throw new NotFoundException('Attachment not found on this case');
+    }
+    // 1-hour TTL so a rep can open a case and play a voice note / view an image
+    // minutes later without the URL expiring mid-session (default is 5 min).
+    const url = await this.storage.getSignedUrl(att.storageKey, 3600);
+    return { url, mimeType: att.mimeType, originalName: att.originalName };
   }
 
   async updateNote(

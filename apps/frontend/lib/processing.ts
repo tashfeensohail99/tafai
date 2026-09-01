@@ -783,6 +783,17 @@ export type ProcessingNoteType =
   | 'AUTHORITY_NOTE'
   | 'MANAGER_ONLY';
 
+export type NoteAttachmentKind = 'IMAGE' | 'VOICE' | 'FILE';
+
+export interface ApiNoteAttachment {
+  id: string;
+  kind: NoteAttachmentKind;
+  mimeType: string;
+  sizeBytes: number;
+  originalName?: string | null;
+  durationMs?: number | null;
+}
+
 export interface ApiProcessingNote {
   id: string;
   caseId: string;
@@ -795,20 +806,40 @@ export interface ApiProcessingNote {
   updatedAt: string;
   editedAt?: string | null;
   createdBy?: { id: string; email: string } | null;
+  attachments?: ApiNoteAttachment[];
 }
 
 export function fetchCaseNotes(caseId: string): Promise<ApiProcessingNote[]> {
   return apiFetch<ApiProcessingNote[]>(`/processing/cases/${caseId}/notes`, { cache: 'no-store' });
 }
 
+/**
+ * Create a case note. Sends multipart so text + attachments (voice notes,
+ * screenshots, images, files) go in one request. A text-only note simply
+ * carries no files.
+ */
 export function createCaseNote(
   caseId: string,
-  body: { content: string; noteType?: ProcessingNoteType; mentions?: string[] },
+  body: { content: string; noteType?: ProcessingNoteType; mentions?: string[]; files?: File[] },
 ): Promise<ApiProcessingNote> {
+  const form = new FormData();
+  form.append('content', body.content ?? '');
+  if (body.noteType) form.append('noteType', body.noteType);
+  if (body.mentions?.length) form.append('mentions', JSON.stringify(body.mentions));
+  for (const f of body.files ?? []) form.append('files', f, f.name);
   return apiFetch<ApiProcessingNote>(`/processing/cases/${caseId}/notes`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: form, // apiFetch leaves the multipart boundary to the browser
+    cache: 'no-store',
+  });
+}
+
+/** Short-lived signed URL to display/play/download a note attachment. */
+export function fetchNoteAttachmentUrl(
+  caseId: string,
+  attachmentId: string,
+): Promise<{ url: string; mimeType: string; originalName?: string | null }> {
+  return apiFetch(`/processing/cases/${caseId}/notes/attachments/${attachmentId}/signed-url`, {
     cache: 'no-store',
   });
 }

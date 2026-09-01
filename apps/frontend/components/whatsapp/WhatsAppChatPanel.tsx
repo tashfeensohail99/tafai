@@ -4118,18 +4118,39 @@ function MessageBubble({
             billing block) instead of only a red ✗ the rep has to hover. */}
         {isOut && message.status === 'FAILED' ? (
           <div
-            title={`${message.errorTitle ?? 'Failed'}${message.errorCode ? ` (Meta code ${message.errorCode})` : ''}`}
             style={{
               marginTop: 5,
               paddingTop: 4,
               borderTop: '1px solid var(--sos-border-subtle)',
-              fontSize: 11.5,
-              lineHeight: 1.35,
-              fontWeight: 600,
-              color: 'var(--sos-status-danger)',
             }}
           >
-            ⚠ {failureReason(message.errorCode, message.errorTitle)}
+            <div
+              title={`${message.errorTitle ?? 'Failed'}${message.errorCode ? ` (Meta code ${message.errorCode})` : ''}`}
+              style={{
+                fontSize: 11.5,
+                lineHeight: 1.35,
+                fontWeight: 600,
+                color: 'var(--sos-status-danger)',
+              }}
+            >
+              ⚠ {failureReason(message.errorCode, message.errorTitle)}
+            </div>
+            {/* Retry a FAILED media send. resendMedia re-delivers the stored file
+                via Meta's link-fetch path (explicit audio/ogg Content-Type) —
+                a DIFFERENT ingestion than the media_id upload that just failed,
+                so it can succeed where the original 131053'd. Only shown inside
+                the 24h window (onResend is undefined otherwise). */}
+            {isMedia && onResend ? (
+              <button
+                type="button"
+                onClick={() => { if (!resending) onResend(); }}
+                disabled={resending}
+                className="sos-btn sos-btn--sm"
+                style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              >
+                <RotateCcw size={12} /> {resending ? 'Retrying…' : 'Retry send'}
+              </button>
+            ) : null}
           </div>
         ) : null}
         {/* Failed voice note → the Whisper transcript + one-tap "Send as text",

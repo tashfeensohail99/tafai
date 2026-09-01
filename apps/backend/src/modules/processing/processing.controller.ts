@@ -13,12 +13,14 @@ import {
   Req,
   Res,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { ProcessingNoteType } from '@prisma/client';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
@@ -660,14 +662,74 @@ export class ProcessingController {
     return this.processingService.getNotes(caseId, user);
   }
 
+  /**
+   * Create a case note — text and/or attachments (voice notes, screenshots,
+   * images, files). MULTIPART so the same call carries the recorded audio /
+   * pasted screenshot alongside the text; a plain text note simply sends no
+   * files. Body fields arrive as strings (multipart), so content/noteType/
+   * mentions are read individually and normalised here rather than through the
+   * JSON validation pipe.
+   */
   @Post('cases/:caseId/notes')
   @RequirePermissions('processing.note.create')
+  @UseInterceptors(
+    // Bounded per-request memory: 6 files × 12 MB ≈ 72 MB max in the heap (a
+    // voice note is tiny; a screenshot/photo fits easily in 12 MB), well under
+    // the container headroom — a note is not a bulk-upload path.
+    FilesInterceptor('files', 6, {
+      storage: memoryStorage(),
+      limits: { fileSize: 12 * 1024 * 1024 },
+    }),
+  )
   createNote(
     @Param('caseId', ParseUUIDPipe) caseId: string,
-    @Body() dto: CreateProcessingNoteDto,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+    @Body('content') content: string | undefined,
+    @Body('noteType') noteType: string | undefined,
+    @Body('mentions') mentions: string | string[] | undefined,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.processingService.createNote(caseId, dto, user);
+    // noteType arrives as a raw multipart string (no JSON ValidationPipe on
+    // this route) — validate it here so a bad value is a clean 400, not a
+    // Prisma enum 500.
+    let noteTypeParsed: ProcessingNoteType | undefined;
+    if (noteType != null && noteType !== '') {
+      if (!(Object.values(ProcessingNoteType) as string[]).includes(noteType)) {
+        throw new BadRequestException(`Invalid noteType: ${noteType}`);
+      }
+      noteTypeParsed = noteType as ProcessingNoteType;
+    }
+    // mentions may arrive as a JSON array string, repeated fields, or absent.
+    let mentionIds: string[] = [];
+    if (Array.isArray(mentions)) mentionIds = mentions;
+    else if (typeof mentions === 'string' && mentions.trim()) {
+      try {
+        const parsed = JSON.parse(mentions);
+        mentionIds = Array.isArray(parsed) ? parsed.map(String) : [mentions];
+      } catch {
+        mentionIds = mentions.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    const dto: CreateProcessingNoteDto = {
+      content: content ?? '',
+      noteType: noteTypeParsed,
+      mentions: mentionIds,
+    };
+    return this.processingService.createNote(caseId, dto, user, files);
+  }
+
+  /**
+   * GET /processing/cases/:caseId/notes/attachments/:attachmentId/signed-url
+   * Short-lived signed URL to display/play/download a note attachment.
+   */
+  @Get('cases/:caseId/notes/attachments/:attachmentId/signed-url')
+  @RequireAnyPermissions('processing.note.create', 'processing.note.view_all')
+  getNoteAttachmentUrl(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.getNoteAttachmentUrl(caseId, attachmentId, user);
   }
 
   @Patch('cases/:caseId/notes/:noteId/pin')

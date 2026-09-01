@@ -4,7 +4,7 @@
 // @mention teammates (who get an in-app notification + email). Pinned first.
 // Edit/delete are limited to the author (or a manager) — enforced server-side.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Loader2,
   Pin,
@@ -16,6 +16,12 @@ import {
   Trash2,
   AtSign,
   X,
+  Mic,
+  Square,
+  Paperclip,
+  ImageIcon,
+  FileText,
+  Download,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -34,7 +40,9 @@ import {
   deleteCaseNote,
   pinCaseNote,
   fetchNoteMentionCandidates,
+  fetchNoteAttachmentUrl,
   type ApiProcessingNote,
+  type ApiNoteAttachment,
   type ProcessingNoteType,
   type ApiProcessingOfficer,
 } from '@/lib/processing';
@@ -110,6 +118,273 @@ function MentionPicker({
 }
 
 // Shared editor for both "add" and inline "edit".
+// ── Attachments ────────────────────────────────────────────────────────────
+// Voice notes, screenshots, images and files on a case note. Composer records
+// audio (MediaRecorder), accepts file picks, and captures pasted screenshots;
+// the card renders images (thumbnail → lightbox), voice (audio player) and
+// files (download chip). Bytes live in object storage; the client fetches a
+// short-lived signed URL per attachment when it renders.
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function fmtDuration(ms?: number | null): string {
+  if (!ms || ms <= 0) return '';
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
+/** Inline record button → produces a File and hands it to the composer. */
+function VoiceRecorderButton({ onRecorded }: { onRecorded: (f: File) => void }) {
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const [err, setErr] = useState<string | null>(null);
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const discardRef = useRef(false);
+
+  // Unmount mid-record (Cancel the editor, navigate away): stop the timer AND
+  // release the mic/stream — otherwise the recording light stays on.
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    try { mrRef.current?.stop(); } catch { /* already stopped */ }
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }, []);
+
+  async function start() {
+    setErr(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+      const mimeType = candidates.find((c) => MediaRecorder.isTypeSupported(c));
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      streamRef.current = stream;
+      chunksRef.current = [];
+      discardRef.current = false;
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        if (discardRef.current) return;
+        const type = mr.mimeType || 'audio/webm';
+        const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+        const blob = new Blob(chunksRef.current, { type });
+        if (blob.size > 0) onRecorded(new File([blob], `voice-note.${ext}`, { type }));
+      };
+      mr.start();
+      mrRef.current = mr;
+      setRecording(true);
+      setSeconds(0);
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+    } catch {
+      setErr('Microphone unavailable — allow mic access and try again.');
+    }
+  }
+  function stop(discard: boolean) {
+    discardRef.current = discard;
+    mrRef.current?.stop();
+    mrRef.current = null;
+    setRecording(false);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  }
+
+  if (recording) {
+    return (
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: 'var(--sos-status-danger)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--sos-status-danger)', animation: 'pulse 1s infinite' }} />
+          {`${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, '0')}`}
+        </span>
+        <SecondaryButton iconLeft={<Square size={13} />} onClick={() => stop(false)}>Stop</SecondaryButton>
+        <button type="button" onClick={() => stop(true)} style={{ padding: '6px 10px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: 12.5, cursor: 'pointer' }}>Discard</button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <SecondaryButton iconLeft={<Mic size={13} />} onClick={start}>Record voice</SecondaryButton>
+      {err ? <span style={{ fontSize: 11.5, color: 'var(--sos-status-danger)' }}>{err}</span> : null}
+    </div>
+  );
+}
+
+/** Pending-attachment chips + the attach/record/paste controls for the composer. */
+function AttachmentComposer({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const add = (f: File[]) => onChange([...files, ...f].slice(0, 10));
+  const removeAt = (i: number) => onChange(files.filter((_, idx) => idx !== i));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <SecondaryButton
+          iconLeft={<Paperclip size={13} />}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          Attach image / file
+        </SecondaryButton>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,application/pdf,audio/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const picked = Array.from(e.target.files ?? []);
+            if (picked.length) add(picked);
+            e.target.value = ''; // allow re-picking the same file
+          }}
+        />
+        <VoiceRecorderButton onRecorded={(f) => add([f])} />
+        <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>or paste a screenshot ⌘/Ctrl+V</span>
+      </div>
+      {files.length > 0 ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {files.map((f, i) => {
+            const isImg = f.type.startsWith('image/');
+            const isAudio = f.type.startsWith('audio/') || f.name.startsWith('voice-note');
+            return (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '4px 8px', borderRadius: 999, background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)', color: 'var(--sos-text-primary)' }}>
+                {isImg ? <ImageIcon size={12} /> : isAudio ? <Mic size={12} /> : <FileText size={12} />}
+                <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {isAudio ? 'Voice note' : f.name}
+                </span>
+                <span style={{ color: 'var(--sos-text-muted)' }}>{fmtBytes(f.size)}</span>
+                <button type="button" onClick={() => removeAt(i)} aria-label="Remove" style={{ display: 'inline-flex', border: 'none', background: 'transparent', color: 'var(--sos-text-muted)', cursor: 'pointer', padding: 0 }}>
+                  <X size={12} />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** One rendered attachment on a saved note. Fetches its signed URL on mount
+ *  (image/voice) or on click (file). */
+function NoteAttachmentView({ caseId, att, onLightbox }: { caseId: string; att: ApiNoteAttachment; onLightbox: (url: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const ensureUrl = async (force = false): Promise<string | null> => {
+    if (url && !force) return url;
+    setLoading(true);
+    setFailed(false);
+    try {
+      const res = await fetchNoteAttachmentUrl(caseId, att.id);
+      setUrl(res.url);
+      return res.url;
+    } catch {
+      setFailed(true);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+  // The signed URL can expire (1h TTL) on a long-open tab — a failed <img>/
+  // <audio> load re-fetches a fresh one instead of showing a dead element.
+  const refetch = () => { void ensureUrl(true); };
+
+  // Auto-load image + voice so they render inline; files load on click.
+  useEffect(() => {
+    if (att.kind === 'IMAGE' || att.kind === 'VOICE') void ensureUrl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [att.id]);
+
+  if (att.kind === 'IMAGE') {
+    return (
+      <button
+        type="button"
+        onClick={async () => { const u = await ensureUrl(); if (u) onLightbox(u); }}
+        style={{ padding: 0, border: '1px solid var(--sos-border-subtle)', borderRadius: 8, overflow: 'hidden', background: 'var(--sos-surface-2)', cursor: 'pointer', width: 132, height: 100, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+        title={att.originalName ?? 'Screenshot'}
+      >
+        {url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={url} alt={att.originalName ?? 'attachment'} onError={refetch} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : failed ? (
+          <span style={{ fontSize: 11, color: 'var(--sos-status-danger)' }}>Unavailable</span>
+        ) : (
+          <Loader2 size={16} className="animate-spin" style={{ color: 'var(--sos-text-muted)' }} />
+        )}
+      </button>
+    );
+  }
+
+  if (att.kind === 'VOICE') {
+    return (
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 999, background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)' }}>
+        <Mic size={13} style={{ color: 'var(--sos-brand-primary-strong)', flexShrink: 0 }} />
+        {url ? (
+          <audio controls src={url} onError={refetch} style={{ height: 32, maxWidth: 240 }} />
+        ) : failed ? (
+          <span style={{ fontSize: 12, color: 'var(--sos-status-danger)' }}>Voice note unavailable</span>
+        ) : (
+          <span style={{ fontSize: 12, color: 'var(--sos-text-muted)' }}>Loading…</span>
+        )}
+        {att.durationMs ? <span style={{ fontSize: 11, color: 'var(--sos-text-muted)' }}>{fmtDuration(att.durationMs)}</span> : null}
+      </div>
+    );
+  }
+
+  // FILE
+  return (
+    <button
+      type="button"
+      onClick={async () => { const u = await ensureUrl(); if (u) window.open(u, '_blank', 'noopener'); }}
+      disabled={loading}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, padding: '6px 10px', borderRadius: 8, background: 'var(--sos-surface-2)', border: '1px solid var(--sos-border-subtle)', color: 'var(--sos-text-primary)', cursor: 'pointer' }}
+    >
+      <FileText size={13} />
+      <span style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.originalName ?? 'File'}</span>
+      <span style={{ color: 'var(--sos-text-muted)' }}>{fmtBytes(att.sizeBytes)}</span>
+      <Download size={12} style={{ color: 'var(--sos-text-muted)' }} />
+    </button>
+  );
+}
+
+function NoteAttachments({ caseId, atts, onLightbox }: { caseId: string; atts: ApiNoteAttachment[]; onLightbox: (url: string) => void }) {
+  if (!atts.length) return null;
+  return (
+    <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      {atts.map((a) => <NoteAttachmentView key={a.id} caseId={caseId} att={a} onLightbox={onLightbox} />)}
+    </div>
+  );
+}
+
+/** Full-screen image preview. */
+function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden'; // lock the background scroll
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, cursor: 'zoom-out' }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt="attachment" style={{ maxWidth: '95%', maxHeight: '95%', objectFit: 'contain', borderRadius: 8 }} />
+    </div>
+  );
+}
+
 function NoteEditor({
   officers,
   initialContent = '',
@@ -120,6 +395,8 @@ function NoteEditor({
   submitLabel,
   onSubmit,
   onCancel,
+  allowAttachments = false,
+  hasExistingAttachments = false,
 }: {
   officers: ApiProcessingOfficer[];
   initialContent?: string;
@@ -128,12 +405,22 @@ function NoteEditor({
   saving: boolean;
   err: string | null;
   submitLabel: string;
-  onSubmit: (v: { content: string; noteType: ProcessingNoteType; mentions: string[] }) => void;
+  onSubmit: (v: { content: string; noteType: ProcessingNoteType; mentions: string[]; files?: File[] }) => void;
   onCancel: () => void;
+  /** Attachments (voice/image/file) are offered only on NEW notes, not edits. */
+  allowAttachments?: boolean;
+  /** Edit path: the note already has attachments, so empty text is still a
+   *  valid save (changing type / mentions on an attachment-only note). */
+  hasExistingAttachments?: boolean;
 }) {
   const [content, setContent] = useState(initialContent);
   const [type, setType] = useState<ProcessingNoteType>(initialType);
   const [mentions, setMentions] = useState<string[]>(initialMentions);
+  const [files, setFiles] = useState<File[]>([]);
+  const canSubmit =
+    content.trim().length > 0 ||
+    (allowAttachments && files.length > 0) ||
+    hasExistingAttachments;
 
   return (
     <GlassCard variant="strong" padded="md">
@@ -156,17 +443,29 @@ function NoteEditor({
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder="Type your note here…"
+          onPaste={allowAttachments ? (e) => {
+            // Capture pasted screenshots / images straight into the note.
+            const imgs: File[] = [];
+            for (const item of Array.from(e.clipboardData.items)) {
+              if (item.type.startsWith('image/')) {
+                const f = item.getAsFile();
+                if (f) imgs.push(new File([f], f.name || `screenshot-${Date.now()}.png`, { type: f.type }));
+              }
+            }
+            if (imgs.length) { e.preventDefault(); setFiles((prev) => [...prev, ...imgs].slice(0, 10)); }
+          } : undefined}
+          placeholder={allowAttachments ? 'Type your note… or paste a screenshot, attach an image, or record a voice note.' : 'Type your note here…'}
           rows={4}
           style={{ width: '100%', resize: 'vertical', padding: '10px 12px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'var(--sos-surface-hover)', color: 'var(--sos-text-primary)', fontSize: '14px', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
         />
+        {allowAttachments ? <AttachmentComposer files={files} onChange={setFiles} /> : null}
         <MentionPicker officers={officers} selected={mentions} onToggle={(id) => setMentions((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]))} />
         {err ? (
           <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--sos-status-danger-soft)', border: '1px solid var(--sos-status-danger-border)', color: 'var(--sos-status-danger)', fontSize: 12.5 }}>{err}</div>
         ) : null}
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
           <button type="button" onClick={onCancel} style={{ padding: '8px 16px', borderRadius: 'var(--sos-radius-md)', border: '1px solid var(--sos-border-subtle)', background: 'transparent', color: 'var(--sos-text-muted)', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
-          <PrimaryButton onClick={() => onSubmit({ content: content.trim(), noteType: type, mentions })} disabled={saving || !content.trim()}>
+          <PrimaryButton onClick={() => onSubmit({ content: content.trim(), noteType: type, mentions, files: allowAttachments ? files : undefined })} disabled={saving || !canSubmit}>
             {saving ? 'Saving…' : submitLabel}
           </PrimaryButton>
         </div>
@@ -182,6 +481,7 @@ function NoteCard({
   onPin,
   onEdit,
   onDelete,
+  onLightbox,
 }: {
   note: ApiProcessingNote;
   officers: ApiProcessingOfficer[];
@@ -189,6 +489,7 @@ function NoteCard({
   onPin: (n: ApiProcessingNote) => void;
   onEdit: (id: string, v: { content: string; noteType: ProcessingNoteType; mentions: string[] }) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onLightbox: (url: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -207,6 +508,7 @@ function NoteCard({
         initialContent={note.content}
         initialType={note.noteType}
         initialMentions={note.mentions ?? []}
+        hasExistingAttachments={(note.attachments?.length ?? 0) > 0}
         saving={busy}
         err={err}
         submitLabel="Save changes"
@@ -237,9 +539,12 @@ function NoteCard({
               {author} · {fmtRelative(note.createdAt)}{note.editedAt ? ' · edited' : ''}
             </span>
           </div>
-          <div style={{ fontSize: '13.5px', color: 'var(--sos-text-primary)', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
-            {note.content}
-          </div>
+          {note.content ? (
+            <div style={{ fontSize: '13.5px', color: 'var(--sos-text-primary)', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
+              {note.content}
+            </div>
+          ) : null}
+          <NoteAttachments caseId={note.caseId} atts={note.attachments ?? []} onLightbox={onLightbox} />
           {mentionNames.length > 0 ? (
             <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               {mentionNames.map((n, i) => (
@@ -294,6 +599,7 @@ function AddNote({ officers, onSaved, caseId }: { officers: ApiProcessingOfficer
       saving={saving}
       err={err}
       submitLabel="Save note"
+      allowAttachments
       onCancel={() => { setOpen(false); setErr(null); }}
       onSubmit={async (v) => {
         setSaving(true); setErr(null);
@@ -321,6 +627,7 @@ export function InternalNotesTab({ c }: { c: MockProcessingCase }) {
   const [err, setErr] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'ALL' | ProcessingNoteType>('ALL');
   const [search, setSearch] = useState('');
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,14 +651,15 @@ export function InternalNotesTab({ c }: { c: MockProcessingCase }) {
     setNotes((prev) => prev.map((x) => (x.id === n.id ? { ...x, isPinned: !x.isPinned } : x)));
     try {
       const updated = await pinCaseNote(c.id, n.id, { isPinned: !n.isPinned });
-      setNotes((prev) => prev.map((x) => (x.id === n.id ? { ...x, ...updated } : x)));
+      // Preserve attachments — the pin/update responses don't include them.
+      setNotes((prev) => prev.map((x) => (x.id === n.id ? { ...x, ...updated, attachments: x.attachments } : x)));
     } catch {
       setNotes((prev) => prev.map((x) => (x.id === n.id ? { ...x, isPinned: n.isPinned } : x))); // revert
     }
   }
   async function handleEdit(id: string, v: { content: string; noteType: ProcessingNoteType; mentions: string[] }) {
     const updated = await updateCaseNote(c.id, id, v);
-    setNotes((prev) => prev.map((x) => (x.id === id ? { ...x, ...updated } : x)));
+    setNotes((prev) => prev.map((x) => (x.id === id ? { ...x, ...updated, attachments: x.attachments } : x)));
   }
   async function handleDelete(id: string) {
     await deleteCaseNote(c.id, id);
@@ -438,7 +746,7 @@ export function InternalNotesTab({ c }: { c: MockProcessingCase }) {
                 <Pin size={12} /> Pinned
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {pinned.map((n) => <NoteCard key={n.id} note={n} officers={officers} canManage={canManage(n)} onPin={handlePin} onEdit={handleEdit} onDelete={handleDelete} />)}
+                {pinned.map((n) => <NoteCard key={n.id} note={n} officers={officers} canManage={canManage(n)} onPin={handlePin} onEdit={handleEdit} onDelete={handleDelete} onLightbox={setLightbox} />)}
               </div>
             </div>
           ) : null}
@@ -448,12 +756,13 @@ export function InternalNotesTab({ c }: { c: MockProcessingCase }) {
                 <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--sos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>All notes</div>
               ) : null}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {rest.map((n) => <NoteCard key={n.id} note={n} officers={officers} canManage={canManage(n)} onPin={handlePin} onEdit={handleEdit} onDelete={handleDelete} />)}
+                {rest.map((n) => <NoteCard key={n.id} note={n} officers={officers} canManage={canManage(n)} onPin={handlePin} onEdit={handleEdit} onDelete={handleDelete} onLightbox={setLightbox} />)}
               </div>
             </div>
           ) : null}
         </>
       )}
+      {lightbox ? <Lightbox url={lightbox} onClose={() => setLightbox(null)} /> : null}
     </div>
   );
 }

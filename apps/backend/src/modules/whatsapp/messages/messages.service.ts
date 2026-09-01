@@ -1417,7 +1417,7 @@ export class WhatsAppMessagesService {
 
     // Resolve a SENDABLE reference (durable key as-is; rehost a "meta:<id>" ref
     // off Meta's expiring store before it's purged). Shared with forwardMessage.
-    const { mediaRef, mediaMime } = await this.resolveSendableMediaRef({
+    let { mediaRef, mediaMime } = await this.resolveSendableMediaRef({
       sourceChannelId: thread.channelId,
       mediaUrl: original.mediaUrl,
       mediaMimeType: original.mediaMimeType,
@@ -1425,15 +1425,56 @@ export class WhatsAppMessagesService {
       repointMessageId: input.messageId,
     });
 
+    // VOICE RE-NORMALIZATION (2026-09-01): a FAILED voice note's stored bytes
+    // can carry the exact shape Meta rejects (the 131053 class: WebM-inherited
+    // language tag + start offset) — replaying the SAME bytes would re-fail no
+    // matter the transport. Re-run the hardened transcode on the stored audio,
+    // store the clean copy, and upload it to Meta so the retry delivers by a
+    // FRESH media_id (the reliable path). Best-effort: any hiccup falls back
+    // to link delivery of the existing bytes (the pre-existing behavior).
+    let freshVoiceMediaId: string | null = null;
+    const isVoiceResend =
+      original.type === WhatsAppMessageType.AUDIO &&
+      (original.payload as { isVoiceNote?: boolean } | null)?.isVoiceNote === true;
+    if (isVoiceResend && !mediaRef.startsWith('meta:')) {
+      try {
+        const { bytes } = await this.storage.download(mediaRef);
+        const clean = await this.transcodeVoiceToOgg(bytes);
+        const up = await this.storage.upload(clean, 'audio/ogg', 'whatsapp/outbound', 'voice-note.ogg');
+        mediaRef = up.key;
+        mediaMime = 'audio/ogg';
+        const channel = await this.prisma.whatsAppChannel.findUnique({
+          where: { id: thread.channelId },
+          select: { id: true, phoneNumberId: true, accessTokenEnc: true },
+        });
+        if (channel) {
+          freshVoiceMediaId = await this.metaFactory
+            .forChannel(channel)
+            .uploadMedia(clean, 'audio/ogg', 'voice-note.ogg');
+        }
+        this.logger.log(
+          `resendMedia: voice note re-normalized (${bytes.length} → ${clean.length} bytes, mediaId=${freshVoiceMediaId ?? 'link-fallback'})`,
+        );
+      } catch (e) {
+        this.logger.warn(
+          `resendMedia: voice re-normalization failed — falling back to stored bytes: ${(e as Error).message}`,
+        );
+      }
+    }
+
     // Strip a stale voice-note metaMediaId before cloning: the id is bound to
     // its original ~30-day/channel window, so a re-send must NOT reuse it (the
-    // worker would try an expired media_id and fail). Dropping it makes the
-    // clone deliver from the durable storage key instead. isVoiceNote/filename
+    // worker would try an expired media_id and fail). When re-normalization
+    // above produced a FRESH id, carry that instead. isVoiceNote/filename
     // are preserved so the message still renders correctly.
     const resendPayload = ((): Prisma.InputJsonValue | undefined => {
-      if (!original.payload) return undefined;
-      const { metaMediaId: _drop, ...rest } = original.payload as Record<string, unknown>;
-      return rest as Prisma.InputJsonValue;
+      const base = (original.payload as Record<string, unknown> | null) ?? {};
+      const { metaMediaId: _drop, ...rest } = base;
+      const merged = {
+        ...rest,
+        ...(freshVoiceMediaId ? { metaMediaId: freshVoiceMediaId } : {}),
+      };
+      return Object.keys(merged).length > 0 ? (merged as Prisma.InputJsonValue) : undefined;
     })();
 
     const message = await this.prisma.whatsAppMessage.create({
@@ -1711,6 +1752,21 @@ export class WhatsAppMessagesService {
           '-i', tmpIn,
           '-vn',          // never carry a video/cover-art stream into Ogg
           '-map', '0:a:0', // first audio stream only
+          // ── 131053 hardening (2026-09-01) ──────────────────────────────
+          // Meta's send-time processor started rejecting (≈2026-08-27) Ogg
+          // files carrying a stream-level language tag + a non-zero start
+          // offset — the exact byte-shape every WEB (WebM/MediaRecorder)
+          // recording produced: ffmpeg's Matroska demuxer defaults a missing
+          // Language to 'eng' and the Ogg muxer copies it into OpusTags,
+          // while the capture latency leaks in as a start offset. Forensics
+          // on real rejected vs delivered files: 8/8 failed had (eng)+offset,
+          // 4/4 delivered had neither. All four flags are no-ops on already-
+          // clean (mobile Ogg) input, so the happy path is untouched.
+          '-map_metadata', '-1',      // drop global metadata
+          '-map_metadata:s', '-1',    // drop per-stream metadata
+          '-metadata:s:a:0', 'language=', // belt-and-braces: clear track language
+          '-af', 'asetpts=PTS-STARTPTS',  // zero the timeline (pre-encoder — safe for Opus pre-skip)
+          // ───────────────────────────────────────────────────────────────
           '-c:a', 'libopus',
           '-ac', '1',     // mono (Meta voice-note requirement)
           '-ar', '48000', // Opus-native rate — forced 16k broke Meta decoding
@@ -1736,6 +1792,32 @@ export class WhatsAppMessagesService {
       const magic = out.subarray(0, 4).toString('latin1');
       if (magic !== 'OggS') {
         throw new Error(`ffmpeg output is not Ogg (magic="${magic}", ${out.length} bytes)`);
+      }
+      // TRIPWIRE (fail-open): assert the output has the Meta-accepted shape —
+      // start_time ≈ 0 and NO stream language tag. If a future ffmpeg/browser
+      // change re-introduces the 131053 byte-shape, this makes it a loud log
+      // marker the day it happens instead of a rep's dead red bubble a week
+      // later. Never blocks the send.
+      try {
+        const { stdout } = await execFileAsync(FFPROBE_BIN, [
+          '-v', 'error',
+          '-show_entries', 'stream=start_time:stream_tags=language:format=start_time',
+          '-of', 'default=noprint_wrappers=1',
+          tmpOut,
+        ]);
+        const probe = String(stdout);
+        const langHit = /TAG:language=(?!\s*$)(\S+)/.exec(probe);
+        const starts = [...probe.matchAll(/start_time=([-\d.]+)/g)].map((m) => Math.abs(parseFloat(m[1])));
+        const badStart = starts.some((s) => Number.isFinite(s) && s > 0.001);
+        if (langHit || badStart) {
+          this.logger.error(
+            `[VOICE-SHAPE-TRIPWIRE] transcode output carries a 131053-risk shape ` +
+              `(language=${langHit?.[1] ?? 'none'}, starts=${starts.join(',')}) — ` +
+              `Meta may reject this voice note; the normalization flags need updating.`,
+          );
+        }
+      } catch {
+        // Probe hiccup — never block a legitimate send on the diagnostic.
       }
       return out;
     } finally {

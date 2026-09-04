@@ -11,6 +11,8 @@ import {
   Menu,
   MessageCircle,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Phone,
   PhoneCall,
   Sparkles,
@@ -135,6 +137,29 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
   const [changesCount, setChangesCount] = useState(0);
   const [missedCalls, setMissedCalls] = useState(0);
 
+  // Desktop sidebar rail: collapsed icon-only by default to save horizontal
+  // space. A returning user who expands it keeps that choice (persisted).
+  // Mobile keeps its off-canvas drawer regardless of this.
+  const [railed, setRailed] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('sales.sidebar.railed') === '0') setRailed(false);
+    } catch {
+      /* localStorage unavailable — keep the collapsed default */
+    }
+  }, []);
+  const toggleRail = () => {
+    setRailed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('sales.sidebar.railed', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
   // Live sidebar counters. Fetched once on auth and then refreshed in the
   // background every 60s — NOT on every navigation. Refetching on `pathname`
   // change was firing two backend round-trips (~1s combined) on top of every
@@ -213,7 +238,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
     <EmployeeSessionContext.Provider value={{ user, refreshUser: async () => {}, logout }}>
       {/* Availability warning popups (Away > 10 min / Offline > 2h) */}
       <PresenceWarnings />
-      <div className="sos-shell">
+      <div className={`sos-shell ${railed ? 'is-railed' : ''}`}>
         {/* Sidebar */}
         <aside className={`sos-sidebar sos-scroll ${mobileOpen ? 'is-open' : ''}`}>
           <div className="sos-sidebar__brand">
@@ -224,6 +249,16 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
               <div className="sos-sidebar__brand-name">Tashfeen</div>
               <div className="sos-sidebar__brand-tagline">Sales OS</div>
             </div>
+            {/* Desktop rail toggle — collapse to an icon rail / expand back. */}
+            <button
+              type="button"
+              className="sos-rail-toggle"
+              onClick={toggleRail}
+              aria-label={railed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={railed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
             <button
               type="button"
               aria-label="Close menu"

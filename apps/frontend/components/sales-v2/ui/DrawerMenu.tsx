@@ -46,6 +46,7 @@ export function DrawerMenu({ items, onNavigate }: DrawerMenuProps) {
             href={item.href as Route}
             aria-current={isActive ? 'page' : undefined}
             className="sos-nav-link"
+            title={item.label}
             onClick={onNavigate}
           >
             <span className="sos-nav-link__icon">

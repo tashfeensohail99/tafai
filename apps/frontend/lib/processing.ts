@@ -2040,6 +2040,23 @@ export interface ApiDatabankClientRow {
   fileCount: number;
 }
 
+/** One associate's databank — their clients, grouped under them. */
+export interface ApiDatabankAssociate {
+  officerId: string;
+  officerName: string;
+  isSelf: boolean;
+  clientCount: number;
+  clients: ApiDatabankClientRow[];
+}
+
+export interface ApiDatabankByAssociate {
+  /** True when the viewer is a manager (sees every associate); false = officer
+   *  (sees only their own group). */
+  canSeeAll: boolean;
+  viewerOfficerId: string;
+  associates: ApiDatabankAssociate[];
+}
+
 export function fetchDatabankTree(clientId: string): Promise<ApiDatabankTree> {
   return apiFetch<ApiDatabankTree>(`/processing/databank/clients/${clientId}/tree`, {
     cache: 'no-store',
@@ -2049,6 +2066,13 @@ export function fetchDatabankTree(clientId: string): Promise<ApiDatabankTree> {
 export function fetchDatabankClients(q?: string): Promise<ApiDatabankClientRow[]> {
   const qs = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
   return apiFetch<ApiDatabankClientRow[]>(`/processing/databank/clients${qs}`, { cache: 'no-store' });
+}
+
+export function fetchDatabankByAssociate(q?: string): Promise<ApiDatabankByAssociate> {
+  const qs = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  return apiFetch<ApiDatabankByAssociate>(`/processing/databank/clients/by-associate${qs}`, {
+    cache: 'no-store',
+  });
 }
 
 export function createDatabankFolder(

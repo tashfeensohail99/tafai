@@ -179,6 +179,106 @@ export class DatabankService {
     return clients.map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
   }
 
+  /**
+   * The same clients as {@link listClients}, but grouped by the associate they
+   * belong to — i.e. the officer their processing case is assigned to. This is
+   * the associate-organised Databank the processing manager asked for:
+   *   - manager (view_all) → one group per officer who has assigned clients,
+   *     with the manager's own group surfaced first;
+   *   - officer            → a single group (themselves) with their clients.
+   * A client that is handled by two officers shows under both. Clients with a
+   * case but no assigned officer are omitted here (they surface once assigned);
+   * the flat {@link listClients} landing still reaches every client.
+   */
+  async clientsByAssociate(user: RequestUser, q?: string) {
+    const canAll = this.canViewAll(user);
+
+    const where: Prisma.ProcessingCaseWhereInput = {
+      assignedOfficerId: canAll ? { not: null } : user.id,
+      client: { deletedAt: null },
+    };
+    const term = q?.trim();
+    if (term) {
+      const contains = { contains: term, mode: 'insensitive' as const };
+      where.OR = [
+        { client: { firstName: contains } },
+        { client: { lastName: contains } },
+        { client: { referenceCode: contains } },
+        { assignedOfficer: { employee: { firstName: contains } } },
+        { assignedOfficer: { employee: { lastName: contains } } },
+      ];
+    }
+
+    const cases = await this.prisma.processingCase.findMany({
+      where,
+      select: {
+        assignedOfficerId: true,
+        assignedOfficer: {
+          select: {
+            id: true,
+            email: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+        },
+        client: { select: { id: true, referenceCode: true, firstName: true, lastName: true } },
+      },
+    });
+
+    type ClientRow = { id: string; referenceCode: string; firstName: string; lastName: string };
+    const groups = new Map<
+      string,
+      { officerId: string; officerName: string; clients: Map<string, ClientRow> }
+    >();
+
+    for (const c of cases) {
+      const officerId = c.assignedOfficerId;
+      if (!officerId) continue;
+      const emp = c.assignedOfficer?.employee;
+      const officerName = emp
+        ? `${emp.firstName} ${emp.lastName}`.trim()
+        : c.assignedOfficer?.email ?? 'Unknown officer';
+      let group = groups.get(officerId);
+      if (!group) {
+        group = { officerId, officerName, clients: new Map() };
+        groups.set(officerId, group);
+      }
+      group.clients.set(c.client.id, c.client);
+    }
+
+    // One groupBy for every client we're about to return.
+    const clientIds = [...new Set([...groups.values()].flatMap((g) => [...g.clients.keys()]))];
+    const countByClient = new Map<string, number>();
+    if (clientIds.length > 0) {
+      const counts = await this.prisma.databankFile.groupBy({
+        by: ['clientId'],
+        where: { deletedAt: null, clientId: { in: clientIds } },
+        _count: { _all: true },
+      });
+      for (const c of counts) countByClient.set(c.clientId, c._count._all);
+    }
+
+    const byName = (a: ClientRow, b: ClientRow) =>
+      `${a.firstName} ${a.lastName}`.trim().localeCompare(`${b.firstName} ${b.lastName}`.trim());
+
+    const associates = [...groups.values()]
+      .map((g) => ({
+        officerId: g.officerId,
+        officerName: g.officerName,
+        isSelf: g.officerId === user.id,
+        clientCount: g.clients.size,
+        clients: [...g.clients.values()]
+          .sort(byName)
+          .map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 })),
+      }))
+      .sort((a, b) => {
+        // The viewer's own databank first, then alphabetical by associate name.
+        if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+        return a.officerName.localeCompare(b.officerName);
+      });
+
+    return { canSeeAll: canAll, viewerOfficerId: user.id, associates };
+  }
+
   // ---------------------------------------------------------------------------
   // Folders
   // ---------------------------------------------------------------------------

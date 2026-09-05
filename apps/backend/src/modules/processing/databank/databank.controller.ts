@@ -63,6 +63,14 @@ export class DatabankController {
     return this.databank.listClients(user, q);
   }
 
+  /** Associate-organised landing: clients grouped by the officer they belong to
+   *  (manager sees every associate + her own; officer sees only her own). */
+  @Get('clients/by-associate')
+  @RequireAnyPermissions(...READ)
+  listByAssociate(@CurrentUser() user: RequestUser, @Query('q') q?: string) {
+    return this.databank.clientsByAssociate(user, q);
+  }
+
   /** The full folder tree + files for one client. */
   @Get('clients/:clientId/tree')
   @RequireAnyPermissions(...READ)

@@ -241,9 +241,13 @@ export class WhatsAppCallsService {
   async hangup(id: string) {
     const { call, client } = await this.clientForCall(id);
     await client.respondToCall({ callId: call.waCallId, action: 'terminate' });
-    // Talk time = end − pick-up. answeredAt is the pick-up moment; startedAt is
-    // the RING start on inbound rows (legacy fallback only).
-    const talkAnchor = call.answeredAt ?? call.startedAt;
+    // Talk time = end − pick-up, anchored ONLY on answeredAt (the pick-up
+    // moment). Never fall back to startedAt: on outbound rows startedAt is the
+    // DIAL time, so the fallback fabricated "talk time" (= ring-out seconds) for
+    // a call the customer never picked up — logging an unanswered dial as a
+    // connected call with a bogus talk-time line. No answeredAt = never
+    // connected = no duration.
+    const talkAnchor = call.answeredAt;
     const ended = await this.prisma.whatsAppCall.update({
       where: { id },
       data: {

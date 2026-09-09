@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Phone, PhoneOff, Mic, MicOff, MessageSquare } from 'lucide-react';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, ApiClientError } from '@/lib/api-client';
 import { useWhatsAppEvent } from '@/lib/whatsapp-realtime';
 
 interface IncomingCall {
@@ -152,6 +152,11 @@ export function CallDock() {
   // in pcRef is ready for reuse; false means it cleaned itself up and accept()
   // must run the classic path.
   const preWarmRef = useRef<{ callId: string; promise: Promise<boolean> } | null>(null);
+  // Monotonic "call generation". startOutbound captures the value at entry and
+  // re-checks it after every await; teardown() bumps it. A mismatch means the
+  // rep cancelled mid-dial (or a new call started), so the in-flight dial must
+  // abort — otherwise a cancel during the mic prompt still places the call.
+  const callGenRef = useRef(0);
   // Holds the card on a brief "Call ended" state before clearing it.
   const endedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Liveness heartbeat (so the backend sweeper can free a leg if this tab dies)
@@ -391,6 +396,10 @@ export function CallDock() {
   }, []);
 
   const teardown = useCallback((reason?: string) => {
+    // Invalidate any in-flight outbound dial: startOutbound checks this after
+    // each await and aborts (releasing the mic, cancelling the placed call) so
+    // "Hang up" while dialing actually stops the call.
+    callGenRef.current += 1;
     const wasConnected = wasConnectedRef.current;
     wasConnectedRef.current = false;
     // Best-effort quality CDR (last getStats sample + why it ended) for the
@@ -800,6 +809,7 @@ export function CallDock() {
         endedTimerRef.current = null;
       }
       activeIdRef.current = 'pending';
+      const gen = (callGenRef.current += 1); // this dial's generation
       outboundThreadRef.current = detail.threadId;
       setError(null);
       setShowReqPerm(false);
@@ -809,7 +819,15 @@ export function CallDock() {
       answeredRef.current = false;
       try {
         const { iceServers } = await apiFetch<{ iceServers: RTCIceServer[] }>('/whatsapp/calls/ice');
+        if (callGenRef.current !== gen) return; // cancelled during ICE fetch
+
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (callGenRef.current !== gen) {
+          // Cancelled during the mic permission prompt — release the mic and
+          // abort BEFORE placing the call (else it dials with a live mic and no card).
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
         localStreamRef.current = stream;
 
         const pc = new RTCPeerConnection({ iceServers: iceServers ?? [] });
@@ -823,12 +841,20 @@ export function CallDock() {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         await waitForIce(pc);
+        if (callGenRef.current !== gen) return; // cancelled during ICE gathering (teardown already closed pc/stream)
 
         const { callId } = await apiFetch<{ callId: string }>('/whatsapp/calls/outbound', {
           method: 'POST',
           body: JSON.stringify({ threadId: detail.threadId, sdpOffer: pc.localDescription?.sdp ?? '' }),
         });
         if (!callId) throw new Error('No call id returned');
+        if (callGenRef.current !== gen) {
+          // Cancelled while the dial was in flight: the call WAS placed, and the
+          // dialing "Hang up" couldn't cancel it (callId was still '' then), so
+          // terminate it here.
+          void apiFetch(`/whatsapp/calls/${callId}/hangup`, { method: 'POST' }).catch(() => undefined);
+          return;
+        }
         activeIdRef.current = callId;
         setCall((c) => (c ? { ...c, callId } : c));
 
@@ -841,6 +867,10 @@ export function CallDock() {
           }
         }, 60000);
       } catch (e) {
+        // Superseded by a cancel/teardown mid-dial (e.g. waitForIce threw because
+        // teardown closed the peer): exit quietly — teardown already cleaned up,
+        // and there's no real error to show the rep.
+        if (callGenRef.current !== gen) return;
         if (dialTimeoutRef.current) {
           clearTimeout(dialTimeoutRef.current);
           dialTimeoutRef.current = null;
@@ -1072,11 +1102,21 @@ export function CallDock() {
       });
       // connectionstatechange flips us to 'in-call' once media connects.
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not connect the call');
-      try {
-        if (call) await apiFetch(`/whatsapp/calls/${call.callId}/hangup`, { method: 'POST' });
-      } catch {
-        /* ignore */
+      // A 4xx from /answer means THIS accept lost a race — almost always 409
+      // "already answered" because the same inbound call was picked up on the
+      // rep's other device (or a double-tap). That call is now LIVE elsewhere,
+      // so we must NOT POST /hangup (backend hangup() has no ownership guard and
+      // would terminate the just-answered call mid-greeting). Tear down THIS
+      // client only, and stay quiet — nothing actually failed for the rep.
+      const lostRace = e instanceof ApiClientError && e.status >= 400 && e.status < 500;
+      if (!lostRace) {
+        setError(e instanceof Error ? e.message : 'Could not connect the call');
+        try {
+          // Only if we have a real call id (never `/calls//hangup`).
+          if (call?.callId) await apiFetch(`/whatsapp/calls/${call.callId}/hangup`, { method: 'POST' });
+        } catch {
+          /* ignore */
+        }
       }
       teardown();
     }

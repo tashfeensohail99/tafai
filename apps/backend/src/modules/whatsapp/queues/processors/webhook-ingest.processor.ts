@@ -627,13 +627,18 @@ export class WebhookIngestProcessor extends WorkerHost {
       // actually connected. If the row is already terminal, the first terminate
       // handled everything (teardown + status + any invite); stop here.
       if (existing.status === 'ENDED' || existing.status === 'MISSED') return;
-      // A call a rep actually answered is never "missed" — key off the answerer
-      // stamps as well as status, so a status race can't mislabel a connected
-      // call. answeredByUserId covers the employee-less admin console.
-      const answered =
-        existing.status === 'ANSWERED' ||
-        existing.answeredByEmployeeId != null ||
-        existing.answeredByUserId != null;
+      // "Answered" == the call actually CONNECTED, which is EXACTLY when
+      // answeredAt is stamped: atomically with status→ANSWERED on inbound
+      // pickup, and by the outbound-connect webhook on the customer's pickup.
+      // We must NOT infer it from the answeredBy* stamps — those are set at
+      // DIAL time on outbound rows (see outbound-create in calls.service), so a
+      // direction-blind check mislabels every unanswered outbound ring-out as
+      // "answered" (ENDED not MISSED, with fabricated talk time and a bogus
+      // thread line). The status-race the old code guarded against can't bite
+      // here: the ENDED/MISSED early-return above means the row is still
+      // ANSWERED/RINGING, and answeredAt is the reliable connection signal for
+      // both directions (matches the history query's `answeredAt != null`).
+      const answered = existing.answeredAt != null;
       // Talk time: prefer Meta's own connected-call duration from the terminate
       // payload (authoritative, excludes ring); else compute from answeredAt
       // (pick-up). startedAt is the RING start on inbound rows, so it's only the

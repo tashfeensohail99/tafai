@@ -14,10 +14,19 @@
  * `lib/processing-substages.ts` — keep the two in sync by hand.
  */
 
+// Cross-cutting case-status labels appended to every dropdown flow (processing
+// team request, 2026-09-11). Display-only tracking labels — they do NOT change
+// the case stage, close/approve a case, create a JR matter, or drive reporting.
+// Keep identical to the frontend lib/processing-substages.ts CASE_STATUS_LABELS.
+const CASE_STATUS_LABELS = [
+  'Case Approve', 'Case Refuse', 'In process', 'Case shifted to JR',
+  'Case on hold', 'Waiting for Request letter', 'Case Submitted',
+] as const;
+
 export const CATEGORY_SUBSTAGE: Readonly<Record<string, readonly string[]>> = {
-  VISIT_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision'],
+  VISIT_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision', ...CASE_STATUS_LABELS],
   // The "LMIA-exempt work permit" flow the processing team described.
-  WORK_PERMIT: ['Business meeting & profile assessment', 'Business establishment', 'Exemption', 'Doc collection', 'Final submission', 'Decision'],
+  WORK_PERMIT: ['Business meeting & profile assessment', 'Business establishment', 'Exemption', 'Doc collection', 'Final submission', 'Decision', ...CASE_STATUS_LABELS],
 };
 
 /** The sub-stage picklist for a service code, or [] when the service is

@@ -21,8 +21,10 @@ import { CopyFileDto, CreateFolderDto } from './databank.dto';
  *                                 assigned case for (any case is enough —
  *                                 the databank belongs to the client, not a
  *                                 single case)
- * Every read and write funnels through assertClientAccess() before touching a
- * row, so there is one place the rule is enforced. Bytes live in the S3/R2
+ * Every read funnels through assertClientReadAccess() (any processing officer
+ * may view/download any client) and every write through assertClientWriteAccess()
+ * (manager or the assigned officer only), so the rule is enforced in one place
+ * per access level. Bytes live in the S3/R2
  * bucket via StorageService; rows hold only the object key.
  */
 @Injectable()
@@ -46,56 +48,92 @@ export class DatabankService {
     return user.permissions.includes('processing.case.view_all');
   }
 
-  /**
-   * Throws unless `user` may see `clientId`'s databank. Managers pass; everyone
-   * else must have at least one processing case assigned to them for the
-   * client. Also 404s for a missing/soft-deleted client.
-   */
-  private async assertClientAccess(clientId: string, user: RequestUser): Promise<void> {
+  /** 404s for a missing/soft-deleted client. */
+  private async assertClientExists(clientId: string): Promise<void> {
     const client = await this.prisma.client.findFirst({
       where: { id: clientId, deletedAt: null },
       select: { id: true },
     });
     if (!client) throw new NotFoundException('Client not found');
-    if (this.canViewAll(user)) return;
+  }
 
+  /**
+   * READ access. Any processing user who reached these routes has already been
+   * gated by the controller to processing.case.view_assigned OR view_all, so
+   * every processing officer may VIEW + DOWNLOAD any client's databank (the
+   * whole team can see each other's folders read-only, per the processing
+   * team's request 2026-09-11). We only confirm the client exists.
+   */
+  private async assertClientReadAccess(clientId: string, _user: RequestUser): Promise<void> {
+    await this.assertClientExists(clientId);
+  }
+
+  /**
+   * WRITE predicate. True only for the people allowed to MODIFY a client's
+   * databank: a manager (processing.case.view_all), the officer with a
+   * processing case assigned to them for the client, or JR (jr.matter.view_all,
+   * or a JR associate holding an assigned matter for the client — the shared
+   * store also backs the Federal Court challenge).
+   */
+  private async canWriteClient(clientId: string, user: RequestUser): Promise<boolean> {
+    if (this.canViewAll(user)) return true;
     const assigned = await this.prisma.processingCase.count({
       where: { clientId, assignedOfficerId: user.id },
     });
-    if (assigned > 0) return;
-
-    // JR access to the SAME per-client databank (shared store): a jr_head
-    // (jr.matter.view_all) sees any client's databank; a JR associate sees a client
-    // they hold an ASSIGNED matter for — so an escalated client's application docs
-    // are available to the associate handling their Federal Court challenge.
-    if (user.permissions.includes('jr.matter.view_all')) return;
+    if (assigned > 0) return true;
+    if (user.permissions.includes('jr.matter.view_all')) return true;
     const jrAssigned = await this.prisma.jrMatter.count({
       where: { clientId, assignedAssociateUserId: user.id },
     });
-    if (jrAssigned > 0) return;
+    return jrAssigned > 0;
+  }
 
-    throw new ForbiddenException('You are not assigned to this client');
+  /**
+   * Throws unless `user` may MODIFY `clientId`'s databank (create / upload /
+   * rename / move / copy-into / delete). Read is broader — see
+   * assertClientReadAccess. 404s for a missing/soft-deleted client.
+   */
+  private async assertClientWriteAccess(clientId: string, user: RequestUser): Promise<void> {
+    await this.assertClientExists(clientId);
+    if (!(await this.canWriteClient(clientId, user))) {
+      throw new ForbiddenException(
+        'This client is assigned to another officer — you can view and download, but not modify, their databank.',
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Loaders (resolve owning client, then authorize)
   // ---------------------------------------------------------------------------
 
+  /** Load a folder for a WRITE operation (rename / move / delete). */
   private async loadFolder(folderId: string, user: RequestUser) {
     const folder = await this.prisma.databankFolder.findFirst({
       where: { id: folderId, deletedAt: null },
     });
     if (!folder) throw new NotFoundException('Folder not found');
-    await this.assertClientAccess(folder.clientId, user);
+    await this.assertClientWriteAccess(folder.clientId, user);
     return folder;
   }
 
+  /** Load a file for a WRITE operation (rename / move / delete). */
   private async loadFile(fileId: string, user: RequestUser) {
     const file = await this.prisma.databankFile.findFirst({
       where: { id: fileId, deletedAt: null },
     });
     if (!file) throw new NotFoundException('File not found');
-    await this.assertClientAccess(file.clientId, user);
+    await this.assertClientWriteAccess(file.clientId, user);
+    return file;
+  }
+
+  /** Load a file for a READ operation (download / copy-from). Any processing
+   *  user may read any client's file. */
+  private async loadFileForRead(fileId: string, user: RequestUser) {
+    const file = await this.prisma.databankFile.findFirst({
+      where: { id: fileId, deletedAt: null },
+    });
+    if (!file) throw new NotFoundException('File not found');
+    await this.assertClientReadAccess(file.clientId, user);
     return file;
   }
 
@@ -122,7 +160,8 @@ export class DatabankService {
    *  builds the hierarchy from parentFolderId / folderId — cheaper than a
    *  recursive query and trivial on the render side. */
   async getTree(clientId: string, user: RequestUser) {
-    await this.assertClientAccess(clientId, user);
+    await this.assertClientReadAccess(clientId, user);
+    const canWrite = await this.canWriteClient(clientId, user);
     const [folders, files] = await Promise.all([
       this.prisma.databankFolder.findMany({
         where: { clientId, deletedAt: null },
@@ -138,18 +177,17 @@ export class DatabankService {
         },
       }),
     ]);
-    return { clientId, folders, files };
+    // canWrite tells the UI whether to show the edit controls: false = the
+    // viewer may read/download but not modify (client assigned to another officer).
+    return { clientId, folders, files, canWrite };
   }
 
-  /** Clients the caller may see, for the cross-client landing page. Manager =
-   *  every client; officer = clients with a case assigned to them. Each row
-   *  carries its databank file count. */
+  /** Clients for the cross-client landing page. Every processing user sees ALL
+   *  clients (read-only on the ones not assigned to them — write is gated
+   *  per-action). Each row carries its databank file count. */
   async listClients(user: RequestUser, q?: string) {
     const where: Prisma.ClientWhereInput = {
       deletedAt: null,
-      ...(this.canViewAll(user)
-        ? {}
-        : { processingCases: { some: { assignedOfficerId: user.id } } }),
       ...(q
         ? {
             OR: [
@@ -185,7 +223,8 @@ export class DatabankService {
    * the associate-organised Databank the processing manager asked for:
    *   - manager (view_all) → one group per officer who has assigned clients,
    *     with the manager's own group surfaced first;
-   *   - officer            → a single group (themselves) with their clients.
+   *   - officer            → every officer's group too (read-only on the ones
+   *     not their own), with their own group surfaced first.
    * A client that is handled by two officers shows under both. Clients with a
    * case but no assigned officer are omitted here (they surface once assigned);
    * the flat {@link listClients} landing still reaches every client.
@@ -193,8 +232,10 @@ export class DatabankService {
   async clientsByAssociate(user: RequestUser, q?: string) {
     const canAll = this.canViewAll(user);
 
+    // Every processing user sees all associates' groups (read-only on the ones
+    // not their own — write is gated per-action). `isSelf` surfaces their own.
     const where: Prisma.ProcessingCaseWhereInput = {
-      assignedOfficerId: canAll ? { not: null } : user.id,
+      assignedOfficerId: { not: null },
       client: { deletedAt: null },
     };
     const term = q?.trim();
@@ -284,7 +325,7 @@ export class DatabankService {
   // ---------------------------------------------------------------------------
 
   async createFolder(clientId: string, dto: CreateFolderDto, user: RequestUser) {
-    await this.assertClientAccess(clientId, user);
+    await this.assertClientWriteAccess(clientId, user);
     const parentFolderId = await this.assertFolderInClient(dto.parentFolderId, clientId);
     const name = await this.uniqueFolderName(clientId, parentFolderId, dto.name.trim());
 
@@ -349,7 +390,7 @@ export class DatabankService {
     source: string | undefined,
     user: RequestUser,
   ) {
-    await this.assertClientAccess(clientId, user);
+    await this.assertClientWriteAccess(clientId, user);
     this.assertSafeFile(file);
     const targetFolder = await this.assertFolderInClient(folderId, clientId);
 
@@ -384,7 +425,7 @@ export class DatabankService {
    *  authorized here; the audit trail is written by the DocumentAccessAudit
    *  interceptor via @AuditDocumentAccess on the route. */
   async getSignedUrl(fileId: string, user: RequestUser) {
-    const file = await this.loadFile(fileId, user);
+    const file = await this.loadFileForRead(fileId, user);
     const url = await this.storage.getSignedUrl(file.storageKey);
     return { url, fileName: file.fileName, mimeType: file.mimeType };
   }
@@ -411,16 +452,15 @@ export class DatabankService {
   /**
    * Copy a file — within the same client, or into another client's databank.
    * A TRUE copy: the bytes are duplicated to a fresh object key, so deleting
-   * either copy never affects the other. The caller must have access to BOTH
-   * the source and the target client (cross-client copy widens who can see the
-   * file, so it is gated on the destination just like a direct upload).
+   * either copy never affects the other. The caller must be able to READ the
+   * source file (any officer can) and WRITE the target client — a copy CREATES
+   * a file in the target, so it is gated on the destination just like a direct
+   * upload, whether the target is the same client or a different one.
    */
   async copyFile(fileId: string, dto: CopyFileDto, user: RequestUser) {
-    const source = await this.loadFile(fileId, user);
+    const source = await this.loadFileForRead(fileId, user);
     const targetClientId = dto.targetClientId ?? source.clientId;
-    if (targetClientId !== source.clientId) {
-      await this.assertClientAccess(targetClientId, user);
-    }
+    await this.assertClientWriteAccess(targetClientId, user);
     const targetFolder = await this.assertFolderInClient(dto.targetFolderId, targetClientId);
 
     const bytes = await this.storage.download(source.storageKey);

@@ -2023,10 +2023,11 @@ export class ProcessingService {
       ...(query.authorityDecision ? { authorityDecision: query.authorityDecision } : {}),
       ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
       ...(updatedAtFilter ? { updatedAt: updatedAtFilter } : {}),
-      // Multi-word name search — each whitespace token must hit one of the
-      // fields, so "abdul qadir" matches an Abdul-Qadir client. See
-      // multi-word-search.ts. Service/id kept per-token too so a query
-      // like "visit visa" still matches a service string.
+      // Multi-word search — each whitespace token must hit one of the fields,
+      // so "abdul qadir" matches an Abdul-Qadir applicant. See multi-word-search.ts.
+      // Matches name / reference code / PHONE / EMAIL on BOTH the client and the
+      // originating lead (processing asked for number + email search, 2026-09-11),
+      // plus the service string and the case id.
       ...(matchAllTokens(
         query.search,
         (token): Prisma.ProcessingCaseWhereInput => ({
@@ -2036,6 +2037,20 @@ export class ProcessingService {
                 OR: [
                   { firstName: { contains: token, mode: 'insensitive' } },
                   { lastName: { contains: token, mode: 'insensitive' } },
+                  { referenceCode: { contains: token, mode: 'insensitive' } },
+                  { phone: { contains: token } },
+                  { email: { contains: token, mode: 'insensitive' } },
+                ],
+              },
+            },
+            {
+              client: {
+                OR: [
+                  { firstName: { contains: token, mode: 'insensitive' } },
+                  { lastName: { contains: token, mode: 'insensitive' } },
+                  { referenceCode: { contains: token, mode: 'insensitive' } },
+                  { phone: { contains: token } },
+                  { email: { contains: token, mode: 'insensitive' } },
                 ],
               },
             },

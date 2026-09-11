@@ -724,7 +724,7 @@ export default function CasesPage() {
             <Search size={14} style={{ color: 'var(--sos-text-muted)' }} />
             <input
               type="search"
-              placeholder="Search by client name or case id…"
+              placeholder="Search by name, case id, phone or email…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--sos-text-primary)', fontSize: 13.5 }}

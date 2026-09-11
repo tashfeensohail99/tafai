@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DatabankFileSource, Prisma } from '@prisma/client';
+import { unlink } from 'node:fs/promises';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { RequestUser } from '../../../common/types/auth.types';
@@ -390,35 +391,44 @@ export class DatabankService {
     source: string | undefined,
     user: RequestUser,
   ) {
-    await this.assertClientWriteAccess(clientId, user);
-    this.assertSafeFile(file);
-    const targetFolder = await this.assertFolderInClient(folderId, clientId);
+    // The upload is written to a Multer temp file on disk (diskStorage), then
+    // STREAMED to storage — never buffered whole in RAM — so large files (up
+    // to the controller's 300 MB cap) don't pressure backend memory. We always
+    // delete the temp file afterwards, success or failure.
+    try {
+      await this.assertClientWriteAccess(clientId, user);
+      this.assertSafeFile(file);
+      const targetFolder = await this.assertFolderInClient(folderId, clientId);
 
-    // Only UPLOAD and CLIPBOARD are reachable through the upload endpoint;
-    // COPIED / MIGRATED are set internally by copyFile / the migration script.
-    const fileSource: DatabankFileSource =
-      source === 'CLIPBOARD' ? DatabankFileSource.CLIPBOARD : DatabankFileSource.UPLOAD;
+      // Only UPLOAD and CLIPBOARD are reachable through the upload endpoint;
+      // COPIED / MIGRATED are set internally by copyFile / the migration script.
+      const fileSource: DatabankFileSource =
+        source === 'CLIPBOARD' ? DatabankFileSource.CLIPBOARD : DatabankFileSource.UPLOAD;
 
-    const uploaded = await this.storage.upload(
-      file!.buffer,
-      file!.mimetype,
-      `databank/clients/${clientId}`,
-      file!.originalname,
-    );
+      const uploaded = await this.storage.uploadStreamFromFile(
+        file!.path,
+        file!.size,
+        file!.mimetype,
+        `databank/clients/${clientId}`,
+        file!.originalname,
+      );
 
-    return this.prisma.databankFile.create({
-      data: {
-        clientId,
-        folderId: targetFolder,
-        fileName: file!.originalname,
-        storageKey: uploaded.key,
-        mimeType: file!.mimetype,
-        fileSizeBytes: uploaded.sizeBytes,
-        source: fileSource,
-        uploadedByUserId: user.id,
-      },
-      select: this.fileSelect,
-    });
+      return await this.prisma.databankFile.create({
+        data: {
+          clientId,
+          folderId: targetFolder,
+          fileName: file!.originalname,
+          storageKey: uploaded.key,
+          mimeType: file!.mimetype,
+          fileSizeBytes: uploaded.sizeBytes,
+          source: fileSource,
+          uploadedByUserId: user.id,
+        },
+        select: this.fileSelect,
+      });
+    } finally {
+      if (file?.path) await unlink(file.path).catch(() => undefined);
+    }
   }
 
   /** A fresh, short-lived signed URL for viewing/downloading a file. Access is
@@ -463,11 +473,13 @@ export class DatabankService {
     await this.assertClientWriteAccess(targetClientId, user);
     const targetFolder = await this.assertFolderInClient(dto.targetFolderId, targetClientId);
 
-    const bytes = await this.storage.download(source.storageKey);
-    const uploaded = await this.storage.upload(
-      bytes.bytes,
-      source.mimeType ?? bytes.mimeType ?? 'application/octet-stream',
+    // Server-side copy: the bytes are duplicated inside storage and never pass
+    // through the backend, so duplicating even a 300 MB file uses no RAM.
+    const uploaded = await this.storage.copyObject(
+      source.storageKey,
       `databank/clients/${targetClientId}`,
+      source.fileSizeBytes ?? 0,
+      source.mimeType ?? 'application/octet-stream',
       source.fileName,
     );
 
@@ -478,7 +490,7 @@ export class DatabankService {
         fileName: source.fileName,
         storageKey: uploaded.key,
         mimeType: source.mimeType,
-        fileSizeBytes: uploaded.sizeBytes,
+        fileSizeBytes: source.fileSizeBytes,
         source: DatabankFileSource.COPIED,
         copiedFromFileId: source.id,
         uploadedByUserId: user.id,

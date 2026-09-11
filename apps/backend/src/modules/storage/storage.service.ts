@@ -6,10 +6,13 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
   HeadBucketCommand,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import type { Readable } from 'node:stream';
+import { createReadStream } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'crypto';
 
 export interface UploadResult {
@@ -75,6 +78,95 @@ export class StorageService {
   ): Promise<UploadResult> {
     const ext = originalFilename?.split('.').pop() ?? 'bin';
     return this.uploadAt(`${folder}/${randomUUID()}.${ext}`, buffer, mimeType);
+  }
+
+  /**
+   * Stream a file from a local path straight to storage WITHOUT buffering the
+   * whole thing in memory. Used by the databank for large uploads (up to
+   * 300 MB) — the request is written to a Multer temp file on disk, then this
+   * streams it to R2 with a known ContentLength, so backend RAM stays flat
+   * regardless of file size. The caller owns the temp file and deletes it after.
+   */
+  async uploadStreamFromFile(
+    filePath: string,
+    sizeBytes: number,
+    mimeType: string,
+    folder: string,
+    originalFilename?: string,
+  ): Promise<UploadResult> {
+    const ext = originalFilename?.split('.').pop() ?? 'bin';
+    const key = `${folder}/${randomUUID()}.${ext}`;
+
+    if (this.mode === 'local') {
+      this.logger.log(`[LOCAL] Skipped stream upload, stub key: ${key}`);
+      return { key, bucket: this.bucket, sizeBytes, mimeType };
+    }
+
+    if (this.mode === 'supabase') {
+      // Supabase (dev fallback) has no streaming path here — read the temp file
+      // once. Prod uses S3/R2 (the streaming branch below).
+      const buf = await readFile(filePath);
+      return this.uploadAt(key, buf, mimeType);
+    }
+
+    await this.ensureBucketExists();
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: createReadStream(filePath),
+        // ContentLength is REQUIRED with a stream Body so the SDK streams the
+        // bytes instead of buffering them to compute the length.
+        ContentLength: sizeBytes,
+        ContentType: mimeType,
+        ...(this.serverSideEncryption
+          ? { ServerSideEncryption: this.serverSideEncryption }
+          : {}),
+      }),
+    );
+    this.logger.log(`[S3] Stream-uploaded (${sizeBytes} bytes): ${key}`);
+    return { key, bucket: this.bucket, sizeBytes, mimeType };
+  }
+
+  /**
+   * Server-side copy of an existing object to a fresh key — the bytes never
+   * pass through the backend (no download+reupload), so duplicating even a
+   * 300 MB databank file uses no backend memory. `sizeBytes`/`mimeType` are
+   * carried from the source row (a copy preserves them).
+   */
+  async copyObject(
+    sourceKey: string,
+    folder: string,
+    sizeBytes: number,
+    mimeType: string,
+    originalFilename?: string,
+  ): Promise<UploadResult> {
+    const ext = originalFilename?.split('.').pop() ?? 'bin';
+    const key = `${folder}/${randomUUID()}.${ext}`;
+
+    if (this.mode === 'local') {
+      this.logger.log(`[LOCAL] Skipped copy, stub key: ${key}`);
+      return { key, bucket: this.bucket, sizeBytes, mimeType };
+    }
+
+    if (this.mode === 'supabase') {
+      const src = await this.download(sourceKey);
+      return this.uploadAt(key, src.bytes, mimeType);
+    }
+
+    await this.ensureBucketExists();
+    await this.s3.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        CopySource: `${this.bucket}/${sourceKey}`,
+        ...(this.serverSideEncryption
+          ? { ServerSideEncryption: this.serverSideEncryption }
+          : {}),
+      }),
+    );
+    this.logger.log(`[S3] Server-side copied: ${sourceKey} → ${key}`);
+    return { key, bucket: this.bucket, sizeBytes, mimeType };
   }
 
   /**

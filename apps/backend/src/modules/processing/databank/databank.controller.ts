@@ -13,7 +13,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
+import { diskStorage } from 'multer';
+import { tmpdir } from 'os';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import { AuditDocumentAccess } from '../../../common/decorators/audit-document-access.decorator';
@@ -42,10 +43,12 @@ import {
  * permission or seed change was needed. Manager-vs-officer scoping lives
  * entirely in DatabankService.assertClientAccess.
  *
- * 50 MB Multer cap: the databank replaces Google Drive for scans and PDFs;
- * larger media isn't supported because uploads buffer wholly in memory.
+ * 300 MB cap: the databank holds scans, PDFs and larger case documents.
+ * Uploads are written to a Multer temp file (diskStorage) and STREAMED to
+ * storage by DatabankService — never buffered whole in memory — so a large
+ * file doesn't pressure backend RAM. The temp file is deleted after upload.
  */
-const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_FILE_BYTES = 300 * 1024 * 1024;
 const READ = ['processing.case.view_assigned', 'processing.case.view_all'] as const;
 const WRITE = 'processing.document.upload';
 
@@ -129,7 +132,7 @@ export class DatabankController {
    */
   @Post('clients/:clientId/files')
   @RequirePermissions(WRITE)
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } }))
+  @UseInterceptors(FileInterceptor('file', { storage: diskStorage({ destination: tmpdir() }), limits: { fileSize: MAX_FILE_BYTES } }))
   uploadFile(
     @Param('clientId', ParseUUIDPipe) clientId: string,
     @UploadedFile() file: Express.Multer.File | undefined,

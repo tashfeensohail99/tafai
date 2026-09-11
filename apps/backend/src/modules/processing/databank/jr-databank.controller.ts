@@ -12,7 +12,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
+import { diskStorage } from 'multer';
+import { tmpdir } from 'os';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import { AuditDocumentAccess } from '../../../common/decorators/audit-document-access.decorator';
@@ -41,7 +42,8 @@ import {
  * per-matter, not via a JR-wide client list. Read routes use jr.portal.view;
  * write routes use jr.artifact.author.
  */
-const MAX_FILE_BYTES = 50 * 1024 * 1024;
+// 300 MB, disk-streamed to storage (never buffered in RAM) — see databank.controller.ts.
+const MAX_FILE_BYTES = 300 * 1024 * 1024;
 const READ = 'jr.portal.view';
 const WRITE = 'jr.artifact.author';
 
@@ -110,7 +112,7 @@ export class JrDatabankController {
    */
   @Post('clients/:clientId/files')
   @RequirePermissions(WRITE)
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } }))
+  @UseInterceptors(FileInterceptor('file', { storage: diskStorage({ destination: tmpdir() }), limits: { fileSize: MAX_FILE_BYTES } }))
   uploadFile(
     @Param('clientId', ParseUUIDPipe) clientId: string,
     @UploadedFile() file: Express.Multer.File | undefined,

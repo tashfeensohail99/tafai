@@ -3635,7 +3635,12 @@ model ClientDocumentVersion {
 /// "Folder (2)" style disambiguation anyway).
 model DatabankFolder {
   id              String    @id @default(uuid())
-  clientId        String
+  // A folder is EITHER client-scoped (clientId set) OR an associate's personal
+  // working folder (ownerUserId set) — exactly one is non-null. ownerUserId is a
+  // plain UserAccount id (cross-schema; no FK). Personal folders are visible to
+  // the owner + a processing manager only.
+  clientId        String?
+  ownerUserId     String?
   parentFolderId  String?
   name            String
   createdByUserId String?
@@ -3645,12 +3650,13 @@ model DatabankFolder {
   // hard-removed by normal use. FK cascades only fire on a rare hard delete.
   deletedAt       DateTime?
 
-  client   Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client   Client?          @relation(fields: [clientId], references: [id], onDelete: Cascade)
   parent   DatabankFolder?  @relation("DatabankFolderTree", fields: [parentFolderId], references: [id], onDelete: Cascade)
   children DatabankFolder[] @relation("DatabankFolderTree")
   files    DatabankFile[]
 
   @@index([clientId])
+  @@index([ownerUserId])
   @@index([parentFolderId])
   @@index([deletedAt])
   @@map("databank_folders")
@@ -3660,7 +3666,10 @@ model DatabankFolder {
 /// One file in a client's databank. `folderId` NULL = the client's root.
 model DatabankFile {
   id                  String             @id @default(uuid())
-  clientId            String
+  // EITHER client-scoped (clientId) OR an associate's personal file (ownerUserId)
+  // — exactly one non-null. See DatabankFolder. ownerUserId = plain UserAccount id.
+  clientId            String?
+  ownerUserId         String?
   folderId            String?
   fileName            String
   storageKey          String
@@ -3677,10 +3686,11 @@ model DatabankFile {
   updatedAt           DateTime           @updatedAt
   deletedAt           DateTime?
 
-  client Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client?         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   folder DatabankFolder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
+  @@index([ownerUserId])
   @@index([folderId])
   @@index([clientId, folderId])
   @@index([deletedAt])

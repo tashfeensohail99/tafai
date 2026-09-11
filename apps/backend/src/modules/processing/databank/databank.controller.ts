@@ -81,6 +81,39 @@ export class DatabankController {
     return this.databank.getTree(clientId, user);
   }
 
+  // ---- My workspace (an associate's PERSONAL folders, not tied to a client) --
+  // Read/write restricted to the owner or a manager in the service. A manager
+  // may target a specific associate with ?userId=; an officer omits it (self).
+
+  @Get('me/tree')
+  @RequireAnyPermissions(...READ)
+  getMyTree(@CurrentUser() user: RequestUser, @Query('userId') userId?: string) {
+    return this.databank.getPersonalTree(user, userId);
+  }
+
+  @Post('me/folders')
+  @RequirePermissions(WRITE)
+  createMyFolder(
+    @Body() dto: CreateFolderDto,
+    @CurrentUser() user: RequestUser,
+    @Query('userId') userId?: string,
+  ) {
+    return this.databank.createPersonalFolder(user, dto, userId);
+  }
+
+  @Post('me/files')
+  @RequirePermissions(WRITE)
+  @UseInterceptors(FileInterceptor('file', { storage: diskStorage({ destination: tmpdir() }), limits: { fileSize: MAX_FILE_BYTES } }))
+  uploadMyFile(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('folderId') folderId: string | undefined,
+    @Body('source') source: string | undefined,
+    @CurrentUser() user: RequestUser,
+    @Query('userId') userId?: string,
+  ) {
+    return this.databank.uploadPersonalFile(user, file, folderId || null, source, userId);
+  }
+
   // ---- Folders ------------------------------------------------------------
 
   @Post('clients/:clientId/folders')

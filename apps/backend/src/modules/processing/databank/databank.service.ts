@@ -103,8 +103,37 @@ export class DatabankService {
     }
   }
 
+  /**
+   * PERSONAL access. An associate's personal databank (ownerUserId) is visible
+   * — read AND write — ONLY to the owner themselves or a processing manager
+   * (processing.case.view_all). Other associates get nothing here (deliberately
+   * stricter than client folders, which the whole team may read).
+   */
+  private assertPersonalAccess(ownerUserId: string, user: RequestUser): void {
+    if (ownerUserId === user.id || this.canViewAll(user)) return;
+    throw new ForbiddenException("This is another associate's personal databank.");
+  }
+
+  /** A databank row is EITHER client-scoped (clientId) OR an associate's
+   *  personal item (ownerUserId). This resolves the row's scope to the right
+   *  authorization. 'read' vs 'write' only differs for CLIENT rows (client read
+   *  is team-wide, client write is manager/assigned-officer); PERSONAL rows are
+   *  owner-or-manager for both. */
+  private async authorizeRow(
+    row: { clientId: string | null; ownerUserId: string | null },
+    user: RequestUser,
+    mode: 'read' | 'write',
+  ): Promise<void> {
+    if (row.clientId) {
+      if (mode === 'write') return this.assertClientWriteAccess(row.clientId, user);
+      return this.assertClientReadAccess(row.clientId, user);
+    }
+    if (row.ownerUserId) return this.assertPersonalAccess(row.ownerUserId, user);
+    throw new NotFoundException('Databank item is not attached to a client or an owner.');
+  }
+
   // ---------------------------------------------------------------------------
-  // Loaders (resolve owning client, then authorize)
+  // Loaders (resolve the owning scope, then authorize)
   // ---------------------------------------------------------------------------
 
   /** Load a folder for a WRITE operation (rename / move / delete). */
@@ -113,7 +142,7 @@ export class DatabankService {
       where: { id: folderId, deletedAt: null },
     });
     if (!folder) throw new NotFoundException('Folder not found');
-    await this.assertClientWriteAccess(folder.clientId, user);
+    await this.authorizeRow(folder, user, 'write');
     return folder;
   }
 
@@ -123,33 +152,39 @@ export class DatabankService {
       where: { id: fileId, deletedAt: null },
     });
     if (!file) throw new NotFoundException('File not found');
-    await this.assertClientWriteAccess(file.clientId, user);
+    await this.authorizeRow(file, user, 'write');
     return file;
   }
 
-  /** Load a file for a READ operation (download / copy-from). Any processing
-   *  user may read any client's file. */
+  /** Load a file for a READ operation (download / copy-from). Client files are
+   *  readable team-wide; personal files only by the owner or a manager. */
   private async loadFileForRead(fileId: string, user: RequestUser) {
     const file = await this.prisma.databankFile.findFirst({
       where: { id: fileId, deletedAt: null },
     });
     if (!file) throw new NotFoundException('File not found');
-    await this.assertClientReadAccess(file.clientId, user);
+    await this.authorizeRow(file, user, 'read');
     return file;
   }
 
-  /** A folderId supplied by the caller must belong to the SAME client and be
-   *  live. Prevents filing a client's document into another client's folder. */
-  private async assertFolderInClient(
+  /** A caller-supplied parent folderId must be live and in the SAME scope
+   *  (same client, or same personal owner) as the item being placed. Prevents
+   *  filing an item into another client's — or another associate's — folder. */
+  private async assertFolderInScope(
     folderId: string | null | undefined,
-    clientId: string,
+    scope: { clientId: string | null; ownerUserId: string | null },
   ): Promise<string | null> {
     if (!folderId) return null;
     const folder = await this.prisma.databankFolder.findFirst({
-      where: { id: folderId, clientId, deletedAt: null },
+      where: {
+        id: folderId,
+        deletedAt: null,
+        clientId: scope.clientId,
+        ownerUserId: scope.ownerUserId,
+      },
       select: { id: true },
     });
-    if (!folder) throw new BadRequestException('Target folder does not exist for this client');
+    if (!folder) throw new BadRequestException('Target folder does not exist in this databank');
     return folder.id;
   }
 
@@ -181,6 +216,31 @@ export class DatabankService {
     // canWrite tells the UI whether to show the edit controls: false = the
     // viewer may read/download but not modify (client assigned to another officer).
     return { clientId, folders, files, canWrite };
+  }
+
+  /** The personal "my workspace" tree for one associate — their folders + files
+   *  not tied to any client. Readable only by the owner or a manager. Defaults
+   *  to the caller; a manager may view another associate's via targetUserId. */
+  async getPersonalTree(user: RequestUser, targetUserId?: string) {
+    const ownerUserId = targetUserId ?? user.id;
+    this.assertPersonalAccess(ownerUserId, user);
+    const canWrite = ownerUserId === user.id || this.canViewAll(user);
+    const [folders, files] = await Promise.all([
+      this.prisma.databankFolder.findMany({
+        where: { ownerUserId, deletedAt: null },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
+      }),
+      this.prisma.databankFile.findMany({
+        where: { ownerUserId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true, folderId: true, fileName: true, mimeType: true, fileSizeBytes: true,
+          source: true, uploadedByUserId: true, createdAt: true, updatedAt: true,
+        },
+      }),
+    ]);
+    return { ownerUserId, folders, files, canWrite };
   }
 
   /** Clients for the cross-client landing page. Every processing user sees ALL
@@ -296,7 +356,7 @@ export class DatabankService {
         where: { deletedAt: null, clientId: { in: clientIds } },
         _count: { _all: true },
       });
-      for (const c of counts) countByClient.set(c.clientId, c._count._all);
+      for (const c of counts) { if (c.clientId) countByClient.set(c.clientId, c._count._all); }
     }
 
     const byName = (a: ClientRow, b: ClientRow) =>
@@ -327,8 +387,9 @@ export class DatabankService {
 
   async createFolder(clientId: string, dto: CreateFolderDto, user: RequestUser) {
     await this.assertClientWriteAccess(clientId, user);
-    const parentFolderId = await this.assertFolderInClient(dto.parentFolderId, clientId);
-    const name = await this.uniqueFolderName(clientId, parentFolderId, dto.name.trim());
+    const scope = { clientId, ownerUserId: null };
+    const parentFolderId = await this.assertFolderInScope(dto.parentFolderId, scope);
+    const name = await this.uniqueFolderName(scope, parentFolderId, dto.name.trim());
 
     return this.prisma.databankFolder.create({
       data: { clientId, parentFolderId, name, createdByUserId: user.id },
@@ -336,10 +397,26 @@ export class DatabankService {
     });
   }
 
+  /** Create a folder in an associate's PERSONAL databank (ownerUserId). Defaults
+   *  to the caller's own; a manager may target another associate via targetUserId. */
+  async createPersonalFolder(user: RequestUser, dto: CreateFolderDto, targetUserId?: string) {
+    const ownerUserId = targetUserId ?? user.id;
+    this.assertPersonalAccess(ownerUserId, user);
+    const scope = { clientId: null, ownerUserId };
+    const parentFolderId = await this.assertFolderInScope(dto.parentFolderId, scope);
+    const name = await this.uniqueFolderName(scope, parentFolderId, dto.name.trim());
+
+    return this.prisma.databankFolder.create({
+      data: { ownerUserId, parentFolderId, name, createdByUserId: user.id },
+      select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
+    });
+  }
+
   async renameFolder(folderId: string, name: string, user: RequestUser) {
     const folder = await this.loadFolder(folderId, user);
     const unique = await this.uniqueFolderName(
-      folder.clientId, folder.parentFolderId, name.trim(), folder.id,
+      { clientId: folder.clientId, ownerUserId: folder.ownerUserId },
+      folder.parentFolderId, name.trim(), folder.id,
     );
     return this.prisma.databankFolder.update({
       where: { id: folder.id },
@@ -350,10 +427,11 @@ export class DatabankService {
 
   async moveFolder(folderId: string, parentFolderId: string | null | undefined, user: RequestUser) {
     const folder = await this.loadFolder(folderId, user);
-    const targetParent = await this.assertFolderInClient(parentFolderId, folder.clientId);
+    const scope = { clientId: folder.clientId, ownerUserId: folder.ownerUserId };
+    const targetParent = await this.assertFolderInScope(parentFolderId, scope);
     await this.assertNoCycle(folder.id, targetParent);
     // A move can collide with an existing name in the destination — suffix it.
-    const name = await this.uniqueFolderName(folder.clientId, targetParent, folder.name, folder.id);
+    const name = await this.uniqueFolderName(scope, targetParent, folder.name, folder.id);
     return this.prisma.databankFolder.update({
       where: { id: folder.id },
       data: { parentFolderId: targetParent, name },
@@ -398,7 +476,7 @@ export class DatabankService {
     try {
       await this.assertClientWriteAccess(clientId, user);
       this.assertSafeFile(file);
-      const targetFolder = await this.assertFolderInClient(folderId, clientId);
+      const targetFolder = await this.assertFolderInScope(folderId, { clientId, ownerUserId: null });
 
       // Only UPLOAD and CLIPBOARD are reachable through the upload endpoint;
       // COPIED / MIGRATED are set internally by copyFile / the migration script.
@@ -416,6 +494,51 @@ export class DatabankService {
       return await this.prisma.databankFile.create({
         data: {
           clientId,
+          folderId: targetFolder,
+          fileName: file!.originalname,
+          storageKey: uploaded.key,
+          mimeType: file!.mimetype,
+          fileSizeBytes: uploaded.sizeBytes,
+          source: fileSource,
+          uploadedByUserId: user.id,
+        },
+        select: this.fileSelect,
+      });
+    } finally {
+      if (file?.path) await unlink(file.path).catch(() => undefined);
+    }
+  }
+
+  /** Upload into an associate's PERSONAL databank (ownerUserId). Same disk-stream
+   *  path as uploadFile; defaults to the caller, a manager may target another
+   *  associate via targetUserId. */
+  async uploadPersonalFile(
+    user: RequestUser,
+    file: Express.Multer.File | undefined,
+    folderId: string | null | undefined,
+    source: string | undefined,
+    targetUserId?: string,
+  ) {
+    try {
+      const ownerUserId = targetUserId ?? user.id;
+      this.assertPersonalAccess(ownerUserId, user);
+      this.assertSafeFile(file);
+      const targetFolder = await this.assertFolderInScope(folderId, { clientId: null, ownerUserId });
+
+      const fileSource: DatabankFileSource =
+        source === 'CLIPBOARD' ? DatabankFileSource.CLIPBOARD : DatabankFileSource.UPLOAD;
+
+      const uploaded = await this.storage.uploadStreamFromFile(
+        file!.path,
+        file!.size,
+        file!.mimetype,
+        `databank/users/${ownerUserId}`,
+        file!.originalname,
+      );
+
+      return await this.prisma.databankFile.create({
+        data: {
+          ownerUserId,
           folderId: targetFolder,
           fileName: file!.originalname,
           storageKey: uploaded.key,
@@ -451,7 +574,10 @@ export class DatabankService {
 
   async moveFile(fileId: string, folderId: string | null | undefined, user: RequestUser) {
     const file = await this.loadFile(fileId, user);
-    const targetFolder = await this.assertFolderInClient(folderId, file.clientId);
+    const targetFolder = await this.assertFolderInScope(folderId, {
+      clientId: file.clientId,
+      ownerUserId: file.ownerUserId,
+    });
     return this.prisma.databankFile.update({
       where: { id: file.id },
       data: { folderId: targetFolder },
@@ -469,15 +595,31 @@ export class DatabankService {
    */
   async copyFile(fileId: string, dto: CopyFileDto, user: RequestUser) {
     const source = await this.loadFileForRead(fileId, user);
-    const targetClientId = dto.targetClientId ?? source.clientId;
-    await this.assertClientWriteAccess(targetClientId, user);
-    const targetFolder = await this.assertFolderInClient(dto.targetFolderId, targetClientId);
+
+    // Resolve the target scope: an explicit targetClientId wins; otherwise copy
+    // within the SOURCE's own scope (client → same client, personal → same owner).
+    let targetClientId: string | null = null;
+    let targetOwnerUserId: string | null = null;
+    if (dto.targetClientId) targetClientId = dto.targetClientId;
+    else if (source.clientId) targetClientId = source.clientId;
+    else targetOwnerUserId = source.ownerUserId;
+
+    // A copy CREATES a file in the target — gate on write of the destination.
+    if (targetClientId) await this.assertClientWriteAccess(targetClientId, user);
+    else if (targetOwnerUserId) this.assertPersonalAccess(targetOwnerUserId, user);
+    else throw new BadRequestException('The file to copy has no client or owner.');
+
+    const scope = { clientId: targetClientId, ownerUserId: targetOwnerUserId };
+    const targetFolder = await this.assertFolderInScope(dto.targetFolderId, scope);
+    const storageFolder = targetClientId
+      ? `databank/clients/${targetClientId}`
+      : `databank/users/${targetOwnerUserId}`;
 
     // Server-side copy: the bytes are duplicated inside storage and never pass
     // through the backend, so duplicating even a 300 MB file uses no RAM.
     const uploaded = await this.storage.copyObject(
       source.storageKey,
-      `databank/clients/${targetClientId}`,
+      storageFolder,
       source.fileSizeBytes ?? 0,
       source.mimeType ?? 'application/octet-stream',
       source.fileName,
@@ -486,6 +628,7 @@ export class DatabankService {
     return this.prisma.databankFile.create({
       data: {
         clientId: targetClientId,
+        ownerUserId: targetOwnerUserId,
         folderId: targetFolder,
         fileName: source.fileName,
         storageKey: uploaded.key,
@@ -531,7 +674,7 @@ export class DatabankService {
   /** Disambiguate a folder name within its parent, filesystem-style
    *  ("Passport" → "Passport (2)"). `excludeId` skips the folder being renamed. */
   private async uniqueFolderName(
-    clientId: string,
+    scope: { clientId: string | null; ownerUserId: string | null },
     parentFolderId: string | null,
     desired: string,
     excludeId?: string,
@@ -542,7 +685,8 @@ export class DatabankService {
     while (
       await this.prisma.databankFolder.findFirst({
         where: {
-          clientId,
+          clientId: scope.clientId,
+          ownerUserId: scope.ownerUserId,
           parentFolderId: parentFolderId ?? null,
           name,
           deletedAt: null,

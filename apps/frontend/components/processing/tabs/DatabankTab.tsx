@@ -83,6 +83,12 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
   const [preview, setPreview] = useState<{ file: ApiDatabankFile; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  // Read-only when the client is assigned to another officer: the whole team
+  // can view/download any client's databank, but only the assigned officer (or
+  // a manager) may modify it. The backend enforces this; here we just hide the
+  // controls. Default writable until the tree tells us otherwise.
+  const [canWrite, setCanWrite] = useState(true);
+  const readOnly = !canWrite;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -92,6 +98,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
       const tree = await fetchDatabankTree(clientId);
       setFolders(tree.folders);
       setFiles(tree.files);
+      setCanWrite(tree.canWrite !== false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load the databank');
     } finally {
@@ -133,6 +140,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
   // ---- Uploads (button, drag-drop, clipboard paste) ----
   const doUpload = useCallback(
     async (list: FileList | File[], source: 'UPLOAD' | 'CLIPBOARD') => {
+      if (readOnly) return;
       const arr = Array.from(list);
       if (arr.length === 0) return;
       setBusy(true);
@@ -149,7 +157,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
         setBusy(false);
       }
     },
-    [clientId, currentFolderId, reload],
+    [clientId, currentFolderId, reload, readOnly],
   );
 
   // Clipboard paste of an image while the tab is mounted.
@@ -168,7 +176,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
   // ---- Folder / file operations ----
   const submitNewFolder = async () => {
     const name = newFolderName.trim();
-    if (!name) return;
+    if (!name || readOnly) return;
     setBusy(true);
     try {
       await createDatabankFolder(clientId, name, currentFolderId);
@@ -184,7 +192,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
 
   const submitRename = async (kind: 'file' | 'folder', id: string) => {
     const value = renameValue.trim();
-    if (!value) return;
+    if (!value || readOnly) return;
     setBusy(true);
     try {
       if (kind === 'folder') await renameDatabankFolder(id, value);
@@ -199,7 +207,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
   };
 
   const doDelete = async () => {
-    if (!confirmDelete) return;
+    if (!confirmDelete || readOnly) return;
     setBusy(true);
     try {
       if (confirmDelete.kind === 'folder') await deleteDatabankFolder(confirmDelete.id);
@@ -214,7 +222,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
   };
 
   const doMove = async (destFolderId: string | null) => {
-    if (!moveTarget) return;
+    if (!moveTarget || readOnly) return;
     setBusy(true);
     try {
       if (moveTarget.kind === 'folder') await moveDatabankFolder(moveTarget.id, destFolderId);
@@ -229,6 +237,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
   };
 
   const duplicateHere = async (file: ApiDatabankFile) => {
+    if (readOnly) return;
     setBusy(true);
     try {
       await copyDatabankFile(file.id, { targetFolderId: currentFolderId });
@@ -286,24 +295,33 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
             </span>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button type="button" onClick={() => setCreatingFolder((v) => !v)} disabled={busy} style={btn(false)}>
-            <FolderPlus size={15} /> New folder
-          </button>
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} style={btn(true)}>
-            <Upload size={15} /> Upload
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              if (e.target.files) void doUpload(e.target.files, 'UPLOAD');
-              e.target.value = '';
-            }}
-          />
-        </div>
+        {readOnly ? (
+          <span
+            title="This client is assigned to another officer — you can view and download, but not edit."
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: muted, border, borderRadius: 999, padding: '5px 12px', whiteSpace: 'nowrap' }}
+          >
+            View only — assigned to another officer
+          </span>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button type="button" onClick={() => setCreatingFolder((v) => !v)} disabled={busy} style={btn(false)}>
+              <FolderPlus size={15} /> New folder
+            </button>
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} style={btn(true)}>
+              <Upload size={15} /> Upload
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                if (e.target.files) void doUpload(e.target.files, 'UPLOAD');
+                e.target.value = '';
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {creatingFolder ? (
@@ -359,7 +377,9 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '40px 0', color: muted, textAlign: 'center' }}>
             <Upload size={22} />
             <div style={{ fontSize: 14 }}>This folder is empty.</div>
-            <div style={{ fontSize: 12.5 }}>Drag files here, click Upload, or paste a screenshot.</div>
+            {!readOnly ? (
+              <div style={{ fontSize: 12.5 }}>Drag files here, click Upload, or paste a screenshot.</div>
+            ) : null}
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10 }}>
@@ -389,14 +409,16 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
                     </button>
                   )}
                 </div>
-                <RowActions
-                  onRename={() => {
-                    setRenamingId(f.id);
-                    setRenameValue(f.name);
-                  }}
-                  onMove={() => setMoveTarget({ kind: 'folder', id: f.id, name: f.name })}
-                  onDelete={() => setConfirmDelete({ kind: 'folder', id: f.id })}
-                />
+                {!readOnly ? (
+                  <RowActions
+                    onRename={() => {
+                      setRenamingId(f.id);
+                      setRenameValue(f.name);
+                    }}
+                    onMove={() => setMoveTarget({ kind: 'folder', id: f.id, name: f.name })}
+                    onDelete={() => setConfirmDelete({ kind: 'folder', id: f.id })}
+                  />
+                ) : null}
               </div>
             ))}
 
@@ -432,13 +454,13 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
                 <RowActions
                   onOpen={() => void openPreview(file)}
                   onDownload={() => void download(file)}
-                  onRename={() => {
+                  onRename={readOnly ? undefined : () => {
                     setRenamingId(file.id);
                     setRenameValue(file.fileName);
                   }}
-                  onCopy={() => void duplicateHere(file)}
-                  onMove={() => setMoveTarget({ kind: 'file', id: file.id, name: file.fileName })}
-                  onDelete={() => setConfirmDelete({ kind: 'file', id: file.id })}
+                  onCopy={readOnly ? undefined : () => void duplicateHere(file)}
+                  onMove={readOnly ? undefined : () => setMoveTarget({ kind: 'file', id: file.id, name: file.fileName })}
+                  onDelete={readOnly ? undefined : () => setConfirmDelete({ kind: 'file', id: file.id })}
                 />
               </div>
             ))}

@@ -2030,6 +2030,11 @@ export interface ApiDatabankTree {
   clientId: string;
   folders: ApiDatabankFolder[];
   files: ApiDatabankFile[];
+  /** True when the viewer may modify this client's databank (manager, or the
+   *  assigned officer). False = read-only (view/download only) — the UI hides
+   *  the upload / new-folder / rename / move / delete controls. Optional for
+   *  backward compatibility; treated as writable when absent. */
+  canWrite?: boolean;
 }
 
 export interface ApiDatabankClientRow {

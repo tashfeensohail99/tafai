@@ -132,6 +132,36 @@ export class ListLeadsQueryDto {
   @IsOptional()
   @IsIn(['yes', 'no'])
   emailVerified?: string;
+
+  /**
+   * Advanced-panel "Source" filter — one of the frontend LeadSource enum
+   * values. Reverses mapSource() server-side (see LeadsService.sourceReverseAnd)
+   * so the paginated list matches the client's per-lead `source` classification.
+   * PHONE is the catch-all bucket (unknown / blank channels), mirroring
+   * mapSource's default.
+   */
+  @IsOptional()
+  @IsIn([
+    'FACEBOOK',
+    'INSTAGRAM',
+    'WEBSITE',
+    'WHATSAPP',
+    'REFERRAL',
+    'PHONE',
+    'WALK_IN',
+    'META_LEAD_FORM',
+  ])
+  source?: string;
+
+  /**
+   * Advanced-panel "SLA" filter — one of the derived SlaStatus buckets. mapSla()
+   * is a pure function of stage (and stage a pure function of status), so this
+   * maps cleanly to a fixed set of LeadStatus values server-side (see
+   * LeadsService.slaStatusAnd).
+   */
+  @IsOptional()
+  @IsIn(['ACTIVE', 'OVERDUE', 'UPCOMING', 'COMPLETED'])
+  slaStatus?: string;
 }
 
 export class CreateLeadDto {

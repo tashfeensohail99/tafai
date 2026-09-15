@@ -140,10 +140,8 @@ const SLA_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
  *   df.country       → targetCountry
  *   df.emailVerified → emailVerified ('yes' | 'no')
  *   df.assignmentType→ tab (ADMIN | AUTO_CRM)
- *
- * df.source and df.slaStatus have no clean 1:1 server mapping over the paginated
- * set (source is free-text collapsed by mapSource; slaStatus is a derived,
- * multi-status bucket), so they are intentionally NOT sent — see the task notes.
+ *   df.slaStatus     → slaStatus (server reverses it to a fixed status set)
+ *   df.source        → source    (server reverses mapSource; PHONE = catch-all)
  *
  * The backend expresses ADMIN/AUTO_CRM only through `tab`, so when the advanced
  * assignment filter is set we fold a single-status tab (OVERDUE→LOST,
@@ -176,6 +174,8 @@ function buildServerParams(
       serviceInterest: df.service || undefined,
       targetCountry: df.country || undefined,
       emailVerified: df.emailVerified || undefined,
+      slaStatus: df.slaStatus || undefined,
+      source: df.source || undefined,
     },
   };
 }

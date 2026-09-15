@@ -702,6 +702,77 @@ export class LeadsService {
   }
 
   /**
+   * The advanced-panel "SLA" filter reversed to a set of LeadStatus values.
+   * mapSla(stage) is pure and stage = mapStatus(status) is pure, so each SLA
+   * bucket is EXACTLY a fixed status set (no per-row derivation needed):
+   *   ACTIVE    → NEW, CONTACTED, FOLLOW_UP   (stages NEW / CONTACTED / MEETING_NEEDED)
+   *   OVERDUE   → LOST                        (stage NO_RESPONSE)
+   *   UPCOMING  → PROPOSAL_SENT, QUALIFIED    (stages PAYMENT_INTERESTED / APPOINTMENT_BOOKED)
+   *   COMPLETED → CONVERTED                   (stage SENT_TO_FINANCE)
+   * Returned as an AND-array entry so it composes with rep-scope / tab / search.
+   */
+  private slaStatusAnd(sla?: string): Prisma.LeadWhereInput[] {
+    switch (sla) {
+      case 'ACTIVE':
+        return [{ status: { in: [LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.FOLLOW_UP] } }];
+      case 'OVERDUE':
+        return [{ status: LeadStatus.LOST }];
+      case 'UPCOMING':
+        return [{ status: { in: [LeadStatus.PROPOSAL_SENT, LeadStatus.QUALIFIED] } }];
+      case 'COMPLETED':
+        return [{ status: LeadStatus.CONVERTED }];
+      default:
+        return [];
+    }
+  }
+
+  /**
+   * The advanced-panel "Source" filter reversed from the frontend's mapSource().
+   * mapSource switches on the UPPERCASED sourceChannel with EXACT equality, so
+   * every bucket except PHONE is a case-insensitive exact match (META collapses
+   * three spellings). PHONE is the catch-all default — every channel that is
+   * null / blank / not one of the recognised labels — so it is expressed as
+   * "null OR NOT in the recognised non-phone set". Returned as an AND-array entry.
+   */
+  private sourceReverseAnd(source?: string): Prisma.LeadWhereInput[] {
+    if (!source) return [];
+    const ci = (values: string[]): Prisma.LeadWhereInput => ({
+      sourceChannel: { in: values, mode: 'insensitive' },
+    });
+    switch (source) {
+      case 'FACEBOOK':
+      case 'INSTAGRAM':
+      case 'WEBSITE':
+      case 'WHATSAPP':
+      case 'REFERRAL':
+      case 'WALK_IN':
+        return [ci([source])];
+      case 'META_LEAD_FORM':
+        return [ci(['META', 'META-LEAD-FORM', 'META_LEAD_FORM'])];
+      case 'PHONE':
+        // The mapSource default bucket: PHONE plus every unrecognised / blank
+        // channel. Expressed as NOT(one of the recognised non-phone labels); a
+        // NULL channel is dropped by `NOT (... IN ...)` under SQL 3-valued logic,
+        // so OR it back in explicitly (mapSource maps null → default → PHONE).
+        return [
+          {
+            OR: [
+              { sourceChannel: null },
+              {
+                NOT: ci([
+                  'FACEBOOK', 'INSTAGRAM', 'WEBSITE', 'WHATSAPP', 'REFERRAL',
+                  'WALK_IN', 'META', 'META-LEAD-FORM', 'META_LEAD_FORM',
+                ]),
+              },
+            ],
+          },
+        ];
+      default:
+        return [];
+    }
+  }
+
+  /**
    * Build the Prisma `where` for the accessible-leads list — shared by
    * findAllAccessible (GET /leads) and findAccessiblePage (GET /leads/page).
    *
@@ -796,6 +867,10 @@ export class LeadsService {
         // Tab bucket (Admin / Auto CRM / Overdue / Payment / Appointment) as its
         // OWN AND entry — see the class comment above about never siblinging OR:.
         ...(tabClause ? [tabClause] : []),
+        // Advanced-panel SLA + Source filters, each its own AND entry so they
+        // compose with (never clobber) the rep-scope / tab / search clauses.
+        ...this.slaStatusAnd(query.slaStatus),
+        ...this.sourceReverseAnd(query.source),
       ],
     };
 

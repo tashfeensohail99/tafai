@@ -927,18 +927,22 @@ export class LeadsService {
     const rawPage = query.page ? parseInt(query.page, 10) : 1;
     const page = Math.max(Number.isFinite(rawPage) ? rawPage : 1, 1);
 
-    // Two aggregate reads (findMany + count) — NOT a per-row fan-out, so this is
-    // safe against the 15-connection pool.
-    const [items, total] = await Promise.all([
-      this.prisma.lead.findMany({
-        where,
-        include: LEAD_LIST_INCLUDE,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      this.prisma.lead.count({ where }),
-    ]);
+    // SEQUENTIAL, not Promise.all: the Supabase session pool is a HARD 15
+    // connections and this is the hottest page reps open. A `Promise.all` here
+    // would hold 2 connections at once — and this page ALSO fires
+    // /leads/list-index on load — so parallelising both endpoints put ~6
+    // concurrent connections on the pool per page open and exhausted it under a
+    // handful of simultaneous reps (EMAXCONNSESSION → every query, incl.
+    // GET /leads/:id, starts failing). One connection at a time; the extra RTT
+    // is cheap next to a pool outage. See tafai-crm-slowness-rca.
+    const items = await this.prisma.lead.findMany({
+      where,
+      include: LEAD_LIST_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+    const total = await this.prisma.lead.count({ where });
 
     return { items, total, page, pageSize };
   }
@@ -954,6 +958,13 @@ export class LeadsService {
    * loaded. countries / services are two distinct-value groupBys under the same
    * scope. (`_query` is accepted for signature symmetry but not used: the index
    * is deliberately independent of the current filter set.)
+   *
+   * The four queries run SEQUENTIALLY, not via Promise.all: the Supabase session
+   * pool is a hard 15 connections and this endpoint fires on every Sales-leads
+   * page open (alongside /leads/page). Four concurrent groupBys per open — times
+   * a few reps — exhausted the pool (EMAXCONNSESSION cascaded to every other
+   * query, including GET /leads/:id → "Lead not found"). One connection at a
+   * time. See tafai-crm-slowness-rca / the "no Promise.all fan-out" rule.
    */
   async leadsListIndex(
     user: RequestUser,
@@ -976,26 +987,24 @@ export class LeadsService {
       AND: this.repScopeAnd(user),
     };
 
-    const [byStatus, autoCrm, countryRows, serviceRows] = await Promise.all([
-      this.prisma.lead.groupBy({
-        by: ['status'],
-        where: scopeWhere,
-        _count: { _all: true },
-      }),
-      this.prisma.lead.count({
-        where: { AND: [scopeWhere, { OR: this.autoCrmClauses() }] },
-      }),
-      this.prisma.lead.groupBy({
-        by: ['targetCountry'],
-        where: { AND: [scopeWhere, { targetCountry: { not: null } }] },
-        orderBy: { targetCountry: 'asc' },
-      }),
-      this.prisma.lead.groupBy({
-        by: ['serviceInterest'],
-        where: { AND: [scopeWhere, { serviceInterest: { not: null } }] },
-        orderBy: { serviceInterest: 'asc' },
-      }),
-    ]);
+    const byStatus = await this.prisma.lead.groupBy({
+      by: ['status'],
+      where: scopeWhere,
+      _count: { _all: true },
+    });
+    const autoCrm = await this.prisma.lead.count({
+      where: { AND: [scopeWhere, { OR: this.autoCrmClauses() }] },
+    });
+    const countryRows = await this.prisma.lead.groupBy({
+      by: ['targetCountry'],
+      where: { AND: [scopeWhere, { targetCountry: { not: null } }] },
+      orderBy: { targetCountry: 'asc' },
+    });
+    const serviceRows = await this.prisma.lead.groupBy({
+      by: ['serviceInterest'],
+      where: { AND: [scopeWhere, { serviceInterest: { not: null } }] },
+      orderBy: { serviceInterest: 'asc' },
+    });
 
     const byStatusCount: Record<string, number> = {};
     let total = 0;

@@ -10,6 +10,7 @@ import {
   AuditAction,
   ClientStatus,
   LeadDisposition,
+  LeadPriority,
   LeadStatus,
   PaymentStatus,
   Prisma,
@@ -54,6 +55,48 @@ const MIN_FORM_ELAPSED_MS = 3000;
  * what an unauthenticated caller can add to a row that is read on every open.
  */
 const MAX_PUBLIC_NOTES_CHARS = 20_000;
+
+/**
+ * Source-channel keywords that classify a lead as "Auto CRM" (auto-captured
+ * digital inflow) rather than "Admin". Reproduces the frontend's
+ * deriveAssignmentType EXACTLY — case-insensitive substring match; ADMIN is the
+ * complement (null / blank source is ADMIN). Kept module-level so the leads
+ * list, the paginated page and the aggregate index all agree.
+ */
+const AUTO_CRM_SOURCE_KEYWORDS = [
+  'whatsapp', 'meta', 'facebook', 'instagram', 'web', 'uan', 'phone', 'call',
+];
+
+/**
+ * The shared `include` block for the accessible-leads list. Used verbatim by
+ * both findAllAccessible (GET /leads) and findAccessiblePage (GET /leads/page)
+ * so a paginated row carries exactly the same shape as an unpaginated one.
+ * Prisma.validator preserves the literal types so findMany's return stays typed.
+ */
+const LEAD_LIST_INCLUDE = Prisma.validator<Prisma.LeadInclude>()({
+  assignedEmployee: {
+    select: { id: true, firstName: true, lastName: true },
+  },
+  branch: { select: { id: true, name: true } },
+  referralPartner: {
+    select: { id: true, companyName: true, referralCode: true },
+  },
+  // CSV-origin metadata for the CSV LEAD badge on every list view. Single-row
+  // lateral join — negligible cost. The frontend renders the badge whenever the
+  // array is non-empty.
+  importRows: {
+    where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+    select: {
+      id: true,
+      createdAt: true,
+      batch: {
+        select: { id: true, batchNumber: true, name: true },
+      },
+    },
+  },
+});
 
 @Injectable()
 export class LeadsService {
@@ -590,14 +633,97 @@ export class LeadsService {
     });
   }
 
-  async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
+  /**
+   * The rep-scope AND-array entry: an agent only ever sees their own book
+   * (leads assigned to them OR created by them). Returned as an ARRAY so it
+   * drops into the single top-level `AND: []` as its OWN entry and can never be
+   * clobbered by a sibling `OR:` — object spread would silently drop it, which
+   * is exactly the org-wide leak from #253. Empty for admins (`leads.view_all`).
+   */
+  private repScopeAnd(user: RequestUser): Prisma.LeadWhereInput[] {
     const canViewAll = user.permissions.includes('leads.view_all');
+    return canViewAll
+      ? []
+      : [
+          {
+            OR: [
+              { assignedEmployee: { userId: user.id } },
+              { createdByUserId: user.id },
+            ],
+          },
+        ];
+  }
+
+  /**
+   * The Auto-CRM source predicate as an OR of case-insensitive substring
+   * matches — the SAME rule as the frontend's deriveAssignmentType. A lead is
+   * Auto-CRM when its sourceChannel contains one of these keywords; ADMIN is the
+   * complement (null / blank source counts as ADMIN).
+   */
+  private autoCrmClauses(): Prisma.LeadWhereInput[] {
+    return AUTO_CRM_SOURCE_KEYWORDS.map(
+      (k): Prisma.LeadWhereInput => ({
+        sourceChannel: { contains: k, mode: 'insensitive' },
+      }),
+    );
+  }
+
+  /**
+   * The leads-list TAB predicate, reproduced server-side so the paginated list
+   * matches the client buckets exactly (adaptLead/mapStatus/deriveAssignmentType):
+   *   ADMIN       → NOT(auto-crm)              (null source is ADMIN)
+   *   AUTO_CRM    → auto-crm
+   *   OVERDUE     → status = LOST              (slaStatus OVERDUE)
+   *   PAYMENT     → status = PROPOSAL_SENT
+   *   APPOINTMENT → status in (FOLLOW_UP, QUALIFIED)
+   *   ALL / unknown → no predicate.
+   */
+  private tabWhere(tab?: string): Prisma.LeadWhereInput | null {
+    switch (tab) {
+      case 'ADMIN':
+        // ADMIN = the complement of Auto-CRM. A NULL sourceChannel is ADMIN
+        // (deriveAssignmentType: blank → ADMIN), so include it EXPLICITLY:
+        // `NOT (col ILIKE …)` alone drops NULL rows under SQL 3-valued logic,
+        // which would then disagree with the ADMIN count (ALL − AUTO_CRM).
+        return {
+          OR: [{ sourceChannel: null }, { NOT: { OR: this.autoCrmClauses() } }],
+        };
+      case 'AUTO_CRM':
+        return { OR: this.autoCrmClauses() };
+      case 'OVERDUE':
+        return { status: LeadStatus.LOST };
+      case 'PAYMENT':
+        return { status: LeadStatus.PROPOSAL_SENT };
+      case 'APPOINTMENT':
+        return { status: { in: [LeadStatus.FOLLOW_UP, LeadStatus.QUALIFIED] } };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Build the Prisma `where` for the accessible-leads list — shared by
+   * findAllAccessible (GET /leads) and findAccessiblePage (GET /leads/page).
+   *
+   * CRITICAL: the rep-scope, the search and the tab predicate each live as their
+   * OWN entry inside a single top-level `AND: []` array — NEVER as sibling `OR:`
+   * keys on this object. Object spread means a second `OR:` key would silently
+   * CLOBBER the first, dropping the rep scope and letting a `view_assigned` rep
+   * search across EVERY rep's leads (the org-wide leak from #253). Access scoping
+   * must survive a search / tab / filter — an agent only ever sees their own book.
+   */
+  private async buildAccessibleWhere(
+    query: ListLeadsQueryDto,
+    user: RequestUser,
+  ): Promise<Prisma.LeadWhereInput> {
     // Resolved before the where-clause is built: a phone term has to become a
     // set of ids, because Prisma can't express the digits-only comparison.
     const phoneMatchIds = query.search ? await this.phoneSearchLeadIds(query.search) : [];
     // Also fold in leads whose converted CLIENT's name matches — see
     // clientNameLeadIds (the client name is often the one the rep knows).
     const clientNameIds = query.search ? await this.clientNameLeadIds(query.search) : [];
+
+    const tabClause = this.tabWhere(query.tab);
 
     const where: Prisma.LeadWhereInput = {
       deletedAt: null,
@@ -607,6 +733,8 @@ export class LeadsService {
       ...(query.sourceChannel ? { sourceChannel: { equals: query.sourceChannel, mode: 'insensitive' } } : {}),
       ...(query.serviceInterest ? { serviceInterest: { equals: query.serviceInterest, mode: 'insensitive' } } : {}),
       ...(query.targetCountry ? { targetCountry: { equals: query.targetCountry, mode: 'insensitive' } } : {}),
+      ...(query.priority ? { priority: query.priority as LeadPriority } : {}),
+      ...(query.emailVerified ? { emailVerified: query.emailVerified === 'yes' } : {}),
       ...this.createdRange(query),
       // CSV-origin filter: lead has at least one import-row with a
       // successful (IMPORTED or DUPLICATE) outcome. A lead drops off this
@@ -636,23 +764,8 @@ export class LeadsService {
             },
           }
         : {}),
-      // Rep-scope AND search each need their own OR group — and BOTH must hold.
-      // They go inside a single `AND` array, NOT as two sibling `OR:` keys on
-      // this object: object spread means a second `OR:` key silently CLOBBERS
-      // the first, so `{...repScopeOR, ...searchOR}` would drop the rep scope and
-      // let a `view_assigned` rep search across EVERY rep's leads. Access
-      // scoping must survive a search — an agent only ever sees their own book.
       AND: [
-        ...(!canViewAll
-          ? [
-              {
-                OR: [
-                  { assignedEmployee: { userId: user.id } },
-                  { createdByUserId: user.id },
-                ],
-              } satisfies Prisma.LeadWhereInput,
-            ]
-          : []),
+        ...this.repScopeAnd(user),
         // Multi-word search: each whitespace token must hit one of the direct
         // fields, OR the lead's id is in one of the pre-computed escape sets
         // (phone digits / converted-client full name — both already handle
@@ -680,6 +793,9 @@ export class LeadsService {
               })(),
             ]
           : []),
+        // Tab bucket (Admin / Auto CRM / Overdue / Payment / Appointment) as its
+        // OWN AND entry — see the class comment above about never siblinging OR:.
+        ...(tabClause ? [tabClause] : []),
       ],
     };
 
@@ -689,52 +805,154 @@ export class LeadsService {
       where.id = { in: await this.adLeadIds(query.adSourceId) };
     }
 
-    // Admins default to 250 rows; agents default to 10000. The UI
-    // filters/searches/counts client-side, so an agent must load their FULL
-    // assigned queue or the KPI cards + tab counts (Auto CRM, SLA Active,
-    // Overdue…) top out at the page size instead of the real total. Agents
-    // therefore default to 10000 → they get every assigned lead and honest
-    // totals no matter how large their book (raised from 1000 so high-volume
-    // reps are never silently truncated). Admins with `leads.view_all` see the
-    // whole org (thousands), so they keep the lean 250 default to avoid a heavy
-    // payload; they can pass `?limit=` (clamped at 10000) or use the per-agent
-    // roster. The clamp still stops a curious agent from pulling the entire org
-    // with `?limit=999999`.
+    return where;
+  }
+
+  async findAllAccessible(query: ListLeadsQueryDto, user: RequestUser) {
+    const where = await this.buildAccessibleWhere(query, user);
+    const canViewAll = user.permissions.includes('leads.view_all');
+
+    // Admins default to 250 rows; agents default to 10000. This LEGACY list is
+    // still loaded whole by the sales dashboard / appointments pages and the CSV
+    // export, so its contract is unchanged — the scalable per-page path for the
+    // big Sales leads list is findAccessiblePage below. The clamp still stops a
+    // curious agent from pulling the entire org with `?limit=999999`.
     const defaultLimit = canViewAll ? 250 : 10000;
     const rawLimit = query.limit ? parseInt(query.limit, 10) : defaultLimit;
     const take = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : defaultLimit, 1), 10000);
 
     return this.prisma.lead.findMany({
       where,
-      include: {
-        assignedEmployee: {
-          select: { id: true, firstName: true, lastName: true },
-        },
-        branch: { select: { id: true, name: true } },
-        referralPartner: {
-          select: { id: true, companyName: true, referralCode: true },
-        },
-        // CSV-origin metadata for the CSV LEAD badge on every list view.
-        // Always included now (single-row lateral join — negligible cost
-        // versus the badge value of "see at a glance where this lead
-        // came from"). The frontend renders the badge whenever the array
-        // is non-empty.
-        importRows: {
-          where: { outcome: { in: ['IMPORTED', 'DUPLICATE'] } },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: {
-            id: true,
-            createdAt: true,
-            batch: {
-              select: { id: true, batchNumber: true, name: true },
-            },
-          },
-        },
-      },
+      include: LEAD_LIST_INCLUDE,
       orderBy: { createdAt: 'desc' },
       take,
     });
+  }
+
+  /**
+   * Paginated accessible-leads list for the Sales leads page. SAME `where`,
+   * `include` and ordering as findAllAccessible, but with skip/take + a total
+   * count so the client renders 30 rows at a time and shows "X of total".
+   * pageSize defaults to 30 (clamped 1..100); page defaults to 1. The search
+   * term spans the rep's ENTIRE book (it's part of the where, not the page).
+   */
+  async findAccessiblePage(
+    query: ListLeadsQueryDto,
+    user: RequestUser,
+  ): Promise<{
+    items: Awaited<ReturnType<LeadsService['findAllAccessible']>>;
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const where = await this.buildAccessibleWhere(query, user);
+
+    const rawPageSize = query.pageSize ? parseInt(query.pageSize, 10) : 30;
+    const pageSize = Math.min(Math.max(Number.isFinite(rawPageSize) ? rawPageSize : 30, 1), 100);
+    const rawPage = query.page ? parseInt(query.page, 10) : 1;
+    const page = Math.max(Number.isFinite(rawPage) ? rawPage : 1, 1);
+
+    // Two aggregate reads (findMany + count) — NOT a per-row fan-out, so this is
+    // safe against the 15-connection pool.
+    const [items, total] = await Promise.all([
+      this.prisma.lead.findMany({
+        where,
+        include: LEAD_LIST_INCLUDE,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.lead.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
+  }
+
+  /**
+   * Book-wide aggregate index for the Sales leads page: the KPI / tab counts
+   * plus the country & service dropdown options. Everything here IGNORES
+   * search / tab / advanced filters — the counts are the rep's WHOLE book
+   * (matching the old behaviour where the tiles read the full loaded array).
+   * Rep-scope only.
+   *
+   * Counts come from ONE groupBy(['status']) + ONE count(auto-crm) — no rows are
+   * loaded. countries / services are two distinct-value groupBys under the same
+   * scope. (`_query` is accepted for signature symmetry but not used: the index
+   * is deliberately independent of the current filter set.)
+   */
+  async leadsListIndex(
+    user: RequestUser,
+    _query?: ListLeadsQueryDto,
+  ): Promise<{
+    counts: {
+      ALL: number;
+      ADMIN: number;
+      AUTO_CRM: number;
+      OVERDUE: number;
+      PAYMENT: number;
+      APPOINTMENT: number;
+      SLA_ACTIVE: number;
+    };
+    countries: string[];
+    services: string[];
+  }> {
+    const scopeWhere: Prisma.LeadWhereInput = {
+      deletedAt: null,
+      AND: this.repScopeAnd(user),
+    };
+
+    const [byStatus, autoCrm, countryRows, serviceRows] = await Promise.all([
+      this.prisma.lead.groupBy({
+        by: ['status'],
+        where: scopeWhere,
+        _count: { _all: true },
+      }),
+      this.prisma.lead.count({
+        where: { AND: [scopeWhere, { OR: this.autoCrmClauses() }] },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['targetCountry'],
+        where: { AND: [scopeWhere, { targetCountry: { not: null } }] },
+        orderBy: { targetCountry: 'asc' },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['serviceInterest'],
+        where: { AND: [scopeWhere, { serviceInterest: { not: null } }] },
+        orderBy: { serviceInterest: 'asc' },
+      }),
+    ]);
+
+    const byStatusCount: Record<string, number> = {};
+    let total = 0;
+    for (const r of byStatus) {
+      const n = r._count._all;
+      byStatusCount[r.status] = n;
+      total += n;
+    }
+    const st = (s: LeadStatus): number => byStatusCount[s] ?? 0;
+
+    const counts = {
+      ALL: total,
+      AUTO_CRM: autoCrm,
+      // ADMIN is the complement of AUTO_CRM (null/blank source included) — never
+      // load rows for it, just subtract (matches deriveAssignmentType exactly).
+      ADMIN: Math.max(total - autoCrm, 0),
+      OVERDUE: st(LeadStatus.LOST),
+      PAYMENT: st(LeadStatus.PROPOSAL_SENT),
+      APPOINTMENT: st(LeadStatus.FOLLOW_UP) + st(LeadStatus.QUALIFIED),
+      SLA_ACTIVE: st(LeadStatus.NEW) + st(LeadStatus.CONTACTED) + st(LeadStatus.FOLLOW_UP),
+    };
+
+    const countries = countryRows
+      .map((r) => r.targetCountry)
+      .filter((c): c is string => !!c)
+      .sort((a, b) => a.localeCompare(b));
+    const services = serviceRows
+      .map((r) => r.serviceInterest)
+      .filter((s): s is string => !!s)
+      .sort((a, b) => a.localeCompare(b));
+
+    return { counts, countries, services };
   }
 
   /**

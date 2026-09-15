@@ -5,7 +5,7 @@
  * All components import their data via the hooks in this file instead of MOCK data.
  */
 
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, buildQuery } from '@/lib/api-client';
 import { getAccessToken } from '@/lib/auth-client';
 import type {
   Lead,
@@ -328,6 +328,92 @@ export function adaptAppointment(api: ApiAppointment): Appointment {
 export async function fetchLeads(): Promise<Lead[]> {
   const data = await apiFetch<ApiLead[]>('/leads');
   return (data ?? []).map(adaptLead);
+}
+
+// ---------------------------------------------------------------------------
+// Server-driven leads list (Sales "Assigned Leads" page)
+//
+// The assigned-leads page used to load a rep's ENTIRE book (up to 10k rows) via
+// fetchLeads() and filter / count / paginate in the browser. With reps now
+// holding 3–5k leads that was very slow. These two helpers move all of that
+// server-side: a 30-row page (search + tab + filters applied over the WHOLE
+// book) and a book-wide aggregate index for the KPI tiles + dropdown options.
+//
+// fetchLeads() / GET /leads are LEFT UNTOUCHED — the sales dashboard and
+// appointments pages still use them.
+// ---------------------------------------------------------------------------
+
+export interface LeadsPage {
+  items: Lead[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface LeadsListIndexCounts {
+  ALL: number;
+  ADMIN: number;
+  AUTO_CRM: number;
+  OVERDUE: number;
+  PAYMENT: number;
+  APPOINTMENT: number;
+  SLA_ACTIVE: number;
+}
+
+export interface LeadsListIndex {
+  counts: LeadsListIndexCounts;
+  countries: string[];
+  services: string[];
+}
+
+const EMPTY_LEADS_LIST_INDEX: LeadsListIndex = {
+  counts: { ALL: 0, ADMIN: 0, AUTO_CRM: 0, OVERDUE: 0, PAYMENT: 0, APPOINTMENT: 0, SLA_ACTIVE: 0 },
+  countries: [],
+  services: [],
+};
+
+/**
+ * GET /leads/page — one 30-row page of the caller's accessible leads, with the
+ * tab bucket, free-text search and advanced filters ALL applied server-side
+ * across the rep's whole book. `filters` maps straight onto the backend query
+ * params (status / priority / serviceInterest / targetCountry / emailVerified);
+ * undefined entries are dropped by buildQuery.
+ */
+export async function fetchLeadsPage(params: {
+  page: number;
+  tab: string;
+  search?: string;
+  filters: Record<string, string | undefined>;
+}): Promise<LeadsPage> {
+  const qs = buildQuery({
+    page: params.page,
+    pageSize: 30,
+    tab: params.tab,
+    search: params.search,
+    ...params.filters,
+  });
+  const data = await apiFetch<{
+    items: ApiLead[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/leads/page${qs}`, { cache: 'no-store' });
+  return {
+    items: (data?.items ?? []).map(adaptLead),
+    total: data?.total ?? 0,
+    page: data?.page ?? params.page,
+    pageSize: data?.pageSize ?? 30,
+  };
+}
+
+/**
+ * GET /leads/list-index — book-wide KPI / tab counts + the country & service
+ * dropdown options. Independent of the current search / tab / filters, so the
+ * tiles show the rep's whole book (matching the old client-side behaviour).
+ */
+export async function fetchLeadsListIndex(): Promise<LeadsListIndex> {
+  const data = await apiFetch<LeadsListIndex>('/leads/list-index', { cache: 'no-store' });
+  return data ?? EMPTY_LEADS_LIST_INDEX;
 }
 
 /**

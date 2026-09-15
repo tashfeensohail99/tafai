@@ -26,6 +26,7 @@ import {
   type Lead,
   type LeadSource,
   type LeadStage,
+  type Priority,
   PRIORITY_LABEL,
   SOURCE_LABEL,
   STAGE_LABEL,
@@ -43,8 +44,13 @@ import {
   StatusBadge,
   type BadgeTone,
 } from '@/components/sales-v2/ui';
-import { fetchLeads } from '@/lib/sales-api';
-import { phoneMatches } from '@/lib/phone-search';
+import {
+  fetchLeadsPage,
+  fetchLeadsListIndex,
+  mapStageToStatus,
+  mapPriorityToApi,
+  type LeadsListIndex,
+} from '@/lib/sales-api';
 import { CsvLeadBadge } from '@/components/shared/CsvLeadBadge';
 import { DISPOSITION_LABEL } from '@/lib/whatsapp';
 import { Modal } from '@/components/whatsapp/Modal';
@@ -122,38 +128,56 @@ const SLA_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'COMPLETED', label: 'Completed' },
 ];
 
-/** Apply the advanced "Filters" panel selections on top of the tab + search. */
-function applyDetailFilters(leads: Lead[], f: DetailFilters): Lead[] {
-  let r = leads;
-  if (f.stage === 'PENDING') r = r.filter((l) => l.stage === 'NEW' || l.stage === 'ASSIGNED');
-  else if (f.stage) r = r.filter((l) => l.stage === f.stage);
-  if (f.priority) r = r.filter((l) => l.priority === f.priority);
-  if (f.source) r = r.filter((l) => l.source === f.source);
-  if (f.assignmentType) r = r.filter((l) => l.assignmentType === f.assignmentType);
-  if (f.slaStatus) r = r.filter((l) => l.slaStatus === f.slaStatus);
-  if (f.country) r = r.filter((l) => l.targetCountry === f.country);
-  if (f.service) r = r.filter((l) => l.service === f.service);
-  if (f.emailVerified === 'yes') r = r.filter((l) => l.emailVerified === true);
-  if (f.emailVerified === 'no') r = r.filter((l) => l.emailVerified !== true);
-  return r;
-}
+/**
+ * Translate the active tab + the advanced "Filters" panel into the query params
+ * the backend /leads/page endpoint understands. Everything is applied
+ * server-side now (over the rep's WHOLE book), so there is no client-side
+ * filtering left.
+ *
+ *   df.stage         → status  (reverse mapStatus; 'PENDING' → NEW)
+ *   df.priority      → priority (HIGH→HOT / MEDIUM→WARM / LOW→COLD)
+ *   df.service       → serviceInterest
+ *   df.country       → targetCountry
+ *   df.emailVerified → emailVerified ('yes' | 'no')
+ *   df.assignmentType→ tab (ADMIN | AUTO_CRM)
+ *
+ * df.source and df.slaStatus have no clean 1:1 server mapping over the paginated
+ * set (source is free-text collapsed by mapSource; slaStatus is a derived,
+ * multi-status bucket), so they are intentionally NOT sent — see the task notes.
+ *
+ * The backend expresses ADMIN/AUTO_CRM only through `tab`, so when the advanced
+ * assignment filter is set we fold a single-status tab (OVERDUE→LOST,
+ * PAYMENT→PROPOSAL_SENT) into `status` first so it isn't lost, then let the
+ * assignment own `tab`. The APPOINTMENT tab spans two statuses and can't fold
+ * into one `status`, so that rare combination drops the status side.
+ */
+function buildServerParams(
+  tab: FilterKey,
+  df: DetailFilters,
+): { tab: string; filters: Record<string, string | undefined> } {
+  let effTab: string = tab;
+  let status: string | undefined = df.stage
+    ? mapStageToStatus(df.stage as LeadStage)
+    : undefined;
 
-function applyFilter(leads: Lead[], key: FilterKey): Lead[] {
-  switch (key) {
-    case 'ADMIN':
-      return leads.filter((l) => l.assignmentType === 'ADMIN');
-    case 'AUTO_CRM':
-      return leads.filter((l) => l.assignmentType === 'AUTO_CRM');
-    case 'OVERDUE':
-      return leads.filter((l) => l.slaStatus === 'OVERDUE');
-    case 'PAYMENT':
-      return leads.filter((l) => l.stage === 'PAYMENT_INTERESTED' || l.stage === 'RECEIPT_UPLOADED');
-    case 'APPOINTMENT':
-      return leads.filter((l) => l.stage === 'MEETING_NEEDED' || l.stage === 'APPOINTMENT_BOOKED');
-    case 'ALL':
-    default:
-      return leads;
+  if (df.assignmentType === 'ADMIN' || df.assignmentType === 'AUTO_CRM') {
+    if (!status) {
+      if (tab === 'OVERDUE') status = 'LOST';
+      else if (tab === 'PAYMENT') status = 'PROPOSAL_SENT';
+    }
+    effTab = df.assignmentType;
   }
+
+  return {
+    tab: effTab,
+    filters: {
+      status,
+      priority: df.priority ? mapPriorityToApi(df.priority as Priority) : undefined,
+      serviceInterest: df.service || undefined,
+      targetCountry: df.country || undefined,
+      emailVerified: df.emailVerified || undefined,
+    },
+  };
 }
 
 function stageBadgeTone(stage: LeadStage): BadgeTone {
@@ -254,49 +278,115 @@ function StatBox({
 }
 
 // Returning from a lead detail should land the rep exactly where they were.
-// This page scrolls on the WINDOW and refetches on mount, so without help the
-// list remounts short (loading spinner) and the browser lands at the top. We
-// keep the last list + the last window scroll offset module-scoped (survives the
-// remount) so the list renders instantly on Back and we restore the offset.
-let cachedLeads: Lead[] | null = null;
+// The list is now server-paginated, so we cache the whole loaded VIEW (the
+// accumulated rows, the page reached, the server total, the aggregate index and
+// the tab/search/filter state they belong to) module-scoped. That survives the
+// remount, so pressing Back renders the exact same list instantly (no blank, no
+// refetch) and we restore the window scroll offset into it.
+interface LeadsView {
+  leads: Lead[];
+  total: number;
+  page: number;
+  tab: FilterKey;
+  query: string;
+  df: DetailFilters;
+  index: LeadsListIndex | null;
+}
+let cachedView: LeadsView | null = null;
 let savedLeadsScrollY = 0;
 
+const EMPTY_COUNTS: LeadsListIndex['counts'] = {
+  ALL: 0, ADMIN: 0, AUTO_CRM: 0, OVERDUE: 0, PAYMENT: 0, APPOINTMENT: 0, SLA_ACTIVE: 0,
+};
+
 export function SalesLeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>(cachedLeads ?? []);
-  // No loading spinner when we already have a cached list — render it instantly
-  // so the page has its full height for the scroll restore to land into.
-  const [loading, setLoading] = useState(cachedLeads == null);
+  const [leads, setLeads] = useState<Lead[]>(cachedView?.leads ?? []);
+  const [total, setTotal] = useState<number>(cachedView?.total ?? 0);
+  const [page, setPage] = useState<number>(cachedView?.page ?? 1);
+  const [index, setIndex] = useState<LeadsListIndex | null>(cachedView?.index ?? null);
+  // Full-page spinner only for the very first load (no cache to render).
+  const [loading, setLoading] = useState(cachedView == null);
+  // Lighter indicator for tab/search/filter refetches — keeps the old rows on
+  // screen (dimmed) rather than blanking the list.
+  const [listLoading, setListLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<FilterKey>('ALL');
-  const [query, setQuery] = useState('');
+  const [tab, setTab] = useState<FilterKey>(cachedView?.tab ?? 'ALL');
+  const [query, setQuery] = useState(cachedView?.query ?? '');
+  const [debouncedQuery, setDebouncedQuery] = useState(cachedView?.query ?? '');
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [df, setDf] = useState<DetailFilters>(EMPTY_FILTERS);
+  const [df, setDf] = useState<DetailFilters>(cachedView?.df ?? EMPTY_FILTERS);
   // Add-follow-up popup opened straight from a lead card — no navigation, so
   // the rep never loses their scroll position in the list.
   const [followUpTarget, setFollowUpTarget] = useState<Lead | null>(null);
   const activeFilterCount = Object.values(df).filter(Boolean).length;
   const scrollRestored = useRef(false);
+  // When we hydrate from the cache on mount, skip exactly ONE page-1 fetch so
+  // pressing Back doesn't blank + refetch the list the rep was already viewing.
+  const skipInitialFetch = useRef(cachedView != null);
 
-  useEffect(() => {
-    let alive = true;
-    // Always refetch for freshness; when we have a cache we do it in the
-    // background (loading already false) so the list never blanks on return.
-    fetchLeads()
-      .then((data) => {
-        if (!alive) return;
-        cachedLeads = data;
-        setLeads(data);
+  // Every tab / search / advanced-filter selection maps to the same set of
+  // server params — memoised so the fetch effect and "Load more" agree.
+  const serverParams = useMemo(() => buildServerParams(tab, df), [tab, df]);
+
+  // Fetch page 1 for the current view. Used both by the change-effect and the
+  // error "Retry" button. Always REPLACES the list (page reset to 1).
+  const refetchFirstPage = () => {
+    setListLoading(true);
+    setError(null);
+    return fetchLeadsPage({
+      page: 1,
+      tab: serverParams.tab,
+      search: debouncedQuery.trim() || undefined,
+      filters: serverParams.filters,
+    })
+      .then((res) => {
+        setLeads(res.items);
+        setTotal(res.total);
+        setPage(1);
       })
       .catch((e) => {
-        if (alive && cachedLeads == null) setError(e?.message ?? 'Failed to load leads');
+        setError((e as Error)?.message ?? 'Failed to load leads');
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        setListLoading(false);
+        setLoading(false);
       });
-    return () => {
-      alive = false;
-    };
+  };
+
+  // Debounce the search box so each keypress doesn't hit the server (~300ms).
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Book-wide KPI/tab counts + dropdown options. Independent of search/tab/
+  // filters, so fetched once per mount (background-refreshed when we had a
+  // cache — the cached numbers show instantly meanwhile).
+  useEffect(() => {
+    let alive = true;
+    fetchLeadsListIndex()
+      .then((idx) => { if (alive) setIndex(idx); })
+      .catch(() => { /* keep whatever we already have */ });
+    return () => { alive = false; };
   }, []);
+
+  // Page-1 (re)load whenever the tab, debounced search or advanced filters
+  // change. On the first mount after a cache-hydrate we skip this exactly once.
+  useEffect(() => {
+    if (skipInitialFetch.current) {
+      skipInitialFetch.current = false;
+      return;
+    }
+    void refetchFirstPage();
+    // refetchFirstPage closes over the current serverParams + debouncedQuery.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverParams, debouncedQuery]);
+
+  // Persist the current view so pressing Back from a lead restores it instantly.
+  useEffect(() => {
+    cachedView = { leads, total, page, tab, query: debouncedQuery, df, index };
+  }, [leads, total, page, tab, debouncedQuery, df, index]);
 
   // Continuously remember the window scroll offset so we can put the rep back
   // exactly where they were after they open a lead and press Back.
@@ -316,59 +406,42 @@ export function SalesLeadsPage() {
     if (savedLeadsScrollY > 0) window.scrollTo(0, savedLeadsScrollY);
   }, [leads.length]);
 
-  // Distinct country / service values present in the data — drive the
-  // dropdowns so they only ever show options that match real leads.
-  const countryOptions = useMemo(
-    () => Array.from(new Set(leads.map((l) => l.targetCountry).filter(Boolean))).sort(),
-    [leads],
-  );
-  const serviceOptions = useMemo(
-    () => Array.from(new Set(leads.map((l) => l.service).filter(Boolean))).sort(),
-    [leads],
-  );
+  // KPI tiles + tab counts + dropdown options come from the book-wide index —
+  // NOT from the loaded rows.
+  const counts = index?.counts ?? EMPTY_COUNTS;
+  const slaActive = counts.SLA_ACTIVE;
+  const countryOptions = index?.countries ?? [];
+  const serviceOptions = index?.services ?? [];
 
-  const filtered = useMemo(() => {
-    let result = applyFilter(leads, tab);
-    result = applyDetailFilters(result, df);
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      result = result.filter(
-        (l) =>
-          `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
-          l.phone.toLowerCase().includes(q) ||
-          // Numbers are stored +92…, everyone types 0… — without this a rep
-          // searching the number reception wrote down finds nothing.
-          phoneMatches(l.phone, query) ||
-          l.service.toLowerCase().includes(q) ||
-          l.targetCountry.toLowerCase().includes(q) ||
-          (l.referenceCode ?? '').toLowerCase().includes(q) ||
-          (l.email ?? '').toLowerCase().includes(q) ||
-          // Searchable by WhatsApp CRM disposition (e.g. "qualified", "junk").
-          (l.disposition
-            ? (DISPOSITION_LABEL[l.disposition as keyof typeof DISPOSITION_LABEL] ?? l.disposition)
-                .toLowerCase()
-                .includes(q)
-            : false),
-      );
+  async function loadMore() {
+    if (loadingMore || leads.length >= total) return;
+    const next = page + 1;
+    setLoadingMore(true);
+    try {
+      const res = await fetchLeadsPage({
+        page: next,
+        tab: serverParams.tab,
+        search: debouncedQuery.trim() || undefined,
+        filters: serverParams.filters,
+      });
+      setLeads((prev) => [...prev, ...res.items]);
+      setTotal(res.total);
+      setPage(next);
+    } catch (e) {
+      setError((e as Error)?.message ?? 'Failed to load more leads');
+    } finally {
+      setLoadingMore(false);
     }
-    return result;
-  }, [leads, tab, query, df]);
+  }
 
-  const counts = useMemo(
-    () => ({
-      ALL: leads.length,
-      ADMIN: leads.filter((l) => l.assignmentType === 'ADMIN').length,
-      AUTO_CRM: leads.filter((l) => l.assignmentType === 'AUTO_CRM').length,
-      OVERDUE: leads.filter((l) => l.slaStatus === 'OVERDUE').length,
-      PAYMENT: leads.filter((l) => l.stage === 'PAYMENT_INTERESTED' || l.stage === 'RECEIPT_UPLOADED').length,
-      APPOINTMENT: leads.filter((l) => l.stage === 'MEETING_NEEDED' || l.stage === 'APPOINTMENT_BOOKED').length,
-    }),
-    [leads],
-  );
+  function resetAll() {
+    setTab('ALL');
+    setQuery('');
+    setDebouncedQuery('');
+    setDf(EMPTY_FILTERS);
+  }
 
-  const slaActive = leads.filter((l) => l.slaStatus === 'ACTIVE').length;
-
-  if (loading) {
+  if (loading && leads.length === 0) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
         <Loader2 size={20} className="sos-spin" />
@@ -377,12 +450,12 @@ export function SalesLeadsPage() {
     );
   }
 
-  if (error) {
+  if (error && leads.length === 0) {
     return (
       <EmptyState
         title="Could not load leads"
         description={error}
-        action={<PrimaryButton onClick={() => { setError(null); setLoading(true); fetchLeads().then((d) => { cachedLeads = d; setLeads(d); }).catch((e) => setError(e?.message ?? 'Failed')).finally(() => setLoading(false)); }}>Retry</PrimaryButton>}
+        action={<PrimaryButton onClick={() => { setLoading(true); void refetchFirstPage(); }}>Retry</PrimaryButton>}
       />
     );
   }
@@ -501,7 +574,7 @@ export function SalesLeadsPage() {
                 alignSelf: 'center',
               }}
             >
-              <strong style={{ color: 'var(--sos-text-primary)' }}>{filtered.length}</strong> of {leads.length} match
+              <strong style={{ color: 'var(--sos-text-primary)' }}>{total}</strong> {total === 1 ? 'match' : 'matches'}
             </span>
             <button
               type="button"
@@ -513,7 +586,7 @@ export function SalesLeadsPage() {
               Clear all
             </button>
             <PrimaryButton onClick={() => setFiltersOpen(false)}>
-              Show {filtered.length} {filtered.length === 1 ? 'lead' : 'leads'}
+              Show {total} {total === 1 ? 'lead' : 'leads'}
             </PrimaryButton>
           </>
         }
@@ -583,28 +656,55 @@ export function SalesLeadsPage() {
       </Modal>
 
       {/* Lead grid */}
-      {filtered.length === 0 ? (
+      {listLoading && leads.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '30vh', gap: '10px', color: 'var(--sos-text-muted)' }}>
+          <Loader2 size={20} className="sos-spin" />
+          <span>Loading leads…</span>
+        </div>
+      ) : leads.length === 0 ? (
         <EmptyState
           title="No leads match this filter"
           description="Try clearing the search or switching to another tab to see more results."
           action={
-            <PrimaryButton onClick={() => { setTab('ALL'); setQuery(''); setDf(EMPTY_FILTERS); }}>
+            <PrimaryButton onClick={resetAll}>
               Reset filters
             </PrimaryButton>
           }
         />
       ) : (
-        <section
-          style={{
-            display: 'grid',
-            gap: '16px',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',
-          }}
-        >
-          {filtered.map((lead) => (
-            <LeadCard key={lead.id} lead={lead} onAddFollowUp={setFollowUpTarget} />
-          ))}
-        </section>
+        <>
+          <section
+            style={{
+              display: 'grid',
+              gap: '16px',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',
+              // Dim (but keep) the current rows while a tab/search/filter change
+              // is loading, so the list never blanks.
+              opacity: listLoading ? 0.55 : 1,
+              transition: 'opacity 120ms ease',
+            }}
+          >
+            {leads.map((lead) => (
+              <LeadCard key={lead.id} lead={lead} onAddFollowUp={setFollowUpTarget} />
+            ))}
+          </section>
+
+          {/* Paging footer — "showing X of total" + Load more. */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', marginTop: '4px' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--sos-text-muted)' }}>
+              Showing <strong style={{ color: 'var(--sos-text-primary)' }}>{leads.length}</strong> of {total}
+            </span>
+            {leads.length < total ? (
+              <SecondaryButton
+                onClick={loadMore}
+                disabled={loadingMore}
+                iconLeft={loadingMore ? <Loader2 size={15} className="sos-spin" /> : undefined}
+              >
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </SecondaryButton>
+            ) : null}
+          </div>
+        </>
       )}
     </div>
   );

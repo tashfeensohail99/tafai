@@ -78,6 +78,38 @@ export class LeadsController {
     return this.leadsService.salesDashboardSummary(user);
   }
 
+  /**
+   * Paginated accessible-leads list for the Sales leads page (page size 30).
+   * Same scope / search / filters as GET / but returns { items, total, page,
+   * pageSize } so the browser renders 30 rows at a time instead of the whole
+   * book. Search + tab + advanced filters are all resolved server-side and span
+   * the rep's entire book. Mounted before @Get(':id') so 'page' isn't parsed
+   * as a UUID.
+   */
+  @Get('page')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  findPage(
+    @Query() query: ListLeadsQueryDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.leadsService.findAccessiblePage(query, user);
+  }
+
+  /**
+   * Book-wide KPI / tab counts + country / service dropdown options for the
+   * Sales leads page. Rep-scoped; ignores search / tab / advanced filters. One
+   * groupBy + one count, no rows loaded. Mounted before @Get(':id') so
+   * 'list-index' isn't parsed as a UUID.
+   */
+  @Get('list-index')
+  @RequireAnyPermissions('leads.view_all', 'leads.view_assigned')
+  listIndex(
+    @Query() query: ListLeadsQueryDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.leadsService.leadsListIndex(user, query);
+  }
+
   /** KPI summary for the admin leads dashboard (total, by status, from ads). */
   @Get('stats')
   @RequirePermissions('leads.view_all')

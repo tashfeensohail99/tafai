@@ -103,6 +103,35 @@ export class ListLeadsQueryDto {
   @IsOptional()
   @IsNumberString()
   limit?: string;
+
+  /** 1-based page number for the paginated /leads/page endpoint (default 1). */
+  @IsOptional()
+  @IsNumberString()
+  page?: string;
+
+  /** Rows per page for /leads/page (default 30, clamped 1..100 server-side). */
+  @IsOptional()
+  @IsNumberString()
+  pageSize?: string;
+
+  /**
+   * Leads-list tab bucket. Reproduces the client buckets server-side so the
+   * paginated list matches the KPI/tab counts. See LeadsService.tabWhere.
+   */
+  @IsOptional()
+  @IsIn(['ALL', 'ADMIN', 'AUTO_CRM', 'OVERDUE', 'PAYMENT', 'APPOINTMENT'])
+  tab?: string;
+
+  /** Lead temperature filter (HOT | WARM | COLD). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  priority?: string;
+
+  /** Email-verification filter for the leads list. */
+  @IsOptional()
+  @IsIn(['yes', 'no'])
+  emailVerified?: string;
 }
 
 export class CreateLeadDto {

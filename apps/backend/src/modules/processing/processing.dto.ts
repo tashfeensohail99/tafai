@@ -332,6 +332,15 @@ export class UpdateCaseSubStageDto {
   subStage!: string | null;
 }
 
+/** Free-text processing-side notes about the payment / instalment plan. Null
+ *  clears it. */
+export class UpdatePaymentPlanNoteDto {
+  @ValidateIf((o) => o.paymentPlanNote !== null && o.paymentPlanNote !== undefined)
+  @IsString()
+  @MaxLength(4000)
+  paymentPlanNote!: string | null;
+}
+
 export class AssignCaseDto {
   @IsUUID()
   officerId!: string;

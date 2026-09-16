@@ -1,32 +1,59 @@
 /**
- * Per-service "sub-stage" picklists (feedback F3).
+ * Per-service "case stage" picklists — the processing team's own workflow
+ * labels (Suggested Interface, 2026-09-17), split by case type.
  *
- * A sub-stage is a LIGHTWEIGHT, editable tracking label an officer sets on a
- * case to communicate where inside the current phase the work sits (e.g. "Doc
- * collection", "Final submission under process"). It is display-only: it never
- * drives the ProcessingCaseStage state machine, document gates, SLA, or
- * reporting — those are all owned by `stage`.
- *
- * The feedback specified picklists for exactly two flows (Visit Visa and the
- * LMIA-exempt Work Permit). For EVERY OTHER service the field is free-text —
- * the officer types the label manually (or leaves it blank), per the doc's
- * "leave it blank or leave space for manual entry". Mirror of the frontend
- * `lib/processing-substages.ts` — keep the two in sync by hand.
+ * Stored on `ProcessingCase.subStage`. These are the team's day-to-day tracking
+ * labels; they sit ALONGSIDE the real `ProcessingCaseStage` state machine (which
+ * owns document gates, SLA and reporting) rather than replacing it. A few labels
+ * are wired to REAL actions in the UI — picking "Submitted" launches the
+ * validated Change-Stage flow, "Closed" launches the Close flow — and "Hold" /
+ * "Refund" surface as real badges (Hold shows the case is parked; Refund records
+ * a request only, it never triggers the finance refund engine). The rest are
+ * tracking labels. Mirror of the frontend `lib/processing-substages.ts` — keep
+ * the two in sync by hand.
  */
 
-// Cross-cutting case-status labels appended to every dropdown flow (processing
-// team request, 2026-09-11). Display-only tracking labels — they do NOT change
-// the case stage, close/approve a case, create a JR matter, or drive reporting.
-// Keep identical to the frontend lib/processing-substages.ts CASE_STATUS_LABELS.
-const CASE_STATUS_LABELS = [
-  'Case Approve', 'Case Refuse', 'In process', 'Case shifted to JR',
-  'Case on hold', 'Waiting for Request letter', 'Case Submitted',
+/** Selecting this reveals a free-text box — any label the officer types is then
+ *  accepted for that service (see isValidSubStage). Keep identical to the
+ *  frontend mirror. */
+export const OTHER_SUBSTAGE = 'Other (manual entry)';
+
+// Visit-visa flow.
+const VISIT_LIST = [
+  'Consultation & profile assessment',
+  'Documents collection',
+  'Submitted',
+  'JR',
+  'Resubmission',
+  'Escalation',
+  'Closed',
+  'Hold',
+  OTHER_SUBSTAGE,
+] as const;
+
+// Business / investment flow ("C11" on the mockup) — Work Permit + investor
+// programs.
+const BUSINESS_LIST = [
+  'Consultation & profile assessment',
+  'Business development',
+  'IT work',
+  'Investment approval',
+  'Exemption',
+  'Document collection',
+  'Submitted',
+  'JR',
+  'Resubmission',
+  'Refund',
+  'Escalation Department',
+  'Hold',
+  OTHER_SUBSTAGE,
 ] as const;
 
 export const CATEGORY_SUBSTAGE: Readonly<Record<string, readonly string[]>> = {
-  VISIT_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision', ...CASE_STATUS_LABELS],
-  // The "LMIA-exempt work permit" flow the processing team described.
-  WORK_PERMIT: ['Business meeting & profile assessment', 'Business establishment', 'Exemption', 'Doc collection', 'Final submission', 'Decision', ...CASE_STATUS_LABELS],
+  VISIT_VISA: VISIT_LIST,
+  WORK_PERMIT: BUSINESS_LIST,
+  E2_VISA: BUSINESS_LIST,
+  CBI: BUSINESS_LIST,
 };
 
 /** The sub-stage picklist for a service code, or [] when the service is
@@ -42,12 +69,17 @@ export function hasSubStageList(service: string): boolean {
 }
 
 /**
- * Validate a proposed sub-stage value for a service. Services WITH a picklist
- * must pick a member; services WITHOUT one accept any string (manual entry —
- * the DTO already bounds the length).
+ * Validate a proposed sub-stage value for a service.
+ * - Service WITH a picklist that INCLUDES "Other (manual entry)": a list member
+ *   OR any (length-bounded) free-text value the officer typed under "Other".
+ * - Service WITH a picklist WITHOUT an "Other" escape: must pick a member.
+ * - Service WITHOUT a picklist: any string (manual entry).
  */
 export function isValidSubStage(service: string, value: string): boolean {
   const list = CATEGORY_SUBSTAGE[service];
-  if (list && list.length > 0) return list.includes(value);
+  if (list && list.length > 0) {
+    if (list.includes(value)) return true;
+    return list.includes(OTHER_SUBSTAGE);
+  }
   return true;
 }

@@ -1,26 +1,51 @@
 /**
- * Per-service sub-stage picklists (feedback F3) — frontend mirror of the
- * backend `substage-templates.ts`. Keep the two in sync by hand (same pattern
- * as lib/service-types.ts). Sub-stages are display/tracking labels only; they
- * never affect the case stage, gates, SLA, or reporting.
+ * Per-service "case stage" picklists — the processing team's workflow labels
+ * (Suggested Interface, 2026-09-17), split by case type. Frontend mirror of the
+ * backend `substage-templates.ts`; keep the two in sync BY HAND (same pattern as
+ * lib/service-types.ts) or the backend validator will reject a value this
+ * dropdown offers.
  *
- * Only the two flows the feedback specified (Visit Visa + LMIA-exempt Work
- * Permit) get a fixed dropdown. Every other service is free-text — the officer
- * types the label manually or leaves it blank.
+ * These are the team's day-to-day labels on `ProcessingCase.subStage`, alongside
+ * the real ProcessingCaseStage state machine. A few drive REAL actions via
+ * `subStageAction()` (Submitted → Change Stage flow, Closed → Close flow); Hold
+ * and Refund render as real badges. The rest are tracking labels.
  */
 
-// Cross-cutting case-status labels appended to every dropdown flow (processing
-// team request, 2026-09-11). Display-only tracking labels. MUST stay identical
-// to the backend substage-templates.ts CASE_STATUS_LABELS or the backend
-// validator will reject a value this dropdown offers.
-const CASE_STATUS_LABELS = [
-  'Case Approve', 'Case Refuse', 'In process', 'Case shifted to JR',
-  'Case on hold', 'Waiting for Request letter', 'Case Submitted',
+export const OTHER_SUBSTAGE = 'Other (manual entry)';
+
+const VISIT_LIST = [
+  'Consultation & profile assessment',
+  'Documents collection',
+  'Submitted',
+  'JR',
+  'Resubmission',
+  'Escalation',
+  'Closed',
+  'Hold',
+  OTHER_SUBSTAGE,
+];
+
+const BUSINESS_LIST = [
+  'Consultation & profile assessment',
+  'Business development',
+  'IT work',
+  'Investment approval',
+  'Exemption',
+  'Document collection',
+  'Submitted',
+  'JR',
+  'Resubmission',
+  'Refund',
+  'Escalation Department',
+  'Hold',
+  OTHER_SUBSTAGE,
 ];
 
 export const CATEGORY_SUBSTAGE: Record<string, string[]> = {
-  VISIT_VISA: ['Doc collection', 'Hold', 'Final submission under process', 'Submission done', 'Decision', ...CASE_STATUS_LABELS],
-  WORK_PERMIT: ['Business meeting & profile assessment', 'Business establishment', 'Exemption', 'Doc collection', 'Final submission', 'Decision', ...CASE_STATUS_LABELS],
+  VISIT_VISA: VISIT_LIST,
+  WORK_PERMIT: BUSINESS_LIST,
+  E2_VISA: BUSINESS_LIST,
+  CBI: BUSINESS_LIST,
 };
 
 /** The sub-stage picklist for a service code, or [] when it is free-text. */
@@ -32,4 +57,35 @@ export function subStagesForService(service: string): string[] {
  *  free-text manual entry. */
 export function hasSubStageList(service: string): boolean {
   return (CATEGORY_SUBSTAGE[service]?.length ?? 0) > 0;
+}
+
+/** The "Other (manual entry)" escape hatch — reveal a free-text box. */
+export function isOtherSubStage(value: string | null | undefined): boolean {
+  return value === OTHER_SUBSTAGE;
+}
+
+/**
+ * A picked label that should launch a REAL, validated case action instead of
+ * being a plain tracking label:
+ *  - 'submit' → open the Change-Stage flow (officer confirms SUBMITTED + ref)
+ *  - 'close'  → open the Close/Complete flow (officer confirms + notes)
+ * Everything else returns null (it's a tracking label). JR is intentionally a
+ * tracking label — the real JR hand-off is its own gated flow (a case must be
+ * refused first), so this never auto-escalates.
+ */
+export function subStageAction(value: string | null | undefined): 'submit' | 'close' | null {
+  if (value === 'Submitted') return 'submit';
+  if (value === 'Closed') return 'close';
+  return null;
+}
+
+/** Hold label → the case is parked (shown as an "On hold" badge). */
+export function isHoldSubStage(value: string | null | undefined): boolean {
+  return value === 'Hold';
+}
+
+/** Refund label → records that a refund was requested (badge only — it does NOT
+ *  move any money). */
+export function isRefundSubStage(value: string | null | undefined): boolean {
+  return value === 'Refund';
 }

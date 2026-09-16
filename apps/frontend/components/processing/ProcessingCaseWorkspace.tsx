@@ -65,7 +65,14 @@ import {
   type ApiProcessingCaseDetail,
   type CaseFinanceSummary,
 } from '@/lib/processing';
-import { subStagesForService, hasSubStageList } from '@/lib/processing-substages';
+import {
+  subStagesForService,
+  hasSubStageList,
+  subStageAction,
+  isHoldSubStage,
+  isRefundSubStage,
+  OTHER_SUBSTAGE,
+} from '@/lib/processing-substages';
 import { labelForServiceCode } from '@/lib/service-types';
 import { stageTone, priorityTone } from './ProcessingDashboardPage';
 import { DocumentChecklistTab } from './tabs/DocumentChecklistTab';
@@ -136,30 +143,39 @@ function MetaDivider() {
 // at-a-glance state (stage, priority, time-in-stage) plus a clickable finance
 // KPI that opens the Finance tab. Wraps gracefully on narrow widths.
 /**
- * Editable sub-stage label (feedback F3) — a compact per-service picklist that
- * sits beside the Stage badge. Purely a tracking label; it does not change the
- * case stage. Clearing (the "—" option) sends null.
+ * The processing team's "Case stage" picker — a per-case-type picklist of their
+ * own workflow labels (Suggested Interface, 2026-09-17). It sits beside the real
+ * engine Stage badge. Most labels are tracking-only, but the action ones drive
+ * REAL flows: picking "Submitted" opens the Change-Stage flow and "Closed" opens
+ * the Close flow (via onAction → the workspace modals). "Hold" / "Refund" surface
+ * as badges here. "Other (manual entry)" reveals a free-text box.
  */
 function SubStagePicker({
   caseId,
   service,
   value,
   onChanged,
+  onAction,
 }: {
   caseId: string;
   service: string;
   value: string | null | undefined;
   onChanged: () => void;
+  onAction?: (action: 'submit' | 'close') => void;
 }) {
   const [saving, setSaving] = useState(false);
   const hasList = hasSubStageList(service);
   const options = subStagesForService(service);
-  // Local text buffer for the free-text (manual-entry) mode. Kept in sync when
-  // the case reloads with a new value.
+  // A stored value that isn't a list member is a custom "Other" entry.
+  const isCustom = !!value && hasList && !options.includes(value);
+  // Free-text box is shown when the service has no picklist, OR the officer
+  // picked "Other (manual entry)", OR the stored value is a custom entry.
+  const [otherMode, setOtherMode] = useState(isCustom);
   const [text, setText] = useState(value ?? '');
   useEffect(() => {
     setText(value ?? '');
-  }, [value]);
+    setOtherMode(!!value && hasList && !subStagesForService(service).includes(value));
+  }, [value, service, hasList]);
 
   async function save(next: string) {
     const trimmed = next.trim();
@@ -168,11 +184,26 @@ function SubStagePicker({
     try {
       await updateCaseSubStage(caseId, { subStage: trimmed || null });
       onChanged();
+      // Fire the real action for action-labels (Submitted → Change Stage flow,
+      // Closed → Close flow). Tracking labels return null and just persist.
+      const act = subStageAction(trimmed);
+      if (act && onAction) onAction(act);
     } catch {
       setText(value ?? ''); // revert on failure
     } finally {
       setSaving(false);
     }
+  }
+
+  function onSelect(picked: string) {
+    if (picked === OTHER_SUBSTAGE) {
+      // Reveal the free-text box; don't persist "Other" itself.
+      setOtherMode(true);
+      setText('');
+      return;
+    }
+    setOtherMode(false);
+    void save(picked);
   }
 
   const controlStyle: React.CSSProperties = {
@@ -187,39 +218,47 @@ function SubStagePicker({
     maxWidth: 220,
   };
 
+  const badge = isHoldSubStage(value) ? (
+    <StatusBadge tone="warning" size="sm" dot={false}>On hold</StatusBadge>
+  ) : isRefundSubStage(value) ? (
+    <StatusBadge tone="danger" size="sm" dot={false}>Refund requested</StatusBadge>
+  ) : null;
+
   return (
-    <MetaItem label="Sub-stage">
-      {hasList ? (
-        <select
-          value={value ?? ''}
-          disabled={saving}
-          onChange={(e) => save(e.target.value)}
-          aria-label="Sub-stage"
-          style={{ ...controlStyle, cursor: saving ? 'wait' : 'pointer' }}
-        >
-          <option value="">— none —</option>
-          {/* Keep an imported / off-list value selectable so it still renders. */}
-          {(value && !options.includes(value) ? [value, ...options] : options).map((o) => (
-            <option key={o} value={o}>{o}</option>
-          ))}
-        </select>
-      ) : (
-        // Free-text (manual entry) for services without a fixed picklist.
-        <input
-          type="text"
-          value={text}
-          disabled={saving}
-          aria-label="Sub-stage"
-          placeholder="Add a label…"
-          maxLength={120}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={() => save(text)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          }}
-          style={controlStyle}
-        />
-      )}
+    <MetaItem label="Case stage">
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {hasList && !otherMode ? (
+          <select
+            value={value ?? ''}
+            disabled={saving}
+            onChange={(e) => onSelect(e.target.value)}
+            aria-label="Case stage"
+            style={{ ...controlStyle, cursor: saving ? 'wait' : 'pointer' }}
+          >
+            <option value="">— none —</option>
+            {(isCustom ? [value as string, ...options] : options).map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={text}
+            disabled={saving}
+            aria-label="Case stage"
+            placeholder="Type a label…"
+            maxLength={120}
+            autoFocus={otherMode}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={() => save(text)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            }}
+            style={controlStyle}
+          />
+        )}
+        {badge}
+      </div>
     </MetaItem>
   );
 }
@@ -228,6 +267,7 @@ function CaseMetaBar({
   c,
   service,
   onSubStageChanged,
+  onSubStageAction,
   finance,
   financeLoading,
   onOpenFinance,
@@ -235,11 +275,14 @@ function CaseMetaBar({
   c: MockProcessingCase;
   service: string;
   onSubStageChanged: () => void;
+  onSubStageAction: (action: 'submit' | 'close') => void;
   finance: CaseFinanceSummary | null;
   financeLoading: boolean;
   onOpenFinance: () => void;
 }) {
-  const overdue = c.daysInCurrentStage >= 5;
+  // A case parked "On hold" is deliberately not chased — suppress the overdue
+  // time-in-stage warning so Hold genuinely quiets the case.
+  const overdue = c.daysInCurrentStage >= 5 && !isHoldSubStage(c.subStage);
   const round0 = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   return (
     <GlassCard variant="panel" padded="md">
@@ -248,7 +291,7 @@ function CaseMetaBar({
           <StatusBadge tone={stageTone(c.stage)} size="sm">{STAGE_LABEL[c.stage]}</StatusBadge>
         </MetaItem>
         <MetaDivider />
-        <SubStagePicker caseId={c.id} service={service} value={c.subStage} onChanged={onSubStageChanged} />
+        <SubStagePicker caseId={c.id} service={service} value={c.subStage} onChanged={onSubStageChanged} onAction={onSubStageAction} />
         <MetaDivider />
         <MetaItem label="Priority">
           <StatusBadge tone={priorityTone(c.priority)} size="sm" dot={false}>{PRIORITY_LABEL[c.priority]}</StatusBadge>
@@ -294,7 +337,7 @@ function CaseMetaBar({
 function NextStepBanner({ c }: { c: MockProcessingCase }) {
   const next = STAGE_NEXT_STEP[c.stage];
   if (!next) return null;
-  const overdue = !STAGE_WAITING_ON_EXTERNAL.has(c.stage) && c.daysInCurrentStage >= 5;
+  const overdue = !STAGE_WAITING_ON_EXTERNAL.has(c.stage) && c.daysInCurrentStage >= 5 && !isHoldSubStage(c.subStage);
   const accent = overdue ? 'var(--sos-status-warning)' : 'var(--sos-brand-primary-strong)';
   const accentSoft = overdue ? 'var(--sos-status-warning-soft)' : 'var(--sos-brand-primary-soft)';
   return (
@@ -605,7 +648,20 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
         </div>
 
         {/* Compact horizontal meta bar (replaces the tall vertical rail) */}
-        <CaseMetaBar c={c} service={api.service} onSubStageChanged={() => setRefetchTick((n) => n + 1)} finance={finance} financeLoading={financeLoading} onOpenFinance={() => setActiveTab('finance')} />
+        <CaseMetaBar
+          c={c}
+          service={api.service}
+          onSubStageChanged={() => setRefetchTick((n) => n + 1)}
+          onSubStageAction={(action) => {
+            // "Submitted" → the validated Change-Stage flow; "Closed" → the Close
+            // flow. The label is already saved; these fire the REAL case action.
+            if (action === 'submit') setShowStageModal(true);
+            else if (action === 'close') setShowCloseModal(true);
+          }}
+          finance={finance}
+          financeLoading={financeLoading}
+          onOpenFinance={() => setActiveTab('finance')}
+        />
 
         {/* Stage-driven "what to do now" guidance for the officer */}
         <NextStepBanner c={c} />

@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { cappedOutEmployeeIds } from '../../common/routing/daily-lead-cap';
 
 /**
  * Shared round-robin lead → sales-employee assignment.
@@ -48,7 +47,7 @@ export class LeadAssignmentService {
    *  reused by the round-robin, the "list agents" picker, and the single-agent
    *  eligibility check, so a human-chosen agent can never fall outside the pool
    *  the round-robin would use. */
-  private static readonly ELIGIBLE_WHERE = {
+  static readonly ELIGIBLE_WHERE = {
     isActive: true,
     whatsappInboxMember: true,
     deletedAt: null,
@@ -88,17 +87,23 @@ export class LeadAssignmentService {
   }
 
   /**
-   * @param opts.ignoreDailyCap skip the per-rep daily new-lead cap. Set ONLY for
-   *   a LIVE ringing customer (Telenor Smart Office inbound call) — a call must
-   *   still reach a rep even if they've hit their proactive-lead quota. Every
-   *   proactive channel (CSV, Meta, walk-in, API create) leaves this false.
+   * The per-rep daily lead cap is deliberately NOT enforced here. This async
+   * engine distributes admin-directed channels — CSV imports, Meta Lead Forms,
+   * manual API creates, reception referrals, and live Telenor calls — none of
+   * which are the live "online round-robin" the cap governs. Enforcement lives
+   * solely in WhatsAppAssignmentService (inbound WhatsApp/CTWA/Messenger). So a
+   * capped rep still receives their CSV/manual leads in full.
+   *
+   * `_opts` (incl. the old ignoreDailyCap) is retained for call-site
+   * compatibility (e.g. Telenor Smart Office) but no longer has any effect —
+   * there is no cap on this path to ignore.
    */
   async pickNextAgent(
     selectedAgentIds: string[] = [],
-    opts?: { ignoreDailyCap?: boolean },
+    _opts?: { ignoreDailyCap?: boolean },
   ): Promise<string | null> {
     return this.prisma.$transaction(async (tx) => {
-      const pool = await tx.employee.findMany({
+      const eligible = await tx.employee.findMany({
         where: {
           ...LeadAssignmentService.ELIGIBLE_WHERE,
           // Skip reps the admin has paused from NEW leads. Only the auto
@@ -109,15 +114,8 @@ export class LeadAssignmentService {
           ...(selectedAgentIds.length > 0 ? { id: { in: selectedAgentIds } } : {}),
         },
         orderBy: { id: 'asc' },
-        select: { id: true, dailyLeadCap: true },
+        select: { id: true },
       });
-      // Drop reps who've hit their per-rep DAILY cap today (same rule the live
-      // engine applies) so this async channel can't overshoot it either. Manual
-      // pickers above are intentionally NOT filtered — a human override wins —
-      // and a live inbound call passes ignoreDailyCap so a ringing customer is
-      // never stranded by the cap.
-      const cappedOut = opts?.ignoreDailyCap ? new Set<string>() : await cappedOutEmployeeIds(tx, pool);
-      const eligible = pool.filter((e) => !cappedOut.has(e.id));
       if (eligible.length === 0) return null;
 
       const org = await tx.organization.findFirst({ orderBy: { createdAt: 'asc' } });

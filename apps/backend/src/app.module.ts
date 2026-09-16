@@ -27,6 +27,7 @@ import { LeadsModule } from './modules/leads/leads.module';
 import { ReceptionModule } from './modules/reception/reception.module';
 import { LeadImportsModule } from './modules/lead-imports/lead-imports.module';
 import { MetaLeadsModule } from './modules/meta-leads/meta-leads.module';
+import { LeadCapsModule } from './modules/lead-caps/lead-caps.module';
 import { MetaAdsModule } from './modules/meta-ads/meta-ads.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
@@ -90,6 +91,7 @@ import { JudicialReviewModule } from './modules/judicial-review/judicial-review.
     CountriesModule,
     PartnersModule,
     LeadsModule,
+    LeadCapsModule,
     ReceptionModule,
     LeadImportsModule,
     MetaLeadsModule,

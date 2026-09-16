@@ -15,6 +15,7 @@ import {
   FileSpreadsheet,
   FileText,
   Flag,
+  Gauge,
   Handshake,
   Key,
   LayoutDashboard,
@@ -105,6 +106,7 @@ const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { label: 'Sales overview', href: '/admin/sales', icon: Users, caption: 'Per-agent KPIs', permissionKey: 'reports.view' },
       { label: 'Leads', href: '/admin/leads', icon: Users, caption: 'All inbound', permissionKey: 'leads.view_all' },
       { label: 'Search & Reassign', href: '/admin/reassign', icon: ArrowRightLeft, caption: 'Find any lead → move rep', permissionKey: 'leads.assign' },
+      { label: 'Lead Caps', href: '/admin/lead-caps', icon: Gauge, caption: 'Daily online-lead limit per rep', permissionKey: 'leads.assign' },
       { label: 'Ads', href: '/admin/ads', icon: Megaphone, caption: 'Meta ad spend → leads', permissionKey: 'leads.view_all' },
       { label: 'Lead Imports', href: '/admin/lead-imports', icon: FileSpreadsheet, caption: 'CSV/Excel bulk upload', permissionKey: 'leads.create' },
       { label: 'WhatsApp', href: '/admin/whatsapp', icon: MessageSquare, caption: 'All conversations', permissionKey: 'whatsapp.view_all_inboxes' },
@@ -162,6 +164,7 @@ function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname.startsWith('/admin/sales')) return { title: 'Sales overview', subtitle: 'Per-agent KPIs' };
   if (pathname.startsWith('/admin/lead-imports/')) return { title: 'Import detail', subtitle: 'Batch progress + per-agent distribution' };
   if (pathname === '/admin/lead-imports') return { title: 'Lead Imports', subtitle: 'CSV/Excel bulk uploads' };
+  if (pathname.startsWith('/admin/lead-caps')) return { title: 'Lead Caps', subtitle: 'Daily online-lead limit per rep' };
   if (pathname.startsWith('/admin/leads')) return { title: 'Leads', subtitle: 'All inbound' };
   if (pathname.startsWith('/admin/whatsapp/status')) return { title: 'WhatsApp Status', subtitle: 'Compose, schedule, and track Status posts' };
   if (pathname.startsWith('/admin/whatsapp')) return { title: 'WhatsApp conversations', subtitle: 'All threads' };

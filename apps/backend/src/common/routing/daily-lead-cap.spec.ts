@@ -67,4 +67,11 @@ describe('cappedOutEmployeeIds', () => {
     const out = await cappedOutEmployeeIds(db, [{ id: 'b', dailyLeadCap: 0 }]);
     expect([...out]).toEqual(['b']);
   });
+
+  it('counts ONLY online round-robin leads (CSV / manual leads never eat the cap)', async () => {
+    const db = fakeDb([{ assignedEmployeeId: 'b', _count: 7 }]);
+    await cappedOutEmployeeIds(db, [{ id: 'b', dailyLeadCap: 7 }]);
+    const where = db.lead.groupBy.mock.calls[0][0].where;
+    expect(where.sourceChannel).toEqual({ in: ['whatsapp', 'messenger'] });
+  });
 });

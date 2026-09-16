@@ -1,12 +1,25 @@
 /**
  * Per-rep DAILY new-lead cap. An admin can wind a rep down to at most N fresh
- * leads per day (e.g. easing someone back in after a pause) WITHOUT fully
- * pausing them — unlike `presenceLocked`, a capped rep still receives leads,
- * just no more than their cap. `Employee.dailyLeadCap = null` means unlimited.
+ * ONLINE round-robin leads per day (e.g. easing someone back in after a pause)
+ * WITHOUT fully pausing them — unlike `presenceLocked`, a capped rep still
+ * receives leads, just no more than their cap. `Employee.dailyLeadCap = null`
+ * means unlimited.
  *
- * Shared by BOTH assignment engines (the live WhatsApp/Messenger engine and the
- * async CSV/Meta engine) so the cap can't be bypassed through one of them.
+ * SCOPE — ONLINE round-robin leads ONLY (inbound WhatsApp/CTWA + Messenger).
+ * The cap deliberately does NOT throttle CSV imports, Meta Lead Forms, manual
+ * creates or reception referrals: those are admin-directed distributions, not
+ * the live round-robin, and must reach a rep regardless of their online quota.
+ * Enforcement therefore lives ONLY in the live WhatsApp engine
+ * (WhatsAppAssignmentService); the async engine (LeadAssignmentService) no
+ * longer consults this helper. To keep the two halves consistent, the daily
+ * COUNT below only counts leads whose sourceChannel is an online channel — so a
+ * rep's CSV/manual leads never eat into their online headroom.
  */
+
+/** The lead sourceChannel values that count as "online round-robin" — the only
+ *  leads the daily cap throttles and counts. Inbound WhatsApp AND Click-to-
+ *  WhatsApp ads both land as 'whatsapp'; Messenger ad chats as 'messenger'. */
+export const ONLINE_ROUND_ROBIN_SOURCE_CHANNELS = ['whatsapp', 'messenger'] as const;
 
 /**
  * Pakistan Standard Time is a fixed UTC+5 (no DST since 2009). Returns the UTC
@@ -75,6 +88,9 @@ export async function cappedOutEmployeeIds(
       assignedEmployeeId: { in: capped.map((e) => e.id) },
       createdAt: { gte: since },
       deletedAt: null,
+      // ONLINE round-robin leads only — CSV / Meta-form / manual / reception
+      // leads never count against a rep's online cap (see scope note above).
+      sourceChannel: { in: [...ONLINE_ROUND_ROBIN_SOURCE_CHANNELS] },
     },
     _count: true,
   })) as LeadCountRow[];

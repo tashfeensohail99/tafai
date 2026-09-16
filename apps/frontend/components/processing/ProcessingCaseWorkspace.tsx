@@ -35,6 +35,7 @@ import {
   ShieldAlert,
   Compass,
   FolderOpen,
+  LayoutDashboard,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -85,16 +86,20 @@ import { CorrectionsTab } from './tabs/CorrectionsTab';
 import { MilestonesTab } from './tabs/MilestonesTab';
 import { CaseTabBar } from './CaseTabBar';
 import { DatabankTab } from './tabs/DatabankTab';
+import { OverviewTab } from './tabs/OverviewTab';
 import { SubmissionPackagePanel } from './SubmissionPackagePanel';
 import { useProcessingSession } from '@/components/layout/ProcessingShell';
 
 // ---------- Tabs -----------------------------------------------------------
 
-type TabKey = 'milestones' | 'documents' | 'databank' | 'timeline' | 'history' | 'communications' | 'finance' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
+type TabKey = 'overview' | 'milestones' | 'documents' | 'databank' | 'timeline' | 'history' | 'communications' | 'finance' | 'whatsapp' | 'notes' | 'tasks' | 'submissions' | 'corrections';
 
 const TABS: Array<{ key: TabKey; label: string; Icon: React.ElementType }> = [
-  // Milestones first — the case-progress narrative the associate works
-  // through. Seeded per case-type at acknowledge time.
+  // Overview first — the processing team's one-page daily view (Suggested
+  // Interface, 2026-09): sign-up + contact, money, notes, email, quick links.
+  { key: 'overview', label: 'Overview', Icon: LayoutDashboard },
+  // Milestones — the case-progress narrative the associate works through.
+  // Seeded per case-type at acknowledge time.
   { key: 'milestones', label: 'Milestones', Icon: Sparkles },
   { key: 'documents', label: 'Documents', Icon: FileSearch },
   // Databank — the free-form per-client document repository (Drive replacement),
@@ -329,7 +334,7 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>(() => {
     const t = searchParams.get('tab');
-    return t && TABS.some((tab) => tab.key === t) ? (t as TabKey) : 'milestones';
+    return t && TABS.some((tab) => tab.key === t) ? (t as TabKey) : 'overview';
   });
   const [showStageModal, setShowStageModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -617,6 +622,9 @@ export function ProcessingCaseWorkspace({ caseId }: ProcessingCaseWorkspaceProps
           />
 
           {/* Tab content */}
+          {activeTab === 'overview' && (
+            <OverviewTab c={c} api={api} finance={finance} financeLoading={financeLoading} onOpenTab={setActiveTab} />
+          )}
           {activeTab === 'milestones' && <MilestonesTab c={c} />}
           {activeTab === 'documents' && <DocumentChecklistTab c={c} />}
           {activeTab === 'databank' && <DatabankTab clientId={api.clientId} clientName={c.clientName} />}

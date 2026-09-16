@@ -2277,6 +2277,9 @@ export class ProcessingService {
             phone: true,
             serviceInterest: true,
             targetCountry: true,
+            // The sales rep's own notes on the lead — surfaced on the case
+            // Overview as "Sales notes" (Suggested Interface, 2026-09).
+            notes: true,
             // The SALES rep who owns the lead (closed the deal) — processing
             // wants this visible on the case, distinct from the processing officer.
             assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
@@ -2461,6 +2464,22 @@ export class ProcessingService {
     return this.prisma.processingCase.update({
       where: { id: caseId },
       data: { subStage: next, updatedByUserId: user.id },
+    });
+  }
+
+  /**
+   * Set or clear the processing-side "payment plan notes" (Suggested Interface,
+   * 2026-09) — free text on the case, shown in the Account card on the Overview.
+   * Distinct from finance's own notes. A null/blank value clears it.
+   */
+  async updatePaymentPlanNote(caseId: string, note: string | null | undefined, user: RequestUser) {
+    const processingCase = await this.findCaseOrThrow(caseId);
+    this.assertCaseAccess(processingCase, user);
+    const next = note && note.trim() ? note.trim() : null;
+    return this.prisma.processingCase.update({
+      where: { id: caseId },
+      data: { paymentPlanNote: next, updatedByUserId: user.id },
+      select: { id: true, paymentPlanNote: true },
     });
   }
 

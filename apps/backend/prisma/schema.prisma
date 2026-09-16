@@ -3455,6 +3455,10 @@ model ProcessingCase {
   signupDate                   DateTime?              @db.Date
   financeHandoverNote          String?
   processingNote               String?
+  /// Free-text notes about the payment / instalment plan, editable by the
+  /// processing officer from the case Overview (Suggested Interface, 2026-09).
+  /// Distinct from finance's own notes — this is the processing side's scratchpad.
+  paymentPlanNote              String?
   estimatedSubmissionDate      DateTime?              @db.Date
   actualSubmissionDate         DateTime?              @db.Date
   authorityTrackingRef         String?

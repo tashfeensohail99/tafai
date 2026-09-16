@@ -68,6 +68,7 @@ import {
   UpdateAuthoritySubmissionDto,
   UpdateCasePriorityDto,
   UpdateCaseSubStageDto,
+  UpdatePaymentPlanNoteDto,
   UpdateDocumentTemplateDto,
   UpdateProcessingTaskDto,
   UpdateAttestationDto,
@@ -291,6 +292,17 @@ export class ProcessingController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.processingService.updateCaseSubStage(caseId, dto, user);
+  }
+
+  /** Set/clear the processing-side payment-plan notes (case Overview). */
+  @Patch('cases/:caseId/payment-note')
+  @RequirePermissions('processing.case.update_stage')
+  updatePaymentPlanNote(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: UpdatePaymentPlanNoteDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.processingService.updatePaymentPlanNote(caseId, dto.paymentPlanNote, user);
   }
 
   // -------------------------------------------------------------------------

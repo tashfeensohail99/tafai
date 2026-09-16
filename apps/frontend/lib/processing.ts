@@ -99,6 +99,8 @@ export interface ApiProcessingCaseDetail {
   subStage: string | null;
   financeHandoverNote: string | null;
   processingNote: string | null;
+  /** Processing-side free-text notes about the payment / instalment plan. */
+  paymentPlanNote: string | null;
   estimatedSubmissionDate: string | null;
   actualSubmissionDate: string | null;
   authorityTrackingRef: string | null;
@@ -120,6 +122,8 @@ export interface ApiProcessingCaseDetail {
     phone: string;
     serviceInterest: string | null;
     targetCountry: string | null;
+    /** The sales rep's own notes on the lead — shown as "Sales notes". */
+    notes: string | null;
     /** Originating SALES rep (null when the lead was never assigned). */
     assignedEmployee: { id: string; firstName: string; lastName: string } | null;
   };
@@ -767,6 +771,19 @@ export function updateCaseSubStage(
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+}
+
+/** Set/clear the processing-side payment-plan notes (case Overview). */
+export function updatePaymentPlanNote(
+  caseId: string,
+  paymentPlanNote: string | null,
+): Promise<{ id: string; paymentPlanNote: string | null }> {
+  return apiFetch(`/processing/cases/${caseId}/payment-note`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paymentPlanNote }),
     cache: 'no-store',
   });
 }

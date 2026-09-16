@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Phone,
   Mail,
@@ -13,9 +13,10 @@ import {
   StickyNote,
   Send,
   ArrowRight,
+  Loader2,
 } from 'lucide-react';
 import type { MockProcessingCase } from '../mockData';
-import type { ApiProcessingCaseDetail, CaseFinanceSummary } from '@/lib/processing';
+import { updatePaymentPlanNote, type ApiProcessingCaseDetail, type CaseFinanceSummary } from '@/lib/processing';
 import { InternalNotesTab } from './InternalNotesTab';
 import { CommunicationsTab } from './CommunicationsTab';
 
@@ -56,6 +57,27 @@ function fmtDate(d: string | null | undefined): string {
 export function OverviewTab({ c, api, finance, financeLoading, onOpenTab }: OverviewTabProps) {
   const currency = finance?.currency ?? c.financeCurrency ?? 'PKR';
 
+  // Editable payment-plan notes (persisted straight to the case).
+  const [planNote, setPlanNote] = useState(api.paymentPlanNote ?? '');
+  const [savedNote, setSavedNote] = useState(api.paymentPlanNote ?? '');
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planSaved, setPlanSaved] = useState(false);
+  async function savePlanNote() {
+    if (planNote.trim() === savedNote.trim()) return; // no-op
+    setPlanSaving(true);
+    try {
+      const next = planNote.trim() || null;
+      await updatePaymentPlanNote(api.id, next);
+      setSavedNote(next ?? '');
+      setPlanSaved(true);
+      setTimeout(() => setPlanSaved(false), 1600);
+    } catch {
+      /* keep the text for a retry */
+    } finally {
+      setPlanSaving(false);
+    }
+  }
+
   const firstInstalmentDate = useMemo(() => {
     const due = (finance?.invoices ?? [])
       .map((i) => i.dueDate)
@@ -80,6 +102,14 @@ export function OverviewTab({ c, api, finance, financeLoading, onOpenTab }: Over
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: border, fontSize: 12.5, color: 'var(--sos-text-secondary, #4b5563)' }}>
             <span style={{ fontWeight: 600 }}>Handover note (from Finance): </span>
             {api.financeHandoverNote}
+          </div>
+        ) : null}
+        {api.lead.notes ? (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: border }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: muted, marginBottom: 4 }}>
+              <StickyNote size={12} /> Sales notes{c.salesRep?.name ? ` · ${c.salesRep.name}` : ''}
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--sos-text-secondary, #4b5563)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{api.lead.notes}</div>
           </div>
         ) : null}
       </Card>
@@ -132,6 +162,29 @@ export function OverviewTab({ c, api, finance, financeLoading, onOpenTab }: Over
             ) : null}
           </>
         )}
+        {/* Editable payment-plan notes (processing side) — the mockup's
+            "space for detailed notes about" the instalment plan. */}
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: border }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: muted }}>Payment plan notes</div>
+            {planSaving ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: muted }}>
+                <Loader2 size={11} className="animate-spin" /> Saving…
+              </span>
+            ) : planSaved ? (
+              <span style={{ fontSize: 11, color: '#15803d' }}>Saved</span>
+            ) : null}
+          </div>
+          <textarea
+            value={planNote}
+            onChange={(e) => setPlanNote(e.target.value)}
+            onBlur={savePlanNote}
+            placeholder="Notes about the instalment plan / payment arrangement…"
+            rows={3}
+            maxLength={4000}
+            style={{ width: '100%', border, borderRadius: 8, padding: '8px 10px', fontSize: 13, background: 'var(--sos-surface-solid, #fff)', color: 'var(--sos-text-primary, #0f172a)', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+          />
+        </div>
       </Card>
 
       {/* ── Quick links ───────────────────────────────────────────────────── */}

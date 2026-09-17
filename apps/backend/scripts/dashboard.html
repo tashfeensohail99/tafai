@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tafai · attendance console</title>
+<style>
+  :root {
+    --navy: #1F4E79;
+    --blue: #2E5A88;
+    --line: #ccd4df;
+    --page: #f4f6f9;
+    --thead: #eaf2f8;
+    --ghost: #eef2f7;
+    --muted: #778;
+    --danger: #e74c3c;
+    --ok: #2ecc71;
+    --amber: #e8a317;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--page);
+    color: #223;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 48px;
+    background: var(--navy);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 18px;
+    z-index: 50;
+    box-shadow: 0 1px 4px rgba(0,0,0,.22);
+  }
+  .brand {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .2px;
+    white-space: nowrap;
+  }
+  .brand .dim { opacity: .62; font-weight: 400; }
+  .pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 999px;
+    padding: 3px 11px 3px 9px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .pill .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 2px rgba(255,255,255,.14);
+    flex: none;
+  }
+  .dot.on   { background: var(--ok); }
+  .dot.off  { background: var(--danger); }
+  .dot.warn { background: var(--amber); }
+  .pill.count { font-variant-numeric: tabular-nums; }
+  .pill.count b { font-weight: 600; }
+
+  /* ---------- layout ---------- */
+  main {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 66px 18px 40px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+    box-shadow: 0 1px 2px rgba(31,78,121,.06);
+  }
+  .card.wide { grid-column: 1 / -1; }
+
+  /* Grid and flex children default to min-width:auto, so they refuse to shrink
+     below their min-content and push the whole page into a horizontal scroll on
+     a narrow screen. Wide content is allowed to scroll inside .tblwrap only. */
+  main > *, .card, .feeds > *, .row, .toolbar, .field { min-width: 0; }
+
+  h2 {
+    margin: 0 0 2px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--blue);
+  }
+  h2 .muted {
+    font-weight: 400;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .muted { color: var(--muted); }
+  .note {
+    margin: 4px 0 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ---------- banner ---------- */
+  #banner {
+    grid-column: 1 / -1;
+    display: none;
+    background: #fdecea;
+    border: 1px solid #f3b6ae;
+    border-left: 4px solid var(--danger);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: #8b2c20;
+    font-size: 13px;
+  }
+  #banner.show { display: block; }
+
+  /* ---------- controls ---------- */
+  button, select, input[type=number], input[type=text] {
+    font: inherit;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    padding: 5px 9px;
+    background: #fff;
+    color: #223;
+  }
+  button {
+    cursor: pointer;
+    background: var(--navy);
+    border-color: var(--navy);
+    color: #fff;
+    padding: 6px 14px;
+    font-weight: 500;
+  }
+  button:hover:not(:disabled) { background: #24598b; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost {
+    background: var(--ghost);
+    border-color: var(--line);
+    color: #33465c;
+  }
+  button.ghost:hover:not(:disabled) { background: #e2e9f2; }
+  button.danger {
+    background: #fff;
+    border-color: var(--danger);
+    color: var(--danger);
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+  button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+  label { font-size: 12px; color: #445; }
+  /* A <select> sizes itself to its longest option, and the employee list holds
+     long names — without this it alone pushes the page wider than the screen. */
+  select { max-width: 100%; min-width: 0; }
+  .field > select { flex: 1 1 auto; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .row + .row { margin-top: 10px; }
+  .field { display: flex; align-items: center; gap: 6px; }
+  .field input[type=number] { width: 74px; }
+  .sep {
+    width: 1px;
+    align-self: stretch;
+    background: var(--line);
+    margin: 0 2px;
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button {
+    border: 0;
+    border-radius: 0;
+    background: var(--ghost);
+    color: #33465c;
+    padding: 5px 16px;
+    font-size: 12px;
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.sel { background: var(--navy); color: #fff; }
+
+  .toolbar {
+    background: #fafbfd;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+  .kv { font-size: 12px; color: var(--muted); }
+  .kv b { color: #223; font-weight: 600; }
+
+  /* ---------- camera feeds ---------- */
+  .feeds {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .feed {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .feed .frame {
+    position: relative;
+    background: #10151c;
+    aspect-ratio: 16 / 9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .feed .frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .feed .frame .placeholder {
+    position: absolute;
+    color: #7d8894;
+    font-size: 12px;
+  }
+  .feed .cap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 11px;
+    border-top: 1px solid var(--line);
+  }
+  .feed .who { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .feed .who .nm { font-weight: 600; font-size: 13px; }
+  .feed .who .meta { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .tag {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    background: var(--thead);
+    color: var(--blue);
+    border: 1px solid #cfe0ee;
+  }
+  .facepx { text-align: right; line-height: 1.1; flex: none; }
+  .facepx .n {
+    font-size: 26px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .facepx .n.bad  { color: var(--danger); }
+  .facepx .n.mid  { color: var(--amber); }
+  .facepx .n.good { color: var(--ok); }
+  .facepx .lbl { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .feed .last {
+    padding: 0 11px 9px;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  /* ---------- tables ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: middle;
+  }
+  th {
+    background: var(--thead);
+    font-weight: 600;
+    color: #2c4a6b;
+    white-space: nowrap;
+  }
+  tbody tr:nth-child(even) td { background: #fbfcfe; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.empty, td.loading {
+    text-align: center;
+    color: var(--muted);
+    padding: 16px;
+    font-style: italic;
+  }
+  .thumb {
+    width: 42px; height: 42px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: var(--ghost);
+    cursor: pointer;
+    display: block;
+  }
+  .thumb.none { cursor: default; }
+  .nothumb {
+    width: 42px; height: 42px;
+    border-radius: 4px;
+    border: 1px dashed var(--line);
+    background: var(--ghost);
+  }
+  .sim { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sim.good { color: #1f9d55; }
+  .sim.mid  { color: #b4770d; }
+  .sim.bad  { color: var(--danger); }
+  .unknown { font-style: italic; color: var(--muted); }
+  .st {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    border-radius: 4px;
+    padding: 1px 7px;
+    display: inline-block;
+  }
+  .st.MATCHED   { background: #e6f8ee; color: #1f8a4c; border: 1px solid #b7e6cb; }
+  .st.UNMATCHED { background: #fdecea; color: #b9382a; border: 1px solid #f3c3bc; }
+  .st.PENDING   { background: #fdf4e3; color: #97701a; border: 1px solid #ecd9a8; }
+  .st.OTHER     { background: var(--ghost); color: #55637a; border: 1px solid var(--line); }
+
+  .tblwrap { overflow-x: auto; }
+
+  /* ---------- messages ---------- */
+  .msg {
+    margin: 11px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+    min-height: 17px;
+  }
+  .msg.ok   { color: #1f8a4c; }
+  .msg.err  { color: var(--danger); }
+  .msg.busy { color: var(--blue); }
+
+  .chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
+
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; }
+    .feeds { grid-template-columns: 1fr; }
+    header { gap: 10px; padding: 0 12px; height: auto; min-height: 48px; flex-wrap: wrap; padding-top: 6px; padding-bottom: 6px; }
+    main { padding-top: 88px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">tafai <span class="dim">·</span> attendance console</div>
+  <div class="pills">
+    <span class="pill"><span class="dot" id="pillBackendDot"></span><span id="pillBackendTxt">backend …</span></span>
+    <span class="pill"><span class="dot" id="pillBridgeDot"></span><span id="pillBridgeTxt">bridge …</span></span>
+    <span class="pill count"><b id="pillSent">0</b>&nbsp;faces sent</span>
+  </div>
+</header>
+
+<main>
+
+  <div id="banner"></div>
+
+  <!-- ============ 2. LIVE CAMERAS ============ -->
+  <section class="card wide">
+    <h2>Live cameras <span class="muted">— is a face in frame, and is it big enough?</span></h2>
+    <p class="note">A face under about 100&nbsp;px wide does not carry enough detail to match reliably. Ask the person to step closer to the door camera.</p>
+
+    <div class="toolbar">
+      <div class="row">
+        <div class="field">
+          <label>Inference</label>
+          <span class="seg" id="execSeg">
+            <button type="button" data-mode="cpu">CPU</button>
+            <button type="button" data-mode="gpu">GPU</button>
+          </span>
+        </div>
+        <span class="kv">requested <b id="execReq">—</b> · actually active <b id="execActive">—</b></span>
+        <div class="sep"></div>
+        <button type="button" id="bridgeBtn" disabled>Start bridge</button>
+      </div>
+      <div class="row">
+        <div class="field"><label for="cfgMinFace">Min face (px)</label><input type="number" id="cfgMinFace" min="20" max="400" step="1"></div>
+        <div class="field"><label for="cfgCooldown">Cooldown (s)</label><input type="number" id="cfgCooldown" min="0" max="120" step="0.5"></div>
+        <div class="field"><label for="cfgFps">Detection fps</label><input type="number" id="cfgFps" min="0.5" max="30" step="0.5"></div>
+        <button type="button" class="ghost" id="cfgSave">Save</button>
+      </div>
+    </div>
+
+    <div class="feeds" id="feeds"></div>
+    <p class="msg" id="msgCameras">Connecting…</p>
+  </section>
+
+  <!-- ============ 3. LIVE EVENTS ============ -->
+  <section class="card wide">
+    <h2>Live events <span class="muted">— every face the bridge has pushed</span></h2>
+    <div class="row" style="margin-bottom:10px">
+      <label class="chk"><input type="checkbox" id="matchedOnly"> matched only</label>
+      <span class="kv">similarity ≥ <b>0.50</b> is a confident match</span>
+    </div>
+    <div class="tblwrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:56px">Face</th>
+            <th style="width:92px">Time</th>
+            <th style="width:170px">Camera</th>
+            <th>Employee</th>
+            <th style="width:100px">Similarity</th>
+            <th style="width:110px">Status</th>
+          </tr>
+        </thead>
+        <tbody id="eventsBody"><tr><td class="loading" colspan="6">Loading events…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="msg" id="msgEvents"></p>
+  </section>
+
+  <!-- ============ 4. ENROLMENT ============ -->
+  <section class="card">
+    <h2>Enrolment <span class="muted">— teach the system a face</span></h2>
+    <p class="note">Enrol from the door camera itself, not a webcam or phone photo. The samples then carry that camera's exact angle, lens and lighting, so the stored face looks like what the camera will actually see at the door — which lifts match scores far more than a sharper studio photo would.</p>
+    <div class="row">
+      <div class="field">
+        <label for="enrEmp">Employee</label>
+        <select id="enrEmp"><option value="">loading…</option></select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="enrCam">Camera</label>
+        <select id="enrCam"></select>
+      </div>
+      <div class="field">
+        <label for="enrCount">Frames</label>
+        <input type="number" id="enrCount" min="3" max="10" step="1" value="5">
+      </div>
+      <button type="button" id="enrBtn">Capture &amp; enrol</button>
+    </div>
+    <p class="msg" id="msgEnrol"></p>
+  </section>
+
+  <!-- ============ 5. EMPLOYEES ============ -->
+  <section class="card">
+    <h2>Employees <span class="muted">— enrolled samples on file</span></h2>
+    <div class="tblwrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th style="width:100px">Code</th>
+            <th style="width:80px">Samples</th>
+            <th style="width:76px"></th>
+          </tr>
+        </thead>
+        <tbody id="empBody"><tr><td class="loading" colspan="4">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="msg" id="msgEmployees"></p>
+  </section>
+
+  <!-- ============ 6. TODAY'S ATTENDANCE ============ -->
+  <section class="card wide">
+    <h2>Today's attendance <span class="muted">— <span id="attDateLbl"></span></span></h2>
+    <div class="tblwrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th style="width:120px">Code</th>
+            <th style="width:140px">Check in</th>
+            <th style="width:140px">Check out</th>
+            <th style="width:150px">Status</th>
+          </tr>
+        </thead>
+        <tbody id="attBody"><tr><td class="loading" colspan="5">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="msg" id="msgAttendance"></p>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ------------------------------------------------------------------ *
+   * helpers
+   * ------------------------------------------------------------------ */
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Every string that reaches innerHTML goes through this. Employee names come
+  // from the DB and can legitimately contain & or ' — unescaped they would
+  // break the row, and in the worst case inject markup.
+  function esc(v) {
+    if (v === null || v === undefined) return "";
+    return String(v)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    var p = function (n) { return n < 10 ? "0" + n : "" + n; };
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
+  function fmtSim(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    var n = Number(v);
+    return isNaN(n) ? "—" : n.toFixed(3);
+  }
+
+  function simClass(v) {
+    // Number(null) is 0, not NaN — without this guard a PENDING event with no
+    // similarity yet renders its em-dash in alarm red, which reads as a failed
+    // match to the operator.
+    if (v === null || v === undefined || v === "") return "";
+    var n = Number(v);
+    if (isNaN(n)) return "";
+    if (n >= 0.5) return "good";
+    if (n >= 0.4) return "mid";
+    return "bad";
+  }
+
+  function faceClass(px) {
+    if (px === null || px === undefined) return "";
+    if (px >= 100) return "good";
+    if (px >= 80) return "mid";
+    return "bad";
+  }
+
+  function todayISO() {
+    var d = new Date(), p = function (n) { return n < 10 ? "0" + n : "" + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  }
+
+  // Every message line in the UI goes through here so a failure is never silent.
+  function say(el, text, kind) {
+    el.textContent = (kind === "ok" ? "✓ " : "") + text;
+    el.className = "msg" + (kind ? " " + kind : "");
+  }
+
+  // fetch + JSON, normalising the server's {"error":"..."} shape into a throw.
+  function api(path, opts) {
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (body) {
+        var data = null;
+        try { data = body ? JSON.parse(body) : null; } catch (e) { data = null; }
+        if (!r.ok) {
+          throw new Error((data && data.error) || ("HTTP " + r.status));
+        }
+        if (data === null && body) throw new Error("bad JSON from " + path);
+        return data;
+      });
+    });
+  }
+
+  function postJSON(path, payload) {
+    return api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * state
+   * ------------------------------------------------------------------ */
+
+  var state = {
+    cameras: [],          // last known camera list from /api/status
+    feedsBuilt: false,    // MJPEG <img> elements are created once, never re-set
+    bridgeRunning: false,
+    cfgDirty: false,      // don't stomp on numbers the operator is typing
+    statusFails: 0,
+    enrolling: false,
+    tick: 0
+  };
+
+  var el = {
+    banner: $("banner"),
+    pillBackendDot: $("pillBackendDot"), pillBackendTxt: $("pillBackendTxt"),
+    pillBridgeDot: $("pillBridgeDot"), pillBridgeTxt: $("pillBridgeTxt"),
+    pillSent: $("pillSent"),
+    execReq: $("execReq"), execActive: $("execActive"), execSeg: $("execSeg"),
+    bridgeBtn: $("bridgeBtn"),
+    cfgMinFace: $("cfgMinFace"), cfgCooldown: $("cfgCooldown"), cfgFps: $("cfgFps"),
+    cfgSave: $("cfgSave"),
+    feeds: $("feeds"),
+    msgCameras: $("msgCameras"),
+    matchedOnly: $("matchedOnly"), eventsBody: $("eventsBody"), msgEvents: $("msgEvents"),
+    enrEmp: $("enrEmp"), enrCam: $("enrCam"), enrCount: $("enrCount"),
+    enrBtn: $("enrBtn"), msgEnrol: $("msgEnrol"),
+    empBody: $("empBody"), msgEmployees: $("msgEmployees"),
+    attBody: $("attBody"), msgAttendance: $("msgAttendance"), attDateLbl: $("attDateLbl")
+  };
+
+  /* ------------------------------------------------------------------ *
+   * 1 + 2 — status, header pills, camera feeds
+   * ------------------------------------------------------------------ */
+
+  function setPill(dot, txt, on, label) {
+    dot.className = "dot " + (on ? "on" : "off");
+    txt.textContent = label;
+  }
+
+  function showBanner(text) {
+    el.banner.textContent = text;
+    el.banner.classList.add("show");
+  }
+  function hideBanner() { el.banner.classList.remove("show"); }
+
+  // The MJPEG <img> src is set exactly once per camera. Re-assigning it on every
+  // poll would tear down and re-open the stream twice a second.
+  function buildFeeds(cams) {
+    el.feeds.innerHTML = "";
+    cams.forEach(function (c) {
+      var d = document.createElement("div");
+      d.className = "feed";
+      d.innerHTML =
+        '<div class="frame">' +
+          '<span class="placeholder">waiting for stream…</span>' +
+          '<img alt="' + esc(c.name) + ' live view" data-ch="' + esc(c.channel) + '">' +
+        '</div>' +
+        '<div class="cap">' +
+          '<div class="who">' +
+            '<span class="nm">' + esc(c.name) + '</span>' +
+            '<span class="tag">' + esc(c.direction) + '</span>' +
+            '<span class="meta">ch ' + esc(c.channel) + ' · <span data-role="conn">—</span></span>' +
+          '</div>' +
+          '<div class="facepx">' +
+            '<div class="n" data-role="px">—</div>' +
+            '<div class="lbl">face px</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="last">last push: <span data-role="last">never</span></div>';
+      el.feeds.appendChild(d);
+
+      var img = d.querySelector("img");
+      var ph = d.querySelector(".placeholder");
+      img.addEventListener("load", function () { ph.style.display = "none"; });
+      img.addEventListener("error", function () {
+        ph.style.display = "";
+        ph.textContent = "stream unavailable";
+      });
+      img.src = "/api/video?channel=" + encodeURIComponent(c.channel);
+      d._img = img;
+    });
+    state.feedsBuilt = true;
+  }
+
+  function renderFeeds(cams) {
+    if (!state.feedsBuilt ||
+        el.feeds.children.length !== cams.length) {
+      buildFeeds(cams);
+    }
+    cams.forEach(function (c, i) {
+      var node = el.feeds.children[i];
+      if (!node) return;
+      var conn = node.querySelector('[data-role="conn"]');
+      conn.textContent = c.connected ? "connected" : "offline";
+      conn.style.color = c.connected ? "#1f8a4c" : "var(--danger)";
+
+      var px = node.querySelector('[data-role="px"]');
+      px.textContent = (c.lastFacePx === null || c.lastFacePx === undefined)
+        ? "—" : c.lastFacePx;
+      px.className = "n " + faceClass(c.lastFacePx);
+
+      node.querySelector('[data-role="last"]').textContent =
+        c.lastPostAt ? fmtTime(c.lastPostAt) : "never";
+    });
+  }
+
+  function renderExec(x) {
+    if (!x) return;
+    el.execReq.textContent = x.requested || "—";
+    var active = Array.isArray(x.active) ? x.active : [];
+    // What the operator asked for and what onnxruntime actually loaded are
+    // different things — a GPU request silently falls back to CPU when CUDA
+    // isn't there. Show the truth, not the intention.
+    el.execActive.textContent = active.length
+      ? active.map(function (p) { return String(p).replace(/ExecutionProvider$/, ""); }).join(" + ")
+      : "none";
+    var wantedGpu = String(x.requested || "").toLowerCase() === "gpu";
+    var gotGpu = active.some(function (p) { return /CUDA|Tensorrt|DML|ROCM/i.test(p); });
+    if (wantedGpu && !gotGpu) {
+      el.execActive.style.color = "var(--danger)";
+      el.execActive.title = "GPU was requested but the runtime fell back to CPU";
+    } else {
+      el.execActive.style.color = "";
+      el.execActive.title = "";
+    }
+    Array.prototype.forEach.call(el.execSeg.children, function (b) {
+      b.classList.toggle("sel", b.getAttribute("data-mode") === String(x.requested || "").toLowerCase());
+    });
+  }
+
+  function renderBridge(b) {
+    state.bridgeRunning = !!(b && b.running);
+    setPill(el.pillBridgeDot, el.pillBridgeTxt, state.bridgeRunning,
+            state.bridgeRunning ? "bridge running" : "bridge stopped");
+    el.bridgeBtn.disabled = false;
+    el.bridgeBtn.textContent = state.bridgeRunning ? "Stop bridge" : "Start bridge";
+    el.bridgeBtn.className = state.bridgeRunning ? "ghost" : "";
+    el.pillSent.textContent = (b && typeof b.sent === "number") ? b.sent : 0;
+
+    // Only refresh the config inputs when the operator isn't mid-edit.
+    if (b && !state.cfgDirty && document.activeElement !== el.cfgMinFace
+        && document.activeElement !== el.cfgCooldown
+        && document.activeElement !== el.cfgFps) {
+      if (typeof b.minFace === "number") el.cfgMinFace.value = b.minFace;
+      if (typeof b.cooldown === "number") el.cfgCooldown.value = b.cooldown;
+      if (typeof b.fps === "number") el.cfgFps.value = b.fps;
+    }
+  }
+
+  function loadStatus() {
+    return api("/api/status").then(function (s) {
+      state.statusFails = 0;
+      hideBanner();
+
+      var up = !!(s.backend && s.backend.up);
+      setPill(el.pillBackendDot, el.pillBackendTxt, up,
+              up ? "backend connected" : "backend offline");
+
+      renderBridge(s.bridge);
+      renderExec(s.exec);
+
+      var cams = Array.isArray(s.cameras) ? s.cameras : [];
+      state.cameras = cams;
+      renderFeeds(cams);
+      syncCameraSelect(cams);
+
+      if (!up) {
+        showBanner("The tafai backend is not answering. Faces are still being " +
+                   "detected but nothing is being recorded — start the backend " +
+                   "(npm run start:dev) and this will clear itself.");
+      }
+
+      var offline = cams.filter(function (c) { return !c.connected; });
+      if (offline.length) {
+        say(el.msgCameras, offline.length + " camera(s) not connected: " +
+            offline.map(function (c) { return c.name; }).join(", "), "err");
+      } else if (!state.bridgeRunning) {
+        say(el.msgCameras, "Cameras live. Bridge is stopped — press Start bridge to begin pushing faces.");
+      } else {
+        say(el.msgCameras, "Bridge running on " + cams.length + " camera(s).", "ok");
+      }
+    }).catch(function (e) {
+      state.statusFails++;
+      setPill(el.pillBackendDot, el.pillBackendTxt, false, "console offline");
+      el.pillBridgeDot.className = "dot off";
+      el.pillBridgeTxt.textContent = "bridge unknown";
+      showBanner("Cannot reach the console server on this machine (" + e.message +
+                 "). The page is not updating. Check that bridge_server.py is still running, " +
+                 "then reload.");
+      say(el.msgCameras, "Status unavailable — " + e.message, "err");
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 3 — live events
+   * ------------------------------------------------------------------ */
+
+  function camLabel(channelId, direction) {
+    var c = state.cameras.filter(function (x) { return x.channel === channelId; })[0];
+    var name = c ? c.name : ("ch " + channelId);
+    var dir = direction || (c ? c.direction : "");
+    return esc(name) + (dir ? ' <span class="tag">' + esc(dir) + "</span>" : "");
+  }
+
+  function loadEvents() {
+    var q = "/api/events?limit=30&matchedOnly=" + (el.matchedOnly.checked ? "true" : "false");
+    return api(q).then(function (rows) {
+      rows = Array.isArray(rows) ? rows : [];
+      if (!rows.length) {
+        el.eventsBody.innerHTML = '<tr><td class="empty" colspan="6">' +
+          (el.matchedOnly.checked ? "No matched faces yet." : "No faces captured yet.") +
+          "</td></tr>";
+        say(el.msgEvents, "Waiting for the first face.");
+        return;
+      }
+      var html = rows.map(function (ev) {
+        var thumb = ev.hasImage
+          ? '<a href="/api/events/' + encodeURIComponent(ev.id) + '/image" target="_blank" rel="noopener">' +
+              '<img class="thumb" loading="lazy" alt="captured face" ' +
+              'src="/api/events/' + encodeURIComponent(ev.id) + '/image"></a>'
+          : '<div class="nothumb" title="no image stored"></div>';
+        var who = ev.employee
+          ? esc(ev.employee)
+          : '<span class="unknown">unknown</span>';
+        var st = String(ev.status || "").toUpperCase();
+        var stCls = (st === "MATCHED" || st === "UNMATCHED" || st === "PENDING") ? st : "OTHER";
+        return "<tr>" +
+          "<td>" + thumb + "</td>" +
+          '<td class="num">' + fmtTime(ev.capturedAt) + "</td>" +
+          "<td>" + camLabel(ev.channelId, ev.direction) + "</td>" +
+          "<td>" + who + "</td>" +
+          '<td class="num"><span class="sim ' + simClass(ev.similarity) + '">' +
+              fmtSim(ev.similarity) + "</span></td>" +
+          '<td><span class="st ' + stCls + '">' + esc(st || "—") + "</span></td>" +
+          "</tr>";
+      }).join("");
+      el.eventsBody.innerHTML = html;
+      say(el.msgEvents, "Showing " + rows.length + " most recent" +
+          (el.matchedOnly.checked ? " matched" : "") + " capture(s).");
+    }).catch(function (e) {
+      say(el.msgEvents, "Could not load events — " + e.message, "err");
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 4 + 5 — employees, enrolment
+   * ------------------------------------------------------------------ */
+
+  function syncCameraSelect(cams) {
+    if (!cams.length) return;
+    var current = el.enrCam.value;
+    var want = cams.map(function (c) { return String(c.channel); }).join(",");
+    if (el.enrCam.getAttribute("data-sig") === want) return;
+    el.enrCam.setAttribute("data-sig", want);
+    el.enrCam.innerHTML = cams.map(function (c) {
+      return '<option value="' + esc(c.channel) + '">' +
+             esc(c.name) + " (" + esc(c.direction) + ")</option>";
+    }).join("");
+    if (current) el.enrCam.value = current;
+  }
+
+  function loadEmployees() {
+    return api("/api/employees").then(function (rows) {
+      rows = Array.isArray(rows) ? rows : [];
+
+      // dropdown — preserve the operator's current pick across refreshes
+      var picked = el.enrEmp.value;
+      el.enrEmp.innerHTML = '<option value="">— select employee —</option>' +
+        rows.map(function (r) {
+          return '<option value="' + esc(r.id) + '">' + esc(r.name) +
+                 (r.code ? " (" + esc(r.code) + ")" : "") +
+                 " · " + (r.samples || 0) + " sample" + ((r.samples === 1) ? "" : "s") +
+                 "</option>";
+        }).join("");
+      if (picked) el.enrEmp.value = picked;
+
+      // table
+      if (!rows.length) {
+        el.empBody.innerHTML = '<tr><td class="empty" colspan="4">No employees found.</td></tr>';
+        say(el.msgEmployees, "");
+        return;
+      }
+      el.empBody.innerHTML = rows.map(function (r) {
+        var n = r.samples || 0;
+        return "<tr>" +
+          "<td>" + esc(r.name) + "</td>" +
+          '<td class="num">' + esc(r.code || "—") + "</td>" +
+          '<td class="num"' + (n ? "" : ' style="color:var(--muted)"') + ">" + n + "</td>" +
+          "<td>" + (n
+            ? '<button type="button" class="danger" data-clear="' + esc(r.id) +
+              '" data-name="' + esc(r.name) + '">Clear</button>'
+            : "") + "</td>" +
+          "</tr>";
+      }).join("");
+      var enrolled = rows.filter(function (r) { return (r.samples || 0) > 0; }).length;
+      say(el.msgEmployees, enrolled + " of " + rows.length + " employee(s) have face samples on file.");
+    }).catch(function (e) {
+      el.empBody.innerHTML = '<tr><td class="empty" colspan="4">—</td></tr>';
+      say(el.msgEmployees, "Could not load employees — " + e.message, "err");
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 6 — today's attendance
+   * ------------------------------------------------------------------ */
+
+  function loadAttendance() {
+    var date = todayISO();
+    el.attDateLbl.textContent = date;
+    return api("/api/attendance?date=" + encodeURIComponent(date)).then(function (rows) {
+      rows = Array.isArray(rows) ? rows : [];
+      if (!rows.length) {
+        el.attBody.innerHTML = '<tr><td class="empty" colspan="5">Nobody has punched in today yet.</td></tr>';
+        say(el.msgAttendance, "");
+        return;
+      }
+      el.attBody.innerHTML = rows.map(function (r) {
+        return "<tr>" +
+          "<td>" + esc(r.employee) + "</td>" +
+          '<td class="num">' + esc(r.code || "—") + "</td>" +
+          '<td class="num">' + fmtTime(r.checkInAt) + "</td>" +
+          '<td class="num">' + fmtTime(r.checkOutAt) + "</td>" +
+          "<td>" + esc(r.status || "—") + "</td>" +
+          "</tr>";
+      }).join("");
+      say(el.msgAttendance, rows.length + " record(s) for " + date + ".");
+    }).catch(function (e) {
+      el.attBody.innerHTML = '<tr><td class="empty" colspan="5">—</td></tr>';
+      say(el.msgAttendance, "Could not load attendance — " + e.message, "err");
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * actions
+   * ------------------------------------------------------------------ */
+
+  el.execSeg.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-mode]");
+    if (!btn) return;
+    var mode = btn.getAttribute("data-mode");
+    Array.prototype.forEach.call(el.execSeg.children, function (b) { b.disabled = true; });
+    say(el.msgCameras, "Switching inference to " + mode.toUpperCase() + " — reloading the model…", "busy");
+    postJSON("/api/exec", { mode: mode }).then(function (x) {
+      renderExec(x);
+      var active = Array.isArray(x.active) ? x.active : [];
+      var gotGpu = active.some(function (p) { return /CUDA|Tensorrt|DML|ROCM/i.test(p); });
+      if (mode === "gpu" && !gotGpu) {
+        say(el.msgCameras, "GPU requested, but the runtime is still on " +
+            (active.join(", ") || "nothing") + " — no usable GPU provider is installed.", "err");
+      } else {
+        say(el.msgCameras, "Inference now running on " + (active.join(", ") || mode.toUpperCase()) + ".", "ok");
+      }
+    }).catch(function (e2) {
+      say(el.msgCameras, "Could not switch inference — " + e2.message, "err");
+    }).then(function () {
+      Array.prototype.forEach.call(el.execSeg.children, function (b) { b.disabled = false; });
+    });
+  });
+
+  el.bridgeBtn.addEventListener("click", function () {
+    var action = state.bridgeRunning ? "stop" : "start";
+    el.bridgeBtn.disabled = true;
+    say(el.msgCameras, (action === "start" ? "Starting" : "Stopping") + " the bridge…", "busy");
+    postJSON("/api/bridge", { action: action }).then(function (r) {
+      state.bridgeRunning = !!(r && r.running);
+      renderBridge({ running: state.bridgeRunning });
+      say(el.msgCameras, "Bridge " + (state.bridgeRunning ? "started." : "stopped."), "ok");
+    }).catch(function (e) {
+      say(el.msgCameras, "Bridge " + action + " failed — " + e.message, "err");
+    }).then(function () {
+      el.bridgeBtn.disabled = false;
+      loadStatus();
+    });
+  });
+
+  [el.cfgMinFace, el.cfgCooldown, el.cfgFps].forEach(function (i) {
+    i.addEventListener("input", function () { state.cfgDirty = true; });
+  });
+
+  el.cfgSave.addEventListener("click", function () {
+    var payload = {
+      minFace: parseInt(el.cfgMinFace.value, 10),
+      cooldown: parseFloat(el.cfgCooldown.value),
+      fps: parseFloat(el.cfgFps.value)
+    };
+    if (isNaN(payload.minFace) || isNaN(payload.cooldown) || isNaN(payload.fps)) {
+      say(el.msgCameras, "All three settings need a number before saving.", "err");
+      return;
+    }
+    el.cfgSave.disabled = true;
+    postJSON("/api/config", payload).then(function () {
+      state.cfgDirty = false;
+      say(el.msgCameras, "Settings saved — min face " + payload.minFace + "px, cooldown " +
+          payload.cooldown + "s, " + payload.fps + " fps.", "ok");
+    }).catch(function (e) {
+      say(el.msgCameras, "Could not save settings — " + e.message, "err");
+    }).then(function () { el.cfgSave.disabled = false; });
+  });
+
+  el.matchedOnly.addEventListener("change", function () {
+    say(el.msgEvents, "Refreshing…", "busy");
+    loadEvents();
+  });
+
+  el.enrBtn.addEventListener("click", function () {
+    if (state.enrolling) return;
+    var employeeId = el.enrEmp.value;
+    var channel = parseInt(el.enrCam.value, 10);
+    var count = parseInt(el.enrCount.value, 10);
+
+    if (!employeeId) { say(el.msgEnrol, "Pick an employee first.", "err"); return; }
+    if (isNaN(channel)) { say(el.msgEnrol, "Pick a camera first.", "err"); return; }
+    if (isNaN(count) || count < 3 || count > 10) {
+      say(el.msgEnrol, "Frame count must be between 3 and 10.", "err"); return;
+    }
+
+    state.enrolling = true;
+    el.enrBtn.disabled = true;
+    var camName = (state.cameras.filter(function (c) { return c.channel === channel; })[0] || {}).name || ("ch " + channel);
+    say(el.msgEnrol, "Capturing " + count + " frames from " + camName +
+        " — look straight at the camera…", "busy");
+
+    postJSON("/api/enroll", { employeeId: employeeId, channel: channel, count: count })
+      .then(function (r) {
+        var q = Array.isArray(r.quality) ? r.quality : [];
+        var shots = q.length
+          ? "  Shot quality: " + q.map(function (v) { return Number(v).toFixed(3); }).join(", ") + "."
+          : "";
+        if (r.ok) {
+          say(el.msgEnrol, "Enrolled " + (r.captured || q.length) + " frame(s)." + shots +
+              (r.message ? "  " + r.message : ""), "ok");
+        } else {
+          say(el.msgEnrol, (r.message || "Enrolment failed.") + shots, "err");
+        }
+        loadEmployees();
+      })
+      .catch(function (e) {
+        say(el.msgEnrol, "Enrolment failed — " + e.message, "err");
+      })
+      .then(function () {
+        state.enrolling = false;
+        el.enrBtn.disabled = false;
+      });
+  });
+
+  el.empBody.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-clear]");
+    if (!btn) return;
+    var id = btn.getAttribute("data-clear");
+    var name = btn.getAttribute("data-name") || "this employee";
+    if (!window.confirm("Delete all face samples for " + name +
+        "?\n\nThey will stop being recognised at the door until re-enrolled.")) return;
+    btn.disabled = true;
+    say(el.msgEmployees, "Clearing samples for " + name + "…", "busy");
+    api("/api/employees/" + encodeURIComponent(id) + "/enrollments", { method: "DELETE" })
+      .then(function () {
+        // loadEmployees() writes its own summary into this same line, so the
+        // confirmation has to be re-asserted after the refresh settles —
+        // otherwise the operator never sees that the delete actually happened.
+        return loadEmployees().then(function () {
+          say(el.msgEmployees, "Cleared all face samples for " + name + ".", "ok");
+        });
+      })
+      .catch(function (e2) {
+        btn.disabled = false;
+        say(el.msgEmployees, "Could not clear samples — " + e2.message, "err");
+      });
+  });
+
+  /* ------------------------------------------------------------------ *
+   * polling — ONE timer, paused while the tab is hidden.
+   * This runs on the same laptop that is decoding two RTSP streams and running
+   * InsightFace, so an idle background tab must cost nothing.
+   * ------------------------------------------------------------------ */
+
+  var timer = null;
+  var tick = 0;
+
+  // Status wants 2s and events want 3s; a 1s base tick with counters gives both
+  // from a single timer without drift, and lets employees/attendance ride along
+  // once a minute instead of owning timers of their own.
+  function startPolling() {
+    if (timer) return;
+    timer = setInterval(function () {
+      if (document.hidden) return;
+      tick++;
+      if (tick % 2 === 0) loadStatus();
+      if (tick % 3 === 0) loadEvents();
+      if (tick % 60 === 0) { loadEmployees(); loadAttendance(); }
+    }, 1000);
+  }
+
+  function stopPolling() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      startPolling();
+      // Catch up immediately rather than making the operator wait a tick.
+      loadStatus(); loadEvents(); loadEmployees(); loadAttendance();
+    }
+  });
+
+  // initial paint
+  loadStatus();
+  loadEvents();
+  loadEmployees();
+  loadAttendance();
+  startPolling();
+})();
+</script>
+</body>
+</html>

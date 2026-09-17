@@ -1,0 +1,23 @@
+# tafai capture-service — versions pinned to apps/face-worker/requirements.txt.
+#
+# The detector here and the embedder there MUST agree on what counts as a face:
+# if this service gates on a bbox from a different SCRFD build than the one the
+# backend later embeds with, the min-face threshold stops meaning what it was
+# measured to mean. Same insightface + same buffalo_l pack => same detections.
+# Do not bump these independently of the face-worker.
+
+fastapi==0.136.3
+uvicorn[standard]==0.47.0
+python-multipart==0.0.20   # required: the NVR posts multipart/form-data
+
+# Outbound HTTP. httpx (not requests) for native async + HTTP DIGEST auth —
+# the NVR's ISAPI endpoints are digest-only on this firmware.
+httpx==0.28.1
+
+# Detection pipeline (versions matched to face-worker / the Summit box)
+numpy==1.26.4
+opencv-python-headless==4.11.0.86   # headless: there is no display on Railway
+onnxruntime==1.20.1                  # CPU build for Linux/Railway
+insightface==1.0.1
+scikit-image==0.26.0
+scipy==1.17.1

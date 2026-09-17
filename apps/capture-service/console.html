@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tafai · attendance capture</title>
+<style>
+  :root {
+    --navy: #1F4E79;
+    --blue: #2E5A88;
+    --line: #ccd4df;
+    --page: #f4f6f9;
+    --thead: #eaf2f8;
+    --ghost: #eef2f7;
+    --muted: #778;
+    --danger: #e74c3c;
+    --ok: #2ecc71;
+    --amber: #e8a317;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--page);
+    color: #223;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 48px;
+    background: var(--navy);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 18px;
+    z-index: 50;
+    box-shadow: 0 1px 4px rgba(0,0,0,.22);
+  }
+  .brand {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .2px;
+    white-space: nowrap;
+  }
+  .brand .dim { opacity: .62; font-weight: 400; }
+  .pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 999px;
+    padding: 3px 11px 3px 9px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .pill .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 2px rgba(255,255,255,.14);
+    flex: none;
+  }
+  .dot.on   { background: var(--ok); }
+  .dot.off  { background: var(--danger); }
+  .dot.warn { background: var(--amber); }
+
+  /* The NVR going unreachable is THE failure that actually happens in the
+     field — a dropped port forward, a changed ISP address, an NVR reboot.
+     Everything downstream keeps looking healthy, so this pill has to shout
+     rather than turn a quiet shade of red. */
+  .pill.alarm {
+    background: var(--danger);
+    border-color: #ff9b90;
+    color: #fff;
+    font-weight: 600;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .pill.alarm .dot { background: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(231,76,60,.75); }
+    50%      { box-shadow: 0 0 0 6px rgba(231,76,60,0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pill.alarm { animation: none; }
+  }
+
+  /* ---------- layout ---------- */
+  main {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 66px 18px 40px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+    box-shadow: 0 1px 2px rgba(31,78,121,.06);
+  }
+  .card.wide { grid-column: 1 / -1; }
+
+  h2 {
+    margin: 0 0 2px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--blue);
+  }
+  h2 .muted {
+    font-weight: 400;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .muted { color: var(--muted); }
+  .note {
+    margin: 4px 0 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ---------- banners ---------- */
+  .banner {
+    grid-column: 1 / -1;
+    display: none;
+    background: #fdecea;
+    border: 1px solid #f3b6ae;
+    border-left: 4px solid var(--danger);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: #8b2c20;
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+  .banner b { display: block; font-size: 13.5px; margin-bottom: 2px; }
+
+  /* ---------- controls ---------- */
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 6px;
+    background: var(--navy);
+    border: 1px solid var(--navy);
+    color: #fff;
+    padding: 6px 14px;
+    font-weight: 500;
+  }
+  button:hover:not(:disabled) { background: #24598b; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost {
+    background: var(--ghost);
+    border-color: var(--line);
+    color: #33465c;
+  }
+  button.ghost:hover:not(:disabled) { background: #e2e9f2; }
+
+  .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .row + .row { margin-top: 10px; }
+
+  /* ---------- pipeline ---------- */
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    flex-wrap: wrap;
+  }
+  .stage {
+    flex: 1 1 130px;
+    min-width: 120px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px 11px;
+    background: #fafbfd;
+  }
+  .stage .n {
+    font-size: 27px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    color: var(--navy);
+  }
+  .stage .n.zero { color: var(--muted); }
+  .stage .n.stall { color: var(--danger); }
+  .stage .lbl {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .stage .sub { font-size: 11.5px; color: var(--muted); margin-top: 4px; min-height: 16px; }
+  .stage.bad { border-color: #f3b6ae; background: #fdf1ef; }
+  .arrow {
+    flex: 0 0 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--line);
+    font-size: 17px;
+    user-select: none;
+  }
+  .arrow.bad { color: var(--danger); font-weight: 700; }
+
+  .diag {
+    margin-top: 12px;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    background: #fafbfd;
+    padding: 9px 12px;
+    font-size: 12.5px;
+  }
+  .diag.ok   { border-color: #b7e6cb; border-left-color: #1f8a4c; background: #f2fbf6; color: #1f6b40; }
+  .diag.warn { border-color: #ecd9a8; border-left-color: var(--amber); background: #fdf8ec; color: #8a6612; }
+  .diag.err  { border-color: #f3b6ae; border-left-color: var(--danger); background: #fdf1ef; color: #8b2c20; }
+  .diag b { font-weight: 600; }
+
+  .sidestat {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .sidestat b { color: #223; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ---------- tables ---------- */
+  .tblwrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: middle;
+  }
+  th {
+    background: var(--thead);
+    font-weight: 600;
+    color: #2c4a6b;
+    white-space: nowrap;
+  }
+  tbody tr:nth-child(even) td { background: #fbfcfe; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.empty, td.loading {
+    text-align: center;
+    color: var(--muted);
+    padding: 16px;
+    font-style: italic;
+  }
+  .tag {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    background: var(--thead);
+    color: var(--blue);
+    border: 1px solid #cfe0ee;
+  }
+  .px { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .px.good { color: #1f9d55; }
+  .px.mid  { color: #b4770d; }
+  .px.bad  { color: var(--danger); }
+  .st {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    border-radius: 4px;
+    padding: 1px 7px;
+    display: inline-block;
+    white-space: nowrap;
+  }
+  .st.good { background: #e6f8ee; color: #1f8a4c; border: 1px solid #b7e6cb; }
+  .st.warn { background: #fdf4e3; color: #97701a; border: 1px solid #ecd9a8; }
+  .st.err  { background: #fdecea; color: #b9382a; border: 1px solid #f3c3bc; }
+  .st.other{ background: var(--ghost); color: #55637a; border: 1px solid var(--line); }
+
+  /* ---------- snapshots ---------- */
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .shot {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .shot .frame {
+    position: relative;
+    background: #10151c;
+    aspect-ratio: 16 / 9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .shot .frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .shot .frame .placeholder { position: absolute; color: #7d8894; font-size: 12px; padding: 0 10px; text-align: center; }
+  .shot .cap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--line);
+    background: #fff;
+  }
+  .shot .who { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .shot .who .nm { font-weight: 600; }
+
+  /* ---------- config ---------- */
+  .cfg { width: 100%; }
+  .cfg td:first-child { width: 42%; color: #445; }
+  .cfg td.v { font-variant-numeric: tabular-nums; }
+  .cfg td.v code {
+    font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--ghost);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+
+  /* ---------- messages ---------- */
+  .msg {
+    margin: 11px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+    min-height: 17px;
+  }
+  .msg.ok   { color: #1f8a4c; }
+  .msg.err  { color: var(--danger); }
+  .msg.busy { color: var(--blue); }
+
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; padding-top: 92px; }
+    .shots { grid-template-columns: 1fr; }
+    .arrow { flex-basis: 100%; height: 20px; transform: rotate(90deg); }
+    header {
+      gap: 10px; padding: 6px 12px;
+      height: auto; min-height: 48px; flex-wrap: wrap;
+    }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">tafai <span class="dim">·</span> attendance capture</div>
+  <div class="pills">
+    <span class="pill" id="pillSvc"><span class="dot" id="pillSvcDot"></span><span id="pillSvcTxt">service …</span></span>
+    <span class="pill" id="pillNvr"><span class="dot" id="pillNvrDot"></span><span id="pillNvrTxt">NVR …</span></span>
+    <span class="pill" id="pillBe"><span class="dot" id="pillBeDot"></span><span id="pillBeTxt">backend …</span></span>
+  </div>
+</header>
+
+<main>
+
+  <!-- console itself cannot reach the capture service -->
+  <div class="banner" id="banner"></div>
+
+  <!-- the loud one: service is up but the NVR is not answering -->
+  <div class="banner" id="nvrBanner"></div>
+
+  <!-- ============ 1. PIPELINE HEALTH ============ -->
+  <section class="card wide">
+    <h2>Pipeline health <span class="muted">— where a face gets lost between the door and the punch</span></h2>
+    <p class="note">The NVR pushes an event, we pull full-resolution snapshots back from it,
+      detect a face, and forward the best one to the tafai backend. Each number is a running
+      total since the service last started; a stage that stays at zero while the one to its
+      left climbs is the stage that is broken.</p>
+
+    <div class="flow" id="flow">
+      <div class="stage" data-k="events">
+        <div class="n zero" data-role="n">—</div>
+        <div class="lbl">events received</div>
+        <div class="sub" data-role="sub">from the NVR</div>
+      </div>
+      <div class="arrow" data-gap="pull">&#8594;</div>
+      <div class="stage" data-k="pulled">
+        <div class="n zero" data-role="n">—</div>
+        <div class="lbl">snapshots pulled</div>
+        <div class="sub" data-role="sub">ISAPI, full res</div>
+      </div>
+      <div class="arrow" data-gap="detect">&#8594;</div>
+      <div class="stage" data-k="faces">
+        <div class="n zero" data-role="n">—</div>
+        <div class="lbl">faces found</div>
+        <div class="sub" data-role="sub">largest per burst</div>
+      </div>
+      <div class="arrow" data-gap="forward">&#8594;</div>
+      <div class="stage" data-k="forwarded">
+        <div class="n zero" data-role="n">—</div>
+        <div class="lbl">forwarded</div>
+        <div class="sub" data-role="sub">to /hik ingest</div>
+      </div>
+    </div>
+
+    <div class="diag" id="diag">Reading service status…</div>
+
+    <div class="sidestat">
+      <span>rejected, face too small: <b id="statSmall">—</b></span>
+      <span>no face in the snapshot: <b id="statNoFace">—</b></span>
+      <span>snapshot pull failed: <b id="statPullFail">—</b></span>
+      <span>forward failed: <b id="statFwdFail">—</b></span>
+      <span>debounced (same person again): <b id="statDebounced">—</b></span>
+      <span>uptime: <b id="statUptime">—</b></span>
+    </div>
+
+    <p class="msg" id="msgPipeline">Connecting…</p>
+  </section>
+
+  <!-- ============ 2. RECENT ACTIVITY ============ -->
+  <section class="card wide">
+    <h2>Recent activity <span class="muted">— every event the NVR has pushed, newest first</span></h2>
+    <p class="note">A face narrower than 100&nbsp;px does not carry enough detail to match.
+      Amber is borderline, red will not match. If a camera is producing constant small faces
+      it is almost always framing something in the background, not a person at the door.</p>
+    <div class="tblwrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:92px">Time</th>
+            <th style="width:190px">Camera</th>
+            <th style="width:140px">Event type</th>
+            <th style="width:90px">Face px</th>
+            <th style="width:150px">Action</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody id="eventsBody"><tr><td class="loading" colspan="6">Loading activity…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="msg" id="msgEvents"></p>
+  </section>
+
+  <!-- ============ 3. CAMERA PREVIEW ============ -->
+  <section class="card">
+    <h2>Camera preview <span class="muted">— check framing and focus</span></h2>
+    <p class="note">Deliberately manual. Each press pulls one full-resolution JPEG (~32&nbsp;KB)
+      over the client's own internet link, so this page never polls the cameras — leave it
+      that way, an auto-refreshing preview would burn the site's bandwidth all day for nothing.</p>
+    <div class="shots" id="shots">
+      <div class="muted" style="grid-column:1/-1">Waiting for the channel map…</div>
+    </div>
+    <p class="msg" id="msgShots"></p>
+  </section>
+
+  <!-- ============ 4. CONFIGURATION ============ -->
+  <section class="card">
+    <h2>Configuration <span class="muted">— active settings, read-only</span></h2>
+    <p class="note">Set by environment variables on the capture service. Change them in
+      Railway and redeploy; they cannot be edited from here. Credentials are never sent to
+      this page.</p>
+    <div class="tblwrap">
+      <table class="cfg">
+        <tbody id="cfgBody"><tr><td class="loading" colspan="2">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="msg" id="msgCfg"></p>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ------------------------------------------------------------------ *
+   * helpers
+   * ------------------------------------------------------------------ */
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Everything that reaches innerHTML goes through this. Event types and detail
+  // strings originate in the NVR's own XML, which we do not control.
+  function esc(v) {
+    if (v === null || v === undefined) return "";
+    return String(v)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function num(v) {
+    return (typeof v === "number" && isFinite(v)) ? v : null;
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    var p = function (n) { return n < 10 ? "0" + n : "" + n; };
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
+  function fmtDuration(sec) {
+    var s = num(sec);
+    if (s === null || s < 0) return "—";
+    s = Math.floor(s);
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600),
+        m = Math.floor((s % 3600) / 60);
+    if (d) return d + "d " + h + "h";
+    if (h) return h + "h " + m + "m";
+    if (m) return m + "m";
+    return s + "s";
+  }
+
+  function pxClass(px) {
+    var n = num(px);
+    if (n === null) return "";
+    if (n >= 100) return "good";
+    if (n >= 80) return "mid";
+    return "bad";
+  }
+
+  function say(el, text, kind) {
+    el.textContent = (kind === "ok" ? "✓ " : "") + text;
+    el.className = "msg" + (kind ? " " + kind : "");
+  }
+
+  function api(path, opts) {
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (body) {
+        var data = null;
+        try { data = body ? JSON.parse(body) : null; } catch (e) { data = null; }
+        if (!r.ok) throw new Error((data && data.error) || ("HTTP " + r.status));
+        if (data === null && body) throw new Error("bad JSON from " + path);
+        return data;
+      });
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * state
+   * ------------------------------------------------------------------ */
+
+  var state = {
+    channels: [],        // [{channel, name, direction}]
+    shotsBuilt: "",      // signature of the channels the buttons were built for
+    shotUrls: {},        // channel -> object URL currently displayed
+    minFace: 100,
+    nvrUp: null,
+    lastStats: null
+  };
+
+  var el = {
+    banner: $("banner"), nvrBanner: $("nvrBanner"),
+    pillSvc: $("pillSvc"), pillSvcDot: $("pillSvcDot"), pillSvcTxt: $("pillSvcTxt"),
+    pillNvr: $("pillNvr"), pillNvrDot: $("pillNvrDot"), pillNvrTxt: $("pillNvrTxt"),
+    pillBe: $("pillBe"), pillBeDot: $("pillBeDot"), pillBeTxt: $("pillBeTxt"),
+    flow: $("flow"), diag: $("diag"),
+    statSmall: $("statSmall"), statNoFace: $("statNoFace"),
+    statPullFail: $("statPullFail"), statFwdFail: $("statFwdFail"),
+    statDebounced: $("statDebounced"), statUptime: $("statUptime"),
+    msgPipeline: $("msgPipeline"),
+    eventsBody: $("eventsBody"), msgEvents: $("msgEvents"),
+    shots: $("shots"), msgShots: $("msgShots"),
+    cfgBody: $("cfgBody"), msgCfg: $("msgCfg")
+  };
+
+  function setPill(pill, dot, txt, kind, label) {
+    dot.className = "dot " + kind;                 // on | off | warn | ""
+    txt.textContent = label;
+    pill.classList.toggle("alarm", kind === "off" && pill === el.pillNvr);
+  }
+
+  function showBanner(node, title, text) {
+    node.innerHTML = "<b>" + esc(title) + "</b>" + esc(text);
+    node.classList.add("show");
+  }
+  function hideBanner(node) { node.classList.remove("show"); }
+
+  /* ------------------------------------------------------------------ *
+   * 1 — pipeline health
+   * ------------------------------------------------------------------ */
+
+  function stageNode(key) { return el.flow.querySelector('.stage[data-k="' + key + '"]'); }
+  function arrowNode(key) { return el.flow.querySelector('.arrow[data-gap="' + key + '"]'); }
+
+  function setStage(key, value, sub, bad) {
+    var node = stageNode(key);
+    if (!node) return;
+    var n = num(value);
+    var nEl = node.querySelector('[data-role="n"]');
+    nEl.textContent = n === null ? "—" : n.toLocaleString();
+    nEl.className = "n" + (bad ? " stall" : (n ? "" : " zero"));
+    node.classList.toggle("bad", !!bad);
+    node.querySelector('[data-role="sub"]').textContent = sub;
+  }
+
+  function setArrow(key, bad) {
+    var a = arrowNode(key);
+    if (a) a.classList.toggle("bad", !!bad);
+  }
+
+  function pct(part, whole) {
+    var p = num(part), w = num(whole);
+    if (p === null || !w) return "";
+    return Math.round((p / w) * 100) + "%";
+  }
+
+  function renderPipeline(s) {
+    var st = (s && s.stats) || {};
+    state.lastStats = st;
+
+    var events    = num(st.eventsReceived);
+    var pulled    = num(st.snapshotsPulled);
+    var faces     = num(st.facesFound);
+    var forwarded = num(st.forwarded);
+    var tooSmall  = num(st.rejectedTooSmall);
+
+    // A stage is "stalled" only when the one feeding it has actually produced
+    // work. Zero everywhere just means a quiet morning, not a fault.
+    var pullStall    = !!(events && !pulled);
+    var detectStall  = !!(pulled && !faces);
+    var forwardStall = !!(faces && !forwarded);
+
+    setStage("events", events, "from the NVR", false);
+    setStage("pulled", pulled, events ? pct(pulled, events) + " of events" : "ISAPI, full res", pullStall);
+    setStage("faces", faces, pulled ? pct(faces, pulled) + " of pulls" : "largest per burst", detectStall);
+    setStage("forwarded", forwarded, faces ? pct(forwarded, faces) + " of faces" : "to /hik ingest", forwardStall);
+    setArrow("pull", pullStall);
+    setArrow("detect", detectStall);
+    setArrow("forward", forwardStall);
+
+    el.statSmall.textContent     = tooSmall === null ? "—" : tooSmall.toLocaleString();
+    el.statNoFace.textContent    = num(st.noFace) === null ? "—" : num(st.noFace).toLocaleString();
+    el.statPullFail.textContent  = num(st.pullFailed) === null ? "—" : num(st.pullFailed).toLocaleString();
+    el.statFwdFail.textContent   = num(st.forwardFailed) === null ? "—" : num(st.forwardFailed).toLocaleString();
+    el.statDebounced.textContent = num(st.debounced) === null ? "—" : num(st.debounced).toLocaleString();
+    el.statUptime.textContent    = fmtDuration(s && s.uptimeSeconds);
+
+    renderDiagnosis(s, {
+      events: events, pulled: pulled, faces: faces,
+      forwarded: forwarded, tooSmall: tooSmall,
+      pullStall: pullStall, detectStall: detectStall, forwardStall: forwardStall
+    });
+  }
+
+  // One sentence naming the stage that is broken and the thing to go fix. The
+  // whole point of this panel is that nobody should have to read four counters
+  // and work out the subtraction themselves.
+  function renderDiagnosis(s, f) {
+    var nvrUp = !(s && s.nvr && s.nvr.reachable === false);
+    var beUp  = !(s && s.backend && s.backend.reachable === false);
+    var kind = "ok", text;
+
+    if (!nvrUp) {
+      kind = "err";
+      text = "The NVR is not answering. Snapshots cannot be pulled, so nothing will be " +
+             "recorded no matter how many events arrive. Check the port forward, the site's " +
+             "public IP, and that the NVR is powered on.";
+    } else if (!beUp) {
+      kind = "err";
+      text = "The tafai backend is not answering. Faces are still being captured but none of " +
+             "them are becoming attendance punches.";
+    } else if (f.pullStall) {
+      kind = "err";
+      text = "Events are arriving but no snapshot has been pulled. The NVR accepts our alert " +
+             "but refuses or times out on the ISAPI snapshot request — usually wrong " +
+             "credentials, or the forwarded port only covers the alarm path.";
+    } else if (f.detectStall) {
+      kind = "err";
+      text = "Snapshots are coming back but no face has been found in any of them. The event " +
+             "is most likely motion rather than a face, or the camera is pointed away from " +
+             "where people actually walk.";
+    } else if (f.forwardStall && f.tooSmall) {
+      kind = "warn";
+      text = "Faces are being found but every one is below the " + state.minFace + " px minimum, " +
+             "so nothing is forwarded. Move the camera closer to the door or narrow its field " +
+             "of view — a face this small cannot be matched at any threshold.";
+    } else if (f.forwardStall) {
+      kind = "err";
+      text = "Faces are being found but nothing is reaching the backend. Check the ingest " +
+             "secret and that the backend is accepting the /hik multipart.";
+    } else if (f.faces && f.tooSmall && f.tooSmall > f.faces / 2) {
+      kind = "warn";
+      text = "More than half of the faces found are too small to match (" +
+             f.tooSmall.toLocaleString() + " rejected). Recognition will be patchy until the " +
+             "framing is tightened.";
+    } else if (!f.events) {
+      kind = "warn";
+      text = "No events received yet. The NVR has not pushed anything — confirm its alarm " +
+             "server points at this service's URL and that face capture is armed on both " +
+             "channels.";
+    } else {
+      text = "Pipeline healthy — " + (f.forwarded || 0).toLocaleString() +
+             " face(s) forwarded from " + f.events.toLocaleString() + " event(s).";
+    }
+    el.diag.className = "diag " + kind;
+    el.diag.textContent = text;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 2 — status poll
+   * ------------------------------------------------------------------ */
+
+  function loadStatus() {
+    return api("/api/status").then(function (s) {
+      s = s || {};
+      hideBanner(el.banner);
+
+      setPill(el.pillSvc, el.pillSvcDot, el.pillSvcTxt, "on", "service up");
+
+      var nvr = s.nvr || {};
+      var nvrUp = nvr.reachable !== false;
+      state.nvrUp = nvrUp;
+      setPill(el.pillNvr, el.pillNvrDot, el.pillNvrTxt,
+              nvrUp ? "on" : "off",
+              nvrUp ? "NVR reachable" : "NVR UNREACHABLE");
+
+      var be = s.backend || {};
+      var beUp = be.reachable !== false;
+      setPill(el.pillBe, el.pillBeDot, el.pillBeTxt,
+              beUp ? "on" : "off",
+              beUp ? "backend reachable" : "backend offline");
+
+      if (!nvrUp) {
+        showBanner(el.nvrBanner, "The NVR is unreachable — attendance is not being captured.",
+          "We can still receive the alarm push, but every snapshot request is failing" +
+          (nvr.lastError ? " (" + nvr.lastError + ")" : "") +
+          ". Nobody walking through the door is being recorded right now. Check the port " +
+          "forward on the office router, whether the site's public IP has changed, and that " +
+          "the NVR has power." +
+          (nvr.lastOkAt ? "  Last successful snapshot: " + fmtTime(nvr.lastOkAt) + "." : ""));
+      } else {
+        hideBanner(el.nvrBanner);
+      }
+
+      renderConfig(s.config);
+      renderPipeline(s);
+
+      if (!nvrUp) {
+        say(el.msgPipeline, "NVR unreachable — the pipeline is stalled at the snapshot pull.", "err");
+      } else if (!beUp) {
+        say(el.msgPipeline, "Backend unreachable — captures are not becoming punches.", "err");
+      } else {
+        say(el.msgPipeline, "Live. Counters are cumulative since the service started " +
+            fmtDuration(s.uptimeSeconds) + " ago.", "ok");
+      }
+    }).catch(function (e) {
+      // The page keeps its last known numbers rather than blanking; the banner
+      // is what tells the operator they are looking at stale data.
+      setPill(el.pillSvc, el.pillSvcDot, el.pillSvcTxt, "off", "service unreachable");
+      setPill(el.pillNvr, el.pillNvrDot, el.pillNvrTxt, "", "NVR unknown");
+      setPill(el.pillBe, el.pillBeDot, el.pillBeTxt, "", "backend unknown");
+      hideBanner(el.nvrBanner);
+      showBanner(el.banner, "Cannot reach the capture service.",
+        "The numbers below are frozen at their last known values and are not updating (" +
+        e.message + "). The service may be redeploying or crash-looping — check its Railway logs.");
+      say(el.msgPipeline, "Status unavailable — " + e.message, "err");
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 3 — recent activity
+   * ------------------------------------------------------------------ */
+
+  var ACTIONS = {
+    "forwarded":     { cls: "good",  label: "forwarded" },
+    "too-small":     { cls: "warn",  label: "too small" },
+    "debounced":     { cls: "other", label: "debounced" },
+    "no-face":       { cls: "err",   label: "no face" },
+    "pull-failed":   { cls: "err",   label: "pull failed" },
+    "forward-failed":{ cls: "err",   label: "forward failed" },
+    "ignored":       { cls: "other", label: "ignored" }
+  };
+
+  function actionCell(action) {
+    var key = String(action || "").toLowerCase();
+    var a = ACTIONS[key];
+    if (!a) {
+      // Unknown verbs are rendered neutrally rather than guessed at — a new
+      // action added server-side must never read as green "forwarded".
+      a = { cls: "other", label: key || "—" };
+    }
+    return '<span class="st ' + a.cls + '">' + esc(a.label) + "</span>";
+  }
+
+  function cameraCell(ev) {
+    var name = ev.camera || channelName(ev.channelId) || ("ch " + (ev.channelId === undefined ? "?" : ev.channelId));
+    var dir = ev.direction || channelDirection(ev.channelId);
+    return esc(name) + (dir ? ' <span class="tag">' + esc(dir) + "</span>" : "");
+  }
+
+  function channelName(ch) {
+    var c = state.channels.filter(function (x) { return String(x.channel) === String(ch); })[0];
+    return c ? c.name : null;
+  }
+  function channelDirection(ch) {
+    var c = state.channels.filter(function (x) { return String(x.channel) === String(ch); })[0];
+    return c ? c.direction : null;
+  }
+
+  function loadEvents() {
+    return api("/api/events?limit=40").then(function (data) {
+      var rows = Array.isArray(data) ? data : (data && Array.isArray(data.events) ? data.events : []);
+      if (!rows.length) {
+        el.eventsBody.innerHTML =
+          '<tr><td class="empty" colspan="6">Nothing yet — no event has arrived from the NVR.</td></tr>';
+        say(el.msgEvents, "Waiting for the first event.");
+        return;
+      }
+      el.eventsBody.innerHTML = rows.map(function (ev) {
+        ev = ev || {};
+        var px = num(ev.facePx);
+        return "<tr>" +
+          '<td class="num">' + fmtTime(ev.at || ev.receivedAt || ev.capturedAt) + "</td>" +
+          "<td>" + cameraCell(ev) + "</td>" +
+          "<td>" + esc(ev.eventType || "—") + "</td>" +
+          '<td class="num">' + (px === null
+              ? '<span class="muted">—</span>'
+              : '<span class="px ' + pxClass(px) + '">' + px + "</span>") + "</td>" +
+          "<td>" + actionCell(ev.action) + "</td>" +
+          '<td class="muted">' + esc(ev.detail || ev.message || "") + "</td>" +
+          "</tr>";
+      }).join("");
+      say(el.msgEvents, "Showing the " + rows.length + " most recent event(s).");
+    }).catch(function (e) {
+      say(el.msgEvents, "Could not load activity — " + e.message, "err");
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 4 — camera preview (manual only)
+   * ------------------------------------------------------------------ */
+
+  function buildShots(channels) {
+    var sig = channels.map(function (c) { return c.channel; }).join(",");
+    if (state.shotsBuilt === sig) return;
+    state.shotsBuilt = sig;
+    Object.keys(state.shotUrls).forEach(revokeShot);
+
+    if (!channels.length) {
+      el.shots.innerHTML = '<div class="muted" style="grid-column:1/-1">No channels configured.</div>';
+      return;
+    }
+    el.shots.innerHTML = channels.map(function (c) {
+      return '<div class="shot" data-ch="' + esc(c.channel) + '">' +
+        '<div class="frame"><span class="placeholder">no snapshot taken</span></div>' +
+        '<div class="cap">' +
+          '<div class="who"><span class="nm">' + esc(c.name || ("channel " + c.channel)) + "</span>" +
+            (c.direction ? '<span class="tag">' + esc(c.direction) + "</span>" : "") +
+          "</div>" +
+          '<button type="button" class="ghost" data-shot="' + esc(c.channel) + '">Take snapshot</button>' +
+        "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  function revokeShot(ch) {
+    if (state.shotUrls[ch]) {
+      URL.revokeObjectURL(state.shotUrls[ch]);
+      delete state.shotUrls[ch];
+    }
+  }
+
+  el.shots.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-shot]");
+    if (!btn) return;
+    var ch = btn.getAttribute("data-shot");
+    var card = btn.closest(".shot");
+    var frame = card.querySelector(".frame");
+    var ph = frame.querySelector(".placeholder");
+
+    btn.disabled = true;
+    if (ph) { ph.style.display = ""; ph.textContent = "pulling from the NVR…"; }
+    say(el.msgShots, "Pulling one frame from channel " + ch + "…", "busy");
+
+    fetch("/api/snapshot?channel=" + encodeURIComponent(ch)).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (body) {
+          var msg;
+          try { msg = (JSON.parse(body) || {}).error; } catch (err) { msg = null; }
+          throw new Error(msg || ("HTTP " + r.status));
+        });
+      }
+      return r.blob();
+    }).then(function (blob) {
+      // One object URL per channel, replaced in place — without the revoke the
+      // page leaks a couple of hundred KB every press.
+      revokeShot(ch);
+      var url = URL.createObjectURL(blob);
+      state.shotUrls[ch] = url;
+      var img = frame.querySelector("img");
+      if (!img) {
+        img = document.createElement("img");
+        img.alt = "snapshot from channel " + ch;
+        frame.appendChild(img);
+      }
+      img.src = url;
+      if (ph) ph.style.display = "none";
+      say(el.msgShots, "Channel " + ch + " — " + Math.round(blob.size / 1024) +
+          " KB at " + fmtTime(new Date().toISOString()) + ".", "ok");
+    }).catch(function (err) {
+      if (ph) { ph.style.display = ""; ph.textContent = "snapshot failed"; }
+      say(el.msgShots, "Could not pull channel " + ch + " — " + err.message, "err");
+    }).then(function () {
+      btn.disabled = false;
+    });
+  });
+
+  /* ------------------------------------------------------------------ *
+   * 5 — configuration (read-only, credential-free)
+   * ------------------------------------------------------------------ */
+
+  // Nothing that could be a credential is rendered, whatever the server sends.
+  // The service should not be putting secrets in /api/status at all, but this
+  // page is the last line before they end up in a screenshot in a group chat.
+  var SECRET_KEY = /pass|pwd|secret|token|key|cred|auth|signature|salt|private|bearer|cookie/i;
+
+  function looksSecret(key, value) {
+    if (SECRET_KEY.test(String(key))) return true;
+    if (typeof value !== "string") return false;
+    if (/:\/\/[^/\s]*:[^/\s]*@/.test(value)) return true;      // user:pass@host in a URL
+    if (/^[A-Za-z0-9_\-+/=]{24,}$/.test(value)) return true;   // opaque high-entropy blob
+    return false;
+  }
+
+  var CFG_LABELS = {
+    minFacePx: "Minimum face width",
+    debounceSeconds: "Debounce per person",
+    burst: "Snapshots per event",
+    burstCount: "Snapshots per event",
+    burstDelayMs: "Delay between snapshots",
+    snapshotTimeoutMs: "Snapshot timeout",
+    eventTypes: "Accepted event types",
+    channelMap: "Channel map",
+    nvrHost: "NVR host",
+    backendUrl: "tafai backend"
+  };
+
+  function fmtCfgValue(key, value) {
+    if (value === null || value === undefined) return '<span class="muted">not set</span>';
+    if (Array.isArray(value)) {
+      return value.map(function (v) { return "<code>" + esc(v) + "</code>"; }).join(" ");
+    }
+    if (typeof value === "object") {
+      return Object.keys(value).map(function (k) {
+        return "<code>" + esc(k) + " → " + esc(value[k]) + "</code>";
+      }).join(" ");
+    }
+    if (key === "minFacePx") return esc(value) + " px";
+    if (/Seconds$/.test(key)) return esc(value) + " s";
+    if (/Ms$/.test(key)) return esc(value) + " ms";
+    return esc(value);
+  }
+
+  function renderConfig(cfg) {
+    if (!cfg || typeof cfg !== "object") {
+      el.cfgBody.innerHTML = '<tr><td class="empty" colspan="2">No configuration reported.</td></tr>';
+      say(el.msgCfg, "");
+      return;
+    }
+    var mf = num(cfg.minFacePx);
+    if (mf !== null) state.minFace = mf;
+
+    // Channel map drives both the preview buttons and the camera labels.
+    var chans = [];
+    if (Array.isArray(cfg.channels)) {
+      chans = cfg.channels.map(function (c) {
+        return { channel: c.channel, name: c.name, direction: c.direction };
+      });
+    } else if (cfg.channelMap && typeof cfg.channelMap === "object") {
+      chans = Object.keys(cfg.channelMap).map(function (k) {
+        var v = cfg.channelMap[k];
+        var dir = (v && typeof v === "object") ? v.direction : v;
+        var nm  = (v && typeof v === "object") ? v.name : null;
+        return { channel: k, name: nm || ("channel " + k), direction: dir };
+      });
+    }
+    state.channels = chans;
+    buildShots(chans);
+
+    var hidden = 0;
+    var rows = Object.keys(cfg).filter(function (k) {
+      if (looksSecret(k, cfg[k])) { hidden++; return false; }
+      return true;
+    }).map(function (k) {
+      return "<tr><td>" + esc(CFG_LABELS[k] || k) + '</td><td class="v">' +
+             fmtCfgValue(k, cfg[k]) + "</td></tr>";
+    });
+
+    el.cfgBody.innerHTML = rows.length
+      ? rows.join("")
+      : '<tr><td class="empty" colspan="2">No displayable configuration.</td></tr>';
+    say(el.msgCfg, hidden
+      ? hidden + " value(s) withheld because they look like credentials."
+      : "Read-only. Edit these in the service's environment variables.");
+  }
+
+  /* ------------------------------------------------------------------ *
+   * polling — ONE timer, paused while the tab is hidden.
+   * Every poll costs the client nothing (status and events are served from the
+   * service's own memory) but snapshots are NOT polled — see the preview panel.
+   * ------------------------------------------------------------------ */
+
+  var timer = null, tick = 0;
+
+  function startPolling() {
+    if (timer) return;
+    timer = setInterval(function () {
+      if (document.hidden) return;
+      tick++;
+      if (tick % 2 === 0) loadStatus();
+      if (tick % 3 === 0) loadEvents();
+    }, 1000);
+  }
+
+  function stopPolling() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      startPolling();
+      loadStatus();
+      loadEvents();
+    }
+  });
+
+  loadStatus();
+  loadEvents();
+  startPolling();
+})();
+</script>
+</body>
+</html>

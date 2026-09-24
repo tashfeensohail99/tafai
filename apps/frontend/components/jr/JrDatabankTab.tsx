@@ -73,6 +73,10 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Whether the viewer may modify THIS client's databank (assigned associate or
+  // JR head). False = read-only: hide every edit control. Defaults writable
+  // until the tree loads / when the server omits the flag.
+  const [canWrite, setCanWrite] = useState(true);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
 
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -93,6 +97,7 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
       const tree = await fetchJrDatabankTree(clientId);
       setFolders(tree.folders);
       setFiles(tree.files);
+      setCanWrite(tree.canWrite !== false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load the databank');
     } finally {
@@ -134,6 +139,7 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
   // ---- Uploads (button, drag-drop, clipboard paste) ----
   const doUpload = useCallback(
     async (list: FileList | File[], source: 'UPLOAD' | 'CLIPBOARD') => {
+      if (!canWrite) return; // read-only viewer — ignore drops/paste/upload
       const arr = Array.from(list);
       if (arr.length === 0) return;
       setBusy(true);
@@ -150,7 +156,7 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
         setBusy(false);
       }
     },
-    [clientId, currentFolderId, reload],
+    [clientId, currentFolderId, reload, canWrite],
   );
 
   // Clipboard paste of an image while the tab is mounted.
@@ -288,26 +294,47 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button type="button" onClick={() => setCreatingFolder((v) => !v)} disabled={busy} style={btn(false)}>
-            <FolderPlus size={15} /> New folder
-          </button>
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} style={btn(true)}>
-            <Upload size={15} /> Upload
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              if (e.target.files) void doUpload(e.target.files, 'UPLOAD');
-              e.target.value = '';
-            }}
-          />
+          {canWrite ? (
+            <>
+              <button type="button" onClick={() => setCreatingFolder((v) => !v)} disabled={busy} style={btn(false)}>
+                <FolderPlus size={15} /> New folder
+              </button>
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} style={btn(true)}>
+                <Upload size={15} /> Upload
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) void doUpload(e.target.files, 'UPLOAD');
+                  e.target.value = '';
+                }}
+              />
+            </>
+          ) : (
+            <span
+              title="This client is assigned to another associate — you can view and download, but not modify."
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                fontSize: 12,
+                fontWeight: 600,
+                color: muted,
+                border,
+                borderRadius: 8,
+                padding: '5px 10px',
+              }}
+            >
+              View only
+            </span>
+          )}
         </div>
       </div>
 
-      {creatingFolder ? (
+      {creatingFolder && canWrite ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             autoFocus
@@ -360,7 +387,11 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '40px 0', color: muted, textAlign: 'center' }}>
             <Upload size={22} />
             <div style={{ fontSize: 14 }}>This folder is empty.</div>
-            <div style={{ fontSize: 12.5 }}>Drag files here, click Upload, or paste a screenshot.</div>
+            <div style={{ fontSize: 12.5 }}>
+              {canWrite
+                ? 'Drag files here, click Upload, or paste a screenshot.'
+                : 'You have read-only access to this databank.'}
+            </div>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10 }}>
@@ -391,12 +422,16 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
                   )}
                 </div>
                 <RowActions
-                  onRename={() => {
-                    setRenamingId(f.id);
-                    setRenameValue(f.name);
-                  }}
-                  onMove={() => setMoveTarget({ kind: 'folder', id: f.id, name: f.name })}
-                  onDelete={() => setConfirmDelete({ kind: 'folder', id: f.id })}
+                  onRename={
+                    canWrite
+                      ? () => {
+                          setRenamingId(f.id);
+                          setRenameValue(f.name);
+                        }
+                      : undefined
+                  }
+                  onMove={canWrite ? () => setMoveTarget({ kind: 'folder', id: f.id, name: f.name }) : undefined}
+                  onDelete={canWrite ? () => setConfirmDelete({ kind: 'folder', id: f.id }) : undefined}
                 />
               </div>
             ))}
@@ -433,13 +468,17 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
                 <RowActions
                   onOpen={() => void openPreview(file)}
                   onDownload={() => void download(file)}
-                  onRename={() => {
-                    setRenamingId(file.id);
-                    setRenameValue(file.fileName);
-                  }}
-                  onCopy={() => void duplicateHere(file)}
-                  onMove={() => setMoveTarget({ kind: 'file', id: file.id, name: file.fileName })}
-                  onDelete={() => setConfirmDelete({ kind: 'file', id: file.id })}
+                  onRename={
+                    canWrite
+                      ? () => {
+                          setRenamingId(file.id);
+                          setRenameValue(file.fileName);
+                        }
+                      : undefined
+                  }
+                  onCopy={canWrite ? () => void duplicateHere(file) : undefined}
+                  onMove={canWrite ? () => setMoveTarget({ kind: 'file', id: file.id, name: file.fileName }) : undefined}
+                  onDelete={canWrite ? () => setConfirmDelete({ kind: 'file', id: file.id }) : undefined}
                 />
               </div>
             ))}

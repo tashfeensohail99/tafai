@@ -2,6 +2,9 @@
 
 import { apiFetch } from './api-client';
 import type {
+  ApiDatabankAssociate,
+  ApiDatabankByAssociate,
+  ApiDatabankClientRow,
   ApiDatabankFile,
   ApiDatabankFolder,
   ApiDatabankTree,
@@ -22,7 +25,31 @@ import type {
  * re-export them rather than duplicate.
  */
 
-export type { ApiDatabankFile, ApiDatabankFolder, ApiDatabankTree, DatabankFileSource };
+export type {
+  ApiDatabankAssociate,
+  ApiDatabankByAssociate,
+  ApiDatabankClientRow,
+  ApiDatabankFile,
+  ApiDatabankFolder,
+  ApiDatabankTree,
+  DatabankFileSource,
+};
+
+/** The JR-matter clients the caller may browse (flat), each with a file count.
+ *  Head sees all associates' clients; associate sees their own. */
+export function fetchJrDatabankClients(q?: string): Promise<ApiDatabankClientRow[]> {
+  const qs = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  return apiFetch<ApiDatabankClientRow[]>(`/jr/databank/clients${qs}`, { cache: 'no-store' });
+}
+
+/** The same clients grouped by their assigned JR associate (own group first for
+ *  a head). Powers the associate-organised JR databank landing. */
+export function fetchJrDatabankByAssociate(q?: string): Promise<ApiDatabankByAssociate> {
+  const qs = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  return apiFetch<ApiDatabankByAssociate>(`/jr/databank/clients/by-associate${qs}`, {
+    cache: 'no-store',
+  });
+}
 
 export function fetchJrDatabankTree(clientId: string): Promise<ApiDatabankTree> {
   return apiFetch<ApiDatabankTree>(`/jr/databank/clients/${clientId}/tree`, {

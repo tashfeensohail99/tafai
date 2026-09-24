@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -38,9 +39,11 @@ import {
  * DELEGATES to the shared DatabankService; access is enforced inside the service
  * (assertClientAccess grants jr.matter.view_all + assigned-associate paths).
  *
- * There is no cross-client landing (GET clients) here: JR reaches the databank
- * per-matter, not via a JR-wide client list. Read routes use jr.portal.view;
- * write routes use jr.artifact.author.
+ * The cross-client landing (GET clients, GET clients/by-associate) is scoped to
+ * clients that have a JR MATTER — a JR head (jr.matter.view_all) sees every
+ * associate's clients, a plain associate sees only their own — so the JR portal
+ * never lists the whole firm. Read routes use jr.portal.view; write routes use
+ * jr.artifact.author.
  */
 // 300 MB, disk-streamed to storage (never buffered in RAM) — see databank.controller.ts.
 const MAX_FILE_BYTES = 300 * 1024 * 1024;
@@ -53,6 +56,23 @@ export class JrDatabankController {
   constructor(private readonly databank: DatabankService) {}
 
   // ---- Browse -------------------------------------------------------------
+
+  /** Cross-client landing: the JR-matter clients the caller may browse (scoped
+   *  in the service — head sees all, associate sees their own), each with a
+   *  databank file count. */
+  @Get('clients')
+  @RequirePermissions(READ)
+  listClients(@CurrentUser() user: RequestUser, @Query('q') q?: string) {
+    return this.databank.listClientsForJr(user, q);
+  }
+
+  /** The same JR-matter clients grouped by their assigned JR associate (own
+   *  group first for a head). Powers the associate-organised landing. */
+  @Get('clients/by-associate')
+  @RequirePermissions(READ)
+  clientsByAssociate(@CurrentUser() user: RequestUser, @Query('q') q?: string) {
+    return this.databank.clientsByAssociateForJr(user, q);
+  }
 
   /** The full folder tree + files for one client. */
   @Get('clients/:clientId/tree')

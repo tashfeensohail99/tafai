@@ -8,6 +8,7 @@
 import {
   ClipboardList,
   FileText,
+  FolderOpen,
   Gavel,
   Landmark,
   LogOut,
@@ -75,6 +76,14 @@ function buildJrNav(permissions: string[]): DrawerMenuItem[] {
   const items: DrawerMenuItem[] = [
     { label: 'Matters', href: '/jr', icon: Scale, caption: 'Judicial review caseload' },
   ];
+  // Databank — every JR user (they all hold jr.portal.view to reach the shell)
+  // gets the associate-organised client document repository.
+  items.push({
+    label: 'Databank',
+    href: '/jr/databank',
+    icon: FolderOpen,
+    caption: 'Client documents',
+  });
   if (canViewMatters) {
     items.push({
       label: 'Deadline Board',
@@ -112,6 +121,8 @@ function buildJrNav(permissions: string[]): DrawerMenuItem[] {
 
 function getPageTitle(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/jr') return { title: 'Judicial Review', subtitle: 'Federal Court JR caseload' };
+  if (pathname === '/jr/databank') return { title: 'Databank', subtitle: 'Client document repository' };
+  if (pathname.startsWith('/jr/databank/')) return { title: 'Client Databank', subtitle: 'Documents for this client' };
   if (pathname === '/jr/board') return { title: 'Deadline Board', subtitle: 'Pending fatal & procedural deadlines' };
   if (pathname === '/jr/counsel-queue') return { title: 'Counsel Queue', subtitle: 'Artifacts awaiting counsel review' };
   if (pathname === '/jr/counsel') return { title: 'Counsel', subtitle: 'Counsel directory & good standing' };

@@ -382,6 +382,179 @@ export class DatabankService {
   }
 
   // ---------------------------------------------------------------------------
+  // Browse — JR views onto the SAME shared store, scoped to JR-matter clients
+  // ---------------------------------------------------------------------------
+
+  /** A JR head (jr.matter.view_all) sees every JR associate's clients; a plain
+   *  associate sees only the matters assigned to them. This is the JR analogue
+   *  of {@link canViewAll} (which keys off processing.case.view_all). */
+  private canSeeAllJr(user: RequestUser): boolean {
+    return user.permissions.includes('jr.matter.view_all');
+  }
+
+  /**
+   * The clients a JR caller may browse from the databank landing — the clients
+   * that have a JR matter (the escalated set). Team-wide READ: every JR user
+   * sees every JR-matter client (write is gated per-action in
+   * {@link canWriteClient} — a JR head or the assigned associate). This mirrors
+   * the Processing databank's team-wide read and stays useful even while matters
+   * carry no assigned associate yet. Keyed to JR matters, so the JR portal never
+   * lists the entire firm. Each row carries its databank file count.
+   */
+  async listClientsForJr(_user: RequestUser, q?: string) {
+    const matters = await this.prisma.jrMatter.findMany({
+      select: { clientId: true },
+    });
+    const clientIds = [...new Set(matters.map((m) => m.clientId))];
+    if (clientIds.length === 0) return [];
+
+    const where: Prisma.ClientWhereInput = {
+      id: { in: clientIds },
+      deletedAt: null,
+      ...(q
+        ? {
+            OR: [
+              { firstName: { contains: q, mode: 'insensitive' } },
+              { lastName: { contains: q, mode: 'insensitive' } },
+              { referenceCode: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+    const clients = await this.prisma.client.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      take: 200,
+      select: { id: true, referenceCode: true, firstName: true, lastName: true },
+    });
+    if (clients.length === 0) return [];
+
+    const counts = await this.prisma.databankFile.groupBy({
+      by: ['clientId'],
+      where: { deletedAt: null, clientId: { in: clients.map((c) => c.id) } },
+      _count: { _all: true },
+    });
+    const countByClient = new Map(counts.map((c) => [c.clientId, c._count._all]));
+    return clients.map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
+  }
+
+  /**
+   * The same JR-matter clients as {@link listClientsForJr}, grouped by the JR
+   * ASSOCIATE the matter is assigned to (JrMatter.assignedAssociateUserId — a
+   * user id, NOT a processing officer). Team-wide READ: every JR user sees every
+   * group, with their own surfaced first (a head can drill into any associate);
+   * matters with no associate yet fall into an "Unassigned" group so nothing is
+   * hidden. `canSeeAll` reports whether the viewer is a JR head (jr.matter.view_all).
+   * The JR analogue of {@link clientsByAssociate}: it joins on JR matters instead
+   * of processing cases, and resolves the associate's display name off the
+   * Employee relation (UserAccount has no name column), exactly like
+   * JudicialReviewService.listAssociates.
+   */
+  async clientsByAssociateForJr(user: RequestUser, q?: string) {
+    const canAll = this.canSeeAllJr(user);
+    const matters = await this.prisma.jrMatter.findMany({
+      select: { clientId: true, assignedAssociateUserId: true },
+    });
+    if (matters.length === 0) {
+      return { canSeeAll: canAll, viewerOfficerId: user.id, associates: [] };
+    }
+
+    const clientIds = [...new Set(matters.map((m) => m.clientId))];
+    const associateIds = [
+      ...new Set(matters.map((m) => m.assignedAssociateUserId).filter((v): v is string => !!v)),
+    ];
+
+    const [clients, users, counts] = await Promise.all([
+      this.prisma.client.findMany({
+        where: { id: { in: clientIds }, deletedAt: null },
+        select: { id: true, referenceCode: true, firstName: true, lastName: true },
+      }),
+      this.prisma.userAccount.findMany({
+        where: { id: { in: associateIds } },
+        select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } },
+      }),
+      this.prisma.databankFile.groupBy({
+        by: ['clientId'],
+        where: { deletedAt: null, clientId: { in: clientIds } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+    const nameByUser = new Map(
+      users.map((u) => {
+        const emp = u.employee ? `${u.employee.firstName} ${u.employee.lastName}`.trim() : '';
+        return [u.id, emp || u.email];
+      }),
+    );
+    const countByClient = new Map<string, number>();
+    for (const c of counts) { if (c.clientId) countByClient.set(c.clientId, c._count._all); }
+
+    // Matters with no associate yet fall into a single "Unassigned" group so
+    // the head still sees every JR client (JR currently assigns associates
+    // lazily — most matters start unassigned).
+    const UNASSIGNED = '__unassigned__';
+    type ClientRow = { id: string; referenceCode: string; firstName: string; lastName: string };
+    const groups = new Map<
+      string,
+      { officerId: string; officerName: string; clients: Map<string, ClientRow> }
+    >();
+    for (const m of matters) {
+      const officerId = m.assignedAssociateUserId ?? UNASSIGNED;
+      const client = clientById.get(m.clientId);
+      if (!client) continue; // client soft-deleted — skip
+      let group = groups.get(officerId);
+      if (!group) {
+        group = {
+          officerId,
+          officerName: officerId === UNASSIGNED ? 'Unassigned' : nameByUser.get(officerId) ?? 'Unknown associate',
+          clients: new Map(),
+        };
+        groups.set(officerId, group);
+      }
+      group.clients.set(client.id, client);
+    }
+
+    // Search is applied in memory (the JR set is small): a client stays if its
+    // own name/reference matches, or its associate's name matches (mirrors the
+    // processing OR over client + officer name).
+    const term = q?.trim().toLowerCase();
+    const byName = (a: ClientRow, b: ClientRow) =>
+      `${a.firstName} ${a.lastName}`.trim().localeCompare(`${b.firstName} ${b.lastName}`.trim());
+
+    const associates = [...groups.values()]
+      .map((g) => {
+        const associateMatches = term ? g.officerName.toLowerCase().includes(term) : false;
+        const rows = [...g.clients.values()]
+          .filter((c) => {
+            if (!term || associateMatches) return true;
+            const name = `${c.firstName} ${c.lastName}`.trim().toLowerCase();
+            return name.includes(term) || c.referenceCode.toLowerCase().includes(term);
+          })
+          .sort(byName)
+          .map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
+        return {
+          officerId: g.officerId,
+          officerName: g.officerName,
+          isSelf: g.officerId === user.id,
+          clientCount: rows.length,
+          clients: rows,
+        };
+      })
+      .filter((g) => g.clients.length > 0)
+      .sort((a, b) => {
+        // Own group first, then the Unassigned bucket last, else alphabetical.
+        if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+        const au = a.officerId === UNASSIGNED;
+        const bu = b.officerId === UNASSIGNED;
+        if (au !== bu) return au ? 1 : -1;
+        return a.officerName.localeCompare(b.officerName);
+      });
+
+    return { canSeeAll: canAll, viewerOfficerId: user.id, associates };
+  }
+
+  // ---------------------------------------------------------------------------
   // Folders
   // ---------------------------------------------------------------------------
 

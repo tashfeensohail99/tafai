@@ -71,19 +71,9 @@ export function DatabankClientsPage() {
       );
     }
     if (!data) return null;
+    const groups = data.associates;
 
-    // ---- Officer: straight to their own clients, no associate level --------
-    if (!data.canSeeAll) {
-      const clients = data.associates[0]?.clients ?? [];
-      if (clients.length === 0) {
-        return (
-          <EmptyState text={q ? 'No clients match your search.' : 'No client databanks yet.'} />
-        );
-      }
-      return <ClientGrid clients={clients} muted={muted} border={border} />;
-    }
-
-    // ---- Manager, drilled into one associate -------------------------------
+    // ---- Drilled into one associate (multi-associate view) -----------------
     if (selected) {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -123,13 +113,22 @@ export function DatabankClientsPage() {
       );
     }
 
-    // ---- Manager: the associate grid ---------------------------------------
-    if (data.associates.length === 0) {
-      return <EmptyState text={q ? 'No associates match your search.' : 'No associate databanks yet.'} />;
+    // ---- One group (or none): show its clients directly --------------------
+    // A lone officer (their own single group) lands straight on their clients;
+    // when there are multiple associates, everyone — manager or officer — gets
+    // the drill-in cards (team-wide read; write is still gated per-action).
+    if (groups.length <= 1) {
+      const clients = groups[0]?.clients ?? [];
+      if (clients.length === 0) {
+        return <EmptyState text={q ? 'No clients match your search.' : 'No client databanks yet.'} />;
+      }
+      return <ClientGrid clients={clients} muted={muted} border={border} />;
     }
+
+    // ---- Multiple associates: the associate grid (drill-in) ----------------
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
-        {data.associates.map((a) => (
+        {groups.map((a) => (
           <AssociateCard
             key={a.officerId}
             associate={a}
@@ -142,7 +141,7 @@ export function DatabankClientsPage() {
     );
   }, [loading, data, selected, q, muted, border]);
 
-  const showManagerHint = !loading && data?.canSeeAll && !selected;
+  const showManagerHint = !loading && (data?.associates.length ?? 0) > 1 && !selected;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

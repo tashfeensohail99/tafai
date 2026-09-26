@@ -490,8 +490,31 @@
   margin: 0 auto;
 }
 
+/* The Processing / JR / HR / Reception shells render the content column as
+   `.sos-main` + `.sos-page-content` (the sales-v2 shell uses `.sos-content` +
+   `.sos-page`). Those two class names were never styled, so `.sos-main` never
+   got `flex: 1` — the column shrank to its content instead of filling the space
+   beside the sidebar. On wide screens that left a big empty area on the right
+   and collapsed auto-fill grids (e.g. the databank) to ~2 columns. Give them the
+   same behaviour as their sales-v2 counterparts. */
+.sos-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+
+.sos-page-content {
+  padding: var(--sos-space-6) var(--sos-space-7) var(--sos-space-12);
+}
+
 @media (max-width: 1023px) {
   .sos-page {
+    padding: var(--sos-space-5) var(--sos-space-4) var(--sos-space-10);
+  }
+  .sos-page-content {
     padding: var(--sos-space-5) var(--sos-space-4) var(--sos-space-10);
   }
 }

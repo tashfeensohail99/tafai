@@ -129,10 +129,7 @@ export class DatabankService {
       return this.assertClientReadAccess(row.clientId, user);
     }
     if (row.ownerUserId) return this.assertPersonalAccess(row.ownerUserId, user);
-    // Shared databank-level item (no client, no owner). Access is governed
-    // entirely by the route permission — READ perms to browse, WRITE
-    // (processing.document.upload) to modify — so there is no per-row ownership
-    // to check: every processing officer may modify the shared team area.
+    throw new NotFoundException('Databank item is not attached to a client or an owner.');
   }
 
   // ---------------------------------------------------------------------------
@@ -244,80 +241,6 @@ export class DatabankService {
       }),
     ]);
     return { ownerUserId, folders, files, canWrite };
-  }
-
-  /** The SHARED, databank-level tree — folders + files tied to NO client and NO
-   *  associate (clientId AND ownerUserId both null). A common team area: every
-   *  processing user may browse it, and anyone who can upload
-   *  (processing.document.upload) may create/modify it. `canWrite` mirrors that
-   *  permission so the UI can hide edit controls for view-only roles. */
-  async getSharedTree(user: RequestUser) {
-    const canWrite = user.permissions.includes('processing.document.upload');
-    const [folders, files] = await Promise.all([
-      this.prisma.databankFolder.findMany({
-        where: { clientId: null, ownerUserId: null, deletedAt: null },
-        orderBy: { name: 'asc' },
-        select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
-      }),
-      this.prisma.databankFile.findMany({
-        where: { clientId: null, ownerUserId: null, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true, folderId: true, fileName: true, mimeType: true, fileSizeBytes: true,
-          source: true, uploadedByUserId: true, createdAt: true, updatedAt: true,
-        },
-      }),
-    ]);
-    return { folders, files, canWrite };
-  }
-
-  /** Create a folder in the SHARED databank area (no client, no owner). Any
-   *  processing user with the WRITE permission (enforced by the route) may. */
-  async createSharedFolder(dto: CreateFolderDto, user: RequestUser) {
-    const scope = { clientId: null, ownerUserId: null };
-    const parentFolderId = await this.assertFolderInScope(dto.parentFolderId, scope);
-    const name = await this.uniqueFolderName(scope, parentFolderId, dto.name.trim());
-    return this.prisma.databankFolder.create({
-      data: { parentFolderId, name, createdByUserId: user.id },
-      select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
-    });
-  }
-
-  /** Upload a file into the SHARED databank area. Same disk-stream path as
-   *  uploadFile; keyed under databank/shared. */
-  async uploadSharedFile(
-    user: RequestUser,
-    file: Express.Multer.File | undefined,
-    folderId: string | null | undefined,
-    source: string | undefined,
-  ) {
-    try {
-      this.assertSafeFile(file);
-      const targetFolder = await this.assertFolderInScope(folderId, { clientId: null, ownerUserId: null });
-      const fileSource: DatabankFileSource =
-        source === 'CLIPBOARD' ? DatabankFileSource.CLIPBOARD : DatabankFileSource.UPLOAD;
-      const uploaded = await this.storage.uploadStreamFromFile(
-        file!.path,
-        file!.size,
-        file!.mimetype,
-        `databank/shared`,
-        file!.originalname,
-      );
-      return await this.prisma.databankFile.create({
-        data: {
-          folderId: targetFolder,
-          fileName: file!.originalname,
-          storageKey: uploaded.key,
-          mimeType: file!.mimetype,
-          fileSizeBytes: uploaded.sizeBytes,
-          source: fileSource,
-          uploadedByUserId: user.id,
-        },
-        select: this.fileSelect,
-      });
-    } finally {
-      if (file?.path) await unlink(file.path).catch(() => undefined);
-    }
   }
 
   /** Clients for the cross-client landing page. Every processing user sees ALL
@@ -857,15 +780,13 @@ export class DatabankService {
     // A copy CREATES a file in the target — gate on write of the destination.
     if (targetClientId) await this.assertClientWriteAccess(targetClientId, user);
     else if (targetOwnerUserId) this.assertPersonalAccess(targetOwnerUserId, user);
-    // else: SHARED target (both null) — governed by the route's WRITE permission.
+    else throw new BadRequestException('The file to copy has no client or owner.');
 
     const scope = { clientId: targetClientId, ownerUserId: targetOwnerUserId };
     const targetFolder = await this.assertFolderInScope(dto.targetFolderId, scope);
     const storageFolder = targetClientId
       ? `databank/clients/${targetClientId}`
-      : targetOwnerUserId
-        ? `databank/users/${targetOwnerUserId}`
-        : `databank/shared`;
+      : `databank/users/${targetOwnerUserId}`;
 
     // Server-side copy: the bytes are duplicated inside storage and never pass
     // through the backend, so duplicating even a 300 MB file uses no RAM.

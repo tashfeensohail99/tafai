@@ -25,6 +25,9 @@ import {
   fetchSharedDatabankTree,
   createSharedDatabankFolder,
   uploadSharedDatabankFile,
+  fetchPersonalDatabankTree,
+  createPersonalDatabankFolder,
+  uploadPersonalDatabankFile,
   renameDatabankFolder,
   moveDatabankFolder,
   deleteDatabankFolder,
@@ -118,19 +121,24 @@ const isPdf = (m: string | null) => !!m && /pdf/i.test(m);
 const isImage = (m: string | null) => !!m && /^image\//i.test(m);
 
 /**
- * The databank file explorer. Two scopes:
+ * The databank file explorer. Three scopes:
  *  - a client's databank: pass `clientId`.
  *  - the SHARED team area (folders tied to no client): pass `shared`.
+ *  - the caller's OWN personal area (their private folders): pass `personal`.
  * Folder/file rename/move/copy/delete/download are id-based, so they work the
- * same in either scope; only the tree fetch, folder-create and upload differ.
+ * same in every scope; only the tree fetch, folder-create and upload differ.
  */
 export function DatabankTab({
   clientId,
   shared,
+  personal,
+  rootLabel = 'Databank',
 }: {
   clientId?: string;
   clientName?: string;
   shared?: boolean;
+  personal?: boolean;
+  rootLabel?: string;
 }) {
   const [folders, setFolders] = useState<ApiDatabankFolder[]>([]);
   const [files, setFiles] = useState<ApiDatabankFile[]>([]);
@@ -158,10 +166,41 @@ export function DatabankTab({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Scope-aware API calls — a client databank, the shared team area, or the
+  // caller's own personal area. Everything else (rename/move/copy/delete/
+  // download) is id-based and identical across scopes.
+  const loadTree = useCallback(
+    () =>
+      shared
+        ? fetchSharedDatabankTree()
+        : personal
+          ? fetchPersonalDatabankTree()
+          : fetchDatabankTree(clientId!),
+    [shared, personal, clientId],
+  );
+  const makeFolder = useCallback(
+    (name: string, parent: string | null) =>
+      shared
+        ? createSharedDatabankFolder(name, parent)
+        : personal
+          ? createPersonalDatabankFolder(name, parent)
+          : createDatabankFolder(clientId!, name, parent),
+    [shared, personal, clientId],
+  );
+  const putFile = useCallback(
+    (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD') =>
+      shared
+        ? uploadSharedDatabankFile(file, folder, src)
+        : personal
+          ? uploadPersonalDatabankFile(file, folder, src)
+          : uploadDatabankFile(clientId!, file, folder, src),
+    [shared, personal, clientId],
+  );
+
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const tree = shared ? await fetchSharedDatabankTree() : await fetchDatabankTree(clientId!);
+      const tree = await loadTree();
       setFolders(tree.folders);
       setFiles(tree.files);
       setCanWrite(tree.canWrite !== false);
@@ -170,7 +209,7 @@ export function DatabankTab({
     } finally {
       setLoading(false);
     }
-  }, [clientId, shared]);
+  }, [loadTree]);
 
   useEffect(() => {
     setLoading(true);
@@ -216,9 +255,7 @@ export function DatabankTab({
       try {
         for (const f of ok) {
           // eslint-disable-next-line no-await-in-loop
-          await (shared
-            ? uploadSharedDatabankFile(f, currentFolderId, source)
-            : uploadDatabankFile(clientId!, f, currentFolderId, source));
+          await putFile(f, currentFolderId, source);
         }
         await reload();
         if (tooBig.length) {
@@ -235,7 +272,7 @@ export function DatabankTab({
         setBusy(false);
       }
     },
-    [clientId, shared, currentFolderId, reload, readOnly],
+    [putFile, currentFolderId, reload, readOnly],
   );
 
   // Upload a whole folder (from the "Upload folder" button or a dropped
@@ -270,9 +307,7 @@ export function DatabankTab({
           const parentId = parentPath ? pathToId.get(parentPath) ?? currentFolderId : currentFolderId;
           const name = segs[segs.length - 1];
           // eslint-disable-next-line no-await-in-loop
-          const created = await (shared
-            ? createSharedDatabankFolder(name, parentId)
-            : createDatabankFolder(clientId!, name, parentId));
+          const created = await makeFolder(name, parentId);
           pathToId.set(d, created.id);
         }
         // 3. Upload each file into the folder its path resolves to.
@@ -282,9 +317,7 @@ export function DatabankTab({
           const dirPath = parts.join('/');
           const target = dirPath ? pathToId.get(dirPath) ?? currentFolderId : currentFolderId;
           // eslint-disable-next-line no-await-in-loop
-          await (shared
-            ? uploadSharedDatabankFile(file, target, 'UPLOAD')
-            : uploadDatabankFile(clientId!, file, target, 'UPLOAD'));
+          await putFile(file, target, 'UPLOAD');
         }
         await reload();
         if (tooBig.length) {
@@ -298,7 +331,7 @@ export function DatabankTab({
         setBusy(false);
       }
     },
-    [clientId, shared, currentFolderId, reload, readOnly],
+    [makeFolder, putFile, currentFolderId, reload, readOnly],
   );
 
   // Clipboard paste of an image while the tab is mounted.
@@ -320,9 +353,7 @@ export function DatabankTab({
     if (!name || readOnly) return;
     setBusy(true);
     try {
-      await (shared
-        ? createSharedDatabankFolder(name, currentFolderId)
-        : createDatabankFolder(clientId!, name, currentFolderId));
+      await makeFolder(name, currentFolderId);
       setNewFolderName('');
       setCreatingFolder(false);
       await reload();
@@ -427,7 +458,7 @@ export function DatabankTab({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: muted, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => setCurrentFolderId(null)} style={crumbBtn(currentFolderId === null)}>
-            <Home size={14} /> Databank
+            <Home size={14} /> {rootLabel}
           </button>
           {breadcrumb.map((f) => (
             <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>

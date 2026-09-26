@@ -114,6 +114,34 @@ export class DatabankController {
     return this.databank.uploadPersonalFile(user, file, folderId || null, source, userId);
   }
 
+  // ---- Shared team area (databank-level folders, tied to no client) --------
+  // Browsable by every processing user; any user who can upload
+  // (processing.document.upload) may create folders and upload files here.
+
+  @Get('shared/tree')
+  @RequireAnyPermissions(...READ)
+  getSharedTree(@CurrentUser() user: RequestUser) {
+    return this.databank.getSharedTree(user);
+  }
+
+  @Post('shared/folders')
+  @RequirePermissions(WRITE)
+  createSharedFolder(@Body() dto: CreateFolderDto, @CurrentUser() user: RequestUser) {
+    return this.databank.createSharedFolder(dto, user);
+  }
+
+  @Post('shared/files')
+  @RequirePermissions(WRITE)
+  @UseInterceptors(FileInterceptor('file', { storage: diskStorage({ destination: tmpdir() }), limits: { fileSize: MAX_FILE_BYTES } }))
+  uploadSharedFile(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('folderId') folderId: string | undefined,
+    @Body('source') source: string | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.uploadSharedFile(user, file, folderId || null, source);
+  }
+
   // ---- Folders ------------------------------------------------------------
 
   @Post('clients/:clientId/folders')

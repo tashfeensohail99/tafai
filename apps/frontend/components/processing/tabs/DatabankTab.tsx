@@ -21,6 +21,9 @@ import {
 import {
   fetchDatabankTree,
   createDatabankFolder,
+  fetchSharedDatabankTree,
+  createSharedDatabankFolder,
+  uploadSharedDatabankFile,
   renameDatabankFolder,
   moveDatabankFolder,
   deleteDatabankFolder,
@@ -66,7 +69,21 @@ function FileGlyph({ mime }: { mime: string | null }) {
 const isPdf = (m: string | null) => !!m && /pdf/i.test(m);
 const isImage = (m: string | null) => !!m && /^image\//i.test(m);
 
-export function DatabankTab({ clientId }: { clientId: string; clientName?: string }) {
+/**
+ * The databank file explorer. Two scopes:
+ *  - a client's databank: pass `clientId`.
+ *  - the SHARED team area (folders tied to no client): pass `shared`.
+ * Folder/file rename/move/copy/delete/download are id-based, so they work the
+ * same in either scope; only the tree fetch, folder-create and upload differ.
+ */
+export function DatabankTab({
+  clientId,
+  shared,
+}: {
+  clientId?: string;
+  clientName?: string;
+  shared?: boolean;
+}) {
   const [folders, setFolders] = useState<ApiDatabankFolder[]>([]);
   const [files, setFiles] = useState<ApiDatabankFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,7 +112,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const tree = await fetchDatabankTree(clientId);
+      const tree = shared ? await fetchSharedDatabankTree() : await fetchDatabankTree(clientId!);
       setFolders(tree.folders);
       setFiles(tree.files);
       setCanWrite(tree.canWrite !== false);
@@ -104,7 +121,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
     } finally {
       setLoading(false);
     }
-  }, [clientId]);
+  }, [clientId, shared]);
 
   useEffect(() => {
     setLoading(true);
@@ -148,7 +165,9 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
       try {
         for (const f of arr) {
           // eslint-disable-next-line no-await-in-loop
-          await uploadDatabankFile(clientId, f, currentFolderId, source);
+          await (shared
+            ? uploadSharedDatabankFile(f, currentFolderId, source)
+            : uploadDatabankFile(clientId!, f, currentFolderId, source));
         }
         await reload();
       } catch (e) {
@@ -157,7 +176,7 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
         setBusy(false);
       }
     },
-    [clientId, currentFolderId, reload, readOnly],
+    [clientId, shared, currentFolderId, reload, readOnly],
   );
 
   // Clipboard paste of an image while the tab is mounted.
@@ -179,7 +198,9 @@ export function DatabankTab({ clientId }: { clientId: string; clientName?: strin
     if (!name || readOnly) return;
     setBusy(true);
     try {
-      await createDatabankFolder(clientId, name, currentFolderId);
+      await (shared
+        ? createSharedDatabankFolder(name, currentFolderId)
+        : createDatabankFolder(clientId!, name, currentFolderId));
       setNewFolderName('');
       setCreatingFolder(false);
       await reload();

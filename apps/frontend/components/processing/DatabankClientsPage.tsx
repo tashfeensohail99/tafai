@@ -163,6 +163,32 @@ export function DatabankClientsPage() {
           }}
         />
       </div>
+      {/* Shared, databank-level "Team folders" — not tied to any client. Any
+          processing officer or manager can create folders / upload here. */}
+      <Link
+        href={'/processing/databank/shared' as Route}
+        style={{
+          border,
+          borderRadius: 12,
+          padding: 14,
+          background: 'var(--sos-surface, rgba(255,255,255,0.6))',
+          textDecoration: 'none',
+          color: 'var(--sos-text-primary, #0f172a)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+        }}
+      >
+        <span style={{ color: 'var(--sos-accent, #b8860b)', flexShrink: 0 }}>
+          <FolderOpen size={26} />
+        </span>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: 'block', fontWeight: 600, fontSize: 14 }}>Team folders</span>
+          <span style={{ display: 'block', fontSize: 12, color: muted, marginTop: 2 }}>
+            Shared databank folders, not tied to a client — anyone on the team can add here
+          </span>
+        </span>
+      </Link>
       {error ? (
         <div style={{ fontSize: 13, color: 'var(--sos-danger, #dc2626)' }}>{error}</div>
       ) : null}

@@ -57,6 +57,53 @@ export function fetchJrDatabankTree(clientId: string): Promise<ApiDatabankTree> 
   });
 }
 
+/** The caller's OWN personal databank (folders/files tied to no client — only
+ *  they and a JR head see it). Same owner-scoped store the processing "My
+ *  folders" uses, reached via the JR route + JR permissions. */
+export function fetchJrPersonalTree(): Promise<ApiDatabankTree> {
+  return apiFetch<ApiDatabankTree>(`/jr/databank/me/tree`, { cache: 'no-store' });
+}
+
+export function createJrPersonalFolder(
+  name: string,
+  parentFolderId: string | null = null,
+): Promise<ApiDatabankFolder> {
+  return apiFetch<ApiDatabankFolder>(`/jr/databank/me/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parentFolderId }),
+    cache: 'no-store',
+  });
+}
+
+export async function uploadJrPersonalFile(
+  file: File,
+  folderId: string | null = null,
+  source: DatabankFileSource = 'UPLOAD',
+): Promise<ApiDatabankFile> {
+  const { getAccessToken } = await import('./auth-client');
+  const token = getAccessToken();
+  const form = new FormData();
+  form.append('file', file);
+  if (folderId) form.append('folderId', folderId);
+  form.append('source', source);
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const res = await fetch(`${base}/jr/databank/me/files`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form,
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const msg =
+      errBody && typeof errBody === 'object' && 'message' in errBody
+        ? String((errBody as { message?: unknown }).message)
+        : `Upload failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export function createJrDatabankFolder(
   clientId: string,
   name: string,

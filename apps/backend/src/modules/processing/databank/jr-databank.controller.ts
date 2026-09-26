@@ -81,6 +81,33 @@ export class JrDatabankController {
     return this.databank.getTree(clientId, user);
   }
 
+  // ---- My workspace (the caller's OWN personal folders, not tied to a client)
+  // Owner-scoped (delegates to the shared personal store), reached with JR perms.
+
+  @Get('me/tree')
+  @RequirePermissions(READ)
+  getMyTree(@CurrentUser() user: RequestUser) {
+    return this.databank.getPersonalTree(user);
+  }
+
+  @Post('me/folders')
+  @RequirePermissions(WRITE)
+  createMyFolder(@Body() dto: CreateFolderDto, @CurrentUser() user: RequestUser) {
+    return this.databank.createPersonalFolder(user, dto);
+  }
+
+  @Post('me/files')
+  @RequirePermissions(WRITE)
+  @UseInterceptors(FileInterceptor('file', { storage: diskStorage({ destination: tmpdir() }), limits: { fileSize: MAX_FILE_BYTES } }))
+  uploadMyFile(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('folderId') folderId: string | undefined,
+    @Body('source') source: string | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.uploadPersonalFile(user, file, folderId || null, source);
+  }
+
   // ---- Folders ------------------------------------------------------------
 
   @Post('clients/:clientId/folders')

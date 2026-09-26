@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
-import { Folder, FolderOpen, Search, Loader2, FileText, ChevronLeft, Users } from 'lucide-react';
+import { Folder, FolderOpen, Search, Loader2, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   fetchDatabankByAssociate,
   type ApiDatabankAssociate,
@@ -193,32 +193,6 @@ export function DatabankClientsPage() {
           }}
         />
       </div>
-      {/* Shared, databank-level "Team folders" — not tied to any client. Any
-          processing officer or manager can create folders / upload here. */}
-      <Link
-        href={'/processing/databank/shared' as Route}
-        style={{
-          border,
-          borderRadius: 12,
-          padding: 14,
-          background: 'var(--sos-surface, rgba(255,255,255,0.6))',
-          textDecoration: 'none',
-          color: 'var(--sos-text-primary, #0f172a)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-        }}
-      >
-        <span style={{ color: 'var(--sos-accent, #b8860b)', flexShrink: 0 }}>
-          <FolderOpen size={26} />
-        </span>
-        <span style={{ minWidth: 0 }}>
-          <span style={{ display: 'block', fontWeight: 600, fontSize: 14 }}>Team folders</span>
-          <span style={{ display: 'block', fontSize: 12, color: muted, marginTop: 2 }}>
-            Shared databank folders, not tied to a client — anyone on the team can add here
-          </span>
-        </span>
-      </Link>
       {error ? (
         <div style={{ fontSize: 13, color: 'var(--sos-danger, #dc2626)' }}>{error}</div>
       ) : null}
@@ -233,7 +207,15 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-/** One associate folder on the manager's landing. */
+/** Two-letter initials for an associate's avatar (first + last word). */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** One associate on the databank landing — initials avatar + client count. */
 function AssociateCard({
   associate,
   muted,
@@ -245,6 +227,7 @@ function AssociateCard({
   border: string;
   onOpen: () => void;
 }) {
+  const self = associate.isSelf;
   return (
     <button
       type="button"
@@ -263,25 +246,39 @@ function AssociateCard({
         width: '100%',
       }}
     >
-      <span style={{ color: 'var(--sos-accent, #b8860b)', flexShrink: 0 }}>
-        <Users size={26} />
+      <span
+        style={{
+          width: 38,
+          height: 38,
+          borderRadius: '50%',
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 13,
+          fontWeight: 700,
+          background: self ? 'rgba(184,134,11,0.14)' : 'rgba(148,163,184,0.18)',
+          color: self ? 'var(--sos-accent, #b8860b)' : 'var(--sos-text-muted, #64748b)',
+        }}
+      >
+        {initials(associate.officerName)}
       </span>
-      <span style={{ minWidth: 0 }}>
+      <span style={{ minWidth: 0, flex: 1 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {associate.officerName}
           </span>
-          {associate.isSelf ? (
+          {self ? (
             <span
               style={{
-                fontSize: 10.5,
+                fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: '0.04em',
                 textTransform: 'uppercase',
                 color: 'var(--sos-accent, #b8860b)',
-                border: '1px solid var(--sos-accent, #b8860b)',
+                background: 'rgba(184,134,11,0.12)',
                 borderRadius: 6,
-                padding: '1px 5px',
+                padding: '1px 6px',
                 flexShrink: 0,
               }}
             >
@@ -293,6 +290,7 @@ function AssociateCard({
           <Folder size={12} /> {associate.clientCount} {associate.clientCount === 1 ? 'client' : 'clients'}
         </span>
       </span>
+      <ChevronRight size={16} style={{ color: muted, flexShrink: 0 }} />
     </button>
   );
 }

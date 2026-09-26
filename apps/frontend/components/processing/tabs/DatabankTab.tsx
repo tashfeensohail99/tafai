@@ -22,9 +22,6 @@ import {
 import {
   fetchDatabankTree,
   createDatabankFolder,
-  fetchSharedDatabankTree,
-  createSharedDatabankFolder,
-  uploadSharedDatabankFile,
   fetchPersonalDatabankTree,
   createPersonalDatabankFolder,
   uploadPersonalDatabankFile,
@@ -121,22 +118,19 @@ const isPdf = (m: string | null) => !!m && /pdf/i.test(m);
 const isImage = (m: string | null) => !!m && /^image\//i.test(m);
 
 /**
- * The databank file explorer. Three scopes:
+ * The databank file explorer. Two scopes:
  *  - a client's databank: pass `clientId`.
- *  - the SHARED team area (folders tied to no client): pass `shared`.
  *  - the caller's OWN personal area (their private folders): pass `personal`.
  * Folder/file rename/move/copy/delete/download are id-based, so they work the
- * same in every scope; only the tree fetch, folder-create and upload differ.
+ * same in either scope; only the tree fetch, folder-create and upload differ.
  */
 export function DatabankTab({
   clientId,
-  shared,
   personal,
   rootLabel = 'Databank',
 }: {
   clientId?: string;
   clientName?: string;
-  shared?: boolean;
   personal?: boolean;
   rootLabel?: string;
 }) {
@@ -166,35 +160,24 @@ export function DatabankTab({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Scope-aware API calls — a client databank, the shared team area, or the
-  // caller's own personal area. Everything else (rename/move/copy/delete/
-  // download) is id-based and identical across scopes.
+  // Scope-aware API calls — a client databank or the caller's own personal
+  // area. Everything else (rename/move/copy/delete/download) is id-based and
+  // identical across scopes.
   const loadTree = useCallback(
-    () =>
-      shared
-        ? fetchSharedDatabankTree()
-        : personal
-          ? fetchPersonalDatabankTree()
-          : fetchDatabankTree(clientId!),
-    [shared, personal, clientId],
+    () => (personal ? fetchPersonalDatabankTree() : fetchDatabankTree(clientId!)),
+    [personal, clientId],
   );
   const makeFolder = useCallback(
     (name: string, parent: string | null) =>
-      shared
-        ? createSharedDatabankFolder(name, parent)
-        : personal
-          ? createPersonalDatabankFolder(name, parent)
-          : createDatabankFolder(clientId!, name, parent),
-    [shared, personal, clientId],
+      personal ? createPersonalDatabankFolder(name, parent) : createDatabankFolder(clientId!, name, parent),
+    [personal, clientId],
   );
   const putFile = useCallback(
     (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD') =>
-      shared
-        ? uploadSharedDatabankFile(file, folder, src)
-        : personal
-          ? uploadPersonalDatabankFile(file, folder, src)
-          : uploadDatabankFile(clientId!, file, folder, src),
-    [shared, personal, clientId],
+      personal
+        ? uploadPersonalDatabankFile(file, folder, src)
+        : uploadDatabankFile(clientId!, file, folder, src),
+    [personal, clientId],
   );
 
   const reload = useCallback(async () => {

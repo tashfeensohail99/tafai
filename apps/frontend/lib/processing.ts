@@ -2145,6 +2145,53 @@ export async function uploadSharedDatabankFile(
   return res.json();
 }
 
+/** The caller's OWN personal databank tree — folders/files they own, tied to no
+ *  client (only they and a manager see it). `canWrite` = owner or manager. */
+export function fetchPersonalDatabankTree(): Promise<ApiDatabankTree> {
+  return apiFetch<ApiDatabankTree>(`/processing/databank/me/tree`, { cache: 'no-store' });
+}
+
+export function createPersonalDatabankFolder(
+  name: string,
+  parentFolderId: string | null = null,
+): Promise<ApiDatabankFolder> {
+  return apiFetch<ApiDatabankFolder>(`/processing/databank/me/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parentFolderId }),
+    cache: 'no-store',
+  });
+}
+
+/** Upload a file into the caller's personal databank (multipart). */
+export async function uploadPersonalDatabankFile(
+  file: File,
+  folderId: string | null = null,
+  source: DatabankFileSource = 'UPLOAD',
+): Promise<ApiDatabankFile> {
+  const { getAccessToken } = await import('./auth-client');
+  const token = getAccessToken();
+  const form = new FormData();
+  form.append('file', file);
+  if (folderId) form.append('folderId', folderId);
+  form.append('source', source);
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  const res = await fetch(`${base}/processing/databank/me/files`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form,
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const msg =
+      errBody && typeof errBody === 'object' && 'message' in errBody
+        ? String((errBody as { message?: unknown }).message)
+        : `Upload failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export function createDatabankFolder(
   clientId: string,
   name: string,

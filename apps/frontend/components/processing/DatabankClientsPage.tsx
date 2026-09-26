@@ -10,6 +10,7 @@ import {
   type ApiDatabankByAssociate,
   type ApiDatabankClientRow,
 } from '@/lib/processing';
+import { DatabankTab } from './tabs/DatabankTab';
 
 /**
  * Databank landing, organised by ASSOCIATE.
@@ -103,6 +104,35 @@ export function DatabankClientsPage() {
             <span style={{ fontSize: 13, color: muted }}>
               {selected.clientCount} {selected.clientCount === 1 ? 'client' : 'clients'}
             </span>
+          </div>
+          {/* Your OWN folders — a personal databank area, only in your own view.
+              Documents not tied to a specific client; only you + a manager see it. */}
+          {selected.isSelf ? (
+            <div
+              style={{
+                border,
+                borderRadius: 12,
+                padding: 14,
+                background: 'var(--sos-surface, rgba(255,255,255,0.6))',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FolderOpen size={16} style={{ color: 'var(--sos-accent, #b8860b)' }} />
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>My folders</span>
+                </div>
+                <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
+                  Your own folders — for documents not tied to a specific client. Only you and a manager can see these.
+                </div>
+              </div>
+              <DatabankTab personal rootLabel="My folders" />
+            </div>
+          ) : null}
+          <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--sos-text-primary, #0f172a)', marginTop: 2 }}>
+            {selected.isSelf ? 'My clients' : 'Clients'}
           </div>
           {selected.clients.length === 0 ? (
             <EmptyState text="No clients in this databank yet." />

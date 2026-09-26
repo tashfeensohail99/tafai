@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Folder,
   FolderPlus,
+  FolderUp,
   Upload,
   Download,
   Trash2,
@@ -36,6 +37,53 @@ import {
   type ApiDatabankFolder,
   type ApiDatabankFile,
 } from '@/lib/processing';
+
+/** Per-file upload cap — mirrors the backend Multer limit. A single file over
+ *  this (e.g. a big .zip) is rejected by the server, so we skip it up front with
+ *  a clear message instead of a failed request. */
+const MAX_FILE_BYTES = 300 * 1024 * 1024;
+const fmtMB = (n: number) => `${Math.round(n / (1024 * 1024))} MB`;
+
+/** One file picked for a folder upload, carrying its path relative to the
+ *  dropped/selected folder (e.g. "Passport/scan.pdf") so we can recreate the
+ *  subfolder tree. */
+type FolderEntry = { file: File; relPath: string };
+
+/** Recursively walk a drag-and-dropped FileSystemEntry into FolderEntry[],
+ *  preserving the relative path. `webkitGetAsEntry()` is the only cross-browser
+ *  way to read a dropped DIRECTORY (dataTransfer.files is empty for folders).
+ *  Typed loosely — the File System (Entries) API isn't in lib.dom. */
+async function walkEntry(entry: any, prefix: string, out: FolderEntry[]): Promise<void> {
+  if (!entry) return;
+  if (entry.isFile) {
+    await new Promise<void>((resolve) => {
+      entry.file(
+        (f: File) => {
+          out.push({ file: f, relPath: prefix ? `${prefix}/${f.name}` : f.name });
+          resolve();
+        },
+        () => resolve(),
+      );
+    });
+    return;
+  }
+  if (entry.isDirectory) {
+    const dirPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const reader = entry.createReader();
+    const readBatch = (): Promise<any[]> =>
+      new Promise((resolve) => reader.readEntries((es: any[]) => resolve(es), () => resolve([])));
+    // readEntries returns at most ~100 entries per call — loop until drained.
+    let batch = await readBatch();
+    while (batch.length) {
+      for (const child of batch) {
+        // eslint-disable-next-line no-await-in-loop
+        await walkEntry(child, dirPath, out);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      batch = await readBatch();
+    }
+  }
+}
 
 /**
  * The per-client Databank — a Drive-like document repository. Folder tree via
@@ -108,6 +156,7 @@ export function DatabankTab({
   const readOnly = !canWrite;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -160,18 +209,91 @@ export function DatabankTab({
       if (readOnly) return;
       const arr = Array.from(list);
       if (arr.length === 0) return;
+      const ok = arr.filter((f) => f.size <= MAX_FILE_BYTES);
+      const tooBig = arr.filter((f) => f.size > MAX_FILE_BYTES);
       setBusy(true);
       setError(null);
       try {
-        for (const f of arr) {
+        for (const f of ok) {
           // eslint-disable-next-line no-await-in-loop
           await (shared
             ? uploadSharedDatabankFile(f, currentFolderId, source)
             : uploadDatabankFile(clientId!, f, currentFolderId, source));
         }
         await reload();
+        if (tooBig.length) {
+          setError(
+            `Skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit: ${tooBig
+              .slice(0, 5)
+              .map((f) => f.name)
+              .join(', ')}${tooBig.length > 5 ? '…' : ''}`,
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Upload failed');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [clientId, shared, currentFolderId, reload, readOnly],
+  );
+
+  // Upload a whole folder (from the "Upload folder" button or a dropped
+  // directory), recreating its subfolder tree under the current folder.
+  const doUploadFolder = useCallback(
+    async (entries: FolderEntry[]) => {
+      if (readOnly || entries.length === 0) return;
+      const ok = entries.filter((e) => e.file.size <= MAX_FILE_BYTES);
+      const tooBig = entries.filter((e) => e.file.size > MAX_FILE_BYTES);
+      setBusy(true);
+      setError(null);
+      try {
+        // 1. Every distinct directory path in the selection, shallowest first.
+        const dirSet = new Set<string>();
+        for (const { relPath } of ok) {
+          const parts = relPath.split('/');
+          parts.pop(); // drop the filename
+          let acc = '';
+          for (const seg of parts) {
+            acc = acc ? `${acc}/${seg}` : seg;
+            dirSet.add(acc);
+          }
+        }
+        const dirs = [...dirSet].sort(
+          (a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b),
+        );
+        // 2. Create the folders top-down, mapping each path to its new id.
+        const pathToId = new Map<string, string>();
+        for (const d of dirs) {
+          const segs = d.split('/');
+          const parentPath = segs.slice(0, -1).join('/');
+          const parentId = parentPath ? pathToId.get(parentPath) ?? currentFolderId : currentFolderId;
+          const name = segs[segs.length - 1];
+          // eslint-disable-next-line no-await-in-loop
+          const created = await (shared
+            ? createSharedDatabankFolder(name, parentId)
+            : createDatabankFolder(clientId!, name, parentId));
+          pathToId.set(d, created.id);
+        }
+        // 3. Upload each file into the folder its path resolves to.
+        for (const { file, relPath } of ok) {
+          const parts = relPath.split('/');
+          parts.pop();
+          const dirPath = parts.join('/');
+          const target = dirPath ? pathToId.get(dirPath) ?? currentFolderId : currentFolderId;
+          // eslint-disable-next-line no-await-in-loop
+          await (shared
+            ? uploadSharedDatabankFile(file, target, 'UPLOAD')
+            : uploadDatabankFile(clientId!, file, target, 'UPLOAD'));
+        }
+        await reload();
+        if (tooBig.length) {
+          setError(
+            `Uploaded the folder, but skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit.`,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Folder upload failed');
       } finally {
         setBusy(false);
       }
@@ -324,9 +446,12 @@ export function DatabankTab({
             View only — assigned to another officer
           </span>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" onClick={() => setCreatingFolder((v) => !v)} disabled={busy} style={btn(false)}>
               <FolderPlus size={15} /> New folder
+            </button>
+            <button type="button" onClick={() => folderInputRef.current?.click()} disabled={busy} style={btn(false)}>
+              <FolderUp size={15} /> Upload folder
             </button>
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} style={btn(true)}>
               <Upload size={15} /> Upload
@@ -338,6 +463,29 @@ export function DatabankTab({
               hidden
               onChange={(e) => {
                 if (e.target.files) void doUpload(e.target.files, 'UPLOAD');
+                e.target.value = '';
+              }}
+            />
+            <input
+              ref={(el) => {
+                folderInputRef.current = el;
+                // webkitdirectory/directory aren't standard React props — set them
+                // on the DOM node so the picker selects a whole folder tree.
+                if (el) {
+                  el.setAttribute('webkitdirectory', '');
+                  el.setAttribute('directory', '');
+                }
+              }}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const picked = e.target.files ? Array.from(e.target.files) : [];
+                const entries: FolderEntry[] = picked.map((f) => ({
+                  file: f,
+                  relPath: (f as unknown as { webkitRelativePath?: string }).webkitRelativePath || f.name,
+                }));
+                if (entries.length) void doUploadFolder(entries);
                 e.target.value = '';
               }}
             />
@@ -383,7 +531,29 @@ export function DatabankTab({
         onDrop={(e) => {
           e.preventDefault();
           setDragActive(false);
-          if (e.dataTransfer.files) void doUpload(e.dataTransfer.files, 'UPLOAD');
+          if (readOnly) return;
+          // Capture entries synchronously (the DataTransfer is cleared once the
+          // handler returns). If any dropped item is a directory, walk the tree;
+          // otherwise fall back to the flat file list.
+          const items = e.dataTransfer.items;
+          const entries =
+            items && items.length && typeof items[0]?.webkitGetAsEntry === 'function'
+              ? Array.from(items)
+                  .map((it) => it.webkitGetAsEntry())
+                  .filter(Boolean)
+              : [];
+          if (entries.some((en) => (en as { isDirectory?: boolean } | null)?.isDirectory)) {
+            void (async () => {
+              const collected: FolderEntry[] = [];
+              for (const en of entries) {
+                // eslint-disable-next-line no-await-in-loop
+                await walkEntry(en, '', collected);
+              }
+              await doUploadFolder(collected);
+            })();
+            return;
+          }
+          if (e.dataTransfer.files?.length) void doUpload(e.dataTransfer.files, 'UPLOAD');
         }}
         style={{
           border: dragActive ? `2px dashed ${accent}` : `2px dashed transparent`,
@@ -399,7 +569,10 @@ export function DatabankTab({
             <Upload size={22} />
             <div style={{ fontSize: 14 }}>This folder is empty.</div>
             {!readOnly ? (
-              <div style={{ fontSize: 12.5 }}>Drag files here, click Upload, or paste a screenshot.</div>
+              <div style={{ fontSize: 12.5 }}>
+                Drag files or a whole folder here, use Upload / Upload folder, or paste a screenshot.
+                <br />Up to {fmtMB(MAX_FILE_BYTES)} per file.
+              </div>
             ) : null}
           </div>
         ) : (

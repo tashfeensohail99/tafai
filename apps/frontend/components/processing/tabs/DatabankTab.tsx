@@ -40,12 +40,13 @@ import {
   type DatabankUploadTarget,
 } from '@/lib/processing';
 
-/** Per-file upload cap. Uploads go STRAIGHT to R2 (presigned PUT), never
- *  through the backend, so a single file can be up to 4 GB (R2's single-PUT
- *  ceiling with headroom) — a whole client folder can be any size, since files
- *  upload one at a time. A file over this is skipped up front with a clear
- *  message instead of a failed request. */
-const MAX_FILE_BYTES = 4 * 1024 * 1024 * 1024;
+/** Per-file upload cap. Uploads go STRAIGHT to R2 (presigned PUT), never through
+ *  the backend, so a whole client folder can be any size (files upload one at a
+ *  time). The per-FILE ceiling is the backend's DatabankFile.fileSizeBytes
+ *  column — a 32-bit int (max ~2 GB); a bigger single file needs the DB column
+ *  widened + multipart (a planned follow-up). A file over this is skipped up
+ *  front with a clear message instead of a failed request. */
+const MAX_FILE_BYTES = 2_147_483_647; // Postgres int4 max (must match the backend)
 const fmtMB = (n: number) =>
   n >= 1024 * 1024 * 1024
     ? `${(n / (1024 * 1024 * 1024)).toFixed(n % (1024 * 1024 * 1024) === 0 ? 0 : 1)} GB`

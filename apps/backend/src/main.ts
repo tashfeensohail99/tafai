@@ -1,4 +1,7 @@
 // build-stamp: 2026-05-12T10:26:52.442Z
+// Must be first: makes BigInt columns (e.g. DatabankFile.fileSizeBytes)
+// JSON-serializable before any response is built.
+import './common/bigint-json';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';

@@ -60,16 +60,17 @@ export class DatabankService {
     'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'ps1', 'sh', 'js', 'mjs', 'jar', 'vbs', 'dll', 'app',
   ]);
 
-  /** Per-file cap for DIRECT (browser→R2) uploads. The hard ceiling is the
-   *  `DatabankFile.fileSizeBytes` column — a Postgres int4 (max 2,147,483,647
-   *  bytes ≈ 2 GB); a larger file would OVERFLOW the column at commit, AFTER the
-   *  whole thing already uploaded to R2 (orphaned object). Cloudflare R2 itself
-   *  allows a single PutObject up to 5 GiB, so raising this cap needs the column
-   *  widened to BigInt (a migration) — bundled with the >2 GB multipart
-   *  follow-up. This is still far above the 1 GB proxy cap because the bytes go
-   *  straight to R2 and never touch the backend, and a whole client folder can
-   *  be any size (files upload one at a time). */
-  private static readonly DIRECT_MAX_BYTES = 2_147_483_647; // Postgres int4 max
+  /** Per-file cap for the legacy single-PUT DIRECT (browser→R2) upload. The DB
+   *  column is BigInt now (no longer the ceiling), but a single PUT is NOT
+   *  resumable — a dropped connection restarts the whole file — so this path
+   *  stays at ~2 GB. Multi-GB files go through the resumable multipart uploader
+   *  (Databank Phase 1), which lifts this. A whole client folder can be any
+   *  size (files upload one at a time). */
+  private static readonly DIRECT_MAX_BYTES = 2_147_483_647;
+
+  /** A single server-side CopyObject is capped at 5 GiB on S3-compatible
+   *  storage (R2 included); bigger copies need multipart UploadPartCopy. */
+  private static readonly COPY_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -754,9 +755,9 @@ export class DatabankService {
     }
     // A presigned PUT can't enforce size (R2 has no POST policy), so a caller
     // that skips the UI guard can store up to R2's 5 GiB single-PUT limit.
-    // Check the REAL stored size: over the cap it would overflow the int4
-    // fileSizeBytes column and 500 at insert, orphaning the object. Remove the
-    // object (best-effort) and reject cleanly instead.
+    // Check the REAL stored size against this path's cap: over it, remove the
+    // object (best-effort) and reject cleanly rather than keep an oversized,
+    // non-resumable upload.
     if ((head.sizeBytes ?? 0) > DatabankService.DIRECT_MAX_BYTES) {
       await this.storage.delete(dto.storageKey).catch(() => undefined);
       throw new BadRequestException(
@@ -942,12 +943,22 @@ export class DatabankService {
       ? `databank/clients/${targetClientId}`
       : `databank/users/${targetOwnerUserId}`;
 
+    // A single server-side CopyObject is capped at 5 GiB on S3-compatible
+    // storage (R2 included) — a bigger object needs a multipart UploadPartCopy
+    // (planned). Refuse clearly up front instead of a storage 400 mid-request.
+    const sizeBytes = Number(source.fileSizeBytes ?? 0);
+    if (sizeBytes > DatabankService.COPY_MAX_BYTES) {
+      throw new BadRequestException(
+        'Files larger than 5 GB can’t be copied yet — download and re-upload it instead.',
+      );
+    }
+
     // Server-side copy: the bytes are duplicated inside storage and never pass
-    // through the backend, so duplicating even a 300 MB file uses no RAM.
+    // through the backend, so duplicating even a multi-GB file uses no RAM.
     const uploaded = await this.storage.copyObject(
       source.storageKey,
       storageFolder,
-      source.fileSizeBytes ?? 0,
+      sizeBytes,
       source.mimeType ?? 'application/octet-stream',
       source.fileName,
     );
@@ -961,6 +972,7 @@ export class DatabankService {
         storageKey: uploaded.key,
         mimeType: source.mimeType,
         fileSizeBytes: source.fileSizeBytes,
+        sha256: source.sha256, // same bytes → same hash (duplicate detection)
         source: DatabankFileSource.COPIED,
         copiedFromFileId: source.id,
         uploadedByUserId: user.id,

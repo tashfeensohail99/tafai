@@ -9,7 +9,7 @@ import { unlink } from 'node:fs/promises';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { RequestUser } from '../../../common/types/auth.types';
-import { CopyFileDto, CreateFolderDto } from './databank.dto';
+import { CommitUploadDto, CopyFileDto, CreateFolderDto, PresignUploadDto } from './databank.dto';
 
 /**
  * The per-client databank — a free-form, Drive-like document repository for the
@@ -35,6 +35,14 @@ export class DatabankService {
   private static readonly BLOCKED_EXT = new Set([
     'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'ps1', 'sh', 'js', 'mjs', 'jar', 'vbs', 'dll', 'app',
   ]);
+
+  /** Per-file cap for DIRECT (browser→R2) uploads. Cloudflare R2 accepts a
+   *  single non-multipart PutObject up to 5 GiB; we cap at 4 GiB for headroom.
+   *  This is far above the 300 MB proxy cap because the bytes go straight to R2
+   *  and never touch the backend. A whole client folder can be any size (files
+   *  upload one at a time); only an INDIVIDUAL file above this needs the
+   *  multipart path (a planned follow-up). */
+  private static readonly DIRECT_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -635,6 +643,95 @@ export class DatabankService {
   // Files
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // Direct-to-storage upload (large files → R2, bypassing the backend)
+  // ---------------------------------------------------------------------------
+
+  /** Resolve a direct upload's scope (client vs personal) and AUTHORIZE the
+   *  write in one place, returning the DB scope + the storage folder the object
+   *  lives under. Shared by presign and commit so both gate identically. */
+  private async resolveWriteScope(
+    dto: { clientId?: string | null; personal?: boolean },
+    user: RequestUser,
+    targetUserId?: string,
+  ): Promise<{ clientId: string | null; ownerUserId: string | null; storageFolder: string }> {
+    if (dto.personal) {
+      const ownerUserId = targetUserId ?? user.id;
+      this.assertPersonalAccess(ownerUserId, user);
+      return { clientId: null, ownerUserId, storageFolder: `databank/users/${ownerUserId}` };
+    }
+    if (!dto.clientId) {
+      throw new BadRequestException('Provide either clientId or personal: true.');
+    }
+    await this.assertClientWriteAccess(dto.clientId, user);
+    return { clientId: dto.clientId, ownerUserId: null, storageFolder: `databank/clients/${dto.clientId}` };
+  }
+
+  /**
+   * Step 1 of a direct browser→R2 upload. Authorizes the write, validates the
+   * file name / size / destination folder, and returns a presigned PUT URL the
+   * browser uploads to WITHOUT the bytes passing through the backend. In dev
+   * storage modes the strategy is 'proxy' and the client falls back to the
+   * streaming multipart endpoint.
+   */
+  async presignDirectUpload(dto: PresignUploadDto, user: RequestUser, targetUserId?: string) {
+    this.assertSafeFileName(dto.fileName);
+    if (dto.fileSizeBytes > DatabankService.DIRECT_MAX_BYTES) {
+      throw new BadRequestException(
+        `File is larger than the ${Math.round(
+          DatabankService.DIRECT_MAX_BYTES / (1024 * 1024 * 1024),
+        )} GB per-file upload limit.`,
+      );
+    }
+    const scope = await this.resolveWriteScope(dto, user, targetUserId);
+    // Fail an out-of-scope / missing folder BEFORE the (large) upload starts.
+    await this.assertFolderInScope(dto.folderId, {
+      clientId: scope.clientId,
+      ownerUserId: scope.ownerUserId,
+    });
+    const presigned = await this.storage.presignPutUrl(scope.storageFolder, dto.mimeType, dto.fileName);
+    return { ...presigned, maxBytes: DatabankService.DIRECT_MAX_BYTES };
+  }
+
+  /**
+   * Step 2 of a direct upload: the browser finished PUTting to `storageKey`, so
+   * record the DatabankFile row. Re-authorizes the write, confirms the key
+   * belongs to THIS scope's storage folder (a caller can't commit an arbitrary
+   * or other-client key), and HEADs the object to prove it landed + capture its
+   * true size before creating the row.
+   */
+  async commitDirectUpload(dto: CommitUploadDto, user: RequestUser, targetUserId?: string) {
+    this.assertSafeFileName(dto.fileName);
+    const scope = await this.resolveWriteScope(dto, user, targetUserId);
+    if (!dto.storageKey.startsWith(`${scope.storageFolder}/`)) {
+      throw new ForbiddenException('This upload key does not belong to the target databank.');
+    }
+    const head = await this.storage.headObjectMeta(dto.storageKey);
+    if (!head.exists) {
+      throw new BadRequestException(
+        'The upload was not found in storage — it may not have finished. Please retry.',
+      );
+    }
+    const targetFolder = await this.assertFolderInScope(dto.folderId, {
+      clientId: scope.clientId,
+      ownerUserId: scope.ownerUserId,
+    });
+    return this.prisma.databankFile.create({
+      data: {
+        clientId: scope.clientId,
+        ownerUserId: scope.ownerUserId,
+        folderId: targetFolder,
+        fileName: dto.fileName,
+        storageKey: dto.storageKey,
+        mimeType: dto.mimeType,
+        fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
+        source: DatabankFileSource.UPLOAD,
+        uploadedByUserId: user.id,
+      },
+      select: this.fileSelect,
+    });
+  }
+
   async uploadFile(
     clientId: string,
     file: Express.Multer.File | undefined,
@@ -838,7 +935,17 @@ export class DatabankService {
     if (!file) {
       throw new BadRequestException('No file provided. Use multipart/form-data with field name "file".');
     }
-    const ext = (file.originalname.split('.').pop() ?? '').toLowerCase();
+    this.assertSafeFileName(file.originalname);
+  }
+
+  /** Refuse an empty name or a blocked executable/script extension. Shared by
+   *  the multipart upload (a real file) and the direct-upload presign/commit
+   *  (only a file NAME, no bytes yet). */
+  private assertSafeFileName(fileName: string | undefined): void {
+    if (!fileName || !fileName.trim()) {
+      throw new BadRequestException('A file name is required.');
+    }
+    const ext = (fileName.split('.').pop() ?? '').toLowerCase();
     if (DatabankService.BLOCKED_EXT.has(ext)) {
       throw new BadRequestException(`Files of type .${ext} are not allowed.`);
     }

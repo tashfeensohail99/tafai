@@ -2216,6 +2216,112 @@ export async function uploadDatabankFile(
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// Direct-to-storage upload (large files → R2, bypassing the backend).
+// The browser presigns an upload, PUTs the bytes STRAIGHT to R2 with progress,
+// then commits the DB row. No bytes flow through Railway, so multi-GB files (a
+// Google Drive migration) upload without loading the backend. In dev storage
+// modes the presign returns strategy:'proxy' and we transparently fall back to
+// the streaming multipart upload above.
+// ---------------------------------------------------------------------------
+
+export interface DatabankUploadTarget {
+  /** A client's databank. */
+  clientId?: string;
+  /** The caller's personal databank instead of a client's. */
+  personal?: boolean;
+  /** Manager only: target another associate's personal databank. */
+  userId?: string;
+}
+
+interface PresignedUploadResponse {
+  strategy: 'direct-put' | 'proxy';
+  storageKey: string;
+  url?: string;
+  headers?: Record<string, string>;
+  maxBytes: number;
+}
+
+/** PUT a File to a presigned URL with progress, via XHR (fetch exposes no
+ *  upload progress). Resolves on 2xx, rejects otherwise. No auth header — the
+ *  presigned URL carries its own signature. */
+function putToStorage(
+  url: string,
+  file: File,
+  headers: Record<string, string>,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url, true);
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`Storage upload failed (${xhr.status})`));
+    xhr.onerror = () => reject(new Error('Storage upload failed — check your connection and try again.'));
+    xhr.send(file);
+  });
+}
+
+/**
+ * Upload a file DIRECTLY to storage (R2) then record it. `onProgress` reports
+ * this file's byte progress as a 0..1 fraction. Falls back to the streaming
+ * multipart upload in dev storage modes. Works for a client databank
+ * (`clientId`) or the caller's personal area (`personal`).
+ */
+export async function directUploadDatabankFile(
+  target: DatabankUploadTarget,
+  file: File,
+  folderId: string | null = null,
+  onProgress?: (fraction: number) => void,
+): Promise<ApiDatabankFile> {
+  const mimeType = file.type || 'application/octet-stream';
+  const q = target.userId ? `?userId=${encodeURIComponent(target.userId)}` : '';
+  const body = {
+    clientId: target.clientId,
+    personal: target.personal,
+    folderId,
+    fileName: file.name,
+    mimeType,
+    fileSizeBytes: file.size,
+  };
+
+  const presigned = await apiFetch<PresignedUploadResponse>(
+    `/processing/databank/uploads/presign${q}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    },
+  );
+
+  // Dev storage (local/supabase): no direct-PUT path — stream through the backend.
+  if (presigned.strategy === 'proxy' || !presigned.url) {
+    onProgress?.(0);
+    const res = target.personal
+      ? await uploadPersonalDatabankFile(file, folderId, 'UPLOAD')
+      : await uploadDatabankFile(target.clientId!, file, folderId, 'UPLOAD');
+    onProgress?.(1);
+    return res;
+  }
+
+  await putToStorage(presigned.url, file, presigned.headers ?? {}, (loaded, total) =>
+    onProgress?.(total ? loaded / total : 0),
+  );
+
+  return apiFetch<ApiDatabankFile>(`/processing/databank/uploads/commit${q}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, storageKey: presigned.storageKey }),
+    cache: 'no-store',
+  });
+}
+
 export function getDatabankFileSignedUrl(
   fileId: string,
 ): Promise<{ url: string; fileName: string; mimeType: string | null }> {

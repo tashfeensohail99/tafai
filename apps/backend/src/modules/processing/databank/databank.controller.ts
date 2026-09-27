@@ -27,10 +27,12 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { DatabankService } from './databank.service';
 import {
+  CommitUploadDto,
   CopyFileDto,
   CreateFolderDto,
   MoveFileDto,
   MoveFolderDto,
+  PresignUploadDto,
   RenameFileDto,
   RenameFolderDto,
 } from './databank.dto';
@@ -154,6 +156,33 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.databank.deleteFolder(folderId, user);
+  }
+
+  // ---- Direct-to-storage upload (large files → R2, bypassing the backend) --
+  // The browser presigns an upload, PUTs the bytes STRAIGHT to R2, then commits
+  // the DB row. No bytes flow through Railway, so folders of multi-GB files (the
+  // Google Drive migration) don't pressure the backend. Same write permission as
+  // a normal upload; the scope (client vs personal) is in the body, and a
+  // manager may target another associate's personal area with ?userId=.
+
+  @Post('uploads/presign')
+  @RequirePermissions(WRITE)
+  presignUpload(
+    @Body() dto: PresignUploadDto,
+    @CurrentUser() user: RequestUser,
+    @Query('userId') userId?: string,
+  ) {
+    return this.databank.presignDirectUpload(dto, user, userId);
+  }
+
+  @Post('uploads/commit')
+  @RequirePermissions(WRITE)
+  commitUpload(
+    @Body() dto: CommitUploadDto,
+    @CurrentUser() user: RequestUser,
+    @Query('userId') userId?: string,
+  ) {
+    return this.databank.commitDirectUpload(dto, user, userId);
   }
 
   // ---- Files --------------------------------------------------------------

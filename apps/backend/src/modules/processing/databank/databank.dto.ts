@@ -1,4 +1,14 @@
-import { IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
 /**
  * DTOs for the per-client databank (the Google Drive replacement).
@@ -65,4 +75,50 @@ export class CopyFileDto {
   @ValidateIf((o) => o.targetFolderId !== null)
   @IsUUID()
   targetFolderId?: string | null;
+}
+
+/**
+ * Direct-to-storage upload (the Google Drive migration path). The browser asks
+ * the backend to PRESIGN an upload, PUTs the bytes STRAIGHT to R2 (no bytes
+ * through Railway), then COMMITs the DB row. Scope is EITHER a client
+ * (`clientId`) or the caller's personal area (`personal: true`) — exactly one.
+ */
+export class PresignUploadDto {
+  /** Client-scoped upload. Omit when `personal` is set. */
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
+
+  /** Upload into the caller's personal databank instead of a client's. */
+  @IsOptional()
+  @IsBoolean()
+  personal?: boolean;
+
+  /** Destination folder; omit or null = the databank root. */
+  @IsOptional()
+  @ValidateIf((o) => o.folderId !== null)
+  @IsUUID()
+  folderId?: string | null;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  fileName!: string;
+
+  @IsString()
+  @MaxLength(255)
+  mimeType!: string;
+
+  @IsInt()
+  @Min(0)
+  fileSizeBytes!: number;
+}
+
+/** Commit a completed direct upload: the same scope as the presign, plus the
+ *  `storageKey` the presign returned. */
+export class CommitUploadDto extends PresignUploadDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(512)
+  storageKey!: string;
 }

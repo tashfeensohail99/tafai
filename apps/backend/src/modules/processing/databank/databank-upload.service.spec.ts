@@ -184,17 +184,28 @@ describe('DatabankUploadService.init', () => {
     expect(prisma.databankUpload.createMany.mock.calls[0][0].data).toHaveLength(1);
   });
 
-  it('[review] when R2 lost the multipart upload but the OBJECT is complete, says "just complete" — never retires it', async () => {
+  it('[review] when R2 lost the multipart upload but the OBJECT is complete, PARKS it (never retires / leaves it UPLOADING)', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.findMany.mockResolvedValueOnce([session()]);
     storage.listAllParts.mockRejectedValueOnce(nosuch());
     storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
     const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
-    expect(res.mode === 'direct' && res.results[0]).toMatchObject({
-      status: 'upload', uploadId: 's1', doneParts: [1, 2, 3, 4, 5], urls: [],
+    expect(res.mode === 'direct' && res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 's1' });
+    expect(prisma.databankUpload.updateMany).toHaveBeenCalledWith({
+      where: { id: 's1', status: 'UPLOADING' },
+      data: { status: 'COMPLETING', completingAt: new Date(0) },
     });
-    expect(prisma.databankUpload.updateMany).not.toHaveBeenCalled();
     expect(storage.createMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('[review] matches a COMPLETING session even past its resume deadline (no second upload)', async () => {
+    const { svc, prisma } = harness();
+    await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    const where = prisma.databankUpload.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual([
+      { status: 'UPLOADING', expiresAt: { gt: expect.any(Date) } },
+      { status: 'COMPLETING' },
+    ]);
   });
 
   it('starts over when R2 has truly lost a session (404) — retiring it only if still UPLOADING', async () => {
@@ -304,13 +315,15 @@ describe('DatabankUploadService.complete / finalize', () => {
     expect(h.prisma.databankUpload.updateMany.mock.calls.some((c: any[]) => c[0].data.status === 'UPLOADING')).toBe(false);
   });
 
-  it('[review] a transient HEAD error is a retry, never "the object is gone"', async () => {
+  it('[review] a transient HEAD error — e.g. on a takeover of a parked session — PARKS it: never "gone", never back to UPLOADING', async () => {
     const h = harness();
     h.storage.headObjectStrict.mockRejectedValueOnce(new Error('503 from storage'));
-    const res = await complete(h);
+    const res = await complete(h, session({ status: 'COMPLETING', completingAt: new Date(0) }));
     expect(res).toMatchObject({ status: 'retry' });
-    expect(lastUpdateData(h)).toEqual(RELEASED); // nothing assembled yet → safe to hand back
-    expect(h.prisma.databankUpload.updateMany.mock.calls.some((c: any[]) => c[0].data.status === 'ABORTED')).toBe(false);
+    expect(lastUpdateData(h)).toEqual(PARKED);
+    const statuses = h.prisma.databankUpload.updateMany.mock.calls.map((c: any[]) => c[0].data.status);
+    expect(statuses).not.toContain('UPLOADING');
+    expect(statuses).not.toContain('ABORTED');
   });
 
   it('[review] NoSuchUpload + the object present = a racing finalize completed it → commit, not "expired"', async () => {
@@ -374,14 +387,39 @@ describe('DatabankUploadService.complete / finalize', () => {
     expect(await complete(h)).toMatchObject({ status: 'completed', file: { id: 'winner' } });
   });
 
-  it('aborts and frees storage when the user lost access to the databank', async () => {
+  it('[review] a user who lost access cannot finish it, but the authorised upload is PARKED for the sweeper — never deleted', async () => {
     const h = harness();
     h.databank.resolveWriteScope.mockRejectedValueOnce(new ForbiddenException('nope'));
-    expect((await complete(h)).status).toBe('failed');
-    expect(h.prisma.databankUpload.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'ABORTED', failureReason: 'access revoked' }) }),
+    const res = await complete(h);
+    expect(res).toMatchObject({ status: 'failed', reason: expect.stringMatching(/still be saved/) });
+    expect(lastUpdateData(h)).toEqual(PARKED);
+    expect(h.storage.abortMultipartUpload).not.toHaveBeenCalled();
+    expect(h.storage.delete).not.toHaveBeenCalled();
+  });
+
+  it('[review] a permanent commit error (destination deleted, P2003) is terminal: FAILED + storage freed, not retried forever', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValue({ exists: true, sizeBytes: 40 * MiB });
+    h.prisma.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Foreign key constraint failed', { code: 'P2003', clientVersion: '5.22.0' }),
     );
-    expect(h.storage.abortMultipartUpload).toHaveBeenCalledWith('databank/clients/c1/k.zip', 'r2-up');
+    const res = await complete(h);
+    expect(res).toMatchObject({ status: 'failed' });
+    expect(h.prisma.databankUpload.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED' }) }),
+    );
+    expect(h.storage.delete).toHaveBeenCalledWith('databank/clients/c1/k.zip');
+  });
+
+  it('[review] points at an identical file another session already recorded instead of creating a duplicate row', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValue({ exists: true, sizeBytes: 40 * MiB });
+    h.prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'twin-file' }); // twin lookup inside the commit
+    const res = await complete(h);
+    expect(res).toMatchObject({ status: 'completed', file: { id: 'twin-file' } });
+    expect(h.prisma.databankFile.create).not.toHaveBeenCalled();
+    expect(h.prisma.databankUpload.updateMany.mock.calls[1][0].data).toMatchObject({ status: 'COMPLETED', fileId: 'twin-file' });
+    expect(h.storage.delete).toHaveBeenCalledWith('databank/clients/c1/k.zip'); // our redundant copy freed
   });
 
   it('[review] checks access once per scope for a whole batch', async () => {
@@ -428,11 +466,11 @@ describe('DatabankUploadService.complete / finalize', () => {
     expect(PARKED.completingAt.getTime()).toBeLessThan(cutoff); // a parked claim is reclaimable at once
   });
 
-  it('hands the claim back and asks to retry on a storage error before anything was assembled', async () => {
+  it('parks (never hands back) on an unexpected storage error — only proof of "not assembled" releases', async () => {
     const h = harness();
     h.storage.listAllParts.mockRejectedValueOnce(new Error('503 from storage'));
     expect(await complete(h)).toMatchObject({ status: 'retry' });
-    expect(lastUpdateData(h)).toEqual(RELEASED);
+    expect(lastUpdateData(h)).toEqual(PARKED);
   });
 
   it('marks an upload R2 no longer has (and no object, confirmed by a 404) as expired', async () => {
@@ -461,6 +499,14 @@ describe('DatabankUploadService.abort / cleanupStorage', () => {
     h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session({ status: 'ABORTED' }));
     expect(await h.svc.abort('s1', USER)).toEqual({ id: 's1', status: 'aborted' });
     expect(h.storage.abortMultipartUpload).toHaveBeenCalledWith('databank/clients/c1/k.zip', 'r2-up');
+  });
+
+  it('[review] can discard a PARKED completion (stale claim) — no session is ever stuck without a way out', async () => {
+    const h = harness();
+    h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session({ status: 'ABORTED' }));
+    await h.svc.abort('s1', USER);
+    const where = h.prisma.databankUpload.updateMany.mock.calls[0][0].where;
+    expect(where.OR[1]).toMatchObject({ status: 'COMPLETING', completingAt: { lt: expect.any(Date) } });
   });
 
   it('refuses to cancel once completion has started (409)', async () => {

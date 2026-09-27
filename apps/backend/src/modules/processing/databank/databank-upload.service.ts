@@ -255,11 +255,16 @@ export class DatabankUploadService {
       ? await this.prisma.databankUpload.findMany({
           where: {
             createdByUserId: user.id,
-            status: { in: [DatabankUploadStatus.UPLOADING, DatabankUploadStatus.COMPLETING] },
             clientId: scope.clientId,
             ownerUserId: scope.ownerUserId,
             sha256: { in: hashes },
-            expiresAt: { gt: now },
+            // A COMPLETING session is matched even past its resume deadline — it
+            // may be parked holding an assembled object; a second upload of the
+            // same file would become a duplicate row.
+            OR: [
+              { status: DatabankUploadStatus.UPLOADING, expiresAt: { gt: now } },
+              { status: DatabankUploadStatus.COMPLETING },
+            ],
           },
         })
       : [];
@@ -299,8 +304,14 @@ export class DatabankUploadService {
         const head = await this.storage.headObjectStrict(s.storageKey).catch(() => null);
         const size = Number(s.sizeBytes);
         if (head?.exists && head.sizeBytes === size) {
-          // Fully in storage — tell the client to just call complete.
-          results[c.index] = this.uploadResult(c.index, s, Array.from({ length: s.partCount ?? 1 }, (_, i) => i + 1), [], true);
+          // Fully assembled in storage but never recorded. PARK it (COMPLETING,
+          // reclaimable at once) so no expiry/cleanup can ever treat it as an
+          // abandoned upload; the client's complete — or the sweeper — records it.
+          await this.prisma.databankUpload.updateMany({
+            where: { id: s.id, status: DatabankUploadStatus.UPLOADING },
+            data: { status: DatabankUploadStatus.COMPLETING, completingAt: new Date(0) },
+          });
+          results[c.index] = { index: c.index, status: 'in-progress', uploadId: s.id };
           return;
         }
         if (!head) {
@@ -624,8 +635,12 @@ export class DatabankUploadService {
     if (claim.count === 0) return this.settledResult(s.id);
 
     const mine = { id: s.id, status: DatabankUploadStatus.COMPLETING, completingAt: claimedAt };
-    // Once true, R2 may hold the assembled object: never hand back to UPLOADING.
-    let objectMayExist = false;
+    // RULE: a session goes back to UPLOADING only with PROOF that no assembled
+    // object can exist — ListParts succeeded (the multipart upload is still
+    // open, so it was never completed) or a single-PUT object is a real 404.
+    // Every other failure PARKS it in COMPLETING (reclaimable at once), because
+    // this may be a takeover of a claim that already sent Complete, and an
+    // UPLOADING row is exactly what expiry/cleanup would delete.
     try {
       // Access may have been revoked since init (reassigned client, lockout).
       if (ctx.user) {
@@ -644,9 +659,17 @@ export class DatabankUploadService {
           await check;
         } catch (e) {
           if (e instanceof ForbiddenException || e instanceof NotFoundException) {
-            const moved = await this.retire(mine, DatabankUploadStatus.ABORTED, 'access revoked');
-            if (moved) await this.cleanupStorage({ ...s, status: DatabankUploadStatus.ABORTED, updatedAt: new Date() });
-            return { id: s.id, status: 'failed', reason: 'You no longer have access to this databank.' };
+            // This user can't finish it — but the upload was authorised when it
+            // was made and the bytes belong to the client, so never delete them:
+            // park it and the sweeper records it. (Deterministic: the outcome no
+            // longer depends on whether the user's retry or the sweeper got there
+            // first.)
+            await this.parkClaim(s.id, claimedAt);
+            return {
+              id: s.id,
+              status: 'failed',
+              reason: 'You no longer have access to this databank. The upload will still be saved there.',
+            };
           }
           throw e;
         }
@@ -670,7 +693,6 @@ export class DatabankUploadService {
       const sizeBytes = Number(s.sizeBytes);
       // STRICT: a transient error throws (→ retry); only a 404 means "absent".
       let head = await this.storage.headObjectStrict(s.storageKey);
-      if (head.exists) objectMayExist = true;
 
       if (s.strategy === DatabankUploadStrategy.MULTIPART && !head.exists) {
         let listed: Awaited<ReturnType<StorageService['listAllParts']>> | null = null;
@@ -684,16 +706,15 @@ export class DatabankUploadService {
             await this.retire(mine, DatabankUploadStatus.ABORTED, 'upload no longer exists in storage', true);
             return { id: s.id, status: 'expired' };
           }
-          objectMayExist = true;
         }
         if (listed) {
           const verdict = verifyParts({ sizeBytes, partSize: s.partSize!, partCount: s.partCount! }, listed);
           if (!verdict.ok) {
+            // SAFE to hand back: ListParts just succeeded, so the multipart
+            // upload is still open — it was never completed into an object.
             await this.releaseClaim(s.id, claimedAt);
             return { id: s.id, status: 'missing-parts', missingParts: verdict.missingParts };
           }
-          // From here R2 may assemble the object even if we never see the reply.
-          objectMayExist = true;
           try {
             // ETags straight from ListParts (quoted, byte-exact) — no dependence
             // on the browser reading them through CORS.
@@ -710,7 +731,7 @@ export class DatabankUploadService {
 
       if (!head.exists) {
         if (s.strategy === DatabankUploadStrategy.SINGLE) {
-          // The browser hasn't finished its PUT yet.
+          // The browser hasn't finished its PUT yet (a real 404 — SAFE to hand back).
           await this.releaseClaim(s.id, claimedAt);
           return { id: s.id, status: 'missing-parts', missingParts: [1] };
         }
@@ -737,11 +758,10 @@ export class DatabankUploadService {
       return await this.commit(s, claimedAt, folderId, relocated);
     } catch (e) {
       this.logger.warn(`finalize ${s.id} failed: ${errMsg(e)}`);
-      // Before R2 could hold the object: hand it back so the client re-sends.
-      // After: park it in COMPLETING (reclaimable immediately) — handing it back
-      // to UPLOADING would let expiry/cleanup delete a finished upload.
-      const undo = objectMayExist ? this.parkClaim(s.id, claimedAt) : this.releaseClaim(s.id, claimedAt);
-      await undo.catch(() => undefined);
+      // Unknown state (storage / DB blip): PARK, never hand back — see RULE
+      // above. The next complete (or the sweeper) takes over immediately and
+      // re-derives the truth from storage.
+      await this.parkClaim(s.id, claimedAt).catch(() => undefined);
       return { id: s.id, status: 'retry', reason: 'Storage is busy — please try again.' };
     }
   }
@@ -758,14 +778,30 @@ export class DatabankUploadService {
     relocated: boolean,
   ): Promise<CompleteResult> {
     const fileId = randomUUID();
+    const mine = { id: s.id, status: DatabankUploadStatus.COMPLETING, completingAt: claimedAt };
     try {
-      const file = await this.prisma.$transaction(async (tx) => {
+      const outcome = await this.prisma.$transaction(async (tx) => {
+        // The identical file (same scope + folder + name + content) may already
+        // be recorded by ANOTHER session — e.g. two tabs uploading the same
+        // file at once. Point this session at it rather than a duplicate row.
+        const twin = await tx.databankFile.findFirst({
+          where: {
+            clientId: s.clientId,
+            ownerUserId: s.ownerUserId,
+            folderId,
+            fileName: s.fileName,
+            sha256: s.sha256,
+            deletedAt: null,
+          },
+          select: this.databank.fileSelect,
+        });
         const done = await tx.databankUpload.updateMany({
-          where: { id: s.id, status: DatabankUploadStatus.COMPLETING, completingAt: claimedAt },
-          data: { status: DatabankUploadStatus.COMPLETED, fileId, completingAt: null },
+          where: mine,
+          data: { status: DatabankUploadStatus.COMPLETED, fileId: twin ? twin.id : fileId, completingAt: null },
         });
         if (done.count !== 1) throw new LostClaimError();
-        return tx.databankFile.create({
+        if (twin) return { file: twin, twin: true };
+        const file = await tx.databankFile.create({
           data: {
             id: fileId,
             clientId: s.clientId,
@@ -782,10 +818,24 @@ export class DatabankUploadService {
           },
           select: this.databank.fileSelect,
         });
+        return { file, twin: false };
       });
-      return { id: s.id, status: 'completed', file, ...(relocated ? { relocated: true } : {}) };
+      if (outcome.twin) {
+        // This session's copy of the bytes is redundant — free it (cleanup never
+        // touches an object a file row references).
+        await this.cleanupStorage({ ...s, status: DatabankUploadStatus.COMPLETED, updatedAt: new Date(0) });
+      }
+      return { id: s.id, status: 'completed', file: outcome.file, ...(relocated ? { relocated: true } : {}) };
     } catch (e) {
       if (e instanceof LostClaimError) return this.settledResult(s.id);
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+        // A row this file must point at is GONE (e.g. the client was deleted —
+        // its databank files cascade away). Retrying can never succeed, so this
+        // is terminal: fail it and free the bytes, which now have no home.
+        const moved = await this.retire(mine, DatabankUploadStatus.FAILED, 'destination no longer exists');
+        if (moved) await this.cleanupStorage({ ...s, status: DatabankUploadStatus.FAILED, updatedAt: new Date() });
+        return { id: s.id, status: 'failed', reason: 'The databank this upload belonged to no longer exists.' };
+      }
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         const existing = await this.prisma.databankFile.findUnique({
           where: { uploadSessionId: s.id },
@@ -883,7 +933,15 @@ export class DatabankUploadService {
       where: {
         id,
         createdByUserId: user.id,
-        status: { in: [DatabankUploadStatus.UPLOADING, DatabankUploadStatus.FAILED] },
+        OR: [
+          { status: { in: [DatabankUploadStatus.UPLOADING, DatabankUploadStatus.FAILED] } },
+          // A PARKED / dead completion can be discarded too — otherwise a
+          // session that can never finish would be stuck with no way out.
+          {
+            status: DatabankUploadStatus.COMPLETING,
+            completingAt: { lt: new Date(Date.now() - COMPLETING_STALE_MS) },
+          },
+        ],
       },
       data: { status: DatabankUploadStatus.ABORTED, failureReason: 'cancelled', completingAt: null },
     });

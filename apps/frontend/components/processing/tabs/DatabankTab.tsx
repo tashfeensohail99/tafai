@@ -41,8 +41,11 @@ import {
 /** Per-file upload cap — mirrors the backend Multer limit. A single file over
  *  this (e.g. a big .zip) is rejected by the server, so we skip it up front with
  *  a clear message instead of a failed request. */
-const MAX_FILE_BYTES = 300 * 1024 * 1024;
-const fmtMB = (n: number) => `${Math.round(n / (1024 * 1024))} MB`;
+const MAX_FILE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
+const fmtMB = (n: number) =>
+  n >= 1024 * 1024 * 1024
+    ? `${(n / (1024 * 1024 * 1024)).toFixed(Number.isInteger(n / (1024 * 1024 * 1024)) ? 0 : 1)} GB`
+    : `${Math.round(n / (1024 * 1024))} MB`;
 
 /** One file picked for a folder upload, carrying its path relative to the
  *  dropped/selected folder (e.g. "Passport/scan.pdf") so we can recreate the

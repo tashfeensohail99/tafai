@@ -83,7 +83,7 @@ export class StorageService {
   /**
    * Stream a file from a local path straight to storage WITHOUT buffering the
    * whole thing in memory. Used by the databank for large uploads (up to
-   * 300 MB) — the request is written to a Multer temp file on disk, then this
+   * 1 GB) — the request is written to a Multer temp file on disk, then this
    * streams it to R2 with a known ContentLength, so backend RAM stays flat
    * regardless of file size. The caller owns the temp file and deletes it after.
    */
@@ -131,7 +131,7 @@ export class StorageService {
   /**
    * Server-side copy of an existing object to a fresh key — the bytes never
    * pass through the backend (no download+reupload), so duplicating even a
-   * 300 MB databank file uses no backend memory. `sizeBytes`/`mimeType` are
+   * 1 GB databank file uses no backend memory. `sizeBytes`/`mimeType` are
    * carried from the source row (a copy preserves them).
    */
   async copyObject(

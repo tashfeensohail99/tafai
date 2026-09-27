@@ -45,8 +45,8 @@ import {
  * never lists the whole firm. Read routes use jr.portal.view; write routes use
  * jr.artifact.author.
  */
-// 300 MB, disk-streamed to storage (never buffered in RAM) — see databank.controller.ts.
-const MAX_FILE_BYTES = 300 * 1024 * 1024;
+// 1 GB, disk-streamed to storage (never buffered in RAM) — see databank.controller.ts.
+const MAX_FILE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
 const READ = 'jr.portal.view';
 const WRITE = 'jr.artifact.author';
 

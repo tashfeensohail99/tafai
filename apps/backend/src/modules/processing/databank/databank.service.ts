@@ -24,6 +24,7 @@ import { FolderPathError, FolderPlan, planFolderPaths, splitFolderPath } from '.
  *  in the Seoul DB (Prisma's 5 s default would abort the waiter). */
 const FOLDER_TXN = { timeout: 30_000 };
 
+
 /** Split a search box value into words (max 5). EVERY word must match
  *  somewhere, so "abdul qadir" finds first name "Abdul" + last name "Qadir" —
  *  a single `contains` of the whole string matched neither field. */
@@ -615,7 +616,12 @@ export class DatabankService {
     const key = scope.clientId
       ? `databank-folders|client|${scope.clientId}`
       : `databank-folders|user|${scope.ownerUserId}`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+    // TWO-key form: 1145194033 ('DBF1') is this lock's namespace. (int4, int4)
+    // advisory locks live apart from the single-key hashtext() locks used
+    // elsewhere (upload-commit identity, attendance, telephony), so a 32-bit
+    // hash collision can never make this lock and an upload commit — which holds
+    // its folder FOR SHARE while it takes its own lock — wait on each other.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194033, hashtext(${key}))`;
   }
 
   /** Re-read a folder once its scope is locked: loadFolder ran before the lock,
@@ -732,12 +738,16 @@ export class DatabankService {
   async ensureFolderPaths(dto: EnsureFolderPathsDto, user: RequestUser, targetUserId?: string) {
     const { clientId, ownerUserId } = await this.resolveWriteScope(dto, user, targetUserId);
     const scope = { clientId, ownerUserId };
-    // Reject malformed paths before touching the database.
-    try {
-      dto.paths.forEach(splitFolderPath);
-    } catch (e) {
-      if (e instanceof FolderPathError) throw new BadRequestException(e.message);
-      throw e;
+    // Reject malformed paths before touching the database — naming the path,
+    // so the officer can find the folder to rename in a 2,000-folder drop.
+    for (const path of dto.paths) {
+      try {
+        splitFolderPath(path);
+      } catch (e) {
+        if (!(e instanceof FolderPathError)) throw e;
+        const shown = path.length > 80 ? `${path.slice(0, 77)}...` : path;
+        throw new BadRequestException(`${e.message} (folder ${JSON.stringify(shown)})`);
+      }
     }
     return this.prisma.$transaction(
       async (tx) => {

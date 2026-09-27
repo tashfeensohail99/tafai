@@ -5,7 +5,9 @@ import { DatabankService } from './databank.service';
  * Folder-structure writes (Databank Phase 1, PR-4): `folders/ensure-paths` and
  * the per-scope folder lock that create / rename / move / delete now share.
  * Prisma is a mock that records the ORDER of calls — the lock must come first
- * in every transaction. No DB.
+ * in every transaction. The transaction client is a SEPARATE object from the
+ * service's prisma (which only has $transaction), so any folder read or write
+ * that escaped the transaction would throw. No DB.
  */
 
 const USER = { id: 'u1', permissions: ['processing.document.upload'] } as never;
@@ -19,7 +21,7 @@ function harness() {
       log.push(name);
       return impl(...a);
     });
-  const prisma: Record<string, any> = {
+  const tx: Record<string, any> = {
     databankFolder: {
       findFirst: rec('folder.findFirst', () => null),
       findMany: rec('folder.findMany', () => []),
@@ -32,20 +34,25 @@ function harness() {
     $executeRaw: rec('lock', () => 1),
     $queryRaw: rec('queryRaw', () => []),
   };
-  prisma.$transaction = jest.fn(async (fn: (tx: unknown) => unknown, opts?: unknown) => {
-    log.push(`txn:${JSON.stringify(opts)}`);
-    return fn(prisma);
-  });
-  const svc = new DatabankService(prisma as never, {} as never);
+  const outer = {
+    $transaction: jest.fn(async (fn: (t: unknown) => unknown, opts?: unknown) => {
+      log.push(`txn:${JSON.stringify(opts)}`);
+      return fn(tx);
+    }),
+  };
+  const svc = new DatabankService(outer as never, {} as never);
   const s = svc as any;
   jest.spyOn(svc, 'resolveWriteScope').mockResolvedValue(SCOPE);
   s.loadFolder = jest.fn().mockResolvedValue(LIVE);
   s.assertClientWriteAccess = jest.fn().mockResolvedValue(undefined);
-  return { svc, prisma, log };
+  // `prisma` below = the transaction client (where every folder query must go).
+  return { svc, prisma: tx, outer, log };
 }
 
 /** The lock's key, from the tagged-template call `$executeRaw\`...${key}\``. */
 const lockKey = (prisma: Record<string, any>, call = 0) => prisma.$executeRaw.mock.calls[call][1];
+/** The lock's SQL text around the bound key. */
+const lockSql = (prisma: Record<string, any>, call = 0) => prisma.$executeRaw.mock.calls[call][0].join('$1');
 
 describe('DatabankService.ensureFolderPaths', () => {
   it('locks the scope FIRST, reads its folders once, creates what is missing, returns path → id', async () => {
@@ -59,6 +66,9 @@ describe('DatabankService.ensureFolderPaths', () => {
 
     expect(log).toEqual(['txn:{"timeout":30000}', 'lock', 'folder.findMany', 'folder.createMany']);
     expect(lockKey(prisma)).toBe('databank-folders|client|c1');
+    // [review] the TWO-key form, in its own namespace — never the single-key
+    // hashtext space the upload commit's identity lock uses.
+    expect(lockSql(prisma)).toBe('SELECT pg_advisory_xact_lock(1145194033, hashtext($1))');
     expect(prisma.databankFolder.findMany.mock.calls[0][0].where).toEqual({
       clientId: 'c1',
       ownerUserId: null,
@@ -102,12 +112,20 @@ describe('DatabankService.ensureFolderPaths', () => {
     });
   });
 
-  it('rejects a malformed path with a 400 BEFORE opening a transaction', async () => {
-    const { svc, prisma } = harness();
-    await expect(svc.ensureFolderPaths({ clientId: 'c1', paths: ['ok', 'bad/../x'] }, USER)).rejects.toThrow(
-      BadRequestException,
+  it('rejects a malformed path with a 400 naming it, BEFORE opening a transaction', async () => {
+    const { svc, outer } = harness();
+    const call = svc.ensureFolderPaths({ clientId: 'c1', paths: ['ok', 'Case/../x'] }, USER);
+    await expect(call).rejects.toThrow(BadRequestException);
+    await expect(call).rejects.toThrow('".." is not a valid folder name. (folder "Case/../x")');
+    expect(outer.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('shortens a very long offending path in the message', async () => {
+    const { svc } = harness();
+    const long = `${'a'.repeat(100)}/${'b'.repeat(121)}`;
+    await expect(svc.ensureFolderPaths({ clientId: 'c1', paths: [long] }, USER)).rejects.toThrow(
+      `(folder "${'a'.repeat(77)}...")`,
     );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('checks the drop target UNDER the lock and 400s when it is not a live folder of this scope', async () => {

@@ -29,6 +29,7 @@ import {
   moveDatabankFolder,
   deleteDatabankFolder,
   uploadDatabankFile,
+  directUploadDatabankFile,
   getDatabankFileSignedUrl,
   renameDatabankFile,
   moveDatabankFile,
@@ -36,13 +37,19 @@ import {
   deleteDatabankFile,
   type ApiDatabankFolder,
   type ApiDatabankFile,
+  type DatabankUploadTarget,
 } from '@/lib/processing';
 
-/** Per-file upload cap — mirrors the backend Multer limit. A single file over
- *  this (e.g. a big .zip) is rejected by the server, so we skip it up front with
- *  a clear message instead of a failed request. */
-const MAX_FILE_BYTES = 300 * 1024 * 1024;
-const fmtMB = (n: number) => `${Math.round(n / (1024 * 1024))} MB`;
+/** Per-file upload cap. Uploads go STRAIGHT to R2 (presigned PUT), never
+ *  through the backend, so a single file can be up to 4 GB (R2's single-PUT
+ *  ceiling with headroom) — a whole client folder can be any size, since files
+ *  upload one at a time. A file over this is skipped up front with a clear
+ *  message instead of a failed request. */
+const MAX_FILE_BYTES = 4 * 1024 * 1024 * 1024;
+const fmtMB = (n: number) =>
+  n >= 1024 * 1024 * 1024
+    ? `${(n / (1024 * 1024 * 1024)).toFixed(n % (1024 * 1024 * 1024) === 0 ? 0 : 1)} GB`
+    : `${Math.round(n / (1024 * 1024))} MB`;
 
 /** One file picked for a folder upload, carrying its path relative to the
  *  dropped/selected folder (e.g. "Passport/scan.pdf") so we can recreate the
@@ -150,6 +157,9 @@ export function DatabankTab({
   const [preview, setPreview] = useState<{ file: ApiDatabankFile; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  // Live upload progress across a batch: which file (1-based `done`) of `total`,
+  // its name, and this file's byte percent. null when not uploading.
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string; pct: number } | null>(null);
   // Read-only when the client is assigned to another officer: the whole team
   // can view/download any client's databank, but only the assigned officer (or
   // a manager) may modify it. The backend enforces this; here we just hide the
@@ -172,11 +182,19 @@ export function DatabankTab({
       personal ? createPersonalDatabankFolder(name, parent) : createDatabankFolder(clientId!, name, parent),
     [personal, clientId],
   );
+  // UPLOAD goes STRAIGHT to R2 (presigned PUT, with byte progress); CLIPBOARD
+  // (small pasted screenshots) stays on the simple multipart path so its origin
+  // is recorded as CLIPBOARD.
   const putFile = useCallback(
-    (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD') =>
-      personal
-        ? uploadPersonalDatabankFile(file, folder, src)
-        : uploadDatabankFile(clientId!, file, folder, src),
+    (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD', onProgress?: (f: number) => void) => {
+      if (src === 'CLIPBOARD') {
+        return personal
+          ? uploadPersonalDatabankFile(file, folder, 'CLIPBOARD')
+          : uploadDatabankFile(clientId!, file, folder, 'CLIPBOARD');
+      }
+      const target: DatabankUploadTarget = personal ? { personal: true } : { clientId: clientId! };
+      return directUploadDatabankFile(target, file, folder, onProgress);
+    },
     [personal, clientId],
   );
 
@@ -236,9 +254,13 @@ export function DatabankTab({
       setBusy(true);
       setError(null);
       try {
-        for (const f of ok) {
+        for (let i = 0; i < ok.length; i++) {
+          const f = ok[i];
+          setProgress({ done: i, total: ok.length, name: f.name, pct: 0 });
           // eslint-disable-next-line no-await-in-loop
-          await putFile(f, currentFolderId, source);
+          await putFile(f, currentFolderId, source, (frac) =>
+            setProgress({ done: i, total: ok.length, name: f.name, pct: Math.round(frac * 100) }),
+          );
         }
         await reload();
         if (tooBig.length) {
@@ -253,6 +275,7 @@ export function DatabankTab({
         setError(e instanceof Error ? e.message : 'Upload failed');
       } finally {
         setBusy(false);
+        setProgress(null);
       }
     },
     [putFile, currentFolderId, reload, readOnly],
@@ -294,13 +317,17 @@ export function DatabankTab({
           pathToId.set(d, created.id);
         }
         // 3. Upload each file into the folder its path resolves to.
-        for (const { file, relPath } of ok) {
+        for (let i = 0; i < ok.length; i++) {
+          const { file, relPath } = ok[i];
           const parts = relPath.split('/');
           parts.pop();
           const dirPath = parts.join('/');
           const target = dirPath ? pathToId.get(dirPath) ?? currentFolderId : currentFolderId;
+          setProgress({ done: i, total: ok.length, name: file.name, pct: 0 });
           // eslint-disable-next-line no-await-in-loop
-          await putFile(file, target, 'UPLOAD');
+          await putFile(file, target, 'UPLOAD', (frac) =>
+            setProgress({ done: i, total: ok.length, name: file.name, pct: Math.round(frac * 100) }),
+          );
         }
         await reload();
         if (tooBig.length) {
@@ -312,6 +339,7 @@ export function DatabankTab({
         setError(e instanceof Error ? e.message : 'Folder upload failed');
       } finally {
         setBusy(false);
+        setProgress(null);
       }
     },
     [makeFolder, putFile, currentFolderId, reload, readOnly],
@@ -677,8 +705,25 @@ export function DatabankTab({
       </div>
 
       {busy ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: muted }}>
-          <Loader2 size={13} className="animate-spin" /> Working…
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, color: muted }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Loader2 size={13} className="animate-spin" />
+            {progress
+              ? `Uploading ${progress.done + 1} of ${progress.total} — ${progress.name} (${progress.pct}%)`
+              : 'Working…'}
+          </div>
+          {progress ? (
+            <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: `${progress.total ? Math.round(((progress.done + progress.pct / 100) / progress.total) * 100) : 0}%`,
+                  background: accent,
+                  transition: 'width 0.2s',
+                }}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
 

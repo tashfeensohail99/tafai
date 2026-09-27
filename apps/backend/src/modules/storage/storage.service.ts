@@ -22,6 +22,21 @@ export interface UploadResult {
   mimeType: string;
 }
 
+export interface PresignedUpload {
+  /** 'direct-put' when the browser uploads STRAIGHT to storage (S3/R2); 'proxy'
+   *  in dev storage modes (local/supabase) with no direct-PUT path — the caller
+   *  then falls back to the streaming multipart upload endpoint. */
+  strategy: 'direct-put' | 'proxy';
+  /** The object key the file will live at (returned for both strategies so the
+   *  caller can record the DB row after a direct PUT). */
+  storageKey: string;
+  /** direct-put only: the URL the browser PUTs the raw bytes to. */
+  url?: string;
+  /** direct-put only: headers the browser MUST send on the PUT so the request
+   *  matches the signature (Content-Type, plus SSE when configured). */
+  headers?: Record<string, string>;
+}
+
 type StorageMode = 'supabase' | 's3' | 'local';
 
 @Injectable()
@@ -30,6 +45,7 @@ export class StorageService {
   private readonly s3: S3Client;
   private readonly bucket: string;
   private readonly signedUrlExpires: number;
+  private readonly uploadUrlExpires: number;
   private readonly serverSideEncryption?: 'AES256' | 'aws:kms';
   private bucketReady = false;
   private supabaseBucketReady = false;
@@ -41,6 +57,12 @@ export class StorageService {
     this.bucket = process.env.STORAGE_BUCKET ?? 'receipts';
     this.signedUrlExpires = parseInt(
       process.env.STORAGE_SIGNED_URL_EXPIRES_SECONDS ?? '300',
+      10,
+    );
+    // Direct-upload PUT URLs must outlive a multi-GB upload on a slow line, so
+    // they default to 6h (vs the 5-min read default). SigV4 allows up to 7 days.
+    this.uploadUrlExpires = parseInt(
+      process.env.STORAGE_UPLOAD_URL_EXPIRES_SECONDS ?? '21600',
       10,
     );
     this.serverSideEncryption = process.env.STORAGE_SERVER_SIDE_ENCRYPTION as 'AES256' | 'aws:kms' | undefined;
@@ -167,6 +189,84 @@ export class StorageService {
     );
     this.logger.log(`[S3] Server-side copied: ${sourceKey} → ${key}`);
     return { key, bucket: this.bucket, sizeBytes, mimeType };
+  }
+
+  /**
+   * Presign a direct browser→storage upload for a NEW object under `folder`.
+   * The browser PUTs the raw file to the returned URL with the returned headers,
+   * bypassing the backend entirely — no bytes flow through Railway — so folders
+   * of multi-GB files (the Google Drive migration) upload without pressuring the
+   * backend. The caller records the DB row afterwards via a commit step.
+   *
+   * S3/R2 only. In dev storage modes (local/supabase) there is no direct-PUT
+   * path, so we return { strategy: 'proxy' } and the caller falls back to the
+   * streaming multipart upload. The bucket needs a CORS rule allowing PUT from
+   * the site origin for the browser request to succeed.
+   */
+  async presignPutUrl(
+    folder: string,
+    mimeType: string,
+    originalFilename?: string,
+  ): Promise<PresignedUpload> {
+    const ext = originalFilename?.split('.').pop() ?? 'bin';
+    const key = `${folder}/${randomUUID()}.${ext}`;
+
+    if (this.mode !== 's3') {
+      return { strategy: 'proxy', storageKey: key };
+    }
+
+    await this.ensureBucketExists();
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ContentType: mimeType,
+      ...(this.serverSideEncryption
+        ? { ServerSideEncryption: this.serverSideEncryption }
+        : {}),
+    });
+    const url = await getSignedUrl(this.s3, command, { expiresIn: this.uploadUrlExpires });
+    // The browser MUST send exactly the headers that were signed, or SigV4
+    // rejects the PUT. Content-Type is always signed; SSE only when configured.
+    const headers: Record<string, string> = { 'Content-Type': mimeType };
+    if (this.serverSideEncryption) {
+      headers['x-amz-server-side-encryption'] = this.serverSideEncryption;
+    }
+    this.logger.log(`[S3] Presigned direct upload: ${key}`);
+    return { strategy: 'direct-put', storageKey: key, url, headers };
+  }
+
+  /**
+   * Object metadata (existence + size) — used to VERIFY a direct upload actually
+   * landed before we commit its DB row, and to record the true byte size. Never
+   * throws: a missing object returns { exists: false }.
+   */
+  async headObjectMeta(
+    key: string,
+  ): Promise<{ exists: boolean; sizeBytes?: number; contentType?: string }> {
+    if (this.mode === 'local') return { exists: true };
+
+    if (this.mode === 'supabase') {
+      const res = await fetch(
+        `${this.supabaseUrl}/storage/v1/object/info/${this.bucket}/${key}`,
+        { headers: { Authorization: `Bearer ${this.supabaseServiceKey}` } },
+      );
+      if (!res.ok) return { exists: false };
+      const info = (await res.json().catch(() => null)) as
+        | { size?: number; contentType?: string; metadata?: { size?: number; mimetype?: string } }
+        | null;
+      return {
+        exists: true,
+        sizeBytes: info?.size ?? info?.metadata?.size,
+        contentType: info?.contentType ?? info?.metadata?.mimetype,
+      };
+    }
+
+    try {
+      const out = await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return { exists: true, sizeBytes: out.ContentLength, contentType: out.ContentType };
+    } catch {
+      return { exists: false };
+    }
   }
 
   /**

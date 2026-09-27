@@ -2,9 +2,12 @@ import {
   DEFAULT_MAX_UPLOAD_BYTES,
   GiB,
   MiB,
+  R2_MAX_OBJECT_BYTES,
   R2_MAX_PARTS,
+  R2_MAX_PART_BYTES,
   R2_MIN_PART_BYTES,
   SINGLE_PUT_MAX_BYTES,
+  assertValidPlan,
   expectedPartBytes,
   exceedsUploadCap,
   planParts,
@@ -46,22 +49,43 @@ describe('planParts', () => {
   });
 
   it('always yields an R2-valid plan: equal parts, last part in range, ≤ 10,000 parts', () => {
-    for (const size of [32 * MiB + 1, 1 * GiB + 7, 10 * GiB, 49 * GiB + 123, 100 * GiB, 1024 * GiB]) {
+    const sizes = [
+      32 * MiB + 1, 1 * GiB + 7, 10 * GiB, 49 * GiB + 123, 100 * GiB, 1024 * GiB,
+      9000 * 8 * MiB, 9000 * 8 * MiB + 1, // the 8 MiB → 9 MiB part-size boundary
+      R2_MAX_OBJECT_BYTES - 1, R2_MAX_OBJECT_BYTES, // the largest plannable sizes
+    ];
+    for (const size of sizes) {
       const p = multi(size);
       const last = expectedPartBytes(p, p.partCount);
       expect(p.partCount).toBeLessThanOrEqual(R2_MAX_PARTS);
       expect(p.partSize % MiB).toBe(0);
       expect(p.partSize).toBeGreaterThanOrEqual(R2_MIN_PART_BYTES);
+      expect(p.partSize).toBeLessThanOrEqual(R2_MAX_PART_BYTES);
+      expect(() => assertValidPlan(p)).not.toThrow();
       expect(last).toBeGreaterThan(0);
       expect(last).toBeLessThanOrEqual(p.partSize);
       expect((p.partCount - 1) * p.partSize + last).toBe(size);
     }
   });
 
-  it('rejects negative, fractional and unsafe sizes', () => {
+  it('rejects negative, fractional, unsafe and beyond-storage sizes', () => {
     expect(() => planParts(-1)).toThrow(RangeError);
     expect(() => planParts(1.5)).toThrow(RangeError);
     expect(() => planParts(Number.MAX_SAFE_INTEGER + 1)).toThrow(RangeError);
+    expect(() => planParts(R2_MAX_OBJECT_BYTES + 1)).toThrow(RangeError);
+  });
+});
+
+describe('assertValidPlan', () => {
+  it('rejects malformed stored plans instead of letting verifyParts pass them', () => {
+    const good = multi(40 * MiB); // 5 × 8 MiB
+    expect(() => assertValidPlan(good)).not.toThrow();
+    expect(() => assertValidPlan({ ...good, partCount: 0 })).toThrow(RangeError);
+    expect(() => assertValidPlan({ ...good, partCount: Number.NaN })).toThrow(RangeError);
+    expect(() => assertValidPlan({ ...good, partSize: 1 * MiB })).toThrow(RangeError); // < R2 min
+    expect(() => assertValidPlan({ ...good, sizeBytes: 100 * MiB })).toThrow(RangeError); // doesn't fit
+    expect(() => assertValidPlan({ ...good, sizeBytes: 32 * MiB })).toThrow(RangeError); // last part empty
+    expect(() => verifyParts({ ...good, partCount: 0 }, [])).toThrow(RangeError);
   });
 });
 
@@ -77,6 +101,12 @@ describe('upload cap', () => {
     expect(resolveMaxUploadBytes('abc')).toBe(50 * GiB);
     expect(resolveMaxUploadBytes('-5')).toBe(50 * GiB);
     expect(resolveMaxUploadBytes(String(100 * GiB))).toBe(100 * GiB);
+  });
+
+  it('clamps a huge env cap to what storage + the planner can actually hold', () => {
+    const cap = resolveMaxUploadBytes(String(Number.MAX_SAFE_INTEGER));
+    expect(cap).toBe(R2_MAX_OBJECT_BYTES);
+    expect(() => planParts(cap)).not.toThrow(); // every allowed size is plannable
   });
 });
 

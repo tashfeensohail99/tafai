@@ -366,8 +366,11 @@ export class StorageService {
   ): Promise<{ partNumber: number; etag: string; sizeBytes: number }[]> {
     this.assertS3('listAllParts');
     const parts: { partNumber: number; etag: string; sizeBytes: number }[] = [];
-    let marker: string | undefined;
-    // 11 pages × 1,000 covers R2's 10,000-part maximum with room to spare.
+    let marker: number | undefined;
+    // 11 pages × 1,000 covers R2's 10,000-part maximum with room to spare. A
+    // SHORT list is never returned as the truth: callers treat unlisted parts as
+    // missing, so a silently truncated list would make a finished upload look
+    // incomplete forever. Throw instead.
     for (let page = 0; page < 11; page++) {
       // eslint-disable-next-line no-await-in-loop
       const out = await this.s3.send(
@@ -376,18 +379,25 @@ export class StorageService {
           Key: key,
           UploadId: uploadId,
           MaxParts: 1000,
-          ...(marker ? { PartNumberMarker: marker } : {}),
+          ...(marker !== undefined ? { PartNumberMarker: String(marker) } : {}),
         }),
       );
+      let lastListed: number | undefined;
       for (const p of out.Parts ?? []) {
         if (p.PartNumber && p.ETag) {
           parts.push({ partNumber: p.PartNumber, etag: p.ETag, sizeBytes: p.Size ?? 0 });
         }
+        if (p.PartNumber) lastListed = Math.max(lastListed ?? 0, p.PartNumber);
       }
-      if (!out.IsTruncated || !out.NextPartNumberMarker) break;
-      marker = String(out.NextPartNumberMarker);
+      if (!out.IsTruncated) return parts;
+      // Truncated: continue from R2's marker, or the last part it listed.
+      const next = out.NextPartNumberMarker ? Number(out.NextPartNumberMarker) : lastListed;
+      if (next === undefined || !Number.isFinite(next) || (marker !== undefined && next <= marker)) {
+        throw new Error(`ListParts pagination did not advance (key: ${key}, marker: ${marker ?? 'none'})`);
+      }
+      marker = next;
     }
-    return parts;
+    throw new Error(`ListParts still truncated after the page limit (key: ${key})`);
   }
 
   /** Assemble the object from its parts — sorted by part number, ETags verbatim. */
@@ -431,6 +441,8 @@ export class StorageService {
     const uploads: { key: string; uploadId: string; initiated?: Date }[] = [];
     let keyMarker: string | undefined;
     let uploadIdMarker: string | undefined;
+    // Used only by the orphan reconciler: a partial list just misses some
+    // orphans (R2's 7-day auto-abort is the backstop), so warn — don't throw.
     for (let page = 0; page < 100; page++) {
       // eslint-disable-next-line no-await-in-loop
       const out = await this.s3.send(
@@ -441,14 +453,21 @@ export class StorageService {
           ...(uploadIdMarker ? { UploadIdMarker: uploadIdMarker } : {}),
         }),
       );
-      for (const u of out.Uploads ?? []) {
-        if (u.Key && u.UploadId) uploads.push({ key: u.Key, uploadId: u.UploadId, initiated: u.Initiated });
+      const pageUploads = (out.Uploads ?? []).filter((u) => u.Key && u.UploadId);
+      for (const u of pageUploads) uploads.push({ key: u.Key!, uploadId: u.UploadId!, initiated: u.Initiated });
+      if (!out.IsTruncated) return uploads;
+      // Truncated: continue from R2's markers, or the last upload it listed.
+      const last = pageUploads[pageUploads.length - 1];
+      const nextKey = out.NextKeyMarker ?? last?.Key;
+      const nextId = out.NextUploadIdMarker ?? last?.UploadId;
+      if (!nextKey || (nextKey === keyMarker && nextId === uploadIdMarker)) {
+        this.logger.warn(`[S3] ListMultipartUploads pagination did not advance (prefix: ${prefix}); returning ${uploads.length}`);
+        return uploads;
       }
-      if (!out.IsTruncated) break;
-      keyMarker = out.NextKeyMarker;
-      uploadIdMarker = out.NextUploadIdMarker;
-      if (!keyMarker && !uploadIdMarker) break;
+      keyMarker = nextKey;
+      uploadIdMarker = nextId;
     }
+    this.logger.warn(`[S3] ListMultipartUploads hit the page limit (prefix: ${prefix}); returning ${uploads.length}`);
     return uploads;
   }
 

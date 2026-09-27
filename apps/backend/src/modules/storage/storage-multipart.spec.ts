@@ -73,6 +73,30 @@ describe('StorageService multipart primitives', () => {
     expect(send.mock.calls[1][0].input).toMatchObject({ Key: 'k', UploadId: 'u', PartNumberMarker: '2' });
   });
 
+  it('continues from the last listed part when a truncated page has no marker', async () => {
+    const svc = s3Service();
+    const send = mockSend(svc, (cmd) =>
+      cmd.input.PartNumberMarker === undefined
+        ? { IsTruncated: true, Parts: [{ PartNumber: 1, ETag: '"a1"', Size: 8 }, { PartNumber: 2, ETag: '"a2"', Size: 8 }] }
+        : { IsTruncated: false, Parts: [{ PartNumber: 3, ETag: '"a3"', Size: 3 }] },
+    );
+    const parts = await svc.listAllParts('k', 'u');
+    expect(parts.map((p) => p.partNumber)).toEqual([1, 2, 3]);
+    expect(send.mock.calls[1][0].input).toMatchObject({ PartNumberMarker: '2' });
+  });
+
+  it('throws instead of returning a SHORT part list when pagination stops advancing', async () => {
+    const svc = s3Service();
+    // Always "truncated" and the marker never moves past 2 → must not loop or
+    // silently return 2 parts (callers would treat parts 3..N as missing forever).
+    mockSend(svc, () => ({
+      IsTruncated: true,
+      NextPartNumberMarker: '2',
+      Parts: [{ PartNumber: 1, ETag: '"a1"', Size: 8 }, { PartNumber: 2, ETag: '"a2"', Size: 8 }],
+    }));
+    await expect(svc.listAllParts('k', 'u')).rejects.toThrow(/did not advance/);
+  });
+
   it('completes with parts sorted by number and ETags exactly as given', async () => {
     const svc = s3Service();
     const send = mockSend(svc, () => ({}));

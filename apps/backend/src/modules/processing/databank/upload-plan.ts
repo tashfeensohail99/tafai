@@ -26,6 +26,10 @@ export const TARGET_MAX_PARTS = 9000;
 export const R2_MAX_PARTS = 10_000;
 export const R2_MAX_PART_BYTES = 5 * GiB;
 export const R2_MIN_PART_BYTES = 5 * MiB;
+/** Largest object we will plan. R2's multipart ceiling is ~4.995 TiB; 5,000 GiB
+ *  (~4.88 TiB) stays under it on either reading of "TiB", and far under what the
+ *  9,000-part target can hold (9,000 × 5 GiB), so every allowed size is plannable. */
+export const R2_MAX_OBJECT_BYTES = 5000 * GiB;
 /** Default per-file cap (env DATABANK_MAX_FILE_BYTES overrides). */
 export const DEFAULT_MAX_UPLOAD_BYTES = 50 * GiB;
 
@@ -47,6 +51,9 @@ const ceilToMiB = (n: number): number => Math.ceil(n / MiB) * MiB;
 export function planParts(sizeBytes: number): UploadPlan {
   if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
     throw new RangeError(`Invalid file size: ${sizeBytes}`);
+  }
+  if (sizeBytes > R2_MAX_OBJECT_BYTES) {
+    throw new RangeError(`File too large for storage: ${sizeBytes} bytes`);
   }
   if (sizeBytes <= SINGLE_PUT_MAX_BYTES) return { strategy: 'SINGLE', sizeBytes };
 
@@ -75,11 +82,38 @@ export function exceedsUploadCap(sizeBytes: number, maxBytes: number = DEFAULT_M
 }
 
 /** Resolve the per-file cap from an env value (bytes), falling back to 50 GiB.
- *  Clamped to what a multipart plan can actually hold. */
+ *  Clamped to R2_MAX_OBJECT_BYTES, so planParts can ALWAYS plan an allowed size
+ *  (a cap the planner can't honour would surface as a RangeError, not the
+ *  friendly "too large" message). */
 export function resolveMaxUploadBytes(raw: string | undefined): number {
   const n = raw ? Number(raw) : NaN;
   const cap = Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_MAX_UPLOAD_BYTES;
-  return Math.min(cap, R2_MAX_PARTS * R2_MAX_PART_BYTES);
+  return Math.min(cap, R2_MAX_OBJECT_BYTES);
+}
+
+/**
+ * Throw unless `plan` is an internally consistent, R2-valid multipart plan.
+ * Plans are read back from the stored upload session, so a corrupted row (or a
+ * bad BigInt→Number conversion) must fail loudly — never let verifyParts
+ * report ok:true for bytes it didn't actually check.
+ */
+export function assertValidPlan(plan: { sizeBytes: number; partSize: number; partCount: number }): void {
+  const { sizeBytes, partSize, partCount } = plan;
+  const ok =
+    Number.isSafeInteger(sizeBytes) &&
+    Number.isSafeInteger(partSize) &&
+    Number.isSafeInteger(partCount) &&
+    partCount >= 1 &&
+    partCount <= R2_MAX_PARTS &&
+    partSize >= R2_MIN_PART_BYTES &&
+    partSize <= R2_MAX_PART_BYTES &&
+    sizeBytes > (partCount - 1) * partSize &&
+    sizeBytes <= partCount * partSize;
+  if (!ok) {
+    throw new RangeError(
+      `Invalid multipart plan: size=${sizeBytes} partSize=${partSize} partCount=${partCount}`,
+    );
+  }
 }
 
 /** A part as R2's ListParts reports it. ETag is kept EXACTLY as returned
@@ -117,6 +151,7 @@ export function verifyParts(
   plan: { sizeBytes: number; partSize: number; partCount: number },
   listed: ListedPart[],
 ): PartsVerdict {
+  assertValidPlan(plan);
   const byNumber = new Map<number, ListedPart>();
   const extras = new Set<number>();
   for (const p of listed) {

@@ -89,6 +89,16 @@ export class StorageService {
         secretAccessKey: process.env.STORAGE_SECRET_KEY ?? '',
       },
       forcePathStyle: true,
+      // Only add checksums when an operation REQUIRES one. Since aws-sdk-js-v3
+      // 3.729 the default ('WHEN_SUPPORTED') bakes a CRC32 of an EMPTY body
+      // (x-amz-checksum-crc32=AAAAAA==) into every presigned PutObject /
+      // UploadPart URL; the browser then PUTs the real file, the checksum
+      // doesn't match and R2 rejects the upload. Cloudflare's R2 docs recommend
+      // WHEN_REQUIRED for aws-sdk-js-v3. This restores the pre-3.729 behaviour
+      // for server-side uploads too (plain body + ContentLength), which R2
+      // accepted for years.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
 

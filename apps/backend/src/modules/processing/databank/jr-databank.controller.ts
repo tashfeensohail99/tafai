@@ -23,6 +23,8 @@ import { RequirePermissions } from '../../../common/decorators/require-permissio
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { DatabankService } from './databank.service';
+import { DatabankUploadService } from './databank-upload.service';
+import { CompleteUploadsDto, InitUploadsDto, SignPartsDto } from './databank-upload.dto';
 import {
   CommitUploadDto,
   CopyFileDto,
@@ -55,7 +57,10 @@ const WRITE = 'jr.artifact.author';
 @Controller('jr/databank')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class JrDatabankController {
-  constructor(private readonly databank: DatabankService) {}
+  constructor(
+    private readonly databank: DatabankService,
+    private readonly uploads: DatabankUploadService,
+  ) {}
 
   // ---- Browse -------------------------------------------------------------
 
@@ -108,6 +113,47 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.databank.uploadPersonalFile(user, file, folderId || null, source);
+  }
+
+  // ---- Resumable uploads (multi-GB; browser → R2 multipart, Phase 1) ------
+  // docs/databank-phase1-resumable-uploads.md. The browser hashes each file,
+  // INITs sessions, PUTs parts straight to R2 with presigned URLs (no bytes
+  // through the backend) and COMPLETEs. Same write permission as any upload;
+  // sessions are private to their creator; access is re-checked at complete.
+
+  @Post('uploads/init')
+  @RequirePermissions(WRITE)
+  initUploads(@Body() dto: InitUploadsDto, @CurrentUser() user: RequestUser) {
+    return this.uploads.init(dto, user);
+  }
+
+  @Post('uploads/complete')
+  @RequirePermissions(WRITE)
+  completeUploads(@Body() dto: CompleteUploadsDto, @CurrentUser() user: RequestUser) {
+    return this.uploads.complete(dto, user);
+  }
+
+  /** The caller's unfinished uploads (drives the "resume" banner). */
+  @Get('uploads')
+  @RequirePermissions(WRITE)
+  listUploads(@CurrentUser() user: RequestUser) {
+    return this.uploads.listOpen(user);
+  }
+
+  @Post('uploads/:id/parts')
+  @RequirePermissions(WRITE)
+  signUploadParts(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SignPartsDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.uploads.signParts(id, dto, user);
+  }
+
+  @Delete('uploads/:id')
+  @RequirePermissions(WRITE)
+  abortUpload(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    return this.uploads.abort(id, user);
   }
 
   // ---- Direct-to-storage upload (large files → R2, bypassing the backend) --

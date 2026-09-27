@@ -206,7 +206,7 @@ export class DatabankService {
   /** A caller-supplied parent folderId must be live and in the SAME scope
    *  (same client, or same personal owner) as the item being placed. Prevents
    *  filing an item into another client's — or another associate's — folder. */
-  private async assertFolderInScope(
+  async assertFolderInScope(
     folderId: string | null | undefined,
     scope: { clientId: string | null; ownerUserId: string | null },
   ): Promise<string | null> {
@@ -667,7 +667,7 @@ export class DatabankService {
   /** Resolve a direct upload's scope (client vs personal) and AUTHORIZE the
    *  write in one place, returning the DB scope + the storage folder the object
    *  lives under. Shared by presign and commit so both gate identically. */
-  private async resolveWriteScope(
+  async resolveWriteScope(
     dto: { clientId?: string | null; personal?: boolean },
     user: RequestUser,
     targetUserId?: string,
@@ -995,7 +995,7 @@ export class DatabankService {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  private readonly fileSelect = {
+  readonly fileSelect = {
     id: true, clientId: true, folderId: true, fileName: true, mimeType: true,
     fileSizeBytes: true, source: true, uploadedByUserId: true, createdAt: true, updatedAt: true,
   } satisfies Prisma.DatabankFileSelect;
@@ -1010,7 +1010,7 @@ export class DatabankService {
   /** Refuse an empty name or a blocked executable/script extension. Shared by
    *  the multipart upload (a real file) and the direct-upload presign/commit
    *  (only a file NAME, no bytes yet). */
-  private assertSafeFileName(fileName: string | undefined): void {
+  assertSafeFileName(fileName: string | undefined): void {
     if (!fileName || !fileName.trim()) {
       throw new BadRequestException('A file name is required.');
     }

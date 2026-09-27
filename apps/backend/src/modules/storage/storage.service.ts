@@ -241,6 +241,23 @@ export class StorageService {
     }
 
     await this.ensureBucketExists();
+    const { url, headers } = await this.presignPutForKey(key, mimeType);
+    this.logger.log(`[S3] Presigned direct upload: ${key}`);
+    return { strategy: 'direct-put', storageKey: key, url, headers };
+  }
+
+  /**
+   * Presigned single PUT for an EXISTING, caller-owned key (e.g. a resumable
+   * upload session's small file — resuming must reuse the same key). Returns
+   * the headers the browser MUST send: Content-Type is signed, plus SSE when
+   * configured; SigV4 rejects the PUT otherwise. S3/R2 mode only.
+   */
+  async presignPutForKey(
+    key: string,
+    mimeType: string,
+    expiresInSeconds?: number,
+  ): Promise<{ url: string; headers: Record<string, string> }> {
+    this.assertS3('presignPutForKey');
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -249,15 +266,19 @@ export class StorageService {
         ? { ServerSideEncryption: this.serverSideEncryption }
         : {}),
     });
-    const url = await getSignedUrl(this.s3, command, { expiresIn: this.uploadUrlExpires });
-    // The browser MUST send exactly the headers that were signed, or SigV4
-    // rejects the PUT. Content-Type is always signed; SSE only when configured.
+    const url = await getSignedUrl(this.s3, command, {
+      expiresIn: expiresInSeconds ?? this.uploadUrlExpires,
+    });
     const headers: Record<string, string> = { 'Content-Type': mimeType };
     if (this.serverSideEncryption) {
       headers['x-amz-server-side-encryption'] = this.serverSideEncryption;
     }
-    this.logger.log(`[S3] Presigned direct upload: ${key}`);
-    return { strategy: 'direct-put', storageKey: key, url, headers };
+    return { url, headers };
+  }
+
+  /** Seconds a presigned upload URL stays valid (STORAGE_UPLOAD_URL_EXPIRES_SECONDS). */
+  get uploadUrlTtlSeconds(): number {
+    return this.uploadUrlExpires;
   }
 
   /**

@@ -2234,7 +2234,7 @@ export interface DatabankUploadTarget {
   userId?: string;
 }
 
-interface PresignedUploadResponse {
+export interface PresignedUploadResponse {
   strategy: 'direct-put' | 'proxy';
   storageKey: string;
   url?: string;
@@ -2244,8 +2244,9 @@ interface PresignedUploadResponse {
 
 /** PUT a File to a presigned URL with progress, via XHR (fetch exposes no
  *  upload progress). Resolves on 2xx, rejects otherwise. No auth header — the
- *  presigned URL carries its own signature. */
-function putToStorage(
+ *  presigned URL carries its own signature. Shared by the processing + JR
+ *  direct-upload helpers. */
+export function putToStorage(
   url: string,
   file: File,
   headers: Record<string, string>,

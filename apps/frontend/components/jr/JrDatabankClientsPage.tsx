@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
-import { Folder, FolderOpen, Search, Loader2, FileText, ChevronLeft, Users } from 'lucide-react';
+import { Folder, FolderOpen, Search, Loader2, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   fetchJrDatabankByAssociate,
   type ApiDatabankAssociate,
   type ApiDatabankByAssociate,
   type ApiDatabankClientRow,
 } from '@/lib/jr-databank';
+import { JrDatabankTab } from './JrDatabankTab';
 
 /**
  * JR Databank landing, organised by ASSOCIATE — the JR twin of the processing
@@ -106,6 +107,35 @@ export function JrDatabankClientsPage() {
               {selected.clientCount} {selected.clientCount === 1 ? 'client' : 'clients'}
             </span>
           </div>
+          {/* Your OWN folders — a personal databank area, only in your own view.
+              Documents not tied to a specific client; only you + a JR head see it. */}
+          {selected.isSelf ? (
+            <div
+              style={{
+                border,
+                borderRadius: 12,
+                padding: 14,
+                background: 'var(--sos-surface, rgba(255,255,255,0.6))',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FolderOpen size={16} style={{ color: 'var(--sos-accent, #b8860b)' }} />
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>My folders</span>
+                </div>
+                <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
+                  Your own folders — for documents not tied to a specific client. Only you and a JR head can see these.
+                </div>
+              </div>
+              <JrDatabankTab personal rootLabel="My folders" />
+            </div>
+          ) : null}
+          <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--sos-text-primary, #0f172a)', marginTop: 2 }}>
+            {selected.isSelf ? 'My clients' : 'Clients'}
+          </div>
           {selected.clients.length === 0 ? (
             <EmptyState text="No clients in this databank yet." />
           ) : (
@@ -176,7 +206,15 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-/** One associate folder on the head's landing. */
+/** Two-letter initials for an associate's avatar (first + last word). */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** One associate on the JR databank landing — initials avatar + client count. */
 function AssociateCard({
   associate,
   muted,
@@ -188,6 +226,7 @@ function AssociateCard({
   border: string;
   onOpen: () => void;
 }) {
+  const self = associate.isSelf;
   return (
     <button
       type="button"
@@ -206,25 +245,39 @@ function AssociateCard({
         width: '100%',
       }}
     >
-      <span style={{ color: 'var(--sos-accent, #b8860b)', flexShrink: 0 }}>
-        <Users size={26} />
+      <span
+        style={{
+          width: 38,
+          height: 38,
+          borderRadius: '50%',
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 13,
+          fontWeight: 700,
+          background: self ? 'rgba(184,134,11,0.14)' : 'rgba(148,163,184,0.18)',
+          color: self ? 'var(--sos-accent, #b8860b)' : 'var(--sos-text-muted, #64748b)',
+        }}
+      >
+        {initials(associate.officerName)}
       </span>
-      <span style={{ minWidth: 0 }}>
+      <span style={{ minWidth: 0, flex: 1 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {associate.officerName}
           </span>
-          {associate.isSelf ? (
+          {self ? (
             <span
               style={{
-                fontSize: 10.5,
+                fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: '0.04em',
                 textTransform: 'uppercase',
                 color: 'var(--sos-accent, #b8860b)',
-                border: '1px solid var(--sos-accent, #b8860b)',
+                background: 'rgba(184,134,11,0.12)',
                 borderRadius: 6,
-                padding: '1px 5px',
+                padding: '1px 6px',
                 flexShrink: 0,
               }}
             >
@@ -236,6 +289,7 @@ function AssociateCard({
           <Folder size={12} /> {associate.clientCount} {associate.clientCount === 1 ? 'client' : 'clients'}
         </span>
       </span>
+      <ChevronRight size={16} style={{ color: muted, flexShrink: 0 }} />
     </button>
   );
 }

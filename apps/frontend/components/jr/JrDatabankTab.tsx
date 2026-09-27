@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Folder,
   FolderPlus,
+  FolderUp,
   Upload,
   Download,
   Trash2,
@@ -21,10 +22,14 @@ import {
 import {
   fetchJrDatabankTree,
   createJrDatabankFolder,
+  fetchJrPersonalTree,
+  createJrPersonalFolder,
+  uploadJrPersonalFile,
   renameJrDatabankFolder,
   moveJrDatabankFolder,
   deleteJrDatabankFolder,
   uploadJrDatabankFile,
+  directUploadJrDatabankFile,
   jrDatabankFileSignedUrl,
   renameJrDatabankFile,
   moveJrDatabankFile,
@@ -32,7 +37,58 @@ import {
   deleteJrDatabankFile,
   type ApiDatabankFolder,
   type ApiDatabankFile,
+  type DatabankUploadTarget,
 } from '@/lib/jr-databank';
+
+/** Per-file upload cap. Uploads go STRAIGHT to R2 (presigned PUT), never through
+ *  the backend, so a whole client folder can be any size (files upload one at a
+ *  time). The per-FILE ceiling is the backend's DatabankFile.fileSizeBytes
+ *  column — a 32-bit int (max ~2 GB); a bigger single file needs the DB column
+ *  widened + multipart (a planned follow-up). Oversized files are skipped up
+ *  front with a clear message instead of a failed request. */
+const MAX_FILE_BYTES = 2_147_483_647; // Postgres int4 max (must match the backend)
+const fmtMB = (n: number) =>
+  n >= 1024 * 1024 * 1024
+    ? `${(n / (1024 * 1024 * 1024)).toFixed(Number.isInteger(n / (1024 * 1024 * 1024)) ? 0 : 1)} GB`
+    : `${Math.round(n / (1024 * 1024))} MB`;
+
+/** One file picked for a folder upload, with its path relative to the picked
+ *  folder (e.g. "Passport/scan.pdf") so we can recreate the subfolder tree. */
+type FolderEntry = { file: File; relPath: string };
+
+/** Recursively walk a dropped FileSystemEntry into FolderEntry[], preserving the
+ *  relative path. `webkitGetAsEntry()` is the only cross-browser way to read a
+ *  dropped DIRECTORY. Typed loosely — the Entries API isn't in lib.dom. */
+async function walkEntry(entry: any, prefix: string, out: FolderEntry[]): Promise<void> {
+  if (!entry) return;
+  if (entry.isFile) {
+    await new Promise<void>((resolve) => {
+      entry.file(
+        (f: File) => {
+          out.push({ file: f, relPath: prefix ? `${prefix}/${f.name}` : f.name });
+          resolve();
+        },
+        () => resolve(),
+      );
+    });
+    return;
+  }
+  if (entry.isDirectory) {
+    const dirPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const reader = entry.createReader();
+    const readBatch = (): Promise<any[]> =>
+      new Promise((resolve) => reader.readEntries((es: any[]) => resolve(es), () => resolve([])));
+    let batch = await readBatch();
+    while (batch.length) {
+      for (const child of batch) {
+        // eslint-disable-next-line no-await-in-loop
+        await walkEntry(child, dirPath, out);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      batch = await readBatch();
+    }
+  }
+}
 
 /**
  * The per-client Databank — a Drive-like document repository. Folder tree via
@@ -67,7 +123,16 @@ function FileGlyph({ mime }: { mime: string | null }) {
 const isPdf = (m: string | null) => !!m && /pdf/i.test(m);
 const isImage = (m: string | null) => !!m && /^image\//i.test(m);
 
-export function JrDatabankTab({ clientId }: { clientId: string; clientName?: string }) {
+export function JrDatabankTab({
+  clientId,
+  personal,
+  rootLabel = 'Databank',
+}: {
+  clientId?: string;
+  clientName?: string;
+  personal?: boolean;
+  rootLabel?: string;
+}) {
   const [folders, setFolders] = useState<ApiDatabankFolder[]>([]);
   const [files, setFiles] = useState<ApiDatabankFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,13 +153,44 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
   const [preview, setPreview] = useState<{ file: ApiDatabankFile; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  // Live upload progress across a batch: which file (1-based `done`) of `total`,
+  // its name, and this file's byte percent. null when not uploading.
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string; pct: number } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Scope-aware API calls — a client databank or the caller's own personal area.
+  // Everything else (rename/move/copy/delete/download) is id-based and identical.
+  const loadTree = useCallback(
+    () => (personal ? fetchJrPersonalTree() : fetchJrDatabankTree(clientId!)),
+    [personal, clientId],
+  );
+  const makeFolder = useCallback(
+    (name: string, parent: string | null) =>
+      personal ? createJrPersonalFolder(name, parent) : createJrDatabankFolder(clientId!, name, parent),
+    [personal, clientId],
+  );
+  // UPLOAD goes STRAIGHT to R2 (presigned PUT, with byte progress); CLIPBOARD
+  // (small pasted screenshots) stays on the simple multipart path so its origin
+  // is recorded as CLIPBOARD.
+  const putFile = useCallback(
+    (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD', onProgress?: (f: number) => void) => {
+      if (src === 'CLIPBOARD') {
+        return personal
+          ? uploadJrPersonalFile(file, folder, 'CLIPBOARD')
+          : uploadJrDatabankFile(clientId!, file, folder, 'CLIPBOARD');
+      }
+      const target: DatabankUploadTarget = personal ? { personal: true } : { clientId: clientId! };
+      return directUploadJrDatabankFile(target, file, folder, onProgress);
+    },
+    [personal, clientId],
+  );
 
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const tree = await fetchJrDatabankTree(clientId);
+      const tree = await loadTree();
       setFolders(tree.folders);
       setFiles(tree.files);
       setCanWrite(tree.canWrite !== false);
@@ -103,7 +199,7 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
     } finally {
       setLoading(false);
     }
-  }, [clientId]);
+  }, [loadTree]);
 
   useEffect(() => {
     setLoading(true);
@@ -142,21 +238,97 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
       if (!canWrite) return; // read-only viewer — ignore drops/paste/upload
       const arr = Array.from(list);
       if (arr.length === 0) return;
+      const ok = arr.filter((f) => f.size <= MAX_FILE_BYTES);
+      const tooBig = arr.filter((f) => f.size > MAX_FILE_BYTES);
       setBusy(true);
       setError(null);
       try {
-        for (const f of arr) {
+        for (let i = 0; i < ok.length; i++) {
+          const f = ok[i];
+          setProgress({ done: i, total: ok.length, name: f.name, pct: 0 });
           // eslint-disable-next-line no-await-in-loop
-          await uploadJrDatabankFile(clientId, f, currentFolderId, source);
+          await putFile(f, currentFolderId, source, (frac) =>
+            setProgress({ done: i, total: ok.length, name: f.name, pct: Math.round(frac * 100) }),
+          );
         }
         await reload();
+        if (tooBig.length) {
+          setError(
+            `Skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit: ${tooBig
+              .slice(0, 5)
+              .map((f) => f.name)
+              .join(', ')}${tooBig.length > 5 ? '…' : ''}`,
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Upload failed');
       } finally {
         setBusy(false);
+        setProgress(null);
       }
     },
-    [clientId, currentFolderId, reload, canWrite],
+    [putFile, currentFolderId, reload, canWrite],
+  );
+
+  // Upload a whole folder (button or dropped directory), recreating its
+  // subfolder tree under the current folder.
+  const doUploadFolder = useCallback(
+    async (entries: FolderEntry[]) => {
+      if (!canWrite || entries.length === 0) return;
+      const ok = entries.filter((e) => e.file.size <= MAX_FILE_BYTES);
+      const tooBig = entries.filter((e) => e.file.size > MAX_FILE_BYTES);
+      setBusy(true);
+      setError(null);
+      try {
+        const dirSet = new Set<string>();
+        for (const { relPath } of ok) {
+          const parts = relPath.split('/');
+          parts.pop();
+          let acc = '';
+          for (const seg of parts) {
+            acc = acc ? `${acc}/${seg}` : seg;
+            dirSet.add(acc);
+          }
+        }
+        const dirs = [...dirSet].sort(
+          (a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b),
+        );
+        const pathToId = new Map<string, string>();
+        for (const d of dirs) {
+          const segs = d.split('/');
+          const parentPath = segs.slice(0, -1).join('/');
+          const parentId = parentPath ? pathToId.get(parentPath) ?? currentFolderId : currentFolderId;
+          const name = segs[segs.length - 1];
+          // eslint-disable-next-line no-await-in-loop
+          const created = await makeFolder(name, parentId);
+          pathToId.set(d, created.id);
+        }
+        for (let i = 0; i < ok.length; i++) {
+          const { file, relPath } = ok[i];
+          const parts = relPath.split('/');
+          parts.pop();
+          const dirPath = parts.join('/');
+          const target = dirPath ? pathToId.get(dirPath) ?? currentFolderId : currentFolderId;
+          setProgress({ done: i, total: ok.length, name: file.name, pct: 0 });
+          // eslint-disable-next-line no-await-in-loop
+          await putFile(file, target, 'UPLOAD', (frac) =>
+            setProgress({ done: i, total: ok.length, name: file.name, pct: Math.round(frac * 100) }),
+          );
+        }
+        await reload();
+        if (tooBig.length) {
+          setError(
+            `Uploaded the folder, but skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit.`,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Folder upload failed');
+      } finally {
+        setBusy(false);
+        setProgress(null);
+      }
+    },
+    [makeFolder, putFile, currentFolderId, reload, canWrite],
   );
 
   // Clipboard paste of an image while the tab is mounted.
@@ -178,7 +350,7 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
     if (!name) return;
     setBusy(true);
     try {
-      await createJrDatabankFolder(clientId, name, currentFolderId);
+      await makeFolder(name, currentFolderId);
       setNewFolderName('');
       setCreatingFolder(false);
       await reload();
@@ -282,7 +454,7 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: muted, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => setCurrentFolderId(null)} style={crumbBtn(currentFolderId === null)}>
-            <Home size={14} /> Databank
+            <Home size={14} /> {rootLabel}
           </button>
           {breadcrumb.map((f) => (
             <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -293,11 +465,14 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
             </span>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {canWrite ? (
             <>
               <button type="button" onClick={() => setCreatingFolder((v) => !v)} disabled={busy} style={btn(false)}>
                 <FolderPlus size={15} /> New folder
+              </button>
+              <button type="button" onClick={() => folderInputRef.current?.click()} disabled={busy} style={btn(false)}>
+                <FolderUp size={15} /> Upload folder
               </button>
               <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} style={btn(true)}>
                 <Upload size={15} /> Upload
@@ -309,6 +484,27 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
                 hidden
                 onChange={(e) => {
                   if (e.target.files) void doUpload(e.target.files, 'UPLOAD');
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={(el) => {
+                  folderInputRef.current = el;
+                  if (el) {
+                    el.setAttribute('webkitdirectory', '');
+                    el.setAttribute('directory', '');
+                  }
+                }}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const picked = e.target.files ? Array.from(e.target.files) : [];
+                  const entries: FolderEntry[] = picked.map((f) => ({
+                    file: f,
+                    relPath: (f as unknown as { webkitRelativePath?: string }).webkitRelativePath || f.name,
+                  }));
+                  if (entries.length) void doUploadFolder(entries);
                   e.target.value = '';
                 }}
               />
@@ -372,7 +568,28 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
         onDrop={(e) => {
           e.preventDefault();
           setDragActive(false);
-          if (e.dataTransfer.files) void doUpload(e.dataTransfer.files, 'UPLOAD');
+          if (!canWrite) return;
+          // Capture entries synchronously; if any dropped item is a directory,
+          // walk the tree — otherwise fall back to the flat file list.
+          const items = e.dataTransfer.items;
+          const entries =
+            items && items.length && typeof items[0]?.webkitGetAsEntry === 'function'
+              ? Array.from(items)
+                  .map((it) => it.webkitGetAsEntry())
+                  .filter(Boolean)
+              : [];
+          if (entries.some((en) => (en as { isDirectory?: boolean } | null)?.isDirectory)) {
+            void (async () => {
+              const collected: FolderEntry[] = [];
+              for (const en of entries) {
+                // eslint-disable-next-line no-await-in-loop
+                await walkEntry(en, '', collected);
+              }
+              await doUploadFolder(collected);
+            })();
+            return;
+          }
+          if (e.dataTransfer.files?.length) void doUpload(e.dataTransfer.files, 'UPLOAD');
         }}
         style={{
           border: dragActive ? `2px dashed ${accent}` : `2px dashed transparent`,
@@ -388,9 +605,14 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
             <Upload size={22} />
             <div style={{ fontSize: 14 }}>This folder is empty.</div>
             <div style={{ fontSize: 12.5 }}>
-              {canWrite
-                ? 'Drag files here, click Upload, or paste a screenshot.'
-                : 'You have read-only access to this databank.'}
+              {canWrite ? (
+                <>
+                  Drag files or a whole folder here, use Upload / Upload folder, or paste a screenshot.
+                  <br />Up to {fmtMB(MAX_FILE_BYTES)} per file.
+                </>
+              ) : (
+                'You have read-only access to this databank.'
+              )}
             </div>
           </div>
         ) : (
@@ -487,8 +709,25 @@ export function JrDatabankTab({ clientId }: { clientId: string; clientName?: str
       </div>
 
       {busy ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: muted }}>
-          <Loader2 size={13} className="animate-spin" /> Working…
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, color: muted }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Loader2 size={13} className="animate-spin" />
+            {progress
+              ? `Uploading ${progress.done + 1} of ${progress.total} — ${progress.name} (${progress.pct}%)`
+              : 'Working…'}
+          </div>
+          {progress ? (
+            <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: `${progress.total ? Math.round(((progress.done + progress.pct / 100) / progress.total) * 100) : 0}%`,
+                  background: accent,
+                  transition: 'width 0.2s',
+                }}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
 

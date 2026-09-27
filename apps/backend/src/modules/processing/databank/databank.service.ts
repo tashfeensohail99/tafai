@@ -36,13 +36,16 @@ export class DatabankService {
     'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'ps1', 'sh', 'js', 'mjs', 'jar', 'vbs', 'dll', 'app',
   ]);
 
-  /** Per-file cap for DIRECT (browser→R2) uploads. Cloudflare R2 accepts a
-   *  single non-multipart PutObject up to 5 GiB; we cap at 4 GiB for headroom.
-   *  This is far above the 300 MB proxy cap because the bytes go straight to R2
-   *  and never touch the backend. A whole client folder can be any size (files
-   *  upload one at a time); only an INDIVIDUAL file above this needs the
-   *  multipart path (a planned follow-up). */
-  private static readonly DIRECT_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+  /** Per-file cap for DIRECT (browser→R2) uploads. The hard ceiling is the
+   *  `DatabankFile.fileSizeBytes` column — a Postgres int4 (max 2,147,483,647
+   *  bytes ≈ 2 GB); a larger file would OVERFLOW the column at commit, AFTER the
+   *  whole thing already uploaded to R2 (orphaned object). Cloudflare R2 itself
+   *  allows a single PutObject up to 5 GiB, so raising this cap needs the column
+   *  widened to BigInt (a migration) — bundled with the >2 GB multipart
+   *  follow-up. This is still far above the 1 GB proxy cap because the bytes go
+   *  straight to R2 and never touch the backend, and a whole client folder can
+   *  be any size (files upload one at a time). */
+  private static readonly DIRECT_MAX_BYTES = 2_147_483_647; // Postgres int4 max
 
   constructor(
     private readonly prisma: PrismaService,

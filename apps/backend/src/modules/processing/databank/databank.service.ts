@@ -728,6 +728,15 @@ export class DatabankService {
     if (!keyShape.test(dto.storageKey)) {
       throw new ForbiddenException('This upload key does not belong to the target databank.');
     }
+    // Keys of resumable upload sessions have the same shape, but they are
+    // recorded ONLY by that path, after full verification — never here.
+    const sessionOwned = await this.prisma.databankUpload.findUnique({
+      where: { storageKey: dto.storageKey },
+      select: { id: true },
+    });
+    if (sessionOwned) {
+      throw new ForbiddenException('This upload key belongs to a resumable upload.');
+    }
     // A key backs at most ONE file row. A retried commit (the first response was
     // lost) gets the row it already created instead of a duplicate; any other
     // reuse is refused — and never reaches the size-check delete below, so an

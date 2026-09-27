@@ -9,6 +9,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -44,9 +45,12 @@ export class InitUploadFileDto {
   @Min(0)
   sizeBytes!: number;
 
-  /** File.lastModified (epoch ms) — lets a re-dropped file match its session. */
+  /** File.lastModified (epoch ms) — lets a re-dropped file match its session.
+   *  Bounded to the valid JS Date range so a bogus value is a 400, not a 500. */
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Max(8.64e15)
   lastModified?: number;
 
   /** Path inside a dropped folder, e.g. "Passport/scan.pdf". */

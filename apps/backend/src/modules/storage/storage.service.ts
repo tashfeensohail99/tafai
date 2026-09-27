@@ -320,6 +320,41 @@ export class StorageService {
     }
   }
 
+  /**
+   * STRICT existence check for decisions that must not be wrong: returns
+   * `exists: false` ONLY for a genuine not-found (404 / NotFound / NoSuchKey)
+   * and THROWS on anything else (5xx, timeout, throttling). headObjectMeta
+   * above swallows every error as "absent", which is fine for a best-effort
+   * check but would turn a transient blip into "this multi-GB upload is gone".
+   */
+  async headObjectStrict(
+    key: string,
+  ): Promise<{ exists: boolean; sizeBytes?: number; etag?: string }> {
+    if (this.mode === 'local') return { exists: true };
+
+    if (this.mode === 'supabase') {
+      const res = await fetch(
+        `${this.supabaseUrl}/storage/v1/object/info/${this.bucket}/${key}`,
+        { headers: { Authorization: `Bearer ${this.supabaseServiceKey}` } },
+      );
+      if (res.status === 404 || res.status === 400) return { exists: false };
+      if (!res.ok) throw new Error(`Supabase HEAD failed: ${res.status}`);
+      const info = (await res.json().catch(() => null)) as { size?: number; metadata?: { size?: number } } | null;
+      return { exists: true, sizeBytes: info?.size ?? info?.metadata?.size };
+    }
+
+    try {
+      const out = await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return { exists: true, sizeBytes: out.ContentLength, etag: out.ETag };
+    } catch (error) {
+      const e = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (e?.$metadata?.httpStatusCode === 404 || e?.name === 'NotFound' || e?.name === 'NoSuchKey') {
+        return { exists: false };
+      }
+      throw error;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Multipart — resumable browser→R2 uploads (Databank Phase 1). S3/R2 mode
   // only: callers check `supportsDirectUpload` first; dev storage modes

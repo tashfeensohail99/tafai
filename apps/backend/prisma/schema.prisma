@@ -3783,6 +3783,10 @@ model DatabankUpload {
   @@index([status, expiresAt])
   @@index([status, completingAt])
   @@index([fileId])
+  // Sweeper: the pending-cleanup scan (r2CleanedAt IS NULL, oldest first) and the
+  // daily orphan reconcile's lookup by R2 uploadId.
+  @@index([r2CleanedAt, updatedAt])
+  @@index([r2UploadId])
   @@map("databank_uploads")
   @@schema("processing")
 }

@@ -124,7 +124,7 @@ export type CompleteResult =
 class LostClaimError extends Error {}
 
 /** Run `fn` over `items` with at most `limit` in flight; results keep order. */
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   const worker = async (): Promise<void> => {

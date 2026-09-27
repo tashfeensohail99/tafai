@@ -7,6 +7,12 @@ import {
   HeadObjectCommand,
   HeadBucketCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  ListPartsCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  ListMultipartUploadsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
@@ -38,6 +44,15 @@ export interface PresignedUpload {
 }
 
 type StorageMode = 'supabase' | 's3' | 'local';
+
+/** True for S3/R2's "that multipart upload no longer exists" — it was
+ *  completed, aborted, or auto-expired (R2 aborts after 7 days by default).
+ *  Recognised by the SDK error name or the raw S3 error Code. */
+export function isNoSuchUploadError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { name?: unknown; Code?: unknown };
+  return e.name === 'NoSuchUpload' || e.Code === 'NoSuchUpload';
+}
 
 @Injectable()
 export class StorageService {
@@ -252,7 +267,7 @@ export class StorageService {
    */
   async headObjectMeta(
     key: string,
-  ): Promise<{ exists: boolean; sizeBytes?: number; contentType?: string }> {
+  ): Promise<{ exists: boolean; sizeBytes?: number; contentType?: string; etag?: string }> {
     if (this.mode === 'local') return { exists: true };
 
     if (this.mode === 'supabase') {
@@ -273,10 +288,168 @@ export class StorageService {
 
     try {
       const out = await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
-      return { exists: true, sizeBytes: out.ContentLength, contentType: out.ContentType };
+      return {
+        exists: true,
+        sizeBytes: out.ContentLength,
+        contentType: out.ContentType,
+        etag: out.ETag,
+      };
     } catch {
       return { exists: false };
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Multipart — resumable browser→R2 uploads (Databank Phase 1). S3/R2 mode
+  // only: callers check `supportsDirectUpload` first; dev storage modes
+  // (local / supabase) use the backend proxy upload instead. The browser PUTs
+  // each part straight to R2 with a presigned URL — no bytes touch the backend.
+  // ---------------------------------------------------------------------------
+
+  /** True when browsers can upload straight to storage (S3/R2 mode). */
+  get supportsDirectUpload(): boolean {
+    return this.mode === 's3';
+  }
+
+  private assertS3(op: string): void {
+    if (this.mode !== 's3') {
+      throw new Error(`${op} requires S3/R2 storage mode (current mode: ${this.mode})`);
+    }
+  }
+
+  /** Start a multipart upload at a caller-chosen key; returns R2's uploadId. */
+  async createMultipartUpload(key: string, mimeType: string): Promise<string> {
+    this.assertS3('createMultipartUpload');
+    await this.ensureBucketExists();
+    const out = await this.s3.send(
+      new CreateMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ContentType: mimeType,
+        ...(this.serverSideEncryption
+          ? { ServerSideEncryption: this.serverSideEncryption }
+          : {}),
+      }),
+    );
+    if (!out.UploadId) throw new Error(`CreateMultipartUpload returned no UploadId (key: ${key})`);
+    return out.UploadId;
+  }
+
+  /**
+   * Presigned PUT for ONE part. Only `host` is signed and (with the client's
+   * WHEN_REQUIRED checksum setting, #412) no checksum params are baked in, so
+   * the browser sends the raw slice with NO extra headers. Local SigV4 — no
+   * network call, cheap to mint many.
+   */
+  async presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresInSeconds?: number,
+  ): Promise<string> {
+    this.assertS3('presignUploadPart');
+    return getSignedUrl(
+      this.s3,
+      new UploadPartCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+      { expiresIn: expiresInSeconds ?? this.uploadUrlExpires },
+    );
+  }
+
+  /**
+   * Every part R2 holds for an upload, following ListParts pagination (1,000
+   * per page). ETags are returned EXACTLY as R2 sent them — quotes included —
+   * because CompleteMultipartUpload rejects them otherwise.
+   */
+  async listAllParts(
+    key: string,
+    uploadId: string,
+  ): Promise<{ partNumber: number; etag: string; sizeBytes: number }[]> {
+    this.assertS3('listAllParts');
+    const parts: { partNumber: number; etag: string; sizeBytes: number }[] = [];
+    let marker: string | undefined;
+    // 11 pages × 1,000 covers R2's 10,000-part maximum with room to spare.
+    for (let page = 0; page < 11; page++) {
+      // eslint-disable-next-line no-await-in-loop
+      const out = await this.s3.send(
+        new ListPartsCommand({
+          Bucket: this.bucket,
+          Key: key,
+          UploadId: uploadId,
+          MaxParts: 1000,
+          ...(marker ? { PartNumberMarker: marker } : {}),
+        }),
+      );
+      for (const p of out.Parts ?? []) {
+        if (p.PartNumber && p.ETag) {
+          parts.push({ partNumber: p.PartNumber, etag: p.ETag, sizeBytes: p.Size ?? 0 });
+        }
+      }
+      if (!out.IsTruncated || !out.NextPartNumberMarker) break;
+      marker = String(out.NextPartNumberMarker);
+    }
+    return parts;
+  }
+
+  /** Assemble the object from its parts — sorted by part number, ETags verbatim. */
+  async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: { partNumber: number; etag: string }[],
+  ): Promise<void> {
+    this.assertS3('completeMultipartUpload');
+    const sorted = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+    await this.s3.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: { Parts: sorted.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })) },
+      }),
+    );
+    this.logger.log(`[S3] Completed multipart upload (${sorted.length} parts): ${key}`);
+  }
+
+  /** Abort an upload and free its parts. Already gone (NoSuchUpload) = success. */
+  async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    this.assertS3('abortMultipartUpload');
+    try {
+      await this.s3.send(
+        new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+      );
+    } catch (error) {
+      if (isNoSuchUploadError(error)) return;
+      throw error;
+    }
+  }
+
+  /** In-progress multipart uploads under a prefix — for the orphan reconciler
+   *  (uploads R2 knows about but the DB doesn't). Follows pagination. */
+  async listMultipartUploads(
+    prefix: string,
+  ): Promise<{ key: string; uploadId: string; initiated?: Date }[]> {
+    this.assertS3('listMultipartUploads');
+    const uploads: { key: string; uploadId: string; initiated?: Date }[] = [];
+    let keyMarker: string | undefined;
+    let uploadIdMarker: string | undefined;
+    for (let page = 0; page < 100; page++) {
+      // eslint-disable-next-line no-await-in-loop
+      const out = await this.s3.send(
+        new ListMultipartUploadsCommand({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ...(keyMarker ? { KeyMarker: keyMarker } : {}),
+          ...(uploadIdMarker ? { UploadIdMarker: uploadIdMarker } : {}),
+        }),
+      );
+      for (const u of out.Uploads ?? []) {
+        if (u.Key && u.UploadId) uploads.push({ key: u.Key, uploadId: u.UploadId, initiated: u.Initiated });
+      }
+      if (!out.IsTruncated) break;
+      keyMarker = out.NextKeyMarker;
+      uploadIdMarker = out.NextUploadIdMarker;
+      if (!keyMarker && !uploadIdMarker) break;
+    }
+    return uploads;
   }
 
   /**

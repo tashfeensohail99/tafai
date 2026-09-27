@@ -719,8 +719,32 @@ export class DatabankService {
   async commitDirectUpload(dto: CommitUploadDto, user: RequestUser, targetUserId?: string) {
     this.assertSafeFileName(dto.fileName);
     const scope = await this.resolveWriteScope(dto, user, targetUserId);
-    if (!dto.storageKey.startsWith(`${scope.storageFolder}/`)) {
+    // The key must be EXACTLY what presign issues for this scope —
+    // "<storageFolder>/<uuid>.<ext>", one path segment — so no "..", no extra
+    // segments, no other client's / associate's prefix.
+    const folderRe = scope.storageFolder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const keyShape = new RegExp(`^${folderRe}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[^/]*$`);
+    if (!keyShape.test(dto.storageKey)) {
       throw new ForbiddenException('This upload key does not belong to the target databank.');
+    }
+    // A key backs at most ONE file row. A retried commit (the first response was
+    // lost) gets the row it already created instead of a duplicate; any other
+    // reuse is refused — and never reaches the size-check delete below, so an
+    // object a row still references can't be removed.
+    const existing = await this.prisma.databankFile.findFirst({
+      where: { storageKey: dto.storageKey },
+      select: { id: true, clientId: true, ownerUserId: true, deletedAt: true },
+    });
+    if (existing) {
+      const sameScope =
+        existing.clientId === scope.clientId && existing.ownerUserId === scope.ownerUserId;
+      if (sameScope && !existing.deletedAt) {
+        return this.prisma.databankFile.findUniqueOrThrow({
+          where: { id: existing.id },
+          select: this.fileSelect,
+        });
+      }
+      throw new BadRequestException('This upload has already been used.');
     }
     const head = await this.storage.headObjectMeta(dto.storageKey);
     if (!head.exists) {
@@ -864,12 +888,13 @@ export class DatabankService {
 
   async renameFile(fileId: string, fileName: string, user: RequestUser) {
     // Same extension rule as upload — otherwise "scan.pdf" could be renamed to
-    // "scan.exe" and slip past BLOCKED_EXT.
-    this.assertSafeFileName(fileName);
+    // "scan.exe" and slip past BLOCKED_EXT. Check the EXACT value we store.
+    const name = fileName.trim();
+    this.assertSafeFileName(name);
     const file = await this.loadFile(fileId, user);
     return this.prisma.databankFile.update({
       where: { id: file.id },
-      data: { fileName: fileName.trim() },
+      data: { fileName: name },
       select: this.fileSelect,
     });
   }
@@ -977,7 +1002,10 @@ export class DatabankService {
     if (!fileName || !fileName.trim()) {
       throw new BadRequestException('A file name is required.');
     }
-    const ext = (fileName.split('.').pop() ?? '').toLowerCase();
+    // Ignore trailing whitespace AND dots when reading the extension: "scan.exe "
+    // and "scan.exe." both save/download as "scan.exe" (Windows drops trailing
+    // dots), so they must hit BLOCKED_EXT too.
+    const ext = (fileName.trim().replace(/[.\s]+$/, '').split('.').pop() ?? '').toLowerCase();
     if (DatabankService.BLOCKED_EXT.has(ext)) {
       throw new BadRequestException(`Files of type .${ext} are not allowed.`);
     }

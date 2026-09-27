@@ -24,10 +24,12 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequestUser } from '../../../common/types/auth.types';
 import { DatabankService } from './databank.service';
 import {
+  CommitUploadDto,
   CopyFileDto,
   CreateFolderDto,
   MoveFileDto,
   MoveFolderDto,
+  PresignUploadDto,
   RenameFileDto,
   RenameFolderDto,
 } from './databank.dto';
@@ -106,6 +108,24 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.databank.uploadPersonalFile(user, file, folderId || null, source);
+  }
+
+  // ---- Direct-to-storage upload (large files → R2, bypassing the backend) --
+  // The browser presigns an upload, PUTs the bytes STRAIGHT to R2, then commits
+  // the DB row — no bytes flow through Railway. Delegates to the SAME shared
+  // service methods the Processing databank uses; scope (client vs the caller's
+  // personal area) is in the body.
+
+  @Post('uploads/presign')
+  @RequirePermissions(WRITE)
+  presignUpload(@Body() dto: PresignUploadDto, @CurrentUser() user: RequestUser) {
+    return this.databank.presignDirectUpload(dto, user);
+  }
+
+  @Post('uploads/commit')
+  @RequirePermissions(WRITE)
+  commitUpload(@Body() dto: CommitUploadDto, @CurrentUser() user: RequestUser) {
+    return this.databank.commitDirectUpload(dto, user);
   }
 
   // ---- Folders ------------------------------------------------------------

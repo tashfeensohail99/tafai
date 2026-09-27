@@ -1,6 +1,7 @@
 'use client';
 
 import { apiFetch } from './api-client';
+import { putToStorage } from './processing';
 import type {
   ApiDatabankAssociate,
   ApiDatabankByAssociate,
@@ -9,6 +10,8 @@ import type {
   ApiDatabankFolder,
   ApiDatabankTree,
   DatabankFileSource,
+  DatabankUploadTarget,
+  PresignedUploadResponse,
 } from './processing';
 
 /**
@@ -33,7 +36,61 @@ export type {
   ApiDatabankFolder,
   ApiDatabankTree,
   DatabankFileSource,
+  DatabankUploadTarget,
 };
+
+/**
+ * Upload a file DIRECTLY to storage (R2) via the JR route then record it —
+ * the JR twin of `directUploadDatabankFile`. `onProgress` reports this file's
+ * byte progress (0..1). Falls back to the streaming multipart upload in dev
+ * storage modes. Works for a client databank (`clientId`) or the caller's
+ * personal area (`personal`). Delegates to the SAME shared backend service; the
+ * only difference from the processing helper is the `/jr/databank` route + JR
+ * permissions. */
+export async function directUploadJrDatabankFile(
+  target: DatabankUploadTarget,
+  file: File,
+  folderId: string | null = null,
+  onProgress?: (fraction: number) => void,
+): Promise<ApiDatabankFile> {
+  const mimeType = file.type || 'application/octet-stream';
+  const bodyBase = {
+    clientId: target.clientId,
+    personal: target.personal,
+    folderId,
+    fileName: file.name,
+    mimeType,
+    fileSizeBytes: file.size,
+  };
+
+  const presigned = await apiFetch<PresignedUploadResponse>('/jr/databank/uploads/presign', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bodyBase),
+    cache: 'no-store',
+  });
+
+  // Dev storage (local/supabase): no direct-PUT path — stream through the backend.
+  if (presigned.strategy === 'proxy' || !presigned.url) {
+    onProgress?.(0);
+    const res = target.personal
+      ? await uploadJrPersonalFile(file, folderId, 'UPLOAD')
+      : await uploadJrDatabankFile(target.clientId!, file, folderId, 'UPLOAD');
+    onProgress?.(1);
+    return res;
+  }
+
+  await putToStorage(presigned.url, file, presigned.headers ?? {}, (loaded, total) =>
+    onProgress?.(total ? loaded / total : 0),
+  );
+
+  return apiFetch<ApiDatabankFile>('/jr/databank/uploads/commit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...bodyBase, storageKey: presigned.storageKey }),
+    cache: 'no-store',
+  });
+}
 
 /** The JR-matter clients the caller may browse (flat), each with a file count.
  *  Head sees all associates' clients; associate sees their own. */

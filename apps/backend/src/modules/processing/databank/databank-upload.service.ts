@@ -46,6 +46,8 @@ export const COMPLETING_STALE_MS = 15 * 60 * 1000;
 const INIT_URL_BATCH = 16;
 /** Parallel R2 calls when creating / resuming sessions in one init. */
 const R2_CONCURRENCY = 8;
+/** Permissions that allow writing to a databank (Processing / JR portals). */
+export const DATABANK_WRITE_PERMISSIONS = ['processing.document.upload', 'jr.artifact.author'];
 /** Parallel finalizes per complete request. */
 const FINALIZE_CONCURRENCY = 6;
 
@@ -658,14 +660,23 @@ export class DatabankUploadService {
       // Access may have been revoked since init (reassigned client, lockout).
       if (ctx.user) {
         const user = ctx.user;
-        const scopeKey = `${s.clientId ?? ''}|${s.ownerUserId ?? ''}`;
+        const scopeKey = `${user.id}|${s.clientId ?? ''}|${s.ownerUserId ?? ''}`;
         let check = ctx.scopeChecks?.get(scopeKey);
         if (!check) {
-          check = this.databank.resolveWriteScope(
-            { clientId: s.clientId ?? undefined, personal: !!s.ownerUserId },
-            user,
-            s.ownerUserId && s.ownerUserId !== user.id ? s.ownerUserId : undefined,
-          );
+          check = (async () => {
+            // The route guard already enforced the caller's portal permission;
+            // repeating it here makes the check complete for the sweeper too,
+            // which passes the creator's CURRENT permissions (an assigned case
+            // alone must not be enough once the write permission is gone).
+            if (!user.permissions.some((p) => DATABANK_WRITE_PERMISSIONS.includes(p))) {
+              throw new ForbiddenException('No databank write permission.');
+            }
+            await this.databank.resolveWriteScope(
+              { clientId: s.clientId ?? undefined, personal: !!s.ownerUserId },
+              user,
+              s.ownerUserId && s.ownerUserId !== user.id ? s.ownerUserId : undefined,
+            );
+          })();
           ctx.scopeChecks?.set(scopeKey, check);
         }
         try {
@@ -809,7 +820,16 @@ export class DatabankUploadService {
         });
         const done = await tx.databankUpload.updateMany({
           where: mine,
-          data: { status: DatabankUploadStatus.COMPLETED, fileId: twin ? twin.id : fileId, completingAt: null },
+          // r2CleanedAt = "nothing left in R2 to free for this session": true at
+          // once for a normal commit (the object IS the file); a twin's own
+          // redundant bytes stay pending until cleanupStorage frees them — so
+          // "COMPLETED with r2CleanedAt null" identifies exactly those twins.
+          data: {
+            status: DatabankUploadStatus.COMPLETED,
+            fileId: twin ? twin.id : fileId,
+            completingAt: null,
+            r2CleanedAt: twin ? null : new Date(),
+          },
         });
         if (done.count !== 1) throw new LostClaimError();
         if (twin) return { file: twin, twin: true, relocated };
@@ -866,7 +886,8 @@ export class DatabankUploadService {
         if (existing) {
           await this.prisma.databankUpload.updateMany({
             where: mine,
-            data: { status: DatabankUploadStatus.COMPLETED, fileId: existing.id, completingAt: null },
+            // The row is this session's OWN (uploadSessionId) — nothing to free.
+            data: { status: DatabankUploadStatus.COMPLETED, fileId: existing.id, completingAt: null, r2CleanedAt: new Date() },
           });
           return { id: s.id, status: 'completed', file: existing };
         }

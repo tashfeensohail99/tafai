@@ -45,8 +45,8 @@ import {
  * never lists the whole firm. Read routes use jr.portal.view; write routes use
  * jr.artifact.author.
  */
-// 300 MB, disk-streamed to storage (never buffered in RAM) — see databank.controller.ts.
-const MAX_FILE_BYTES = 300 * 1024 * 1024;
+// 1 GB, disk-streamed to storage (never buffered in RAM) — see databank.controller.ts.
+const MAX_FILE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
 const READ = 'jr.portal.view';
 const WRITE = 'jr.artifact.author';
 
@@ -79,6 +79,33 @@ export class JrDatabankController {
   @RequirePermissions(READ)
   getTree(@Param('clientId', ParseUUIDPipe) clientId: string, @CurrentUser() user: RequestUser) {
     return this.databank.getTree(clientId, user);
+  }
+
+  // ---- My workspace (the caller's OWN personal folders, not tied to a client)
+  // Owner-scoped (delegates to the shared personal store), reached with JR perms.
+
+  @Get('me/tree')
+  @RequirePermissions(READ)
+  getMyTree(@CurrentUser() user: RequestUser) {
+    return this.databank.getPersonalTree(user);
+  }
+
+  @Post('me/folders')
+  @RequirePermissions(WRITE)
+  createMyFolder(@Body() dto: CreateFolderDto, @CurrentUser() user: RequestUser) {
+    return this.databank.createPersonalFolder(user, dto);
+  }
+
+  @Post('me/files')
+  @RequirePermissions(WRITE)
+  @UseInterceptors(FileInterceptor('file', { storage: diskStorage({ destination: tmpdir() }), limits: { fileSize: MAX_FILE_BYTES } }))
+  uploadMyFile(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('folderId') folderId: string | undefined,
+    @Body('source') source: string | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.databank.uploadPersonalFile(user, file, folderId || null, source);
   }
 
   // ---- Folders ------------------------------------------------------------

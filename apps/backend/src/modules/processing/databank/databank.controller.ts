@@ -45,12 +45,12 @@ import {
  * permission or seed change was needed. Manager-vs-officer scoping lives
  * entirely in DatabankService.assertClientAccess.
  *
- * 300 MB cap: the databank holds scans, PDFs and larger case documents.
+ * 1 GB cap: the databank holds scans, PDFs and larger case documents.
  * Uploads are written to a Multer temp file (diskStorage) and STREAMED to
  * storage by DatabankService — never buffered whole in memory — so a large
  * file doesn't pressure backend RAM. The temp file is deleted after upload.
  */
-const MAX_FILE_BYTES = 300 * 1024 * 1024;
+const MAX_FILE_BYTES = 1024 * 1024 * 1024; // 1 GB per file
 const READ = ['processing.case.view_assigned', 'processing.case.view_all'] as const;
 const WRITE = 'processing.document.upload';
 

@@ -4,26 +4,26 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { Folder, FolderOpen, Search, Loader2, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
-import {
-  fetchDatabankByAssociate,
-  type ApiDatabankAssociate,
-  type ApiDatabankByAssociate,
-  type ApiDatabankClientRow,
+import type {
+  ApiDatabankAssociate,
+  ApiDatabankByAssociate,
+  ApiDatabankClientRow,
 } from '@/lib/processing';
+import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 import { DatabankTab } from './tabs/DatabankTab';
 
 /**
- * Databank landing, organised by ASSOCIATE.
+ * Databank landing, organised by ASSOCIATE — the ONE landing every portal uses.
  *
- * A processing manager (view_all) sees one folder per associate — her own
- * first, then everyone else's — and drills into an associate to see that
- * person's client folders. An officer skips the associate level entirely and
- * lands straight on their own clients. The server does the grouping and
- * scoping (GET /processing/databank/clients/by-associate); the client just
- * renders it. Clicking a client opens that client's databank (the same
- * explorer as the case-workspace tab, on its own route).
+ * With several associates, everyone sees one folder per associate — their own
+ * first — and drills in to that person's client folders; a single group (e.g.
+ * a lone officer, or every JR matter still Unassigned) lands straight on its
+ * clients. The server does the grouping and scoping (GET .../clients/
+ * by-associate); this just renders it. Clicking a client opens that client's
+ * databank explorer on the portal's own route. `api` picks the portal
+ * (Processing by default; JR passes jrDatabankApi) — see lib/databank-api.ts.
  */
-export function DatabankClientsPage() {
+export function DatabankClientsPage({ api = processingDatabankApi }: { api?: DatabankApi } = {}) {
   const [data, setData] = useState<ApiDatabankByAssociate | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +36,8 @@ export function DatabankClientsPage() {
     setError(null);
     // Debounce the search so typing doesn't hammer the endpoint.
     const t = setTimeout(() => {
-      fetchDatabankByAssociate(q)
+      api
+        .fetchByAssociate(q)
         .then((r) => {
           if (!cancelled) setData(r);
         })
@@ -51,7 +52,7 @@ export function DatabankClientsPage() {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [q]);
+  }, [api, q]);
 
   const muted = 'var(--sos-text-muted, #64748b)';
   const border = '1px solid var(--sos-border, rgba(148,163,184,0.25))';
@@ -106,7 +107,7 @@ export function DatabankClientsPage() {
             </span>
           </div>
           {/* Your OWN folders — a personal databank area, only in your own view.
-              Documents not tied to a specific client; only you + a manager see it. */}
+              Documents not tied to a specific client; only you + api.personalVisibleTo see it. */}
           {selected.isSelf ? (
             <div
               style={{
@@ -125,10 +126,10 @@ export function DatabankClientsPage() {
                   <span style={{ fontWeight: 600, fontSize: 14 }}>My folders</span>
                 </div>
                 <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
-                  Your own folders — for documents not tied to a specific client. Only you and a manager can see these.
+                  Your own folders — for documents not tied to a specific client. Only you and {api.personalVisibleTo} can see these.
                 </div>
               </div>
-              <DatabankTab personal rootLabel="My folders" />
+              <DatabankTab personal rootLabel="My folders" api={api} />
             </div>
           ) : null}
           <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--sos-text-primary, #0f172a)', marginTop: 2 }}>
@@ -137,7 +138,7 @@ export function DatabankClientsPage() {
           {selected.clients.length === 0 ? (
             <EmptyState text="No clients in this databank yet." />
           ) : (
-            <ClientGrid clients={selected.clients} muted={muted} border={border} />
+            <ClientGrid clients={selected.clients} muted={muted} border={border} hrefFor={api.clientHref} />
           )}
         </div>
       );
@@ -152,7 +153,7 @@ export function DatabankClientsPage() {
       if (clients.length === 0) {
         return <EmptyState text={q ? 'No clients match your search.' : 'No client databanks yet.'} />;
       }
-      return <ClientGrid clients={clients} muted={muted} border={border} />;
+      return <ClientGrid clients={clients} muted={muted} border={border} hrefFor={api.clientHref} />;
     }
 
     // ---- Multiple associates: the associate grid (drill-in) ----------------
@@ -169,7 +170,7 @@ export function DatabankClientsPage() {
         ))}
       </div>
     );
-  }, [loading, data, selected, q, muted, border]);
+  }, [api, loading, data, selected, q, muted, border]);
 
   const showManagerHint = !loading && (data?.associates.length ?? 0) > 1 && !selected;
 
@@ -295,16 +296,18 @@ function AssociateCard({
   );
 }
 
-/** The grid of client folders (shared by the officer view and the manager's
- *  drilled-in associate view). */
+/** The grid of client folders (shared by the single-group view and the
+ *  drilled-in associate view). `hrefFor` = the portal's per-client route. */
 function ClientGrid({
   clients,
   muted,
   border,
+  hrefFor,
 }: {
   clients: ApiDatabankClientRow[];
   muted: string;
   border: string;
+  hrefFor: (clientId: string, name: string) => string;
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
@@ -313,7 +316,7 @@ function ClientGrid({
         return (
           <Link
             key={c.id}
-            href={`/processing/databank/${c.id}?name=${encodeURIComponent(name)}` as Route}
+            href={hrefFor(c.id, name) as Route}
             style={{
               border,
               borderRadius: 12,

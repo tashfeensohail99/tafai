@@ -11,6 +11,30 @@ import { StorageService } from '../../storage/storage.service';
 import { RequestUser } from '../../../common/types/auth.types';
 import { CommitUploadDto, CopyFileDto, CreateFolderDto, PresignUploadDto } from './databank.dto';
 
+/** Split a search box value into words (max 5). EVERY word must match
+ *  somewhere, so "abdul qadir" finds first name "Abdul" + last name "Qadir" —
+ *  a single `contains` of the whole string matched neither field. */
+function searchTerms(q?: string): string[] {
+  return (q ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 5);
+}
+
+/** Prisma filter: every search word matches the client's first name, last name
+ *  or reference code. The per-word ORs sit inside AND:[] so they can never
+ *  widen sibling conditions (cf. the rep-scope OR-spread leak, #253). */
+function clientTermsWhere(q?: string): Prisma.ClientWhereInput {
+  const terms = searchTerms(q);
+  if (!terms.length) return {};
+  return {
+    AND: terms.map((t) => ({
+      OR: [
+        { firstName: { contains: t, mode: 'insensitive' as const } },
+        { lastName: { contains: t, mode: 'insensitive' as const } },
+        { referenceCode: { contains: t, mode: 'insensitive' as const } },
+      ],
+    })),
+  };
+}
+
 /**
  * The per-client databank — a free-form, Drive-like document repository for the
  * Processing team, living alongside the structured document checklist.
@@ -260,15 +284,7 @@ export class DatabankService {
   async listClients(user: RequestUser, q?: string) {
     const where: Prisma.ClientWhereInput = {
       deletedAt: null,
-      ...(q
-        ? {
-            OR: [
-              { firstName: { contains: q, mode: 'insensitive' } },
-              { lastName: { contains: q, mode: 'insensitive' } },
-              { referenceCode: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      ...clientTermsWhere(q),
     };
 
     const clients = await this.prisma.client.findMany({
@@ -310,16 +326,22 @@ export class DatabankService {
       assignedOfficerId: { not: null },
       client: { deletedAt: null },
     };
-    const term = q?.trim();
-    if (term) {
-      const contains = { contains: term, mode: 'insensitive' as const };
-      where.OR = [
-        { client: { firstName: contains } },
-        { client: { lastName: contains } },
-        { client: { referenceCode: contains } },
-        { assignedOfficer: { employee: { firstName: contains } } },
-        { assignedOfficer: { employee: { lastName: contains } } },
-      ];
+    // Every word must match the client's name/reference OR the officer's name,
+    // so "abdul qadir" (first + last) and "tayyab abdul" (officer + client) work.
+    const terms = searchTerms(q);
+    if (terms.length) {
+      where.AND = terms.map((t) => {
+        const contains = { contains: t, mode: 'insensitive' as const };
+        return {
+          OR: [
+            { client: { firstName: contains } },
+            { client: { lastName: contains } },
+            { client: { referenceCode: contains } },
+            { assignedOfficer: { employee: { firstName: contains } } },
+            { assignedOfficer: { employee: { lastName: contains } } },
+          ],
+        };
+      });
     }
 
     const cases = await this.prisma.processingCase.findMany({
@@ -422,15 +444,7 @@ export class DatabankService {
     const where: Prisma.ClientWhereInput = {
       id: { in: clientIds },
       deletedAt: null,
-      ...(q
-        ? {
-            OR: [
-              { firstName: { contains: q, mode: 'insensitive' } },
-              { lastName: { contains: q, mode: 'insensitive' } },
-              { referenceCode: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      ...clientTermsWhere(q),
     };
     const clients = await this.prisma.client.findMany({
       where,
@@ -526,21 +540,20 @@ export class DatabankService {
       group.clients.set(client.id, client);
     }
 
-    // Search is applied in memory (the JR set is small): a client stays if its
-    // own name/reference matches, or its associate's name matches (mirrors the
-    // processing OR over client + officer name).
-    const term = q?.trim().toLowerCase();
+    // Search is applied in memory (the JR set is small): a client stays if EVERY
+    // search word appears in its name, its reference or its associate's name
+    // (mirrors the processing per-word match over client + officer name).
+    const terms = searchTerms(q).map((t) => t.toLowerCase());
     const byName = (a: ClientRow, b: ClientRow) =>
       `${a.firstName} ${a.lastName}`.trim().localeCompare(`${b.firstName} ${b.lastName}`.trim());
 
     const associates = [...groups.values()]
       .map((g) => {
-        const associateMatches = term ? g.officerName.toLowerCase().includes(term) : false;
         const rows = [...g.clients.values()]
           .filter((c) => {
-            if (!term || associateMatches) return true;
-            const name = `${c.firstName} ${c.lastName}`.trim().toLowerCase();
-            return name.includes(term) || c.referenceCode.toLowerCase().includes(term);
+            if (!terms.length) return true;
+            const hay = `${c.firstName} ${c.lastName} ${c.referenceCode} ${g.officerName}`.toLowerCase();
+            return terms.every((t) => hay.includes(t));
           })
           .sort(byName)
           .map((c) => ({ ...c, fileCount: countByClient.get(c.id) ?? 0 }));
@@ -706,13 +719,50 @@ export class DatabankService {
   async commitDirectUpload(dto: CommitUploadDto, user: RequestUser, targetUserId?: string) {
     this.assertSafeFileName(dto.fileName);
     const scope = await this.resolveWriteScope(dto, user, targetUserId);
-    if (!dto.storageKey.startsWith(`${scope.storageFolder}/`)) {
+    // The key must be EXACTLY what presign issues for this scope —
+    // "<storageFolder>/<uuid>.<ext>", one path segment — so no "..", no extra
+    // segments, no other client's / associate's prefix.
+    const folderRe = scope.storageFolder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const keyShape = new RegExp(`^${folderRe}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[^/]*$`);
+    if (!keyShape.test(dto.storageKey)) {
       throw new ForbiddenException('This upload key does not belong to the target databank.');
+    }
+    // A key backs at most ONE file row. A retried commit (the first response was
+    // lost) gets the row it already created instead of a duplicate; any other
+    // reuse is refused — and never reaches the size-check delete below, so an
+    // object a row still references can't be removed.
+    const existing = await this.prisma.databankFile.findFirst({
+      where: { storageKey: dto.storageKey },
+      select: { id: true, clientId: true, ownerUserId: true, deletedAt: true },
+    });
+    if (existing) {
+      const sameScope =
+        existing.clientId === scope.clientId && existing.ownerUserId === scope.ownerUserId;
+      if (sameScope && !existing.deletedAt) {
+        return this.prisma.databankFile.findUniqueOrThrow({
+          where: { id: existing.id },
+          select: this.fileSelect,
+        });
+      }
+      throw new BadRequestException('This upload has already been used.');
     }
     const head = await this.storage.headObjectMeta(dto.storageKey);
     if (!head.exists) {
       throw new BadRequestException(
         'The upload was not found in storage — it may not have finished. Please retry.',
+      );
+    }
+    // A presigned PUT can't enforce size (R2 has no POST policy), so a caller
+    // that skips the UI guard can store up to R2's 5 GiB single-PUT limit.
+    // Check the REAL stored size: over the cap it would overflow the int4
+    // fileSizeBytes column and 500 at insert, orphaning the object. Remove the
+    // object (best-effort) and reject cleanly instead.
+    if ((head.sizeBytes ?? 0) > DatabankService.DIRECT_MAX_BYTES) {
+      await this.storage.delete(dto.storageKey).catch(() => undefined);
+      throw new BadRequestException(
+        `File is larger than the ${Math.round(
+          DatabankService.DIRECT_MAX_BYTES / (1024 * 1024 * 1024),
+        )} GB per-file upload limit.`,
       );
     }
     const targetFolder = await this.assertFolderInScope(dto.folderId, {
@@ -837,10 +887,14 @@ export class DatabankService {
   }
 
   async renameFile(fileId: string, fileName: string, user: RequestUser) {
+    // Same extension rule as upload — otherwise "scan.pdf" could be renamed to
+    // "scan.exe" and slip past BLOCKED_EXT. Check the EXACT value we store.
+    const name = fileName.trim();
+    this.assertSafeFileName(name);
     const file = await this.loadFile(fileId, user);
     return this.prisma.databankFile.update({
       where: { id: file.id },
-      data: { fileName: fileName.trim() },
+      data: { fileName: name },
       select: this.fileSelect,
     });
   }
@@ -948,7 +1002,10 @@ export class DatabankService {
     if (!fileName || !fileName.trim()) {
       throw new BadRequestException('A file name is required.');
     }
-    const ext = (fileName.split('.').pop() ?? '').toLowerCase();
+    // Ignore trailing whitespace AND dots when reading the extension: "scan.exe "
+    // and "scan.exe." both save/download as "scan.exe" (Windows drops trailing
+    // dots), so they must hit BLOCKED_EXT too.
+    const ext = (fileName.trim().replace(/[.\s]+$/, '').split('.').pop() ?? '').toLowerCase();
     if (DatabankService.BLOCKED_EXT.has(ext)) {
       throw new BadRequestException(`Files of type .${ext} are not allowed.`);
     }
@@ -990,41 +1047,39 @@ export class DatabankService {
     if (newParentId === folderId) {
       throw new BadRequestException('A folder cannot be moved into itself');
     }
-    let cursor: string | null = newParentId;
-    while (cursor) {
-      if (cursor === folderId) {
-        throw new BadRequestException('A folder cannot be moved into its own subtree');
-      }
-      // `currentId` + the explicit `parent` annotation break a circular type
-      // inference: feeding the loop-reassigned `cursor` straight into Prisma's
-      // generic findUnique makes TS try to infer `parent` from itself (TS7022).
-      const currentId: string = cursor;
-      // eslint-disable-next-line no-await-in-loop
-      const parent: { parentFolderId: string | null } | null =
-        await this.prisma.databankFolder.findUnique({
-          where: { id: currentId },
-          select: { parentFolderId: true },
-        });
-      cursor = parent?.parentFolderId ?? null;
+    // Walk the new parent's ancestor chain in ONE recursive query (was one
+    // query per level — ~90 ms each to the Seoul DB). UNION de-duplicates, so
+    // the walk terminates even if a race ever left a cycle in the data.
+    const hit = await this.prisma.$queryRaw<{ id: string }[]>`
+      WITH RECURSIVE anc AS (
+        SELECT "id", "parentFolderId" FROM "processing"."databank_folders" WHERE "id" = ${newParentId}
+        UNION
+        SELECT f."id", f."parentFolderId"
+          FROM "processing"."databank_folders" f
+          JOIN anc ON f."id" = anc."parentFolderId"
+      )
+      SELECT "id" FROM anc WHERE "id" = ${folderId} LIMIT 1`;
+    if (hit.length) {
+      throw new BadRequestException('A folder cannot be moved into its own subtree');
     }
   }
 
   /** All live folder ids in a subtree, root included (breadth-first). */
   private async collectSubtree(rootId: string): Promise<string[]> {
-    const ids = [rootId];
-    const queue = [rootId];
-    while (queue.length) {
-      const current = queue.shift()!;
-      // eslint-disable-next-line no-await-in-loop
-      const children = await this.prisma.databankFolder.findMany({
-        where: { parentFolderId: current, deletedAt: null },
-        select: { id: true },
-      });
-      for (const child of children) {
-        ids.push(child.id);
-        queue.push(child.id);
-      }
-    }
-    return ids;
+    // The folder + all LIVE descendants in ONE recursive query (was one query
+    // per folder: ~27 s for a 300-folder Drive-migrated client at ~90 ms per
+    // round trip). Same semantics as before — the root is always included,
+    // descendants only while not soft-deleted. UNION stops on any cycle.
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      WITH RECURSIVE sub AS (
+        SELECT "id" FROM "processing"."databank_folders" WHERE "id" = ${rootId}
+        UNION
+        SELECT f."id"
+          FROM "processing"."databank_folders" f
+          JOIN sub ON f."parentFolderId" = sub."id"
+         WHERE f."deletedAt" IS NULL
+      )
+      SELECT "id" FROM sub`;
+    return rows.map((r) => r.id);
   }
 }

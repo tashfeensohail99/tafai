@@ -24,6 +24,10 @@ const ID_PARAM_PRIORITY = [
   'handoverId', 'invoiceId', 'itemId', 'inboundId', 'threadId', 'callId',
   'noteId', 'taskId', 'milestoneId', 'submissionId', 'correctionId',
   'templateId', 'expenseId', 'channelId', 'employeeId', 'userId', 'token',
+  // Databank item routes (folders/:folderId, files/:fileId) — without these,
+  // rename/move/copy/delete audit rows had no entityId, so "who deleted what"
+  // couldn't be traced from the audit log.
+  'folderId', 'fileId',
 ];
 
 /**

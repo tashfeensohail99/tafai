@@ -32,6 +32,7 @@ import {
   CommitUploadDto,
   CopyFileDto,
   CreateFolderDto,
+  EnsureFolderPathsDto,
   MoveFileDto,
   MoveFolderDto,
   PresignUploadDto,
@@ -131,6 +132,19 @@ export class DatabankController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.databank.createFolder(clientId, dto, user);
+  }
+
+  /** Get-or-create a dropped folder tree in one call: `paths` (relative to
+   *  `parentFolderId`) → folder ids. Reuses same-name folders (never "(2)"), so
+   *  re-dropping a folder merges into it. Scope in the body, like uploads. */
+  @Post('folders/ensure-paths')
+  @RequirePermissions(WRITE)
+  ensureFolderPaths(
+    @Body() dto: EnsureFolderPathsDto,
+    @CurrentUser() user: RequestUser,
+    @Query('userId') userId?: string,
+  ) {
+    return this.databank.ensureFolderPaths(dto, user, userId);
   }
 
   @Patch('folders/:folderId')

@@ -643,13 +643,19 @@ export class DatabankService {
     const folder = await this.loadFolder(folderId, user);
     const ids = await this.collectSubtree(folder.id);
     const now = new Date();
+    // Folders FIRST, then their files: trashing the folder rows takes their row
+    // locks before the file sweep. A resumable-upload commit reads its folder
+    // FOR SHARE, so either it waits for this delete (then sees the folder gone
+    // and relocates to the root), or this delete waits for it — and the file
+    // sweep below then trashes the just-recorded file together with its folder.
+    // Either way no live file is left stranded inside a trashed folder.
     await this.prisma.$transaction([
-      this.prisma.databankFile.updateMany({
-        where: { folderId: { in: ids }, deletedAt: null },
-        data: { deletedAt: now },
-      }),
       this.prisma.databankFolder.updateMany({
         where: { id: { in: ids }, deletedAt: null },
+        data: { deletedAt: now },
+      }),
+      this.prisma.databankFile.updateMany({
+        where: { folderId: { in: ids }, deletedAt: null },
         data: { deletedAt: now },
       }),
     ]);

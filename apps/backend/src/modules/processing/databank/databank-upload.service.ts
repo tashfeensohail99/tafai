@@ -618,9 +618,15 @@ export class DatabankUploadService {
   }
 
   /**
-   * Finish one session: claim → (re)check access + folder → verify the object in
-   * R2 → record the DatabankFile. Shared by the complete route and the sweeper.
+   * Finish one session: claim → (re)check access → verify the object in R2 →
+   * record the DatabankFile. Shared by the complete route and the sweeper.
    * Idempotent: a repeat call reports the same outcome.
+   *
+   * SWEEPER CONTRACT (Phase 1 PR-5): access is re-checked only when `ctx.user`
+   * is given. The sweeper must build the CREATOR's current RequestUser and pass
+   * it, so losing access cancels the upload on every path (deterministic);
+   * and it must finalize parked COMPLETING sessions before R2's 7-day
+   * auto-abort of the multipart upload.
    */
   async finalize(
     s: DatabankUpload,
@@ -772,11 +778,16 @@ export class DatabankUploadService {
         let folderId = s.folderId;
         let relocated = false;
         if (folderId) {
-          const live = await tx.databankFolder.findFirst({
-            where: { id: folderId, deletedAt: null, clientId: s.clientId, ownerUserId: s.ownerUserId },
-            select: { id: true },
-          });
-          if (!live) {
+          // FOR SHARE: a concurrent deleteFolder (which trashes folder rows
+          // before their files) either waits for this commit — and then trashes
+          // our file with its folder — or finishes first, and we relocate.
+          const live = await tx.$queryRaw<{ id: string }[]>`
+            SELECT "id" FROM "processing"."databank_folders"
+             WHERE "id" = ${folderId} AND "deletedAt" IS NULL
+               AND "clientId" IS NOT DISTINCT FROM ${s.clientId}
+               AND "ownerUserId" IS NOT DISTINCT FROM ${s.ownerUserId}
+             FOR SHARE`;
+          if (!live.length) {
             folderId = null;
             relocated = true;
           }
@@ -823,8 +834,12 @@ export class DatabankUploadService {
       });
       if (outcome.twin) {
         // This session's copy of the bytes is redundant — free it (cleanup never
-        // touches an object a file row references).
-        await this.cleanupStorage({ ...s, status: DatabankUploadStatus.COMPLETED, updatedAt: new Date(0) });
+        // touches an object a file row references). Best-effort here; r2CleanedAt
+        // is set only once it succeeds (and, for a single-PUT, only after its
+        // URLs have expired). SWEEPER CONTRACT: retry COMPLETED sessions with
+        // r2CleanedAt null whose file row (fileId) has uploadSessionId ≠ the
+        // session's id — those are twins whose own bytes are still to free.
+        await this.cleanupStorage({ ...s, status: DatabankUploadStatus.COMPLETED, updatedAt: new Date() });
       }
       return { id: s.id, status: 'completed', file: outcome.file, ...(outcome.relocated ? { relocated: true } : {}) };
     } catch (e) {
@@ -866,8 +881,13 @@ export class DatabankUploadService {
     if (!s) return { id, status: 'not-found' };
     switch (s.status) {
       case DatabankUploadStatus.COMPLETED: {
+        // Report the file only while it's live — a file trashed since is gone
+        // from the user's point of view.
         const file = s.fileId
-          ? await this.prisma.databankFile.findUnique({ where: { id: s.fileId }, select: this.databank.fileSelect })
+          ? await this.prisma.databankFile.findFirst({
+              where: { id: s.fileId, deletedAt: null },
+              select: this.databank.fileSelect,
+            })
           : null;
         return file ? { id, status: 'completed', file } : { id, status: 'failed', reason: 'The file was removed.' };
       }

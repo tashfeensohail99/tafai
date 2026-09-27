@@ -39,6 +39,7 @@ function harness() {
     },
   };
   prisma.$executeRaw = jest.fn().mockResolvedValue(1); // pg_advisory_xact_lock in the commit
+  prisma.$queryRaw = jest.fn().mockResolvedValue([{ id: 'folder' }]); // folder read FOR SHARE in the commit
   // Interactive transactions run the callback against the same mocks.
   prisma.$transaction = jest.fn(async (arg: unknown) =>
     typeof arg === 'function' ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as Promise<unknown>[]),
@@ -468,7 +469,7 @@ describe('DatabankUploadService.complete / finalize', () => {
 
   it('files the upload at the root (relocated) when its folder was deleted mid-upload', async () => {
     const h = harness();
-    h.prisma.databankFolder.findFirst.mockResolvedValueOnce(null);
+    h.prisma.$queryRaw.mockResolvedValueOnce([]); // the FOR SHARE read finds no live folder
     h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
     const res = await complete(h, session({ folderId: 'deleted-folder' }));
     expect(res).toMatchObject({ status: 'completed', relocated: true });
@@ -479,8 +480,17 @@ describe('DatabankUploadService.complete / finalize', () => {
     const h = harness();
     h.prisma.databankUpload.updateMany.mockResolvedValueOnce({ count: 0 });
     h.prisma.databankUpload.findUnique.mockResolvedValueOnce(session({ status: 'COMPLETED', fileId: 'f9' }));
-    h.prisma.databankFile.findUnique.mockResolvedValueOnce({ id: 'f9' });
+    h.prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'f9' });
     expect(await complete(h)).toMatchObject({ status: 'completed', file: { id: 'f9' } });
+    expect(h.prisma.databankFile.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { id: 'f9', deletedAt: null } }),
+    );
+
+    const h3 = harness(); // [review] a file trashed since is reported as removed, not "completed"
+    h3.prisma.databankUpload.updateMany.mockResolvedValueOnce({ count: 0 });
+    h3.prisma.databankUpload.findUnique.mockResolvedValueOnce(session({ status: 'COMPLETED', fileId: 'f9' }));
+    h3.prisma.databankFile.findFirst.mockResolvedValueOnce(null);
+    expect(await complete(h3)).toEqual({ id: 's1', status: 'failed', reason: 'The file was removed.' });
 
     const h2 = harness();
     h2.prisma.databankUpload.updateMany.mockResolvedValueOnce({ count: 0 });

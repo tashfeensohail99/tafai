@@ -42,9 +42,6 @@ CREATE TABLE "processing"."databank_uploads" (
 CREATE UNIQUE INDEX "databank_uploads_storageKey_key" ON "processing"."databank_uploads"("storageKey");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "databank_uploads_fileId_key" ON "processing"."databank_uploads"("fileId");
-
--- CreateIndex
 CREATE INDEX "databank_uploads_createdByUserId_status_idx" ON "processing"."databank_uploads"("createdByUserId", "status");
 
 -- CreateIndex
@@ -52,4 +49,7 @@ CREATE INDEX "databank_uploads_status_expiresAt_idx" ON "processing"."databank_u
 
 -- CreateIndex
 CREATE INDEX "databank_uploads_status_completingAt_idx" ON "processing"."databank_uploads"("status", "completingAt");
+
+-- CreateIndex
+CREATE INDEX "databank_uploads_fileId_idx" ON "processing"."databank_uploads"("fileId");
 

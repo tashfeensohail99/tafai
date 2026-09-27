@@ -546,6 +546,13 @@ export class DatabankUploadService {
     if (s.expiresAt.getTime() <= Date.now()) {
       throw new GoneException('This upload has expired — please start it again.');
     }
+    // Access is re-checked before EVERY new write URL: once it's revoked, no
+    // further bytes can be written into this databank.
+    await this.databank.resolveWriteScope(
+      { clientId: s.clientId ?? undefined, personal: !!s.ownerUserId },
+      user,
+      s.ownerUserId && s.ownerUserId !== user.id ? s.ownerUserId : undefined,
+    );
     const numbers = [...new Set(dto.partNumbers)].sort((a, b) => a - b);
     const urlsExpireAt = this.urlsExpireAt();
     if (s.strategy === DatabankUploadStrategy.SINGLE) {
@@ -659,34 +666,20 @@ export class DatabankUploadService {
           await check;
         } catch (e) {
           if (e instanceof ForbiddenException || e instanceof NotFoundException) {
-            // This user can't finish it — but the upload was authorised when it
-            // was made and the bytes belong to the client, so never delete them:
-            // park it and the sweeper records it. (Deterministic: the outcome no
-            // longer depends on whether the user's retry or the sweeper got there
-            // first.)
-            await this.parkClaim(s.id, claimedAt);
+            // Access is checked at EVERY write step (init, part signing,
+            // complete). Losing it before the upload is recorded cancels it: the
+            // user can't finish it, and new part URLs stopped at revocation, so
+            // nothing written after it can be kept. Someone with access can
+            // upload it again.
+            const moved = await this.retire(mine, DatabankUploadStatus.ABORTED, 'access revoked');
+            if (moved) await this.cleanupStorage({ ...s, status: DatabankUploadStatus.ABORTED, updatedAt: new Date() });
             return {
               id: s.id,
               status: 'failed',
-              reason: 'You no longer have access to this databank. The upload will still be saved there.',
+              reason: 'You no longer have access to this databank, so this upload was cancelled.',
             };
           }
           throw e;
-        }
-      }
-
-      // Never throw away a 10 GB upload over a folder deleted mid-upload —
-      // file it at the scope root instead.
-      let folderId = s.folderId;
-      let relocated = false;
-      if (folderId) {
-        const live = await this.prisma.databankFolder.findFirst({
-          where: { id: folderId, deletedAt: null, clientId: s.clientId, ownerUserId: s.ownerUserId },
-          select: { id: true },
-        });
-        if (!live) {
-          folderId = null;
-          relocated = true;
         }
       }
 
@@ -741,21 +734,16 @@ export class DatabankUploadService {
         return { id: s.id, status: 'retry', reason: 'Storage is still assembling the file — please try again.' };
       }
       if (head.sizeBytes !== sizeBytes) {
-        // Never record an object that isn't exactly the declared file — and
-        // never delete one a file row references.
-        const referenced = await this.prisma.databankFile.findFirst({
-          where: { storageKey: s.storageKey },
-          select: { id: true },
-        });
-        let deleted = false;
-        if (!referenced) {
-          deleted = await this.storage.delete(s.storageKey).then(() => true, () => false);
-        }
-        await this.retire(mine, DatabankUploadStatus.FAILED, `size mismatch (${head.sizeBytes} ≠ ${sizeBytes})`, deleted);
+        // Never record an object that isn't exactly the declared file. FAIL the
+        // session first (compare-and-set on OUR claim), and only then free the
+        // bytes through the one guarded cleanup path — so a stalled finalizer
+        // whose claim was taken over can never delete what the taker recorded.
+        const moved = await this.retire(mine, DatabankUploadStatus.FAILED, `size mismatch (${head.sizeBytes} ≠ ${sizeBytes})`);
+        if (moved) await this.cleanupStorage({ ...s, status: DatabankUploadStatus.FAILED, updatedAt: new Date() });
         return { id: s.id, status: 'failed', reason: 'The uploaded file did not match the original. Please upload it again.' };
       }
 
-      return await this.commit(s, claimedAt, folderId, relocated);
+      return await this.commit(s, claimedAt);
     } catch (e) {
       this.logger.warn(`finalize ${s.id} failed: ${errMsg(e)}`);
       // Unknown state (storage / DB blip): PARK, never hand back — see RULE
@@ -767,23 +755,36 @@ export class DatabankUploadService {
   }
 
   /**
-   * Mark the session COMPLETED and create its DatabankFile in ONE transaction —
-   * but only while our claim still stands (a takeover makes us back off). The
-   * unique uploadSessionId means no session can ever produce two file rows.
+   * Record the file: in ONE transaction — (1) re-check the destination folder
+   * (the R2 phase can take minutes; a folder deleted meanwhile → file at the
+   * scope root, `relocated`), (2) serialise on this file's identity with an
+   * advisory lock, (3) reuse an identical file another session already recorded
+   * (same scope + folder + name + content) instead of a duplicate row, (4) flip
+   * the session COMPLETED only while OUR claim still stands (a takeover makes
+   * us back off), (5) create the row. DatabankFile.uploadSessionId is unique, so
+   * one session can never produce two rows.
    */
-  private async commit(
-    s: DatabankUpload,
-    claimedAt: Date,
-    folderId: string | null,
-    relocated: boolean,
-  ): Promise<CompleteResult> {
+  private async commit(s: DatabankUpload, claimedAt: Date): Promise<CompleteResult> {
     const fileId = randomUUID();
     const mine = { id: s.id, status: DatabankUploadStatus.COMPLETING, completingAt: claimedAt };
     try {
       const outcome = await this.prisma.$transaction(async (tx) => {
-        // The identical file (same scope + folder + name + content) may already
-        // be recorded by ANOTHER session — e.g. two tabs uploading the same
-        // file at once. Point this session at it rather than a duplicate row.
+        let folderId = s.folderId;
+        let relocated = false;
+        if (folderId) {
+          const live = await tx.databankFolder.findFirst({
+            where: { id: folderId, deletedAt: null, clientId: s.clientId, ownerUserId: s.ownerUserId },
+            select: { id: true },
+          });
+          if (!live) {
+            folderId = null;
+            relocated = true;
+          }
+        }
+        // Two sessions committing the same file at the same instant would both
+        // miss each other's row under READ COMMITTED — the lock serialises them.
+        const identity = `databank-file|${s.clientId ?? ''}|${s.ownerUserId ?? ''}|${folderId ?? ''}|${s.fileName}|${s.sha256}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identity}))`;
         const twin = await tx.databankFile.findFirst({
           where: {
             clientId: s.clientId,
@@ -800,7 +801,7 @@ export class DatabankUploadService {
           data: { status: DatabankUploadStatus.COMPLETED, fileId: twin ? twin.id : fileId, completingAt: null },
         });
         if (done.count !== 1) throw new LostClaimError();
-        if (twin) return { file: twin, twin: true };
+        if (twin) return { file: twin, twin: true, relocated };
         const file = await tx.databankFile.create({
           data: {
             id: fileId,
@@ -818,14 +819,14 @@ export class DatabankUploadService {
           },
           select: this.databank.fileSelect,
         });
-        return { file, twin: false };
+        return { file, twin: false, relocated };
       });
       if (outcome.twin) {
         // This session's copy of the bytes is redundant — free it (cleanup never
         // touches an object a file row references).
         await this.cleanupStorage({ ...s, status: DatabankUploadStatus.COMPLETED, updatedAt: new Date(0) });
       }
-      return { id: s.id, status: 'completed', file: outcome.file, ...(relocated ? { relocated: true } : {}) };
+      return { id: s.id, status: 'completed', file: outcome.file, ...(outcome.relocated ? { relocated: true } : {}) };
     } catch (e) {
       if (e instanceof LostClaimError) return this.settledResult(s.id);
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
@@ -836,14 +837,20 @@ export class DatabankUploadService {
         if (moved) await this.cleanupStorage({ ...s, status: DatabankUploadStatus.FAILED, updatedAt: new Date() });
         return { id: s.id, status: 'failed', reason: 'The databank this upload belonged to no longer exists.' };
       }
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      // Only a clash on uploadSessionId means "a racing finalizer already made
+      // this session's row"; any other unique clash is a real error.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002' &&
+        JSON.stringify(e.meta?.target ?? '').includes('uploadSessionId')
+      ) {
         const existing = await this.prisma.databankFile.findUnique({
           where: { uploadSessionId: s.id },
           select: this.databank.fileSelect,
         });
         if (existing) {
           await this.prisma.databankUpload.updateMany({
-            where: { id: s.id, status: DatabankUploadStatus.COMPLETING, completingAt: claimedAt },
+            where: mine,
             data: { status: DatabankUploadStatus.COMPLETED, fileId: existing.id, completingAt: null },
           });
           return { id: s.id, status: 'completed', file: existing };
@@ -972,15 +979,14 @@ export class DatabankUploadService {
       });
       if (!referenced) {
         const head = await this.storage.headObjectStrict(s.storageKey);
-        if (head.exists) {
-          await this.storage.delete(s.storageKey);
-        } else if (
+        if (head.exists) await this.storage.delete(s.storageKey);
+        if (
           s.strategy === DatabankUploadStrategy.SINGLE &&
           Date.now() < s.updatedAt.getTime() + this.storage.uploadUrlTtlSeconds * 1000
         ) {
-          // A single-PUT URL may still be live: a PUT in flight could land AFTER
-          // this check. Leave r2CleanedAt unset so the sweeper re-checks once
-          // every URL for this session has expired.
+          // A single-PUT URL may still be live: a PUT in flight could (re)create
+          // the object AFTER this pass, deleted or not. Leave r2CleanedAt unset
+          // so the sweeper re-checks once every URL for this session has expired.
           return;
         }
       }

@@ -38,6 +38,7 @@ function harness() {
       create: jest.fn().mockResolvedValue({ id: 'new-file' }),
     },
   };
+  prisma.$executeRaw = jest.fn().mockResolvedValue(1); // pg_advisory_xact_lock in the commit
   // Interactive transactions run the callback against the same mocks.
   prisma.$transaction = jest.fn(async (arg: unknown) =>
     typeof arg === 'function' ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as Promise<unknown>[]),
@@ -360,9 +361,12 @@ describe('DatabankUploadService.complete / finalize', () => {
     const h = harness();
     h.storage.headObjectStrict
       .mockResolvedValueOnce({ exists: false })
-      .mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB - 1 });
+      .mockResolvedValue({ exists: true, sizeBytes: 40 * MiB - 1 });
     h.storage.listAllParts.mockResolvedValueOnce(parts(5));
     expect((await complete(h)).status).toBe('failed');
+    // FAILED first (CAS on our claim), THEN the guarded cleanup deletes.
+    const calls = h.prisma.databankUpload.updateMany.mock.calls.map((c: any[]) => c[0].data.status);
+    expect(calls.indexOf('FAILED')).toBeGreaterThan(-1);
     expect(h.storage.delete).toHaveBeenCalledWith('databank/clients/c1/k.zip');
     expect(h.prisma.databankFile.create).not.toHaveBeenCalled();
   });
@@ -373,28 +377,59 @@ describe('DatabankUploadService.complete / finalize', () => {
     h.prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'someone-elses-row' });
     expect((await complete(h)).status).toBe('failed');
     expect(h.storage.delete).not.toHaveBeenCalled();
-    expect(lastUpdateData(h)).toMatchObject({ status: 'FAILED' });
-    expect(lastUpdateData(h)).not.toHaveProperty('r2CleanedAt');
+    expect(h.prisma.databankUpload.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED' }) }),
+    );
   });
 
   it('returns the winning row when a racing finalizer already recorded the file (P2002)', async () => {
     const h = harness();
     h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
     h.prisma.$transaction.mockRejectedValueOnce(
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '5.22.0' }),
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '5.22.0',
+        meta: { target: ['uploadSessionId'] },
+      }),
     );
     h.prisma.databankFile.findUnique.mockResolvedValueOnce({ id: 'winner' });
     expect(await complete(h)).toMatchObject({ status: 'completed', file: { id: 'winner' } });
   });
 
-  it('[review] a user who lost access cannot finish it, but the authorised upload is PARKED for the sweeper — never deleted', async () => {
+  it('[review] treats a unique clash on any OTHER constraint as an error (parked), not as "a racing finalizer won"', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
+    h.prisma.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '5.22.0',
+        meta: { target: ['something_else'] },
+      }),
+    );
+    expect(await complete(h)).toMatchObject({ status: 'retry' });
+    expect(h.prisma.databankFile.findUnique).not.toHaveBeenCalled();
+    expect(lastUpdateData(h)).toEqual(PARKED);
+  });
+
+  it('[review] serialises same-file commits with an advisory lock before the twin check', async () => {
+    const h = harness();
+    h.storage.headObjectStrict.mockResolvedValueOnce({ exists: true, sizeBytes: 40 * MiB });
+    await complete(h);
+    expect(h.prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const lockOrder = h.prisma.$executeRaw.mock.invocationCallOrder[0];
+    const twinOrder = h.prisma.databankFile.findFirst.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(twinOrder);
+  });
+
+  it('[review] cancels (and frees storage) when the user lost access — deterministic, since part URLs stop at revocation too', async () => {
     const h = harness();
     h.databank.resolveWriteScope.mockRejectedValueOnce(new ForbiddenException('nope'));
     const res = await complete(h);
-    expect(res).toMatchObject({ status: 'failed', reason: expect.stringMatching(/still be saved/) });
-    expect(lastUpdateData(h)).toEqual(PARKED);
-    expect(h.storage.abortMultipartUpload).not.toHaveBeenCalled();
-    expect(h.storage.delete).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ status: 'failed', reason: expect.stringMatching(/cancelled/) });
+    expect(h.prisma.databankUpload.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'ABORTED', failureReason: 'access revoked' }) }),
+    );
+    expect(h.storage.abortMultipartUpload).toHaveBeenCalledWith('databank/clients/c1/k.zip', 'r2-up');
   });
 
   it('[review] a permanent commit error (destination deleted, P2003) is terminal: FAILED + storage freed, not retried forever', async () => {
@@ -556,6 +591,14 @@ describe('DatabankUploadService.signParts / listOpen', () => {
     h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session());
     const { parts: signed } = await h.svc.signParts('s1', { partNumbers: [4, 2, 4] } as never, USER);
     expect(signed.map((p) => p.partNumber)).toEqual([2, 4]);
+  });
+
+  it('[review] refuses new part URLs once the user has lost write access', async () => {
+    const h = harness();
+    h.prisma.databankUpload.findFirst.mockResolvedValueOnce(session());
+    h.databank.resolveWriteScope.mockRejectedValueOnce(new ForbiddenException('reassigned'));
+    await expect(h.svc.signParts('s1', { partNumbers: [1] } as never, USER)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(h.storage.presignUploadPart).not.toHaveBeenCalled();
   });
 
   it('rejects out-of-range parts, expired sessions and finished sessions', async () => {

@@ -3769,8 +3769,11 @@ model DatabankUpload {
   failureReason    String?
   /// When the R2 side (parts / object) of an ABORTED/FAILED session was freed.
   r2CleanedAt      DateTime?
-  /// The DatabankFile this session produced (COMPLETED only).
-  fileId           String?                @unique
+  /// The DatabankFile this session resolved to (COMPLETED only). NOT unique:
+  /// several sessions can resolve to one file (an identical twin uploaded by
+  /// another session is reused). "One session → at most one row" is enforced by
+  /// DatabankFile.uploadSessionId instead.
+  fileId           String?
   /// Resume deadline — 6 days after start, inside R2's 7-day auto-abort.
   expiresAt        DateTime
   createdAt        DateTime               @default(now())
@@ -3779,6 +3782,7 @@ model DatabankUpload {
   @@index([createdByUserId, status])
   @@index([status, expiresAt])
   @@index([status, completingAt])
+  @@index([fileId])
   @@map("databank_uploads")
   @@schema("processing")
 }

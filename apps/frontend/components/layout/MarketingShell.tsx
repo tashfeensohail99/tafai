@@ -36,6 +36,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 import { getMarketingAlerts } from '@/lib/marketing';
 
 export interface MarketingUser {
@@ -174,6 +175,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
         permissions: session.user.permissions,
       },
       logout: () => {
+        if (!confirmStopUploads()) return;
         sessionLogout();
         router.replace('/login');
       },

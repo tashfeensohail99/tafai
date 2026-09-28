@@ -1947,3 +1947,80 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
   }
 }
+
+/* =========================================================
+   Databank upload dock (resumable uploads, behind NEXT_PUBLIC_DATABANK_UPLOAD_V2)
+   Kept at the END of the file: .sos-glass sets position: relative and this must win.
+   z-index 90: above the topbar (20) / sidebar (30), below the mobile nav overlay (99),
+   modals (200+) and the CallDock (2000).
+   ========================================================= */
+.sos-upload-dock {
+  position: fixed;
+  right: var(--sos-space-5);
+  bottom: var(--sos-space-5);
+  z-index: 90;
+  width: min(420px, calc(100vw - 2 * var(--sos-space-3)));
+  max-height: min(60vh, 560px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--sos-radius-card);
+  overflow: hidden;
+  font-size: 13px;
+}
+.sos-upload-dock--pill {
+  width: min(340px, calc(100vw - 2 * var(--sos-space-3)));
+  max-height: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sos-upload-dock__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sos-space-2);
+  padding: var(--sos-space-3) var(--sos-space-4);
+  border-bottom: 1px solid var(--sos-border-subtle);
+}
+.sos-upload-dock .sos-banner {
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  backdrop-filter: none;
+}
+.sos-upload-dock__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sos-upload-dock__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sos-space-2);
+  padding: 6px var(--sos-space-4);
+  border-top: 1px solid var(--sos-border-subtle);
+  font-size: 12.5px;
+}
+.sos-upload-dock__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+html.has-upload-dock .sos-page-content,
+html.has-upload-dock .sos-page {
+  padding-bottom: 88px;
+}
+@media (max-height: 640px) {
+  .sos-upload-dock { max-height: calc(100vh - 96px); }
+}
+@media (max-width: 639px) {
+  .sos-upload-dock {
+    left: var(--sos-space-3);
+    right: var(--sos-space-3);
+    width: auto;
+    bottom: calc(var(--sos-space-3) + env(safe-area-inset-bottom));
+    max-height: 70vh;
+  }
+}

@@ -168,7 +168,13 @@ export async function refreshTokens(): Promise<string | null> {
   return refresh.kind === 'refreshed' ? refresh.accessToken : null;
 }
 
+/** Dispatched on window by logout() — the databank upload queue stops on it. */
+export const LOGOUT_EVENT = 'tafsheen:logout';
+
 export function logout() {
+  // Stop background work tied to this user (the upload queue) BEFORE the
+  // tokens go, so nothing flashes "signed out".
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(LOGOUT_EVENT));
   // Fire-and-forget revocation. The backend invalidates the refresh
   // token server-side so even if it lingers in some other tab it can't
   // be used. We don't await — logout is a UX action, not a transaction.

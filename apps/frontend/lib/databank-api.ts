@@ -42,6 +42,7 @@ import {
   uploadJrDatabankFile,
   uploadJrPersonalFile,
 } from './jr-databank';
+import type { DatabankBasePath } from './databank-upload/transport';
 
 /**
  * ONE Databank, several portals. The explorer (DatabankTab) and the landing
@@ -52,6 +53,8 @@ import {
  * and every portal gets it — no more parallel Processing / JR copies.
  */
 export interface DatabankApi {
+  /** This portal's databank API prefix (the resumable-upload routes live under it). */
+  uploadBase: DatabankBasePath;
   /** Route to this portal's per-client explorer page. */
   clientHref(clientId: string, name: string): string;
   /** Who besides the owner can see an associate's personal "My folders". */
@@ -87,6 +90,7 @@ export interface DatabankApi {
 }
 
 export const processingDatabankApi: DatabankApi = {
+  uploadBase: '/processing/databank',
   clientHref: (clientId, name) => `/processing/databank/${clientId}?name=${encodeURIComponent(name)}`,
   personalVisibleTo: 'a manager',
   readOnlyLabel: 'View only — assigned to another officer',
@@ -110,6 +114,7 @@ export const processingDatabankApi: DatabankApi = {
 };
 
 export const jrDatabankApi: DatabankApi = {
+  uploadBase: '/jr/databank',
   clientHref: (clientId, name) => `/jr/databank/${clientId}?name=${encodeURIComponent(name)}`,
   personalVisibleTo: 'a JR head',
   readOnlyLabel: 'View only — assigned to another associate',

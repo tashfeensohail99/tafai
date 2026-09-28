@@ -33,6 +33,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 import { fetchAgreementReviewCounts } from '@/lib/agreements';
 
 export interface FinanceUser {
@@ -157,6 +158,7 @@ export function FinanceShell({ children }: { children: ReactNode }) {
   };
 
   function logout() {
+    if (!confirmStopUploads()) return;
     sessionLogout();
     router.replace('/login');
   }

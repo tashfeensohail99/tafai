@@ -53,7 +53,8 @@ import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
 import { apiFetch, ApiClientError, isSessionRejected } from '@/lib/api-client';
 import { clearAllTokens, getAccessToken } from '@/lib/auth-client';
-import { invalidateSessionCache } from '@/lib/session';
+import { invalidateSessionCache, LOGOUT_EVENT } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 
 export interface AdminUser {
   id: string;
@@ -245,6 +246,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    if (!confirmStopUploads()) return;
+    window.dispatchEvent(new Event(LOGOUT_EVENT));
     clearAllTokens();
     invalidateSessionCache();
     setUser(null);

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import '../styles/globals.css';
 import { ThemeProvider } from '@/components/layout/ThemeProvider';
 import { BackendWarmup } from '@/components/layout/BackendWarmup';
+import { UploadDockHost } from '@/components/databank/UploadDockHost';
 
 export const metadata = {
   title: 'Tashfeen – Immigration Solutions',
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <ThemeProvider>
           <BackendWarmup />
+          <UploadDockHost />
           {children}
         </ThemeProvider>
       </body>

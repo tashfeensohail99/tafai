@@ -284,7 +284,7 @@ export function StageChangeModal({ caseRecord: c, onClose, onChanged }: StageCha
 
   if (allowed.length === 0) {
     return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div data-sos-modal="" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }} onClick={(e) => e.target === e.currentTarget && onClose()}>
         <div className="sos-glass sos-glass--strong" style={{ width: '100%', maxWidth: '460px', padding: '28px', borderRadius: 'var(--sos-radius-lg)' }}>
           <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--sos-text-primary)', marginBottom: '8px' }}>No transitions available</div>
           <div style={{ fontSize: '13px', color: 'var(--sos-text-muted)', marginBottom: '20px' }}>This case is in a terminal stage: <strong>{STAGE_LABEL[c.stage]}</strong>.</div>
@@ -296,7 +296,7 @@ export function StageChangeModal({ caseRecord: c, onClose, onChanged }: StageCha
 
   if (done) {
     return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+      <div data-sos-modal="" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
         <div className="sos-glass sos-glass--strong" style={{ width: '100%', maxWidth: '460px', padding: '28px', borderRadius: 'var(--sos-radius-lg)', textAlign: 'center' }}>
           <CheckCircle2 size={40} style={{ color: 'var(--sos-status-success)', marginBottom: '12px' }} />
           <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: '8px' }}>Stage updated</div>
@@ -311,7 +311,7 @@ export function StageChangeModal({ caseRecord: c, onClose, onChanged }: StageCha
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+      data-sos-modal="" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div

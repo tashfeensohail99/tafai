@@ -1764,3 +1764,18 @@ test('[review r7] after the laptop slept, a read that then gets stuck is still a
   assert.ok(stuckReads >= 1);
   assert.ok(env.clock - stuckSince < HASH_STALL_MS + 2 * 60_000, 'abandoned within the stall window, not an hour later');
 });
+
+test('[review r8] cancelling every file that waited on the drive ends the wait (no stale "is the drive connected?")', async () => {
+  const { env, engine } = setup();
+  env.readable = async () => false;
+  env.hash = async () => {
+    await tick();
+    throw new Error('NotReadableError');
+  };
+  engine.add([item('x.pdf', 12, { key: 'x', seed: 'x' }), item('y.pdf', 12, { key: 'y', seed: 'y' })]);
+  await until(() => engine.snapshot().readsWaiting, 100_000);
+  await engine.cancel('x');
+  await engine.cancel('y');
+  await until(() => !engine.snapshot().readsWaiting, 10_000);
+  assert.equal(engine.hasWork(), false);
+});

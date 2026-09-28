@@ -759,6 +759,9 @@ export class UploadEngine {
   }
 
   private pump(): void {
+    // Everything that waited on the source was cancelled / failed / finished:
+    // the wait is over (never a stale "is the drive connected?").
+    if (this.readWait && !this.hasWork()) this.endReadWait();
     // Hash in order. Local work, so it carries on while PAUSED — but not while
     // OFFLINE: a file streamed from a network drive can't be read then, and a
     // whole drop must not fail in a burst.
@@ -1048,12 +1051,17 @@ export class UploadEngine {
     if (this.lastRead && this.lastRead.job !== job) this.lastOtherRead = this.lastRead;
     this.lastRead = { job, at };
     if (this.readWait) {
-      this.readWait.wake.abort(); // every file waiting on the source goes again now
-      this.readWait = null;
       this.readWaitEndedAt = at;
-      this.notify();
+      this.endReadWait(); // every file waiting on the source goes again now
       this.schedule();
     }
+  }
+
+  private endReadWait(): void {
+    if (!this.readWait) return;
+    this.readWait.wake.abort();
+    this.readWait = null;
+    this.notify();
   }
 
   /** Was any file read successfully AFTER `t`? If not, test a file that WAS

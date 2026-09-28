@@ -20,7 +20,7 @@ import {
 import { getUploadQueue, useUploadQueue } from '@/lib/databank-upload-browser';
 import { batchSections, batchStateLine, dockHeadline, rowView } from '@/lib/databank-upload/dock-model';
 import type { RowAction, Tone } from '@/lib/databank-upload/dock-model';
-import type { BatchView, RowView } from '@/lib/databank-upload/queue';
+import type { BatchView, QueueNotice, RowView } from '@/lib/databank-upload/queue';
 
 const COLLAPSED_KEY = 'databank.uploadDock.collapsed';
 const readCollapsed = (): boolean => {
@@ -258,6 +258,33 @@ function BatchGroup({ b }: { b: BatchView }) {
   );
 }
 
+/** Another officer signed in: the uploads stopped — say so, and what was left. */
+function StoppedNotice({ notice, onOk }: { notice: QueueNotice; onOk: () => void }) {
+  return (
+    <div className="sos-upload-dock__header" role="alert">
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <AlertTriangle size={16} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 700 }}>Uploads stopped — someone else signed in on this browser</div>
+          {notice.lost.map((l) => (
+            <div key={l.label} style={{ fontSize: 12.5, opacity: 0.8 }}>
+              {l.count.toLocaleString('en-US')} {l.count === 1 ? 'file' : 'files'} for {l.label} were not uploaded.
+            </div>
+          ))}
+          <div style={{ fontSize: 12.5, marginTop: 4 }}>
+            Sign back in and drop the same files or folder again — saved files are skipped, half-sent ones continue.
+          </div>
+        </div>
+      </div>
+      <div>
+        <button type="button" className="sos-btn sos-btn--sm" onClick={onOk}>
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function UploadDock() {
   const snap = useUploadQueue();
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed());
@@ -287,31 +314,11 @@ export default function UploadDock() {
     return () => window.removeEventListener('keydown', onKey);
   }, [collapsed]);
 
-  if (snap.notice && !snap.batches.length) {
-    // Another officer signed in: the uploads stopped — say so, and what was left.
+  const notice = snap.notice ? <StoppedNotice notice={snap.notice} onOk={() => q.dismissNotice()} /> : null;
+  if (notice && !snap.batches.length) {
     return (
-      <section className="sos-upload-dock sos-glass sos-glass--strong" role="alert" aria-label="Uploads stopped">
-        <header className="sos-upload-dock__header">
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <AlertTriangle size={16} />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontWeight: 700 }}>Uploads stopped — someone else signed in on this browser</div>
-              {snap.notice.lost.map((l) => (
-                <div key={l.label} style={{ fontSize: 12.5, opacity: 0.8 }}>
-                  {l.count.toLocaleString('en-US')} {l.count === 1 ? 'file' : 'files'} for {l.label} were not uploaded.
-                </div>
-              ))}
-              <div style={{ fontSize: 12.5, marginTop: 4 }}>
-                Sign back in and drop the same files or folder again — saved files are skipped, half-sent ones continue.
-              </div>
-            </div>
-          </div>
-          <div>
-            <button type="button" className="sos-btn sos-btn--sm" onClick={() => q.dismissNotice()}>
-              OK
-            </button>
-          </div>
-        </header>
+      <section className="sos-upload-dock sos-glass sos-glass--strong" role="region" aria-label="Uploads stopped">
+        {notice}
       </section>
     );
   }
@@ -351,6 +358,7 @@ export default function UploadDock() {
             {h.title}
           </span>
           {snap.attention ? <span className="sos-badge sos-badge--warning">{snap.attention} need you</span> : null}
+          {snap.notice ? <span className="sos-badge sos-badge--warning">Uploads stopped</span> : null}
         </div>
         {snap.active ? (
           <div className="sos-progress" style={{ height: 3, borderRadius: 0 }}>
@@ -455,7 +463,8 @@ export default function UploadDock() {
           Waiting for internet — nothing is lost. It continues by itself.
         </div>
       ) : null}
-      {!snap.offline && !snap.linkDown && snap.readsWaiting ? (
+      {notice}
+      {!snap.offline && !snap.linkDown && snap.readsWaiting && unfinished > 0 ? (
         <div className="sos-banner sos-banner--warning" style={{ margin: 8, fontSize: 12.5 }}>
           Can’t read the files right now — is the USB drive, network drive or Google Drive connected? Nothing is lost;
           the uploads continue by themselves once it is.

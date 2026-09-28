@@ -77,7 +77,7 @@ export function CloseCaseModal({ caseRecord: c, onClose, onClosed }: CloseCaseMo
 
   if (done) {
     return (
-      <div style={overlayStyle}>
+      <div data-sos-modal="" style={overlayStyle}>
         <div
           className="sos-glass sos-glass--strong"
           style={{ width: '100%', maxWidth: '460px', padding: '28px', borderRadius: 'var(--sos-radius-lg)', textAlign: 'center' }}
@@ -97,7 +97,7 @@ export function CloseCaseModal({ caseRecord: c, onClose, onClosed }: CloseCaseMo
 
   return (
     <div
-      style={overlayStyle}
+      data-sos-modal="" style={overlayStyle}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div

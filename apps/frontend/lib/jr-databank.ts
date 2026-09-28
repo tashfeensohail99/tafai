@@ -70,7 +70,8 @@ export async function directUploadJrDatabankFile(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...bodyBase, storageKey }),
       cache: 'no-store',
-      signal,
+      // No signal: once sent, the server records the file whatever the tab does —
+      // aborting would only make the dock say "Cancelled" about a saved file.
     });
   // Already stored (only the commit's reply was lost): record it, don't re-upload.
   if (opts.commitKey) return commit(opts.commitKey);

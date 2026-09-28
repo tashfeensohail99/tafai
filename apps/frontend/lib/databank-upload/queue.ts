@@ -136,6 +136,8 @@ export interface QueueSnapshot {
 
 export interface QueueNotice {
   reason: 'user-changed';
+  /** The officer whose uploads stopped (their next drop clears the notice). */
+  ownerSub?: string;
   /** Per drop: files that were NOT uploaded. */
   lost: Array<{ label: string; count: number }>;
 }
@@ -237,6 +239,9 @@ interface LegacyRow {
   tries?: number;
   /** The bytes are in storage under this key: a retry only records them. */
   storedKey?: string;
+  /** Cancel came after the bytes were stored: it is being recorded anyway. */
+  lateCancel?: boolean;
+  note?: string;
 }
 
 function statusOf(e: unknown): number {
@@ -374,8 +379,7 @@ export class UploadQueue {
     const lg = this.legacy.get(rowId);
     if (lg) {
       if (lg.status === 'waiting' || lg.status === 'uploading') {
-        lg.status = 'cancelled';
-        lg.ctrl?.abort(); // (if it had already been recorded, the runner shows it saved)
+        this.cancelLegacy(lg);
         this.afterChange();
       }
       return;
@@ -442,10 +446,7 @@ export class UploadQueue {
     b.ctrl.abort();
     for (const rowId of b.legacyIds) {
       const lg = this.legacy.get(rowId);
-      if (lg?.status === 'waiting' || lg?.status === 'uploading') {
-        lg.status = 'cancelled';
-        lg.ctrl?.abort();
-      }
+      if (lg?.status === 'waiting' || lg?.status === 'uploading') this.cancelLegacy(lg);
     }
     const pendingKeys = new Set(b.pending.map((it) => it.key));
     b.pending = [];
@@ -583,7 +584,7 @@ export class UploadQueue {
         }
         if (count) lost.push({ label: b.meta.label, count });
       }
-      this.notice = lost.length ? { reason, lost } : undefined;
+      this.notice = lost.length ? { reason, lost, ownerSub: this.ownerId ?? undefined } : undefined;
     }
     this.shut = true;
     this.gen += 1;
@@ -666,6 +667,9 @@ export class UploadQueue {
     const sub = jwtSub(this.deps.accessToken());
     if (!sub) throw new Error('Sign in again to upload.');
     if (this.ownerId && sub !== this.ownerId) this.shutdown('user-changed');
+    // The officer whose uploads stopped is back and dropping again: the notice
+    // ("N files were not uploaded") has done its job and would soon be untrue.
+    if (this.notice && this.notice.ownerSub === sub) this.notice = undefined;
     this.ownerId = sub;
   }
 
@@ -727,9 +731,7 @@ export class UploadQueue {
     const ob = existing ? this.batches.get(existing.batchId) : undefined;
     if (existing && ob) {
       const st = this.rowStatus(existingId!);
-      // (A file the standard upload already saved stays saved: asking the server
-      // again could upload it twice — the standard upload never dedupes.)
-      if (LIVE.has(st) || st === 'queued' || (st === 'done' && this.legacy.has(existingId!))) {
+      if (LIVE.has(st) || st === 'queued') {
         b.alreadyListed += 1;
         return;
       }
@@ -853,6 +855,18 @@ export class UploadQueue {
       if (!best || (express && !this.isExpress(best)) || (express === this.isExpress(best) && b.seq < best.seq)) best = b;
     }
     return best ? this.legacyLanes.get(best.id)!.shift() : undefined;
+  }
+
+  /** Stop a standard upload — unless its bytes are already stored: then it is
+   *  being recorded (or was, if a reply got lost) and Cancel can't undo that;
+   *  it finishes and says so. */
+  private cancelLegacy(lg: LegacyRow): void {
+    if (lg.storedKey) {
+      lg.lateCancel = true;
+      return;
+    }
+    lg.status = 'cancelled';
+    lg.ctrl?.abort();
   }
 
   private forgetLegacy(b: Batch, rowId: string): void {
@@ -1181,6 +1195,7 @@ export class UploadQueue {
         let progressed = true;
         let stalled = false;
         const stopWatch = new AbortController();
+        if (lg.storedKey) stopWatch.abort(); // only recording left: nothing to stall
         const watch = (async () => {
           let quiet = 0;
           while (!stopWatch.signal.aborted) {
@@ -1211,12 +1226,14 @@ export class UploadQueue {
               commitKey: lg.storedKey,
               onStored: (key) => {
                 lg.storedKey = key;
+                stopWatch.abort(); // the commit is not "stalled" while the server records it
               },
             },
           );
           // Recorded — even if Cancel came too late to stop it.
           lg.status = 'done';
           lg.storedKey = undefined;
+          if (lg.lateCancel) lg.note = 'It was already being saved, so it could not be cancelled — delete it from the folder if unwanted.';
           lg.bytesDone = r.item.source.size;
           lg.file = file;
           if (this.sameUser()) this.noteLanded(b.dataScope, [file], false);
@@ -1225,6 +1242,11 @@ export class UploadQueue {
           const now = lg.status as LegacyRow['status']; // (Cancel may have changed it during the await)
           if (now === 'cancelled') {
             // The officer stopped it (or signed out).
+          } else if (lg.lateCancel) {
+            // Cancelled while it was being recorded, and the recording failed —
+            // or only its reply got lost. Don't try again; say what to check.
+            lg.status = 'cancelled';
+            lg.note = 'It may already have been saved — check the folder and delete it if unwanted.';
           } else if (status === 401) {
             lg.status = 'waiting';
             lg.bytesDone = 0;
@@ -1322,7 +1344,7 @@ export class UploadQueue {
     for (const b of this.batches.values()) {
       const snap = snaps.get(b);
       if (snap?.linkDown || b.linkWait) linkDown = true;
-      if (snap?.readsWaiting) readsWaiting = true;
+      if (snap?.readsWaiting && this.hasWork(b)) readsWaiting = true; // (a finished / cancelled drop's wait is over)
       const byKey = new Map((snap?.files ?? []).map((f) => [f.key, f]));
       const pendingKeys = new Set(b.pending.map((it) => it.key));
       const rows: RowView[] = [];
@@ -1350,6 +1372,7 @@ export class UploadQueue {
             error: lg.error,
             retryable: lg.status === 'failed' ? true : undefined,
             file: lg.file,
+            note: lg.note,
             legacy: true,
           };
         } else if (byKey.has(r.key) && !pendingKeys.has(r.key)) {

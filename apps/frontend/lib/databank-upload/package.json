@@ -1,0 +1,5 @@
+{
+  "//": "ESM so `node --test` can run these .ts files natively (Node type stripping). Next.js ignores it.",
+  "type": "module",
+  "private": true
+}

@@ -27,8 +27,15 @@ export async function hashFile(
 ): Promise<string> {
   if (signal.aborted) throw aborted();
   if (file.size <= WEBCRYPTO_MAX && typeof crypto !== 'undefined' && crypto.subtle) {
-    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-    if (signal.aborted) throw aborted();
+    // Race the read against the signal: a read that hangs (a stalled network
+    // drive) must not hold the hash slot — Cancel frees it at once.
+    const stop = new Promise<never>((_, reject) => {
+      if (signal.aborted) reject(aborted());
+      else signal.addEventListener('abort', () => reject(aborted()), { once: true });
+    });
+    stop.catch(() => undefined);
+    const bytes = await Promise.race([file.arrayBuffer(), stop]);
+    const digest = await Promise.race([crypto.subtle.digest('SHA-256', bytes), stop]);
     onProgress(file.size);
     return toHex(digest);
   }

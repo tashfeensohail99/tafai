@@ -58,9 +58,14 @@ export class FakeServer implements UploadTransport {
   /** Virtual sleep (set by setup) for faults that take time. */
   sleep: (ms: number, signal?: AbortSignal) => Promise<void> = async () => undefined;
 
-  /** Plan like the server, scaled down: ≤ 25 bytes SINGLE, else 10-byte parts. */
+  /** Plan like the server, scaled down: ≤ 25 bytes SINGLE, else 10-byte parts —
+   *  and for "big" sizes (> 1 MB, e.g. a 300 MiB test file) 16 equal parts, so
+   *  a test never plans millions of parts. */
   plan(size: number) {
-    return size <= 25 ? { partSize: size, partCount: 1 } : { partSize: 10, partCount: Math.ceil(size / 10) };
+    if (size <= 25) return { partSize: size, partCount: 1 };
+    if (size <= 1_000_000) return { partSize: 10, partCount: Math.ceil(size / 10) };
+    const partSize = Math.ceil(size / 16);
+    return { partSize, partCount: Math.ceil(size / partSize) };
   }
 
   private async api<T>(method: 'init' | 'sign' | 'complete' | 'abort', signal: AbortSignal, body: () => T): Promise<T> {

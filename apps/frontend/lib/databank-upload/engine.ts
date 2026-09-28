@@ -606,8 +606,7 @@ export class UploadEngine {
       files: this.jobs.map((j) => ({ ...j.view })),
       paused: this.paused,
       offline: this.offline,
-      linkDown:
-        this.failuresInARow.storage >= LINK_DOWN_AFTER || this.failuresInARow.api >= LINK_DOWN_AFTER,
+      linkDown: this.linkLooksDown(),
       slots: this.slots,
     };
   }
@@ -640,7 +639,13 @@ export class UploadEngine {
   }
 
   private unhalt(): void {
-    if (this.halted) return;
+    if (this.halted) {
+      // Still halted by the OTHER reason (paused + offline): the view changed
+      // anyway, and hashing — gated only on offline — may be able to run now.
+      this.notify();
+      this.schedule();
+      return;
+    }
     if (this.haltedSince !== null) {
       this.exclude(this.haltedSince, this.now());
       this.haltedSince = null;
@@ -831,6 +836,7 @@ export class UploadEngine {
     job.inflight.clear();
     job.pending = [];
     job.cooling.clear();
+    job.unreadableSince.clear();
     job.urls.clear();
     job.signing = undefined;
     job.view.bytesInFlight = 0;
@@ -892,6 +898,11 @@ export class UploadEngine {
       timer.abort();
       unlink();
     }
+  }
+
+  /** Several requests in a row got no answer and nothing got through. */
+  private linkLooksDown(): boolean {
+    return this.failuresInARow.storage >= LINK_DOWN_AFTER || this.failuresInARow.api >= LINK_DOWN_AFTER;
   }
 
   private succeeded(channel: Channel): void {
@@ -958,6 +969,14 @@ export class UploadEngine {
         this.set(job, { status: 'queued', hashedBytes: 0 }); // hashed again once back online
         return;
       }
+      if (this.linkLooksDown()) {
+        // The browser says "online" but nothing gets through (ISP down, Wi-Fi up):
+        // a Drive-streamed / NAS file can't be read either. Not the file's fault —
+        // wait (outage-style back-off) and don't count it.
+        this.set(job, { status: 'queued', hashedBytes: 0 });
+        void this.hashRetryLater(job, gen, 5);
+        return;
+      }
       job.hashFailures += 1;
       if (job.hashFailures < 3) {
         // Maybe a network drive / Drive stream that hiccuped: try again shortly.
@@ -974,10 +993,10 @@ export class UploadEngine {
   }
 
   /** Park a queued job for a back-off, then let the pump hash it again. */
-  private async hashRetryLater(job: Job, gen: number): Promise<void> {
+  private async hashRetryLater(job: Job, gen: number, tries = job.hashFailures * 2): Promise<void> {
     job.parked = true;
     try {
-      await this.backoff(backoffMs(job.hashFailures * 2, this.env.random), job, false);
+      await this.backoff(backoffMs(tries, this.env.random), job, false);
     } finally {
       if (job.gen === gen) job.parked = false;
       this.schedule();
@@ -1290,6 +1309,9 @@ export class UploadEngine {
       const [start, end] = partRange(n, job.session.partSize, job.item.source.size);
       const verdict = await this.probe(job, start, end);
       if (job.gen !== gen) return;
+      // This attempt READ the file (it sent bytes): any older "unreadable" mark
+      // is disproved — only a fresh verdict counts.
+      if (f.loaded > 0) job.unreadableSince.delete(n);
       if (verdict === 'unreadable') {
         const since = job.unreadableSince.get(n);
         // Proof must come AFTER the first "unreadable": a sibling PUT that landed

@@ -1238,3 +1238,101 @@ test('[review r4] nothing is hashed while offline; a read that fails while onlin
   assert.equal(hashes, 3, 'two failed reads were retried');
   assert.equal(server.recorded.length, 1);
 });
+
+// ---- review round 5 -------------------------------------------------------------
+
+test('[review r5] an attempt that streamed bytes voids an old "unreadable" mark: a second outage does not fail a streamed file', async () => {
+  const { server, env, engine } = setup();
+  let outage = 0; // 0 = up; 1 / 2 = first / second outage
+  env.readable = async () => outage === 0;
+  server.apiFault = () => (outage ? 0 : 'ok');
+  let attempt1 = 0;
+  const realPut = server.put.bind(server);
+  server.put = async (part, body, onProgress, signal) => {
+    const [, , , , n] = part.url.split('/');
+    if (n !== '1') {
+      if (outage) throw new TransportError('network down', 0);
+      return realPut(part, body, onProgress, signal);
+    }
+    attempt1 += 1;
+    if (attempt1 === 1) {
+      outage = 1; // outage 1 hits part 1 → "unreadable" mark
+      throw new TransportError('network down', 0);
+    }
+    if (attempt1 === 2) {
+      onProgress(4); // the retry STREAMS bytes (the file is readable again)…
+      await server.sleep(2_000, signal);
+      outage = 2; // …then a second short drop
+      throw new TransportError('network down', 0);
+    }
+    return realPut(part, body, onProgress, signal);
+  };
+  engine.add([item('flap.bin', 30)]);
+  await until(() => outage === 1);
+  const t1 = env.clock;
+  await until(() => env.clock - t1 > 60_000);
+  outage = 0; // link back: part 1 is re-signed and retried
+  await until(() => outage === 2);
+  const t2 = env.clock;
+  await until(() => env.clock - t2 > 60_000);
+  assert.notEqual(statuses(engine)['flap.bin'], 'failed', 'the old mark was not taken as proof');
+  outage = 0;
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['flap.bin'], 'done');
+});
+
+test('[review r5] back online while PAUSED: hashing restarts and listeners hear about it', async () => {
+  const { server, engine } = setup();
+  engine.pause();
+  engine.setOnline(false);
+  engine.add([item('p1.pdf', 12), item('p2.pdf', 12)]);
+  await engine.whenIdle(); // offline: queued files wait
+  assert.deepEqual(Object.values(statuses(engine)), ['queued', 'queued']);
+  let notified = 0;
+  engine.subscribe(() => notified++);
+  engine.setOnline(true); // still paused
+  await engine.whenIdle();
+  assert.ok(notified > 0, 'the dock is told the connection is back');
+  assert.equal(engine.snapshot().offline, false);
+  assert.deepEqual(Object.values(statuses(engine)), ['hashed', 'hashed'], 'hashing ran while paused');
+  assert.equal(server.initCalls.length, 0, 'but nothing was sent');
+  engine.resume();
+  await engine.whenIdle();
+  assert.deepEqual(Object.values(statuses(engine)), ['done', 'done']);
+});
+
+test('[review r5] resume() during an outage still tells listeners the pause ended', async () => {
+  const { engine } = setup();
+  engine.setOnline(false);
+  engine.pause();
+  await tick(); // let the pause's own update go by first
+  let notified = 0;
+  engine.subscribe(() => notified++);
+  engine.resume();
+  await tick();
+  assert.ok(notified > 0);
+  assert.equal(engine.snapshot().paused, false);
+});
+
+test('[review r5] reads failing while the ENGINE sees the link down (browser still "online") are not counted', async () => {
+  const { server, env, engine } = setup();
+  let outage = true;
+  server.apiFault = () => (outage ? 0 : 'ok');
+  let reads = 0;
+  env.hash = async (source) => {
+    await tick();
+    if ((source as FakeSource).sha.startsWith(Buffer.from('streamed').toString('hex')) && outage) {
+      reads += 1;
+      throw new Error('NotReadableError'); // a Drive stream: unreadable while the ISP is down
+    }
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('local.pdf', 12), item('streamed-a.pdf', 12, { seed: 'streamed-a' }), item('streamed-b.pdf', 12, { seed: 'streamed-b' })]);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000); // ten minutes of ISP outage (Wi-Fi up)
+  assert.ok(reads > 4, `the streamed files kept being retried (${reads} reads)`);
+  assert.equal(Object.values(statuses(engine)).filter((s) => s === 'failed').length, 0, 'none failed');
+  outage = false;
+  await engine.whenIdle();
+  assert.deepEqual(Object.values(statuses(engine)), ['done', 'done', 'done']);
+});

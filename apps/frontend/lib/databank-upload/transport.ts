@@ -83,16 +83,18 @@ export function makeUploadTransport(base: DatabankBasePath, target: UploadTarget
   };
 }
 
-/** Get-or-create a dropped folder tree in one call: paths → folder ids. */
+/** Get-or-create a dropped folder tree in one call: paths → folder ids. The
+ *  caller's `signal` bounds it (timeout / cancel) like every engine call. */
 export function ensureFolderPaths(
   base: DatabankBasePath,
   target: UploadTarget,
   parentFolderId: string | null,
   paths: string[],
+  signal?: AbortSignal,
 ): Promise<{ folders: Record<string, string>; created: number }> {
   const q = target.userId && base === '/processing/databank' ? `?userId=${encodeURIComponent(target.userId)}` : '';
   const scope = target.personal ? { personal: true } : { clientId: target.clientId };
-  return call(`${base}/folders/ensure-paths${q}`, json({ ...scope, parentFolderId, paths }));
+  return call(`${base}/folders/ensure-paths${q}`, json({ ...scope, parentFolderId, paths }), signal);
 }
 
 /** PUT one part straight to R2 with upload progress. No auth header — the

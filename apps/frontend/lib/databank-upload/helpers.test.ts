@@ -88,23 +88,26 @@ test('summary: counts, bytes (skipped/cancelled/duplicates excluded), headline w
   assert.equal(s.active, true);
   assert.equal(
     headline(s, 6.2e6, 48 * 60),
-    '9 files — 3 completed · 2 uploading · 1 waiting · 1 to review · 1 already there · 1 failed — 9.6 GB of 20 GB · 6.2 MB/s · ~48 min',
+    '9 files — 3 completed · 2 uploading · 1 waiting · 1 to review · 1 already there · 1 failed — 8.9 GB of 19 GB · 5.9 MB/s · ~48 min',
   );
 });
 
 test('summary: finished batch shows no speed/ETA; singular "file"', () => {
   const s = summarize([f('done', 950_000, 950_000)]);
   assert.equal(s.active, false);
-  assert.equal(headline(s, 1e6, 3), '1 file — 1 completed — 950 KB of 950 KB');
+  assert.equal(headline(s, 1e6, 3), '1 file — 1 completed — 928 KB of 928 KB');
 });
 
 test('formatting', () => {
+  // 1,024-based, like Windows Explorer (and the server's "2 GB" limit = 2,147,483,647 bytes)
   assert.equal(formatBytes(0), '0 B');
-  assert.equal(formatBytes(999), '999 B');
-  assert.equal(formatBytes(1500), '1.5 KB');
-  assert.equal(formatBytes(4.1e9), '4.1 GB');
-  assert.equal(formatBytes(25e9), '25 GB');
-  assert.equal(formatBytes(2e9), '2 GB');
+  assert.equal(formatBytes(1023), '1023 B');
+  assert.equal(formatBytes(1536), '1.5 KB');
+  assert.equal(formatBytes(4.1e9), '3.8 GB');
+  assert.equal(formatBytes(2_147_483_647), '2 GB');
+  assert.equal(formatBytes(12 * 2 ** 30), '12 GB');
+  assert.equal(formatBytes(25e9), '23 GB');
+  assert.equal(formatBytes(1.5 * 2 ** 40), '1.5 TB');
   assert.equal(formatEta(null), null);
   assert.equal(formatEta(30), '< 1 min');
   assert.equal(formatEta(48 * 60), '~48 min');

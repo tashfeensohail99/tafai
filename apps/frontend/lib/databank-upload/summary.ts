@@ -69,12 +69,14 @@ export function summarize(files: FileView[]): UploadSummary {
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
 
-/** 1,000-based like Drive/Windows Explorer: "950 KB", "4.1 GB", "12 GB". */
+/** 1,024-based and labelled "KB/MB/GB" like Windows Explorer, which is what
+ *  officers compare against — and what the server's "N GB per file" limit
+ *  text means: "928 KB", "3.8 GB", "12 GB". */
 export function formatBytes(n: number): string {
   let v = Math.max(0, n);
   let u = 0;
-  while (v >= 1000 && u < UNITS.length - 1) {
-    v /= 1000;
+  while (v >= 1024 && u < UNITS.length - 1) {
+    v /= 1024;
     u += 1;
   }
   const text = u === 0 || v >= 10 ? Math.round(v).toString() : v.toFixed(1).replace(/\.0$/, '');

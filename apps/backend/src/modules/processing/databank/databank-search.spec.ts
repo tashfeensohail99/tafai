@@ -134,6 +134,25 @@ describe('DatabankService.searchDatabank', () => {
     expect(rq.values).toContain(`%${needle}%`); // the ILIKE substring argument
   });
 
+  it('non-empty q matches tags by substring (tags are unstemmed vs the english query, so ILIKE covers them)', async () => {
+    const { svc, resultsQ } = harness();
+    await svc.searchDatabank(USER, { clientId: 'c1', q: 'visas' });
+    const sql = String(resultsQ().sql);
+    // fileName AND the joined tags both get a substring fallback alongside @@.
+    expect(sql).toContain(`"fileName" ILIKE`);
+    expect(sql).toContain(`array_to_string("tags", ' ') ILIKE`);
+  });
+
+  it('ORDER BY always ends with the unique "id" tiebreaker (stable pagination)', async () => {
+    const { svc, resultsQ } = harness();
+    await svc.searchDatabank(USER, { clientId: 'c1', q: 'passport' });
+    expect(String(resultsQ().sql)).toMatch(/ORDER BY ts_rank[\s\S]*"createdAt" DESC, "id" DESC/);
+
+    const noQ = harness();
+    await noQ.svc.searchDatabank(USER, { clientId: 'c1' });
+    expect(String(noQ.resultsQ().sql)).toContain('ORDER BY "createdAt" DESC, "id" DESC');
+  });
+
   it('a type filter narrows results and total is summed from the selected facet buckets', async () => {
     const { svc, resultsQ, facetQ } = harness();
     const out = await svc.searchDatabank(USER, { clientId: 'c1', types: ['image', 'pdf', 'bogus'] });

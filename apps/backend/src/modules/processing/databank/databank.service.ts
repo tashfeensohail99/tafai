@@ -386,7 +386,11 @@ export class DatabankService {
     const hasQ = q.length > 0;
     if (hasQ) {
       filters.push(
-        Prisma.sql`("searchVector" @@ websearch_to_tsquery('english', ${q}) OR "fileName" ILIKE ${`%${q}%`})`,
+        // fileName + tags carry 'simple' (unstemmed) lexemes but the query is
+        // 'english' (good for the description), so an inflected term won't match
+        // them via @@ — a substring fallback on the name AND the joined tags keeps
+        // exact-term name/tag hits working regardless of stemming.
+        Prisma.sql`("searchVector" @@ websearch_to_tsquery('english', ${q}) OR "fileName" ILIKE ${`%${q}%`} OR array_to_string("tags", ' ') ILIKE ${`%${q}%`})`,
       );
     }
     const facetWhere = Prisma.join(filters, ' AND ');
@@ -412,9 +416,11 @@ export class DatabankService {
     const pageSize = Math.min(200, Math.max(1, Math.floor(params.pageSize ?? 50)));
     const offset = (page - 1) * pageSize;
 
+    // "id" is the final, unique tiebreaker so LIMIT/OFFSET paging is stable when
+    // ts_rank / createdAt tie (else a page boundary could drop or repeat a row).
     const orderBy = hasQ
-      ? Prisma.sql`ORDER BY ts_rank("searchVector", websearch_to_tsquery('english', ${q})) DESC, "createdAt" DESC`
-      : Prisma.sql`ORDER BY "createdAt" DESC`;
+      ? Prisma.sql`ORDER BY ts_rank("searchVector", websearch_to_tsquery('english', ${q})) DESC, "createdAt" DESC, "id" DESC`
+      : Prisma.sql`ORDER BY "createdAt" DESC, "id" DESC`;
 
     type FileRow = {
       id: string;

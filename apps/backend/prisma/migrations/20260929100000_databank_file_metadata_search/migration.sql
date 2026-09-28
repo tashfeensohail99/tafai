@@ -6,12 +6,25 @@ ALTER TABLE "processing"."databank_files"
   ADD COLUMN "tags" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   ADD COLUMN "customFields" JSONB;
 
+-- array_to_string() is only STABLE (it invokes element output functions), and a
+-- generated-column expression must be IMMUTABLE, so it cannot be called there
+-- directly. For text[] the join IS deterministic, so wrap it in an IMMUTABLE
+-- function the generated expression can use. coalesce guards a NULL array.
+CREATE OR REPLACE FUNCTION "processing"."databank_tags_text"(TEXT[])
+  RETURNS TEXT
+  LANGUAGE sql
+  IMMUTABLE
+  PARALLEL SAFE
+AS $$
+  SELECT array_to_string(COALESCE($1, ARRAY[]::TEXT[]), ' ')
+$$;
+
 ALTER TABLE "processing"."databank_files"
   ADD COLUMN "searchVector" tsvector
   GENERATED ALWAYS AS (
     setweight(to_tsvector('simple', coalesce("fileName", '')), 'A') ||
     setweight(to_tsvector('english', coalesce("description", '')), 'B') ||
-    setweight(to_tsvector('simple', array_to_string("tags", ' ')), 'A')
+    setweight(to_tsvector('simple', "processing"."databank_tags_text"("tags")), 'A')
   ) STORED;
 
 CREATE INDEX "databank_files_search_idx"

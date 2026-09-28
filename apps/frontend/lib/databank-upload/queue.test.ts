@@ -1140,3 +1140,72 @@ test('queue: [review r5] "Remove" on a standard-upload row whose save was refuse
   await until(() => statusByName(q)['c.pdf'] === 'cancelled', 10_000);
   assert.match(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.note ?? '', /may already have been saved/);
 });
+
+// ---- review round 6 ------------------------------------------------------------------------
+
+test('queue: [review r6] Cancel on a drop stops it at once — the rest does not keep uploading while the DELETEs go out', async () => {
+  const { q, server } = qsetup();
+  const realAbort = server.abort.bind(server);
+  server.abort = async (id, signal) => {
+    await server.sleep(800, signal); // DELETEs are slow (the Seoul DB)
+    return realAbort(id, signal);
+  };
+  const realPut = server.put.bind(server);
+  server.put = async (part, body, onProgress, signal) => {
+    await server.sleep(300, signal);
+    return realPut(part, body, onProgress, signal);
+  };
+  const id = q.enqueueFiles(CLIENT_A, meta(), Array.from({ length: 300 }, (_, i) => drop(`k${i}.pdf`, 5, undefined, 1, `k${i}`)));
+  await until(() => server.recorded.length >= 20, 400_000);
+  const at = server.recorded.length;
+  await q.cancelBatch(id);
+  await settled(q, 400_000);
+  assert.ok(server.recorded.length - at <= 10, `${server.recorded.length - at} files still recorded after Stop`);
+});
+
+test('queue: [review r6] Retry on a standard-upload row whose bytes were stored only records them — no second upload, no question again', async () => {
+  const { q, server, s } = qsetup();
+  const existing = { id: 'f9', fileName: 'a.pdf', folderId: null, folderName: 'Databank', createdAt: '2026-01-01T00:00:00Z' };
+  const realInit = server.init.bind(server);
+  server.init = async (files, signal) => {
+    if (files.every((f) => f.allowDuplicate)) {
+      server.initCalls.push(files);
+      return { mode: 'proxy' } as never;
+    }
+    return realInit(files, signal);
+  };
+  server.initOverride = (f, index) => (f.allowDuplicate ? null : { index, status: 'possible-duplicate', existing });
+  let lose = true;
+  s.legacyCommitFault = (name) => (name === 'a.pdf' && lose ? 'lost' : null); // recorded — its replies lost
+  const id = q.enqueueFiles(CLIENT_A, meta(), [drop('a.pdf', 5)]);
+  await until(() => q.getSnapshot().batches[0]?.state === 'needs-you', 50_000);
+  q.resolveAllDuplicates(id, 'upload');
+  await until(() => statusByName(q)['a.pdf'] === 'failed', 400_000);
+  lose = false;
+  q.retryFailed();
+  await settled(q, 200_000);
+  assert.equal(statusByName(q)['a.pdf'], 'done');
+  assert.equal(s.legacyCalls.filter((c) => c.name === 'a.pdf').length, 1, 'uploaded once');
+  assert.equal(s.legacyRecorded.size, 1, 'recorded once');
+});
+
+test('queue: [review r6] the "uploads stopped" notice does not count files whose Cancel is still going out', async () => {
+  const { q, server, s } = qsetup();
+  const realAbort = server.abort.bind(server);
+  server.abort = async (id, signal) => {
+    await server.sleep(10 * 60_000, signal); // a Cancel that takes a long time to be answered
+    return realAbort(id, signal);
+  };
+  server.fault = () => 'hang';
+  const id = q.enqueueFiles(CLIENT_A, meta('Ali Khan'), [drop('a.bin', 200), drop('b.bin', 200, undefined, 1, 'b')]);
+  await until(() => server.inFlight > 0, 50_000);
+  void q.cancelBatch(id);
+  await until(() => rowsOf(q).some((r) => r.status === 'cancelling'), 50_000);
+  server.fault = () => 'ok';
+  s.token = jwt('officer-2');
+  s.sub = 'officer-2';
+  q.enqueueFiles(CLIENT_B, meta('Walk-in'), [drop('w.pdf', 5, undefined, 1, 'w')]);
+  await tick();
+  assert.equal(q.getSnapshot().notice, undefined, 'nothing to report: those were being cancelled');
+  q.shutdown('logout');
+});

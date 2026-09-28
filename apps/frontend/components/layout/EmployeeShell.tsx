@@ -390,7 +390,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
         </aside>
 
         {mobileOpen ? (
-          <div data-sos-modal="" aria-hidden onClick={() => setMobileOpen(false)} className="sos-drawer-backdrop" />
+          <div aria-hidden onClick={() => setMobileOpen(false)} className="sos-drawer-backdrop" />
         ) : null}
 
         {/* Content */}

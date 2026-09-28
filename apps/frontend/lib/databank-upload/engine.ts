@@ -162,6 +162,8 @@ export interface FileView {
   retryable?: boolean;
   /** Extra context for the row (e.g. "already saved — could not be cancelled"). */
   note?: string;
+  /** "Retry failed" leaves this failed row alone (an explicit Retry still works). */
+  bulkSkip?: boolean;
   /** Done: the recorded file row. */
   file?: unknown;
 }
@@ -243,6 +245,10 @@ export const NO_PROOF_GIVE_UP_MS = 30 * 60_000;
  *  or a good read — a paused 20k-file drop must not read every file in turn. */
 const HALTED_READ_FAILS_MAX = 3;
 const PROBE_TIMEOUT_MS = 30_000;
+/** Cancels ask the server to discard sessions this many at a time (a drop of
+ *  2,000 files must not send 2,000 DELETEs at once) — the files themselves
+ *  stop at once. */
+const ABORT_POOL = 4;
 /** A back-off that wakes this much later than asked means the machine slept
  *  (or the tab was frozen): that time is not "trying" and never counts toward
  *  the give-up window. (Hidden tabs throttle timers to ~1/min, hence the margin.) */
@@ -354,6 +360,8 @@ interface Job {
   readTo: number;
   /** A read of it failed (and no fresh read since): a poor file to test the source with. */
   readFailed: boolean;
+  /** When it last read fine (any read). */
+  lastReadAt?: number;
   /** Active time since nothing could tell whether IT or its source is at fault
    *  (see NO_PROOF_GIVE_UP_MS) — this file's own clock. */
   unprovenSince?: number;
@@ -411,11 +419,9 @@ export class UploadEngine {
   private resumeCtrl = new AbortController();
   /** Reads that failed in a row while halted (see HALTED_READ_FAILS_MAX). */
   private haltedReadFails = 0;
-  /** The source check in flight, and the last one done: a check whose probes
-   *  started AFTER a read failed answers for that failure too — a burst of
-   *  failures (a gone folder, a source hiccup) shares one check. */
-  private sourceCheck: { startedAt: number; done: Promise<'up' | 'away' | 'unknown'> } | null = null;
-  private lastSourceCheck: { startedAt: number; verdict: 'up' | 'away' | 'unknown' } | null = null;
+  /** DELETEs in flight, and cancels waiting for a turn (see ABORT_POOL). */
+  private abortsRunning = 0;
+  private readonly abortTurns: Array<() => void> = [];
   /** Due times of the engine's armed timers (see nap/observe): a timer that
    *  fires far LATER than it was due means the machine slept or the tab froze.
    *  A long timer firing on schedule (a 120 s request timeout) is not sleep. */
@@ -639,7 +645,16 @@ export class UploadEngine {
     this.cancelling += 1;
     this.schedule();
     try {
-      const outcome = await this.abortSession(sessionId, job);
+      // (Stopped already — detached above; only the DELETE waits for a turn.)
+      while (this.abortsRunning >= ABORT_POOL) await new Promise<void>((r) => this.abortTurns.push(r));
+      this.abortsRunning += 1;
+      let outcome: Awaited<ReturnType<UploadEngine['abortSession']>>;
+      try {
+        outcome = await this.abortSession(sessionId, job);
+      } finally {
+        this.abortsRunning -= 1;
+        this.abortTurns.shift()?.();
+      }
       if (job.gen !== gen) return;
       if (outcome === 'finishing') {
         job.redrop = undefined; // it is being saved anyway
@@ -736,7 +751,8 @@ export class UploadEngine {
 
   snapshot(): EngineSnapshot {
     return {
-      files: this.jobs.map((j) => ({ ...j.view })),
+      // (bulkSkip: "Retry failed" leaves it alone — its Cancel went unanswered or came while saving)
+      files: this.jobs.map((j) => (j.cancelUnconfirmed || j.cancelRequested ? { ...j.view, bulkSkip: true } : { ...j.view })),
       paused: this.paused,
       offline: this.offline,
       // (a read wait whose ping failed: no internet — say so; paused, nothing was asked)
@@ -1146,6 +1162,7 @@ export class UploadEngine {
    *  wait; a read that may have come from a cache only moves readTo. */
   private noteRead(job: Job, to: number, freshAt: number): void {
     if (to > job.readTo) job.readTo = to;
+    job.lastReadAt = this.now();
     if (to <= freshAt) return;
     job.readFailed = false;
     const at = this.now();
@@ -1178,25 +1195,6 @@ export class UploadEngine {
     if (!this.env.readable) return 'up';
     const other = this.lastRead && this.lastRead.job !== job ? this.lastRead : this.lastOtherRead;
     if (other && other.job !== job && other.at > t) return 'up';
-    // A check that started after this failure answers for it (its probes read after it).
-    const running = this.sourceCheck;
-    if (running && running.startedAt > t) return running.done;
-    const last = this.lastSourceCheck;
-    if (last && last.startedAt > t) return last.verdict;
-    const startedAt = this.now();
-    const done = this.checkSource(job);
-    this.sourceCheck = { startedAt, done };
-    try {
-      const verdict = await done;
-      if (!this.lastSourceCheck || this.lastSourceCheck.startedAt < startedAt) this.lastSourceCheck = { startedAt, verdict };
-      return verdict;
-    } finally {
-      if (this.sourceCheck?.done === done) this.sourceCheck = null;
-    }
-  }
-
-  /** The probes behind sourceState (see there). */
-  private async checkSource(job: Job): Promise<'up' | 'away' | 'unknown'> {
     // A spot never read, of another file — from ANOTHER folder when there is
     // one (a moved or renamed folder takes its siblings with it): if it reads,
     // the source works. If it doesn't, that proves nothing (it may be gone too).
@@ -1234,11 +1232,17 @@ export class UploadEngine {
    *  the source was away still counts: its failing again is the evidence.) */
   private knownGoodFiles(job: Job): Job[] {
     const ok = (j: Job) => j !== job && j.readTo > 0 && j.item.source.size > 0 && j.view.status !== 'cancelled' && j.view.status !== 'cancelling';
-    const pool = this.jobs.filter((j) => ok(j) && !j.readFailed);
-    for (const j of this.jobs) if (ok(j) && j.readFailed && pool.length < 2) pool.push(j);
+    // The most recently read first (not the drop's first files — a moved client
+    // folder must not supply both), outside the failing file's top folder when
+    // possible, from two different top folders; ones not failing first.
+    const top = (j: Job) => (j.item.relativePath ? j.item.relativePath.split('/')[0] : null) ?? j.item.folderId ?? null;
+    const mine = top(job);
+    const pool = this.jobs
+      .filter(ok)
+      .sort((a, b) => Number(a.readFailed) - Number(b.readFailed) || Number(top(a) === mine) - Number(top(b) === mine) || (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0));
     const first = pool[0];
     if (!first) return [];
-    const other = pool.find((j) => j !== first && (j.item.folderId ?? null) !== (first.item.folderId ?? null)) ?? pool.find((j) => j !== first);
+    const other = pool.find((j) => j !== first && top(j) !== top(first)) ?? pool.find((j) => j !== first);
     return other ? [first, other] : [first];
   }
 
@@ -1531,7 +1535,11 @@ export class UploadEngine {
         again = await probeSpot();
         if (job.gen !== gen) return;
       }
-      if (!link || source === 'away' || (source === 'unknown' && again !== 'ok')) {
+      // ('unknown' = files read before still read fine, nothing fresh to test with. A
+      // file that already took a strike with real proof — the source worked while it
+      // did not — is struck again rather than waiting: a moved folder's files finish
+      // in seconds. A source that is really away gives 'away', which never strikes.)
+      if (!link || source === 'away' || (source === 'unknown' && again !== 'ok' && job.hashFailures === 0)) {
         if (link && source === 'unknown') job.unprovenSince ??= this.activeNow();
         else if (source === 'away') job.unprovenSince = undefined; // the source is away: the long wait
         this.enterReadWait(link ? 'source' : 'link');
@@ -1788,7 +1796,15 @@ export class UploadEngine {
     for (const job of this.jobs) {
       if (job.view.status !== 'uploading') continue;
       active += 1;
-      if (job.pending.length && !job.signing) return { job, part: job.pending.shift()! };
+      if (job.signing) continue;
+      if (job.unreadableSince.size) {
+        // A part of it found the file unreadable: only those parts go again (their
+        // own re-checks, spaced out, tell) — no new parts until one reads again.
+        const i = job.pending.findIndex((p) => job.unreadableSince.has(p));
+        if (i >= 0) return { job, part: job.pending.splice(i, 1)[0] };
+        continue;
+      }
+      if (job.pending.length) return { job, part: job.pending.shift()! };
     }
     if (active >= this.maxActiveFiles) return null;
     const ready = this.jobs.find((j) => j.view.status === 'ready' && j.pending.length);
@@ -1819,13 +1835,14 @@ export class UploadEngine {
       if (since !== undefined && this.env.readable) {
         const proofAt = Math.max(this.lastSuccessAt.api, this.lastSuccessAt.storage);
         if (proofAt > since && proofAt >= attemptAt) {
+          const probedAt = this.now(); // (judged against THIS attempt — no older proof or verdict)
           const verdict = await this.probe(job, start, end);
           if (job.gen !== gen) return;
           if (f.reason) throw new TransportError('stopped', 0);
           if (verdict === 'unreadable') {
             // The link works — but does the SOURCE? (A NAS switched off, Drive
             // not reconnected yet: every file is unreadable, none is "gone".)
-            const source = await this.sourceState(since, job);
+            const source = await this.sourceState(probedAt, job);
             if (job.gen !== gen) return;
             if (source === 'up') {
               this.fail(job, 'This file changed or is no longer on this computer — drop it again to continue (finished parts are kept).');

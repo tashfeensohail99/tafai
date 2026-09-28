@@ -2222,7 +2222,7 @@ test('[review r9] a NAS off for 2½ h while the drop UPLOADS (everything read al
   assert.equal(engine.snapshot().readsWaiting, true);
   const signs = server.calls.sign - signs0;
   assert.ok(signs < 1_500, `waiting parts back off (${signs} sign calls in 150 min)`);
-  assert.ok(probes < 1_600, `parts checking at once share one source check (${probes} probes)`);
+  assert.ok(probes < 3_500, `a few 1-byte probes per spaced-out part check (${probes} probes)`);
   nas = true;
   await engine.whenIdle();
   assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
@@ -2504,7 +2504,11 @@ test('[review r10] a NAS cut while multi-part files upload never flips the dock 
   const { server, env, engine } = setup();
   env.random = seeded(14);
   let nas = true;
-  env.readable = async () => nas;
+  let probes = 0;
+  env.readable = async () => {
+    probes += 1;
+    return nas;
+  };
   server.fault = () => (nas ? 'slow' : 0);
   const realSign = server.signParts.bind(server);
   server.signParts = async (id, parts, signal) => {
@@ -2516,13 +2520,126 @@ test('[review r10] a NAS cut while multi-part files upload never flips the dock 
   await until(() => server.okPuts.size >= 5, 200_000);
   nas = false;
   const t0 = env.clock;
+  const signs0 = server.calls.sign;
   let wrong = 0;
   for (let k = 1; k <= 80; k++) {
     await until(() => env.clock - t0 > k * 15_000, 2_000_000);
     if (engine.snapshot().linkDown) wrong += 1;
   }
   assert.equal(wrong, 0, `"Waiting for internet" in ${wrong} of 80 samples`);
+  // a file waiting on its drive retries only the part that found it unreadable — not every part in turn
+  assert.ok(probes < 1_500, `${probes} probes in 20 min`);
+  assert.ok(server.calls.sign - signs0 < 600, `${server.calls.sign - signs0} sign calls in 20 min`);
   nas = true;
   await engine.whenIdle();
   assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
+});
+
+// ---- review round 11 -----------------------------------------------------------------------
+
+test('[review r11] a moved folder of 100 files mid-drop: they all fail within minutes of each other — not one per minute for hours', async () => {
+  const { env, engine } = setup();
+  env.random = seeded(21);
+  let bGone = false;
+  env.readable = async (src: UploadSource) => !(bGone && startsWith(src, 'B'));
+  env.hash = async (source) => {
+    await env.sleep(200);
+    if (bGone && startsWith(source, 'B')) throw new Error('NotFoundError');
+    return (source as FakeSource).sha;
+  };
+  const files = [
+    ...Array.from({ length: 50 }, (_, i) => item(`A${i}.pdf`, 12, { seed: `A${i}`, folderId: 'fa' })),
+    ...Array.from({ length: 100 }, (_, i) => item(`B${i}.pdf`, 12, { seed: `B${i}`, folderId: 'fb' })),
+    ...Array.from({ length: 150 }, (_, i) => item(`C${i}.pdf`, 12, { seed: `C${i}`, folderId: 'fc' })),
+  ];
+  engine.add(files);
+  await until(() => !['queued', 'hashing'].includes(statuses(engine)['A49.pdf']), 200_000);
+  bGone = true;
+  const t0 = env.clock;
+  await engine.whenIdle();
+  const st = statuses(engine);
+  assert.ok(files.slice(150).every((f) => st[f.key] === 'done'));
+  assert.ok(files.slice(50, 150).every((f) => st[f.key] === 'failed'));
+  assert.ok(env.clock - t0 < 45 * 60_000, `settled in ${Math.round((env.clock - t0) / 60_000)} min`);
+});
+
+test('[review r11] a file edited during a NAS cut (never readable again): once the NAS is back it fails within the short wait — not 12 h', async () => {
+  const { server, env, engine } = setup();
+  env.random = seeded(22);
+  let nas = true;
+  let edited = false;
+  const doc = item('doc7.pdf', 12, { seed: 'doc7' });
+  env.readable = async (src: UploadSource) => nas && !(edited && src === doc.source);
+  server.fault = ({ session }) => {
+    if (!nas) return 0;
+    if (edited && session === 's8') return 0; // doc7's PUTs can't read it any more
+    return 'slow';
+  };
+  engine.add([...Array.from({ length: 7 }, (_, i) => item(`doc${i}.pdf`, 12, { seed: `doc${i}` })), doc, ...Array.from({ length: 22 }, (_, i) => item(`e${i}.pdf`, 12, { seed: `e${i}` }))]);
+  await until(() => Object.values(statuses(engine)).every((x) => x !== 'queued' && x !== 'hashing'), 200_000);
+  await until(() => server.okPuts.size >= 3, 200_000);
+  nas = false;
+  edited = true; // meanwhile someone saves over doc7.pdf
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000, 2_000_000);
+  nas = true;
+  await until(() => statuses(engine)['doc7.pdf'] === 'failed', 3_000_000);
+  assert.ok(env.clock - t0 < 60 * 60_000, `failed after ${Math.round((env.clock - t0) / 60_000)} min, not 12 h`);
+  await engine.whenIdle();
+  assert.equal(Object.values(statuses(engine)).filter((x) => x === 'done').length, 29);
+});
+
+test('[review r11] a whole client folder moved mid-upload: its own files are never the "known good" drive test, so a stuck file fails in the short wait — not 12 h', async () => {
+  const { server, env, engine } = setup();
+  env.random = seeded(23);
+  let xGone = false;
+  const inX = (src: unknown) => startsWith(src, 'X');
+  env.readable = async (src: UploadSource) => !(xGone && inX(src));
+  const video = item('interview.mp4', 130, { seed: 'Xvideo', folderId: 'xv', relativePath: 'X/Videos/interview.mp4' });
+  let videoSession = '';
+  server.fault = ({ session }) => (xGone && session === videoSession ? 0 : 'slow');
+  engine.add([
+    ...Array.from({ length: 10 }, (_, i) => item(`b${i}.pdf`, 12, { seed: `Xb${i}`, folderId: 'xb', relativePath: `X/Bank/b${i}.pdf` })),
+    ...Array.from({ length: 10 }, (_, i) => item(`p${i}.pdf`, 12, { seed: `Xp${i}`, folderId: 'xp', relativePath: `X/Passport/p${i}.pdf` })),
+    ...Array.from({ length: 10 }, (_, i) => item(`y${i}.pdf`, 12, { seed: `Y${i}`, folderId: 'y', relativePath: `Y/y${i}.pdf` })),
+    video,
+  ]);
+  await until(() => statuses(engine)['interview.mp4'] === 'uploading', 400_000);
+  videoSession = view(engine, 'interview.mp4').uploadId!;
+  await until(() => server.okPuts.size >= 25, 400_000);
+  xGone = true; // the client folder X is moved in the shared Drive
+  const t0 = env.clock;
+  await until(() => statuses(engine)['interview.mp4'] === 'failed', 3_000_000);
+  assert.ok(env.clock - t0 < 60 * 60_000, `failed after ${Math.round((env.clock - t0) / 60_000)} min`);
+  assert.match(view(engine, 'interview.mp4').error!, /moved|no longer on this computer/);
+});
+
+test('[review r11] a NAS that comes back for a moment and goes again: a read in that moment does not make a waiting upload "no longer on this computer"', async () => {
+  for (const seed of [31, 32, 33, 34]) {
+    const { server, env, engine } = setup();
+    env.random = seeded(seed);
+    let nas = true;
+    env.readable = async () => nas;
+    env.hash = async (source) => {
+      await env.sleep(3_000);
+      if (!nas) throw new Error('NotReadableError');
+      return (source as FakeSource).sha;
+    };
+    const video = item('film.mov', 1_600, { seed: 'film' }); // 160 parts
+    let videoSession = '';
+    server.fault = ({ session }) => (!nas && session === videoSession ? 0 : session === videoSession ? 'slow' : 'ok');
+    engine.add([video, ...Array.from({ length: 200 }, (_, i) => item(`q${i}.pdf`, 12, { seed: `q${i}` }))]);
+    await until(() => statuses(engine)['film.mov'] === 'uploading', 400_000);
+    videoSession = view(engine, 'film.mov').uploadId!;
+    await until(() => server.okPuts.size >= 20, 400_000);
+    const t0 = env.clock;
+    for (const [off, on] of [[0, 2], [2.5, 20]]) {
+      await until(() => env.clock - t0 >= off * 60_000, 2_000_000);
+      nas = false;
+      await until(() => env.clock - t0 >= on * 60_000 - (on === 2 ? 30_000 : 0), 2_000_000);
+      nas = true; // (back for 30 s between the two cuts)
+    }
+    assert.notEqual(statuses(engine)['film.mov'], 'failed', `seed ${seed}: the NAS was away — not the file`);
+    engine.pause();
+  }
 });

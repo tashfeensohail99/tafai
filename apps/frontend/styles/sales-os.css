@@ -2014,6 +2014,17 @@
 html:has([data-sos-modal], [role="dialog"], [aria-modal="true"]) .sos-upload-dock {
   visibility: hidden;
 }
+/* An open mobile menu (phone-width only: on desktop the drawer backdrop is never shown). */
+@media (max-width: 1023px) {
+  html:has(.sos-drawer-backdrop) .sos-upload-dock {
+    visibility: hidden;
+  }
+}
+@media (min-width: 1024px) {
+  .sos-drawer-backdrop {
+    display: none;
+  }
+}
 html.has-upload-dock .sos-page-content,
 html.has-upload-dock .sos-page {
   padding-bottom: 88px;

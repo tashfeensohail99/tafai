@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { batchSections, batchStateLine, dockHeadline, formatFinishAt, plainError, rowView } from './dock-model.ts';
+import { batchSections, batchStateLine, bulkRetryable, dockHeadline, formatFinishAt, plainError, rowView } from './dock-model.ts';
 import type { BatchView, QueueSnapshot, RowView } from './queue.ts';
 import { EMPTY_SNAPSHOT } from './queue.ts';
 import { summarize } from './summary.ts';
@@ -210,4 +210,14 @@ test('[review r5] a Cancel that came while saving is flagged on a "handed-off" r
   assert.equal(rowView(row('handed-off', { note })).tone, 'warning');
   assert.match(rowView(row('handed-off', { note })).detail!, /could not be cancelled/);
   assert.match(rowView(row('failed', { error: 'connection reset', note: 'It may already have been saved — check the folder before retrying.' })).detail!, /may already have been saved/);
+});
+
+test('[review r6] "Retry failed (N)" counts only rows it will retry', () => {
+  const rows = [
+    row('failed', { rowId: 'a' }),
+    row('failed', { rowId: 'b', retryable: false }),
+    row('failed', { rowId: 'c', bulkSkip: true }),
+    row('done', { rowId: 'd' }),
+  ];
+  assert.equal(bulkRetryable(rows), 1);
 });

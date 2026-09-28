@@ -123,6 +123,13 @@ export function rowView(r: RowView): RowDisplay {
   }
 }
 
+/** Failed rows "Retry failed" will actually retry (its button shows this count). */
+export function bulkRetryable(rows: RowView[]): number {
+  let n = 0;
+  for (const r of rows) if (r.status === 'failed' && r.retryable !== false && !r.bulkSkip) n += 1;
+  return n;
+}
+
 /** "done around 6:50 PM" — only for ETAs of 10 minutes or more. */
 export function formatFinishAt(etaSeconds: number | null, now: number, locale = 'en-US'): string | null {
   if (etaSeconds === null || etaSeconds < 600) return null;

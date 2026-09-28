@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { getUploadQueue, useUploadQueue } from '@/lib/databank-upload-browser';
-import { batchSections, batchStateLine, dockHeadline, rowView } from '@/lib/databank-upload/dock-model';
+import { batchSections, batchStateLine, bulkRetryable, dockHeadline, rowView } from '@/lib/databank-upload/dock-model';
 import { needsCheck } from '@/lib/databank-upload/summary';
 import type { RowAction, Tone } from '@/lib/databank-upload/dock-model';
 import type { BatchView, QueueNotice, RowView } from '@/lib/databank-upload/queue';
@@ -194,7 +194,7 @@ function BatchGroup({ b }: { b: BatchView }) {
               Start now
             </button>
           ) : null}
-          {s.failed ? (
+          {bulkRetryable(b.rows) ? (
             <button type="button" className="sos-btn sos-btn--sm sos-btn--ghost" onClick={() => q.retryFailed(b.id)}>
               <RotateCcw size={12} /> Retry failed
             </button>
@@ -335,6 +335,7 @@ export default function UploadDock() {
   const s = snap.summary;
   const pct = s.bytesTotal > 0 ? Math.round((s.bytesSent / s.bytesTotal) * 100) : 0;
   const unfinished = s.uploading + s.waiting;
+  const retryable = snap.batches.reduce((n, b) => n + bulkRetryable(b.rows), 0);
   const icon = snap.authLost ? (
     <AlertTriangle size={16} />
   ) : snap.offline || snap.linkDown ? (
@@ -415,9 +416,9 @@ export default function UploadDock() {
               </button>
             )
           ) : null}
-          {s.failed ? (
+          {retryable ? (
             <button type="button" className="sos-btn sos-btn--sm sos-btn--ghost" onClick={() => q.retryFailed()}>
-              <RotateCcw size={12} /> Retry failed ({s.failed})
+              <RotateCcw size={12} /> Retry failed ({retryable})
             </button>
           ) : null}
           {unfinished ? (

@@ -181,7 +181,6 @@ const FLUSH_MS = 250;
 const AUTH_POLL_MS = 5_000;
 const ENSURE_TIMEOUT_MS = 60_000;
 const ENSURE_ATTEMPTS = 8;
-const CANCEL_POOL = 4;
 const PING_TIMEOUT_MS = 20_000;
 /** A standard upload with no progress for this long is aborted and retried. */
 const LEGACY_STALL_MS = 60_000;
@@ -479,15 +478,9 @@ export class UploadQueue {
       const todo = files
         .filter((f) => WORK.has(f.status) || f.status === 'needs-decision' || f.status === 'failed')
         .map((f) => ({ key: f.key, keepSession: f.status === 'failed' && !!f.uploadId && elsewhere.has(f.uploadId) }));
-      // A pool of 4 at a time — not 1,800 DELETEs at once.
-      let next = 0;
-      const worker = async () => {
-        while (next < todo.length) {
-          const t = todo[next++];
-          await engine.cancel(t.key, { keepSession: t.keepSession });
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(CANCEL_POOL, todo.length) }, worker));
+      // Every file stops NOW (each cancel detaches its file before its first
+      // await); the engine sends the DELETEs a few at a time.
+      await Promise.all(todo.map((t) => engine.cancel(t.key, { keepSession: t.keepSession })));
     }
     this.afterChange();
   }
@@ -522,14 +515,22 @@ export class UploadQueue {
     const lg = this.legacy.get(rowId);
     if (lg) {
       if (lg.status !== 'failed' && lg.status !== 'cancelled') return false;
-      const mayBeSaved = !!lg.storedKey;
+      if (lg.storedKey) {
+        // Its bytes are stored: only record them (the save is idempotent per key —
+        // if it already landed, that row comes back). No second upload.
+        lg.status = 'waiting';
+        lg.tries = 0;
+        lg.error = undefined;
+        lg.note = undefined;
+        lg.lateCancel = false;
+        this.pushLegacy(b.id, rowId);
+        void this.runLegacy();
+        return true;
+      }
       this.forgetLegacy(b, rowId);
-      if (b.engine?.status(r.key)) {
-        // Its bytes may be saved: ask the server afresh (its duplicate check
-        // answers). Never stored: the officer's earlier "Upload anyway" stands.
-        if (mayBeSaved) b.engine.add([r.item]);
-        else b.engine.retry(r.key);
-      } else b.pending.push(r.item);
+      // (the officer's earlier "Upload anyway" stands: nothing was stored)
+      if (b.engine?.status(r.key)) b.engine.retry(r.key);
+      else b.pending.push(r.item);
       return true;
     }
     b.engine?.retry(r.key);
@@ -594,7 +595,7 @@ export class UploadQueue {
         for (const rowId of b.rowIds) {
           const st = this.rowStatus(rowId);
           // (cancelled on purpose — or "may already be saved" — is not "not uploaded")
-          if (st !== 'done' && st !== 'skipped' && st !== 'handed-off' && st !== 'cancelled') count += 1;
+          if (st !== 'done' && st !== 'skipped' && st !== 'handed-off' && st !== 'cancelled' && st !== 'cancelling') count += 1;
         }
         if (count) lost.push({ label: b.meta.label, count, ownerSub: this.ownerId ?? undefined, tKey: b.tKey });
       }

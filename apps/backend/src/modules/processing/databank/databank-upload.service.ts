@@ -51,6 +51,17 @@ export const DATABANK_WRITE_PERMISSIONS = ['processing.document.upload', 'jr.art
 /** Parallel finalizes per complete request. */
 const FINALIZE_CONCURRENCY = 6;
 
+/** A file's identity for the init race lock: who, which databank, where, and
+ *  exactly which bytes — the same fields the resume lookup matches on. */
+function sessionIdentity(
+  userId: string,
+  scope: { clientId: string | null; ownerUserId: string | null },
+  folderId: string | null,
+  f: { fileName: string; sizeBytes: number; sha256: string },
+): string {
+  return ['databank-upload', userId, scope.clientId ?? '', scope.ownerUserId ?? '', folderId ?? '', f.fileName, f.sizeBytes, f.sha256].join('|');
+}
+
 /** Content types a browser would EXECUTE if served back inline — stored as
  *  application/octet-stream so an uploaded file can never run as a page. */
 const ACTIVE_CONTENT_TYPES = new Set([
@@ -206,6 +217,10 @@ export class DatabankUploadService {
     // Dev storage (local / supabase) has no direct-to-storage path — the client
     // falls back to the streaming multipart proxy upload.
     if (!this.storage.supportsDirectUpload) return { mode: 'proxy' };
+    // Kill switch: DATABANK_RESUMABLE_UPLOADS=off (+ a backend restart) makes
+    // every client fall back to the standard upload (≤ 2 GB) — no new resumable
+    // sessions start; ones already running can still finish.
+    if (process.env.DATABANK_RESUMABLE_UPLOADS === 'off') return { mode: 'proxy' };
 
     const now = new Date();
     const results = new Array<InitResult>(dto.files.length);
@@ -422,29 +437,50 @@ export class DatabankUploadService {
       }
     });
     const fresh = started.filter((x): x is NonNullable<typeof x> => !!x);
+    // RACE GUARD. Two inits of the same file can overlap — typically a reply
+    // lost on a flaky link, and the browser's retry arriving while the first
+    // request is still here. Both passed step 2 before either inserted, so both
+    // would open a session and a later resume could pick the empty one. So the
+    // insert runs under a lock on each file's identity (sorted, one statement:
+    // no deadlock between two batches), re-checks for a live session a racing
+    // init created since step 2, and inserts only the files that lost no race.
+    let won = fresh;
+    let lost: Array<{ x: (typeof fresh)[number]; rival: DatabankUpload }> = [];
     if (fresh.length) {
       try {
-        await this.prisma.databankUpload.createMany({
-          data: fresh.map((x) => ({
-            id: x.id,
-            createdByUserId: user.id,
-            clientId: scope.clientId,
-            ownerUserId: scope.ownerUserId,
-            folderId: x.c.folderId,
-            relativePath: x.c.f.relativePath ?? null,
-            fileName: x.c.f.fileName,
-            mimeType: x.c.mimeType,
-            sizeBytes: BigInt(x.c.f.sizeBytes),
-            fileLastModified: x.c.f.lastModified !== undefined ? new Date(x.c.f.lastModified) : null,
-            sha256: x.c.f.sha256,
-            strategy: x.c.plan.strategy,
-            storageKey: x.storageKey,
-            r2UploadId: x.r2UploadId,
-            partSize: x.c.plan.strategy === 'MULTIPART' ? x.c.plan.partSize : null,
-            partCount: x.c.plan.strategy === 'MULTIPART' ? x.c.plan.partCount : null,
-            expiresAt: sessionExpiresAt,
-          })),
-        });
+        const outcome = await this.prisma.$transaction(async (tx) => {
+          const keys = [...new Set(fresh.map((x) => sessionIdentity(user.id, scope, x.c.folderId, x.c.f)))].sort();
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194035, hashtext(k)) FROM unnest(${keys}::text[]) AS t(k)`;
+          const rivals = await tx.databankUpload.findMany({
+            where: {
+              createdByUserId: user.id,
+              clientId: scope.clientId,
+              ownerUserId: scope.ownerUserId,
+              sha256: { in: [...new Set(fresh.map((x) => x.c.f.sha256))] },
+              OR: [
+                { status: DatabankUploadStatus.UPLOADING, expiresAt: { gt: now } },
+                { status: DatabankUploadStatus.COMPLETING },
+              ],
+            },
+          });
+          const winners: typeof fresh = [];
+          const losers: typeof lost = [];
+          for (const x of fresh) {
+            const rival = rivals.find(
+              (o) =>
+                o.sha256 === x.c.f.sha256 &&
+                o.fileName === x.c.f.fileName &&
+                o.folderId === x.c.folderId &&
+                Number(o.sizeBytes) === x.c.f.sizeBytes,
+            );
+            if (rival) losers.push({ x, rival });
+            else winners.push(x);
+          }
+          if (winners.length) await tx.databankUpload.createMany({ data: winners.map((x) => this.sessionRow(x, user, scope, sessionExpiresAt)) });
+          return { winners, losers };
+        }, { timeout: 30_000 });
+        won = outcome.winners;
+        lost = outcome.losers;
       } catch (e) {
         // Don't leave R2 multipart uploads nobody knows about.
         await Promise.all(
@@ -455,7 +491,23 @@ export class DatabankUploadService {
         throw e;
       }
     }
-    await mapLimit(fresh, R2_CONCURRENCY, async (x) => {
+    // Lost a race: free our redundant R2 upload and follow the winner's session.
+    await mapLimit(lost, R2_CONCURRENCY, async ({ x, rival }) => {
+      if (x.r2UploadId) await this.storage.abortMultipartUpload(x.storageKey, x.r2UploadId).catch(() => undefined);
+      if (rival.status === DatabankUploadStatus.COMPLETING) {
+        results[x.c.index] = { index: x.c.index, status: 'in-progress', uploadId: rival.id };
+        return;
+      }
+      try {
+        results[x.c.index] = await this.resumeResult(x.c.index, rival);
+      } catch (e) {
+        // The winner's R2 state needs the full step-2 handling (lost upload,
+        // assembled object…): ask the browser to init again, which does it.
+        this.logger.warn(`init race resume ${rival.id} failed: ${errMsg(e)}`);
+        results[x.c.index] = { index: x.c.index, status: 'retry', reason: 'Storage is busy — please try again.' };
+      }
+    });
+    await mapLimit(won, R2_CONCURRENCY, async (x) => {
       const plan = x.c.plan;
       const multipart = plan.strategy === 'MULTIPART';
       const partCount = multipart ? plan.partCount : 1;
@@ -478,6 +530,34 @@ export class DatabankUploadService {
     });
 
     return { mode: 'direct', maxBytes: this.maxBytes, results };
+  }
+
+  /** One new session row (the insert's shape, shared by init). */
+  private sessionRow(
+    x: { c: { folderId: string | null; f: InitUploadFileDto; plan: UploadPlan; mimeType: string }; id: string; storageKey: string; r2UploadId: string | null },
+    user: RequestUser,
+    scope: Scope,
+    expiresAt: Date,
+  ): Prisma.DatabankUploadCreateManyInput {
+    return {
+      id: x.id,
+      createdByUserId: user.id,
+      clientId: scope.clientId,
+      ownerUserId: scope.ownerUserId,
+      folderId: x.c.folderId,
+      relativePath: x.c.f.relativePath ?? null,
+      fileName: x.c.f.fileName,
+      mimeType: x.c.mimeType,
+      sizeBytes: BigInt(x.c.f.sizeBytes),
+      fileLastModified: x.c.f.lastModified !== undefined ? new Date(x.c.f.lastModified) : null,
+      sha256: x.c.f.sha256,
+      strategy: x.c.plan.strategy,
+      storageKey: x.storageKey,
+      r2UploadId: x.r2UploadId,
+      partSize: x.c.plan.strategy === 'MULTIPART' ? x.c.plan.partSize : null,
+      partCount: x.c.plan.strategy === 'MULTIPART' ? x.c.plan.partCount : null,
+      expiresAt,
+    };
   }
 
   private uploadResult(index: number, s: DatabankUpload, doneParts: number[], urls: PartUrl[], resumed: boolean): InitResult {

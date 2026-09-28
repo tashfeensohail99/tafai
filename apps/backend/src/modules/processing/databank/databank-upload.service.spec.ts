@@ -251,6 +251,74 @@ describe('DatabankUploadService.init', () => {
     expect(prisma.databankUpload.createMany.mock.calls[0][0].data[0].mimeType).toBe('application/octet-stream');
   });
 
+  it('[follow-up] kill switch DATABANK_RESUMABLE_UPLOADS=off sends every client to the standard upload (after authorizing)', async () => {
+    const { svc, storage, databank } = harness();
+    process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
+    try {
+      expect(await svc.init({ clientId: 'c1', files: [file('v.mp4', 100 * MiB, 'a')] } as never, USER)).toEqual({ mode: 'proxy' });
+      expect(databank.resolveWriteScope).toHaveBeenCalled();
+      expect(storage.createMultipartUpload).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.DATABANK_RESUMABLE_UPLOADS;
+    }
+  });
+
+  it('[follow-up] serialises session creation per file identity: one sorted lock statement inside the insert transaction', async () => {
+    const { svc, prisma } = harness();
+    await svc.init({ clientId: 'c1', files: [file('b.pdf', 10, 'b'), file('a.pdf', 10, 'a')] } as never, USER);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    const lock = prisma.$executeRaw.mock.calls.find((c: unknown[]) => String((c[0] as string[]).join('?')).includes('pg_advisory_xact_lock(1145194035'));
+    expect(lock).toBeDefined();
+    const keys = lock![1] as string[];
+    expect(keys).toHaveLength(2);
+    expect([...keys].sort()).toEqual(keys); // sorted → two batches always lock in the same order
+    expect(keys[0]).toContain('|a.pdf|10|'); // identity = who + where + name + size + hash
+    // the re-check runs INSIDE the transaction, after the lock and before the insert
+    expect(prisma.databankUpload.findMany).toHaveBeenCalledTimes(2);
+    expect(prisma.databankUpload.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('[follow-up] loses the race to a session a concurrent init just created: no second session, our R2 upload freed, resumes the winner', async () => {
+    const { svc, prisma, storage } = harness();
+    prisma.databankUpload.findMany
+      .mockResolvedValueOnce([]) // step 2: nothing open yet
+      .mockResolvedValueOnce([session({ id: 'winner' })]); // under the lock: the racing init's session
+    storage.listAllParts.mockResolvedValueOnce(parts(1)); // the winner already has part 1
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
+    expect(storage.abortMultipartUpload).toHaveBeenCalledWith(expect.any(String), 'r2-new');
+    expect(res.mode === 'direct' && res.results[0]).toMatchObject({ status: 'upload', uploadId: 'winner', resumed: true, doneParts: [1] });
+  });
+
+  it('[follow-up] loses the race to a session that is already COMPLETING: follows it (in-progress)', async () => {
+    const { svc, prisma, storage } = harness();
+    prisma.databankUpload.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([session({ id: 'w2', status: 'COMPLETING' })]);
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    expect(res.mode === 'direct' && res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 'w2' });
+    expect(storage.abortMultipartUpload).toHaveBeenCalledWith(expect.any(String), 'r2-new');
+    expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
+  });
+
+  it('[follow-up] a mixed batch: only the race losers are skipped; the others are inserted and signed', async () => {
+    const { svc, prisma, storage } = harness();
+    prisma.databankUpload.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([session({ id: 'w' })]);
+    storage.listAllParts.mockResolvedValueOnce([]); // the winner has no parts yet
+    const res = await svc.init(
+      { clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a'), file('other.pdf', 10, 'b')] } as never,
+      USER,
+    );
+    expect(prisma.databankUpload.createMany.mock.calls[0][0].data.map((r: { fileName: string }) => r.fileName)).toEqual(['other.pdf']);
+    expect(res.mode === 'direct' && res.results.map((r) => (r as { uploadId?: string }).uploadId)).toEqual(['w', expect.any(String)]);
+  });
+
+  it('[follow-up] if resuming the winner fails, the loser is asked to init again (retry), never left without an answer', async () => {
+    const { svc, prisma, storage } = harness();
+    prisma.databankUpload.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([session({ id: 'w' })]);
+    storage.listAllParts.mockRejectedValueOnce(new Error('503 from storage'));
+    const res = await svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+    expect(res.mode === 'direct' && res.results[0]).toMatchObject({ status: 'retry' });
+  });
+
   it('aborts freshly created R2 uploads if recording the sessions fails', async () => {
     const { svc, prisma, storage } = harness();
     prisma.databankUpload.createMany.mockRejectedValueOnce(new Error('db down'));

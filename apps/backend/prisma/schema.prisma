@@ -3691,16 +3691,24 @@ model DatabankFolder {
 
 /// One file in a client's databank. `folderId` NULL = the client's root.
 model DatabankFile {
-  id                  String             @id @default(uuid())
+  id                  String                   @id @default(uuid())
   // EITHER client-scoped (clientId) OR an associate's personal file (ownerUserId)
   // — exactly one non-null. See DatabankFolder. ownerUserId = plain UserAccount id.
   clientId            String?
   ownerUserId         String?
   folderId            String?
   fileName            String
+  description         String?
+  tags                String[]                 @default([])
+  customFields        Json?
+  /// Full-text search vector (fileName + description + tags) maintained by
+  /// Postgres as a GENERATED STORED column — never written from app code.
+  /// Queried via $queryRaw ($queryRawUnsafe not needed). Migration
+  /// 20260929100000_databank_file_metadata_search.
+  searchVector        Unsupported("tsvector")?
   /// The storage object — backs at most ONE row (a retried direct-upload commit
   /// that overlaps the first gets that row, see commitDirectUpload).
-  storageKey          String             @unique
+  storageKey          String                   @unique
   mimeType            String?
   /// BigInt (not Int): databank files can be multi-GB — an int4 overflowed at
   /// ~2.1 GB. Serialized to JSON as a plain number via src/common/bigint-json.ts.
@@ -3710,16 +3718,16 @@ model DatabankFile {
   sha256              String?
   /// The DatabankUpload session that produced this row (resumable uploads).
   /// Unique so a session can only ever finalize into ONE file row.
-  uploadSessionId     String?            @unique
-  source              DatabankFileSource @default(UPLOAD)
+  uploadSessionId     String?                  @unique
+  source              DatabankFileSource       @default(UPLOAD)
   /// Original Google Drive path, set only on MIGRATED files (migration audit).
   migrationSourcePath String?
   /// The databank file this was copied from, set only on COPIED files. Plain id
   /// (no FK) so deleting the original never affects the copy.
   copiedFromFileId    String?
   uploadedByUserId    String?
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
   deletedAt           DateTime?
 
   client Client?         @relation(fields: [clientId], references: [id], onDelete: Cascade)

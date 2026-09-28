@@ -3678,7 +3678,15 @@ model DatabankFile {
   fileName            String
   storageKey          String
   mimeType            String?
-  fileSizeBytes       Int?
+  /// BigInt (not Int): databank files can be multi-GB — an int4 overflowed at
+  /// ~2.1 GB. Serialized to JSON as a plain number via src/common/bigint-json.ts.
+  fileSizeBytes       BigInt?
+  /// Client-computed whole-file SHA-256 (hex) — duplicate detection + resume
+  /// identity for resumable uploads. Null for files stored before Phase 1.
+  sha256              String?
+  /// The DatabankUpload session that produced this row (resumable uploads).
+  /// Unique so a session can only ever finalize into ONE file row.
+  uploadSessionId     String?            @unique
   source              DatabankFileSource @default(UPLOAD)
   /// Original Google Drive path, set only on MIGRATED files (migration audit).
   migrationSourcePath String?
@@ -3698,6 +3706,9 @@ model DatabankFile {
   @@index([folderId])
   @@index([clientId, folderId])
   @@index([deletedAt])
+  @@index([sha256])
+  // Direct-upload commit looks a file up by its object key (one row per key).
+  @@index([storageKey])
   @@map("databank_files")
   @@schema("processing")
 }

@@ -288,7 +288,7 @@ function RuleEditor({
   };
 
   return (
-    <div
+    <div data-sos-modal=""
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 100 }}
       onClick={onClose}
     >

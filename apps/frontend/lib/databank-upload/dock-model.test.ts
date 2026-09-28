@@ -157,3 +157,46 @@ test('[review r2] the drive is away: the headline asks whether it is connected (
   assert.equal(dockHeadline(s, now).title, 'Can’t read the files — is the drive connected?');
   assert.equal(dockHeadline({ ...s, linkDown: true }, now).title, 'Waiting for internet…', 'no internet takes precedence');
 });
+
+// ---- review round 4 ------------------------------------------------------------------------
+
+test('[review r4] cancelled files are never "saved": own section, and the headline says so', () => {
+  const now = Date.UTC(2026, 8, 28, 13, 0, 0);
+  const rows = [
+    ...Array.from({ length: 3 }, (_, i) => row('done', { rowId: `d${i}` })),
+    ...Array.from({ length: 27 }, (_, i) => row('cancelled', { rowId: `c${i}` })),
+  ];
+  const s = snap(rows, { active: false }, { state: 'finished' });
+  assert.equal(dockHeadline(s, now).title, '3 saved · 27 cancelled');
+  const line = batchStateLine(s.batches[0]);
+  assert.equal(line.text, '3 saved · 27 cancelled');
+  assert.equal(line.tone, 'neutral', 'cancelled on purpose: not a warning, but not "success" either');
+  const secs = batchSections(s.batches[0]);
+  assert.equal(secs.find((x) => x.key === 'saved')!.title, '3 saved');
+  const c = secs.find((x) => x.key === 'cancelled')!;
+  assert.equal(c.title, 'Cancelled (27)');
+  assert.equal(c.collapsed, true);
+});
+
+test('[review r4] a Cancel that came while the file was being saved: "Check the folder", open, and counted', () => {
+  const now = Date.UTC(2026, 8, 28, 13, 0, 0);
+  const late = row('done', { rowId: 'late', note: 'It was already being saved, so it could not be cancelled — delete it from the folder if unwanted.' });
+  const maybe = row('cancelled', { rowId: 'maybe', note: 'It may already have been saved — check the folder and delete it if unwanted.' });
+  const s = snap([late, maybe, row('done', { rowId: 'ok' })], { active: false }, { state: 'finished' });
+  const secs = batchSections(s.batches[0]);
+  const check = secs.find((x) => x.key === 'check')!;
+  assert.equal(check.title, 'Check the folder (2)');
+  assert.equal(check.collapsed, false, 'shown, not tucked into "saved"');
+  assert.deepEqual(check.rows.map((r) => r.rowId).sort(), ['late', 'maybe']);
+  assert.equal(secs.find((x) => x.key === 'saved')!.title, '1 saved');
+  assert.equal(dockHeadline(s, now).title, '2 saved · 1 cancelled · 2 to check');
+  assert.equal(batchStateLine(s.batches[0]).tone, 'warning');
+});
+
+test('[review r4] the saved list shows the newest files and says how many more there are', () => {
+  const rows = Array.from({ length: 120 }, (_, i) => row('done', { rowId: `d${i}` }));
+  const saved = batchSections(snap(rows).batches[0]).find((x) => x.key === 'saved')!;
+  assert.equal(saved.rows.length, 50);
+  assert.equal(saved.rows[49].rowId, 'd119');
+  assert.equal(saved.more, 70);
+});

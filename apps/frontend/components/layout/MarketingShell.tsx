@@ -247,7 +247,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
 
         {/* ── Mobile overlay ───────────────────────────────────────────── */}
         {mobileOpen && (
-          <div
+          <div data-sos-modal=""
             aria-hidden="true"
             onClick={() => setMobileOpen(false)}
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 99 }}

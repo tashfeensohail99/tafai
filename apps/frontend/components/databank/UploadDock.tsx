@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { getUploadQueue, useUploadQueue } from '@/lib/databank-upload-browser';
 import { batchSections, batchStateLine, dockHeadline, rowView } from '@/lib/databank-upload/dock-model';
+import { needsCheck } from '@/lib/databank-upload/summary';
 import type { RowAction, Tone } from '@/lib/databank-upload/dock-model';
 import type { BatchView, QueueNotice, RowView } from '@/lib/databank-upload/queue';
 
@@ -129,7 +130,9 @@ const UploadRow = memo(
 function BatchGroup({ b }: { b: BatchView }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [confirmDismiss, setConfirmDismiss] = useState(false);
-  const leftOut = b.skipped.length + b.summary.failed + b.summary.needsDecision + (b.state === 'prepare-failed' ? 1 : 0);
+  const notUploaded = b.skipped.length + b.summary.failed + b.summary.needsDecision + (b.state === 'prepare-failed' ? 1 : 0);
+  const toCheck = b.rows.filter(needsCheck).length;
+  const leftOut = notUploaded + toCheck;
   const canDismiss = b.state === 'finished' || b.state === 'needs-you' || b.state === 'prepare-failed';
   // A confirm left open must not come back later, unasked, with other numbers.
   useEffect(() => {
@@ -214,7 +217,12 @@ function BatchGroup({ b }: { b: BatchView }) {
             <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
               {b.state === 'prepare-failed'
                 ? 'Nothing from this folder was uploaded — remove it from the list?'
-                : `${leftOut === 1 ? '1 file was' : `${leftOut.toLocaleString('en-US')} files were`} not uploaded — remove this list anyway?`}
+                : `${[
+                    notUploaded ? `${notUploaded === 1 ? '1 file was' : `${notUploaded.toLocaleString('en-US')} files were`} not uploaded` : '',
+                    toCheck ? `${toCheck === 1 ? '1 file needs' : `${toCheck.toLocaleString('en-US')} files need`} checking in the folder` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' and ')} — remove this list anyway?`}
               <button type="button" className="sos-btn sos-btn--sm sos-btn--danger" onClick={() => q.dismissBatch(b.id)}>
                 Remove
               </button>
@@ -266,8 +274,8 @@ function StoppedNotice({ notice, onOk }: { notice: QueueNotice; onOk: () => void
         <AlertTriangle size={16} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 700 }}>Uploads stopped — someone else signed in on this browser</div>
-          {notice.lost.map((l) => (
-            <div key={l.label} style={{ fontSize: 12.5, opacity: 0.8 }}>
+          {notice.lost.map((l, i) => (
+            <div key={`${l.ownerSub ?? ''}|${l.tKey ?? l.label}|${i}`} style={{ fontSize: 12.5, opacity: 0.8 }}>
               {l.count.toLocaleString('en-US')} {l.count === 1 ? 'file' : 'files'} for {l.label} were not uploaded.
             </div>
           ))}

@@ -848,7 +848,7 @@ test('queue: [review r2] another officer signing in stops the uploads WITH a not
   await until(() => !!q.getSnapshot().notice, 50_000);
   const n = q.getSnapshot().notice!;
   assert.equal(n.reason, 'user-changed');
-  assert.deepEqual(n.lost, [{ label: 'Ali Khan', count: 2 }]);
+  assert.deepEqual(n.lost.map((l) => ({ label: l.label, count: l.count })), [{ label: 'Ali Khan', count: 2 }]);
   assert.equal(q.getSnapshot().batches.length, 0);
   q.dismissNotice();
   assert.equal(q.getSnapshot().notice, undefined);
@@ -938,4 +938,138 @@ test('queue: [review r3] the "uploads stopped" notice stays for the next officer
   await settled(q, 100_000);
   assert.equal(q.getSnapshot().notice, undefined, 'officer-1 is back and re-dropped: "2 files were not uploaded" would now be untrue');
   assert.deepEqual(statusByName(q), { 'a.bin': 'done', 'b.bin': 'done' });
+});
+
+// ---- review round 4 ------------------------------------------------------------------------
+
+test('queue: [review r4] kill switch: a re-drop of a file saved after "Upload anyway" asks the server again — no silent second upload', async () => {
+  const { q, server, s } = qsetup();
+  s.legacyDelay = (name) => (name.startsWith('slow') ? 60_000 : 0); // keeps the drop busy
+  const existing = { id: 'f9', fileName: 'a.pdf', folderId: null, folderName: 'Databank', createdAt: '2026-01-01T00:00:00Z' };
+  // #424: the server's duplicate check answers first; files the officer chose to upload anyway go standard
+  const realInit = server.init.bind(server);
+  server.init = async (files, signal) => {
+    if (files.every((f) => f.allowDuplicate)) {
+      server.initCalls.push(files);
+      return { mode: 'proxy' } as never;
+    }
+    return realInit(files, signal);
+  };
+  server.initOverride = (f, index) => (f.allowDuplicate ? null : { index, status: 'possible-duplicate', existing });
+  const id = q.enqueueFiles(CLIENT_A, meta(), [drop('a.pdf', 5), drop('slow1.pdf', 6, undefined, 1, 's1'), drop('slow2.pdf', 7, undefined, 1, 's2')]);
+  await until(() => q.getSnapshot().batches[0]?.state === 'needs-you', 50_000);
+  q.resolveAllDuplicates(id, 'upload');
+  await until(() => statusByName(q)['a.pdf'] === 'done', 100_000);
+  q.enqueueFiles(CLIENT_A, meta(), [drop('a.pdf', 5)]); // the officer re-drops while the drop is still busy
+  await until(() => statusByName(q)['a.pdf'] === 'needs-decision', 100_000);
+  assert.equal(s.legacyCalls.filter((c) => c.name === 'a.pdf').length, 1, 'uploaded once');
+  q.shutdown('logout');
+});
+
+test('queue: [review r4] Cancel on a standard-upload row WAITING to retry its save: cancelled at once ("check the folder"), never saved afterwards', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyCommitFault = (name) => (name === 'c.pdf' ? 'lost' : null); // the save's reply never arrives
+  q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await until(() => s.legacyCommitCalls >= 1, 50_000);
+  q.pauseAll(); // (it now waits to retry the save — asking whether the link is up)
+  for (let i = 0; i < 50; i++) await tick();
+  await q.cancel(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.rowId);
+  await until(() => statusByName(q)['c.pdf'] === 'cancelled', 10_000);
+  assert.match(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.note ?? '', /may already have been saved/);
+  q.resumeAll();
+  await settled(q, 100_000);
+  assert.equal(s.legacyCommitCalls, 1, 'not saved after the Cancel');
+  assert.equal(statusByName(q)['c.pdf'], 'cancelled');
+});
+
+test('queue: [review r4] a standard save that finishes after sign-out never reaches the next officer\'s explorer', async () => {
+  const { q, server, s, env } = qsetup();
+  server.mode = 'proxy';
+  s.legacyCommitDelay = () => 60_000;
+  q.enqueueFiles(CLIENT_A, meta(), [drop('p.pdf', 5)]);
+  await until(() => s.stored.includes('p.pdf'), 50_000);
+  const calls = s.legacyCommitCalls;
+  q.shutdown('logout'); // officer-1 signs out while the save is being recorded
+  s.token = jwt('officer-2');
+  s.sub = 'officer-2';
+  const seen: unknown[] = [];
+  q.onLanded('c:A', (e) => seen.push(...e.files));
+  const t0 = env.clock;
+  await until(() => env.clock - t0 >= 60_000, 100_000); // the save is recorded after all…
+  for (let i = 0; i < 50; i++) await tick();
+  assert.equal(s.legacyCommitCalls, calls, '(precondition: the one save in flight, not a new one)');
+  assert.equal(s.legacyRecorded.size, 1, '(precondition: it was recorded)');
+  assert.deepEqual(seen, [], "…but officer-1's file is not shown to officer-2");
+  assert.equal(q.getSnapshot().batches.length, 0);
+});
+
+test('queue: [review r4] "uploads stopped" lines are per officer and place: a later stop adds to them, a drop elsewhere keeps them', async () => {
+  const { q, server, s } = qsetup();
+  server.fault = () => 'hang';
+  q.enqueueFiles(CLIENT_A, meta('Ali Khan'), [drop('a.bin', 200), drop('b.bin', 200, undefined, 1, 'b')]);
+  await until(() => server.inFlight > 0);
+  s.token = jwt('officer-2');
+  s.sub = 'officer-2';
+  await until(() => !!q.getSnapshot().notice, 50_000);
+  // officer-2 starts a walk-in upload that is still running when officer-3 signs in
+  q.enqueueFiles(CLIENT_B, meta('Walk-in'), [drop('w.bin', 200, undefined, 1, 'w')]);
+  await until(() => server.inFlight > 0 && rowsOf(q).some((r) => r.fileName === 'w.bin'), 50_000);
+  s.token = jwt('officer-3');
+  s.sub = 'officer-3';
+  q.enqueueFiles(CLIENT_B, meta('Walk-in'), [drop('x.pdf', 5, undefined, 1, 'x')]);
+  await until(() => (q.getSnapshot().notice?.lost.length ?? 0) === 2, 50_000);
+  const labels = q.getSnapshot().notice!.lost.map((l) => l.label).sort();
+  assert.deepEqual(labels, ['Ali Khan', 'Walk-in'], "officer-1's line is still there");
+  q.shutdown('logout');
+  // officer-1 is back and first drops into ANOTHER client: their Ali Khan line stays
+  server.fault = () => 'ok';
+  s.token = jwt('officer-1');
+  s.sub = 'officer-1';
+  q.enqueueFiles(CLIENT_B, meta('Walk-in'), [drop('r.pdf', 5, undefined, 1, 'r')]);
+  await settled(q, 100_000);
+  assert.ok(q.getSnapshot().notice!.lost.some((l) => l.label === 'Ali Khan'), 'a drop elsewhere does not clear it');
+  // …then re-drops Ali Khan's files: that line ends; officer-2's stays
+  q.enqueueFiles(CLIENT_A, meta('Ali Khan'), [drop('a.bin', 200), drop('b.bin', 200, undefined, 1, 'b')]);
+  await settled(q, 100_000);
+  assert.deepEqual(q.getSnapshot().notice!.lost.map((l) => l.label), ['Walk-in']);
+});
+
+test('queue: [review r4] a drop with a file to check is never "clean": Clear finished keeps it, and it counts as needing the officer', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyCommitDelay = (name) => (name === 'c.pdf' ? 60_000 : 0);
+  s.legacyCommitFault = (name) => (name === 'c.pdf' ? 'lost' : null);
+  const id = q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await until(() => s.stored.includes('c.pdf'), 50_000);
+  await q.cancelBatch(id); // Cancel while it is being saved; the save's reply is lost
+  await settled(q, 200_000);
+  assert.equal(statusByName(q)['c.pdf'], 'cancelled');
+  q.clearFinished();
+  await tick();
+  await until(() => q.getSnapshot().rev > 0);
+  assert.equal(q.getSnapshot().batches.length, 1, 'kept: the officer must check the folder first');
+  assert.ok(q.getSnapshot().attention >= 1);
+});
+
+test('queue: [review r4] Cancel while the retry is still asking whether the link is up: cancelled, and the save is not sent again', async () => {
+  const { q, server, s, env } = qsetup();
+  server.mode = 'proxy';
+  s.legacyCommitFault = (name) => (name === 'c.pdf' ? 'lost' : null); // the save's reply never arrives
+  const realPing = server.ping.bind(server);
+  let pings = 0;
+  server.ping = async (signal) => {
+    pings += 1;
+    await server.sleep(15_000, signal); // a slow /health answer
+    return realPing(signal);
+  };
+  q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await until(() => s.legacyCommitCalls >= 1 && pings >= 1, 50_000);
+  await q.cancel(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.rowId); // (during that ping)
+  await settled(q, 100_000);
+  for (let i = 0; i < 50; i++) await tick();
+  void env;
+  assert.equal(s.legacyCommitCalls, 1, 'not sent again after the Cancel');
+  assert.equal(statusByName(q)['c.pdf'], 'cancelled');
+  assert.match(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.note ?? '', /may already have been saved/);
 });

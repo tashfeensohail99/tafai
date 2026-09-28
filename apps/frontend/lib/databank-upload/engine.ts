@@ -222,10 +222,13 @@ const READ_WAIT_MAX_MS = 60_000;
 /** A read that fails, yet reads fine at that spot right after, this many times
  *  in a row, counts anyway (a file that only fails when read in full). */
 const READ_OK_BUT_FAILED_MAX = 3;
-/** Failed reads forgiven as link blips before they count anyway — on a
- *  congested uplink (slow pings, part retries) every read looks like one, and a
- *  bad file must not be re-read forever. */
-const BLIP_MAX = 8;
+/** Failed reads are forgiven as link blips for this long while they keep
+ *  failing at the same spot — then they count. On a congested uplink (slow
+ *  pings, part retries) every read looks like a blip, and a bad file must not
+ *  be re-read forever; a flapping link (however often it flaps) gets this long
+ *  to let one read through. Blips back off (1 s … 30 s), so a bad file is
+ *  re-read a few dozen times at most. */
+const BLIP_WINDOW_MS = 30 * 60_000;
 /** Bytes up to this far past what was already read may come from a cache
  *  (Drive for desktop serves recently read files while it is offline; the OS
  *  reads ahead): only a read beyond that proves the source works. */
@@ -235,6 +238,12 @@ const FRESH_MARGIN = 16 * 1024 * 1024;
  *  fails — it may have been moved or edited, which the browser reports exactly
  *  like an unplugged drive. */
 export const NO_PROOF_GIVE_UP_MS = 30 * 60_000;
+/** A fresh read this recent before a failure still vouches for the source (a
+ *  folder of gone files must not use up one never-read file per check) — but
+ *  never twice for one file: each further strike needs a proof newer than that
+ *  file's previous failure, so a source that vanishes right after a proof costs
+ *  at most one wrong strike, never a failed file. */
+const SOURCE_PROOF_HOLD_MS = 15_000;
 /** A read that failed while paused is tried again this often until Resume. */
 const HALTED_READ_RETRY_MS = 10 * 60_000;
 const PROBE_TIMEOUT_MS = 30_000;
@@ -338,13 +347,22 @@ interface Job {
   hashFailures: number;
   /** Reads that failed although the same spot read fine right after. */
   readOkButFailed: number;
-  /** Failed reads forgiven as blips (bounded by BLIP_MAX). */
+  /** Failed reads forgiven as blips in a row (see BLIP_WINDOW_MS). */
   blips: number;
+  blipsSince?: number;
+  /** Where its last failed read stopped: a bad spot fails in the same place
+   *  every time; a flapping link breaks reads all over the file. */
+  lastFailSpot?: number;
   /** How far this file was READ (hash, probe): reading it again up to here
    *  (+ FRESH_MARGIN) may be served from a cache — no proof of the source. */
   readTo: number;
   /** A read of it failed (and no fresh read since): a poor file to test the source with. */
   readFailed: boolean;
+  /** When its previous read failed (see SOURCE_PROOF_HOLD_MS). */
+  lastFailedReadAt?: number;
+  /** Active time since nothing could tell whether IT or its source is at fault
+   *  (see NO_PROOF_GIVE_UP_MS) — this file's own clock. */
+  unprovenSince?: number;
   hashCtrl?: AbortController;
 }
 
@@ -429,9 +447,9 @@ export class UploadEngine {
     /** The due time a wake-up timer is armed for (one per due time). */
     armedFor?: number;
     sinceActive: number;
-    /** Since when nothing was left to test the source with (see NO_PROOF_GIVE_UP_MS). */
-    prooflessSince?: number;
     tried: Set<Job>;
+    /** Folders of recent test reads: the next one comes from another folder. */
+    triedFolders: Set<string | null>;
     wake: AbortController;
   } | null = null;
   /** A timer that tells listeners when a stale "link down" stops holding. */
@@ -475,7 +493,10 @@ export class UploadEngine {
         if (st === 'cancelling') {
           known.redrop = item; // the officer changed their mind: upload it once the Cancel settles
         } else if (st === 'failed' || st === 'cancelled' || st === 'fallback') {
-          // (fallback: the server said 'proxy' — dropped again, ask it again)
+          // (fallback: the server said 'proxy' — dropped again, ask it again. An
+          // earlier "Upload anyway" does not carry over: the standard upload may
+          // have saved it since, and only the server's duplicate check knows.)
+          if (st === 'fallback') known.allowDuplicate = false;
           this.replaceItem(known, item);
           known.cancelUnconfirmed = false; // dropping it again IS the officer's answer
           this.retry(item.key);
@@ -501,6 +522,7 @@ export class UploadEngine {
           known.cancelUnconfirmed = false;
           known.hashFailures = 0;
           known.blips = 0;
+          known.blipsSince = undefined;
           this.set(known, {
             status: known.sha256 ? 'hashed' : 'queued',
             existing: undefined,
@@ -678,7 +700,9 @@ export class UploadEngine {
     job.cancelRequested = false;
     job.cancelUnconfirmed = false;
     job.hashFailures = 0;
+    job.readOkButFailed = 0;
     job.blips = 0;
+    job.blipsSince = undefined;
     this.set(job, {
       status: job.sha256 ? 'hashed' : 'queued',
       error: undefined,
@@ -851,10 +875,13 @@ export class UploadEngine {
    *  lastModified changed ⇒ the content may have too: hash it again. */
   private replaceItem(job: Job, item: UploadItem): void {
     const old = job.item;
-    if (item.source.size !== old.source.size || item.lastModified !== old.lastModified) job.sha256 = undefined;
+    const changed = item.source.size !== old.source.size || item.lastModified !== old.lastModified;
+    if (changed) {
+      job.sha256 = undefined;
+      job.readTo = 0; // different content: nothing read from it yet
+      job.readFailed = false;
+    }
     job.item = item;
-    job.readTo = 0; // a new File: nothing read from it yet
-    job.readFailed = false;
     this.set(job, { fileName: item.fileName, relativePath: item.relativePath, size: item.source.size });
   }
 
@@ -922,15 +949,15 @@ export class UploadEngine {
   /** Any armed timer more than ASLEEP_MS overdue ⇒ the machine slept (or the
    *  tab was frozen) from its due time until now: not trying time, so it is
    *  excluded from the give-up window. Called on every timer wake, every charge
-   *  and halt. While halted nothing is excluded here — unhalt() excludes the
-   *  whole halted stretch itself (no double counting). */
+   *  and halt. While halted the ACTIVE clock excludes nothing here — unhalt()
+   *  excludes the whole halted stretch itself (no double counting) — but the
+   *  sleep still counts as sleep for the awake clock (the hash watchdog). */
   private observe(): void {
-    if (this.haltedSince !== null) return;
     const now = this.now();
     let earliest = Infinity;
     for (const due of this.armed.values()) if (due < earliest) earliest = due;
     if (now - earliest > ASLEEP_MS) {
-      this.exclude(earliest, now);
+      if (this.haltedSince === null) this.exclude(earliest, now);
       const start = Math.max(earliest, this.sleptUntil);
       if (now > start) this.sleptMs += now - start;
       this.sleptUntil = Math.max(this.sleptUntil, now);
@@ -971,6 +998,8 @@ export class UploadEngine {
     job.signBudget = newBudget();
     job.resigns.clear();
     job.unreadableSince.clear();
+    job.unprovenSince = undefined;
+    job.lastFailedReadAt = undefined;
     job.signing = undefined;
     job.session = undefined;
     job.wantsComplete = false;
@@ -1133,28 +1162,58 @@ export class UploadEngine {
    *  from Drive for desktop's cache while it is offline. Only ANOTHER file
    *  counts (this file's own reads say nothing about "gone" vs "unplugged").
    *  Without a read probe we can't tell — assume it works (as before). */
-  private async sourceState(t: number, job: Job): Promise<'up' | 'away' | 'unknown'> {
+  private async sourceState(t: number, job: Job, proofFrom = t): Promise<'up' | 'away' | 'unknown'> {
     if (!this.env.readable) return 'up';
     const other = this.lastRead && this.lastRead.job !== job ? this.lastRead : this.lastOtherRead;
-    if (other && other.job !== job && other.at > t) return 'up';
-    let test: Job | undefined;
-    for (const j of this.jobs) {
-      if (j === job || TERMINAL.has(j.view.status) || j.view.status === 'cancelling') continue;
-      if (this.freshFrom(j) >= j.item.source.size) continue;
-      if (!j.readFailed) {
-        test = j;
-        break;
-      }
-      test ??= j; // (one whose own read failed — if nothing better)
+    if (other && other.job !== job && other.at > proofFrom) return 'up';
+    // A spot never read, of another file — from ANOTHER folder when there is
+    // one (a moved or renamed folder takes its siblings with it): if it reads,
+    // the source works. If it doesn't, that proves nothing (it may be gone too).
+    const fresh = this.freshTestFile(job);
+    if (fresh) {
+      const at = this.freshFrom(fresh);
+      if ((await this.probe(fresh, at, at + 1)) === 'ok') return 'up';
     }
-    if (!test) return 'unknown';
-    const at = this.freshFrom(test);
-    return (await this.probe(test, at, at + 1)) === 'ok' ? 'up' : 'away';
+    // A file that read fine before and can't be read NOW: the drive / NAS / Drive
+    // client is away (a cache can make a read succeed, never fail). Two such
+    // files, if there are two, so one deleted file can't claim the whole drive.
+    const known = this.knownGoodFiles(job);
+    if (!known.length) return 'unknown';
+    for (const k of known) {
+      if ((await this.probe(k, 0, 1)) === 'ok') return 'unknown'; // (reads fine — maybe from a cache)
+    }
+    return 'away';
+  }
+
+  /** Another live file with a spot never read (see freshFrom), whose own read
+   *  never failed — preferring a different folder than `job`'s. */
+  private freshTestFile(job: Job): Job | undefined {
+    let sameFolder: Job | undefined;
+    for (const j of this.jobs) {
+      if (j === job || j.readFailed || TERMINAL.has(j.view.status) || j.view.status === 'cancelling') continue;
+      if (this.freshFrom(j) >= j.item.source.size) continue;
+      if ((j.item.folderId ?? null) !== (job.item.folderId ?? null)) return j;
+      sameFolder ??= j;
+    }
+    return sameFolder;
+  }
+
+  /** Up to two other files that were read fine before — from different folders
+   *  when possible, ones not failing since first. (One that failed only while
+   *  the source was away still counts: its failing again is the evidence.) */
+  private knownGoodFiles(job: Job): Job[] {
+    const ok = (j: Job) => j !== job && j.readTo > 0 && j.item.source.size > 0 && j.view.status !== 'cancelled' && j.view.status !== 'cancelling';
+    const pool = this.jobs.filter((j) => ok(j) && !j.readFailed);
+    for (const j of this.jobs) if (ok(j) && j.readFailed && pool.length < 2) pool.push(j);
+    const first = pool[0];
+    if (!first) return [];
+    const other = pool.find((j) => j !== first && (j.item.folderId ?? null) !== (first.item.folderId ?? null)) ?? pool.find((j) => j !== first);
+    return other ? [first, other] : [first];
   }
 
   /** Nothing can be read right now (and nothing proves the source works):
    *  gate hashing to one test read at a time — a 20k-file drop must not spin. */
-  private enterReadWait(cause: 'link' | 'source', proofless = false, testRead = true): void {
+  private enterReadWait(cause: 'link' | 'source', testRead = true): void {
     const w = this.readWait;
     if (w) {
       // Only a failed TEST read spaces out the next one — a part checking its
@@ -1162,12 +1221,6 @@ export class UploadEngine {
       if (testRead) {
         w.streak += 1;
         w.nextAt = this.now() + this.readWaitDelay();
-      }
-      if (cause === 'source') {
-        // Nothing to test with: the short give-up clock runs (from the first
-        // such verdict); a test that FAILED shows the source is away: the long one.
-        if (!proofless) w.prooflessSince = undefined;
-        else w.prooflessSince ??= this.activeNow();
       }
       if (w.cause !== cause) {
         w.cause = cause;
@@ -1181,8 +1234,8 @@ export class UploadEngine {
       streak: 1,
       nextAt: this.now() + READ_WAIT_MS,
       sinceActive: this.activeNow(),
-      prooflessSince: cause === 'source' && proofless ? this.activeNow() : undefined,
       tried: new Set(),
+      triedFolders: new Set(),
       wake: new AbortController(),
     };
     this.notify();
@@ -1255,40 +1308,50 @@ export class UploadEngine {
     }
     const queued = this.jobs.filter((j) => j.view.status === 'queued' && !j.parked);
     if (!queued.length) return;
-    let next = queued.find((j) => !w.tried.has(j));
-    if (!next) {
+    // Rotate over the files — and over their FOLDERS: a moved or renamed folder
+    // must not be walked through file by file before anything else is tried.
+    const folderOf = (j: Job) => j.item.folderId ?? null;
+    let untried = queued.filter((j) => !w.tried.has(j));
+    if (!untried.length) {
       w.tried.clear();
-      next = queued[0];
+      untried = queued;
+    }
+    let next = untried.find((j) => !w.triedFolders.has(folderOf(j)));
+    if (!next) {
+      w.triedFolders.clear();
+      next = untried[0];
     }
     w.tried.add(next);
+    w.triedFolders.add(folderOf(next));
     w.nextAt = this.now() + this.readWaitDelay();
     this.armReadWait();
     void this.hashJob(next);
   }
 
-  /** Given up waiting on the source (the active clock, like every other wait):
-   *  after giveUpMs — or NO_PROOF_GIVE_UP_MS while nothing could test it. */
-  private readWaitExpired(): boolean {
+  /** The source has been away for giveUpMs (the active clock, like every other wait). */
+  private sourceGaveUp(): boolean {
     const w = this.readWait;
-    if (!w) return false;
-    const now = this.activeNow();
-    return now - w.sinceActive >= this.giveUpMs || (w.prooflessSince !== undefined && now - w.prooflessSince >= NO_PROOF_GIVE_UP_MS);
+    return !!w && this.activeNow() - w.sinceActive >= this.giveUpMs;
   }
 
-  /** Why a file that waited on the source gave up. */
-  private readGiveUpMessage(e: unknown): string {
-    return this.readWait?.prooflessSince !== undefined
-      ? `Could not read this file (${errorMessage(e)}) — was it moved, edited or renamed, or its drive disconnected? Drop it again to continue.`
-      : `Could not read this file for hours (${errorMessage(e)}). Is the drive / Google Drive connected?`;
+  /** Nothing could tell for NO_PROOF_GIVE_UP_MS whether THIS file or its source
+   *  is at fault (a one-file drop, or everything else read already). */
+  private unprovenTooLong(job: Job): boolean {
+    return job.unprovenSince !== undefined && this.activeNow() - job.unprovenSince >= NO_PROOF_GIVE_UP_MS;
   }
 
-  /** The wait is over: this file, and every file still queued behind the one
-   *  test read at a time, fail now (not one per test read — a 20k-file drop
-   *  would take weeks). Parts marked unreadable fail on their next check. */
+  /** Give up on reading `job`. The source away for hours: every file still
+   *  queued behind the one test read at a time fails too (not one per test
+   *  read — a 20k-file drop would take weeks). Only this file's own clock ran
+   *  out: only this file. Parts marked unreadable fail on their next check. */
   private giveUpReads(job: Job, e: unknown): void {
-    const msg = this.readGiveUpMessage(e);
-    this.fail(job, msg, true);
-    for (const j of this.jobs) if (j !== job && j.view.status === 'queued') this.fail(j, msg, true);
+    if (this.sourceGaveUp()) {
+      const msg = `Could not read this file for hours (${errorMessage(e)}). Is the drive / Google Drive connected?`;
+      this.fail(job, msg, true);
+      for (const j of this.jobs) if (j !== job && j.view.status === 'queued') this.fail(j, msg, true);
+      return;
+    }
+    this.fail(job, `Could not read this file (${errorMessage(e)}) — was it moved, edited or renamed, or its drive disconnected? Drop it again to continue.`, true);
   }
 
   private succeeded(channel: Channel): void {
@@ -1369,6 +1432,9 @@ export class UploadEngine {
       job.hashFailures = 0;
       job.readOkButFailed = 0;
       job.blips = 0;
+      job.blipsSince = undefined;
+      job.unprovenSince = undefined;
+      job.lastFailedReadAt = undefined;
       this.set(job, { hashedBytes: job.item.source.size });
       // Only a copy still IN PROGRESS counts — a finished one says nothing about
       // what the databank holds now (it may have been deleted): ask the server.
@@ -1420,7 +1486,12 @@ export class UploadEngine {
         await this.waitForResume(job);
         return;
       }
-      const source = link ? await this.sourceState(failedAt, job) : 'away';
+      // A recent fresh read (SOURCE_PROOF_HOLD_MS) vouches — but only one newer
+      // than this file's previous failure (each strike needs its own proof).
+      const prevFail = job.lastFailedReadAt;
+      job.lastFailedReadAt = failedAt;
+      const proofFrom = Math.max(failedAt - SOURCE_PROOF_HOLD_MS, prevFail ?? -Infinity);
+      const source = link ? await this.sourceState(failedAt, job, proofFrom) : 'away';
       if (job.gen !== gen) return;
       // Can THIS file be read now, where it failed?
       const size = job.item.source.size;
@@ -1432,14 +1503,17 @@ export class UploadEngine {
         if (job.gen !== gen) return;
       }
       if (!link || source === 'away' || (source === 'unknown' && again !== 'ok')) {
-        this.enterReadWait(link ? 'source' : 'link', source === 'unknown');
-        if (this.readWaitExpired()) {
+        if (link && source === 'unknown') job.unprovenSince ??= this.activeNow();
+        else if (source === 'away') job.unprovenSince = undefined; // the source is away: the long wait
+        this.enterReadWait(link ? 'source' : 'link');
+        if (this.sourceGaveUp() || this.unprovenTooLong(job)) {
           this.giveUpReads(job, e);
           return;
         }
         await this.waitForSource(job, this.readWaitDelay());
         return;
       }
+      job.unprovenSince = undefined;
       again ??= await probeSpot();
       if (job.gen !== gen) return;
       if (again === 'ok') {
@@ -1447,10 +1521,19 @@ export class UploadEngine {
         // was being read, that failure was a blip — uncounted, read it again.
         // With no trouble anywhere, a file that fails in full yet reads fine at
         // that spot is broken: that counts after a few tries.
-        const blip = (this.lastLinkTroubleAt >= readStartedAt || this.readWaitEndedAt >= readStartedAt) && job.blips < BLIP_MAX;
+        const trouble = this.lastLinkTroubleAt >= readStartedAt || this.readWaitEndedAt >= readStartedAt;
+        const now = this.now();
+        // Blips run from the first one at this spot: failing somewhere else
+        // (a flap breaks reads all over the file) starts over.
+        if (job.blipsSince === undefined || job.lastFailSpot !== at) {
+          job.blips = 0;
+          job.blipsSince = now;
+        }
+        job.lastFailSpot = at;
+        const blip = trouble && now - job.blipsSince < BLIP_WINDOW_MS;
         if (blip) job.blips += 1;
         if (blip || (job.readOkButFailed += 1) < READ_OK_BUT_FAILED_MAX) {
-          await this.backoff(backoffMs(2, this.env.random), job, false);
+          await this.backoff(backoffMs(blip ? Math.min(6, 1 + job.blips) : 2, this.env.random), job, false);
           return;
         }
       }
@@ -1720,8 +1803,13 @@ export class UploadEngine {
               return;
             }
             // Wait for the source: keep the mark, free the slot, come back later.
-            this.enterReadWait('source', source === 'unknown', false);
-            if (this.readWaitExpired()) {
+            // (With files still to hash, their test reads set the pace; with none,
+            // part checks do — backing off like test reads, not every 5 s.)
+            const hashLane = this.jobs.some((j) => j.view.status === 'queued' || j.view.status === 'hashing');
+            if (source === 'unknown') job.unprovenSince ??= this.activeNow();
+            else job.unprovenSince = undefined; // the source is away: the long wait
+            this.enterReadWait('source', !hashLane);
+            if (this.sourceGaveUp() || this.unprovenTooLong(job)) {
               this.fail(job, 'Could not read this file — was it moved, edited or renamed, or its drive disconnected? Drop it again to continue (finished parts are kept).');
               return;
             }

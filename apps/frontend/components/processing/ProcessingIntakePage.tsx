@@ -134,7 +134,7 @@ function AcknowledgeModal({
   const serviceChanged = !!serviceCode && serviceCode !== c.service;
 
   return (
-    <div
+    <div data-sos-modal=""
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >

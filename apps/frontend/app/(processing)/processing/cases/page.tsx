@@ -232,7 +232,7 @@ function EmailComposeModal({
   }
 
   return (
-    <div
+    <div data-sos-modal=""
       onClick={onClose}
       style={{
         position: 'fixed',

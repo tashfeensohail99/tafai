@@ -2056,8 +2056,11 @@ test('[review r8] a congested uplink (every /health ping slow) forgives a bad fi
     return realPing(signal);
   };
   engine.add([item('fine.pdf', 12, { seed: 'fine' }), odd]);
-  await until(() => statuses(engine)['odd.bin'] === 'failed', 100_000);
-  assert.ok(reads <= 16, `bounded (${reads} reads)`);
+  const t0 = env.clock;
+  await until(() => statuses(engine)['odd.bin'] === 'failed', 400_000);
+  // forgiven (spaced out) for the blip window, then counted: it fails — not re-read forever
+  assert.ok(reads <= 80, `a few dozen re-reads at most (${reads})`);
+  assert.ok(env.clock - t0 < 45 * 60_000, `failed after ${Math.round((env.clock - t0) / 60_000)} min`);
   await engine.whenIdle();
   assert.equal(statuses(engine)['fine.pdf'], 'done');
 });
@@ -2128,6 +2131,170 @@ test('[review r8] while an upload\'s part waits on the drive, the queued files s
   assert.ok(qReads >= 8, `test reads kept coming, one at a time (${qReads} in 10 min)`);
   assert.ok(qReads <= 40, `…and spaced out (${qReads} in 10 min)`);
   drive = true;
+  await engine.whenIdle();
+  assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
+});
+
+// ---- review round 9 ------------------------------------------------------------------------
+
+const startsWith = (src: unknown, prefix: string) => (src as FakeSource).sha.startsWith(Buffer.from(prefix).toString('hex'));
+
+test('[review r9] a folder moved or renamed mid-drop: its files fail soon — the other folders are not held back, nothing waits 12 h', async () => {
+  const { env, engine } = setup();
+  env.random = seeded(3);
+  let bGone = false;
+  env.readable = async (src: UploadSource) => !(bGone && startsWith(src, 'B'));
+  env.hash = async (source) => {
+    await env.sleep(2_000); // 2 s per PDF
+    if (bGone && startsWith(source, 'B')) throw new Error('NotFoundError');
+    return (source as FakeSource).sha;
+  };
+  const files = [
+    ...Array.from({ length: 20 }, (_, i) => item(`A${i}.pdf`, 12, { seed: `A${i}`, folderId: 'fa' })),
+    ...Array.from({ length: 30 }, (_, i) => item(`B${i}.pdf`, 12, { seed: `B${i}`, folderId: 'fb' })),
+    ...Array.from({ length: 40 }, (_, i) => item(`C${i}.pdf`, 12, { seed: `C${i}`, folderId: 'fc' })),
+  ];
+  engine.add(files);
+  await until(() => !['queued', 'hashing'].includes(statuses(engine)['A19.pdf']), 200_000);
+  bGone = true; // a colleague renames B/ in the shared Drive
+  const t0 = env.clock;
+  let firstC = Infinity;
+  const watch = setInterval(() => {
+    if (firstC === Infinity && files.slice(50).some((f) => !['queued', 'hashing'].includes(statuses(engine)[f.key]))) firstC = env.clock - t0;
+  }, 0);
+  await engine.whenIdle();
+  clearInterval(watch);
+  const st = statuses(engine);
+  assert.ok(files.slice(50).every((f) => st[f.key] === 'done'), 'every C file uploaded');
+  assert.ok(files.slice(20, 50).every((f) => st[f.key] === 'failed'), 'the moved files fail (drop them again from where they are now)');
+  assert.ok(firstC < 10 * 60_000, `C/ was not held back (${Math.round(firstC / 60_000)} min)`);
+  assert.ok(env.clock - t0 < 45 * 60_000, `settled in ${Math.round((env.clock - t0) / 60_000)} min, not 12 h`);
+  assert.equal(engine.snapshot().readsWaiting, false);
+});
+
+test('[review r9] two files that can never be read, last in the drop: they fail after the short wait with the right words — not 12 h', async () => {
+  const { env, engine } = setup();
+  env.random = seeded(4);
+  env.readable = async (src: UploadSource) => !startsWith(src, 'L');
+  env.hash = async (source) => {
+    await tick();
+    if (startsWith(source, 'L')) throw new Error('NotReadableError'); // locked (.pst / .ost) or deleted
+    return (source as FakeSource).sha;
+  };
+  engine.add([
+    ...Array.from({ length: 10 }, (_, i) => item(`g${i}.pdf`, 12, { seed: `g${i}` })),
+    item('outlook.pst', 12, { seed: 'L1' }),
+    item('outlook.ost', 12, { seed: 'L2' }),
+  ]);
+  const t0 = env.clock;
+  await engine.whenIdle();
+  const took = env.clock - t0;
+  assert.ok(took < 45 * 60_000, `${Math.round(took / 60_000)} min`);
+  for (const k of ['outlook.pst', 'outlook.ost']) {
+    assert.equal(statuses(engine)[k], 'failed');
+    assert.doesNotMatch(view(engine, k).error!, /for hours/);
+  }
+});
+
+test('[review r9] a NAS off for 2½ h while the drop UPLOADS (everything read already): nothing fails, and the waiting parts back off', async () => {
+  const { server, env, engine } = setup();
+  env.random = seeded(5);
+  let nas = true;
+  env.readable = async () => nas;
+  server.fault = () => (nas ? 'slow' : 0);
+  engine.add(Array.from({ length: 40 }, (_, i) => item(`n${i}.pdf`, 12, { seed: `n${i}` })));
+  await until(() => Object.values(statuses(engine)).every((x) => x !== 'queued' && x !== 'hashing'), 200_000);
+  await until(() => server.okPuts.size >= 3, 200_000);
+  nas = false; // load-shedding: the NAS goes off; router and internet stay on the UPS
+  const signs0 = server.calls.sign;
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 150 * 60_000, 3_000_000);
+  assert.equal(Object.values(statuses(engine)).filter((x) => x === 'failed').length, 0, 'the NAS is off — no file is "moved or edited"');
+  assert.equal(engine.snapshot().readsWaiting, true);
+  const signs = server.calls.sign - signs0;
+  assert.ok(signs < 1_500, `waiting parts back off (${signs} sign calls in 150 min)`);
+  nas = true;
+  await engine.whenIdle();
+  assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
+  exactlyOnce(server);
+});
+
+test('[review r9] a Drive-streamed read broken by 20 ISP flaps in a row still finishes (blips are forgiven by time, not by count)', async () => {
+  const { server, env, engine } = setup();
+  let down = false;
+  env.readable = async () => !down;
+  server.apiFault = (m) => (down && m !== 'ping' ? 0 : 'ok');
+  server.fault = () => (down ? 0 : 'ok');
+  const realPing = server.ping.bind(server);
+  server.ping = async (signal) => {
+    while (down) await server.sleep(500, signal);
+    return realPing(signal);
+  };
+  const long = item('long.mov', 12, { seed: 'long' });
+  env.hash = async (source, onProgress) => {
+    if (source === long.source) {
+      for (let i = 1; i <= 10; i++) {
+        await env.sleep(2_000); // a 20 s read — no 5 s "up" window lets it finish
+        if (down) throw new Error('NotReadableError');
+        onProgress(i);
+      }
+    }
+    await tick();
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('sibling.pdf', 12, { seed: 'sib' })]);
+  await engine.whenIdle();
+  engine.add([long]);
+  for (let i = 0; i < 40; i++) {
+    await env.sleep(5_000);
+    down = !down; // 5 s up / 5 s down, twenty outages mid-read
+  }
+  down = false;
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['long.mov'], 'done');
+});
+
+test('[review r9] the lid closes for an hour while PAUSED mid-hash: the read is not abandoned on wake (sleep counts as sleep)', async () => {
+  const { env, engine } = setup();
+  let calls = 0;
+  let slept = false;
+  env.hash = async (source, onProgress) => {
+    calls += 1;
+    for (let i = 1; i <= 10; i++) {
+      await env.sleep(7_000);
+      if (i === 3 && !slept) {
+        slept = true;
+        env.clock += 60 * 60_000; // the lid closes for an hour…
+        await env.sleep(20_000); // …and the read takes a moment to resume after waking
+      }
+      onProgress(i);
+    }
+    return (source as FakeSource).sha;
+  };
+  engine.pause();
+  engine.add([item('long.bin', 12)]);
+  await until(() => statuses(engine)['long.bin'] === 'hashed', 200_000);
+  assert.equal(calls, 1, 'hashed once — not restarted after the sleep');
+  engine.resume();
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['long.bin'], 'done');
+});
+
+test('[review r9] a NAS cut seconds after a file read fine: that recent read vouches for ONE strike at most — no file fails', async () => {
+  const { env, engine } = setup();
+  let nas = true;
+  env.readable = async () => nas;
+  env.hash = async (source) => {
+    await env.sleep(1_000);
+    if (!nas) throw new Error('NotReadableError');
+    if (startsWith(source, 'first')) nas = false; // the NAS loses power right after this read
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('first.pdf', 12, { seed: 'first' }), ...Array.from({ length: 5 }, (_, i) => item(`q${i}.pdf`, 12, { seed: `q${i}` }))]);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000, 400_000);
+  assert.equal(Object.values(statuses(engine)).filter((x) => x === 'failed').length, 0, 'the NAS is off — no file is struck out');
+  nas = true;
   await engine.whenIdle();
   assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
 });

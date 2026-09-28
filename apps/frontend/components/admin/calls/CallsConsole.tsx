@@ -379,7 +379,7 @@ function CallDetailModal({ call, onClose }: { call: CallRow; onClose: () => void
   }, [call.id]);
 
   return (
-    <div
+    <div data-sos-modal=""
       onClick={onClose}
       style={{
         position: 'fixed',

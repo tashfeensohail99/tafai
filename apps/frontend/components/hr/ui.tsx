@@ -32,7 +32,7 @@ export function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'bad' | 'neutra
 /** Premium modal frame (scoped hr-console styling). */
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="hr-overlay" onClick={onClose}>
+    <div data-sos-modal="" className="hr-overlay" onClick={onClose}>
       <div className="hr-modal" style={{ maxWidth: wide ? 640 : 460 }} onClick={(e) => e.stopPropagation()}>
         <div className="hr-modal__head">
           <h2 className="hr-modal__title">{title}</h2>

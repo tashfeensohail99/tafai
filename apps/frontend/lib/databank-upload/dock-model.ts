@@ -5,7 +5,7 @@
  * whether they need to do anything.
  */
 import type { BatchView, QueueSnapshot, RowView } from './queue.ts';
-import { formatBytes, formatEta } from './summary.ts';
+import { formatBytes, formatEta, needsCheck } from './summary.ts';
 
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 export type RowAction = 'cancel' | 'retry' | 'discard' | 'skip' | 'upload-anyway' | 'upload-again';
@@ -161,10 +161,14 @@ export function dockHeadline(s: QueueSnapshot, now: number): Headline {
   }
   const issues = sum.failed + sum.needsDecision + s.batches.filter((b) => b.state === 'prepare-failed').length;
   const left = s.batches.reduce((a, b) => a + b.skipped.length, 0); // not uploaded (e.g. folder names too long)
+  const checks = s.batches.reduce((a, b) => a + b.rows.filter(needsCheck).length, 0);
   const saved = sum.completed;
-  if (issues || left) {
+  // (Never "All N files saved" while some were cancelled — or need a look in the folder.)
+  if (issues || left || checks || sum.cancelled) {
     const bits = [`${n(saved)} saved`];
+    if (sum.cancelled) bits.push(`${n(sum.cancelled)} cancelled`);
     if (left) bits.push(`${n(left)} not uploaded`);
+    if (checks) bits.push(`${n(checks)} to check`);
     if (issues) bits.push(plural(issues, 'needs attention', 'need attention'));
     return { title: bits.join(' · ') };
   }
@@ -173,7 +177,7 @@ export function dockHeadline(s: QueueSnapshot, now: number): Headline {
 }
 
 export interface BatchSection {
-  key: 'choice' | 'problems' | 'progress' | 'waiting' | 'saved' | 'not-uploaded';
+  key: 'choice' | 'problems' | 'check' | 'progress' | 'waiting' | 'saved' | 'cancelled' | 'not-uploaded';
   title: string;
   rows: RowView[];
   /** Rows not rendered (performance cap). */
@@ -191,25 +195,33 @@ export function batchSections(b: BatchView): BatchSection[] {
   const problems: RowView[] = [];
   const progress: RowView[] = [];
   const waiting: RowView[] = [];
+  const check: RowView[] = [];
   const saved: RowView[] = [];
+  const cancelled: RowView[] = [];
   for (const r of b.rows) {
     if (r.status === 'needs-decision') choice.push(r);
     else if (r.status === 'failed') problems.push(r);
     else if (r.status === 'hashing' || r.status === 'uploading' || r.status === 'completing' || r.status === 'cancelling') progress.push(r);
     else if (r.status === 'queued' || r.status === 'hashed' || r.status === 'ready' || r.status === 'fallback') waiting.push(r);
-    else saved.push(r); // done, handed-off, skipped, cancelled
+    else if (needsCheck(r)) check.push(r); // a Cancel that came while it was being saved
+    else if (r.status === 'cancelled') cancelled.push(r);
+    else saved.push(r); // done, handed-off, skipped
   }
   const out: BatchSection[] = [];
-  const add = (key: BatchSection['key'], title: string, rows: RowView[], cap: number, collapsed = false) => {
-    if (rows.length) out.push({ key, title, rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap), collapsed });
+  const add = (key: BatchSection['key'], title: string, rows: RowView[], cap: number, collapsed = false, newest = false) => {
+    if (!rows.length) return;
+    out.push({ key, title, rows: newest ? rows.slice(-cap) : rows.slice(0, cap), more: Math.max(0, rows.length - cap), collapsed });
   };
   add('choice', `Needs your choice (${n(choice.length)})`, choice, CAP);
   add('problems', `Problems (${n(problems.length)})`, problems, CAP);
+  // Open by default: the officer asked to cancel these, and they may be in the folder anyway.
+  add('check', `Check the folder (${n(check.length)})`, check, CAP);
   add('progress', 'In progress', progress, CAP);
   add('waiting', `Waiting (${n(waiting.length)})`, waiting, WAITING_CAP);
   const already = saved.filter((r) => r.status === 'skipped').length;
   const savedTitle = already ? `${n(saved.length - already)} saved · ${n(already)} already there` : `${n(saved.length)} saved`;
-  add('saved', savedTitle, saved.slice(-SAVED_CAP), SAVED_CAP, true);
+  add('saved', savedTitle, saved, SAVED_CAP, true, true);
+  add('cancelled', `Cancelled (${n(cancelled.length)})`, cancelled, CAP, true);
   if (b.skipped.length) {
     // Open by default: these files are NOT in the databank — the officer must see why.
     out.push({ key: 'not-uploaded', title: `Not uploaded (${n(b.skipped.length)})`, rows: [], more: 0, collapsed: false });
@@ -233,11 +245,14 @@ export function batchStateLine(b: BatchView): { text: string; tone: Tone } {
     case 'finished': {
       const s = b.summary;
       const left = b.skipped.length;
-      if (s.failed || left) {
+      const checks = b.rows.filter(needsCheck).length;
+      if (s.failed || left || checks || s.cancelled) {
         const bits = [`${n(s.completed)} saved`];
+        if (s.cancelled) bits.push(`${n(s.cancelled)} cancelled`);
         if (left) bits.push(`${n(left)} not uploaded`);
+        if (checks) bits.push(`${n(checks)} to check`);
         if (s.failed) bits.push(plural(s.failed, 'problem'));
-        return { text: bits.join(' · '), tone: 'warning' };
+        return { text: bits.join(' · '), tone: s.failed || left || checks ? 'warning' : 'neutral' };
       }
       return { text: `${n(s.completed)} saved${s.skipped ? ` · ${n(s.skipped)} already there` : ''}`, tone: 'success' };
     }

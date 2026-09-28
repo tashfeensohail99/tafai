@@ -30,6 +30,7 @@ import type { UploadSummary } from './summary.ts';
 import { SpeedMeter } from './speed.ts';
 import { backoffMs, classifyApi } from './retry.ts';
 import { dataScopeOf, itemKey, jwtSub, targetKey } from './keys.ts';
+import { needsCheck } from './summary.ts';
 import { chunkPaths, orderForUpload, planFolderDrop } from './folder-plan.ts';
 import type { Skipped } from './folder-plan.ts';
 
@@ -136,10 +137,9 @@ export interface QueueSnapshot {
 
 export interface QueueNotice {
   reason: 'user-changed';
-  /** The officer whose uploads stopped (their next drop clears the notice). */
-  ownerSub?: string;
-  /** Per drop: files that were NOT uploaded. */
-  lost: Array<{ label: string; count: number }>;
+  /** Per stopped drop: files that were NOT uploaded — whose, and where to. An
+   *  entry ends when that officer drops into that place again, or on OK. */
+  lost: Array<{ label: string; count: number; ownerSub?: string; tKey?: string }>;
 }
 
 export interface LandedEvent {
@@ -241,6 +241,8 @@ interface LegacyRow {
   storedKey?: string;
   /** Cancel came after the bytes were stored: it is being recorded anyway. */
   lateCancel?: boolean;
+  /** Inside the upload / save call right now (only then can't Cancel stop it). */
+  inCall?: boolean;
   note?: string;
 }
 
@@ -582,9 +584,14 @@ export class UploadQueue {
           const st = this.rowStatus(rowId);
           if (st !== 'done' && st !== 'skipped' && st !== 'handed-off') count += 1;
         }
-        if (count) lost.push({ label: b.meta.label, count });
+        if (count) lost.push({ label: b.meta.label, count, ownerSub: this.ownerId ?? undefined, tKey: b.tKey });
       }
-      this.notice = lost.length ? { reason, lost, ownerSub: this.ownerId ?? undefined } : undefined;
+      // Added to, never replaced: an earlier officer's stopped drops nobody has
+      // read yet stay listed (a newer count for the same officer + place wins).
+      const same = (a: QueueNotice['lost'][number], c: QueueNotice['lost'][number]) => a.ownerSub === c.ownerSub && a.tKey === c.tKey;
+      const kept = (this.notice?.lost ?? []).filter((old) => !lost.some((l) => same(old, l)));
+      const all = [...kept, ...lost];
+      this.notice = all.length ? { reason, lost: all } : undefined;
     }
     this.shut = true;
     this.gen += 1;
@@ -667,9 +674,14 @@ export class UploadQueue {
     const sub = jwtSub(this.deps.accessToken());
     if (!sub) throw new Error('Sign in again to upload.');
     if (this.ownerId && sub !== this.ownerId) this.shutdown('user-changed');
-    // The officer whose uploads stopped is back and dropping again: the notice
-    // ("N files were not uploaded") has done its job and would soon be untrue.
-    if (this.notice && this.notice.ownerSub === sub) this.notice = undefined;
+    // The officer whose uploads stopped is back and drops into THAT place again:
+    // that line ("N files for X were not uploaded") has done its job and would
+    // soon be untrue. Lines for other places — or other officers — stay.
+    if (this.notice) {
+      const tKey = targetKey(t.base, t.target);
+      const left = this.notice.lost.filter((l) => !(l.ownerSub === sub && l.tKey === tKey));
+      if (left.length !== this.notice.lost.length) this.notice = left.length ? { ...this.notice, lost: left } : undefined;
+    }
     this.ownerId = sub;
   }
 
@@ -814,9 +826,12 @@ export class UploadQueue {
   /** Finished with nothing failed, undecided or left out. */
   private isClean(b: Batch): boolean {
     if (b.phase !== 'ready' || this.hasWork(b) || b.skipped.length) return false;
-    for (const id of b.legacyIds) if (this.legacy.get(id)?.status === 'failed') return false;
+    for (const id of b.legacyIds) {
+      const lg = this.legacy.get(id);
+      if (lg && (lg.status === 'failed' || needsCheck(lg))) return false;
+    }
     for (const f of b.engine?.snapshot().files ?? []) {
-      if (f.status === 'needs-decision' || f.status === 'failed') return false;
+      if (f.status === 'needs-decision' || f.status === 'failed' || needsCheck(f)) return false;
     }
     return true;
   }
@@ -857,14 +872,16 @@ export class UploadQueue {
     return best ? this.legacyLanes.get(best.id)!.shift() : undefined;
   }
 
-  /** Stop a standard upload — unless its bytes are already stored: then it is
-   *  being recorded (or was, if a reply got lost) and Cancel can't undo that;
-   *  it finishes and says so. */
+  /** Stop a standard upload — unless it is being recorded right now (bytes
+   *  stored, save in flight): Cancel can't undo that; it finishes and says so.
+   *  Waiting to retry a save that failed: cancelled — but it may have been
+   *  recorded already (a lost reply), so the row says to check the folder. */
   private cancelLegacy(lg: LegacyRow): void {
-    if (lg.storedKey) {
+    if (lg.storedKey && lg.inCall) {
       lg.lateCancel = true;
       return;
     }
+    if (lg.storedKey) lg.note = 'It may already have been saved — check the folder and delete it if unwanted.';
     lg.status = 'cancelled';
     lg.ctrl?.abort();
   }
@@ -1187,6 +1204,7 @@ export class UploadQueue {
         const b = r && this.batches.get(r.batchId);
         if (!r || !lg || !b || lg.status !== 'waiting') continue;
         if (!this.sameUser()) return;
+        const gen = this.gen; // (a shutdown while this row runs makes it someone else's queue)
         lg.status = 'uploading';
         const ctrl = new AbortController();
         lg.ctrl = ctrl;
@@ -1211,6 +1229,7 @@ export class UploadQueue {
           }
         })();
         try {
+          lg.inCall = true;
           const file = await this.deps.legacyUpload(
             b.target,
             r.item.source,
@@ -1230,6 +1249,8 @@ export class UploadQueue {
               },
             },
           );
+          lg.inCall = false;
+          if (gen !== this.gen) continue; // signed out / another officer since: not theirs to show
           // Recorded — even if Cancel came too late to stop it.
           lg.status = 'done';
           lg.storedKey = undefined;
@@ -1238,6 +1259,8 @@ export class UploadQueue {
           lg.file = file;
           if (this.sameUser()) this.noteLanded(b.dataScope, [file], false);
         } catch (e) {
+          lg.inCall = false;
+          if (gen !== this.gen) continue; // (as above: that queue is gone)
           const status = statusOf(e);
           const now = lg.status as LegacyRow['status']; // (Cancel may have changed it during the await)
           if (now === 'cancelled') {
@@ -1255,6 +1278,8 @@ export class UploadQueue {
           } else if (stalled || status === 0 || classifyApi(status) === 'transient') {
             // No answer / a stall / 5xx: the link, or this upload? Only counts while the link works.
             const up = await this.linkUp(b.target, b.ctrl.signal);
+            // Cancelled (or signed out) while we asked: nothing more for this row.
+            if (gen !== this.gen || (lg.status as LegacyRow['status']) === 'cancelled') continue;
             if (up) lg.tries = (lg.tries ?? 0) + 1;
             if (up && (lg.tries ?? 0) >= LEGACY_ATTEMPTS) {
               lg.status = 'failed';
@@ -1430,8 +1455,9 @@ export class UploadQueue {
         ? this.speed.etaSeconds(Math.max(0, summary.bytesTotal - summary.bytesSent))
         : null;
     const notUploaded = batchViews.reduce((n, b) => n + b.skipped.length, 0);
+    const checks = batchViews.reduce((n, b) => n + b.rows.filter(needsCheck).length, 0);
     const attention =
-      summary.failed + summary.needsDecision + notUploaded + batchViews.filter((b) => b.state === 'prepare-failed').length;
+      summary.failed + summary.needsDecision + notUploaded + checks + batchViews.filter((b) => b.state === 'prepare-failed').length;
     const running = this.runningBig ? this.batches.get(this.runningBig) : undefined;
     this.snapshot = Object.freeze({
       rev: this.snapshot.rev + 1,

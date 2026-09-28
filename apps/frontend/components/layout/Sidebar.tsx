@@ -43,7 +43,7 @@ export function Sidebar({ groups, logo, mobileOpen, onMobileClose, navIntro }: S
   return (
     <>
       {mobileOpen ? (
-        <button
+        <button data-sos-modal=""
           type="button"
           onClick={onMobileClose}
           className="fixed inset-0 z-30 bg-[#041C4D]/50 backdrop-blur-sm lg:hidden"

@@ -40,6 +40,12 @@ const GROUP: Record<FileStatus, keyof UploadSummary> = {
   cancelled: 'cancelled',
 };
 
+/** A finished row the officer must look at: its Cancel came while it was
+ *  being saved, so it may be in the folder anyway ("check the folder"). */
+export function needsCheck(r: { status: string; note?: string }): boolean {
+  return (r.status === 'done' || r.status === 'cancelled') && !!r.note;
+}
+
 /** Files whose bytes do not count toward "x of y GB". */
 const NOT_SENT: ReadonlySet<FileStatus> = new Set(['skipped', 'cancelling', 'cancelled', 'needs-decision', 'fallback']);
 

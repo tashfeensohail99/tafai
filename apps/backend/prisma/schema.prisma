@@ -3698,7 +3698,9 @@ model DatabankFile {
   ownerUserId         String?
   folderId            String?
   fileName            String
-  storageKey          String
+  /// The storage object — backs at most ONE row (a retried direct-upload commit
+  /// that overlaps the first gets that row, see commitDirectUpload).
+  storageKey          String             @unique
   mimeType            String?
   /// BigInt (not Int): databank files can be multi-GB — an int4 overflowed at
   /// ~2.1 GB. Serialized to JSON as a plain number via src/common/bigint-json.ts.
@@ -3729,8 +3731,6 @@ model DatabankFile {
   @@index([clientId, folderId])
   @@index([deletedAt])
   @@index([sha256])
-  // Direct-upload commit looks a file up by its object key (one row per key).
-  @@index([storageKey])
   @@map("databank_files")
   @@schema("processing")
 }

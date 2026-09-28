@@ -901,20 +901,36 @@ export class DatabankService {
       clientId: scope.clientId,
       ownerUserId: scope.ownerUserId,
     });
-    return this.prisma.databankFile.create({
-      data: {
-        clientId: scope.clientId,
-        ownerUserId: scope.ownerUserId,
-        folderId: targetFolder,
-        fileName: dto.fileName,
-        storageKey: dto.storageKey,
-        mimeType: dto.mimeType,
-        fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
-        source: DatabankFileSource.UPLOAD,
-        uploadedByUserId: user.id,
-      },
-      select: this.fileSelect,
-    });
+    try {
+      return await this.prisma.databankFile.create({
+        data: {
+          clientId: scope.clientId,
+          ownerUserId: scope.ownerUserId,
+          folderId: targetFolder,
+          fileName: dto.fileName,
+          storageKey: dto.storageKey,
+          mimeType: dto.mimeType,
+          fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
+          source: DatabankFileSource.UPLOAD,
+          uploadedByUserId: user.id,
+        },
+        select: this.fileSelect,
+      });
+    } catch (e) {
+      // Two commits of one key can overlap — a retry whose first reply was lost
+      // while the server was still recording it — and both pass the look above.
+      // storageKey is UNIQUE, so only one insert lands: the other gets its row
+      // (same rules as the look above).
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+      const made = await this.prisma.databankFile.findFirst({
+        where: { storageKey: dto.storageKey },
+        select: { id: true, clientId: true, ownerUserId: true, deletedAt: true },
+      });
+      if (made && made.clientId === scope.clientId && made.ownerUserId === scope.ownerUserId && !made.deletedAt) {
+        return this.prisma.databankFile.findUniqueOrThrow({ where: { id: made.id }, select: this.fileSelect });
+      }
+      throw new BadRequestException('This upload has already been used.');
+    }
   }
 
   async uploadFile(

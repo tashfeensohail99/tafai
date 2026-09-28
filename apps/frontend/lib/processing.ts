@@ -2251,9 +2251,16 @@ export function putToStorage(
   file: File,
   headers: Record<string, string>,
   onProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
     const xhr = new XMLHttpRequest();
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+    xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
     xhr.open('PUT', url, true);
     for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => {
@@ -2279,6 +2286,7 @@ export async function directUploadDatabankFile(
   file: File,
   folderId: string | null = null,
   onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
 ): Promise<ApiDatabankFile> {
   const mimeType = file.type || 'application/octet-stream';
   const q = target.userId ? `?userId=${encodeURIComponent(target.userId)}` : '';
@@ -2298,6 +2306,7 @@ export async function directUploadDatabankFile(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       cache: 'no-store',
+      signal,
     },
   );
 
@@ -2311,8 +2320,12 @@ export async function directUploadDatabankFile(
     return res;
   }
 
-  await putToStorage(presigned.url, file, presigned.headers ?? {}, (loaded, total) =>
-    onProgress?.(total ? loaded / total : 0),
+  await putToStorage(
+    presigned.url,
+    file,
+    presigned.headers ?? {},
+    (loaded, total) => onProgress?.(total ? loaded / total : 0),
+    signal,
   );
 
   return apiFetch<ApiDatabankFile>(`/processing/databank/uploads/commit${q}`, {

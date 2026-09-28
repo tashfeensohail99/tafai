@@ -128,6 +128,8 @@ const UploadRow = memo(
 
 function BatchGroup({ b }: { b: BatchView }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [confirmDismiss, setConfirmDismiss] = useState(false);
+  const leftOut = b.skipped.length + b.summary.failed + b.summary.needsDecision;
   const state = batchStateLine(b);
   const s = b.summary;
   const pct = s.bytesTotal > 0 ? Math.round((s.bytesSent / s.bytesTotal) * 100) : 0;
@@ -183,10 +185,25 @@ function BatchGroup({ b }: { b: BatchView }) {
               Cancel
             </button>
           ) : null}
-          {b.state === 'finished' ? (
-            <button type="button" className="sos-btn sos-btn--sm sos-btn--ghost" onClick={() => q.dismissBatch(b.id)}>
+          {b.state === 'finished' && !confirmDismiss ? (
+            <button
+              type="button"
+              className="sos-btn sos-btn--sm sos-btn--ghost"
+              onClick={() => (leftOut ? setConfirmDismiss(true) : q.dismissBatch(b.id))}
+            >
               Dismiss
             </button>
+          ) : null}
+          {b.state === 'finished' && confirmDismiss ? (
+            <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
+              {leftOut === 1 ? '1 file was' : `${leftOut.toLocaleString('en-US')} files were`} not uploaded — remove this list anyway?
+              <button type="button" className="sos-btn sos-btn--sm sos-btn--danger" onClick={() => q.dismissBatch(b.id)}>
+                Remove
+              </button>
+              <button type="button" className="sos-btn sos-btn--sm sos-btn--ghost" onClick={() => setConfirmDismiss(false)}>
+                Keep
+              </button>
+            </span>
           ) : null}
         </div>
       </div>
@@ -228,6 +245,11 @@ export default function UploadDock() {
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed());
   const [confirmCancel, setConfirmCancel] = useState(false);
   const q = getUploadQueue();
+  const unfinishedNow = snap.summary.uploading + snap.summary.waiting;
+  // A "Stop the remaining N files?" left open must not greet the NEXT drop.
+  useEffect(() => {
+    if (!unfinishedNow || collapsed) setConfirmCancel(false);
+  }, [unfinishedNow, collapsed]);
 
   useEffect(() => {
     const el = document.documentElement;
@@ -369,9 +391,16 @@ export default function UploadDock() {
       </header>
       {snap.authLost ? (
         <div className="sos-banner sos-banner--danger" style={{ margin: 8, fontSize: 12.5 }}>
-          You were signed out — uploads are paused and nothing is lost. Sign in again (this tab or another), then press
-          Continue.
-          <button type="button" className="sos-btn sos-btn--sm" onClick={() => void q.checkAuth()}>
+          You were signed out — uploads are paused and nothing is lost. Sign in again in a NEW tab (not with Sign out
+          here — that stops the uploads); they continue by themselves.
+          <button
+            type="button"
+            className="sos-btn sos-btn--sm"
+            onClick={() => window.open('/login', '_blank', 'noopener')}
+          >
+            Sign in (new tab)
+          </button>
+          <button type="button" className="sos-btn sos-btn--sm sos-btn--ghost" onClick={() => void q.checkAuth()}>
             Continue
           </button>
         </div>

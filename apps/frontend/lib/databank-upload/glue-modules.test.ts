@@ -118,6 +118,9 @@ function fakeQueue() {
       hasActive: () => active,
       subscribe: (fn: () => void) => (subs.add(fn), () => subs.delete(fn)),
       shutdown: (r: string) => calls.push(`shutdown:${r}`),
+      checkAuth: async () => {
+        calls.push('checkAuth');
+      },
     },
   };
 }
@@ -151,23 +154,61 @@ test('lifecycle: online/offline, logout, and a leave-page guard only while uploa
   await flush();
 });
 
+/** A drag event carrying `types` (what the browser says is being dragged). */
+function dragEvent(type: string, types: string[]) {
+  const e = new Event(type, { cancelable: true }) as Event & { dataTransfer: { dropEffect: string; types: string[] } };
+  Object.defineProperty(e, 'dataTransfer', { value: { dropEffect: 'copy', types } });
+  return e;
+}
+
 test('lifecycle: stray-drop guard is inert when a drop zone already handled the event', () => {
   const win = new EventTarget();
   const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
   const fq = fakeQueue();
   attachLifecycle(fq.q, win, {}, doc);
   fq.setActive(true);
-  const stray = new Event('drop', { cancelable: true });
+  const stray = dragEvent('drop', ['Files']);
   win.dispatchEvent(stray);
   assert.equal(stray.defaultPrevented, true, 'a file dropped outside a zone does not open in the tab');
-  const handled = new Event('drop', { cancelable: true });
+  assert.equal(stray.dataTransfer.dropEffect, 'none');
+  const handled = dragEvent('drop', ['Files']);
   handled.preventDefault(); // the explorer's drop zone got it first
   win.dispatchEvent(handled);
   assert.equal(handled.defaultPrevented, true);
   fq.setActive(false);
-  const idle = new Event('drop', { cancelable: true });
+  const idle = dragEvent('drop', ['Files']);
   win.dispatchEvent(idle);
   assert.equal(idle.defaultPrevented, false, 'no guard when idle');
+});
+
+test('lifecycle: [review] the guard leaves text/link drags and native file inputs alone', () => {
+  const win = new EventTarget();
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  const fq = fakeQueue();
+  attachLifecycle(fq.q, win, {}, doc);
+  fq.setActive(true);
+  const text = dragEvent('dragover', ['text/plain']);
+  win.dispatchEvent(text);
+  assert.equal(text.defaultPrevented, false, 'dragging text into a textarea still works');
+  const onInput = dragEvent('drop', ['Files']);
+  Object.defineProperty(onInput, 'target', { value: { closest: (sel: string) => (sel.includes('file') ? {} : null) } });
+  win.dispatchEvent(onInput);
+  assert.equal(onInput.defaultPrevented, false, 'a visible <input type=file> still takes a dropped file');
+});
+
+test('lifecycle: [review] a sign-in in another tab (shared refresh token changes) re-checks the session at once', () => {
+  const win = new EventTarget();
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  const fq = fakeQueue();
+  attachLifecycle(fq.q, win, {}, doc);
+  const other = new Event('storage') as Event & { key: string };
+  Object.defineProperty(other, 'key', { value: 'some-other-key' });
+  win.dispatchEvent(other);
+  assert.equal(fq.calls.filter((c) => c === 'checkAuth').length, 0);
+  const token = new Event('storage') as Event & { key: string };
+  Object.defineProperty(token, 'key', { value: 'tafsheen-refresh-token' });
+  win.dispatchEvent(token);
+  assert.equal(fq.calls.filter((c) => c === 'checkAuth').length, 1);
 });
 
 test('lifecycle: wake lock while active + visible, released when idle, re-taken on return, failures swallowed', async () => {

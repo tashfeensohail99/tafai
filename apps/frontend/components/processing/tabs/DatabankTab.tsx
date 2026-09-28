@@ -202,17 +202,28 @@ export function DatabankTab({
   );
   const dataScope = dataScopeOf(dest.target);
 
+  // Reloads can overlap (a folder drop's debounced refresh, the end-of-drop
+  // refresh, a delete): only the LATEST applies, and files that landed while it
+  // was in flight are merged back in (the tree was read before they committed).
+  const reloadSeq = useRef(0);
+  const landedLog = useRef<Array<{ at: number; files: unknown[] }>>([]);
   const reload = useCallback(async () => {
     setError(null);
+    const seq = ++reloadSeq.current;
+    const startedAt = Date.now();
     try {
       const tree = await loadTree();
+      if (seq !== reloadSeq.current) return;
+      const late = landedLog.current.filter((x) => x.at >= startedAt);
+      landedLog.current = late;
       setFolders(tree.folders);
-      setFiles(tree.files);
+      setFiles(late.length ? mergeLandedFiles(tree.files, late.flatMap((x) => x.files)) : tree.files);
       setCanWrite(tree.canWrite !== false);
     } catch (e) {
+      if (seq !== reloadSeq.current) return;
       setError(e instanceof Error ? e.message : 'Could not load the databank');
     } finally {
-      setLoading(false);
+      if (seq === reloadSeq.current) setLoading(false);
     }
   }, [loadTree]);
 
@@ -263,7 +274,10 @@ export function DatabankTab({
         .then((m) => {
           if (cancelled) return;
           off = m.onLanded(dataScope, (e) => {
-            if (e.files.length) setFiles((f) => mergeLandedFiles(f, e.files));
+            if (e.files.length) {
+              landedLog.current.push({ at: Date.now(), files: e.files });
+              setFiles((f) => mergeLandedFiles(f, e.files));
+            }
             if (e.foldersChanged) reloader.request();
             if (e.idle) reloader.flush();
           });
@@ -940,6 +954,7 @@ function RowActions(props: {
 function Overlay({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (
     <div
+      data-sos-modal=""
       onClick={onClose}
       style={{
         position: 'fixed',

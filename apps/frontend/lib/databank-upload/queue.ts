@@ -67,8 +67,15 @@ export interface QueueDeps {
     paths: string[],
     signal: AbortSignal,
   ): Promise<{ folders: Record<string, string>; created: number }>;
-  /** The standard (≤ 2 GB) upload, for proxy mode. */
-  legacyUpload(t: QueueTarget, file: UploadSource, folderId: string | null, onProgress: (fraction: number) => void): Promise<unknown>;
+  /** The standard (≤ 2 GB) upload, for files the server answered 'proxy' for.
+   *  `signal` aborts it (Cancel, a stall, sign-out). */
+  legacyUpload(
+    t: QueueTarget,
+    file: UploadSource,
+    folderId: string | null,
+    onProgress: (fraction: number) => void,
+    signal: AbortSignal,
+  ): Promise<unknown>;
   accessToken(): string | null;
   /** Try to get a fresh session (refresh the token). Never throws. */
   restoreSession(): Promise<void>;
@@ -152,6 +159,11 @@ const AUTH_POLL_MS = 5_000;
 const ENSURE_TIMEOUT_MS = 60_000;
 const ENSURE_ATTEMPTS = 8;
 const CANCEL_POOL = 4;
+const PING_TIMEOUT_MS = 20_000;
+/** A standard upload with no progress for this long is aborted and retried. */
+const LEGACY_STALL_MS = 60_000;
+/** Standard-upload failures while the link demonstrably works, before a file fails. */
+const LEGACY_ATTEMPTS = 3;
 
 const WORK: ReadonlySet<FileStatus> = new Set(['queued', 'hashing', 'hashed', 'ready', 'uploading', 'completing', 'cancelling']);
 const LIVE: ReadonlySet<FileStatus> = new Set([...WORK, 'needs-decision']);
@@ -184,6 +196,10 @@ interface Batch {
   createdAt: number;
   ctrl: AbortController;
   totalBytes: number;
+  /** Rows of this batch on the standard upload (so hasWork never scans every row). */
+  legacyIds: Set<string>;
+  /** Folder preparation is waiting out a link outage (the dock says so). */
+  linkWait?: boolean;
 }
 
 interface Row {
@@ -197,6 +213,10 @@ interface LegacyRow {
   bytesDone: number;
   error?: string;
   file?: unknown;
+  /** Aborts the upload in flight. */
+  ctrl?: AbortController;
+  /** Failures while the link worked (see LEGACY_ATTEMPTS). */
+  tries?: number;
 }
 
 function statusOf(e: unknown): number {
@@ -244,6 +264,8 @@ export class UploadQueue {
   private flushScheduled = false;
   private lastFlushAt = -Infinity;
   private flushTimer: AbortController | null = null;
+  /** hasWork() answers, memoised for one synchronous pass (flush, reconcile, a drop). */
+  private workMemo: Map<Batch, boolean> | null = null;
 
   constructor(deps: QueueDeps) {
     this.deps = deps;
@@ -257,7 +279,9 @@ export class UploadQueue {
     const b = this.newBatch(t, meta, 'files');
     b.skipped.push(...skipped);
     const ordered = orderForUpload(files.map((f) => ({ f, size: f.file.size, path: f.relPath || f.file.name })));
-    for (const { f } of ordered) this.route(b, meta.parentFolderId, f);
+    this.withMemo(() => {
+      for (const { f } of ordered) this.route(b, meta.parentFolderId, f);
+    });
     b.phase = 'ready';
     this.afterChange();
     return b.id;
@@ -326,11 +350,12 @@ export class UploadQueue {
     if (!r || !b) return;
     const lg = this.legacy.get(rowId);
     if (lg) {
-      if (lg.status === 'waiting') {
+      if (lg.status === 'waiting' || lg.status === 'uploading') {
         lg.status = 'cancelled';
+        lg.ctrl?.abort(); // (if it had already been recorded, the runner shows it saved)
         this.afterChange();
       }
-      return; // an uploading standard upload cannot be stopped mid-way
+      return;
     }
     const i = b.pending.findIndex((it) => it.key === r.key);
     if (i >= 0) {
@@ -348,6 +373,14 @@ export class UploadQueue {
   async discard(rowId: string): Promise<void> {
     const r = this.rows.get(rowId);
     const b = r && this.batches.get(r.batchId);
+    const lg = this.legacy.get(rowId);
+    if (r && b && lg) {
+      if (lg.status === 'failed') {
+        lg.status = 'cancelled';
+        this.afterChange();
+      }
+      return;
+    }
     if (!r || !b?.engine) return;
     const view = b.engine.snapshot().files.find((f) => f.key === r.key);
     if (!view || view.status !== 'failed') return;
@@ -365,9 +398,12 @@ export class UploadQueue {
     const b = this.batches.get(batchId);
     if (!b) return;
     b.ctrl.abort();
-    for (const rowId of b.rowIds) {
+    for (const rowId of b.legacyIds) {
       const lg = this.legacy.get(rowId);
-      if (lg?.status === 'waiting') lg.status = 'cancelled';
+      if (lg?.status === 'waiting' || lg?.status === 'uploading') {
+        lg.status = 'cancelled';
+        lg.ctrl?.abort();
+      }
     }
     const pendingKeys = new Set(b.pending.map((it) => it.key));
     b.pending = [];
@@ -403,39 +439,36 @@ export class UploadQueue {
   }
 
   retry(rowId: string): void {
-    const r = this.rows.get(rowId);
-    const b = r && this.batches.get(r.batchId);
-    if (!r || !b) return;
-    const lg = this.legacy.get(rowId);
-    if (lg && (lg.status === 'failed' || lg.status === 'cancelled')) {
-      if (b.engine?.snapshot().files.some((f) => f.key === r.key)) {
-        this.legacy.delete(rowId); // a cancelled PENDING row: give it back to the engine
-        b.engine.retry(r.key);
-      } else if (this.proxyBases.has(b.target.base)) {
-        lg.status = 'waiting';
-        lg.error = undefined;
-        this.legacyQueue.push(rowId);
-      } else {
-        this.legacy.delete(rowId);
-        b.pending.push(r.item);
-      }
-      this.afterChange();
-      return;
-    }
-    b.engine?.retry(r.key);
-    this.afterChange();
+    if (this.retryRow(rowId)) this.afterChange();
   }
 
   retryFailed(batchId?: string): void {
     for (const b of this.batches.values()) {
       if (batchId && b.id !== batchId) continue;
       b.engine?.retryFailed();
-      for (const rowId of b.rowIds) {
-        const lg = this.legacy.get(rowId);
-        if (lg?.status === 'failed') this.retry(rowId);
-      }
+      for (const rowId of [...b.legacyIds]) if (this.legacy.get(rowId)?.status === 'failed') this.retryRow(rowId);
     }
     this.afterChange();
+  }
+
+  /** Retry one row without the reconcile (retryFailed does one at the end). A
+   *  standard-upload row asks the SERVER again: only a fresh 'proxy' answer
+   *  sends it back to the standard upload (the switch may be off by now, or its
+   *  earlier session may be finishing — then init says so). */
+  private retryRow(rowId: string): boolean {
+    const r = this.rows.get(rowId);
+    const b = r && this.batches.get(r.batchId);
+    if (!r || !b) return false;
+    const lg = this.legacy.get(rowId);
+    if (lg) {
+      if (lg.status !== 'failed' && lg.status !== 'cancelled') return false;
+      this.forgetLegacy(b, rowId);
+      if (b.engine?.status(r.key)) b.engine.add([r.item]); // (a fallback / cancelled engine file is re-inited)
+      else b.pending.push(r.item);
+      return true;
+    }
+    b.engine?.retry(r.key);
+    return true;
   }
 
   resolveDuplicate(rowId: string, choice: 'skip' | 'upload'): void {
@@ -446,10 +479,18 @@ export class UploadQueue {
     this.afterChange();
   }
 
-  /** Remove a finished batch from the dock (not while anything still needs doing). */
+  /** Remove a batch from the dock — not while anything is still running. Files
+   *  that failed or wait on a choice are given up (their server sessions freed);
+   *  the dock asks the officer first when anything was not uploaded. */
   dismissBatch(batchId: string): void {
     const b = this.batches.get(batchId);
-    if (!b || !this.canDismiss(b)) return;
+    if (!b || b.phase === 'preparing' || this.hasWork(b)) return;
+    const engine = b.engine;
+    if (engine) {
+      for (const f of engine.snapshot().files) {
+        if (f.status === 'failed' || f.status === 'needs-decision') void engine.cancel(f.key);
+      }
+    }
     b.unsub?.();
     for (const rowId of b.rowIds) {
       const r = this.rows.get(rowId);
@@ -466,8 +507,9 @@ export class UploadQueue {
     this.afterChange();
   }
 
+  /** Remove batches that finished CLEANLY (nothing failed, skipped or undecided). */
   clearFinished(): void {
-    for (const b of [...this.batches.values()]) if (this.canDismiss(b)) this.dismissBatch(b.id);
+    for (const b of [...this.batches.values()]) if (this.isClean(b)) this.dismissBatch(b.id);
   }
 
   /** Sign-out / another user: stop everything, locally. No DELETE is sent —
@@ -487,10 +529,12 @@ export class UploadQueue {
       }
       b.unsub?.();
     }
+    for (const lg of this.legacy.values()) lg.ctrl?.abort();
     this.batches.clear();
     this.rows.clear();
     this.owner.clear();
     this.legacy.clear();
+    this.proxyBases.clear();
     this.legacyQueue.length = 0;
     this.lastStatus.clear();
     this.scopeBusy.clear();
@@ -556,6 +600,19 @@ export class UploadQueue {
     this.ownerId = sub;
   }
 
+  /** Is this tab still signed in as the officer who queued the uploads? The
+   *  access token can change under us with no 401 (apiFetch refreshes with the
+   *  refresh token another person's sign-in left in shared storage): another
+   *  user ⇒ stop everything (never upload one officer's files as another). */
+  private sameUser(): boolean {
+    const sub = jwtSub(this.deps.accessToken());
+    if (sub && this.ownerId && sub !== this.ownerId) {
+      this.shutdown('user-changed');
+      return false;
+    }
+    return true;
+  }
+
   private newBatch(t: QueueTarget, meta: BatchMeta, kind: 'files' | 'folder'): Batch {
     const seq = ++this.seq;
     const b: Batch = {
@@ -575,6 +632,7 @@ export class UploadQueue {
       createdAt: this.deps.env.now(),
       ctrl: new AbortController(),
       totalBytes: 0,
+      legacyIds: new Set(),
     };
     this.batches.set(b.id, b);
     return b;
@@ -611,9 +669,9 @@ export class UploadQueue {
         existing.item = item;
         const lg = this.legacy.get(existingId!);
         if (lg) {
-          this.legacy.delete(existingId!);
-          if (this.proxyBases.has(ob.target.base)) this.toLegacy(existingId!);
-          else if (ob.engine?.snapshot().files.some((v) => v.key === key)) ob.engine.add([item]);
+          // Ask the server again — never straight to the standard upload.
+          this.forgetLegacy(ob, existingId!);
+          if (ob.engine?.status(key)) ob.engine.add([item]);
           else ob.pending.push(item);
         } else if (ob.engine) {
           ob.engine.add([item]);
@@ -622,6 +680,7 @@ export class UploadQueue {
           if (i >= 0) ob.pending[i] = item;
           else ob.pending.push(item);
         }
+        this.workMemo?.set(ob, true);
         b.alreadyListed += 1;
         return;
       }
@@ -631,8 +690,9 @@ export class UploadQueue {
     this.owner.set(ownerKey, rowId);
     b.rowIds.push(rowId);
     b.totalBytes += f.file.size;
-    if (this.proxyBases.has(b.target.base)) this.toLegacy(rowId);
-    else b.pending.push(item);
+    // Always the server first: init answers per file (a session already
+    // finishing, a duplicate, or 'proxy' → only then the standard upload).
+    b.pending.push(item);
   }
 
   /** A row's status as of the last snapshot (≤ 250 ms old) — O(1), so a
@@ -651,33 +711,54 @@ export class UploadQueue {
   private hasWork(b: Batch): boolean {
     if (b.phase !== 'ready') return b.phase === 'preparing';
     if (b.pending.length) return true;
-    for (const rowId of b.rowIds) {
-      const lg = this.legacy.get(rowId);
-      if (lg) {
-        if (lg.status === 'waiting' || lg.status === 'uploading') return true;
-        continue;
+    const memo = this.workMemo?.get(b);
+    if (memo !== undefined) return memo;
+    let work = false;
+    for (const rowId of b.legacyIds) {
+      const s = this.legacy.get(rowId)?.status;
+      if (s === 'waiting' || s === 'uploading') {
+        work = true;
+        break;
       }
     }
-    if (b.engine) {
-      for (const f of b.engine.snapshot().files) {
-        if (f.status === 'fallback') continue;
-        if (WORK.has(f.status)) return true;
-      }
-    }
-    return false;
+    if (!work && b.engine) work = b.engine.hasWork();
+    this.workMemo?.set(b, work);
+    return work;
   }
 
-  private canDismiss(b: Batch): boolean {
-    if (b.phase === 'preparing' || this.hasWork(b)) return false;
+  /** Run `fn` with hasWork() memoised (one answer per batch for the pass). */
+  private withMemo<T>(fn: () => T): T {
+    if (this.workMemo) return fn();
+    this.workMemo = new Map();
+    try {
+      return fn();
+    } finally {
+      this.workMemo = null;
+    }
+  }
+
+  /** Finished with nothing failed, undecided or left out. */
+  private isClean(b: Batch): boolean {
+    if (b.phase !== 'ready' || this.hasWork(b) || b.skipped.length) return false;
+    for (const id of b.legacyIds) if (this.legacy.get(id)?.status === 'failed') return false;
     for (const f of b.engine?.snapshot().files ?? []) {
-      if (f.status === 'needs-decision') return false;
-      if (f.status === 'failed' && f.retryable !== false) return false;
+      if (f.status === 'needs-decision' || f.status === 'failed') return false;
     }
     return true;
   }
 
+  private forgetLegacy(b: Batch, rowId: string): void {
+    this.legacy.get(rowId)?.ctrl?.abort();
+    this.legacy.delete(rowId);
+    b.legacyIds.delete(rowId);
+  }
+
   /** Who may run: every express batch with work + ONE big batch (sticky). */
   private reconcile(): void {
+    this.withMemo(() => this.reconcileNow());
+  }
+
+  private reconcileNow(): void {
     const ready = [...this.batches.values()].filter((b) => b.phase === 'ready');
     const big = this.runningBig ? this.batches.get(this.runningBig) : undefined;
     if (!big || !this.hasWork(big) || this.isExpress(big)) {
@@ -719,9 +800,12 @@ export class UploadQueue {
     const inner = this.deps.makeTransport(t);
     const gen = this.gen;
     const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
-      if (this.shut || gen !== this.gen) throw new TransportError('Stopped', 499);
+      if (this.shut || gen !== this.gen || !this.sameUser()) throw new TransportError('Stopped', 499);
       try {
-        return await fn();
+        const res = await fn();
+        // The call may have refreshed the token — as whom? Another user ⇒ stop.
+        if (gen !== this.gen || !this.sameUser()) throw new TransportError('Stopped', 499);
+        return res;
       } catch (e) {
         if (statusOf(e) === 401) {
           this.onAuthLost(); // pauses every engine first…
@@ -735,12 +819,14 @@ export class UploadQueue {
         guard(async () => {
           const res = await inner.init(files, signal);
           if (res && res.mode === 'direct' && typeof res.maxBytes === 'number') this.maxBytesByBase.set(t.base, res.maxBytes);
+          if (res && res.mode === 'direct') this.proxyBases.delete(t.base); // the kill switch is off again
           if (res && res.mode === 'proxy') this.proxyBases.add(t.base);
           return res;
         }),
       signParts: (id, parts, signal) => guard(() => inner.signParts(id, parts, signal)),
       complete: (ids, signal) => guard(() => inner.complete(ids, signal)),
       abort: (id, signal) => guard(() => inner.abort(id, signal)),
+      ping: inner.ping ? (signal) => guard(() => inner.ping!(signal)) : undefined,
       put: (part, body, onProgress, signal) => {
         if (gen !== this.gen) return Promise.reject(new TransportError('Stopped', 499));
         let last = 0;
@@ -775,10 +861,16 @@ export class UploadQueue {
     let created = 0;
     for (const chunk of chunkPaths(plan.dirPaths)) {
       let attempt = 0;
+      let waits = 0;
       for (;;) {
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted || !this.sameUser()) return;
         try {
           const res = await this.ensureWithTimeout(b.target, b.meta.parentFolderId, chunk, ctrl.signal);
+          if (!this.sameUser()) return;
+          if (b.linkWait) {
+            b.linkWait = false;
+            this.markDirty();
+          }
           for (const p of chunk) {
             const id = res && res.folders && Object.prototype.hasOwnProperty.call(res.folders, p) ? res.folders[p] : undefined;
             if (typeof id === 'string') folders.set(p, id);
@@ -797,6 +889,17 @@ export class UploadQueue {
             await this.waitFor('online', ctrl.signal);
             continue; // not counted
           }
+          if (status === 0 && !(await this.linkUp(b.target, ctrl.signal))) {
+            // No answer, and nothing gets through (ISP down, Wi-Fi up): wait for
+            // the link like the uploads do — not counted, never "failed".
+            if (!b.linkWait) {
+              b.linkWait = true;
+              this.markDirty();
+            }
+            waits += 1;
+            await this.nap(backoffMs(Math.min(waits, 6), this.deps.env.random), ctrl.signal);
+            continue;
+          }
           attempt += 1;
           if (classifyApi(status) === 'transient' && attempt < ENSURE_ATTEMPTS) {
             await this.nap(backoffMs(attempt, this.deps.env.random), ctrl.signal);
@@ -810,14 +913,16 @@ export class UploadQueue {
       }
     }
     if (ctrl.signal.aborted) return;
-    for (const { entry, dir } of plan.accepted) {
-      const folderId = dir ? folders.get(dir) : b.meta.parentFolderId;
-      if (dir && !folderId) {
-        b.skipped.push({ path: entry.relPath, size: entry.size, kind: 'bad-folder', reason: `The folder "${dir}" could not be created.` });
-        continue;
+    this.withMemo(() => {
+      for (const { entry, dir } of plan.accepted) {
+        const folderId = dir ? folders.get(dir) : b.meta.parentFolderId;
+        if (dir && !folderId) {
+          b.skipped.push({ path: entry.relPath, size: entry.size, kind: 'bad-folder', reason: `The folder "${dir}" could not be created.` });
+          continue;
+        }
+        this.route(b, folderId ?? null, entry.f);
       }
-      this.route(b, folderId ?? null, entry.f);
-    }
+    });
     b.foldersCreated = created;
     b.phase = 'ready';
     this.noteLanded(b.dataScope, [], true);
@@ -845,6 +950,29 @@ export class UploadQueue {
 
   private nap(ms: number, signal?: AbortSignal): Promise<void> {
     return this.deps.env.sleep(ms, signal);
+  }
+
+  /** Does anything get through right now? One cheap ping (GET /health). No
+   *  ping available: assume yes (the failure then counts, as before). */
+  private async linkUp(t: QueueTarget, outer: AbortSignal): Promise<boolean> {
+    const ping = this.transportFor(t).ping;
+    if (!ping) return true;
+    const ctrl = new AbortController();
+    const stopTimer = new AbortController();
+    const onOuter = () => ctrl.abort();
+    outer.addEventListener('abort', onOuter, { once: true });
+    void this.nap(PING_TIMEOUT_MS, stopTimer.signal).then(() => {
+      if (!stopTimer.signal.aborted) ctrl.abort();
+    });
+    try {
+      await ping(ctrl.signal);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      stopTimer.abort();
+      outer.removeEventListener('abort', onOuter);
+    }
   }
 
   private waitFor(what: 'auth' | 'online', signal: AbortSignal): Promise<void> {
@@ -908,14 +1036,20 @@ export class UploadQueue {
 
   private toLegacy(rowId: string): void {
     const r = this.rows.get(rowId);
-    if (!r) return;
+    const b = r && this.batches.get(r.batchId);
+    if (!r || !b) return;
     const tooBig = r.item.source.size > LEGACY_MAX_BYTES;
     this.legacy.set(
       rowId,
       tooBig
-        ? { status: 'failed', bytesDone: 0, error: 'Too large for the standard upload (2 GB max) — this server can’t take bigger files right now.' }
+        ? {
+            status: 'failed',
+            bytesDone: 0,
+            error: 'Too large for the standard upload (2 GB max), which this server is using right now — Retry later.',
+          }
         : { status: 'waiting', bytesDone: 0 },
     );
+    b.legacyIds.add(rowId);
     if (!tooBig) this.legacyQueue.push(rowId);
   }
 
@@ -929,27 +1063,78 @@ export class UploadQueue {
         const lg = this.legacy.get(rowId);
         const b = r && this.batches.get(r.batchId);
         if (!r || !lg || !b || lg.status !== 'waiting') continue;
+        if (!this.sameUser()) return;
         lg.status = 'uploading';
+        const ctrl = new AbortController();
+        lg.ctrl = ctrl;
         this.markDirty();
+        // Stall watchdog (no progress for LEGACY_STALL_MS ⇒ abort; retried below).
+        let progressed = true;
+        let stalled = false;
+        const stopWatch = new AbortController();
+        const watch = (async () => {
+          let quiet = 0;
+          while (!stopWatch.signal.aborted) {
+            await this.nap(5_000, stopWatch.signal);
+            if (stopWatch.signal.aborted) return;
+            quiet = progressed ? 0 : quiet + 5_000;
+            progressed = false;
+            if (quiet >= LEGACY_STALL_MS) {
+              stalled = true;
+              ctrl.abort();
+              return;
+            }
+          }
+        })();
         try {
-          const file = await this.deps.legacyUpload(b.target, r.item.source, r.item.folderId, (fr) => {
-            lg.bytesDone = Math.round(Math.max(0, Math.min(1, fr)) * r.item.source.size);
-            this.markDirty();
-          });
+          const file = await this.deps.legacyUpload(
+            b.target,
+            r.item.source,
+            r.item.folderId,
+            (fr) => {
+              progressed = true;
+              lg.bytesDone = Math.round(Math.max(0, Math.min(1, fr)) * r.item.source.size);
+              this.markDirty();
+            },
+            ctrl.signal,
+          );
+          // Recorded — even if Cancel came too late to stop it.
           lg.status = 'done';
           lg.bytesDone = r.item.source.size;
           lg.file = file;
-          this.noteLanded(b.dataScope, [file], false);
+          if (this.sameUser()) this.noteLanded(b.dataScope, [file], false);
         } catch (e) {
-          if (statusOf(e) === 401) {
+          const status = statusOf(e);
+          const now = lg.status as LegacyRow['status']; // (Cancel may have changed it during the await)
+          if (now === 'cancelled') {
+            // The officer stopped it (or signed out).
+          } else if (status === 401) {
             lg.status = 'waiting';
             lg.bytesDone = 0;
             this.legacyQueue.unshift(rowId);
             this.onAuthLost();
+          } else if (stalled || status === 0 || classifyApi(status) === 'transient') {
+            // No answer / a stall / 5xx: the link, or this upload? Only counts while the link works.
+            const up = await this.linkUp(b.target, b.ctrl.signal);
+            if (up) lg.tries = (lg.tries ?? 0) + 1;
+            if (up && (lg.tries ?? 0) >= LEGACY_ATTEMPTS) {
+              lg.status = 'failed';
+              lg.error = stalled ? 'The upload stopped responding.' : message(e);
+            } else {
+              lg.status = 'waiting';
+              lg.bytesDone = 0;
+              this.legacyQueue.unshift(rowId);
+              this.markDirty();
+              await this.nap(backoffMs(up ? (lg.tries ?? 1) * 2 : 5, this.deps.env.random), b.ctrl.signal);
+            }
           } else {
             lg.status = 'failed';
             lg.error = message(e);
           }
+        } finally {
+          stopWatch.abort();
+          await watch;
+          if (lg.ctrl === ctrl) lg.ctrl = undefined;
         }
         this.markDirty();
       }
@@ -976,7 +1161,8 @@ export class UploadQueue {
   private markDirty(): void {
     if (this.flushScheduled) return;
     this.flushScheduled = true;
-    const wait = this.lastFlushAt + FLUSH_MS - this.deps.env.now();
+    // Clamped: a PC clock set BACK must not postpone the next snapshot by hours.
+    const wait = Math.min(FLUSH_MS, this.lastFlushAt + FLUSH_MS - this.deps.env.now());
     if (wait <= 0) {
       queueMicrotask(() => this.flush());
     } else {
@@ -989,6 +1175,10 @@ export class UploadQueue {
   }
 
   private flush(): void {
+    this.withMemo(() => this.flushNow());
+  }
+
+  private flushNow(): void {
     this.flushScheduled = false;
     this.flushTimer = null;
     this.lastFlushAt = this.deps.env.now();
@@ -996,10 +1186,24 @@ export class UploadQueue {
     const batchViews: BatchView[] = [];
     const allRows: RowView[] = [];
     let linkDown = false;
-    let fallbacks: string[] = [];
+    // One engine snapshot per batch per flush. Rows the server sent to the
+    // standard upload ('proxy' answers) move over first, so the views below
+    // (and hasWork) already see them there.
+    const snaps = new Map<Batch, ReturnType<UploadEngine['snapshot']>>();
     for (const b of this.batches.values()) {
       const snap = b.engine?.snapshot();
-      if (snap?.linkDown) linkDown = true;
+      if (!snap) continue;
+      snaps.set(b, snap);
+      for (const f of snap.files) {
+        if (f.status !== 'fallback') continue;
+        const id = `${b.id}\u0001${f.key}`;
+        if (this.rows.has(id) && !this.legacy.has(id)) this.moveToLegacy(id);
+      }
+    }
+    this.workMemo?.clear();
+    for (const b of this.batches.values()) {
+      const snap = snaps.get(b);
+      if (snap?.linkDown || b.linkWait) linkDown = true;
       const byKey = new Map((snap?.files ?? []).map((f) => [f.key, f]));
       const pendingKeys = new Set(b.pending.map((it) => it.key));
       const rows: RowView[] = [];
@@ -1025,17 +1229,14 @@ export class UploadQueue {
             bytesDone: lg.bytesDone,
             bytesInFlight: 0,
             error: lg.error,
-            retryable: lg.status === 'failed' ? !lg.error?.startsWith('Too large') : undefined,
+            retryable: lg.status === 'failed' ? true : undefined,
             file: lg.file,
             legacy: true,
           };
         } else if (byKey.has(r.key) && !pendingKeys.has(r.key)) {
           const v = byKey.get(r.key)!;
           view = { ...v, rowId, batchId: b.id, folderId: r.item.folderId };
-          if (v.status === 'fallback') {
-            fallbacks.push(rowId);
-            view = { ...view, status: 'queued', legacy: true }; // moving to the standard upload
-          }
+          if (v.status === 'fallback') view = { ...view, status: 'queued', legacy: true }; // (never shown raw)
         } else {
           view = { ...base, status: 'queued', bytesDone: 0, bytesInFlight: 0 };
         }
@@ -1072,9 +1273,6 @@ export class UploadQueue {
         createdAt: b.createdAt,
       });
     }
-    // Rows the server sent to the standard upload (proxy mode).
-    for (const rowId of fallbacks) this.moveToLegacy(rowId);
-
     const summary = summarize(allRows);
     const active = [...this.batches.values()].some((b) => this.hasWork(b));
     if (active && this.activeSince === null) this.activeSince = now;
@@ -1089,8 +1287,9 @@ export class UploadQueue {
       active && !halted && this.activeSince !== null && now - this.activeSince >= 5000
         ? this.speed.etaSeconds(Math.max(0, summary.bytesTotal - summary.bytesSent))
         : null;
+    const notUploaded = batchViews.reduce((n, b) => n + b.skipped.length, 0);
     const attention =
-      summary.failed + summary.needsDecision + batchViews.filter((b) => b.state === 'prepare-failed').length;
+      summary.failed + summary.needsDecision + notUploaded + batchViews.filter((b) => b.state === 'prepare-failed').length;
     const running = this.runningBig ? this.batches.get(this.runningBig) : undefined;
     this.snapshot = Object.freeze({
       rev: this.snapshot.rev + 1,
@@ -1113,28 +1312,15 @@ export class UploadQueue {
     void this.runLegacy();
   }
 
+  /** The server answered 'proxy' for THIS file (dev storage / kill switch): it
+   *  goes to the standard upload. Nothing else moves without its own answer —
+   *  a file whose session is still finishing must never be uploaded twice. */
   private moveToLegacy(rowId: string): void {
     if (this.legacy.has(rowId)) return;
     const r = this.rows.get(rowId);
     const b = r && this.batches.get(r.batchId);
     if (!r || !b) return;
-    this.proxyBases.add(b.target.base);
-    // Everything else for this portal that hasn't started goes the same way.
-    for (const ob of this.batches.values()) {
-      if (ob.target.base !== b.target.base) continue;
-      for (const it of ob.pending.splice(0)) {
-        const id = `${ob.id}\u0001${it.key}`;
-        if (this.rows.has(id)) this.toLegacy(id);
-      }
-      for (const f of ob.engine?.snapshot().files ?? []) {
-        const id = `${ob.id}\u0001${f.key}`;
-        if (id === rowId || this.legacy.has(id) || !this.rows.has(id)) continue;
-        if (!f.uploadId && (f.status === 'queued' || f.status === 'hashing' || f.status === 'hashed' || f.status === 'fallback')) {
-          void ob.engine!.cancel(f.key); // local: no session yet — stops its hash worker
-          this.toLegacy(id);
-        }
-      }
-    }
+    this.proxyBases.add(b.target.base); // (the dock says the standard upload is in use)
     this.toLegacy(rowId);
     this.markDirty();
   }

@@ -137,3 +137,16 @@ test('batchStateLine covers every state', () => {
   }
   assert.match(batchStateLine({ ...base, state: 'prepare-failed', prepareError: 'A folder name is longer than 120 characters. (folder "X")' }).text, /Nothing was uploaded/);
 });
+
+test('[review] files a folder plan left out are never "all saved": headline, batch line, and an OPEN list', () => {
+  const now = Date.UTC(2026, 8, 28, 13, 0, 0);
+  const left = [{ path: 'Client/Very long folder/x.pdf', size: 1, kind: 'bad-folder' as const, reason: 'A folder name is longer than 120 characters.' }];
+  const s = snap([row('done')], { active: false });
+  const withLeft = { ...s, batches: [{ ...s.batches[0], state: 'finished' as const, skipped: left }] };
+  assert.equal(dockHeadline(withLeft, now).title, '1 saved · 1 not uploaded');
+  const line = batchStateLine(withLeft.batches[0]);
+  assert.equal(line.tone, 'warning');
+  assert.equal(line.text, '1 saved · 1 not uploaded');
+  const secs = batchSections(withLeft.batches[0]);
+  assert.equal(secs.find((x) => x.key === 'not-uploaded')!.collapsed, false, 'the reasons are shown, not tucked away');
+});

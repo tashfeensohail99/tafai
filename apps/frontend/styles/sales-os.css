@@ -1951,8 +1951,11 @@
 /* =========================================================
    Databank upload dock (resumable uploads, behind NEXT_PUBLIC_DATABANK_UPLOAD_V2)
    Kept at the END of the file: .sos-glass sets position: relative and this must win.
-   z-index 90: above the topbar (20) / sidebar (30), below the mobile nav overlay (99),
-   modals (200+) and the CallDock (2000).
+   z-index 90 in the ROOT stacking context: above the shells' content (.sos-main /
+   .sos-content are z-index 1 stacking contexts — so even a z 200 dialog inside
+   them paints BELOW the dock), the topbar (20) and sidebar (30); below the mobile
+   nav overlay (99) and the CallDock (2000). Dialogs that mark themselves
+   [data-sos-modal] hide the dock while they are open (rule below).
    ========================================================= */
 .sos-upload-dock {
   position: fixed;
@@ -2007,6 +2010,9 @@
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+html:has([data-sos-modal]) .sos-upload-dock {
+  visibility: hidden;
 }
 html.has-upload-dock .sos-page-content,
 html.has-upload-dock .sos-page {

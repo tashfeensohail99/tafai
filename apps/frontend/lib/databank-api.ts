@@ -72,12 +72,13 @@ export interface DatabankApi {
    *  screenshots so their CLIPBOARD origin is recorded). */
   uploadFile(clientId: string, file: File, folderId: string | null, source: DatabankFileSource): Promise<ApiDatabankFile>;
   uploadPersonalFile(file: File, folderId: string | null, source: DatabankFileSource): Promise<ApiDatabankFile>;
-  /** Direct browser→R2 upload with byte progress (0..1). */
+  /** Direct browser→R2 upload with byte progress (0..1); `signal` aborts it. */
   directUpload(
     target: DatabankUploadTarget,
     file: File,
     folderId: string | null,
     onProgress?: (fraction: number) => void,
+    signal?: AbortSignal,
   ): Promise<ApiDatabankFile>;
   renameFolder(folderId: string, name: string): Promise<unknown>;
   moveFolder(folderId: string, parentFolderId: string | null): Promise<unknown>;

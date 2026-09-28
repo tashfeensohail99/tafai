@@ -52,6 +52,7 @@ export async function directUploadJrDatabankFile(
   file: File,
   folderId: string | null = null,
   onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
 ): Promise<ApiDatabankFile> {
   const mimeType = file.type || 'application/octet-stream';
   const bodyBase = {
@@ -68,6 +69,7 @@ export async function directUploadJrDatabankFile(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyBase),
     cache: 'no-store',
+    signal,
   });
 
   // Dev storage (local/supabase): no direct-PUT path — stream through the backend.
@@ -80,8 +82,12 @@ export async function directUploadJrDatabankFile(
     return res;
   }
 
-  await putToStorage(presigned.url, file, presigned.headers ?? {}, (loaded, total) =>
-    onProgress?.(total ? loaded / total : 0),
+  await putToStorage(
+    presigned.url,
+    file,
+    presigned.headers ?? {},
+    (loaded, total) => onProgress?.(total ? loaded / total : 0),
+    signal,
   );
 
   return apiFetch<ApiDatabankFile>('/jr/databank/uploads/commit', {

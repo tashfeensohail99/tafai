@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EMPTY_SNAPSHOT, UploadQueue } from './queue.ts';
 import type { DropFile, LandedEvent, QueueDeps, QueueTarget } from './queue.ts';
-import { TransportError } from './engine.ts';
-import { FakeServer, FakeSource, exactlyOnce, makeEnv, tick, until } from './testing/fake-server.ts';
+import { TransportError, UploadEngine } from './engine.ts';
+import { FakeServer, FakeSource, exactlyOnce, makeEnv, stopped, tick, until } from './testing/fake-server.ts';
 
 /**
  * The upload queue driving the REAL engine against the fake server + R2, on
@@ -27,7 +27,8 @@ function qsetup(opts: { engine?: QueueDeps['engineOptions'] } = {}) {
     ensureCalls: [] as Array<{ parent: string | null; paths: string[] }>,
     ensureFault: (_call: number): number | null => null,
     legacyCalls: [] as Array<{ folderId: string | null; name: string }>,
-    legacyFault: (_name: string): number | null => null,
+    legacyFault: (_name: string): number | 'hang' | null => null,
+    legacyAborts: 0,
     folderIds: new Map<string, string>(),
     fseq: 0,
   };
@@ -63,14 +64,23 @@ function qsetup(opts: { engine?: QueueDeps['engineOptions'] } = {}) {
         server.pending -= 1;
       }
     },
-    async legacyUpload(_t, file, folderId, onProgress) {
+    async legacyUpload(_t, file, folderId, onProgress, signal) {
       const name = (file as unknown as { name: string }).name;
       s.legacyCalls.push({ folderId, name });
       server.pending += 1;
       try {
         await tick();
         const f = s.legacyFault(name);
-        if (f !== null) throw new TransportError(`upload failed (${f})`, f);
+        if (f === 'hang') {
+          try {
+            await stopped(signal); // until aborted (Cancel / stall / sign-out)
+          } catch (e) {
+            s.legacyAborts += 1;
+            throw e;
+          }
+        }
+        if (signal.aborted) throw new TransportError('aborted', 0);
+        if (typeof f === 'number') throw new TransportError(`upload failed (${f})`, f);
         onProgress(1);
         return { id: `legacy-${name}`, fileName: name };
       } finally {
@@ -455,4 +465,207 @@ test('queue: maxBytes comes from the server once an init answered', async () => 
   q.enqueueFiles(CLIENT_A, meta(), [drop('m.pdf', 5)]);
   await settled(q);
   assert.equal(q.maxBytes('/processing/databank'), 1e12);
+});
+
+// ---- review round 1 ------------------------------------------------------------------------
+
+test('queue: [review] kill switch — every file is asked first: a session still finishing is followed, only "proxy" files go standard', async () => {
+  const { q, server, s } = qsetup();
+  // The server (switch on) answers per file: a file whose earlier session is
+  // being recorded → 'in-progress'; everything else → the standard upload.
+  let switchOn = true;
+  server.initOverride = (f, index) => {
+    if (!switchOn) return null;
+    if (f.fileName === 'finishing.bin') {
+      const id = 'sess-finishing';
+      if (!server.sessions.has(id)) {
+        server.sessions.set(id, { id, identity: 'x', size: f.sizeBytes, partSize: f.sizeBytes, partCount: 1, stored: new Map([[1, f.sizeBytes]]), status: 'COMPLETING' });
+      }
+      return { index, status: 'in-progress', uploadId: id };
+    }
+    return null;
+  };
+  const realInit = server.init.bind(server);
+  server.init = async (files, signal) => {
+    const res = await realInit(files, signal);
+    if (!switchOn || res.mode !== 'direct') return res;
+    // new files in a batch with nothing under way: whole-batch 'proxy' (the backend's rule)
+    if (!res.results.some((r) => r.status === 'in-progress')) return { mode: 'proxy' as const };
+    return { ...res, results: res.results.map((r) => (r.status === 'in-progress' ? r : { index: r.index, status: 'retry' as const, reason: 'switching' })) };
+  };
+  q.enqueueFiles(CLIENT_A, meta(), [drop('finishing.bin', 20), drop('new.pdf', 5)]);
+  await settled(q, 100_000);
+  assert.deepEqual(s.legacyCalls.map((c) => c.name), ['new.pdf'], 'only the "proxy" file took the standard upload');
+  assert.equal(statusByName(q)['finishing.bin'] !== 'failed', true);
+  assert.ok(server.completeCalls.flat().includes('sess-finishing'), 'the finishing session was followed, not re-uploaded');
+  assert.equal(q.getSnapshot().compat, true);
+  // The switch goes off again: the next drop is asked first and goes resumable.
+  switchOn = false;
+  q.enqueueFiles(CLIENT_A, meta(), [drop('after.bin', 60)]);
+  await settled(q, 100_000);
+  assert.equal(statusByName(q)['after.bin'], 'done');
+  assert.deepEqual(s.legacyCalls.map((c) => c.name), ['new.pdf'], 'nothing else went standard');
+  assert.equal(q.getSnapshot().compat, false, 'the "standard upload" banner clears on a direct answer');
+});
+
+test('queue: [review] a file sent to the standard upload is re-asked on Retry (never straight back to it)', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyFault = (name) => (name === 'r.pdf' ? 400 : null); // the standard upload rejects it once
+  q.enqueueFiles(CLIENT_A, meta(), [drop('r.pdf', 5)]);
+  await settled(q);
+  assert.equal(statusByName(q)['r.pdf'], 'failed');
+  const inits = server.initCalls.length;
+  server.mode = 'direct'; // switch off meanwhile
+  s.legacyFault = () => null;
+  q.retryFailed();
+  await settled(q);
+  assert.ok(server.initCalls.length > inits, 'the server was asked again');
+  assert.equal(statusByName(q)['r.pdf'], 'done');
+  assert.equal(s.legacyCalls.length, 1, 'the retry went resumable');
+});
+
+test('queue: [review] re-dropping a big finished drop copies no engine views per file (no main-thread freeze)', async () => {
+  const { q } = qsetup();
+  const files = Array.from({ length: 400 }, (_, i) => drop(`f${i}.pdf`, 5, `root/f${i}.pdf`, 1, `s${i}`));
+  q.enqueueFolder(CLIENT_A, meta(), files);
+  await settled(q, 400_000);
+  const running = q.enqueueFolder(CLIENT_A, meta(), [drop('slow.bin', 60, 'other/slow.bin')]); // keeps a batch busy
+  void running;
+  const proto = UploadEngine.prototype as unknown as { snapshot: () => unknown; hasWork: () => boolean };
+  const real = { snapshot: proto.snapshot, hasWork: proto.hasWork };
+  let copies = 0;
+  let scans = 0;
+  proto.snapshot = function (this: unknown) {
+    copies += 1;
+    return real.snapshot.call(this);
+  };
+  proto.hasWork = function (this: unknown) {
+    scans += 1;
+    return real.hasWork.call(this);
+  };
+  try {
+    q.enqueueFolder(CLIENT_A, meta(), files);
+    await until(() => q.getSnapshot().batches.length === 3, 50_000);
+  } finally {
+    proto.snapshot = real.snapshot;
+    proto.hasWork = real.hasWork;
+  }
+  assert.ok(copies < 40, `engine views copied ${copies} times for a 400-file re-drop`);
+  assert.ok(scans < 40, `engine scanned for work ${scans} times for a 400-file re-drop (once per pass, not per file)`);
+});
+
+test('queue: [review] the tab silently switching to ANOTHER user (no 401) stops the queue before anything is sent as them', async () => {
+  const { q, server, s } = qsetup();
+  server.fault = () => 'hang';
+  q.enqueueFiles(CLIENT_A, meta(), [drop('mine.bin', 200), drop('mine2.bin', 200, undefined, 1, 'm2')]);
+  await until(() => server.inFlight > 0);
+  const inits = server.initCalls.length;
+  const signs = server.signCalls.length;
+  s.token = jwt('officer-2'); // another officer signed in; this tab's token was refreshed as them
+  server.fault = () => 'ok';
+  await until(() => q.getSnapshot().batches.length === 0, 50_000);
+  await tick();
+  assert.equal(q.hasActive(), false);
+  const before = { i: server.initCalls.length, g: server.signCalls.length, c: server.completeCalls.length };
+  await tick();
+  await tick();
+  assert.deepEqual({ i: server.initCalls.length, g: server.signCalls.length, c: server.completeCalls.length }, before, 'nothing more sent');
+  assert.ok(server.initCalls.length <= inits + 1 && server.signCalls.length <= signs + 1, 'at most the call in flight');
+});
+
+test('queue: [review] folder prep during an ISP outage (browser still "online") waits for the link instead of failing', async () => {
+  const { q, server, s, env } = qsetup();
+  let outage = true;
+  s.ensureFault = () => (outage ? 0 : null);
+  server.apiFault = (m) => (outage && m === 'ping' ? 0 : 'ok');
+  q.enqueueFolder(CLIENT_A, meta(), [drop('a.pdf', 5, 'Client/a.pdf'), drop('b.pdf', 5, 'Client/Sub/b.pdf')]);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 15 * 60_000, 400_000);
+  const snap = q.getSnapshot();
+  assert.equal(snap.batches[0].state, 'preparing', 'still waiting, not "could not create the folders"');
+  assert.equal(snap.linkDown, true, 'the dock says it is waiting for the internet');
+  assert.ok(s.ensureCalls.length > 8, `kept trying (${s.ensureCalls.length})`);
+  outage = false;
+  await settled(q, 200_000);
+  assert.deepEqual(statusByName(q), { 'Client/a.pdf': 'done', 'Client/Sub/b.pdf': 'done' });
+});
+
+test('queue: [review] folder prep still gives up on a failure while the link WORKS (ping answers)', async () => {
+  const { q, s } = qsetup();
+  s.ensureFault = () => 0; // this call keeps failing, the link does not
+  q.enqueueFolder(CLIENT_A, meta(), [drop('a.pdf', 5, 'C/a.pdf')]);
+  await until(() => q.getSnapshot().batches[0]?.state === 'prepare-failed', 400_000);
+  assert.equal(s.ensureCalls.length, 8);
+});
+
+test('queue: [review] the standard upload waits out an outage, can be cancelled mid-way, and Remove works on its rows', async () => {
+  const { q, server, s, env } = qsetup();
+  server.mode = 'proxy';
+  let outage = true;
+  s.legacyFault = (name) => (name === 'hang.pdf' ? 'hang' : outage ? 0 : name === 'bad.pdf' ? 400 : null);
+  server.apiFault = (m) => (outage && m === 'ping' ? 0 : 'ok');
+  q.enqueueFiles(CLIENT_A, meta(), [drop('a.pdf', 5), drop('bad.pdf', 6)]);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000, 400_000);
+  assert.equal(rowsOf(q).filter((r) => r.status === 'failed').length, 0, 'an outage fails nothing');
+  outage = false;
+  await settled(q, 200_000);
+  assert.equal(statusByName(q)['a.pdf'], 'done');
+  assert.equal(statusByName(q)['bad.pdf'], 'failed');
+  const bad = rowsOf(q).find((r) => r.fileName === 'bad.pdf')!;
+  await q.discard(bad.rowId);
+  await until(() => statusByName(q)['bad.pdf'] === 'cancelled');
+  // a standard upload in flight can be stopped
+  q.enqueueFiles(CLIENT_A, meta(), [drop('hang.pdf', 7)]);
+  await until(() => statusByName(q)['hang.pdf'] === 'uploading', 50_000);
+  const hang = rowsOf(q).find((r) => r.fileName === 'hang.pdf')!;
+  await q.cancel(hang.rowId);
+  await settled(q, 100_000);
+  assert.equal(statusByName(q)['hang.pdf'], 'cancelled');
+  assert.equal(s.legacyAborts, 1, 'the upload itself was stopped, not just relabelled');
+  q.enqueueFiles(CLIENT_A, meta(), [drop('after.pdf', 8)]);
+  await until(() => statusByName(q)['after.pdf'] === 'done', 50_000);
+  assert.equal(q.hasActive(), false, 'nothing left running');
+});
+
+test('queue: [review] a batch with failed files can be dismissed (their sessions freed); "Clear finished" leaves it', async () => {
+  const { q, server } = qsetup();
+  server.fault = ({ session, part }) => (session === 's1' && part === 1 ? 400 : 'ok');
+  const id = q.enqueueFiles(CLIENT_A, meta(), [drop('f.bin', 60)]);
+  await settled(q);
+  assert.equal(statusByName(q)['f.bin'], 'failed');
+  q.clearFinished();
+  await tick();
+  await until(() => q.getSnapshot().rev > 0);
+  assert.equal(q.getSnapshot().batches.length, 1, 'clear-finished keeps a batch with a problem');
+  q.dismissBatch(id);
+  await until(() => q.getSnapshot().batches.length === 0);
+  await until(() => server.abortCalls.includes('s1'), 50_000);
+});
+
+test('queue: [review] files a folder plan left out are never "all saved"', async () => {
+  const { q } = qsetup();
+  const long = 'x'.repeat(121);
+  q.enqueueFolder(CLIENT_A, meta(), [drop('ok.pdf', 5, 'Client/ok.pdf'), drop('lost.pdf', 5, `Client/${long}/lost.pdf`)]);
+  await settled(q);
+  const snap = q.getSnapshot();
+  assert.equal(snap.batches[0].skipped.length, 1);
+  assert.ok(snap.attention >= 1, 'it needs the officer');
+  q.clearFinished();
+  await tick();
+  await tick();
+  assert.equal(q.getSnapshot().batches.length, 1, 'not cleared without asking');
+});
+
+test('queue: [review] a PC clock set back does not freeze the dock', async () => {
+  const { q, env } = qsetup();
+  q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await settled(q);
+  const rev = q.getSnapshot().rev;
+  env.wallSkew = -3 * 3600_000; // Windows time sync moved the clock back 3 hours
+  q.enqueueFiles(CLIENT_A, meta(), [drop('d.pdf', 5)]);
+  const t0 = env.clock;
+  await until(() => q.getSnapshot().rev > rev, 50_000);
+  assert.ok(env.clock - t0 < 60_000, 'a new snapshot within seconds, not hours');
 });

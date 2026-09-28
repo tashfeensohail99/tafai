@@ -11,6 +11,8 @@
  *  - a drop guard while uploading: a file dropped OUTSIDE a drop zone would
  *    otherwise make the browser open it and navigate away mid-upload
  *  - 'tafsheen:logout' (dispatched by session.logout) → stop the queue
+ *  - a sign-in in ANOTHER tab (the shared refresh token changes) → re-check at
+ *    once, so a queue paused on "signed out" resumes without waiting for its poll
  * It never touches document.title (the notifications bell owns it).
  */
 
@@ -19,6 +21,7 @@ export interface LifecycleQueue {
   hasActive(): boolean;
   subscribe(fn: () => void): () => void;
   shutdown(reason: 'logout' | 'user-changed'): void;
+  checkAuth?(): Promise<void>;
 }
 
 interface Target {
@@ -39,6 +42,9 @@ export interface DocumentLike extends Target {
   visibilityState?: string;
 }
 
+/** localStorage key of the shared refresh token (auth-client.ts). */
+const REFRESH_TOKEN_KEY = 'tafsheen-refresh-token';
+
 export function attachLifecycle(q: LifecycleQueue, win: Target, nav: NavigatorLike, doc: DocumentLike): () => void {
   const onOnline = () => q.setOnline(true);
   const onOffline = () => q.setOnline(false);
@@ -49,14 +55,24 @@ export function attachLifecycle(q: LifecycleQueue, win: Target, nav: NavigatorLi
   };
   const onStrayDrag = (e: Event) => {
     if (e.defaultPrevented) return; // a real drop zone handled it
+    // Only FILES dropped outside a drop zone make the browser open them (and
+    // leave the page); text / link drags, and a native file input, keep working.
+    const dt = (e as Event & { dataTransfer?: { dropEffect: string; types?: ArrayLike<string> } | null }).dataTransfer;
+    if (!dt || !Array.from(dt.types ?? []).includes('Files')) return;
+    const target = e.target as { closest?: (selector: string) => unknown } | null;
+    if (target && typeof target.closest === 'function' && target.closest('input[type="file"]')) return;
     e.preventDefault();
-    const dt = (e as Event & { dataTransfer?: { dropEffect: string } | null }).dataTransfer;
-    if (dt) dt.dropEffect = 'none';
+    dt.dropEffect = 'none';
+  };
+  const onStorage = (e: Event) => {
+    const key = (e as Event & { key?: string | null }).key;
+    if (key === REFRESH_TOKEN_KEY || key === null) void q.checkAuth?.();
   };
 
   win.addEventListener('online', onOnline);
   win.addEventListener('offline', onOffline);
   win.addEventListener('tafsheen:logout', onLogout);
+  win.addEventListener('storage', onStorage);
   if (nav.onLine === false) q.setOnline(false);
 
   let guarded = false;
@@ -122,6 +138,7 @@ export function attachLifecycle(q: LifecycleQueue, win: Target, nav: NavigatorLi
     win.removeEventListener('online', onOnline);
     win.removeEventListener('offline', onOffline);
     win.removeEventListener('tafsheen:logout', onLogout);
+    win.removeEventListener('storage', onStorage);
     doc.removeEventListener('visibilitychange', onVisibility);
     if (guarded) {
       win.removeEventListener('beforeunload', onBeforeUnload);

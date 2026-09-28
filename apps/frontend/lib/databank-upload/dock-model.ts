@@ -154,8 +154,14 @@ export function dockHeadline(s: QueueSnapshot, now: number): Headline {
     return { title: `Uploading ${n(sum.completed + sum.uploading)} of ${n(total)} files`, sub: bits.join(' · ') };
   }
   const issues = sum.failed + sum.needsDecision + s.batches.filter((b) => b.state === 'prepare-failed').length;
+  const left = s.batches.reduce((a, b) => a + b.skipped.length, 0); // not uploaded (e.g. folder names too long)
   const saved = sum.completed;
-  if (issues) return { title: `${n(saved)} saved · ${plural(issues, 'needs attention', 'need attention')}` };
+  if (issues || left) {
+    const bits = [`${n(saved)} saved`];
+    if (left) bits.push(`${n(left)} not uploaded`);
+    if (issues) bits.push(plural(issues, 'needs attention', 'need attention'));
+    return { title: bits.join(' · ') };
+  }
   const already = sum.skipped ? ` · ${n(sum.skipped)} already there` : '';
   return { title: `All ${plural(saved, 'file')} saved${already}` };
 }
@@ -199,7 +205,8 @@ export function batchSections(b: BatchView): BatchSection[] {
   const savedTitle = already ? `${n(saved.length - already)} saved · ${n(already)} already there` : `${n(saved.length)} saved`;
   add('saved', savedTitle, saved.slice(-SAVED_CAP), SAVED_CAP, true);
   if (b.skipped.length) {
-    out.push({ key: 'not-uploaded', title: `Not uploaded (${n(b.skipped.length)})`, rows: [], more: 0, collapsed: true });
+    // Open by default: these files are NOT in the databank — the officer must see why.
+    out.push({ key: 'not-uploaded', title: `Not uploaded (${n(b.skipped.length)})`, rows: [], more: 0, collapsed: false });
   }
   return out;
 }
@@ -219,9 +226,14 @@ export function batchStateLine(b: BatchView): { text: string; tone: Tone } {
       return { text: 'Needs your choice', tone: 'warning' };
     case 'finished': {
       const s = b.summary;
-      return s.failed
-        ? { text: `${n(s.completed)} saved · ${plural(s.failed, 'problem')}`, tone: 'warning' }
-        : { text: `${n(s.completed)} saved${s.skipped ? ` · ${n(s.skipped)} already there` : ''}`, tone: 'success' };
+      const left = b.skipped.length;
+      if (s.failed || left) {
+        const bits = [`${n(s.completed)} saved`];
+        if (left) bits.push(`${n(left)} not uploaded`);
+        if (s.failed) bits.push(plural(s.failed, 'problem'));
+        return { text: bits.join(' · '), tone: 'warning' };
+      }
+      return { text: `${n(s.completed)} saved${s.skipped ? ` · ${n(s.skipped)} already there` : ''}`, tone: 'success' };
     }
     default: {
       const s = b.summary;

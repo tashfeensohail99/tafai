@@ -241,6 +241,23 @@ export class StorageService {
     }
 
     await this.ensureBucketExists();
+    const { url, headers } = await this.presignPutForKey(key, mimeType);
+    this.logger.log(`[S3] Presigned direct upload: ${key}`);
+    return { strategy: 'direct-put', storageKey: key, url, headers };
+  }
+
+  /**
+   * Presigned single PUT for an EXISTING, caller-owned key (e.g. a resumable
+   * upload session's small file — resuming must reuse the same key). Returns
+   * the headers the browser MUST send: Content-Type is signed, plus SSE when
+   * configured; SigV4 rejects the PUT otherwise. S3/R2 mode only.
+   */
+  async presignPutForKey(
+    key: string,
+    mimeType: string,
+    expiresInSeconds?: number,
+  ): Promise<{ url: string; headers: Record<string, string> }> {
+    this.assertS3('presignPutForKey');
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -249,15 +266,19 @@ export class StorageService {
         ? { ServerSideEncryption: this.serverSideEncryption }
         : {}),
     });
-    const url = await getSignedUrl(this.s3, command, { expiresIn: this.uploadUrlExpires });
-    // The browser MUST send exactly the headers that were signed, or SigV4
-    // rejects the PUT. Content-Type is always signed; SSE only when configured.
+    const url = await getSignedUrl(this.s3, command, {
+      expiresIn: expiresInSeconds ?? this.uploadUrlExpires,
+    });
     const headers: Record<string, string> = { 'Content-Type': mimeType };
     if (this.serverSideEncryption) {
       headers['x-amz-server-side-encryption'] = this.serverSideEncryption;
     }
-    this.logger.log(`[S3] Presigned direct upload: ${key}`);
-    return { strategy: 'direct-put', storageKey: key, url, headers };
+    return { url, headers };
+  }
+
+  /** Seconds a presigned upload URL stays valid (STORAGE_UPLOAD_URL_EXPIRES_SECONDS). */
+  get uploadUrlTtlSeconds(): number {
+    return this.uploadUrlExpires;
   }
 
   /**
@@ -296,6 +317,41 @@ export class StorageService {
       };
     } catch {
       return { exists: false };
+    }
+  }
+
+  /**
+   * STRICT existence check for decisions that must not be wrong: returns
+   * `exists: false` ONLY for a genuine not-found (404 / NotFound / NoSuchKey)
+   * and THROWS on anything else (5xx, timeout, throttling). headObjectMeta
+   * above swallows every error as "absent", which is fine for a best-effort
+   * check but would turn a transient blip into "this multi-GB upload is gone".
+   */
+  async headObjectStrict(
+    key: string,
+  ): Promise<{ exists: boolean; sizeBytes?: number; etag?: string }> {
+    if (this.mode === 'local') return { exists: true };
+
+    if (this.mode === 'supabase') {
+      const res = await fetch(
+        `${this.supabaseUrl}/storage/v1/object/info/${this.bucket}/${key}`,
+        { headers: { Authorization: `Bearer ${this.supabaseServiceKey}` } },
+      );
+      if (res.status === 404 || res.status === 400) return { exists: false };
+      if (!res.ok) throw new Error(`Supabase HEAD failed: ${res.status}`);
+      const info = (await res.json().catch(() => null)) as { size?: number; metadata?: { size?: number } } | null;
+      return { exists: true, sizeBytes: info?.size ?? info?.metadata?.size };
+    }
+
+    try {
+      const out = await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return { exists: true, sizeBytes: out.ContentLength, etag: out.ETag };
+    } catch (error) {
+      const e = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (e?.$metadata?.httpStatusCode === 404 || e?.name === 'NotFound' || e?.name === 'NoSuchKey') {
+        return { exists: false };
+      }
+      throw error;
     }
   }
 

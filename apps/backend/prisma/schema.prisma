@@ -3165,6 +3165,28 @@ enum DatabankFileSource {
   @@schema("processing")
 }
 
+/// Lifecycle of a resumable databank upload session (Databank Phase 1).
+/// UPLOADING → (complete) COMPLETING → COMPLETED; or → ABORTED (cancel/expiry)
+/// / FAILED (verification). COMPLETING is claimed atomically so a complete that
+/// dies after R2 finished is finished by the sweeper, never re-deleted.
+enum DatabankUploadStatus {
+  UPLOADING
+  COMPLETING
+  COMPLETED
+  ABORTED
+  FAILED
+
+  @@schema("processing")
+}
+
+/// SINGLE = one presigned PUT (≤ 32 MiB); MULTIPART = R2 multipart, resumable.
+enum DatabankUploadStrategy {
+  SINGLE
+  MULTIPART
+
+  @@schema("processing")
+}
+
 enum DocAccessType {
   VIEW
   DOWNLOAD
@@ -3710,6 +3732,58 @@ model DatabankFile {
   // Direct-upload commit looks a file up by its object key (one row per key).
   @@index([storageKey])
   @@map("databank_files")
+  @@schema("processing")
+}
+
+/// A resumable browser→R2 upload in progress (Databank Phase 1 —
+/// docs/databank-phase1-resumable-uploads.md). The bytes go straight to R2;
+/// this row tracks the plan and state. A DatabankFile row is only created once
+/// the server has VERIFIED the whole object, so file reads never see partial
+/// uploads. No per-part rows — R2 ListParts is the record of what arrived.
+/// Ids are plain (no FKs) so deleting a client/folder never cascades into an
+/// in-flight session; finalize relocates to the scope root instead.
+model DatabankUpload {
+  id               String                 @id @default(uuid())
+  createdByUserId  String
+  /// Scope — exactly one of clientId / ownerUserId, like DatabankFile.
+  clientId         String?
+  ownerUserId      String?
+  folderId         String?
+  /// Path inside a dropped folder (e.g. "Passport/scan.pdf") — lets a re-drop
+  /// map each file back to its session.
+  relativePath     String?
+  fileName         String
+  mimeType         String
+  sizeBytes        BigInt
+  fileLastModified DateTime?
+  /// Client-computed whole-file SHA-256 (hex): resume identity + duplicate check.
+  sha256           String
+  strategy         DatabankUploadStrategy
+  storageKey       String                 @unique
+  /// R2 multipart uploadId (MULTIPART only).
+  r2UploadId       String?
+  partSize         Int?
+  partCount        Int?
+  status           DatabankUploadStatus   @default(UPLOADING)
+  completingAt     DateTime?
+  failureReason    String?
+  /// When the R2 side (parts / object) of an ABORTED/FAILED session was freed.
+  r2CleanedAt      DateTime?
+  /// The DatabankFile this session resolved to (COMPLETED only). NOT unique:
+  /// several sessions can resolve to one file (an identical twin uploaded by
+  /// another session is reused). "One session → at most one row" is enforced by
+  /// DatabankFile.uploadSessionId instead.
+  fileId           String?
+  /// Resume deadline — 6 days after start, inside R2's 7-day auto-abort.
+  expiresAt        DateTime
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@index([createdByUserId, status])
+  @@index([status, expiresAt])
+  @@index([status, completingAt])
+  @@index([fileId])
+  @@map("databank_uploads")
   @@schema("processing")
 }
 

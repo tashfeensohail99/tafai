@@ -206,7 +206,7 @@ export class DatabankService {
   /** A caller-supplied parent folderId must be live and in the SAME scope
    *  (same client, or same personal owner) as the item being placed. Prevents
    *  filing an item into another client's — or another associate's — folder. */
-  private async assertFolderInScope(
+  async assertFolderInScope(
     folderId: string | null | undefined,
     scope: { clientId: string | null; ownerUserId: string | null },
   ): Promise<string | null> {
@@ -643,13 +643,19 @@ export class DatabankService {
     const folder = await this.loadFolder(folderId, user);
     const ids = await this.collectSubtree(folder.id);
     const now = new Date();
+    // Folders FIRST, then their files: trashing the folder rows takes their row
+    // locks before the file sweep. A resumable-upload commit reads its folder
+    // FOR SHARE, so either it waits for this delete (then sees the folder gone
+    // and relocates to the root), or this delete waits for it — and the file
+    // sweep below then trashes the just-recorded file together with its folder.
+    // Either way no live file is left stranded inside a trashed folder.
     await this.prisma.$transaction([
-      this.prisma.databankFile.updateMany({
-        where: { folderId: { in: ids }, deletedAt: null },
-        data: { deletedAt: now },
-      }),
       this.prisma.databankFolder.updateMany({
         where: { id: { in: ids }, deletedAt: null },
+        data: { deletedAt: now },
+      }),
+      this.prisma.databankFile.updateMany({
+        where: { folderId: { in: ids }, deletedAt: null },
         data: { deletedAt: now },
       }),
     ]);
@@ -667,7 +673,7 @@ export class DatabankService {
   /** Resolve a direct upload's scope (client vs personal) and AUTHORIZE the
    *  write in one place, returning the DB scope + the storage folder the object
    *  lives under. Shared by presign and commit so both gate identically. */
-  private async resolveWriteScope(
+  async resolveWriteScope(
     dto: { clientId?: string | null; personal?: boolean },
     user: RequestUser,
     targetUserId?: string,
@@ -727,6 +733,15 @@ export class DatabankService {
     const keyShape = new RegExp(`^${folderRe}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[^/]*$`);
     if (!keyShape.test(dto.storageKey)) {
       throw new ForbiddenException('This upload key does not belong to the target databank.');
+    }
+    // Keys of resumable upload sessions have the same shape, but they are
+    // recorded ONLY by that path, after full verification — never here.
+    const sessionOwned = await this.prisma.databankUpload.findUnique({
+      where: { storageKey: dto.storageKey },
+      select: { id: true },
+    });
+    if (sessionOwned) {
+      throw new ForbiddenException('This upload key belongs to a resumable upload.');
     }
     // A key backs at most ONE file row. A retried commit (the first response was
     // lost) gets the row it already created instead of a duplicate; any other
@@ -995,7 +1010,7 @@ export class DatabankService {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  private readonly fileSelect = {
+  readonly fileSelect = {
     id: true, clientId: true, folderId: true, fileName: true, mimeType: true,
     fileSizeBytes: true, source: true, uploadedByUserId: true, createdAt: true, updatedAt: true,
   } satisfies Prisma.DatabankFileSelect;
@@ -1010,7 +1025,7 @@ export class DatabankService {
   /** Refuse an empty name or a blocked executable/script extension. Shared by
    *  the multipart upload (a real file) and the direct-upload presign/commit
    *  (only a file NAME, no bytes yet). */
-  private assertSafeFileName(fileName: string | undefined): void {
+  assertSafeFileName(fileName: string | undefined): void {
     if (!fileName || !fileName.trim()) {
       throw new BadRequestException('A file name is required.');
     }

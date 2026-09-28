@@ -80,6 +80,8 @@ export function makeUploadTransport(base: DatabankBasePath, target: UploadTarget
       await call(`${base}/uploads/${id}`, { method: 'DELETE' }, signal);
     },
     put: xhrPut,
+    // Unauthenticated, no DB: proves the link when a file read fails (engine.linkProvenSince).
+    ping: (signal: AbortSignal) => call('/health', { method: 'GET' }, signal),
   };
 }
 

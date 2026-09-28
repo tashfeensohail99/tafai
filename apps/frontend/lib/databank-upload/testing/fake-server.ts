@@ -51,10 +51,10 @@ export class FakeServer implements UploadTransport {
   seq = 0;
   mode: 'direct' | 'proxy' = 'direct';
   fault: (ctx: { session: string; part: number; attempt: number }) => Fault = () => 'ok';
-  apiFault: (method: 'init' | 'sign' | 'complete' | 'abort', call: number) => ApiFault = () => 'ok';
+  apiFault: (method: 'init' | 'sign' | 'complete' | 'abort' | 'ping', call: number) => ApiFault = () => 'ok';
   initOverride: (f: InitUploadFile, index: number) => InitResult | null = () => null;
   completeOverride: (id: string, call: number) => CompleteResult | null = () => null;
-  calls = { init: 0, sign: 0, complete: 0, abort: 0 };
+  calls = { init: 0, sign: 0, complete: 0, abort: 0, ping: 0 };
   /** Virtual sleep (set by setup) for faults that take time. */
   sleep: (ms: number, signal?: AbortSignal) => Promise<void> = async () => undefined;
 
@@ -68,7 +68,7 @@ export class FakeServer implements UploadTransport {
     return { partSize, partCount: Math.ceil(size / partSize) };
   }
 
-  private async api<T>(method: 'init' | 'sign' | 'complete' | 'abort', signal: AbortSignal, body: () => T): Promise<T> {
+  private async api<T>(method: 'init' | 'sign' | 'complete' | 'abort' | 'ping', signal: AbortSignal, body: () => T): Promise<T> {
     const call = ++this.calls[method];
     this.pending += 1;
     try {
@@ -86,6 +86,10 @@ export class FakeServer implements UploadTransport {
     } finally {
       this.pending -= 1;
     }
+  }
+
+  ping(signal: AbortSignal) {
+    return this.api('ping', signal, () => ({ status: 'ok' }));
   }
 
   init(files: InitUploadFile[], signal: AbortSignal) {

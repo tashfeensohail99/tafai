@@ -85,6 +85,11 @@ export interface UploadTransport {
   abort(uploadId: string, signal: AbortSignal): Promise<void>;
   /** PUT one part to its presigned URL; reject with TransportError on non-2xx. */
   put(part: PartUrl, body: unknown, onProgress: (loaded: number) => void, signal: AbortSignal): Promise<void>;
+  /** Optional cheap round trip (GET /health) that proves the link is up. A file
+   *  read that fails is only the FILE's fault if the link works — a Drive-
+   *  streamed or network-share file is unreadable during an ISP outage too.
+   *  Without it, a failed read always counts. */
+  ping?(signal: AbortSignal): Promise<unknown>;
 }
 
 export interface EngineEnv {
@@ -196,6 +201,17 @@ const MAX_COMPLETE_CYCLES = 3;
 const GROW_AFTER = 8;
 /** Failures in a row, with nothing getting through, before the link counts as down. */
 const LINK_DOWN_AFTER = 3;
+/** …and only while those failures are recent: once nothing has failed for this
+ *  long (the requests that failed have ended, or nothing is being tried), "the
+ *  link is down" no longer holds. Longer than the slowest failure cycle (a 60 s
+ *  stall + a 30 s back-off, or a 60 s timeout + back-off, in a throttled tab). */
+const LINK_DOWN_FRESH_MS = 180_000;
+/** A file read (hash) with no progress for this long is abandoned — a stalled
+ *  network share must not hold the hash slot forever. Generous: a slow Drive
+ *  stream still delivers a slice well within it. */
+export const HASH_STALL_MS = 5 * 60_000;
+const HASH_CHECK_MS = 30_000;
+const PING_TIMEOUT_MS = 20_000;
 /** A back-off that wakes this much later than asked means the machine slept
  *  (or the tab was frozen): that time is not "trying" and never counts toward
  *  the give-up window. (Hidden tabs throttle timers to ~1/min, hence the margin.) */
@@ -300,6 +316,10 @@ interface Job {
 const TERMINAL: ReadonlySet<FileStatus> = new Set([
   'done', 'skipped', 'handed-off', 'fallback', 'failed', 'cancelled',
 ]);
+/** Statuses with work still to do (see hasWork). */
+const WORKING: ReadonlySet<FileStatus> = new Set([
+  'queued', 'hashing', 'hashed', 'ready', 'uploading', 'completing', 'cancelling',
+]);
 
 /** Call `onAbort` when any of `signals` aborts; returns an unlink function. */
 function link(signals: Array<AbortSignal | undefined>, onAbort: () => void): () => void {
@@ -347,6 +367,11 @@ export class UploadEngine {
   /** Per channel: when a request last got through, and failures in a row since. */
   private readonly lastSuccessAt: Record<Channel, number> = { storage: -Infinity, api: -Infinity };
   private readonly failuresInARow: Record<Channel, number> = { storage: 0, api: 0 };
+  private readonly lastFailureAt: Record<Channel, number> = { storage: -Infinity, api: -Infinity };
+  /** A timer that tells listeners when a stale "link down" stops holding. */
+  private linkExpiryArmed = false;
+  /** The one ping in flight (see linkProvenSince). */
+  private pinging?: Promise<void>;
   /** Work in flight: hashes, API calls, part slots, back-off sleeps, cancels. */
   private hashing = 0;
   private initInFlight = false;
@@ -383,7 +408,8 @@ export class UploadEngine {
         const st = known.view.status;
         if (st === 'cancelling') {
           known.redrop = item; // the officer changed their mind: upload it once the Cancel settles
-        } else if (st === 'failed' || st === 'cancelled') {
+        } else if (st === 'failed' || st === 'cancelled' || st === 'fallback') {
+          // (fallback: the server said 'proxy' — dropped again, ask it again)
           this.replaceItem(known, item);
           known.cancelUnconfirmed = false; // dropping it again IS the officer's answer
           this.retry(item.key);
@@ -407,6 +433,7 @@ export class UploadEngine {
           known.soloInit = false;
           known.cancelRequested = false;
           known.cancelUnconfirmed = false;
+          known.hashFailures = 0;
           this.set(known, {
             status: known.sha256 ? 'hashed' : 'queued',
             existing: undefined,
@@ -547,7 +574,8 @@ export class UploadEngine {
    *  storage still holds for it. */
   retry(key: string): void {
     const job = this.byKey.get(key);
-    if (!job || (job.view.status !== 'failed' && job.view.status !== 'cancelled')) return;
+    const st = job?.view.status;
+    if (!job || (st !== 'failed' && st !== 'cancelled' && st !== 'fallback')) return;
     const twin = this.liveTwin(job);
     if (twin) {
       // A re-dropped copy of the same file is already uploading (and owns the
@@ -614,6 +642,18 @@ export class UploadEngine {
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** Anything still to do (hash, init, upload, complete, cancel)? Unlike
+   *  snapshot(), copies nothing — the queue asks this a lot on 20k-file drops. */
+  hasWork(): boolean {
+    for (const j of this.jobs) if (WORKING.has(j.view.status)) return true;
+    return false;
+  }
+
+  /** One file's status; undefined when the key is not in this engine. */
+  status(key: string): FileStatus | undefined {
+    return this.byKey.get(key)?.view.status;
   }
 
   /** Resolves once nothing is running and nothing more can start on its own
@@ -900,9 +940,47 @@ export class UploadEngine {
     }
   }
 
-  /** Several requests in a row got no answer and nothing got through. */
+  /** Several requests in a row got no answer, nothing got through, and the
+   *  latest failure is recent. (A count left behind by requests that ended some
+   *  other way — the file failed, was cancelled — must not keep "waiting for the
+   *  network" up for good.) */
   private linkLooksDown(): boolean {
-    return this.failuresInARow.storage >= LINK_DOWN_AFTER || this.failuresInARow.api >= LINK_DOWN_AFTER;
+    const now = this.now();
+    const down = (ch: Channel) =>
+      this.failuresInARow[ch] >= LINK_DOWN_AFTER && now - this.lastFailureAt[ch] <= LINK_DOWN_FRESH_MS;
+    return down('storage') || down('api');
+  }
+
+  /** Nothing else notifies when a "link down" verdict goes stale: a timer does. */
+  private armLinkExpiry(): void {
+    if (this.linkExpiryArmed) return;
+    const last = Math.max(this.lastFailureAt.storage, this.lastFailureAt.api);
+    this.linkExpiryArmed = true;
+    void this.env.sleep(Math.max(1_000, last + LINK_DOWN_FRESH_MS + 1_000 - this.now())).then(() => {
+      this.linkExpiryArmed = false;
+      // A newer failure since: wait for ITS expiry (a pure time check — never a tight loop).
+      if (this.now() - Math.max(this.lastFailureAt.storage, this.lastFailureAt.api) <= LINK_DOWN_FRESH_MS) this.armLinkExpiry();
+      else this.notify();
+    });
+  }
+
+  /** Did a request get through AFTER `t`? If none has, ask (one cheap ping,
+   *  shared). Halted — send nothing: no proof. No ping available: assume yes. */
+  private async linkProvenSince(t: number): Promise<boolean> {
+    const proven = () => this.lastSuccessAt.api > t || this.lastSuccessAt.storage > t;
+    if (proven()) return true;
+    if (!this.transport.ping) return true;
+    if (this.halted) return false;
+    this.pinging ??= this.api((signal) => this.transport.ping!(signal), PING_TIMEOUT_MS)
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        this.pinging = undefined;
+      });
+    await this.pinging;
+    return proven();
   }
 
   private succeeded(channel: Channel): void {
@@ -922,6 +1000,8 @@ export class UploadEngine {
     budget.tries += 1;
     budget.firstFailureAt ??= active;
     this.failuresInARow[channel] += 1;
+    this.lastFailureAt[channel] = this.now();
+    this.armLinkExpiry();
     if (this.lastSuccessAt[channel] > startedAt) budget.counted += 1;
     if (budget.counted >= max || active - budget.firstFailureAt >= this.giveUpMs) {
       this.failuresInARow[channel] = 0; // this request stops trying: don't leave "waiting for the network" up
@@ -938,17 +1018,40 @@ export class UploadEngine {
     const ctrl = new AbortController();
     job.hashCtrl = ctrl;
     this.set(job, { status: 'hashing', hashedBytes: 0 });
+    // Watchdog: no progress for HASH_STALL_MS (a stalled network share) ⇒ give
+    // up on this read — the slot is freed even if the read never settles.
+    let lastProgressAt = this.now();
+    const stopWatch = new AbortController();
+    let onStall!: (e: Error) => void;
+    const stalled = new Promise<never>((_, reject) => (onStall = reject));
+    stalled.catch(() => undefined);
+    const watch = (async () => {
+      while (!stopWatch.signal.aborted) {
+        await this.nap(HASH_CHECK_MS, stopWatch.signal);
+        if (stopWatch.signal.aborted) return;
+        if (this.now() - lastProgressAt > HASH_STALL_MS) {
+          ctrl.abort();
+          onStall(new Error('reading it stopped responding'));
+          return;
+        }
+      }
+    })();
     try {
-      const hex = await this.env.hash(
-        job.item.source,
-        (bytes) => {
-          if (job.gen === gen) job.view.hashedBytes = bytes;
-          this.notify();
-        },
-        ctrl.signal,
-      );
+      const hex = await Promise.race([
+        this.env.hash(
+          job.item.source,
+          (bytes) => {
+            lastProgressAt = this.now();
+            if (job.gen === gen) job.view.hashedBytes = bytes;
+            this.notify();
+          },
+          ctrl.signal,
+        ),
+        stalled,
+      ]);
       if (job.gen !== gen) return;
       job.sha256 = hex;
+      job.hashFailures = 0;
       this.set(job, { hashedBytes: job.item.source.size });
       // Only a copy still IN PROGRESS counts — a finished one says nothing about
       // what the databank holds now (it may have been deleted): ask the server.
@@ -965,38 +1068,39 @@ export class UploadEngine {
       }
     } catch (e) {
       if (job.gen !== gen) return;
-      if (this.offline) {
-        this.set(job, { status: 'queued', hashedBytes: 0 }); // hashed again once back online
-        return;
-      }
-      if (this.linkLooksDown()) {
-        // The browser says "online" but nothing gets through (ISP down, Wi-Fi up):
-        // a Drive-streamed / NAS file can't be read either. Not the file's fault —
-        // wait (outage-style back-off) and don't count it.
-        this.set(job, { status: 'queued', hashedBytes: 0 });
-        void this.hashRetryLater(job, gen, 5);
-        return;
-      }
-      job.hashFailures += 1;
-      if (job.hashFailures < 3) {
-        // Maybe a network drive / Drive stream that hiccuped: try again shortly.
-        this.set(job, { status: 'queued', hashedBytes: 0 });
-        void this.hashRetryLater(job, gen);
-        return;
-      }
-      this.fail(job, `Could not read this file (${errorMessage(e)}). Is it still on this computer?`, true);
+      this.set(job, { status: 'queued', hashedBytes: 0 });
+      if (this.offline) return; // hashed again once back online
+      void this.judgeRead(job, gen, this.now(), e);
     } finally {
+      stopWatch.abort();
       this.hashing -= 1;
       if (job.hashCtrl === ctrl) job.hashCtrl = undefined;
       this.schedule();
+      await watch;
     }
   }
 
-  /** Park a queued job for a back-off, then let the pump hash it again. */
-  private async hashRetryLater(job: Job, gen: number, tries = job.hashFailures * 2): Promise<void> {
+  /** A read failed while online. It is only the FILE's fault if the link is
+   *  proven up AFTER the failure (a Drive-streamed / network-share file is also
+   *  unreadable during an ISP outage): then it counts, and the 3rd counted
+   *  failure fails the file. No proof ⇒ wait outage-style and read it again,
+   *  uncounted. Parked meanwhile, so the next file hashes. */
+  private async judgeRead(job: Job, gen: number, failedAt: number, e: unknown): Promise<void> {
     job.parked = true;
     try {
-      await this.backoff(backoffMs(tries, this.env.random), job, false);
+      const proven = await this.linkProvenSince(failedAt);
+      if (job.gen !== gen) return;
+      if (!proven) {
+        await this.backoff(backoffMs(5, this.env.random), job, false);
+        return;
+      }
+      job.hashFailures += 1;
+      if (job.hashFailures >= 3) {
+        this.fail(job, `Could not read this file (${errorMessage(e)}). Is it still on this computer?`, true);
+        return;
+      }
+      // Maybe a network drive / Drive stream that hiccuped: try again shortly.
+      await this.backoff(backoffMs(job.hashFailures * 2, this.env.random), job, false);
     } finally {
       if (job.gen === gen) job.parked = false;
       this.schedule();
@@ -1037,6 +1141,9 @@ export class UploadEngine {
           }
         } catch (e) {
           const status = statusOf(e);
+          // Halted (paused / offline / the queue paused on a sign-out): whatever
+          // came back — even a 401 — is judged after resume, never here.
+          if (this.halted) return; // they stay 'hashed'; resume re-inits them
           if (classifyApi(status) === 'fatal') {
             if (status === 400 && jobs.length > 1) {
               // One bad file rejects the whole batch: init them one by one so
@@ -1047,7 +1154,6 @@ export class UploadEngine {
             for (const j of live()) this.fail(j, errorMessage(e), status === 401);
             return;
           }
-          if (this.halted) return; // they stay 'hashed'; resume re-inits them
           if (this.charge(budget, 'api', startedAt, MAX_API_ATTEMPTS) === 'give-up') {
             for (const j of live()) this.fail(j, errorMessage(e), true);
             return;
@@ -1232,6 +1338,25 @@ export class UploadEngine {
       if (job.gen !== gen || !url) return; // signing failed and already handled the job
       if (f.reason) throw new TransportError('stopped', 0); // halted while signing
       const [start, end] = partRange(n, session.partSize, job.item.source.size);
+      // This part's last attempt found the file unreadable. Judge it NOW, right
+      // after a request got through DURING THIS ATTEMPT (usually its own
+      // re-sign): unreadable while the link demonstrably works = the file is
+      // gone. A proof from before this attempt says nothing about now (the link
+      // may have dropped since) — then the PUT itself tells (streamed = readable).
+      const since = job.unreadableSince.get(n);
+      if (since !== undefined && this.env.readable) {
+        const proofAt = Math.max(this.lastSuccessAt.api, this.lastSuccessAt.storage);
+        if (proofAt > since && proofAt >= attemptAt) {
+          const verdict = await this.probe(job, start, end);
+          if (job.gen !== gen) return;
+          if (f.reason) throw new TransportError('stopped', 0);
+          if (verdict === 'unreadable') {
+            this.fail(job, 'This file changed or is no longer on this computer — drop it again to continue (finished parts are kept).');
+            return;
+          }
+          if (verdict === 'ok') job.unreadableSince.delete(n);
+        }
+      }
       startedAt = this.now();
       await this.putWatched(f, url, job.item.source.slice(start, end), () => {
         if (job.gen === gen) this.refreshInFlight(job);
@@ -1271,6 +1396,9 @@ export class UploadEngine {
     startedAt: number,
     attemptAt: number,
   ): Promise<void> {
+    // This attempt READ the file (it sent bytes) — however it ended (stall, 5xx,
+    // 403, a drop): an older "unreadable" mark is disproved.
+    if (f.loaded > 0) job.unreadableSince.delete(n);
     if (f.reason === 'stop') {
       // Halted (or reset): put it back unless the job itself was reset.
       if (job.gen === gen && !job.pending.includes(n)) job.pending.unshift(n);
@@ -1302,28 +1430,15 @@ export class UploadEngine {
     // No response at all may not be the network: the file itself may have been
     // moved, edited or unplugged — the browser reports that the same way. But a
     // file on a network share / Drive stream is ALSO unreadable during an
-    // outage, so "unreadable" only counts once the link is proven up (a PUT or
-    // an API call got through during this attempt). Otherwise the next attempt
-    // re-signs the part first, which proves (or disproves) the link.
+    // outage, so an "unreadable" probe here only MARKS the part; the next
+    // attempt re-signs first and judges it right after that proof (sendPart).
     if (f.reason !== 'stall' && statusOf(e) === 0 && this.env.readable && job.session) {
       const [start, end] = partRange(n, job.session.partSize, job.item.source.size);
       const verdict = await this.probe(job, start, end);
       if (job.gen !== gen) return;
-      // This attempt READ the file (it sent bytes): any older "unreadable" mark
-      // is disproved — only a fresh verdict counts.
-      if (f.loaded > 0) job.unreadableSince.delete(n);
       if (verdict === 'unreadable') {
-        const since = job.unreadableSince.get(n);
-        // Proof must come AFTER the first "unreadable": a sibling PUT that landed
-        // just before an outage proves nothing about now.
-        const provenSince = since !== undefined && !this.halted &&
-          (this.lastSuccessAt.api > since || this.lastSuccessAt.storage > since);
-        if (provenSince) {
-          this.fail(job, 'This file changed or is no longer on this computer — drop it again to continue (finished parts are kept).');
-          return;
-        }
-        if (since === undefined) job.unreadableSince.set(n, this.now());
-        job.urls.delete(n); // next attempt signs first: an API answer shows whether the link is up
+        if (!job.unreadableSince.has(n)) job.unreadableSince.set(n, this.now());
+        job.urls.delete(n); // the next attempt signs first: that answer shows whether the link is up
       } else if (verdict === 'ok') {
         job.unreadableSince.delete(n);
       }
@@ -1454,11 +1569,11 @@ export class UploadEngine {
           this.reinit(job, 'The upload session expired.');
           return null;
         }
+        if (this.halted) throw e; // judged after resume (see runInit)
         if (classifyApi(status) === 'fatal') {
           this.fail(job, errorMessage(e), status === 401);
           return null;
         }
-        if (this.halted) throw e;
         this.onTrouble();
         if (this.charge(job.signBudget, 'api', startedAt, MAX_API_ATTEMPTS) === 'give-up') {
           this.fail(job, errorMessage(e), true);
@@ -1539,12 +1654,12 @@ export class UploadEngine {
           if (!res || !Array.isArray(res.results)) throw new TransportError('The server sent an unreadable reply.', 0);
         } catch (e) {
           const status = statusOf(e);
-          if (classifyApi(status) === 'fatal') {
-            for (const j of live()) this.fail(j, errorMessage(e), status === 401);
+          if (this.halted) {
+            for (const j of live()) j.wantsComplete = true; // re-sent on resume (see runInit)
             return;
           }
-          if (this.halted) {
-            for (const j of live()) j.wantsComplete = true; // re-sent on resume
+          if (classifyApi(status) === 'fatal') {
+            for (const j of live()) this.fail(j, errorMessage(e), status === 401);
             return;
           }
           if (this.charge(budget, 'api', startedAt, MAX_API_ATTEMPTS) === 'give-up') {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { INIT_TIMEOUT_MS, MAX_PART_ATTEMPTS, STALL_MS, TransportError, UploadEngine } from './engine.ts';
+import { HASH_STALL_MS, INIT_TIMEOUT_MS, MAX_PART_ATTEMPTS, STALL_MS, TransportError, UploadEngine } from './engine.ts';
 import {
   FakeServer,
   FakeSource,
@@ -9,6 +9,7 @@ import {
   makeEnv,
   setup,
   statuses,
+  stopped,
   tick,
   until,
   view,
@@ -1335,4 +1336,230 @@ test('[review r5] reads failing while the ENGINE sees the link down (browser sti
   outage = false;
   await engine.whenIdle();
   assert.deepEqual(Object.values(statuses(engine)), ['done', 'done', 'done']);
+});
+
+// ---- review round 6 -------------------------------------------------------------
+
+/** Part 1: outage 1 fails it with no response (the probe can't read the file →
+ *  "unreadable" mark); the link returns; the retry STREAMS bytes and then ends in
+ *  `second` (a stall or a 503) as outage 2 starts; the next attempt, inside
+ *  outage 2, fails with no response and the probe can't read it again. */
+async function flapping(second: 'stall' | 503) {
+  const { server, env, engine } = setup();
+  let outage = 0; // 0 = up; 1 / 2 = first / second outage
+  env.readable = async () => outage === 0;
+  server.apiFault = () => (outage ? 0 : 'ok');
+  let attempt1 = 0;
+  const realPut = server.put.bind(server);
+  server.put = async (part, body, onProgress, signal) => {
+    const [, , , , n] = part.url.split('/');
+    if (n !== '1') {
+      if (outage) throw new TransportError('network down', 0);
+      return realPut(part, body, onProgress, signal);
+    }
+    attempt1 += 1;
+    if (attempt1 === 1) {
+      outage = 1;
+      throw new TransportError('network down', 0);
+    }
+    if (attempt1 === 2) {
+      onProgress(4); // the retry READ the file and sent bytes…
+      outage = 2; // …then the link drops again
+      if (second === 503) throw new TransportError('bad gateway', 503);
+      await stopped(signal); // no reset, no progress: the stall watchdog ends it
+    }
+    if (outage) throw new TransportError('network down', 0);
+    return realPut(part, body, onProgress, signal);
+  };
+  engine.add([item('flap.bin', 30)]);
+  await until(() => outage === 1);
+  const t1 = env.clock;
+  await until(() => env.clock - t1 > 60_000);
+  outage = 0; // link back: part 1 is re-signed and retried
+  await until(() => attempt1 >= 3);
+  const t2 = env.clock;
+  await until(() => env.clock - t2 > 60_000);
+  assert.notEqual(statuses(engine)['flap.bin'], 'failed', `${second}: the outage-1 mark was disproved by the streamed attempt`);
+  outage = 0;
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['flap.bin'], 'done');
+  exactlyOnce(server);
+}
+
+test('[review r6] a streamed attempt that then STALLS voids the old "unreadable" mark (a flapping link fails nothing)', async () => {
+  await flapping('stall');
+});
+
+test('[review r6] a streamed attempt that then gets a 503 voids the old "unreadable" mark too', async () => {
+  await flapping(503);
+});
+
+test('[review r6] "waiting for the network" does not outlive the requests: after the only file fails, it clears while idle', async () => {
+  const { server, env, engine } = setup();
+  let gone = false;
+  env.readable = async () => !gone;
+  server.fault = () => (gone ? 0 : 'ok');
+  engine.add([item('solo.bin', 300)]);
+  await until(() => server.okPuts.size >= 3);
+  gone = true; // the USB stick is pulled
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['solo.bin'], 'failed');
+  let heard = 0;
+  engine.subscribe(() => heard++);
+  const t0 = env.clock;
+  await until(() => !engine.snapshot().linkDown || env.clock - t0 > 30 * 60_000, 200_000);
+  assert.equal(engine.snapshot().linkDown, false, 'no stuck "waiting for the network" banner');
+  assert.ok(env.clock - t0 <= 4 * 60_000, 'it goes stale within minutes');
+  assert.ok(heard > 0, 'and the dock is told');
+});
+
+test('[review r6] a file that cannot be read while the link WORKS fails after 3 reads — even with nothing else running (a ping proves the link)', async () => {
+  const { server, env, engine } = setup();
+  let reads = 0;
+  env.hash = async (source) => {
+    await tick();
+    if ((source as FakeSource).sha.startsWith(Buffer.from('locked').toString('hex'))) {
+      reads += 1;
+      throw new Error('NotReadableError'); // open in another program / deleted after the drop
+    }
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('locked.pst', 12, { seed: 'locked' })]);
+  await until(() => statuses(engine)['locked.pst'] === 'failed', 60_000); // (a regression would wait forever)
+  assert.equal(statuses(engine)['locked.pst'], 'failed');
+  assert.match(view(engine, 'locked.pst').error!, /Could not read this file/);
+  assert.equal(reads, 3);
+  assert.ok(server.calls.ping > 0, 'the link was proven with a ping');
+  assert.equal(server.initCalls.length, 0);
+});
+
+test('[review r6] a Drive-streamed drop hashed during an ISP outage (nothing in flight to prove the link) fails no file', async () => {
+  const { server, env, engine } = setup();
+  let outage = true;
+  server.apiFault = () => (outage ? 0 : 'ok');
+  server.fault = () => (outage ? 0 : 'ok');
+  let reads = 0;
+  env.hash = async (source) => {
+    await tick();
+    if (outage) {
+      reads += 1;
+      throw new Error('NotReadableError'); // streamed from Drive: unreadable while the ISP is down
+    }
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('a.pdf', 12), item('b.pdf', 12), item('c.pdf', 12)]);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000, 200_000);
+  assert.ok(reads >= 6, `the files kept being re-read (${reads})`);
+  assert.equal(Object.values(statuses(engine)).filter((s) => s === 'failed').length, 0, 'none failed');
+  outage = false;
+  await engine.whenIdle();
+  assert.deepEqual(Object.values(statuses(engine)), ['done', 'done', 'done']);
+});
+
+test('[review r6] a read that never settles is abandoned after HASH_STALL_MS: the next file hashes and uploads', async () => {
+  const { env, engine } = setup();
+  let stuckReads = 0;
+  env.hash = async (source) => {
+    if ((source as FakeSource).sha.startsWith(Buffer.from('stuck').toString('hex'))) {
+      stuckReads += 1;
+      return new Promise<string>(() => undefined); // a stalled network share: never settles, ignores Cancel
+    }
+    await tick();
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('stuck.bin', 12, { seed: 'stuck' }), item('next.pdf', 12)]);
+  const t0 = env.clock;
+  await until(() => statuses(engine)['next.pdf'] === 'done', 200_000);
+  assert.ok(env.clock - t0 >= HASH_STALL_MS, 'it waited out the stall window first');
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['stuck.bin'], 'failed', 'the link works (ping), so 3 abandoned reads fail it');
+  assert.match(view(engine, 'stuck.bin').error!, /stopped responding/);
+  assert.equal(stuckReads, 3);
+});
+
+test('[review r6] a re-dropped done file starts with a clean read record (earlier hiccups do not count against it)', async () => {
+  const { server, env, engine } = setup();
+  let failNext = 2;
+  env.hash = async (source) => {
+    await tick();
+    if (failNext-- > 0) throw new Error('read hiccup');
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('f.pdf', 12)]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['f.pdf'], 'done');
+  failNext = 1;
+  engine.add([item('f.pdf', 14)]); // edited (new size): same key, hashed again — one hiccup
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['f.pdf'], 'done');
+  assert.equal(server.recorded.length, 2);
+});
+
+test('[review r6] an answer that arrives as the engine halts (a 401 on sign-out) is judged after resume, never fails files', async () => {
+  for (const where of ['init', 'sign', 'complete'] as const) {
+    const { server, engine } = setup();
+    let first = true;
+    const trip = () => {
+      if (!first) return false;
+      first = false;
+      engine.pause(); // the queue pauses everything on a 401 first…
+      return true;
+    };
+    const realInit = server.init.bind(server);
+    const realSign = server.signParts.bind(server);
+    const realComplete = server.complete.bind(server);
+    server.init = async (files, signal) => {
+      if (where === 'init' && trip()) throw new TransportError('Signed out', 401); // …and the 401 still reaches the engine
+      return realInit(files, signal);
+    };
+    server.signParts = async (id, parts, signal) => {
+      if (where === 'sign' && trip()) throw new TransportError('Signed out', 401);
+      return realSign(id, parts, signal);
+    };
+    server.complete = async (ids, signal) => {
+      if (where === 'complete' && trip()) throw new TransportError('Signed out', 401);
+      return realComplete(ids, signal);
+    };
+    engine.add([item('big.bin', 300)]);
+    await until(() => !first);
+    await engine.whenIdle();
+    assert.notEqual(statuses(engine)['big.bin'], 'failed', `${where}: not failed while paused`);
+    engine.resume();
+    await engine.whenIdle();
+    assert.equal(statuses(engine)['big.bin'], 'done', `${where}: finished after resume`);
+    exactlyOnce(server);
+  }
+});
+
+// ---- API for the upload queue --------------------------------------------------------
+
+test('[queue api] hasWork()/status() answer without copying views', async () => {
+  const { server, engine } = setup();
+  assert.equal(engine.hasWork(), false);
+  assert.equal(engine.status('x.pdf'), undefined);
+  server.fault = () => 'hang';
+  engine.add([item('x.pdf', 60)]);
+  await until(() => engine.status('x.pdf') === 'uploading');
+  assert.equal(engine.hasWork(), true);
+  server.fault = () => 'ok';
+  await engine.cancel('x.pdf');
+  await engine.whenIdle();
+  assert.equal(engine.status('x.pdf'), 'cancelled');
+  assert.equal(engine.hasWork(), false);
+});
+
+test('[queue api] a file the server sent to the standard upload ("proxy") asks again when dropped again or retried', async () => {
+  const { server, engine } = setup();
+  server.mode = 'proxy';
+  engine.add([item('p.pdf', 12), item('q.pdf', 12)]);
+  await engine.whenIdle();
+  assert.deepEqual(statuses(engine), { 'p.pdf': 'fallback', 'q.pdf': 'fallback' });
+  assert.equal(engine.hasWork(), false, 'fallback is terminal for the engine');
+  server.mode = 'direct'; // the kill switch is off again
+  engine.add([item('p.pdf', 12)]);
+  engine.retry('q.pdf');
+  await engine.whenIdle();
+  assert.deepEqual(statuses(engine), { 'p.pdf': 'done', 'q.pdf': 'done' });
+  assert.equal(server.recorded.length, 2);
 });

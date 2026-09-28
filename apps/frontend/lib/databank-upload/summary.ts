@@ -43,7 +43,7 @@ const GROUP: Record<FileStatus, keyof UploadSummary> = {
 /** A finished row the officer must look at: its Cancel came while it was
  *  being saved, so it may be in the folder anyway ("check the folder"). */
 export function needsCheck(r: { status: string; note?: string }): boolean {
-  return (r.status === 'done' || r.status === 'cancelled') && !!r.note;
+  return (r.status === 'done' || r.status === 'handed-off' || r.status === 'cancelled') && !!r.note;
 }
 
 /** Files whose bytes do not count toward "x of y GB". */

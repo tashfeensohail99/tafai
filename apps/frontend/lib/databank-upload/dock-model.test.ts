@@ -200,3 +200,14 @@ test('[review r4] the saved list shows the newest files and says how many more t
   assert.equal(saved.rows[49].rowId, 'd119');
   assert.equal(saved.more, 70);
 });
+
+test('[review r5] a Cancel that came while saving is flagged on a "handed-off" row too, and a failed row shows its note', () => {
+  const now = Date.UTC(2026, 8, 28, 13, 0, 0);
+  const note = 'It was already being saved, so it could not be cancelled — delete it from the folder if unwanted.';
+  const s = snap([row('handed-off', { rowId: 'h', note }), row('done', { rowId: 'd' })], { active: false }, { state: 'finished' });
+  assert.equal(batchSections(s.batches[0]).find((x) => x.key === 'check')!.title, 'Check the folder (1)');
+  assert.equal(dockHeadline(s, now).title, '2 saved · 1 to check');
+  assert.equal(rowView(row('handed-off', { note })).tone, 'warning');
+  assert.match(rowView(row('handed-off', { note })).detail!, /could not be cancelled/);
+  assert.match(rowView(row('failed', { error: 'connection reset', note: 'It may already have been saved — check the folder before retrying.' })).detail!, /may already have been saved/);
+});

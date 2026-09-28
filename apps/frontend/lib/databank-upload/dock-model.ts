@@ -80,11 +80,14 @@ export function rowView(r: RowView): RowDisplay {
       return { chip: 'Cancelling…', tone: 'neutral', busy: true, actions: [] };
     case 'done':
       if (r.relocated) {
-        return { chip: 'Saved', tone: 'warning', detail: 'Saved at the top of the databank — its folder was deleted while uploading', actions: [] };
+        const where = 'Saved at the top of the databank — its folder was deleted while uploading';
+        return { chip: 'Saved', tone: 'warning', detail: r.note ? `${where}. ${r.note}` : where, actions: [] };
       }
       return { chip: 'Saved', tone: r.note ? 'warning' : 'success', detail: r.note, actions: [] };
     case 'handed-off':
-      return { chip: 'Saved', tone: 'success', detail: 'The server is finishing it — it appears in a few minutes', actions: [] };
+      return r.note
+        ? { chip: 'Saved', tone: 'warning', detail: `The server is finishing it. ${r.note}`, actions: [] }
+        : { chip: 'Saved', tone: 'success', detail: 'The server is finishing it — it appears in a few minutes', actions: [] };
     case 'skipped':
       if (r.duplicateKind === 'already-uploaded') {
         return { chip: 'Already there', tone: 'success', detail: `In ${r.existing?.folderName ?? 'the top folder'}`, actions: [] };
@@ -112,7 +115,7 @@ export function rowView(r: RowView): RowDisplay {
     case 'failed':
       return r.retryable === false
         ? { chip: 'Not allowed', tone: 'danger', detail: plainError(r.error), actions: ['discard'] }
-        : { chip: 'Not uploaded', tone: 'danger', detail: plainError(r.error), actions: ['retry', 'discard'] };
+        : { chip: 'Not uploaded', tone: 'danger', detail: r.note ? `${plainError(r.error)} ${r.note}` : plainError(r.error), actions: ['retry', 'discard'] };
     case 'cancelled':
       return { chip: 'Cancelled', tone: 'neutral', detail: r.note, actions: ['upload-again'] };
     default:

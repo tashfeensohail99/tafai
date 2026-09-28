@@ -102,7 +102,7 @@ function PortalSidebar({
 
   return (
     <>
-      {open ? <div className="sos-drawer-backdrop" onClick={onClose} aria-hidden /> : null}
+      {open ? <div data-sos-modal="" className="sos-drawer-backdrop" onClick={onClose} aria-hidden /> : null}
 
       <nav className={`sos-sidebar${open ? ' is-open' : ''}`} aria-label="Client portal navigation" style={{ width: '260px' }}>
         <div className="sos-sidebar__brand">

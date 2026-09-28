@@ -238,12 +238,6 @@ const FRESH_MARGIN = 16 * 1024 * 1024;
  *  fails — it may have been moved or edited, which the browser reports exactly
  *  like an unplugged drive. */
 export const NO_PROOF_GIVE_UP_MS = 30 * 60_000;
-/** A fresh read this recent before a failure still vouches for the source (a
- *  folder of gone files must not use up one never-read file per check) — but
- *  never twice for one file: each further strike needs a proof newer than that
- *  file's previous failure, so a source that vanishes right after a proof costs
- *  at most one wrong strike, never a failed file. */
-const SOURCE_PROOF_HOLD_MS = 15_000;
 /** Paused: a read that failed waits for Resume. This many failing in a row
  *  (the drive / Drive client is away) stop the paused hash lane until Resume
  *  or a good read — a paused 20k-file drop must not read every file in turn. */
@@ -360,8 +354,6 @@ interface Job {
   readTo: number;
   /** A read of it failed (and no fresh read since): a poor file to test the source with. */
   readFailed: boolean;
-  /** When its previous read failed (see SOURCE_PROOF_HOLD_MS). */
-  lastFailedReadAt?: number;
   /** Active time since nothing could tell whether IT or its source is at fault
    *  (see NO_PROOF_GIVE_UP_MS) — this file's own clock. */
   unprovenSince?: number;
@@ -419,6 +411,11 @@ export class UploadEngine {
   private resumeCtrl = new AbortController();
   /** Reads that failed in a row while halted (see HALTED_READ_FAILS_MAX). */
   private haltedReadFails = 0;
+  /** The source check in flight, and the last one done: a check whose probes
+   *  started AFTER a read failed answers for that failure too — a burst of
+   *  failures (a gone folder, a source hiccup) shares one check. */
+  private sourceCheck: { startedAt: number; done: Promise<'up' | 'away' | 'unknown'> } | null = null;
+  private lastSourceCheck: { startedAt: number; verdict: 'up' | 'away' | 'unknown' } | null = null;
   /** Due times of the engine's armed timers (see nap/observe): a timer that
    *  fires far LATER than it was due means the machine slept or the tab froze.
    *  A long timer firing on schedule (a 120 s request timeout) is not sleep. */
@@ -720,7 +717,7 @@ export class UploadEngine {
    *  officer wanted those gone; an explicit Retry on the row still works). */
   retryFailed(): void {
     for (const j of this.jobs) {
-      if (j.view.status === 'failed' && j.view.retryable !== false && !j.cancelUnconfirmed) this.retry(j.item.key);
+      if (j.view.status === 'failed' && j.view.retryable !== false && !j.cancelUnconfirmed && !j.cancelRequested) this.retry(j.item.key);
     }
   }
 
@@ -744,7 +741,8 @@ export class UploadEngine {
       offline: this.offline,
       // (a read wait whose ping failed: no internet — say so; paused, nothing was asked)
       linkDown: this.linkLooksDown() || (this.readWait?.cause === 'link' && !this.halted),
-      readsWaiting: this.readWait?.cause === 'source',
+      // (paused and no longer testing: nothing is known — the dock says "Paused")
+      readsWaiting: this.readWait?.cause === 'source' && !(this.halted && this.haltedReadFails >= HALTED_READ_FAILS_MAX),
       slots: this.slots,
     };
   }
@@ -837,9 +835,13 @@ export class UploadEngine {
       if (this.readWait) {
         this.pumpReadWait();
       } else {
-        for (const job of this.jobs) {
-          if (this.hashing >= this.hashConcurrency) break;
-          if (job.view.status === 'queued' && !job.parked) void this.hashJob(job);
+        // Files never failed first: one that failed (and is being retried) must
+        // not hold up the rest of the drop — e.g. a moved folder's files.
+        for (const retrying of [false, true]) {
+          for (const job of this.jobs) {
+            if (this.hashing >= this.hashConcurrency) break;
+            if (job.view.status === 'queued' && !job.parked && job.readFailed === retrying) void this.hashJob(job);
+          }
         }
       }
     }
@@ -1005,7 +1007,6 @@ export class UploadEngine {
     job.resigns.clear();
     job.unreadableSince.clear();
     job.unprovenSince = undefined;
-    job.lastFailedReadAt = undefined;
     job.signing = undefined;
     job.session = undefined;
     job.wantsComplete = false;
@@ -1153,6 +1154,8 @@ export class UploadEngine {
     if (this.readWait) {
       this.readWaitEndedAt = at;
       this.endReadWait(); // every file waiting on the source goes again now
+      // The source works again: every "can't tell" clock starts over next time.
+      for (const j of this.jobs) j.unprovenSince = undefined;
       this.schedule();
     }
   }
@@ -1171,10 +1174,29 @@ export class UploadEngine {
    *  from Drive for desktop's cache while it is offline. Only ANOTHER file
    *  counts (this file's own reads say nothing about "gone" vs "unplugged").
    *  Without a read probe we can't tell — assume it works (as before). */
-  private async sourceState(t: number, job: Job, proofFrom = t): Promise<'up' | 'away' | 'unknown'> {
+  private async sourceState(t: number, job: Job): Promise<'up' | 'away' | 'unknown'> {
     if (!this.env.readable) return 'up';
     const other = this.lastRead && this.lastRead.job !== job ? this.lastRead : this.lastOtherRead;
-    if (other && other.job !== job && other.at > proofFrom) return 'up';
+    if (other && other.job !== job && other.at > t) return 'up';
+    // A check that started after this failure answers for it (its probes read after it).
+    const running = this.sourceCheck;
+    if (running && running.startedAt > t) return running.done;
+    const last = this.lastSourceCheck;
+    if (last && last.startedAt > t) return last.verdict;
+    const startedAt = this.now();
+    const done = this.checkSource(job);
+    this.sourceCheck = { startedAt, done };
+    try {
+      const verdict = await done;
+      if (!this.lastSourceCheck || this.lastSourceCheck.startedAt < startedAt) this.lastSourceCheck = { startedAt, verdict };
+      return verdict;
+    } finally {
+      if (this.sourceCheck?.done === done) this.sourceCheck = null;
+    }
+  }
+
+  /** The probes behind sourceState (see there). */
+  private async checkSource(job: Job): Promise<'up' | 'away' | 'unknown'> {
     // A spot never read, of another file — from ANOTHER folder when there is
     // one (a moved or renamed folder takes its siblings with it): if it reads,
     // the source works. If it doesn't, that proves nothing (it may be gone too).
@@ -1374,15 +1396,17 @@ export class UploadEngine {
    * i.e. the link is up and this request itself keeps failing. During an outage
    * nothing counts, and the request retries until `giveUpMs` has passed.
    */
-  private charge(budget: Budget, channel: Channel, startedAt: number, max: number): 'retry' | 'give-up' {
+  private charge(budget: Budget, channel: Channel, startedAt: number, max: number, linkTrouble = true): 'retry' | 'give-up' {
     this.observe();
     const active = this.activeNow();
     budget.tries += 1;
     budget.firstFailureAt ??= active;
-    this.failuresInARow[channel] += 1;
-    this.lastFailureAt[channel] = this.now();
-    this.lastLinkTroubleAt = this.now();
-    this.armLinkExpiry();
+    if (linkTrouble) {
+      this.failuresInARow[channel] += 1;
+      this.lastFailureAt[channel] = this.now();
+      this.lastLinkTroubleAt = this.now();
+      this.armLinkExpiry();
+    }
     if (this.lastSuccessAt[channel] > startedAt) budget.counted += 1;
     if (budget.counted >= max || active - budget.firstFailureAt >= this.giveUpMs) {
       this.failuresInARow[channel] = 0; // this request stops trying: don't leave "waiting for the network" up
@@ -1443,7 +1467,6 @@ export class UploadEngine {
       job.blips = 0;
       job.blipsSince = undefined;
       job.unprovenSince = undefined;
-      job.lastFailedReadAt = undefined;
       this.haltedReadFails = 0;
       this.set(job, { hashedBytes: job.item.source.size });
       // Only a copy still IN PROGRESS counts — a finished one says nothing about
@@ -1497,12 +1520,7 @@ export class UploadEngine {
         await this.waitForResume(job);
         return;
       }
-      // A recent fresh read (SOURCE_PROOF_HOLD_MS) vouches — but only one newer
-      // than this file's previous failure (each strike needs its own proof).
-      const prevFail = job.lastFailedReadAt;
-      job.lastFailedReadAt = failedAt;
-      const proofFrom = Math.max(failedAt - SOURCE_PROOF_HOLD_MS, prevFail ?? -Infinity);
-      const source = link ? await this.sourceState(failedAt, job, proofFrom) : 'away';
+      const source = link ? await this.sourceState(failedAt, job) : 'away';
       if (job.gen !== gen) return;
       // Can THIS file be read now, where it failed?
       const size = job.item.source.size;
@@ -1831,7 +1849,10 @@ export class UploadEngine {
             void this.coolOff(job, gen, n, this.readWaitDelay());
             return;
           }
-          if (verdict === 'ok') job.unreadableSince.delete(n);
+          if (verdict === 'ok') {
+            job.unreadableSince.delete(n);
+            job.unprovenSince = undefined; // it reads again
+          }
         }
       }
       startedAt = this.now();
@@ -1842,6 +1863,7 @@ export class UploadEngine {
       });
       if (job.gen !== gen) return;
       this.succeeded('storage');
+      job.unprovenSince = undefined; // its bytes were read and sent
       job.inflight.delete(n);
       if (!job.done.has(n)) {
         job.done.add(n);
@@ -1911,9 +1933,11 @@ export class UploadEngine {
     // file on a network share / Drive stream is ALSO unreadable during an
     // outage, so an "unreadable" probe here only MARKS the part; the next
     // attempt re-signs first and judges it right after that proof (sendPart).
+    let unreadable = false;
     if (f.reason !== 'stall' && statusOf(e) === 0 && this.env.readable && job.session) {
       const [start, end] = partRange(n, job.session.partSize, job.item.source.size);
       const verdict = await this.probe(job, start, end);
+      unreadable = verdict === 'unreadable';
       if (job.gen !== gen) return;
       if (verdict === 'unreadable') {
         if (!job.unreadableSince.has(n)) job.unreadableSince.set(n, this.now());
@@ -1925,7 +1949,8 @@ export class UploadEngine {
     this.onTrouble();
     let budget = job.partBudgets.get(n);
     if (!budget) job.partBudgets.set(n, (budget = newBudget()));
-    if (this.charge(budget, 'storage', startedAt, MAX_PART_ATTEMPTS) === 'give-up') {
+    // (its body could not be read: the source, not the link — no "Waiting for internet")
+    if (this.charge(budget, 'storage', startedAt, MAX_PART_ATTEMPTS, !unreadable) === 'give-up') {
       this.fail(job, 'The connection kept dropping. Retry when your internet is stable — finished parts are kept.');
       return;
     }

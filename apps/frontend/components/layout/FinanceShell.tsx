@@ -249,7 +249,7 @@ export function FinanceShell({ children }: { children: ReactNode }) {
         </aside>
 
         {mobileOpen ? (
-          <div aria-hidden onClick={() => setMobileOpen(false)} className="sos-drawer-backdrop" />
+          <div data-sos-modal="" aria-hidden onClick={() => setMobileOpen(false)} className="sos-drawer-backdrop" />
         ) : null}
 
         {/* Content */}

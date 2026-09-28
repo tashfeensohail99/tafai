@@ -364,6 +364,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </div>
         </aside>
 
+        {mobileOpen ? (
+          <div data-sos-modal="" aria-hidden onClick={() => setMobileOpen(false)} className="sos-drawer-backdrop" />
+        ) : null}
+
         {/* ── Content ─────────────────────────────────────────────────── */}
         <div className="sos-content">
           <header className="sos-topbar">

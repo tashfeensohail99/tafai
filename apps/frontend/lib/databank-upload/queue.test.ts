@@ -30,7 +30,7 @@ function qsetup(opts: { engine?: QueueDeps['engineOptions'] } = {}) {
     legacyFault: (_name: string): number | 'hang' | null => null,
     legacyAborts: 0,
     /** 'lost': the commit is recorded, then its reply never arrives (status 0). */
-    legacyCommitFault: (_name: string, _call: number): 'lost' | null => null,
+    legacyCommitFault: (_name: string, _call: number): 'lost' | number | null => null,
     legacyCommitCalls: 0,
     /** storageKey → recorded row (the backend's commit is idempotent per key). */
     legacyRecorded: new Map<string, { id: string; fileName: string }>(),
@@ -83,7 +83,9 @@ function qsetup(opts: { engine?: QueueDeps['engineOptions'] } = {}) {
         if (slow) await server.sleep(slow); // (no signal: nothing on the tab can stop it now)
         const row = s.legacyRecorded.get(key) ?? { id: `legacy-${name}-${key}`, fileName: name };
         s.legacyRecorded.set(key, row);
-        if (s.legacyCommitFault(name, s.legacyCommitCalls) === 'lost') throw new TransportError('connection reset', 0);
+        const cf = s.legacyCommitFault(name, s.legacyCommitCalls);
+        if (cf === 'lost') throw new TransportError('connection reset', 0);
+        if (typeof cf === 'number') throw new TransportError(`commit failed (${cf})`, cf);
         return row;
       };
       if (opts?.commitKey) return commit(opts.commitKey); // only record — no second upload
@@ -1071,5 +1073,70 @@ test('queue: [review r4] Cancel while the retry is still asking whether the link
   void env;
   assert.equal(s.legacyCommitCalls, 1, 'not sent again after the Cancel');
   assert.equal(statusByName(q)['c.pdf'], 'cancelled');
+  assert.match(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.note ?? '', /may already have been saved/);
+});
+
+// ---- review round 5 ------------------------------------------------------------------------
+
+test('queue: [review r5] "Remove" on a failed standard-upload row whose bytes were stored says to check the folder (the save may have landed)', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyCommitFault = (name) => (name === 'c.pdf' ? 'lost' : null); // recorded — the replies never arrive
+  q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await until(() => statusByName(q)['c.pdf'] === 'failed', 400_000);
+  assert.match(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.note ?? '', /may already have been saved/);
+  await q.discard(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.rowId);
+  await until(() => statusByName(q)['c.pdf'] === 'cancelled', 10_000);
+  assert.match(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.note ?? '', /may already have been saved/);
+  assert.ok(q.getSnapshot().attention >= 1, 'a file to check needs the officer');
+});
+
+test('queue: [review r5] kill switch: Retry on a standard-upload row approved with "Upload anyway" that never stored its bytes keeps the approval', async () => {
+  const { q, server, s } = qsetup();
+  const existing = { id: 'f9', fileName: 'a.pdf', folderId: null, folderName: 'Databank', createdAt: '2026-01-01T00:00:00Z' };
+  const realInit = server.init.bind(server);
+  server.init = async (files, signal) => {
+    if (files.every((f) => f.allowDuplicate)) {
+      server.initCalls.push(files);
+      return { mode: 'proxy' } as never;
+    }
+    return realInit(files, signal);
+  };
+  server.initOverride = (f, index) => (f.allowDuplicate ? null : { index, status: 'possible-duplicate', existing });
+  s.legacyFault = () => 400; // the standard upload fails outright (nothing stored)
+  const id = q.enqueueFiles(CLIENT_A, meta(), [drop('a.pdf', 5)]);
+  await until(() => q.getSnapshot().batches[0]?.state === 'needs-you', 50_000);
+  q.resolveAllDuplicates(id, 'upload');
+  await until(() => statusByName(q)['a.pdf'] === 'failed', 100_000);
+  s.legacyFault = () => null;
+  q.retryFailed();
+  await settled(q, 100_000);
+  assert.equal(statusByName(q)['a.pdf'], 'done', 'not asked again');
+});
+
+test('queue: [review r5] the "uploads stopped" notice does not count files the officer cancelled on purpose', async () => {
+  const { q, server, s } = qsetup();
+  const id = q.enqueueFiles(CLIENT_A, meta('Ali Khan'), Array.from({ length: 5 }, (_, i) => drop(`x${i}.pdf`, 5, undefined, 1, `x${i}`)));
+  await q.cancelBatch(id);
+  await settled(q);
+  server.fault = () => 'hang';
+  q.enqueueFiles(CLIENT_B, meta('Walk-in'), [drop('w.bin', 200, undefined, 1, 'w')]);
+  await until(() => server.inFlight > 0, 50_000);
+  s.token = jwt('officer-2');
+  s.sub = 'officer-2';
+  q.enqueueFiles(CLIENT_B, meta('Other'), [drop('o.pdf', 5, undefined, 1, 'o')]); // officer-2 drops a file
+  await until(() => !!q.getSnapshot().notice, 50_000);
+  assert.deepEqual(q.getSnapshot().notice!.lost.map((l) => l.label), ['Walk-in'], 'the cancelled Ali Khan drop is not "not uploaded"');
+  q.shutdown('logout');
+});
+
+test('queue: [review r5] "Remove" on a standard-upload row whose save was refused after its bytes were stored says to check the folder', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyCommitFault = (name) => (name === 'c.pdf' ? 409 : null); // e.g. "already used": not retried, the bytes are stored
+  q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await until(() => statusByName(q)['c.pdf'] === 'failed', 200_000);
+  await q.discard(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.rowId);
+  await until(() => statusByName(q)['c.pdf'] === 'cancelled', 10_000);
   assert.match(rowsOf(q).find((r) => r.fileName === 'c.pdf')!.note ?? '', /may already have been saved/);
 });

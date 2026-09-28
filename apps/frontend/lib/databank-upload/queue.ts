@@ -135,6 +135,9 @@ export interface QueueSnapshot {
   notice?: QueueNotice;
 }
 
+/** A standard upload whose save may have landed although its reply never came. */
+const MAYBE_SAVED = 'It may already have been saved — check the folder and delete it if unwanted.';
+
 export interface QueueNotice {
   reason: 'user-changed';
   /** Per stopped drop: files that were NOT uploaded — whose, and where to. An
@@ -429,6 +432,8 @@ export class UploadQueue {
     const lg = this.legacy.get(rowId);
     if (r && b && lg) {
       if (lg.status === 'failed') {
+        // (its bytes were stored: a save may have landed although the reply was lost)
+        if (lg.storedKey) lg.note = MAYBE_SAVED;
         lg.status = 'cancelled';
         this.afterChange();
       }
@@ -517,9 +522,14 @@ export class UploadQueue {
     const lg = this.legacy.get(rowId);
     if (lg) {
       if (lg.status !== 'failed' && lg.status !== 'cancelled') return false;
+      const mayBeSaved = !!lg.storedKey;
       this.forgetLegacy(b, rowId);
-      if (b.engine?.status(r.key)) b.engine.add([r.item]); // (a fallback / cancelled engine file is re-inited)
-      else b.pending.push(r.item);
+      if (b.engine?.status(r.key)) {
+        // Its bytes may be saved: ask the server afresh (its duplicate check
+        // answers). Never stored: the officer's earlier "Upload anyway" stands.
+        if (mayBeSaved) b.engine.add([r.item]);
+        else b.engine.retry(r.key);
+      } else b.pending.push(r.item);
       return true;
     }
     b.engine?.retry(r.key);
@@ -579,10 +589,12 @@ export class UploadQueue {
     if (reason === 'user-changed') {
       const lost: QueueNotice['lost'] = [];
       for (const b of this.batches.values()) {
-        let count = b.skipped.length + (b.phase === 'ready' ? 0 : (b.prepareInput?.files.length ?? 0));
+        // (a folder still being prepared: all its files; ready: those its plan left out)
+        let count = b.phase === 'ready' ? b.skipped.length : (b.prepareInput?.files.length ?? 0);
         for (const rowId of b.rowIds) {
           const st = this.rowStatus(rowId);
-          if (st !== 'done' && st !== 'skipped' && st !== 'handed-off') count += 1;
+          // (cancelled on purpose — or "may already be saved" — is not "not uploaded")
+          if (st !== 'done' && st !== 'skipped' && st !== 'handed-off' && st !== 'cancelled') count += 1;
         }
         if (count) lost.push({ label: b.meta.label, count, ownerSub: this.ownerId ?? undefined, tKey: b.tKey });
       }
@@ -881,7 +893,7 @@ export class UploadQueue {
       lg.lateCancel = true;
       return;
     }
-    if (lg.storedKey) lg.note = 'It may already have been saved — check the folder and delete it if unwanted.';
+    if (lg.storedKey) lg.note = MAYBE_SAVED;
     lg.status = 'cancelled';
     lg.ctrl?.abort();
   }
@@ -1269,7 +1281,7 @@ export class UploadQueue {
             // Cancelled while it was being recorded, and the recording failed —
             // or only its reply got lost. Don't try again; say what to check.
             lg.status = 'cancelled';
-            lg.note = 'It may already have been saved — check the folder and delete it if unwanted.';
+            lg.note = MAYBE_SAVED;
           } else if (status === 401) {
             lg.status = 'waiting';
             lg.bytesDone = 0;
@@ -1284,6 +1296,7 @@ export class UploadQueue {
             if (up && (lg.tries ?? 0) >= LEGACY_ATTEMPTS) {
               lg.status = 'failed';
               lg.error = stalled ? 'The upload stopped responding.' : message(e);
+              if (lg.storedKey) lg.note = 'It may already have been saved — check the folder before retrying.';
             } else {
               lg.status = 'waiting';
               lg.bytesDone = lg.storedKey ? r.item.source.size : 0;

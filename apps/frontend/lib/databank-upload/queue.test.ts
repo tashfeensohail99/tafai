@@ -1209,3 +1209,35 @@ test('queue: [review r6] the "uploads stopped" notice does not count files whose
   assert.equal(q.getSnapshot().notice, undefined, 'nothing to report: those were being cancelled');
   q.shutdown('logout');
 });
+
+// ---- review round 7 ------------------------------------------------------------------------
+
+test('queue: [review r7] Stop also stops failed standard-upload rows: "Retry failed" later does not save the stopped drop', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyFault = (name) => (name === 'f.pdf' ? 400 : null); // fails outright (nothing stored)
+  s.legacyDelay = (name) => (name === 'slow.pdf' ? 60_000 : 0); // keeps the drop running
+  const id = q.enqueueFiles(CLIENT_A, meta(), [drop('f.pdf', 5), drop('slow.pdf', 6, undefined, 1, 'slow')]);
+  await until(() => statusByName(q)['f.pdf'] === 'failed', 200_000);
+  await q.cancelBatch(id);
+  await settled(q, 200_000);
+  s.legacyFault = () => null;
+  q.retryFailed();
+  await settled(q, 200_000);
+  assert.equal(statusByName(q)['f.pdf'], 'cancelled', 'not saved after Stop');
+  assert.equal(s.legacyCalls.filter((c) => c.name === 'f.pdf').length, 1);
+});
+
+test('queue: [review r7] a save of stored bytes that is refused outright: Retry starts afresh instead of re-sending the same key forever', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  let refuse = true;
+  s.legacyCommitFault = (name) => (name === 'c.pdf' && refuse ? 409 : null);
+  q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await until(() => statusByName(q)['c.pdf'] === 'failed', 200_000);
+  refuse = false;
+  q.retryFailed();
+  await settled(q, 200_000);
+  assert.equal(statusByName(q)['c.pdf'], 'done');
+  assert.equal(s.legacyCalls.filter((c) => c.name === 'c.pdf').length, 2, 'uploaded afresh (a new key)');
+});

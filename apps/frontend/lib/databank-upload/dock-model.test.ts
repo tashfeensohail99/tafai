@@ -221,3 +221,8 @@ test('[review r6] "Retry failed (N)" counts only rows it will retry', () => {
   ];
   assert.equal(bulkRetryable(rows), 1);
 });
+
+test('[review r7] a row whose Cancel went unanswered offers only Remove (which tries the cancel again) — never Retry, which would upload it', () => {
+  const v = rowView(row('failed', { bulkSkip: true, error: 'Could not reach the server to cancel this upload — it may still be saved. Remove it to try the cancel again.' }));
+  assert.deepEqual(v.actions, ['discard']);
+});

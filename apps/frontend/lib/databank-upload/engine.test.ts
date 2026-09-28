@@ -2643,3 +2643,130 @@ test('[review r11] a NAS that comes back for a moment and goes again: a read in 
     engine.pause();
   }
 });
+
+// ---- review round 12 -----------------------------------------------------------------------
+
+test('[review r12] a file unlucky once (a strike with proof) is not finished off by later, unrelated Drive dropouts', async () => {
+  for (const seed of [1, 2, 3]) {
+    const { env, engine } = setup();
+    env.random = seeded(seed);
+    let drive = true;
+    const cached = new Set<unknown>(); // Drive for desktop keeps what was read
+    const x = item('x.pdf', 12, { seed: 'xfile' });
+    let xBusyUntil = -1;
+    let xTried = false;
+    env.readable = async (src: UploadSource) => {
+      if (src === x.source && env.clock < xBusyUntil) return false;
+      return drive || cached.has(src);
+    };
+    env.hash = async (source) => {
+      if (source === x.source && !xTried) {
+        xTried = true;
+        xBusyUntil = env.clock + 15_000; // Drive was syncing it: unreadable for 15 s
+        await env.sleep(500);
+        throw new Error('NotReadableError');
+      }
+      await env.sleep(20_000); // a slow Drive stream
+      if (source === x.source && env.clock < xBusyUntil) throw new Error('NotReadableError');
+      if (!drive && !cached.has(source)) throw new Error('NotReadableError');
+      cached.add(source);
+      return (source as FakeSource).sha;
+    };
+    const files = Array.from({ length: 200 }, (_, i) => item(`d${i}.pdf`, 12, { seed: `d${i}` }));
+    files.splice(3, 0, x);
+    engine.add(files);
+    const t0 = env.clock;
+    for (const at of [20, 50]) {
+      await until(() => env.clock - t0 > at * 60_000, 3_000_000);
+      drive = false;
+      const s0 = env.clock;
+      await until(() => env.clock - s0 > 3 * 60_000, 3_000_000);
+      drive = true;
+    }
+    await engine.whenIdle();
+    const failed = Object.entries(statuses(engine)).filter(([, s]) => s === 'failed').map(([k]) => k);
+    assert.deepEqual(failed, [], `seed ${seed}`);
+  }
+});
+
+test('[review r12] ISP flaps followed by Drive reconnect lags do not strike out a file that was unlucky once', async () => {
+  for (const seed of [1, 2, 3]) {
+    const { server, env, engine } = setup();
+    env.random = seeded(seed);
+    let isp = true;
+    let drive = true;
+    const cached = new Set<unknown>();
+    const x = item('x.pdf', 12, { seed: 'xfile' });
+    let xBusyUntil = -1;
+    let xTried = false;
+    server.apiFault = () => (isp ? 'ok' : 0);
+    server.fault = () => (isp ? 'ok' : 0);
+    env.readable = async (src: UploadSource) => {
+      if (src === x.source && env.clock < xBusyUntil) return false;
+      return drive || cached.has(src);
+    };
+    env.hash = async (source) => {
+      if (source === x.source && !xTried) {
+        xTried = true;
+        xBusyUntil = env.clock + 15_000;
+        await env.sleep(500);
+        throw new Error('NotReadableError');
+      }
+      if (!drive && !cached.has(source)) {
+        await env.sleep(2_000);
+        throw new Error('NotReadableError');
+      }
+      await env.sleep(20_000);
+      if (!drive && !cached.has(source)) throw new Error('NotReadableError');
+      cached.add(source);
+      return (source as FakeSource).sha;
+    };
+    const files = Array.from({ length: 200 }, (_, i) => item(`d${i}.pdf`, 12, { seed: `d${i}` }));
+    files.splice(3, 0, x);
+    engine.add(files);
+    const t0 = env.clock;
+    for (const at of [15, 40]) {
+      await until(() => env.clock - t0 > at * 60_000, 3_000_000);
+      isp = false;
+      drive = false;
+      const s0 = env.clock;
+      await until(() => env.clock - s0 > 8_000, 3_000_000);
+      isp = true; // the internet is back…
+      await until(() => env.clock - s0 > 98_000, 3_000_000);
+      drive = true; // …Drive for desktop reconnects 90 s later
+    }
+    await engine.whenIdle();
+    const failed = Object.entries(statuses(engine)).filter(([, s]) => s === 'failed').map(([k]) => k);
+    assert.deepEqual(failed, [], `seed ${seed}`);
+  }
+});
+
+test('[review r12] a moved part of ONE client folder, spanning 10 subfolders: the rest of the folder is not held behind "is the drive connected?"', async () => {
+  const { env, engine } = setup();
+  env.random = seeded(24);
+  let moved = false;
+  const isMoved = (src: unknown) => startsWith(src, 'M');
+  env.readable = async (src: UploadSource) => !(moved && isMoved(src));
+  env.hash = async (source) => {
+    if (moved && isMoved(source)) {
+      await env.sleep(3);
+      throw new Error('NotFoundError');
+    }
+    await env.sleep(200);
+    return (source as FakeSource).sha;
+  };
+  const before = Array.from({ length: 100 }, (_, i) => item(`a${i}.pdf`, 12, { seed: `A${i}`, folderId: `fa${i % 5}`, relativePath: `Client/Before/s${i % 5}/a${i}.pdf` }));
+  const gone = Array.from({ length: 200 }, (_, i) => item(`m${i}.pdf`, 12, { seed: `M${i}`, folderId: `fm${i % 10}`, relativePath: `Client/Moved/s${i % 10}/m${i}.pdf` }));
+  const after = Array.from({ length: 300 }, (_, i) => item(`c${i}.pdf`, 12, { seed: `C${i}`, folderId: `fc${i % 5}`, relativePath: `Client/After/s${i % 5}/c${i}.pdf` }));
+  engine.add([...before, ...gone, ...after]);
+  await until(() => !['queued', 'hashing'].includes(statuses(engine)['a99.pdf']), 400_000);
+  moved = true;
+  const t0 = env.clock;
+  await until(() => after.filter((f) => statuses(engine)[f.key] === 'done').length >= 150, 3_000_000);
+  assert.ok(env.clock - t0 < 5 * 60_000, `half of the rest done ${Math.round((env.clock - t0) / 60_000)} min after the move`);
+  await engine.whenIdle();
+  assert.ok(after.every((f) => statuses(engine)[f.key] === 'done'));
+  // (one moved file may have been read just before the move — it uploads normally)
+  assert.ok(gone.filter((f) => statuses(engine)[f.key] === 'failed').length >= gone.length - 1);
+  assert.ok(gone.every((f) => ['failed', 'done'].includes(statuses(engine)[f.key])));
+});

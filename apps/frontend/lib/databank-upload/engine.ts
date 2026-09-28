@@ -244,6 +244,11 @@ export const NO_PROOF_GIVE_UP_MS = 30 * 60_000;
  *  (the drive / Drive client is away) stop the paused hash lane until Resume
  *  or a good read — a paused 20k-file drop must not read every file in turn. */
 const HALTED_READ_FAILS_MAX = 3;
+/** A file struck with real proof ('up': the source worked while it did not) is
+ *  struck again on 'unknown' only this soon after — later outages of the whole
+ *  source (Drive for desktop serves its cache, so they look 'unknown') must not
+ *  finish off a file that was unlucky once. */
+const PROVEN_STRIKE_WINDOW_MS = 10 * 60_000;
 const PROBE_TIMEOUT_MS = 30_000;
 /** Cancels ask the server to discard sessions this many at a time (a drop of
  *  2,000 files must not send 2,000 DELETEs at once) — the files themselves
@@ -362,6 +367,10 @@ interface Job {
   readFailed: boolean;
   /** When it last read fine (any read). */
   lastReadAt?: number;
+  /** When it last took a strike with real proof ('up') — see PROVEN_STRIKE_WINDOW_MS. */
+  provenStrikeAt?: number;
+  /** Its top folder (relativePath's first segment, else folderId), cached. */
+  topFolder?: string | null;
   /** Active time since nothing could tell whether IT or its source is at fault
    *  (see NO_PROOF_GIVE_UP_MS) — this file's own clock. */
   unprovenSince?: number;
@@ -387,6 +396,16 @@ function link(signals: Array<AbortSignal | undefined>, onAbort: () => void): () 
   return () => {
     for (const s of live) s.removeEventListener('abort', onAbort);
   };
+}
+
+/** A file's folder path (relativePath without its name; a flat drop: its folderId). */
+function pathDirs(item: UploadItem): string[] {
+  if (item.relativePath) {
+    const parts = item.relativePath.split('/');
+    parts.pop();
+    return parts;
+  }
+  return item.folderId ? [item.folderId] : [];
 }
 
 export class UploadEngine {
@@ -668,7 +687,7 @@ export class UploadEngine {
       if (outcome === 'gave-up') {
         // No answer for the whole give-up window: we do NOT know it was
         // discarded (the server may still record it) — say so, keep the session.
-        this.fail(job, 'Could not reach the server to cancel this upload — it may still be saved. Try Cancel again later.', true);
+        this.fail(job, 'Could not reach the server to cancel this upload — it may still be saved. Remove it to try the cancel again.', true);
         job.cancelUnconfirmed = true;
       } else {
         this.reset(job);
@@ -1023,6 +1042,7 @@ export class UploadEngine {
     job.resigns.clear();
     job.unreadableSince.clear();
     job.unprovenSince = undefined;
+    job.provenStrikeAt = undefined;
     job.signing = undefined;
     job.session = undefined;
     job.wantsComplete = false;
@@ -1198,8 +1218,10 @@ export class UploadEngine {
     // A spot never read, of another file — from ANOTHER folder when there is
     // one (a moved or renamed folder takes its siblings with it): if it reads,
     // the source works. If it doesn't, that proves nothing (it may be gone too).
-    const fresh = this.freshTestFile(job);
-    if (fresh) {
+    // (up to three, from different folders, the ones sharing the least of the
+    // failing file's path first: a moved folder with subfolders must not be
+    // tested with its own files)
+    for (const fresh of this.freshTestFiles(job, 3)) {
       const at = this.freshFrom(fresh);
       if ((await this.probe(fresh, at, at + 1)) === 'ok') return 'up';
     }
@@ -1214,17 +1236,34 @@ export class UploadEngine {
     return 'away';
   }
 
-  /** Another live file with a spot never read (see freshFrom), whose own read
-   *  never failed — preferring a different folder than `job`'s. */
-  private freshTestFile(job: Job): Job | undefined {
-    let sameFolder: Job | undefined;
+  /** Up to `max` other live files with a spot never read (see freshFrom), whose
+   *  own read never failed, one per folder — the folders sharing the SHORTEST
+   *  path with `job`'s first (a moved or renamed folder takes its subfolders with
+   *  it). One pass: the best candidate per shared-prefix depth is kept. */
+  private freshTestFiles(job: Job, max: number): Job[] {
+    const mine = pathDirs(job.item);
+    const byDepth: Job[][] = [];
+    const seenFolders = new Set<string | null>();
     for (const j of this.jobs) {
       if (j === job || j.readFailed || TERMINAL.has(j.view.status) || j.view.status === 'cancelling') continue;
       if (this.freshFrom(j) >= j.item.source.size) continue;
-      if ((j.item.folderId ?? null) !== (job.item.folderId ?? null)) return j;
-      sameFolder ??= j;
+      const folder = j.item.folderId ?? null;
+      if (seenFolders.has(folder)) continue;
+      seenFolders.add(folder);
+      const theirs = pathDirs(j.item);
+      let shared = 0;
+      while (shared < mine.length && shared < theirs.length && mine[shared] === theirs[shared]) shared += 1;
+      if (folder === (job.item.folderId ?? null)) shared = Number.MAX_SAFE_INTEGER; // (its own folder: last resort)
+      const list = (byDepth[shared === Number.MAX_SAFE_INTEGER ? 1000 : shared] ??= []);
+      if (list.length < max) list.push(j);
     }
-    return sameFolder;
+    const out: Job[] = [];
+    for (const list of byDepth) {
+      if (!list) continue;
+      for (const j of list) if (out.length < max) out.push(j);
+      if (out.length >= max) break;
+    }
+    return out;
   }
 
   /** Up to two other files that were read fine before — from different folders
@@ -1235,15 +1274,33 @@ export class UploadEngine {
     // The most recently read first (not the drop's first files — a moved client
     // folder must not supply both), outside the failing file's top folder when
     // possible, from two different top folders; ones not failing first.
-    const top = (j: Job) => (j.item.relativePath ? j.item.relativePath.split('/')[0] : null) ?? j.item.folderId ?? null;
+    const top = (j: Job) => {
+      if (j.topFolder === undefined) j.topFolder = (j.item.relativePath ? j.item.relativePath.split('/')[0] : null) ?? j.item.folderId ?? null;
+      return j.topFolder;
+    };
     const mine = top(job);
-    const pool = this.jobs
-      .filter(ok)
-      .sort((a, b) => Number(a.readFailed) - Number(b.readFailed) || Number(top(a) === mine) - Number(top(b) === mine) || (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0));
-    const first = pool[0];
+    // rank: not failing, outside its top folder, most recently read — kept in one pass
+    const rank = (j: Job) => [Number(j.readFailed), Number(top(j) === mine), -(j.lastReadAt ?? 0)];
+    const better = (a: Job, b: Job | undefined) => {
+      if (!b) return true;
+      const x = rank(a);
+      const y = rank(b);
+      for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i];
+      return false;
+    };
+    let first: Job | undefined;
+    for (const j of this.jobs) if (ok(j) && better(j, first)) first = j;
     if (!first) return [];
-    const other = pool.find((j) => j !== first && top(j) !== top(first)) ?? pool.find((j) => j !== first);
-    return other ? [first, other] : [first];
+    let other: Job | undefined;
+    let otherSameTop: Job | undefined;
+    for (const j of this.jobs) {
+      if (j === first || !ok(j)) continue;
+      if (top(j) !== top(first)) {
+        if (better(j, other)) other = j;
+      } else if (better(j, otherSameTop)) otherSameTop = j;
+    }
+    const second = other ?? otherSameTop;
+    return second ? [first, second] : [first];
   }
 
   /** Nothing can be read right now (and nothing proves the source works):
@@ -1351,6 +1408,9 @@ export class UploadEngine {
       w.tried.clear();
       untried = queued;
     }
+    // (a file that never failed tells more than one that did — the lane's order)
+    const clean = untried.filter((j) => !j.readFailed);
+    if (clean.length) untried = clean;
     let next = untried.find((j) => !w.triedFolders.has(folderOf(j)));
     if (!next) {
       w.triedFolders.clear();
@@ -1471,6 +1531,7 @@ export class UploadEngine {
       job.blips = 0;
       job.blipsSince = undefined;
       job.unprovenSince = undefined;
+      job.provenStrikeAt = undefined;
       this.haltedReadFails = 0;
       this.set(job, { hashedBytes: job.item.source.size });
       // Only a copy still IN PROGRESS counts — a finished one says nothing about
@@ -1539,7 +1600,7 @@ export class UploadEngine {
       // file that already took a strike with real proof — the source worked while it
       // did not — is struck again rather than waiting: a moved folder's files finish
       // in seconds. A source that is really away gives 'away', which never strikes.)
-      if (!link || source === 'away' || (source === 'unknown' && again !== 'ok' && job.hashFailures === 0)) {
+      if (!link || source === 'away' || (source === 'unknown' && again !== 'ok' && !(job.provenStrikeAt !== undefined && this.now() - job.provenStrikeAt <= PROVEN_STRIKE_WINDOW_MS))) {
         if (link && source === 'unknown') job.unprovenSince ??= this.activeNow();
         else if (source === 'away') job.unprovenSince = undefined; // the source is away: the long wait
         this.enterReadWait(link ? 'source' : 'link');
@@ -1575,6 +1636,9 @@ export class UploadEngine {
         }
       }
       job.hashFailures += 1;
+      if (source === 'up') job.provenStrikeAt = this.now();
+      // (the link is proven: a wait labelled "no internet" is about the source now)
+      if (this.readWait?.cause === 'link') this.enterReadWait('source', false);
       if (job.hashFailures >= 3) {
         this.fail(job, `Could not read this file (${errorMessage(e)}). Is it still on this computer?`, true);
         return;

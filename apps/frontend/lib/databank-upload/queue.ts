@@ -453,6 +453,11 @@ export class UploadQueue {
     for (const rowId of b.legacyIds) {
       const lg = this.legacy.get(rowId);
       if (lg?.status === 'waiting' || lg?.status === 'uploading') this.cancelLegacy(lg);
+      else if (lg?.status === 'failed') {
+        // (Stop means stop: "Retry failed" must not save the stopped drop later)
+        if (lg.storedKey) lg.note = MAYBE_SAVED;
+        lg.status = 'cancelled';
+      }
     }
     const pendingKeys = new Set(b.pending.map((it) => it.key));
     b.pending = [];
@@ -1308,6 +1313,13 @@ export class UploadQueue {
           } else {
             lg.status = 'failed';
             lg.error = message(e);
+            // A save of stored bytes that is refused outright (e.g. its row was
+            // deleted since) won't succeed by re-sending the same key: Retry
+            // starts afresh (the server's duplicate check answers).
+            if (lg.storedKey) {
+              lg.storedKey = undefined;
+              lg.note = 'Its save was refused — it may already have been saved; check the folder before retrying.';
+            }
           }
         } finally {
           stopWatch.abort();

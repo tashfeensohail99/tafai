@@ -113,6 +113,9 @@ export function rowView(r: RowView): RowDisplay {
       };
     }
     case 'failed':
+      // (its Cancel went unanswered, or came while it was being saved: the officer
+      // wanted it gone — Remove, which tries the cancel again, not Retry)
+      if (r.bulkSkip) return { chip: 'Not uploaded', tone: 'danger', detail: r.note ? `${plainError(r.error)} ${r.note}` : plainError(r.error), actions: ['discard'] };
       return r.retryable === false
         ? { chip: 'Not allowed', tone: 'danger', detail: plainError(r.error), actions: ['discard'] }
         : { chip: 'Not uploaded', tone: 'danger', detail: r.note ? `${plainError(r.error)} ${r.note}` : plainError(r.error), actions: ['retry', 'discard'] };

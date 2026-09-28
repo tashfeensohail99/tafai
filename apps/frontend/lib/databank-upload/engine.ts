@@ -244,8 +244,10 @@ export const NO_PROOF_GIVE_UP_MS = 30 * 60_000;
  *  file's previous failure, so a source that vanishes right after a proof costs
  *  at most one wrong strike, never a failed file. */
 const SOURCE_PROOF_HOLD_MS = 15_000;
-/** A read that failed while paused is tried again this often until Resume. */
-const HALTED_READ_RETRY_MS = 10 * 60_000;
+/** Paused: a read that failed waits for Resume. This many failing in a row
+ *  (the drive / Drive client is away) stop the paused hash lane until Resume
+ *  or a good read — a paused 20k-file drop must not read every file in turn. */
+const HALTED_READ_FAILS_MAX = 3;
 const PROBE_TIMEOUT_MS = 30_000;
 /** A back-off that wakes this much later than asked means the machine slept
  *  (or the tab was frozen): that time is not "trying" and never counts toward
@@ -415,6 +417,8 @@ export class UploadEngine {
   private sleptUntil = -Infinity;
   /** Aborted (and replaced) whenever the engine runs again after a halt. */
   private resumeCtrl = new AbortController();
+  /** Reads that failed in a row while halted (see HALTED_READ_FAILS_MAX). */
+  private haltedReadFails = 0;
   /** Due times of the engine's armed timers (see nap/observe): a timer that
    *  fires far LATER than it was due means the machine slept or the tab froze.
    *  A long timer firing on schedule (a 120 s request timeout) is not sleep. */
@@ -807,6 +811,7 @@ export class UploadEngine {
     this.haltCtrl = new AbortController();
     this.resumeCtrl.abort(); // reads parked while halted go again now
     this.resumeCtrl = new AbortController();
+    this.haltedReadFails = 0;
     this.notify();
     this.schedule();
   }
@@ -826,8 +831,9 @@ export class UploadEngine {
     if (this.readWait && !this.readWaitHasWaiters()) this.endReadWait();
     // Hash in order. Local work, so it carries on while PAUSED — but not while
     // OFFLINE: a file streamed from a network drive can't be read then, and a
-    // whole drop must not fail in a burst.
-    if (!this.offline) {
+    // whole drop must not fail in a burst. (Nor while paused once reads keep
+    // failing: the source is away — nothing is judged until Resume anyway.)
+    if (!this.offline && !(this.halted && this.haltedReadFails >= HALTED_READ_FAILS_MAX)) {
       if (this.readWait) {
         this.pumpReadWait();
       } else {
@@ -1087,7 +1093,10 @@ export class UploadEngine {
     const now = this.now();
     const down = (ch: Channel) =>
       this.failuresInARow[ch] >= LINK_DOWN_AFTER && now - this.lastFailureAt[ch] <= LINK_DOWN_FRESH_MS;
-    return down('storage') || down('api');
+    // PUTs failing while our API answers after them is not "no internet": the
+    // bodies can't be read (a NAS / drive away) — the dock asks about the drive.
+    const storageDown = down('storage') && !(this.lastSuccessAt.api > this.lastFailureAt.storage);
+    return storageDown || down('api');
   }
 
   /** Nothing else notifies when a "link down" verdict goes stale: a timer does. */
@@ -1253,13 +1262,13 @@ export class UploadEngine {
     return false;
   }
 
-  /** Sleep (not "work": the engine is halted) until it runs again, the job
-   *  moves on, or HALTED_READ_RETRY_MS pass. */
+  /** Sleep (not "work": the engine is halted) until it runs again or the job
+   *  moves on. (A day at most — then it is simply read once more.) */
   private async waitForResume(job: Job): Promise<void> {
     const ctrl = new AbortController();
     const unlink = link([job.wake.signal, this.resumeCtrl.signal], () => ctrl.abort());
     try {
-      await this.nap(HALTED_READ_RETRY_MS, ctrl.signal);
+      await this.nap(24 * 3600_000, ctrl.signal);
     } finally {
       unlink();
     }
@@ -1435,6 +1444,7 @@ export class UploadEngine {
       job.blipsSince = undefined;
       job.unprovenSince = undefined;
       job.lastFailedReadAt = undefined;
+      this.haltedReadFails = 0;
       this.set(job, { hashedBytes: job.item.source.size });
       // Only a copy still IN PROGRESS counts — a finished one says nothing about
       // what the databank holds now (it may have been deleted): ask the server.
@@ -1483,6 +1493,7 @@ export class UploadEngine {
       if (!link && this.halted) {
         // Paused: no ping is sent, so nothing is known about the link (it is
         // NOT "no internet"). Uncounted — try again once it runs.
+        this.haltedReadFails += 1;
         await this.waitForResume(job);
         return;
       }

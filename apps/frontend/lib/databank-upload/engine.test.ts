@@ -2298,3 +2298,81 @@ test('[review r9] a NAS cut seconds after a file read fine: that recent read vou
   await engine.whenIdle();
   assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
 });
+
+test('[review r9] paused, then the drive goes away: a few reads fail and the paused engine stops reading until Resume (not every file in turn)', async () => {
+  const { env, engine } = setup();
+  let drive = true;
+  let reads = 0;
+  env.readable = async () => drive;
+  env.hash = async (source) => {
+    await tick();
+    reads += 1;
+    if (!drive) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  engine.pause();
+  drive = false; // Drive for desktop quits / the USB drive is pulled while paused
+  engine.add(Array.from({ length: 200 }, (_, i) => item(`p${i}.pdf`, 12, { seed: `p${i}` })));
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 60 * 60_000, 400_000);
+  assert.ok(reads <= 10, `${reads} reads while paused, not one per file every few minutes`);
+  assert.equal(engine.snapshot().linkDown, false);
+  drive = true;
+  engine.resume();
+  await engine.whenIdle();
+  assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
+});
+
+test('[review r9] a NAS off while files upload: the dock asks about the DRIVE (our API still answers) — not "Waiting for internet"', async () => {
+  const { server, env, engine } = setup();
+  env.random = seeded(9);
+  let nas = true;
+  env.readable = async () => nas;
+  server.fault = () => (nas ? 'slow' : 0); // a PUT whose body can't be read fails like a dropped connection
+  const realSign = server.signParts.bind(server);
+  server.signParts = async (id, parts, signal) => {
+    await server.sleep(500, signal); // a real round trip to our API
+    return realSign(id, parts, signal);
+  };
+  engine.add(Array.from({ length: 8 }, (_, i) => item(`v${i}.mov`, 600, { seed: `v${i}` })));
+  await until(() => Object.values(statuses(engine)).every((x) => x !== 'queued' && x !== 'hashing'), 200_000);
+  await until(() => server.okPuts.size >= 5, 200_000);
+  nas = false;
+  const t0 = env.clock;
+  for (const m of [5, 10, 15, 20, 25]) {
+    await until(() => env.clock - t0 > m * 60_000, 2_000_000);
+    const snap = engine.snapshot();
+    assert.equal(snap.linkDown, false, `at ${m} min: not "Waiting for internet"`);
+    assert.equal(snap.readsWaiting, true, `at ${m} min: "is the drive connected?"`);
+  }
+  nas = true;
+  await engine.whenIdle();
+  assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
+  exactlyOnce(server);
+});
+
+test('[review r9] an untestable file\'s 30-min clock stops during an internet outage: files added meanwhile never fail, nor does it', async () => {
+  const { server, env, engine } = setup();
+  let isp = true;
+  const f = item('f.pdf', 12, { seed: 'F' });
+  env.readable = async (src: UploadSource) => isp && src !== f.source;
+  env.hash = async (source) => {
+    await tick();
+    if (!isp || source === f.source) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  server.apiFault = () => (isp ? 'ok' : 0); // (the /health ping too)
+  server.fault = () => (isp ? 'ok' : 0);
+  engine.add([f]); // the only file, and it can't be read: nothing to test the source with
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 2 * 60_000, 200_000);
+  isp = false; // the ISP drops (Wi-Fi stays up)
+  await until(() => env.clock - t0 > 8 * 60_000, 200_000);
+  const later = Array.from({ length: 3 }, (_, i) => item(`n${i}.pdf`, 12, { seed: `n${i}` }));
+  engine.add(later); // re-dropped / retried while the internet is down
+  await until(() => env.clock - t0 > 40 * 60_000, 2_000_000);
+  assert.equal(later.filter((x) => statuses(engine)[x.key] === 'failed').length, 0, 'an outage fails nothing');
+  assert.notEqual(statuses(engine)['f.pdf'], 'failed', '…and the outage did not count toward its clock');
+  isp = true;
+  await until(() => later.every((x) => statuses(engine)[x.key] === 'done'), 400_000);
+});

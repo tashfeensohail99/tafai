@@ -16,8 +16,10 @@
 import { Sha256 } from './sha256.ts';
 
 const WEBCRYPTO_MAX = 32 * 1024 * 1024;
-const SMALL_SLICE = 4 * 1024 * 1024;
-const SLICE = 8 * 1024 * 1024;
+/** Progress after every slice (the engine's stall watchdog needs a tick well
+ *  inside 5 min even on a slow Drive stream: 2 MiB ≈ 7 KB/s). */
+const SMALL_SLICE = 1024 * 1024;
+const SLICE = 2 * 1024 * 1024;
 
 function toHex(buf: ArrayBuffer): string {
   let hex = '';
@@ -59,12 +61,17 @@ export async function hashFile(
   if (signal.aborted) throw aborted();
   if (file.size <= WEBCRYPTO_MAX && typeof crypto !== 'undefined' && crypto.subtle) {
     const stop = whenAborted(signal);
-    const bytes = new Uint8Array(file.size);
+    // (The whole-file buffer is allocated only once the first slice was read: a
+    // file that can't be read — retried during an outage — allocates nothing.)
+    let bytes: Uint8Array<ArrayBuffer> | null = null;
     for (let off = 0; off < file.size; off += SMALL_SLICE) {
       const end = Math.min(off + SMALL_SLICE, file.size);
-      bytes.set(new Uint8Array(await Promise.race([file.slice(off, end).arrayBuffer(), stop])), off);
+      const chunk = new Uint8Array(await Promise.race([file.slice(off, end).arrayBuffer(), stop]));
+      bytes ??= new Uint8Array(file.size);
+      bytes.set(chunk, off);
       onProgress(end);
     }
+    bytes ??= new Uint8Array(0);
     const digest = await Promise.race([crypto.subtle.digest('SHA-256', bytes), stop]);
     onProgress(file.size);
     return toHex(digest);

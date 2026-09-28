@@ -2011,7 +2011,7 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
-html:has([data-sos-modal]) .sos-upload-dock {
+html:has([data-sos-modal], [role="dialog"], [aria-modal="true"]) .sos-upload-dock {
   visibility: hidden;
 }
 html.has-upload-dock .sos-page-content,

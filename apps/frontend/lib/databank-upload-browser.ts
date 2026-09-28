@@ -40,13 +40,14 @@ export function getUploadQueue(): UploadQueue {
     ensurePaths: (t, parent, paths, signal) => ensureFolderPaths(t.base, t.target, parent, paths, signal),
     // The standard (≤ 2 GB) upload for proxy mode: a direct presign PUT when the
     // server allows it (the kill switch), multipart through the backend in dev.
-    legacyUpload: (t, file, folderId, onProgress, signal) =>
+    legacyUpload: (t, file, folderId, onProgress, signal, opts) =>
       (t.base === '/jr/databank' ? jrDatabankApi : processingDatabankApi).directUpload(
         t.target,
         file as File,
         folderId,
         onProgress,
         signal,
+        opts,
       ),
     accessToken: getAccessToken,
     restoreSession: async () => {

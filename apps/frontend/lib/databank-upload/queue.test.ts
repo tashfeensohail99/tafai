@@ -29,6 +29,13 @@ function qsetup(opts: { engine?: QueueDeps['engineOptions'] } = {}) {
     legacyCalls: [] as Array<{ folderId: string | null; name: string }>,
     legacyFault: (_name: string): number | 'hang' | null => null,
     legacyAborts: 0,
+    /** 'lost': the commit is recorded, then its reply never arrives (status 0). */
+    legacyCommitFault: (_name: string, _call: number): 'lost' | null => null,
+    legacyCommitCalls: 0,
+    /** storageKey → recorded row (the backend's commit is idempotent per key). */
+    legacyRecorded: new Map<string, { id: string; fileName: string }>(),
+    legacyDelay: (_name: string): number => 0,
+    kseq: 0,
     folderIds: new Map<string, string>(),
     fseq: 0,
   };
@@ -64,12 +71,27 @@ function qsetup(opts: { engine?: QueueDeps['engineOptions'] } = {}) {
         server.pending -= 1;
       }
     },
-    async legacyUpload(_t, file, folderId, onProgress, signal) {
+    async legacyUpload(_t, file, folderId, onProgress, signal, opts) {
       const name = (file as unknown as { name: string }).name;
+      const commit = async (key: string) => {
+        s.legacyCommitCalls += 1;
+        const row = s.legacyRecorded.get(key) ?? { id: `legacy-${name}-${key}`, fileName: name };
+        s.legacyRecorded.set(key, row);
+        if (s.legacyCommitFault(name, s.legacyCommitCalls) === 'lost') throw new TransportError('connection reset', 0);
+        return row;
+      };
+      if (opts?.commitKey) return commit(opts.commitKey); // only record — no second upload
       s.legacyCalls.push({ folderId, name });
       server.pending += 1;
       try {
         await tick();
+        const delay = s.legacyDelay(name);
+        for (let t = 0; t < delay; t += 30_000) {
+          // a slow upload that is alive: progress every 30 s (no stall)
+          await server.sleep(Math.min(30_000, delay - t), signal);
+          if (signal.aborted) throw new TransportError('aborted', 0);
+          onProgress(Math.min(0.99, (t + 30_000) / delay));
+        }
         const f = s.legacyFault(name);
         if (f === 'hang') {
           try {
@@ -82,7 +104,9 @@ function qsetup(opts: { engine?: QueueDeps['engineOptions'] } = {}) {
         if (signal.aborted) throw new TransportError('aborted', 0);
         if (typeof f === 'number') throw new TransportError(`upload failed (${f})`, f);
         onProgress(1);
-        return { id: `legacy-${name}`, fileName: name };
+        const key = `k${++s.kseq}`;
+        opts?.onStored(key);
+        return await commit(key);
       } finally {
         server.pending -= 1;
       }
@@ -629,7 +653,7 @@ test('queue: [review] the standard upload waits out an outage, can be cancelled 
   assert.equal(q.hasActive(), false, 'nothing left running');
 });
 
-test('queue: [review] a batch with failed files can be dismissed (their sessions freed); "Clear finished" leaves it', async () => {
+test('queue: [review] a batch with failed files can be dismissed (locally: no DELETE — the session expires, or resumes on a re-drop); "Clear finished" leaves it', async () => {
   const { q, server } = qsetup();
   server.fault = ({ session, part }) => (session === 's1' && part === 1 ? 400 : 'ok');
   const id = q.enqueueFiles(CLIENT_A, meta(), [drop('f.bin', 60)]);
@@ -641,7 +665,8 @@ test('queue: [review] a batch with failed files can be dismissed (their sessions
   assert.equal(q.getSnapshot().batches.length, 1, 'clear-finished keeps a batch with a problem');
   q.dismissBatch(id);
   await until(() => q.getSnapshot().batches.length === 0);
-  await until(() => server.abortCalls.includes('s1'), 50_000);
+  await tick();
+  assert.deepEqual(server.abortCalls, [], 'no DELETE burst from a dismiss');
 });
 
 test('queue: [review] files a folder plan left out are never "all saved"', async () => {
@@ -668,4 +693,167 @@ test('queue: [review] a PC clock set back does not freeze the dock', async () =>
   const t0 = env.clock;
   await until(() => q.getSnapshot().rev > rev, 50_000);
   assert.ok(env.clock - t0 < 60_000, 'a new snapshot within seconds, not hours');
+});
+
+// ---- review round 2 ------------------------------------------------------------------------
+
+test('queue: [review r2] a standard upload whose commit reply is lost is recorded ONCE (the retry only commits, same key)', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyCommitFault = (name, call) => (name === 'c.pdf' && call === 1 ? 'lost' : null);
+  q.enqueueFiles(CLIENT_A, meta(), [drop('c.pdf', 5)]);
+  await settled(q, 100_000);
+  assert.equal(statusByName(q)['c.pdf'], 'done');
+  assert.equal(s.legacyCalls.filter((c) => c.name === 'c.pdf').length, 1, 'uploaded once');
+  assert.equal(s.legacyRecorded.size, 1, 'one row in the databank, not two');
+});
+
+test('queue: [review r2] "Skip all" / "Upload all anyway" answer a drop\'s duplicate choices at once', async () => {
+  const { q, server } = qsetup();
+  const existing = { id: 'f9', fileName: 'x.pdf', folderId: null, folderName: 'Old', createdAt: '2026-01-01T00:00:00Z' };
+  server.initOverride = (f, index) => (f.allowDuplicate ? null : { index, status: 'possible-duplicate', existing });
+  const id = q.enqueueFiles(CLIENT_A, meta(), Array.from({ length: 30 }, (_, i) => drop(`p${i}.pdf`, 5, undefined, 1, `p${i}`)));
+  await settled(q);
+  assert.equal(q.getSnapshot().batches[0].state, 'needs-you');
+  q.resolveAllDuplicates(id, 'skip');
+  await settled(q);
+  assert.ok(rowsOf(q).every((r) => r.status === 'skipped'));
+  assert.equal(q.getSnapshot().batches[0].state, 'finished');
+});
+
+test('queue: [review r2] dismissing a batch never discards a session a copy in ANOTHER batch uploads on, and sends no DELETE burst', async () => {
+  const { q, server } = qsetup();
+  let holdCopy = true;
+  server.fault = ({ session, part, attempt }) => {
+    if (session !== 's1') return 'ok';
+    if (part === 2 && attempt === 1) return 400; // the folder drop's file fails, keeping s1
+    return holdCopy && attempt > 1 ? 'hang' : 'ok';
+  };
+  const a = q.enqueueFolder(CLIENT_A, meta(), [drop('scan.bin', 60, 'P/scan.bin')]);
+  await settled(q);
+  assert.equal(statusByName(q)['P/scan.bin'], 'failed');
+  // The officer drops the same file loose into the created folder: same identity → it resumes s1.
+  const folderId = [...server.sessions.values()][0].identity.split('|')[0];
+  q.enqueueFiles(CLIENT_A, meta('Ali Khan', folderId), [drop('scan.bin', 60, undefined, 1, 'P/scan.bin')]);
+  await until(() => rowsOf(q).some((r) => r.fileName === 'scan.bin' && r.relativePath === undefined && r.status === 'uploading'), 50_000);
+  q.dismissBatch(a);
+  await tick();
+  holdCopy = false;
+  await settled(q, 100_000);
+  assert.deepEqual(server.abortCalls, [], 'no DELETE: the copy is using that session');
+  assert.equal(statusByName(q)['scan.bin'], 'done');
+  exactlyOnce(server);
+});
+
+test('queue: [review r2] Cancel on a batch keeps a failed row\'s session when a copy elsewhere uses it', async () => {
+  const { q, server } = qsetup();
+  let holdCopy = true;
+  server.fault = ({ session, part, attempt }) => {
+    if (session !== 's1') return 'ok';
+    if (part === 2 && attempt === 1) return 400;
+    return holdCopy && attempt > 1 ? 'hang' : 'ok';
+  };
+  const a = q.enqueueFolder(CLIENT_A, meta(), [drop('scan.bin', 60, 'P/scan.bin')]);
+  await settled(q);
+  const folderId = [...server.sessions.values()][0].identity.split('|')[0];
+  q.enqueueFiles(CLIENT_A, meta('Ali Khan', folderId), [drop('scan.bin', 60, undefined, 1, 'P/scan.bin')]);
+  await until(() => rowsOf(q).some((r) => r.relativePath === undefined && r.status === 'uploading'), 50_000);
+  await q.cancelBatch(a);
+  holdCopy = false;
+  await settled(q, 100_000);
+  assert.deepEqual(server.abortCalls, []);
+  assert.equal(statusByName(q)['scan.bin'], 'done');
+});
+
+test('queue: [review r2] kill switch: re-dropping a file the standard upload already saved does not upload it again', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyDelay = (name) => (name === 'slow.pdf' ? 60_000 : 0); // keeps the batch busy
+  q.enqueueFiles(CLIENT_A, meta(), [drop('a.pdf', 5), drop('slow.pdf', 6)]);
+  await until(() => statusByName(q)['a.pdf'] === 'done', 50_000);
+  q.enqueueFiles(CLIENT_A, meta(), [drop('a.pdf', 5)]);
+  await settled(q, 100_000);
+  assert.equal(s.legacyCalls.filter((c) => c.name === 'a.pdf').length, 1, 'saved once');
+  assert.equal(q.getSnapshot().batches[0].alreadyListed, 1);
+});
+
+test('queue: [review r2] Cancel right after the server answered "proxy" stops those files (none uploads afterwards)', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  let id = '';
+  const realInit = server.init.bind(server);
+  server.init = async (files, signal) => {
+    const res = await realInit(files, signal);
+    setImmediate(() => void q.cancelBatch(id)); // Cancel lands after the engine marked them 'proxy', before the next flush moves them
+    return res;
+  };
+  id = q.enqueueFiles(CLIENT_A, meta(), Array.from({ length: 5 }, (_, i) => drop(`w${i}.pdf`, 5, undefined, 1, `w${i}`)));
+  await settled(q, 100_000);
+  assert.equal(s.legacyCalls.length, 0, 'nothing went to the standard upload after Cancel');
+  assert.ok(rowsOf(q).every((r) => r.status === 'cancelled'));
+});
+
+test('queue: [review r2] proxy mode keeps admission: an express drop is not stuck behind a big migration', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyDelay = (name) => (name.startsWith('big') ? 10 * 60_000 : 0); // 10 min per big file
+  q.enqueueFiles(CLIENT_A, meta(), Array.from({ length: 30 }, (_, i) => drop(`big${i}.bin`, 10 * MiB, undefined, 1, `b${i}`)));
+  await until(() => rowsOf(q).some((r) => r.fileName.startsWith('big') && r.status === 'uploading'), 50_000);
+  q.enqueueFiles(CLIENT_B, meta('Walk-in'), [drop('passport.pdf', 5)]);
+  await until(() => statusByName(q)['passport.pdf'] === 'done', 400_000);
+  const bigDone = rowsOf(q).filter((r) => r.fileName.startsWith('big') && r.status === 'done').length;
+  assert.equal(rowsOf(q).filter((r) => r.fileName.startsWith('big') && r.status === 'failed').length, 0, '(precondition: the big uploads are slow, not failing)');
+  assert.ok(bigDone <= 2, `the passport went up while the migration was still running (${bigDone}/30 big files done)`);
+  q.shutdown('logout'); // (don't leave 5 virtual hours of uploads running)
+});
+
+test('queue: [review r2] a cancelled drop that gets work again backs off normally during an outage', async () => {
+  const { q, server, s, env } = qsetup();
+  server.mode = 'proxy';
+  const id = q.enqueueFiles(CLIENT_A, meta(), [drop('r.pdf', 5)]);
+  await q.cancelBatch(id);
+  await settled(q);
+  // outage: the standard upload gets no answer, the ping neither
+  s.legacyFault = () => 0;
+  server.apiFault = (m) => (m === 'ping' ? 0 : 'ok');
+  q.retryFailed();
+  const row = rowsOf(q).find((r) => r.fileName === 'r.pdf')!;
+  q.retry(row.rowId);
+  const t0 = env.clock;
+  const calls0 = s.legacyCalls.length;
+  await until(() => env.clock - t0 > 60_000, 200_000);
+  assert.ok(s.legacyCalls.length - calls0 <= 12, `backed off (${s.legacyCalls.length - calls0} tries in a minute)`);
+  q.shutdown('logout'); // (end the outage loop: tests share one process)
+});
+
+test('queue: [review r2] another officer signing in stops the uploads WITH a notice of what was left', async () => {
+  const { q, server, s } = qsetup();
+  server.fault = () => 'hang';
+  q.enqueueFiles(CLIENT_A, meta('Ali Khan'), [drop('a.bin', 200), drop('b.bin', 200, undefined, 1, 'b')]);
+  await until(() => server.inFlight > 0);
+  s.token = jwt('officer-2');
+  await until(() => !!q.getSnapshot().notice, 50_000);
+  const n = q.getSnapshot().notice!;
+  assert.equal(n.reason, 'user-changed');
+  assert.deepEqual(n.lost, [{ label: 'Ali Khan', count: 2 }]);
+  assert.equal(q.getSnapshot().batches.length, 0);
+  q.dismissNotice();
+  assert.equal(q.getSnapshot().notice, undefined);
+});
+
+test('queue: [review r2] "can\'t read the files" (the drive is away) reaches the dock', async () => {
+  const { q, env } = qsetup();
+  let drive = false;
+  env.readable = async () => drive;
+  env.hash = async (source) => {
+    await tick();
+    if (!drive) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  q.enqueueFiles(CLIENT_A, meta(), [drop('x.pdf', 5), drop('y.pdf', 5, undefined, 1, 'y')]);
+  await until(() => q.getSnapshot().readsWaiting, 100_000);
+  drive = true;
+  await settled(q, 100_000);
+  assert.equal(q.getSnapshot().readsWaiting, false);
+  assert.deepEqual(statusByName(q), { 'x.pdf': 'done', 'y.pdf': 'done' });
 });

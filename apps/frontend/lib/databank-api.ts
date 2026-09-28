@@ -79,6 +79,8 @@ export interface DatabankApi {
     folderId: string | null,
     onProgress?: (fraction: number) => void,
     signal?: AbortSignal,
+    /** commitKey: stored already — only record it. onStored: the bytes are in storage. */
+    opts?: { commitKey?: string; onStored?: (storageKey: string) => void },
   ): Promise<ApiDatabankFile>;
   renameFolder(folderId: string, name: string): Promise<unknown>;
   moveFolder(folderId: string, parentFolderId: string | null): Promise<unknown>;

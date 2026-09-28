@@ -206,21 +206,36 @@ export function DatabankTab({
   // refresh, a delete): only the LATEST applies, and files that landed while it
   // was in flight are merged back in (the tree was read before they committed).
   const reloadSeq = useRef(0);
+  const appliedSeq = useRef(0);
   const landedLog = useRef<Array<{ at: number; files: unknown[] }>>([]);
+  /** A good tree that a newer reload superseded — used if that newer one fails. */
+  const spare = useRef<{ seq: number; startedAt: number; tree: Awaited<ReturnType<typeof loadTree>> } | null>(null);
   const reload = useCallback(async () => {
     setError(null);
     const seq = ++reloadSeq.current;
     const startedAt = Date.now();
-    try {
-      const tree = await loadTree();
-      if (seq !== reloadSeq.current) return;
-      const late = landedLog.current.filter((x) => x.at >= startedAt);
+    const apply = (tree: Awaited<ReturnType<typeof loadTree>>, since: number, applied: number) => {
+      const late = landedLog.current.filter((x) => x.at >= since);
       landedLog.current = late;
       setFolders(tree.folders);
       setFiles(late.length ? mergeLandedFiles(tree.files, late.flatMap((x) => x.files)) : tree.files);
       setCanWrite(tree.canWrite !== false);
+      appliedSeq.current = applied;
+    };
+    try {
+      const tree = await loadTree();
+      if (seq !== reloadSeq.current) {
+        if (seq > appliedSeq.current && (!spare.current || spare.current.seq < seq)) spare.current = { seq, startedAt, tree };
+        return;
+      }
+      spare.current = null;
+      apply(tree, startedAt, seq);
     } catch (e) {
       if (seq !== reloadSeq.current) return;
+      // The newest reload failed: show the newest good tree we got instead of nothing.
+      const s = spare.current;
+      spare.current = null;
+      if (s && s.seq > appliedSeq.current) apply(s.tree, s.startedAt, s.seq);
       setError(e instanceof Error ? e.message : 'Could not load the databank');
     } finally {
       if (seq === reloadSeq.current) setLoading(false);

@@ -2287,6 +2287,7 @@ export async function directUploadDatabankFile(
   folderId: string | null = null,
   onProgress?: (fraction: number) => void,
   signal?: AbortSignal,
+  opts: { commitKey?: string; onStored?: (storageKey: string) => void } = {},
 ): Promise<ApiDatabankFile> {
   const mimeType = file.type || 'application/octet-stream';
   const q = target.userId ? `?userId=${encodeURIComponent(target.userId)}` : '';
@@ -2298,6 +2299,17 @@ export async function directUploadDatabankFile(
     mimeType,
     fileSizeBytes: file.size,
   };
+  const commit = (storageKey: string) =>
+    apiFetch<ApiDatabankFile>(`/processing/databank/uploads/commit${q}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, storageKey }),
+      cache: 'no-store',
+      signal,
+    });
+  // Already stored (only the commit's reply was lost last time): record it —
+  // the server returns the row it already made for this key. No second copy.
+  if (opts.commitKey) return commit(opts.commitKey);
 
   const presigned = await apiFetch<PresignedUploadResponse>(
     `/processing/databank/uploads/presign${q}`,
@@ -2327,13 +2339,8 @@ export async function directUploadDatabankFile(
     (loaded, total) => onProgress?.(total ? loaded / total : 0),
     signal,
   );
-
-  return apiFetch<ApiDatabankFile>(`/processing/databank/uploads/commit${q}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, storageKey: presigned.storageKey }),
-    cache: 'no-store',
-  });
+  opts.onStored?.(presigned.storageKey);
+  return commit(presigned.storageKey);
 }
 
 export function getDatabankFileSignedUrl(

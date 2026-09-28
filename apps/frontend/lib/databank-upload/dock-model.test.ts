@@ -150,3 +150,10 @@ test('[review] files a folder plan left out are never "all saved": headline, bat
   const secs = batchSections(withLeft.batches[0]);
   assert.equal(secs.find((x) => x.key === 'not-uploaded')!.collapsed, false, 'the reasons are shown, not tucked away');
 });
+
+test('[review r2] the drive is away: the headline asks whether it is connected (not "waiting for internet")', () => {
+  const now = Date.UTC(2026, 8, 28, 13, 0, 0);
+  const s = snap([row('queued'), row('queued', { rowId: 'q2' })], { readsWaiting: true });
+  assert.equal(dockHeadline(s, now).title, 'Can’t read the files — is the drive connected?');
+  assert.equal(dockHeadline({ ...s, linkDown: true }, now).title, 'Waiting for internet…', 'no internet takes precedence');
+});

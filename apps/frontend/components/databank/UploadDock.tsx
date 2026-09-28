@@ -129,7 +129,12 @@ const UploadRow = memo(
 function BatchGroup({ b }: { b: BatchView }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [confirmDismiss, setConfirmDismiss] = useState(false);
-  const leftOut = b.skipped.length + b.summary.failed + b.summary.needsDecision;
+  const leftOut = b.skipped.length + b.summary.failed + b.summary.needsDecision + (b.state === 'prepare-failed' ? 1 : 0);
+  const canDismiss = b.state === 'finished' || b.state === 'needs-you' || b.state === 'prepare-failed';
+  // A confirm left open must not come back later, unasked, with other numbers.
+  useEffect(() => {
+    setConfirmDismiss(false);
+  }, [b.state, leftOut]);
   const state = batchStateLine(b);
   const s = b.summary;
   const pct = s.bytesTotal > 0 ? Math.round((s.bytesSent / s.bytesTotal) * 100) : 0;
@@ -164,6 +169,17 @@ function BatchGroup({ b }: { b: BatchView }) {
             </button>
           </div>
         ) : null}
+        {b.state === 'needs-you' && s.needsDecision > 1 ? (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
+            {s.needsDecision.toLocaleString('en-US')} files may already be in the databank:
+            <button type="button" className="sos-btn sos-btn--sm sos-btn--secondary" onClick={() => q.resolveAllDuplicates(b.id, 'skip')}>
+              Skip all
+            </button>
+            <button type="button" className="sos-btn sos-btn--sm sos-btn--ghost" onClick={() => q.resolveAllDuplicates(b.id, 'upload')}>
+              Upload all anyway
+            </button>
+          </div>
+        ) : null}
         {b.state !== 'preparing' && b.state !== 'prepare-failed' && s.bytesTotal > 0 ? (
           <div className="sos-progress" style={{ height: 4 }}>
             <div className="sos-progress__fill" style={{ width: `${pct}%` }} />
@@ -180,12 +196,12 @@ function BatchGroup({ b }: { b: BatchView }) {
               <RotateCcw size={12} /> Retry failed
             </button>
           ) : null}
-          {b.state === 'running' || b.state === 'waiting-turn' || b.state === 'paused' || b.state === 'preparing' ? (
+          {b.state === 'running' || b.state === 'waiting-turn' || b.state === 'paused' || b.state === 'preparing' || b.state === 'needs-you' ? (
             <button type="button" className="sos-btn sos-btn--sm sos-btn--ghost" onClick={() => void q.cancelBatch(b.id)}>
               Cancel
             </button>
           ) : null}
-          {b.state === 'finished' && !confirmDismiss ? (
+          {canDismiss && !confirmDismiss ? (
             <button
               type="button"
               className="sos-btn sos-btn--sm sos-btn--ghost"
@@ -194,9 +210,11 @@ function BatchGroup({ b }: { b: BatchView }) {
               Dismiss
             </button>
           ) : null}
-          {b.state === 'finished' && confirmDismiss ? (
+          {canDismiss && confirmDismiss ? (
             <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>
-              {leftOut === 1 ? '1 file was' : `${leftOut.toLocaleString('en-US')} files were`} not uploaded — remove this list anyway?
+              {b.state === 'prepare-failed'
+                ? 'Nothing from this folder was uploaded — remove it from the list?'
+                : `${leftOut === 1 ? '1 file was' : `${leftOut.toLocaleString('en-US')} files were`} not uploaded — remove this list anyway?`}
               <button type="button" className="sos-btn sos-btn--sm sos-btn--danger" onClick={() => q.dismissBatch(b.id)}>
                 Remove
               </button>
@@ -269,6 +287,34 @@ export default function UploadDock() {
     return () => window.removeEventListener('keydown', onKey);
   }, [collapsed]);
 
+  if (snap.notice && !snap.batches.length) {
+    // Another officer signed in: the uploads stopped — say so, and what was left.
+    return (
+      <section className="sos-upload-dock sos-glass sos-glass--strong" role="alert" aria-label="Uploads stopped">
+        <header className="sos-upload-dock__header">
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <AlertTriangle size={16} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 700 }}>Uploads stopped — someone else signed in on this browser</div>
+              {snap.notice.lost.map((l) => (
+                <div key={l.label} style={{ fontSize: 12.5, opacity: 0.8 }}>
+                  {l.count.toLocaleString('en-US')} {l.count === 1 ? 'file' : 'files'} for {l.label} were not uploaded.
+                </div>
+              ))}
+              <div style={{ fontSize: 12.5, marginTop: 4 }}>
+                Sign back in and drop the same files or folder again — saved files are skipped, half-sent ones continue.
+              </div>
+            </div>
+          </div>
+          <div>
+            <button type="button" className="sos-btn sos-btn--sm" onClick={() => q.dismissNotice()}>
+              OK
+            </button>
+          </div>
+        </header>
+      </section>
+    );
+  }
   if (!snap.batches.length) return null;
   const h = dockHeadline(snap, Date.now());
   const s = snap.summary;
@@ -407,6 +453,12 @@ export default function UploadDock() {
       ) : snap.offline || snap.linkDown ? (
         <div className="sos-banner sos-banner--warning" style={{ margin: 8, fontSize: 12.5 }}>
           Waiting for internet — nothing is lost. It continues by itself.
+        </div>
+      ) : null}
+      {!snap.offline && !snap.linkDown && snap.readsWaiting ? (
+        <div className="sos-banner sos-banner--warning" style={{ margin: 8, fontSize: 12.5 }}>
+          Can’t read the files right now — is the USB drive, network drive or Google Drive connected? Nothing is lost;
+          the uploads continue by themselves once it is.
         </div>
       ) : null}
       {snap.compat ? (

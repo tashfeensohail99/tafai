@@ -75,6 +75,13 @@ export interface QueueDeps {
     folderId: string | null,
     onProgress: (fraction: number) => void,
     signal: AbortSignal,
+    opts: {
+      /** The file is already in storage under this key: only record it (the
+       *  server returns the row it already made if the first reply was lost). */
+      commitKey?: string;
+      /** Called once the bytes are stored, with their key. */
+      onStored: (storageKey: string) => void;
+    },
   ): Promise<unknown>;
   accessToken(): string | null;
   /** Try to get a fresh session (refresh the token). Never throws. */
@@ -121,6 +128,16 @@ export interface QueueSnapshot {
   /** Rows / batches that need the officer: failed, duplicate choices, folder errors. */
   attention: number;
   runningLabel?: string;
+  /** Files can't be read and nothing shows the drive works: "Is the drive connected?". */
+  readsWaiting: boolean;
+  /** Uploads were stopped for a reason the officer must hear about (kept until dismissed). */
+  notice?: QueueNotice;
+}
+
+export interface QueueNotice {
+  reason: 'user-changed';
+  /** Per drop: files that were NOT uploaded. */
+  lost: Array<{ label: string; count: number }>;
 }
 
 export interface LandedEvent {
@@ -147,6 +164,7 @@ export const EMPTY_SNAPSHOT: QueueSnapshot = Object.freeze({
   bytesPerSecond: 0,
   etaSeconds: null,
   attention: 0,
+  readsWaiting: false,
 }) as QueueSnapshot;
 
 /** Drops up to this size always run at once, even beside a big migration. */
@@ -217,6 +235,8 @@ interface LegacyRow {
   ctrl?: AbortController;
   /** Failures while the link worked (see LEGACY_ATTEMPTS). */
   tries?: number;
+  /** The bytes are in storage under this key: a retry only records them. */
+  storedKey?: string;
 }
 
 function statusOf(e: unknown): number {
@@ -236,7 +256,10 @@ export class UploadQueue {
   /** `${targetKey}\u0001${itemKey}` → the row that owns that file. */
   private readonly owner = new Map<string, string>();
   private readonly legacy = new Map<string, LegacyRow>();
-  private readonly legacyQueue: string[] = [];
+  /** Standard-upload rows waiting, per drop — picked by the same admission
+   *  rules as the engines (express drops first, then the running big one). */
+  private readonly legacyLanes = new Map<string, string[]>();
+  private notice?: QueueNotice;
   private legacyRunning = false;
   private readonly transports = new Map<string, UploadTransport>();
   private readonly pauseReasons = new Set<'user' | 'auth'>();
@@ -364,8 +387,32 @@ export class UploadQueue {
       this.afterChange();
       return;
     }
+    if (b.engine?.status(r.key) === 'fallback') {
+      // Answered 'proxy', not yet on the standard upload: it never goes there.
+      this.legacy.set(rowId, { status: 'cancelled', bytesDone: 0 });
+      b.legacyIds.add(rowId);
+      this.afterChange();
+      return;
+    }
     await b.engine?.cancel(r.key);
     this.afterChange();
+  }
+
+  /** "Skip all" / "Upload all anyway" for a drop's duplicate choices. */
+  resolveAllDuplicates(batchId: string, choice: 'skip' | 'upload'): void {
+    const b = this.batches.get(batchId);
+    if (!b?.engine) return;
+    for (const f of b.engine.snapshot().files) if (f.status === 'needs-decision') b.engine.resolveDuplicate(f.key, choice);
+    this.revive(b);
+    this.afterChange();
+  }
+
+  /** The "someone else signed in" notice, once read. */
+  dismissNotice(): void {
+    if (!this.notice) return;
+    this.notice = undefined;
+    this.snapshot = Object.freeze({ ...this.snapshot, rev: this.snapshot.rev + 1, notice: undefined });
+    for (const fn of this.subscribers) fn();
   }
 
   /** Remove a failed row. If another live row (a re-dropped copy) is using its
@@ -382,15 +429,10 @@ export class UploadQueue {
       return;
     }
     if (!r || !b?.engine) return;
-    const view = b.engine.snapshot().files.find((f) => f.key === r.key);
+    const view = b.engine.file(r.key);
     if (!view || view.status !== 'failed') return;
-    const shared =
-      !!view.uploadId &&
-      [...this.batches.values()].some(
-        (o) => o !== b && o.engine?.snapshot().files.some((f) => f.uploadId === view.uploadId && LIVE.has(f.status)),
-      );
-    if (shared) this.legacy.set(rowId, { status: 'cancelled', bytesDone: 0 });
-    else await b.engine.cancel(r.key);
+    const shared = !!view.uploadId && this.liveUploadIdsExcept(b).has(view.uploadId);
+    await b.engine.cancel(r.key, { keepSession: shared });
     this.afterChange();
   }
 
@@ -417,19 +459,27 @@ export class UploadQueue {
     }
     const engine = b.engine;
     if (engine) {
-      const keys = engine
-        .snapshot()
-        .files.filter((f) => WORK.has(f.status) || f.status === 'needs-decision' || f.status === 'failed')
-        .map((f) => f.key);
+      const elsewhere = this.liveUploadIdsExcept(b);
+      const files = engine.snapshot().files;
+      for (const f of files) {
+        const id = `${b.id}\u0001${f.key}`;
+        if (f.status === 'fallback' && this.rows.has(id) && !this.legacy.has(id)) {
+          this.legacy.set(id, { status: 'cancelled', bytesDone: 0 }); // answered 'proxy', never goes standard now
+          b.legacyIds.add(id);
+        }
+      }
+      const todo = files
+        .filter((f) => WORK.has(f.status) || f.status === 'needs-decision' || f.status === 'failed')
+        .map((f) => ({ key: f.key, keepSession: f.status === 'failed' && !!f.uploadId && elsewhere.has(f.uploadId) }));
       // A pool of 4 at a time — not 1,800 DELETEs at once.
       let next = 0;
       const worker = async () => {
-        while (next < keys.length) {
-          const k = keys[next++];
-          await engine.cancel(k);
+        while (next < todo.length) {
+          const t = todo[next++];
+          await engine.cancel(t.key, { keepSession: t.keepSession });
         }
       };
-      await Promise.all(Array.from({ length: Math.min(CANCEL_POOL, keys.length) }, worker));
+      await Promise.all(Array.from({ length: Math.min(CANCEL_POOL, todo.length) }, worker));
     }
     this.afterChange();
   }
@@ -447,6 +497,7 @@ export class UploadQueue {
       if (batchId && b.id !== batchId) continue;
       b.engine?.retryFailed();
       for (const rowId of [...b.legacyIds]) if (this.legacy.get(rowId)?.status === 'failed') this.retryRow(rowId);
+      this.revive(b);
     }
     this.afterChange();
   }
@@ -459,6 +510,7 @@ export class UploadQueue {
     const r = this.rows.get(rowId);
     const b = r && this.batches.get(r.batchId);
     if (!r || !b) return false;
+    this.revive(b);
     const lg = this.legacy.get(rowId);
     if (lg) {
       if (lg.status !== 'failed' && lg.status !== 'cancelled') return false;
@@ -480,17 +532,20 @@ export class UploadQueue {
   }
 
   /** Remove a batch from the dock — not while anything is still running. Files
-   *  that failed or wait on a choice are given up (their server sessions freed);
-   *  the dock asks the officer first when anything was not uploaded. */
+   *  that failed or wait on a choice are given up HERE only: no DELETE burst,
+   *  and never a session another copy uses. Their server sessions expire on
+   *  their own — or continue if the same files are dropped again within 6 days.
+   *  The dock asks the officer first when anything was not uploaded. */
   dismissBatch(batchId: string): void {
     const b = this.batches.get(batchId);
     if (!b || b.phase === 'preparing' || this.hasWork(b)) return;
     const engine = b.engine;
     if (engine) {
       for (const f of engine.snapshot().files) {
-        if (f.status === 'failed' || f.status === 'needs-decision') void engine.cancel(f.key);
+        if (f.status === 'failed' || f.status === 'needs-decision') void engine.cancel(f.key, { keepSession: true });
       }
     }
+    this.legacyLanes.delete(batchId);
     b.unsub?.();
     for (const rowId of b.rowIds) {
       const r = this.rows.get(rowId);
@@ -515,7 +570,21 @@ export class UploadQueue {
   /** Sign-out / another user: stop everything, locally. No DELETE is sent —
    *  the server keeps the sessions for 6 days, so dropping the same files again
    *  (after signing back in) continues where they stopped. */
-  shutdown(_reason: 'logout' | 'user-changed'): void {
+  shutdown(reason: 'logout' | 'user-changed'): void {
+    // Another officer signed in on this browser: the dock must SAY the uploads
+    // stopped, and what was left — not just vanish as if everything finished.
+    if (reason === 'user-changed') {
+      const lost: QueueNotice['lost'] = [];
+      for (const b of this.batches.values()) {
+        let count = b.skipped.length + (b.phase === 'ready' ? 0 : (b.prepareInput?.files.length ?? 0));
+        for (const rowId of b.rowIds) {
+          const st = this.rowStatus(rowId);
+          if (st !== 'done' && st !== 'skipped' && st !== 'handed-off') count += 1;
+        }
+        if (count) lost.push({ label: b.meta.label, count });
+      }
+      this.notice = lost.length ? { reason, lost } : undefined;
+    }
     this.shut = true;
     this.gen += 1;
     for (const b of this.batches.values()) {
@@ -535,7 +604,7 @@ export class UploadQueue {
     this.owner.clear();
     this.legacy.clear();
     this.proxyBases.clear();
-    this.legacyQueue.length = 0;
+    this.legacyLanes.clear();
     this.lastStatus.clear();
     this.scopeBusy.clear();
     this.pendingLanded.clear();
@@ -546,7 +615,7 @@ export class UploadQueue {
     this.ownerId = null;
     this.wake('auth');
     this.wake('online');
-    this.snapshot = { ...EMPTY_SNAPSHOT, rev: this.snapshot.rev + 1 };
+    this.snapshot = { ...EMPTY_SNAPSHOT, rev: this.snapshot.rev + 1, notice: this.notice };
     for (const fn of this.subscribers) fn();
     this.shut = false; // the queue can be used again (by whoever signs in next)
   }
@@ -658,7 +727,9 @@ export class UploadQueue {
     const ob = existing ? this.batches.get(existing.batchId) : undefined;
     if (existing && ob) {
       const st = this.rowStatus(existingId!);
-      if (LIVE.has(st) || st === 'queued') {
+      // (A file the standard upload already saved stays saved: asking the server
+      // again could upload it twice — the standard upload never dedupes.)
+      if (LIVE.has(st) || st === 'queued' || (st === 'done' && this.legacy.has(existingId!))) {
         b.alreadyListed += 1;
         return;
       }
@@ -667,6 +738,7 @@ export class UploadQueue {
         // Hand the new File to the row that owns this upload (keeps the
         // engine's session hand-over protection within one engine).
         existing.item = item;
+        this.revive(ob);
         const lg = this.legacy.get(existingId!);
         if (lg) {
           // Ask the server again — never straight to the standard upload.
@@ -745,6 +817,42 @@ export class UploadQueue {
       if (f.status === 'needs-decision' || f.status === 'failed') return false;
     }
     return true;
+  }
+
+  /** A batch that was cancelled gets work again: a fresh signal, so its waits
+   *  back off normally (an aborted one would end every nap at once). */
+  private revive(b: Batch): void {
+    if (b.ctrl.signal.aborted) b.ctrl = new AbortController();
+  }
+
+  /** Server sessions a LIVE row in ANOTHER batch is using (a re-dropped copy). */
+  private liveUploadIdsExcept(b: Batch): Set<string> {
+    const ids = new Set<string>();
+    for (const o of this.batches.values()) {
+      if (o === b || !o.engine) continue;
+      for (const f of o.engine.snapshot().files) if (f.uploadId && LIVE.has(f.status)) ids.add(f.uploadId);
+    }
+    return ids;
+  }
+
+  private pushLegacy(batchId: string, rowId: string, front = false): void {
+    let lane = this.legacyLanes.get(batchId);
+    if (!lane) this.legacyLanes.set(batchId, (lane = []));
+    if (front) lane.unshift(rowId);
+    else lane.push(rowId);
+  }
+
+  /** The next standard-upload row, by the engines' admission rules: express
+   *  drops first (oldest first), then the running big drop; others wait. */
+  private pickLegacy(): string | undefined {
+    let best: Batch | undefined;
+    for (const b of this.batches.values()) {
+      if (!this.legacyLanes.get(b.id)?.length) continue;
+      const express = this.isExpress(b);
+      if (!express && b.id !== this.runningBig) continue;
+      if (!best || (express && !this.isExpress(best)) || (express === this.isExpress(best) && b.seq < best.seq)) best = b;
+    }
+    return best ? this.legacyLanes.get(best.id)!.shift() : undefined;
   }
 
   private forgetLegacy(b: Batch, rowId: string): void {
@@ -1050,15 +1158,16 @@ export class UploadQueue {
         : { status: 'waiting', bytesDone: 0 },
     );
     b.legacyIds.add(rowId);
-    if (!tooBig) this.legacyQueue.push(rowId);
+    if (!tooBig) this.pushLegacy(b.id, rowId);
   }
 
   private async runLegacy(): Promise<void> {
     if (this.legacyRunning) return;
     this.legacyRunning = true;
     try {
-      while (this.legacyQueue.length && !this.pauseReasons.size && !this.offline && !this.shut) {
-        const rowId = this.legacyQueue.shift()!;
+      while (!this.pauseReasons.size && !this.offline && !this.shut) {
+        const rowId = this.pickLegacy();
+        if (!rowId) break;
         const r = this.rows.get(rowId);
         const lg = this.legacy.get(rowId);
         const b = r && this.batches.get(r.batchId);
@@ -1097,9 +1206,17 @@ export class UploadQueue {
               this.markDirty();
             },
             ctrl.signal,
+            {
+              // Stored already (an earlier try lost only the commit's reply): record, don't re-upload.
+              commitKey: lg.storedKey,
+              onStored: (key) => {
+                lg.storedKey = key;
+              },
+            },
           );
           // Recorded — even if Cancel came too late to stop it.
           lg.status = 'done';
+          lg.storedKey = undefined;
           lg.bytesDone = r.item.source.size;
           lg.file = file;
           if (this.sameUser()) this.noteLanded(b.dataScope, [file], false);
@@ -1111,7 +1228,7 @@ export class UploadQueue {
           } else if (status === 401) {
             lg.status = 'waiting';
             lg.bytesDone = 0;
-            this.legacyQueue.unshift(rowId);
+            this.pushLegacy(b.id, rowId, true);
             this.onAuthLost();
           } else if (stalled || status === 0 || classifyApi(status) === 'transient') {
             // No answer / a stall / 5xx: the link, or this upload? Only counts while the link works.
@@ -1122,8 +1239,8 @@ export class UploadQueue {
               lg.error = stalled ? 'The upload stopped responding.' : message(e);
             } else {
               lg.status = 'waiting';
-              lg.bytesDone = 0;
-              this.legacyQueue.unshift(rowId);
+              lg.bytesDone = lg.storedKey ? r.item.source.size : 0;
+              this.pushLegacy(b.id, rowId, true);
               this.markDirty();
               await this.nap(backoffMs(up ? (lg.tries ?? 1) * 2 : 5, this.deps.env.random), b.ctrl.signal);
             }
@@ -1186,6 +1303,7 @@ export class UploadQueue {
     const batchViews: BatchView[] = [];
     const allRows: RowView[] = [];
     let linkDown = false;
+    let readsWaiting = false;
     // One engine snapshot per batch per flush. Rows the server sent to the
     // standard upload ('proxy' answers) move over first, so the views below
     // (and hasWork) already see them there.
@@ -1204,6 +1322,7 @@ export class UploadQueue {
     for (const b of this.batches.values()) {
       const snap = snaps.get(b);
       if (snap?.linkDown || b.linkWait) linkDown = true;
+      if (snap?.readsWaiting) readsWaiting = true;
       const byKey = new Map((snap?.files ?? []).map((f) => [f.key, f]));
       const pendingKeys = new Set(b.pending.map((it) => it.key));
       const rows: RowView[] = [];
@@ -1305,6 +1424,8 @@ export class UploadQueue {
       etaSeconds: eta,
       attention,
       runningLabel: running?.meta.label,
+      readsWaiting,
+      notice: this.notice,
     });
     for (const fn of this.subscribers) fn();
     this.emitLanded();
@@ -1321,7 +1442,13 @@ export class UploadQueue {
     const b = r && this.batches.get(r.batchId);
     if (!r || !b) return;
     this.proxyBases.add(b.target.base); // (the dock says the standard upload is in use)
-    this.toLegacy(rowId);
+    if (b.ctrl.signal.aborted) {
+      // The officer cancelled this drop: nothing more goes up.
+      this.legacy.set(rowId, { status: 'cancelled', bytesDone: 0 });
+      b.legacyIds.add(rowId);
+    } else {
+      this.toLegacy(rowId);
+    }
     this.markDirty();
   }
 

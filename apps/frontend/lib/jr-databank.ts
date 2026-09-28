@@ -53,6 +53,7 @@ export async function directUploadJrDatabankFile(
   folderId: string | null = null,
   onProgress?: (fraction: number) => void,
   signal?: AbortSignal,
+  opts: { commitKey?: string; onStored?: (storageKey: string) => void } = {},
 ): Promise<ApiDatabankFile> {
   const mimeType = file.type || 'application/octet-stream';
   const bodyBase = {
@@ -63,6 +64,16 @@ export async function directUploadJrDatabankFile(
     mimeType,
     fileSizeBytes: file.size,
   };
+  const commit = (storageKey: string) =>
+    apiFetch<ApiDatabankFile>('/jr/databank/uploads/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...bodyBase, storageKey }),
+      cache: 'no-store',
+      signal,
+    });
+  // Already stored (only the commit's reply was lost): record it, don't re-upload.
+  if (opts.commitKey) return commit(opts.commitKey);
 
   const presigned = await apiFetch<PresignedUploadResponse>('/jr/databank/uploads/presign', {
     method: 'POST',
@@ -89,13 +100,8 @@ export async function directUploadJrDatabankFile(
     (loaded, total) => onProgress?.(total ? loaded / total : 0),
     signal,
   );
-
-  return apiFetch<ApiDatabankFile>('/jr/databank/uploads/commit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...bodyBase, storageKey: presigned.storageKey }),
-    cache: 'no-store',
-  });
+  opts.onStored?.(presigned.storageKey);
+  return commit(presigned.storageKey);
 }
 
 /** The JR-matter clients the caller may browse (flat), each with a file count.

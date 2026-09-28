@@ -1241,3 +1241,45 @@ test('queue: [review r7] a save of stored bytes that is refused outright: Retry 
   assert.equal(statusByName(q)['c.pdf'], 'done');
   assert.equal(s.legacyCalls.filter((c) => c.name === 'c.pdf').length, 2, 'uploaded afresh (a new key)');
 });
+
+// ---- review round 13 (dock) ----------------------------------------------------------------
+
+test('queue: [review r13] "Cancel all" leaves a finished drop\'s failed file to retry — it only stops the running drop', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.legacyFault = (name) => (name === 'f.pdf' ? 400 : null); // A: one file fails outright (nothing stored)
+  s.legacyDelay = (name) => (name === 'slow.pdf' ? 60_000 : 0); // B: keeps running
+  q.enqueueFiles(CLIENT_A, meta('Ali'), [drop('ok.pdf', 5, undefined, 1, 'ok'), drop('f.pdf', 6)]);
+  await until(() => statusByName(q)['ok.pdf'] === 'done' && statusByName(q)['f.pdf'] === 'failed', 200_000);
+  q.enqueueFiles(CLIENT_B, meta('Bilal'), [drop('slow.pdf', 7, undefined, 1, 'slow')]);
+  await until(() => statusByName(q)['slow.pdf'] === 'uploading', 200_000);
+  await q.cancelAll(); // the header "Cancel all" (drop B is running)
+  await settled(q, 200_000);
+  assert.equal(statusByName(q)['f.pdf'], 'failed', "the finished drop's un-uploaded file is still there");
+  assert.equal(statusByName(q)['slow.pdf'], 'cancelled', 'the running drop was stopped');
+  assert.ok(q.getSnapshot().attention >= 1, 'the un-uploaded file still needs the officer');
+  s.legacyFault = () => null;
+  q.retryFailed();
+  await settled(q, 200_000);
+  assert.equal(statusByName(q)['f.pdf'], 'done', 'Retry failed saves it');
+  assert.equal(s.legacyCalls.filter((c) => c.name === 'f.pdf').length, 2);
+});
+
+test('queue: [review r13] "Cancel all" leaves a prepare-failed folder as "Try again" — never an empty "0 saved" that Clear finished removes', async () => {
+  const { q, server, s } = qsetup();
+  server.mode = 'proxy';
+  s.ensureFault = (n) => (n === 1 ? 400 : null); // folder A: prepare fails outright (nothing uploaded)
+  s.legacyDelay = (name) => (name === 'slow.pdf' ? 60_000 : 0); // B: keeps running
+  const folder = q.enqueueFolder(CLIENT_A, meta(), [drop('a.pdf', 5, 'G/a.pdf')]);
+  await until(() => q.getSnapshot().batches.find((x) => x.id === folder)?.state === 'prepare-failed', 200_000);
+  q.enqueueFiles(CLIENT_B, meta('Bilal'), [drop('slow.pdf', 7, undefined, 1, 'slow')]);
+  await until(() => statusByName(q)['slow.pdf'] === 'uploading', 200_000);
+  await q.cancelAll();
+  await settled(q, 200_000);
+  const fb = q.getSnapshot().batches.find((x) => x.id === folder);
+  assert.equal(fb?.state, 'prepare-failed', 'the folder that could not be prepared is still there to try again');
+  assert.ok(q.getSnapshot().attention >= 1, 'it still needs the officer');
+  assert.equal(statusByName(q)['slow.pdf'], 'cancelled', 'the running drop was stopped');
+  q.clearFinished();
+  assert.ok(q.getSnapshot().batches.some((x) => x.id === folder), 'Clear finished does not remove it');
+});

@@ -235,10 +235,12 @@ const BLIP_WINDOW_MS = 30 * 60_000;
  *  (Drive for desktop serves recently read files while it is offline; the OS
  *  reads ahead): only a read beyond that proves the source works. */
 const FRESH_MARGIN = 16 * 1024 * 1024;
-/** Nothing left to test the source with (a one-file drop, or every other file
- *  read already): a file that can't be read waits this long (active time), then
- *  fails — it may have been moved or edited, which the browser reports exactly
- *  like an unplugged drive. */
+/** Nothing can tell whether the source works (files read before still read,
+ *  nothing new does — a one-file drop, the drop's last folder moved, Drive for
+ *  desktop offline while the internet works): the files that can't be read wait
+ *  this long (active time, one clock for the whole stretch), then fail — they may
+ *  have been moved or edited, which the browser reports exactly like an
+ *  unplugged drive. */
 export const NO_PROOF_GIVE_UP_MS = 30 * 60_000;
 /** Paused: a read that failed waits for Resume. This many failing in a row
  *  (the drive / Drive client is away) stop the paused hash lane until Resume
@@ -250,6 +252,10 @@ const HALTED_READ_FAILS_MAX = 3;
  *  finish off a file that was unlucky once. */
 const PROVEN_STRIKE_WINDOW_MS = 10 * 60_000;
 const PROBE_TIMEOUT_MS = 30_000;
+/** A never-read file up to this size that proves the source is read WHOLE (and
+ *  hashed for real): a 1-byte test would spend all of its fresh bytes (see
+ *  FRESH_MARGIN), leaving a file that must still be read yet can prove nothing. */
+const PROOF_READ_MAX = FRESH_MARGIN;
 /** Cancels ask the server to discard sessions this many at a time (a drop of
  *  2,000 files must not send 2,000 DELETEs at once) — the files themselves
  *  stop at once. */
@@ -369,6 +375,8 @@ interface Job {
   lastReadAt?: number;
   /** When it last took a strike with real proof ('up') — see PROVEN_STRIKE_WINDOW_MS. */
   provenStrikeAt?: number;
+  /** Why its last read failed (for a give-up that comes between its turns). */
+  readError?: string;
   /** Its top folder (relativePath's first segment, else folderId), cached. */
   topFolder?: string | null;
   /** Active time since nothing could tell whether IT or its source is at fault
@@ -396,6 +404,18 @@ function link(signals: Array<AbortSignal | undefined>, onAbort: () => void): () 
   return () => {
     for (const s of live) s.removeEventListener('abort', onAbort);
   };
+}
+
+type SourceVerdict = 'up' | 'away' | 'unknown' | 'exhausted';
+
+/** The hash lane's order: never failed (0), failed only while the source was
+ *  away (1), struck with proof — likely gone (2). */
+function laneTier(j: Job): number {
+  return !j.readFailed ? 0 : j.hashFailures === 0 ? 1 : 2;
+}
+
+function movedMessage(why: string | undefined): string {
+  return `Could not read this file${why ? ` (${why})` : ''} — was it moved, edited or renamed, or its drive disconnected? Drop it again to continue.`;
 }
 
 /** A file's folder path (relativePath without its name; a flat drop: its folderId). */
@@ -463,6 +483,11 @@ export class UploadEngine {
   private lastRead: { job: Job; at: number } | null = null;
   /** The most recent read of a DIFFERENT file than lastRead's. */
   private lastOtherRead: { job: Job; at: number } | null = null;
+  /** The source check running now (see sourceState). */
+  private sourceTurn: Promise<unknown> = Promise.resolve();
+  /** The last check that could tell found the source away (files read before
+   *  fail too) — only a check with evidence changes it; see checkSource. */
+  private sourceAway = false;
   /** Reads fail and nothing proves the link / the source works: hashing is
    *  gated to one test read at a time (rotating over the files), spaced out.
    *  `wake` ends every read-wait sleep the moment any read succeeds. */
@@ -473,6 +498,11 @@ export class UploadEngine {
     /** The due time a wake-up timer is armed for (one per due time). */
     armedFor?: number;
     sinceActive: number;
+    /** Since when (active time) nothing could tell whether the source works —
+     *  files read before still read, nothing new does. Only 'away' (the long
+     *  wait) or the wait's end (a fresh read) stops this clock: see
+     *  NO_PROOF_GIVE_UP_MS. */
+    cannotTellSince?: number;
     tried: Set<Job>;
     /** Folders of recent test reads: the next one comes from another folder. */
     triedFolders: Set<string | null>;
@@ -484,6 +514,9 @@ export class UploadEngine {
   private pinging?: Promise<void>;
   /** Work in flight: hashes, API calls, part slots, back-off sleeps, cancels. */
   private hashing = 0;
+  /** Of `hashing`, the proof reads (see proofRead) — they don't hold up the lane:
+   *  the failures that keep coming while one runs all share its proof. */
+  private proofHashing = 0;
   private initInFlight = false;
   private completeInFlight = false;
   private busySlots = 0;
@@ -871,11 +904,13 @@ export class UploadEngine {
         this.pumpReadWait();
       } else {
         // Files never failed first: one that failed (and is being retried) must
-        // not hold up the rest of the drop — e.g. a moved folder's files.
-        for (const retrying of [false, true]) {
+        // not hold up the rest of the drop — e.g. a moved folder's files. Of
+        // those, ones that only failed while the source was away before ones
+        // struck with proof (likely gone).
+        for (const tier of [0, 1, 2]) {
           for (const job of this.jobs) {
-            if (this.hashing >= this.hashConcurrency) break;
-            if (job.view.status === 'queued' && !job.parked && job.readFailed === retrying) void this.hashJob(job);
+            if (this.hashing - this.proofHashing >= this.hashConcurrency) break;
+            if (job.view.status === 'queued' && !job.parked && laneTier(job) === tier) void this.hashJob(job);
           }
         }
       }
@@ -1157,15 +1192,23 @@ export class UploadEngine {
     if (!this.transport.ping) return true;
     if (this.halted) return false;
     const pingStart = this.now();
-    this.pinging ??= this.api((signal) => this.transport.ping!(signal), PING_TIMEOUT_MS)
-      .then(
-        () => undefined,
-        () => undefined,
-      )
-      .finally(() => {
-        this.pinging = undefined;
-      });
-    await this.pinging;
+    // A ping already in flight (shared) may have been sent before `t` and answer
+    // with a success stamped before `t` — proving nothing for THIS failure. Then
+    // send a fresh one. (At most twice: a second that answers proves it, or the
+    // link is really down.)
+    for (let ask = 0; ask < 2; ask++) {
+      const before = this.lastSuccessAt.api;
+      this.pinging ??= this.api((signal) => this.transport.ping!(signal), PING_TIMEOUT_MS)
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .finally(() => {
+          this.pinging = undefined;
+        });
+      await this.pinging;
+      if (proven() || this.lastSuccessAt.api === before || this.halted) break;
+    }
     // A ping that failed, or only answered after a while: the link was down.
     if (!proven() || this.now() - pingStart > 3_000) this.lastLinkTroubleAt = this.now();
     return proven();
@@ -1201,6 +1244,7 @@ export class UploadEngine {
     if (!this.readWait) return;
     this.readWait.wake.abort();
     this.readWait = null;
+    this.sourceAway = false;
     this.notify();
   }
 
@@ -1210,60 +1254,119 @@ export class UploadEngine {
    *  left to test with. Only fresh reads count — bytes read before may come
    *  from Drive for desktop's cache while it is offline. Only ANOTHER file
    *  counts (this file's own reads say nothing about "gone" vs "unplugged").
-   *  Without a read probe we can't tell — assume it works (as before). */
-  private async sourceState(t: number, job: Job): Promise<'up' | 'away' | 'unknown'> {
+   *  Without a read probe we can't tell — assume it works (as before).
+   *  'exhausted': like 'unknown', but because no file is left that could prove
+   *  it (every other file was read already, or failed with proof) — not because
+   *  the ones tried failed too.
+   *  Checks run ONE AT A TIME: a check that reads a file freshly proves the
+   *  source for every failure before it (a moved folder's 200 failures share
+   *  one proof instead of spending 200 files), and 200 failures never start 200
+   *  test reads at once. */
+  private sourceState(t: number, job: Job): Promise<SourceVerdict> {
+    const run = this.sourceTurn.then(() => this.checkSource(t, job));
+    this.sourceTurn = run.catch(() => undefined);
+    return run;
+  }
+
+  private async checkSource(t: number, job: Job): Promise<SourceVerdict> {
     if (!this.env.readable) return 'up';
-    const other = this.lastRead && this.lastRead.job !== job ? this.lastRead : this.lastOtherRead;
-    if (other && other.job !== job && other.at > t) return 'up';
+    if (TERMINAL.has(job.view.status) || job.view.status === 'cancelling') return 'unknown'; // (its caller moves on)
+    const freshSince = () => {
+      const other = this.lastRead && this.lastRead.job !== job ? this.lastRead : this.lastOtherRead;
+      return !!other && other.job !== job && other.at > t;
+    };
+    if (freshSince()) {
+      this.sourceAway = false;
+      return 'up';
+    }
+    // A file that read fine before and can't be read NOW: the drive / NAS / Drive
+    // client is away (a cache can make a read succeed, never fail). Two such
+    // files, if there are two, so one deleted file can't claim the whole drive.
+    // (true: away; false: one reads — maybe from a cache; undefined: none to test)
+    const knownAway = async (): Promise<boolean | undefined> => {
+      const known = this.knownGoodFiles(job);
+      if (!known.length) return undefined;
+      for (const k of known) {
+        if ((await this.probe(k, 0, 1)) === 'ok') return (this.sourceAway = false);
+      }
+      return (this.sourceAway = true);
+    };
+    // Waiting on a source found away: test THAT first (two 1-byte reads) — every
+    // fresh file tried while it is still away would be read for nothing and
+    // marked as failing. (A known-good file that was moved is marked by its
+    // failed test and not picked again, so this can't hold a wait by itself.)
+    if (this.readWait && this.sourceAway && (await knownAway())) return 'away';
     // A spot never read, of another file — from ANOTHER folder when there is
     // one (a moved or renamed folder takes its siblings with it): if it reads,
     // the source works. If it doesn't, that proves nothing (it may be gone too).
     // (up to three, from different folders, the ones sharing the least of the
     // failing file's path first: a moved folder with subfolders must not be
     // tested with its own files)
-    for (const fresh of this.freshTestFiles(job, 3)) {
-      const at = this.freshFrom(fresh);
-      if ((await this.probe(fresh, at, at + 1)) === 'ok') return 'up';
+    const candidates = this.freshTestFiles(job, 3);
+    for (const fresh of candidates) {
+      if ((await this.proofRead(fresh)) || freshSince()) {
+        this.sourceAway = false;
+        return 'up';
+      }
     }
-    // A file that read fine before and can't be read NOW: the drive / NAS / Drive
-    // client is away (a cache can make a read succeed, never fail). Two such
-    // files, if there are two, so one deleted file can't claim the whole drive.
-    const known = this.knownGoodFiles(job);
-    if (!known.length) return 'unknown';
-    for (const k of known) {
-      if ((await this.probe(k, 0, 1)) === 'ok') return 'unknown'; // (reads fine — maybe from a cache)
-    }
-    return 'away';
+    if (await knownAway()) return 'away';
+    return candidates.length ? 'unknown' : 'exhausted';
   }
 
-  /** Up to `max` other live files with a spot never read (see freshFrom), whose
-   *  own read never failed, one per folder — the folders sharing the SHORTEST
-   *  path with `job`'s first (a moved or renamed folder takes its subfolders with
-   *  it). One pass: the best candidate per shared-prefix depth is kept. */
+  /** Read `c` where it was never read, to prove the source works. A small file
+   *  still waiting to be hashed is read WHOLE — hashed for real, so the proof
+   *  costs no file (see PROOF_READ_MAX); the check waits for it up to the probe
+   *  timeout (a slow read carries on as the lane's own, and its bytes still end
+   *  a read wait). Anything else: one byte past what was read. */
+  private async proofRead(c: Job): Promise<boolean> {
+    const at = this.freshFrom(c);
+    if (at === 0 && c.item.source.size <= PROOF_READ_MAX && c.view.status === 'queued' && !c.parked && !this.offline) {
+      const stop = new AbortController();
+      try {
+        return await Promise.race([this.hashJob(c, true), this.nap(PROBE_TIMEOUT_MS, stop.signal).then(() => false)]);
+      } finally {
+        stop.abort();
+      }
+    }
+    return (await this.probe(c, at, at + 1)) === 'ok';
+  }
+
+  /** Up to `max` other live files with a spot never read (see freshFrom), one
+   *  per folder, never one that failed WITH proof (it is likely gone). Ones whose
+   *  read never failed first; then ones that only failed while the source was
+   *  away (after a NAS cut they are the only fresh files left). Within that, the
+   *  folders sharing the SHORTEST path with `job`'s first (a moved or renamed
+   *  folder takes its subfolders with it); its own folder last. */
   private freshTestFiles(job: Job, max: number): Job[] {
     const mine = pathDirs(job.item);
-    const byDepth: Job[][] = [];
-    const seenFolders = new Set<string | null>();
+    const myFolder = job.item.folderId ?? null;
+    const best = new Map<string | null, { j: Job; rank: number }>();
     for (const j of this.jobs) {
-      if (j === job || j.readFailed || TERMINAL.has(j.view.status) || j.view.status === 'cancelling') continue;
+      if (j === job || j.hashFailures > 0 || TERMINAL.has(j.view.status) || j.view.status === 'cancelling') continue;
       if (this.freshFrom(j) >= j.item.source.size) continue;
       const folder = j.item.folderId ?? null;
-      if (seenFolders.has(folder)) continue;
-      seenFolders.add(folder);
-      const theirs = pathDirs(j.item);
-      let shared = 0;
-      while (shared < mine.length && shared < theirs.length && mine[shared] === theirs[shared]) shared += 1;
-      if (folder === (job.item.folderId ?? null)) shared = Number.MAX_SAFE_INTEGER; // (its own folder: last resort)
-      const list = (byDepth[shared === Number.MAX_SAFE_INTEGER ? 1000 : shared] ??= []);
-      if (list.length < max) list.push(j);
+      const had = best.get(folder);
+      if (had && !(had.j.readFailed && !j.readFailed)) continue; // (one per folder, a clean one if it has one)
+      let depth: number;
+      if (folder === myFolder) depth = 1000;
+      else {
+        const theirs = pathDirs(j.item);
+        depth = 0;
+        while (depth < mine.length && depth < theirs.length && mine[depth] === theirs[depth]) depth += 1;
+      }
+      best.set(folder, { j, rank: (j.readFailed ? 2000 : 0) + depth });
     }
-    const out: Job[] = [];
-    for (const list of byDepth) {
-      if (!list) continue;
-      for (const j of list) if (out.length < max) out.push(j);
-      if (out.length >= max) break;
+    // (the `max` lowest ranks — ties in drop order)
+    const out: { j: Job; rank: number }[] = [];
+    for (const c of best.values()) {
+      let i = out.length;
+      while (i > 0 && out[i - 1].rank > c.rank) i -= 1;
+      if (i < max) {
+        out.splice(i, 0, c);
+        if (out.length > max) out.pop();
+      }
     }
-    return out;
+    return out.map((c) => c.j);
   }
 
   /** Up to two other files that were read fine before — from different folders
@@ -1393,8 +1496,16 @@ export class UploadEngine {
    *  queued files (a file that is really gone can't block the others). */
   private pumpReadWait(): void {
     const w = this.readWait!;
+    // A file's "can't tell" clock runs out on time — not when its turn to be
+    // tested comes round (with hundreds waiting, that is hours later).
+    for (const j of this.jobs) {
+      if (j.view.status === 'queued' && this.unprovenTooLong(j)) this.fail(j, movedMessage(j.readError));
+    }
     if (this.hashing > 0) return; // (its end schedules the pump)
-    if (this.now() < w.nextAt) {
+    // Nothing could tell for NO_PROOF_GIVE_UP_MS: every file that can't be read
+    // now fails at once — the test reads are no longer spaced out.
+    const toldUp = w.cannotTellSince !== undefined && this.activeNow() - w.cannotTellSince >= NO_PROOF_GIVE_UP_MS;
+    if (!toldUp && this.now() < w.nextAt) {
       this.armReadWait();
       return;
     }
@@ -1408,9 +1519,14 @@ export class UploadEngine {
       w.tried.clear();
       untried = queued;
     }
-    // (a file that never failed tells more than one that did — the lane's order)
-    const clean = untried.filter((j) => !j.readFailed);
-    if (clean.length) untried = clean;
+    // A read that can END the wait first (a spot never read: see freshFrom — a
+    // file whose fresh bytes a test already spent reads fine, yet proves
+    // nothing); within that, a file that never failed tells more than one that
+    // did, and one struck with proof comes last (the lane's order).
+    const tierOf = (j: Job) => (this.freshFrom(j) < j.item.source.size ? 0 : 3) + laneTier(j);
+    let top = Infinity;
+    for (const j of untried) top = Math.min(top, tierOf(j));
+    untried = untried.filter((j) => tierOf(j) === top);
     let next = untried.find((j) => !w.triedFolders.has(folderOf(j)));
     if (!next) {
       w.triedFolders.clear();
@@ -1418,9 +1534,25 @@ export class UploadEngine {
     }
     w.tried.add(next);
     w.triedFolders.add(folderOf(next));
-    w.nextAt = this.now() + this.readWaitDelay();
+    w.nextAt = this.now() + (toldUp ? 0 : this.readWaitDelay());
     this.armReadWait();
     void this.hashJob(next);
+  }
+
+  /** A read of `job` failed and the verdict is in: nothing could tell whether
+   *  the source works (`cannotTell`), or it is away / the link is down (the long
+   *  wait). "Can't tell" runs ONE clock per stretch — each file's clock is the
+   *  stretch's (see NO_PROOF_GIVE_UP_MS), so the files fail together when it
+   *  runs out, not one per test read (hundreds waiting would take hours). */
+  private noteCannotTell(job: Job, cannotTell: boolean): void {
+    const w = this.readWait;
+    if (cannotTell) {
+      if (w) w.cannotTellSince ??= this.activeNow();
+      job.unprovenSince ??= w?.cannotTellSince ?? this.activeNow();
+    } else {
+      if (w) w.cannotTellSince = undefined; // the source is away: the long wait
+      job.unprovenSince = undefined;
+    }
   }
 
   /** The source has been away for giveUpMs (the active clock, like every other wait). */
@@ -1446,7 +1578,7 @@ export class UploadEngine {
       for (const j of this.jobs) if (j !== job && j.view.status === 'queued') this.fail(j, msg, true);
       return;
     }
-    this.fail(job, `Could not read this file (${errorMessage(e)}) — was it moved, edited or renamed, or its drive disconnected? Drop it again to continue.`, true);
+    this.fail(job, movedMessage(errorMessage(e)), true);
   }
 
   private succeeded(channel: Channel): void {
@@ -1481,9 +1613,13 @@ export class UploadEngine {
 
   // ---- hash -----------------------------------------------------------------
 
-  private async hashJob(job: Job): Promise<void> {
+  /** Hash `job`. Resolves true when it was read in full. A PROOF read (see
+   *  proofRead) is not judged when it fails — it only marks the file (the lane
+   *  reads it again, and judges it, in its turn). */
+  private async hashJob(job: Job, proof = false): Promise<boolean> {
     const gen = job.gen;
     this.hashing += 1;
+    if (proof) this.proofHashing += 1;
     const ctrl = new AbortController();
     job.hashCtrl = ctrl;
     this.set(job, { status: 'hashing', hashedBytes: 0 });
@@ -1523,7 +1659,7 @@ export class UploadEngine {
         ),
         stalled,
       ]);
-      if (job.gen !== gen) return;
+      if (job.gen !== gen) return false;
       this.noteRead(job, job.item.source.size, freshAt); // (a 0-byte file read nothing: proves nothing)
       job.sha256 = hex;
       job.hashFailures = 0;
@@ -1547,16 +1683,20 @@ export class UploadEngine {
       } else {
         this.set(job, { status: 'hashed' });
       }
+      return true;
     } catch (e) {
-      if (job.gen !== gen) return;
+      if (job.gen !== gen) return false;
       const at = job.view.hashedBytes; // where the read failed
       this.set(job, { status: 'queued', hashedBytes: 0 });
       job.readFailed = true;
-      if (this.offline) return; // hashed again once back online
+      job.readError = errorMessage(e);
+      if (this.offline || proof) return false; // (offline: hashed again once back online)
       void this.judgeRead(job, gen, readStartedAt, this.now(), at, e);
+      return false;
     } finally {
       stopWatch.abort();
       this.hashing -= 1;
+      if (proof) this.proofHashing -= 1;
       if (job.hashCtrl === ctrl) job.hashCtrl = undefined;
       this.schedule();
       await watch;
@@ -1591,19 +1731,26 @@ export class UploadEngine {
       const size = job.item.source.size;
       const spot = Math.min(at, size - 1);
       const probeSpot = () => (this.env.readable && size > 0 ? this.probe(job, spot, spot + 1) : Promise.resolve('unreadable' as const));
+      const cannotTell = source === 'unknown' || source === 'exhausted';
       let again: 'ok' | 'unreadable' | 'unknown' | undefined;
-      if (link && source === 'unknown') {
+      if (link && cannotTell) {
         again = await probeSpot();
         if (job.gen !== gen) return;
       }
-      // ('unknown' = files read before still read fine, nothing fresh to test with. A
-      // file that already took a strike with real proof — the source worked while it
-      // did not — is struck again rather than waiting: a moved folder's files finish
-      // in seconds. A source that is really away gives 'away', which never strikes.)
-      if (!link || source === 'away' || (source === 'unknown' && again !== 'ok' && !(job.provenStrikeAt !== undefined && this.now() - job.provenStrikeAt <= PROVEN_STRIKE_WINDOW_MS))) {
-        if (link && source === 'unknown') job.unprovenSince ??= this.activeNow();
-        else if (source === 'away') job.unprovenSince = undefined; // the source is away: the long wait
+      // ('unknown' / 'exhausted' = files read before still read fine, nothing fresh
+      // proves the source. A file that already took a strike with real proof — the
+      // source worked while it did not — is struck again rather than waiting:
+      // - 'exhausted' (nothing left that COULD prove it — the drop's gone files,
+      //   retried after everything else): whenever that strike was, else a moved
+      //   folder's files would wait out their clocks one test read at a time;
+      // - 'unknown' (fresh files were tried and failed too — e.g. Drive for desktop
+      //   dropped out, serving only its cache): only within PROVEN_STRIKE_WINDOW_MS,
+      //   so a later dropout can't finish off a file that was unlucky once.
+      // A source that is really away gives 'away', which never strikes.)
+      const proven = job.provenStrikeAt !== undefined && (source === 'exhausted' || this.now() - job.provenStrikeAt <= PROVEN_STRIKE_WINDOW_MS);
+      if (!link || source === 'away' || (cannotTell && again !== 'ok' && !proven)) {
         this.enterReadWait(link ? 'source' : 'link');
+        this.noteCannotTell(job, link && cannotTell);
         if (this.sourceGaveUp() || this.unprovenTooLong(job)) {
           this.giveUpReads(job, e);
           return;
@@ -1906,7 +2053,11 @@ export class UploadEngine {
           if (verdict === 'unreadable') {
             // The link works — but does the SOURCE? (A NAS switched off, Drive
             // not reconnected yet: every file is unreadable, none is "gone".)
-            const source = await this.sourceState(probedAt, job);
+            // Already waiting on it, with files still to hash: their test reads
+            // find out when it is back (and end the wait) — a check per part
+            // would only read files for nothing (and mark them as failing).
+            const hashLane = this.jobs.some((j) => j.view.status === 'queued' || j.view.status === 'hashing');
+            const source = this.readWait && hashLane ? 'waiting' : await this.sourceState(probedAt, job);
             if (job.gen !== gen) return;
             if (source === 'up') {
               this.fail(job, 'This file changed or is no longer on this computer — drop it again to continue (finished parts are kept).');
@@ -1915,10 +2066,8 @@ export class UploadEngine {
             // Wait for the source: keep the mark, free the slot, come back later.
             // (With files still to hash, their test reads set the pace; with none,
             // part checks do — backing off like test reads, not every 5 s.)
-            const hashLane = this.jobs.some((j) => j.view.status === 'queued' || j.view.status === 'hashing');
-            if (source === 'unknown') job.unprovenSince ??= this.activeNow();
-            else job.unprovenSince = undefined; // the source is away: the long wait
             this.enterReadWait('source', !hashLane);
+            if (source !== 'waiting') this.noteCannotTell(job, source !== 'away');
             if (this.sourceGaveUp() || this.unprovenTooLong(job)) {
               this.fail(job, 'Could not read this file — was it moved, edited or renamed, or its drive disconnected? Drop it again to continue (finished parts are kept).');
               return;

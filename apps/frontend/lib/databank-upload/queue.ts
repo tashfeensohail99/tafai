@@ -491,7 +491,23 @@ export class UploadQueue {
   }
 
   async cancelAll(): Promise<void> {
-    await Promise.all([...this.batches.keys()].map((id) => this.cancelBatch(id)));
+    // Only drops that are actually running (preparing / uploading / waiting a
+    // turn / paused / awaiting a duplicate choice). A finished drop's failed
+    // rows and a folder whose prepare failed are LEFT ALONE — cancelling them
+    // would turn a file that was never uploaded into a silent "cancelled" (out
+    // of Retry-failed and the folder-check count), and a prepare-failed folder
+    // into an empty "0 saved". Those stay visible until the officer clears them.
+    const ids = [...this.batches.values()].filter((b) => !this.isDormant(b)).map((b) => b.id);
+    await Promise.all(ids.map((id) => this.cancelBatch(id)));
+  }
+
+  /** A drop with nothing running and nothing awaiting a choice: finished (maybe
+   *  with failures still to retry) or a folder whose prepare failed. */
+  private isDormant(b: Batch): boolean {
+    if (b.phase === 'preparing') return false;
+    if (b.phase === 'prepare-failed') return true;
+    if (this.hasWork(b)) return false;
+    return !b.engine?.snapshot().files.some((f) => f.status === 'needs-decision');
   }
 
   retry(rowId: string): void {

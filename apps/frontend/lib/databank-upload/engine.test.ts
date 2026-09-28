@@ -2770,3 +2770,152 @@ test('[review r12] a moved part of ONE client folder, spanning 10 subfolders: th
   assert.ok(gone.filter((f) => statuses(engine)[f.key] === 'failed').length >= gone.length - 1);
   assert.ok(gone.every((f) => ['failed', 'done'].includes(statuses(engine)[f.key])));
 });
+
+// ---- review round 13 -----------------------------------------------------------------------
+
+test('[review r13] a folder moved mid-drop, then a short NAS cut: once the NAS is back the rest of the drop carries on at full pace', async () => {
+  for (const seed of [21, 22]) {
+    const { env, engine } = setup();
+    env.random = seeded(seed);
+    let bGone = false;
+    let nas = true;
+    env.readable = async (src: UploadSource) => nas && !(bGone && startsWith(src, 'B'));
+    env.hash = async (source) => {
+      await env.sleep(3000);
+      if (!nas || (bGone && startsWith(source, 'B'))) throw new Error('NotReadableError');
+      return (source as FakeSource).sha;
+    };
+    const a = Array.from({ length: 50 }, (_, i) => item(`A${i}.pdf`, 12, { seed: `A${i}`, folderId: 'fa', relativePath: `Clients/A/A${i}.pdf` }));
+    const b = Array.from({ length: 100 }, (_, i) => item(`B${i}.pdf`, 12, { seed: `B${i}`, folderId: 'fb', relativePath: `Clients/B/B${i}.pdf` }));
+    const c = Array.from({ length: 400 }, (_, i) => item(`C${i}.pdf`, 12, { seed: `C${i}`, folderId: `fc${i % 3}`, relativePath: `Clients/C/s${i % 3}/C${i}.pdf` }));
+    engine.add([...a, ...b, ...c]);
+    await until(() => !['queued', 'hashing'].includes(statuses(engine)['A49.pdf']), 2_000_000);
+    bGone = true;
+    const read = () => c.filter((f) => !['queued', 'hashing'].includes(statuses(engine)[f.key])).length;
+    await until(() => b.every((f) => statuses(engine)[f.key] !== 'hashing') && read() >= 20, 3_000_000);
+    nas = false;
+    const s0 = env.clock;
+    await until(() => env.clock - s0 > 2 * 60_000, 3_000_000);
+    nas = true;
+    const back = env.clock;
+    const r0 = read();
+    await until(() => read() === c.length || env.clock - back > 30 * 60_000, 3_000_000);
+    // (unthrottled: 600 in 30 min at 3 s a file)
+    assert.ok(read() - r0 >= 300 || read() === c.length, `seed ${seed}: ${read() - r0} files read in the 30 min after the NAS came back`);
+    assert.equal(engine.snapshot().readsWaiting, false, `seed ${seed}: no "is the drive connected?" with the drive back`);
+    engine.pause();
+  }
+});
+
+test('[review r13] a moved folder bigger than the rest of the drop: the rest is read at full pace, not one test read a minute', async () => {
+  const { env, engine } = setup();
+  env.random = seeded(21);
+  let bGone = false;
+  env.readable = async (src: UploadSource) => !(bGone && startsWith(src, 'B'));
+  env.hash = async (source) => {
+    await env.sleep(6000);
+    if (bGone && startsWith(source, 'B')) throw new Error('NotFoundError');
+    return (source as FakeSource).sha;
+  };
+  const a = Array.from({ length: 50 }, (_, i) => item(`A${i}.pdf`, 12, { seed: `A${i}`, folderId: 'fa', relativePath: `Clients/A/A${i}.pdf` }));
+  const b = Array.from({ length: 200 }, (_, i) => item(`B${i}.pdf`, 12, { seed: `B${i}`, folderId: 'fb', relativePath: `Clients/B/B${i}.pdf` }));
+  const c = Array.from({ length: 120 }, (_, i) => item(`C${i}.pdf`, 12, { seed: `C${i}`, folderId: `fc${i % 3}`, relativePath: `Clients/C/s${i % 3}/C${i}.pdf` }));
+  engine.add([...a, ...b, ...c]);
+  await until(() => !['queued', 'hashing'].includes(statuses(engine)['A49.pdf']), 2_000_000);
+  bGone = true;
+  const t0 = env.clock;
+  let banner = false;
+  await until(() => {
+    banner ||= engine.snapshot().readsWaiting;
+    return c.every((f) => !['queued', 'hashing'].includes(statuses(engine)[f.key]));
+  }, 3_000_000);
+  // (120 files × 6 s = 12 min of reading; the moved files take 6 s each to fail —
+  // 20 min of the lane — while the rest is read alongside, as the proofs)
+  assert.ok(env.clock - t0 < 30 * 60_000, `the rest read ${Math.round((env.clock - t0) / 60_000)} min after the move`);
+  assert.equal(banner, false, 'never "is the drive connected?"');
+  await engine.whenIdle();
+  assert.ok(c.every((f) => statuses(engine)[f.key] === 'done'));
+  assert.ok(b.every((f) => statuses(engine)[f.key] === 'failed'));
+});
+
+test('[review r13] a few unreadable files, then an hour-long NAS cut: the healthy files are not held for hours behind them once it is back', async () => {
+  const { server, env, engine } = setup();
+  env.random = seeded(1);
+  const realPing = server.ping.bind(server);
+  server.ping = async (signal: AbortSignal) => {
+    await server.sleep(120, signal);
+    return realPing(signal);
+  };
+  let nas = true;
+  const bad = new Set<unknown>();
+  env.readable = async (src: UploadSource) => nas && !bad.has(src);
+  env.hash = async (source) => {
+    if (bad.has(source)) {
+      await env.sleep(3);
+      throw new Error('NotFoundError');
+    }
+    if (!nas) {
+      await env.sleep(2000);
+      throw new Error('NotReadableError');
+    }
+    await env.sleep(300);
+    if (!nas) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  const files = Array.from({ length: 1000 }, (_, i) => item(`f${i}.pdf`, 12, { seed: `F${i}`, folderId: `fo${Math.floor(i / 50)}`, relativePath: `Client${Math.floor(i / 50)}/f${i}.pdf` }));
+  const badFiles = Array.from({ length: 5 }, (_, k) => files[10 + k * 50]);
+  for (const f of badFiles) bad.add(f.source);
+  engine.add(files);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 2 * 60_000, 50_000_000);
+  nas = false;
+  const c0 = env.clock;
+  await until(() => env.clock - c0 > 60 * 60_000, 50_000_000);
+  nas = true;
+  const back = env.clock;
+  const healthy = files.filter((f) => !bad.has(f.source));
+  await until(() => healthy.every((f) => statuses(engine)[f.key] === 'done') || env.clock - back > 3 * 3600_000, 200_000_000);
+  assert.ok(env.clock - back < 20 * 60_000, `all healthy files done ${Math.round((env.clock - back) / 60_000)} min after the NAS came back`);
+  await engine.whenIdle();
+  assert.ok(badFiles.every((f) => statuses(engine)[f.key] === 'failed'));
+});
+
+test('[review r13] a big folder moved early in a long drop fails with "moved?" soon after the rest is done — not after 12 h of "is the drive connected?"', async () => {
+  const { env, engine } = setup();
+  env.random = seeded(5);
+  let moved = false;
+  env.readable = async (src: UploadSource) => !(moved && startsWith(src, 'M'));
+  env.hash = async (source) => {
+    if (moved && startsWith(source, 'M')) {
+      await env.sleep(3);
+      throw new Error('NotFoundError');
+    }
+    await env.sleep(2000);
+    return (source as FakeSource).sha;
+  };
+  const a = Array.from({ length: 100 }, (_, i) => item(`a${i}.pdf`, 12, { seed: `A${i}`, folderId: `fa${i % 4}`, relativePath: `Client/A/s${i % 4}/a${i}.pdf` }));
+  const m = Array.from({ length: 500 }, (_, i) => item(`m${i}.pdf`, 12, { seed: `M${i}`, folderId: 'fm', relativePath: `Client/Moved/m${i}.pdf` }));
+  const c = Array.from({ length: 400 }, (_, i) => item(`c${i}.pdf`, 12, { seed: `C${i}`, folderId: `fc${i % 4}`, relativePath: `Client/C/s${i % 4}/c${i}.pdf` }));
+  engine.add([...a, ...m, ...c]);
+  await until(() => !['queued', 'hashing'].includes(statuses(engine)['a99.pdf']), 2_000_000);
+  moved = true;
+  await until(() => c.every((f) => statuses(engine)[f.key] === 'done'), 50_000_000);
+  const restDone = env.clock;
+  let waitingMs = 0;
+  let last = env.clock;
+  await until(() => {
+    if (engine.snapshot().readsWaiting) waitingMs += env.clock - last;
+    last = env.clock;
+    return !engine.hasWork();
+  }, 200_000_000);
+  assert.ok(env.clock - restDone < 45 * 60_000, `the moved files ended ${Math.round((env.clock - restDone) / 60_000)} min after the rest was done`);
+  assert.ok(waitingMs < 35 * 60_000, `"is the drive connected?" for ${Math.round(waitingMs / 60_000)} min`);
+  const snap = engine.snapshot().files.filter((f) => f.key.startsWith('m'));
+  // (a handful were hashed before the folder moved — uploading those is correct)
+  const failed = snap.filter((f) => f.status === 'failed');
+  assert.ok(failed.length >= 490, `${failed.length} of the moved files failed`);
+  assert.ok(snap.every((f) => f.status === 'failed' || f.status === 'done'));
+  // Each fails on ITS own account (moved / not on this computer) — never the
+  // 12-h "for hours … Is the drive connected?" that blames the whole drive.
+  assert.ok(failed.every((f) => !/for hours/.test(f.error ?? '')), 'the moved files are not blamed on the drive after 12 h');
+});

@@ -36,11 +36,12 @@ const GROUP: Record<FileStatus, keyof UploadSummary> = {
   'needs-decision': 'needsDecision',
   fallback: 'waiting',
   failed: 'failed',
+  cancelling: 'cancelled',
   cancelled: 'cancelled',
 };
 
 /** Files whose bytes do not count toward "x of y GB". */
-const NOT_SENT: ReadonlySet<FileStatus> = new Set(['skipped', 'cancelled', 'needs-decision', 'fallback']);
+const NOT_SENT: ReadonlySet<FileStatus> = new Set(['skipped', 'cancelling', 'cancelled', 'needs-decision', 'fallback']);
 
 export function summarize(files: FileView[]): UploadSummary {
   const s: UploadSummary = {

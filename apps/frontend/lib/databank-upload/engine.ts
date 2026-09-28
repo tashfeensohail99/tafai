@@ -5,22 +5,29 @@
  *   hash (SHA-256, off-thread) → init (batched ≤50) → PUT parts straight to R2
  *   with presigned URLs → complete (batched ≤50)
  * surviving what an office link does to a 20 GB Drive export: dropped
- * connections, stalls, throttling, expired URLs, a tab that resumes days later.
+ * connections, load-shedding outages, stalls, throttling, expired URLs, a tab
+ * that resumes days later.
  *
  * Pure orchestration: the network (UploadTransport) and time/hashing
- * (EngineEnv) are injected, so tests drive it with a fake transport that
- * injects 403s, stalls, 5xx and drops and can assert every part lands exactly
- * once. No React, no DOM — the dock subscribes to snapshot().
+ * (EngineEnv) are injected, so tests drive it with a fake server + R2 that
+ * injects 403s, stalls, 5xx, outages and silence, and assert every part lands
+ * exactly once. No React, no DOM — the dock subscribes to snapshot().
  *
  * Rules it keeps:
  *  - A part is confirmed only by a 2xx PUT; the SERVER re-verifies every part
- *    (ListParts) before it records the file, so a lie here can't corrupt data.
+ *    (ListParts) before it records the file, so a mistake here can't corrupt data.
+ *  - OUTAGES DON'T FAIL FILES. A failure only uses up a retry attempt when other
+ *    requests on the same channel (storage / our API) are demonstrably getting
+ *    through; while nothing gets through, files wait (backoff capped at 30 s)
+ *    for up to 12 h. `setOnline(false)` (the browser's offline event) halts all
+ *    work at once. Only errors that can never succeed stop a file straight away.
  *  - Global part slots (adaptive 2–6, AIMD: halve on trouble, +1 after a run of
- *    successes), filled from the OLDEST active file first so files finish in
- *    order; small files run several at a time.
- *  - Nothing is ever re-sent that storage already has (init's doneParts).
- *  - Every retry backs off with jitter; a stalled PUT (no progress for 60 s) is
- *    aborted and retried; an expired URL is re-signed.
+ *    successes), filled from the OLDEST active file first.
+ *  - Nothing storage already has is re-sent (init's doneParts); an identical
+ *    file twice in one drop is uploaded once.
+ *  - Every request has a timeout, and stops when the engine is halted.
+ *  - Cancel never lies: a file the server is already recording ends "done"
+ *    (with a note), not "cancelled".
  */
 
 import type {
@@ -58,7 +65,8 @@ export interface UploadItem {
   lastModified?: number;
 }
 
-/** A failed request. `status` is the HTTP status, 0 when there was no response. */
+/** A failed request. `status` is the HTTP status, 0 when there was no response
+ *  (offline, reset, timeout, abort, unreadable reply). */
 export class TransportError extends Error {
   readonly status: number;
   constructor(message: string, status: number) {
@@ -68,11 +76,13 @@ export class TransportError extends Error {
   }
 }
 
+/** Every call takes an AbortSignal (timeouts, halt, cancel) and must reject
+ *  with a TransportError once it fires. */
 export interface UploadTransport {
-  init(files: InitUploadFile[]): Promise<InitResponse>;
-  signParts(uploadId: string, partNumbers: number[]): Promise<SignPartsResponse>;
-  complete(uploadIds: string[]): Promise<CompleteResponse>;
-  abort(uploadId: string): Promise<void>;
+  init(files: InitUploadFile[], signal: AbortSignal): Promise<InitResponse>;
+  signParts(uploadId: string, partNumbers: number[], signal: AbortSignal): Promise<SignPartsResponse>;
+  complete(uploadIds: string[], signal: AbortSignal): Promise<CompleteResponse>;
+  abort(uploadId: string, signal: AbortSignal): Promise<void>;
   /** PUT one part to its presigned URL; reject with TransportError on non-2xx. */
   put(part: PartUrl, body: unknown, onProgress: (loaded: number) => void, signal: AbortSignal): Promise<void>;
 }
@@ -97,6 +107,8 @@ export interface EngineOptions {
   maxActiveFiles?: number;
   /** Initialised-but-waiting files to keep ahead of the uploader (default 8). */
   readyAhead?: number;
+  /** Give up on a request that has failed this long with nothing getting through (default 12 h). */
+  giveUpMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,8 +122,9 @@ export type FileStatus =
   | 'ready' //          session open, waiting for a part slot
   | 'uploading'
   | 'completing' //     all parts sent, server is recording it
+  | 'cancelling' //     asking the server to discard it
   | 'done' //           recorded in the databank
-  | 'skipped' //        already in the databank (identical file, same place)
+  | 'skipped' //        already there (or the same file twice in this drop)
   | 'needs-decision' // a duplicate elsewhere — skip or upload anyway?
   | 'handed-off' //     uploaded; the server is still assembling it and will finish on its own
   | 'fallback' //       dev storage: upload this one the legacy way
@@ -124,7 +137,7 @@ export interface FileView {
   relativePath?: string;
   size: number;
   status: FileStatus;
-  /** Bytes storage has confirmed (whole parts). */
+  /** Bytes storage has confirmed (whole parts). Kept on failure: Retry resumes them. */
   bytesDone: number;
   /** Bytes of parts currently in flight (may be discarded on failure). */
   bytesInFlight: number;
@@ -134,10 +147,12 @@ export interface FileView {
   relocated?: boolean;
   /** For skipped / needs-decision: the file the databank already holds. */
   existing?: ExistingFile;
-  duplicateKind?: 'already-uploaded' | 'duplicate' | 'possible-duplicate';
+  duplicateKind?: 'already-uploaded' | 'duplicate' | 'possible-duplicate' | 'same-drop';
   /** Failed: why, and whether "Retry" can help. */
   error?: string;
   retryable?: boolean;
+  /** Extra context for the row (e.g. "already saved — could not be cancelled"). */
+  note?: string;
   /** Done: the recorded file row. */
   file?: unknown;
 }
@@ -145,6 +160,10 @@ export interface FileView {
 export interface EngineSnapshot {
   files: FileView[];
   paused: boolean;
+  /** The browser reported the connection offline (setOnline(false)). */
+  offline: boolean;
+  /** Several requests in a row got no answer and nothing got through: "Waiting for the network…". */
+  linkDown: boolean;
   slots: number;
 }
 
@@ -155,13 +174,15 @@ export interface EngineSnapshot {
 /** A PUT with no progress for this long is aborted and retried. */
 export const STALL_MS = 60_000;
 const STALL_CHECK_MS = 5_000;
-/** Attempts per part (transient failures) before the file stops as failed. */
+/** Attempts per part — counted only while other PUTs get through. */
 export const MAX_PART_ATTEMPTS = 8;
+/** Attempts per API request — counted only while other API calls get through. */
+const MAX_API_ATTEMPTS = 6;
+/** Default give-up for a request failing with nothing getting through at all. */
+export const GIVE_UP_MS = 12 * 3600_000;
 /** Re-signs of one part in a row before a 403 is treated as final. */
 const MAX_RESIGNS = 3;
-/** Attempts of one init / complete batch on transient errors. */
-const MAX_API_ATTEMPTS = 6;
-/** Server-side "retry" / "in-progress" answers to follow per file. */
+/** Server "try again" / "in progress" / no-answer follow-ups per file. */
 const MAX_FOLLOW_UPS = 40;
 /** Times one file may be re-initialised (session lost / expired). */
 const MAX_REINITS = 2;
@@ -169,13 +190,27 @@ const MAX_REINITS = 2;
 const MAX_COMPLETE_CYCLES = 3;
 /** Successes in a row before one more part slot is tried. */
 const GROW_AFTER = 8;
+/** Failures in a row, with nothing getting through, before the link counts as down. */
+const LINK_DOWN_AFTER = 3;
+/** Request timeouts. A timed-out complete keeps running on the server (a later
+ *  complete follows it), so none of these can lose work. */
+export const INIT_TIMEOUT_MS = 60_000;
+const SIGN_TIMEOUT_MS = 60_000;
+const COMPLETE_TIMEOUT_MS = 120_000;
+const ABORT_TIMEOUT_MS = 30_000;
 /** A URL is refreshed when it expires within this, and is not brand new
  *  (the second clause stops a skewed client clock re-signing forever). */
 const URL_REFRESH_MS = 120_000;
 const URL_MIN_AGE_MS = 60_000;
+/** Server field limits (databank-upload.dto.ts) — checked here so one bad file
+ *  can't 400 a whole batch. */
+const MAX_FILE_NAME = 255;
+const MAX_MIME = 255;
+const MAX_RELATIVE_PATH = 1024;
+const MAX_LAST_MODIFIED = 8.64e15;
 
 // ---------------------------------------------------------------------------
-// Internal job state
+// Internal state
 // ---------------------------------------------------------------------------
 
 interface Session {
@@ -192,14 +227,29 @@ interface InFlight {
   reason?: 'stall' | 'stop';
 }
 
+/** Retry accounting for one request that tolerates outages. */
+interface Budget {
+  /** Failures that happened while the channel was demonstrably up. */
+  counted: number;
+  /** All failures (drives the backoff delay). */
+  tries: number;
+  firstFailureAt: number | null;
+}
+
+const newBudget = (): Budget => ({ counted: 0, tries: 0, firstFailureAt: null });
+
+type Channel = 'storage' | 'api';
+
 interface Job {
   item: UploadItem;
   view: FileView;
   sha256?: string;
   allowDuplicate: boolean;
-  /** Bumped whenever the job is reset (cancel, retry, re-init): stale async
-   *  callbacks compare their captured generation and back off. */
+  /** Bumped whenever the job is reset (cancel, retry, re-init, detach): stale
+   *  async callbacks compare their captured generation and back off. */
   gen: number;
+  /** Aborted (and replaced) with every generation: ends that generation's sleeps and calls. */
+  wake: AbortController;
   session?: Session;
   /** Parts waiting for a slot. */
   pending: number[];
@@ -210,7 +260,8 @@ interface Job {
   done: Set<number>;
   urls: Map<number, { part: PartUrl; fetchedAt: number; expiresAt: number }>;
   signing?: Promise<void>;
-  attempts: Map<number, number>;
+  partBudgets: Map<number, Budget>;
+  signBudget: Budget;
   resigns: Map<number, number>;
   followUps: number;
   reinits: number;
@@ -219,12 +270,29 @@ interface Job {
   wantsComplete: boolean;
   /** Backing off after a server "try again" — init/complete leave it alone. */
   parked: boolean;
+  /** Init this file on its own (its batch was rejected as a whole). */
+  soloInit: boolean;
+  /** The officer cancelled it but the server was already recording it. */
+  cancelRequested: boolean;
   hashCtrl?: AbortController;
 }
 
 const TERMINAL: ReadonlySet<FileStatus> = new Set([
   'done', 'skipped', 'handed-off', 'fallback', 'failed', 'cancelled',
 ]);
+
+/** Call `onAbort` when any of `signals` aborts; returns an unlink function. */
+function link(signals: Array<AbortSignal | undefined>, onAbort: () => void): () => void {
+  const live = signals.filter((s): s is AbortSignal => !!s);
+  if (live.some((s) => s.aborted)) {
+    onAbort();
+    return () => undefined;
+  }
+  for (const s of live) s.addEventListener('abort', onAbort, { once: true });
+  return () => {
+    for (const s of live) s.removeEventListener('abort', onAbort);
+  };
+}
 
 export class UploadEngine {
   private readonly transport: UploadTransport;
@@ -234,20 +302,26 @@ export class UploadEngine {
   private readonly hashConcurrency: number;
   private readonly maxActiveFiles: number;
   private readonly readyAhead: number;
+  private readonly giveUpMs: number;
 
   private readonly jobs: Job[] = [];
   private readonly byKey = new Map<string, Job>();
   private slots: number;
   private successStreak = 0;
   private paused = false;
-  /** Work in flight: hashes, API calls, part slots, back-off sleeps. */
+  private offline = false;
+  /** Aborted whenever the engine halts (pause / offline): ends sleeps and calls. */
+  private haltCtrl = new AbortController();
+  /** Per channel: when a request last got through, and failures in a row since. */
+  private readonly lastSuccessAt: Record<Channel, number> = { storage: -Infinity, api: -Infinity };
+  private readonly failuresInARow: Record<Channel, number> = { storage: 0, api: 0 };
+  /** Work in flight: hashes, API calls, part slots, back-off sleeps, cancels. */
   private hashing = 0;
   private initInFlight = false;
   private completeInFlight = false;
   private busySlots = 0;
   private sleeping = 0;
-  /** Aborted on pause, so back-off sleeps end at once. */
-  private pauseCtrl = new AbortController();
+  private cancelling = 0;
   private scheduled = false;
   private readonly listeners = new Set<() => void>();
   private idleWaiters: Array<() => void> = [];
@@ -261,14 +335,20 @@ export class UploadEngine {
     this.hashConcurrency = opts.hashConcurrency ?? 1;
     this.maxActiveFiles = opts.maxActiveFiles ?? 6;
     this.readyAhead = opts.readyAhead ?? 8;
+    this.giveUpMs = opts.giveUpMs ?? GIVE_UP_MS;
   }
 
   // ---- public API -----------------------------------------------------------
 
-  /** Queue files. A key already queued is ignored (re-dropping is harmless). */
+  /** Queue files. Re-dropping a queued file is harmless; re-dropping a failed or
+   *  cancelled one retries it. */
   add(items: UploadItem[]): void {
     for (const item of items) {
-      if (this.byKey.has(item.key)) continue;
+      const known = this.byKey.get(item.key);
+      if (known) {
+        if (known.view.status === 'failed' || known.view.status === 'cancelled') this.retry(item.key);
+        continue;
+      }
       const job: Job = {
         item,
         view: {
@@ -283,18 +363,22 @@ export class UploadEngine {
         },
         allowDuplicate: false,
         gen: 0,
+        wake: new AbortController(),
         pending: [],
         inflight: new Map(),
         cooling: new Set(),
         done: new Set(),
         urls: new Map(),
-        attempts: new Map(),
+        partBudgets: new Map(),
+        signBudget: newBudget(),
         resigns: new Map(),
         followUps: 0,
         reinits: 0,
         completeCycles: 0,
         wantsComplete: false,
         parked: false,
+        soloInit: false,
+        cancelRequested: false,
       };
       this.jobs.push(job);
       this.byKey.set(item.key, job);
@@ -302,42 +386,86 @@ export class UploadEngine {
     this.schedule();
   }
 
-  /** Stop sending: in-flight parts are aborted (and re-sent on resume). */
+  /** Stop sending: in-flight requests are aborted (and re-sent on resume). */
   pause(): void {
     if (this.paused) return;
     this.paused = true;
-    this.pauseCtrl.abort();
-    for (const job of this.jobs) for (const f of job.inflight.values()) this.stopPart(f);
-    this.notify();
-    this.schedule();
+    this.halt();
   }
 
   resume(): void {
     if (!this.paused) return;
     this.paused = false;
-    this.pauseCtrl = new AbortController();
-    this.notify();
-    this.schedule();
+    this.unhalt();
   }
 
-  /** Cancel one file: stop it and free its server session + stored parts.
-   *  A FAILED file can be cancelled too (discarding the parts it kept for a retry). */
+  /** Feed the browser's online/offline events: offline halts everything at once
+   *  (no retries burn), online picks up where it left off. */
+  setOnline(online: boolean): void {
+    if (online === !this.offline) return;
+    this.offline = !online;
+    if (this.offline) {
+      this.halt();
+    } else {
+      this.failuresInARow.storage = 0;
+      this.failuresInARow.api = 0;
+      this.unhalt();
+    }
+  }
+
+  /**
+   * Cancel one file (also a FAILED one, discarding the parts it kept for a
+   * retry): stop sending, then ask the server to discard the session. If the
+   * server is already recording the file (409), the row follows it to "done"
+   * with a note instead of pretending it was cancelled.
+   */
   async cancel(key: string): Promise<void> {
     const job = this.byKey.get(key);
-    if (!job || (TERMINAL.has(job.view.status) && job.view.status !== 'failed')) return;
+    if (!job) return;
+    const s = job.view.status;
+    if (s === 'cancelling' || (TERMINAL.has(s) && s !== 'failed')) return;
     const sessionId = job.session?.id ?? job.view.uploadId;
-    this.reset(job);
-    this.set(job, { status: 'cancelled' });
+    if (!sessionId) {
+      this.reset(job);
+      this.set(job, { status: 'cancelled' });
+      this.schedule();
+      return;
+    }
+    this.detachParts(job);
+    job.parked = false;
+    job.wantsComplete = false;
+    const gen = job.gen;
+    this.set(job, { status: 'cancelling' });
+    this.cancelling += 1;
     this.schedule();
-    if (sessionId) await this.transport.abort(sessionId).catch(() => undefined);
+    try {
+      const outcome = await this.abortSession(sessionId);
+      if (job.gen !== gen) return;
+      if (outcome === 'finishing') {
+        job.cancelRequested = true;
+        this.set(job, {
+          note: 'It was already being saved, so it could not be cancelled — delete it from the folder if unwanted.',
+        });
+        this.toComplete(job, sessionId);
+        return;
+      }
+      this.reset(job);
+      this.set(job, {
+        status: 'cancelled',
+        note: outcome === 'unknown' ? 'Cancelled here; the server will discard the upload.' : undefined,
+      });
+    } finally {
+      this.cancelling -= 1;
+      this.schedule();
+    }
   }
 
   async cancelAll(): Promise<void> {
     await Promise.all(this.jobs.map((j) => this.cancel(j.item.key)));
   }
 
-  /** Try a failed (or cancelled) file again from the start: a fresh init
-   *  resumes whatever storage still holds for it. */
+  /** Try a failed (or cancelled) file again: a fresh init resumes whatever
+   *  storage still holds for it. */
   retry(key: string): void {
     const job = this.byKey.get(key);
     if (!job || (job.view.status !== 'failed' && job.view.status !== 'cancelled')) return;
@@ -345,7 +473,14 @@ export class UploadEngine {
     job.reinits = 0;
     job.followUps = 0;
     job.completeCycles = 0;
-    this.set(job, { status: job.sha256 ? 'hashed' : 'queued', error: undefined, retryable: undefined });
+    job.soloInit = false;
+    job.cancelRequested = false;
+    this.set(job, {
+      status: job.sha256 ? 'hashed' : 'queued',
+      error: undefined,
+      retryable: undefined,
+      note: undefined,
+    });
     this.schedule();
   }
 
@@ -370,6 +505,9 @@ export class UploadEngine {
     return {
       files: this.jobs.map((j) => ({ ...j.view })),
       paused: this.paused,
+      offline: this.offline,
+      linkDown:
+        this.failuresInARow.storage >= LINK_DOWN_AFTER || this.failuresInARow.api >= LINK_DOWN_AFTER,
       slots: this.slots,
     };
   }
@@ -380,13 +518,31 @@ export class UploadEngine {
   }
 
   /** Resolves once nothing is running and nothing more can start on its own
-   *  (everything terminal, waiting on a decision, or paused). */
+   *  (everything terminal, waiting on a decision, or halted). */
   whenIdle(): Promise<void> {
     if (this.isIdle()) return Promise.resolve();
     return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
 
   // ---- scheduling -----------------------------------------------------------
+
+  private get halted(): boolean {
+    return this.paused || this.offline;
+  }
+
+  private halt(): void {
+    this.haltCtrl.abort();
+    for (const job of this.jobs) for (const f of job.inflight.values()) this.stopPart(f);
+    this.notify();
+    this.schedule();
+  }
+
+  private unhalt(): void {
+    if (this.halted) return;
+    this.haltCtrl = new AbortController();
+    this.notify();
+    this.schedule();
+  }
 
   private schedule(): void {
     if (this.scheduled) return;
@@ -398,12 +554,12 @@ export class UploadEngine {
   }
 
   private pump(): void {
-    // Hash in order.
+    // Hash in order (local CPU — carries on while halted).
     for (const job of this.jobs) {
       if (this.hashing >= this.hashConcurrency) break;
       if (job.view.status === 'queued') void this.hashJob(job);
     }
-    if (!this.paused) {
+    if (!this.halted) {
       if (!this.initInFlight) this.maybeInit();
       if (!this.completeInFlight) this.maybeComplete();
       this.fillSlots();
@@ -418,11 +574,11 @@ export class UploadEngine {
 
   private isIdle(): boolean {
     if (this.hashing || this.initInFlight || this.completeInFlight || this.busySlots || this.sleeping) return false;
-    if (this.scheduled) return false;
+    if (this.cancelling || this.scheduled) return false;
     for (const job of this.jobs) {
       const s = job.view.status;
-      if (s === 'queued' || s === 'hashing') return false;
-      if (this.paused) continue;
+      if (s === 'queued' || s === 'hashing' || s === 'cancelling') return false;
+      if (this.halted) continue;
       if (s === 'hashed' || s === 'ready' || s === 'uploading' || s === 'completing') return false;
     }
     return true;
@@ -436,9 +592,16 @@ export class UploadEngine {
     Object.assign(job.view, patch);
   }
 
-  /** Forget everything in flight for a job (cancel / retry / re-init). */
-  private reset(job: Job): void {
+  /** Start a new generation: stale callbacks back off, stale sleeps/calls end. */
+  private nextGen(job: Job): void {
     job.gen += 1;
+    job.wake.abort();
+    job.wake = new AbortController();
+  }
+
+  /** Forget everything in flight for a job (cancel / retry / re-init / fail). */
+  private reset(job: Job): void {
+    this.nextGen(job);
     job.hashCtrl?.abort();
     for (const f of job.inflight.values()) this.stopPart(f);
     job.inflight.clear();
@@ -446,7 +609,8 @@ export class UploadEngine {
     job.cooling.clear();
     job.done.clear();
     job.urls.clear();
-    job.attempts.clear();
+    job.partBudgets.clear();
+    job.signBudget = newBudget();
     job.resigns.clear();
     job.signing = undefined;
     job.session = undefined;
@@ -456,9 +620,9 @@ export class UploadEngine {
   }
 
   /** Stop sending a job's parts but keep its session (the server has taken
-   *  over, e.g. it is completing the file): stale part callbacks back off. */
+   *  over — it is completing the file, or being asked to discard it). */
   private detachParts(job: Job): void {
-    job.gen += 1;
+    this.nextGen(job);
     for (const f of job.inflight.values()) this.stopPart(f);
     job.inflight.clear();
     job.pending = [];
@@ -473,20 +637,78 @@ export class UploadEngine {
     f.ctrl.abort();
   }
 
-  private fail(job: Job, error: string, retryable = true): void {
-    const sessionId = job.session?.id;
+  /** Stop a file. Its session and confirmed bytes are kept (unless the session
+   *  itself is gone), so Retry resumes and Cancel can still discard it. */
+  private fail(job: Job, error: string, retryable = true, sessionLost = false): void {
+    const sessionId = sessionLost ? undefined : (job.session?.id ?? job.view.uploadId);
+    const kept = sessionLost ? 0 : job.view.bytesDone;
     this.reset(job);
-    this.set(job, { status: 'failed', error, retryable, uploadId: sessionId });
+    this.set(job, { status: 'failed', error, retryable, uploadId: sessionId, bytesDone: kept });
   }
 
-  /** Sleep that counts as running work (keeps whenIdle honest) and ends early on pause. */
-  private async backoff(ms: number): Promise<void> {
+  /** Sleep that counts as running work (keeps whenIdle honest) and ends early
+   *  on halt or when the job's generation moves on. */
+  private async backoff(ms: number, job?: Job): Promise<void> {
     this.sleeping += 1;
+    const ctrl = new AbortController();
+    const unlink = link([this.haltCtrl.signal, job?.wake.signal], () => ctrl.abort());
     try {
-      await this.env.sleep(ms, this.pauseCtrl.signal);
+      await this.env.sleep(ms, ctrl.signal);
     } finally {
+      unlink();
       this.sleeping -= 1;
     }
+  }
+
+  /** One API call with a timeout; also aborted on halt (unless `haltable` is
+   *  false) and when `job`'s generation moves on. Aborts reject as TransportError(0). */
+  private async api<T>(
+    call: (signal: AbortSignal) => Promise<T>,
+    timeoutMs: number,
+    opts: { job?: Job; haltable?: boolean } = {},
+  ): Promise<T> {
+    const ctrl = new AbortController();
+    const unlink = link(
+      [opts.haltable === false ? undefined : this.haltCtrl.signal, opts.job?.wake.signal],
+      () => ctrl.abort(),
+    );
+    const timer = new AbortController();
+    void this.env.sleep(timeoutMs, timer.signal).then(() => {
+      if (!timer.signal.aborted) ctrl.abort();
+    });
+    try {
+      if (ctrl.signal.aborted) throw new TransportError('Stopped', 0);
+      const res = await call(ctrl.signal);
+      this.succeeded('api');
+      return res;
+    } catch (e) {
+      if (ctrl.signal.aborted && !(e instanceof TransportError)) throw new TransportError('Stopped', 0);
+      throw e;
+    } finally {
+      timer.abort();
+      unlink();
+    }
+  }
+
+  private succeeded(channel: Channel): void {
+    this.lastSuccessAt[channel] = this.env.now();
+    this.failuresInARow[channel] = 0;
+  }
+
+  /**
+   * Account one transient failure of a request started at `startedAt`. It only
+   * COUNTS toward `max` if another request on the channel got through since —
+   * i.e. the link is up and this request itself keeps failing. During an outage
+   * nothing counts, and the request retries until `giveUpMs` has passed.
+   */
+  private charge(budget: Budget, channel: Channel, startedAt: number, max: number): 'retry' | 'give-up' {
+    const now = this.env.now();
+    budget.tries += 1;
+    budget.firstFailureAt ??= now;
+    this.failuresInARow[channel] += 1;
+    if (this.lastSuccessAt[channel] > startedAt) budget.counted += 1;
+    if (budget.counted >= max || now - budget.firstFailureAt >= this.giveUpMs) return 'give-up';
+    return 'retry';
   }
 
   // ---- hash -----------------------------------------------------------------
@@ -508,7 +730,26 @@ export class UploadEngine {
       );
       if (job.gen !== gen) return;
       job.sha256 = hex;
-      this.set(job, { status: 'hashed', hashedBytes: job.item.source.size });
+      this.set(job, { hashedBytes: job.item.source.size });
+      const twin = this.jobs.find(
+        (j) =>
+          j !== job &&
+          j.sha256 === hex &&
+          j.item.source.size === job.item.source.size &&
+          j.item.fileName === job.item.fileName &&
+          j.item.folderId === job.item.folderId &&
+          !['failed', 'cancelled', 'cancelling', 'skipped'].includes(j.view.status),
+      );
+      if (twin) {
+        // The same file twice in one drop: upload it once (they would share one session).
+        this.set(job, {
+          status: 'skipped',
+          duplicateKind: 'same-drop',
+          note: `Same file as ${twin.item.relativePath ?? twin.item.fileName}.`,
+        });
+      } else {
+        this.set(job, { status: 'hashed' });
+      }
     } catch (e) {
       if (job.gen !== gen) return;
       this.fail(job, `Could not read this file (${errorMessage(e)}). Is it still on this computer?`, true);
@@ -525,9 +766,12 @@ export class UploadEngine {
     const waiting = this.jobs.filter((j) => j.view.status === 'ready').length;
     const room = this.readyAhead - waiting;
     if (room <= 0) return;
-    const batch = this.jobs
-      .filter((j) => j.view.status === 'hashed' && !j.parked)
-      .slice(0, Math.min(room, MAX_INIT_FILES));
+    const candidates = this.jobs.filter((j) => j.view.status === 'hashed' && !j.parked);
+    const invalid = candidates.filter((j) => !j.item.fileName || j.item.fileName.length > MAX_FILE_NAME);
+    for (const j of invalid) this.fail(j, `The file name must be 1–${MAX_FILE_NAME} characters.`, false);
+    const valid = candidates.filter((j) => !invalid.includes(j));
+    const solo = valid.find((j) => j.soloInit);
+    const batch = solo ? [solo] : valid.slice(0, Math.min(room, MAX_INIT_FILES));
     if (batch.length) void this.runInit(batch);
   }
 
@@ -535,22 +779,38 @@ export class UploadEngine {
     this.initInFlight = true;
     const gens = batch.map((j) => j.gen);
     const live = () => batch.filter((j, i) => j.gen === gens[i] && j.view.status === 'hashed');
+    const budget = newBudget();
     try {
-      for (let attempt = 1; ; attempt++) {
+      for (;;) {
         const jobs = live();
         if (!jobs.length) return;
         const sentGens = jobs.map((j) => j.gen);
+        const startedAt = this.env.now();
         let res: InitResponse;
         try {
-          res = await this.transport.init(jobs.map((j) => this.initFile(j)));
+          res = await this.api((signal) => this.transport.init(jobs.map((j) => this.initFile(j)), signal), INIT_TIMEOUT_MS);
+          if (!res || (res.mode !== 'proxy' && !Array.isArray((res as { results?: unknown }).results))) {
+            throw new TransportError('The server sent an unreadable reply.', 0);
+          }
         } catch (e) {
           const status = statusOf(e);
-          if (classifyApi(status) === 'fatal' || attempt >= MAX_API_ATTEMPTS) {
-            for (const j of live()) this.fail(j, errorMessage(e), classifyApi(status) === 'transient');
+          if (classifyApi(status) === 'fatal') {
+            if (status === 400 && jobs.length > 1) {
+              // One bad file rejects the whole batch: init them one by one so
+              // only that file fails.
+              for (const j of jobs) j.soloInit = true;
+              return;
+            }
+            for (const j of live()) this.fail(j, errorMessage(e), status === 401);
             return;
           }
-          await this.backoff(backoffMs(attempt, this.env.random));
-          if (this.paused) return; // they stay 'hashed'; resume re-inits them
+          if (this.halted) return; // they stay 'hashed'; resume re-inits them
+          if (this.charge(budget, 'api', startedAt, MAX_API_ATTEMPTS) === 'give-up') {
+            for (const j of live()) this.fail(j, errorMessage(e), true);
+            return;
+          }
+          await this.backoff(backoffMs(budget.tries, this.env.random));
+          if (this.halted) return;
           continue;
         }
         if (res.mode === 'proxy') {
@@ -560,20 +820,23 @@ export class UploadEngine {
         const current = live();
         const answered = new Set<Job>();
         for (const r of res.results) {
-          const job = jobs[r.index];
+          const job = typeof r?.index === 'number' ? jobs[r.index] : undefined;
           if (!job) continue;
           if (current.includes(job)) {
             if (answered.has(job)) continue; // one answer per file
             answered.add(job);
+            job.soloInit = false;
             this.applyInit(job, r);
           } else if (r.status === 'upload' && job.view.status === 'cancelled' && job.gen !== sentGens[r.index]) {
             // Cancelled while its init was in flight: free the session it opened.
-            void this.transport.abort(r.uploadId).catch(() => undefined);
+            void this.abortSession(r.uploadId);
           }
         }
-        // A file the server gave no answer for: ask again later (bounded) rather
-        // than re-sending it on every pump.
-        for (const j of current) if (!answered.has(j)) void this.followUp(j, () => undefined, 'No answer from the server.');
+        // A file the server gave no answer for: ask again later (bounded)
+        // rather than re-sending it on every pump.
+        for (const j of current) {
+          if (!answered.has(j)) void this.followUp(j, () => undefined, 'No answer from the server.');
+        }
         return;
       }
     } finally {
@@ -584,12 +847,14 @@ export class UploadEngine {
 
   private initFile(job: Job): InitUploadFile {
     const { item } = job;
+    const lm = item.lastModified;
+    const mime = item.mimeType && item.mimeType.length <= MAX_MIME ? item.mimeType : 'application/octet-stream';
     return {
       fileName: item.fileName,
-      mimeType: item.mimeType || 'application/octet-stream',
+      mimeType: mime,
       sizeBytes: item.source.size,
-      ...(item.lastModified !== undefined ? { lastModified: item.lastModified } : {}),
-      ...(item.relativePath ? { relativePath: item.relativePath } : {}),
+      ...(lm !== undefined && Number.isSafeInteger(lm) && lm >= 0 && lm <= MAX_LAST_MODIFIED ? { lastModified: lm } : {}),
+      ...(item.relativePath && item.relativePath.length <= MAX_RELATIVE_PATH ? { relativePath: item.relativePath } : {}),
       sha256: job.sha256!,
       ...(job.allowDuplicate ? { allowDuplicate: true } : {}),
       folderId: item.folderId,
@@ -606,7 +871,7 @@ export class UploadEngine {
         const now = this.env.now();
         const expiresAt = Date.parse(r.urlsExpireAt);
         job.urls.clear();
-        for (const part of r.urls) job.urls.set(part.partNumber, { part, fetchedAt: now, expiresAt });
+        for (const part of r.urls ?? []) job.urls.set(part.partNumber, { part, fetchedAt: now, expiresAt });
         this.set(job, {
           status: 'ready',
           uploadId: r.uploadId,
@@ -626,43 +891,47 @@ export class UploadEngine {
         return;
       case 'in-progress':
         // Another tab (or the server's sweeper) is finishing this very file.
-        this.set(job, { uploadId: r.uploadId });
         job.session = undefined;
         this.toComplete(job, r.uploadId);
-        return;
-      case 'retry':
-        void this.followUp(job, () => undefined, r.reason); // stays 'hashed'; re-init after the wait
         return;
       case 'rejected':
         this.fail(job, r.reason, false);
         return;
+      case 'retry':
+      default:
+        // stays 'hashed'; re-init after the wait
+        void this.followUp(job, () => undefined, (r as { reason?: string }).reason ?? 'The server could not start this upload.');
+        return;
     }
   }
 
-  /** A server "try again" for one file: back off, then `again()` — bounded. */
+  /** A server "try again" (or no answer) for one file: back off, then `again()`
+   *  — bounded by MAX_FOLLOW_UPS. */
   private async followUp(job: Job, again: () => void, reason: string): Promise<void> {
     const gen = job.gen;
     job.followUps += 1;
-    if (job.followUps > MAX_FOLLOW_UPS) {
-      this.fail(job, reason, true);
-      this.schedule();
-      return;
+    try {
+      if (job.followUps > MAX_FOLLOW_UPS) {
+        this.fail(job, reason, true);
+        return;
+      }
+      // Parked: init/complete leave it alone while we wait.
+      job.parked = true;
+      job.wantsComplete = false;
+      await this.backoff(backoffMs(Math.min(job.followUps, 5), this.env.random), job);
+      if (job.gen !== gen) return;
+      job.parked = false;
+      again();
+    } finally {
+      this.schedule(); // on EVERY exit — a reset during the wait must still wake the pump
     }
-    // Parked: init/complete leave it alone while we wait.
-    job.parked = true;
-    job.wantsComplete = false;
-    await this.backoff(backoffMs(Math.min(job.followUps, 5), this.env.random));
-    if (job.gen !== gen) return;
-    job.parked = false;
-    again();
-    this.schedule();
   }
 
   /** Start over with a new session (the old one expired or vanished). */
   private reinit(job: Job, why: string): void {
     job.reinits += 1;
     if (job.reinits > MAX_REINITS) {
-      this.fail(job, why, true);
+      this.fail(job, why, true, true);
       return;
     }
     this.reset(job);
@@ -701,22 +970,24 @@ export class UploadEngine {
     this.busySlots += 1;
     const f: InFlight = { ctrl: new AbortController(), loaded: 0, lastProgressAt: this.env.now() };
     job.inflight.set(n, f);
+    let startedAt = this.env.now();
     try {
       const url = await this.urlFor(job, n);
-      if (job.gen !== gen) return;
-      if (!url) return; // signing failed and already handled the job
-      if (f.reason) throw new TransportError('stopped', 0); // paused while signing
+      if (job.gen !== gen || !url) return; // signing failed and already handled the job
+      if (f.reason) throw new TransportError('stopped', 0); // halted while signing
       const [start, end] = partRange(n, session.partSize, job.item.source.size);
+      startedAt = this.env.now();
       await this.putWatched(f, url, job.item.source.slice(start, end), () => {
         if (job.gen === gen) this.refreshInFlight(job);
       });
       if (job.gen !== gen) return;
+      this.succeeded('storage');
       job.inflight.delete(n);
       if (!job.done.has(n)) {
         job.done.add(n);
         this.set(job, { bytesDone: job.view.bytesDone + (end - start) });
       }
-      job.attempts.delete(n);
+      job.partBudgets.delete(n);
       job.resigns.delete(n);
       this.refreshInFlight(job);
       this.onSuccess();
@@ -727,16 +998,23 @@ export class UploadEngine {
       if (job.gen !== gen) return;
       job.inflight.delete(n);
       this.refreshInFlight(job);
-      await this.onPartError(job, gen, n, f, e);
+      await this.onPartError(job, gen, n, f, e, startedAt);
     } finally {
       this.busySlots -= 1;
       this.schedule();
     }
   }
 
-  private async onPartError(job: Job, gen: number, n: number, f: InFlight, e: unknown): Promise<void> {
+  private async onPartError(
+    job: Job,
+    gen: number,
+    n: number,
+    f: InFlight,
+    e: unknown,
+    startedAt: number,
+  ): Promise<void> {
     if (f.reason === 'stop') {
-      // Paused (or reset): put it back unless the job itself was reset.
+      // Halted (or reset): put it back unless the job itself was reset.
       if (job.gen === gen && !job.pending.includes(n)) job.pending.unshift(n);
       return;
     }
@@ -762,19 +1040,22 @@ export class UploadEngine {
     }
     // Transient: fewer parts at once, back off, then retry this part.
     this.onTrouble();
-    const a = (job.attempts.get(n) ?? 0) + 1;
-    job.attempts.set(n, a);
-    if (a >= MAX_PART_ATTEMPTS) {
+    let budget = job.partBudgets.get(n);
+    if (!budget) job.partBudgets.set(n, (budget = newBudget()));
+    if (this.charge(budget, 'storage', startedAt, MAX_PART_ATTEMPTS) === 'give-up') {
       this.fail(job, 'The connection kept dropping. Retry when your internet is stable — finished parts are kept.');
       return;
     }
     job.cooling.add(n);
-    await this.backoff(backoffMs(a, this.env.random));
+    await this.backoff(backoffMs(budget.tries, this.env.random), job);
     if (job.gen === gen && job.cooling.delete(n) && !job.pending.includes(n)) job.pending.unshift(n);
   }
 
-  /** PUT with a stall watchdog: no progress for STALL_MS ⇒ abort (retried). */
+  /** PUT with a stall watchdog: no progress for STALL_MS ⇒ abort (retried).
+   *  The window starts HERE — time spent signing the URL never counts. */
   private async putWatched(f: InFlight, url: PartUrl, body: unknown, onTick: () => void): Promise<void> {
+    f.lastProgressAt = this.env.now();
+    f.loaded = 0;
     const stop = new AbortController();
     const watch = (async () => {
       while (!stop.signal.aborted) {
@@ -830,18 +1111,15 @@ export class UploadEngine {
    *  handed to the server to complete). */
   private async urlFor(job: Job, n: number): Promise<PartUrl | null> {
     const gen = job.gen;
-    let ownAttempts = 0;
     for (;;) {
       const cached = job.urls.get(n);
       if (cached && !this.isStale(cached)) return cached.part;
-      // Paused: stop here — sendPart's error path puts the part back (its
-      // in-flight record was marked 'stop' by pause()).
-      if (this.paused) throw new TransportError('paused', 0);
+      // Halted: stop here — sendPart's error path puts the part back (its
+      // in-flight record was marked 'stop' by halt()).
+      if (this.halted) throw new TransportError('halted', 0);
       const own = !job.signing;
-      if (own) {
-        ownAttempts += 1;
-        job.signing = this.signBatch(job, n);
-      }
+      const startedAt = this.env.now();
+      if (own) job.signing = this.signBatch(job, n);
       const signing = job.signing!;
       try {
         await signing;
@@ -859,12 +1137,17 @@ export class UploadEngine {
           this.reinit(job, 'The upload session expired.');
           return null;
         }
-        if (classifyApi(status) === 'fatal' || ownAttempts >= MAX_API_ATTEMPTS) {
-          this.fail(job, errorMessage(e), classifyApi(status) === 'transient');
+        if (classifyApi(status) === 'fatal') {
+          this.fail(job, errorMessage(e), status === 401);
           return null;
         }
+        if (this.halted) throw e;
         this.onTrouble();
-        await this.backoff(backoffMs(ownAttempts, this.env.random));
+        if (this.charge(job.signBudget, 'api', startedAt, MAX_API_ATTEMPTS) === 'give-up') {
+          this.fail(job, errorMessage(e), true);
+          return null;
+        }
+        await this.backoff(backoffMs(job.signBudget.tries, this.env.random), job);
         if (job.gen !== gen) return null;
         continue;
       } finally {
@@ -874,10 +1157,11 @@ export class UploadEngine {
         }
       }
       if (job.gen !== gen) return null;
+      job.signBudget = newBudget();
       const got = job.urls.get(n);
       if (got) return got.part; // just signed — use it even if a skewed clock calls it stale
-      if (own && ownAttempts >= MAX_API_ATTEMPTS) {
-        this.fail(job, 'Could not get an upload link for this file.');
+      if (own) {
+        this.fail(job, 'The server did not return an upload link for this file.');
         return null;
       }
     }
@@ -897,7 +1181,8 @@ export class UploadEngine {
       return !!u && !this.isStale(u);
     };
     const want = [n, ...job.pending.filter((p) => p !== n && !fresh(p))].slice(0, MAX_SIGN_PARTS);
-    const res = await this.transport.signParts(session.id, want);
+    const res = await this.api((signal) => this.transport.signParts(session.id, want, signal), SIGN_TIMEOUT_MS, { job });
+    if (!res || !Array.isArray(res.parts)) throw new TransportError('The server sent an unreadable reply.', 0);
     if (job.session !== session) return;
     const now = this.env.now();
     const expiresAt = Date.parse(res.urlsExpireAt);
@@ -924,36 +1209,49 @@ export class UploadEngine {
     const gens = batch.map((j) => j.gen);
     for (const j of batch) j.wantsComplete = false;
     const live = () => batch.filter((j, i) => j.gen === gens[i] && j.view.status === 'completing');
+    const budget = newBudget();
     try {
-      for (let attempt = 1; ; attempt++) {
+      for (;;) {
         const jobs = live();
         if (!jobs.length) return;
+        const startedAt = this.env.now();
         let res: CompleteResponse;
         try {
-          res = await this.transport.complete(jobs.map((j) => j.view.uploadId!));
+          const ids = [...new Set(jobs.map((j) => j.view.uploadId!))];
+          res = await this.api((signal) => this.transport.complete(ids, signal), COMPLETE_TIMEOUT_MS);
+          if (!res || !Array.isArray(res.results)) throw new TransportError('The server sent an unreadable reply.', 0);
         } catch (e) {
           const status = statusOf(e);
-          if (classifyApi(status) === 'fatal' || attempt >= MAX_API_ATTEMPTS) {
-            for (const j of live()) this.fail(j, errorMessage(e), classifyApi(status) === 'transient');
+          if (classifyApi(status) === 'fatal') {
+            for (const j of live()) this.fail(j, errorMessage(e), status === 401);
             return;
           }
-          await this.backoff(backoffMs(attempt, this.env.random));
-          if (this.paused) {
+          if (this.halted) {
+            for (const j of live()) j.wantsComplete = true; // re-sent on resume
+            return;
+          }
+          if (this.charge(budget, 'api', startedAt, MAX_API_ATTEMPTS) === 'give-up') {
+            for (const j of live()) this.fail(j, errorMessage(e), true);
+            return;
+          }
+          await this.backoff(backoffMs(budget.tries, this.env.random));
+          if (this.halted) {
             for (const j of live()) j.wantsComplete = true;
             return;
           }
           continue;
         }
-        const current = live();
-        const byId = new Map(current.map((j) => [j.view.uploadId!, j]));
+        // Several jobs may share a session id — every one of them gets the answer.
+        const byId = new Map<string, Job[]>();
+        for (const j of live()) byId.set(j.view.uploadId!, [...(byId.get(j.view.uploadId!) ?? []), j]);
         for (const r of res.results) {
-          const job = byId.get(r.id);
-          if (!job) continue;
-          byId.delete(r.id); // one answer per file
-          this.applyComplete(job, r);
+          const group = r && typeof r.id === 'string' ? byId.get(r.id) : undefined;
+          if (!group) continue;
+          byId.delete(r.id); // one answer per session
+          for (const job of group) this.applyComplete(job, r);
         }
-        for (const j of byId.values()) {
-          void this.followUp(j, () => (j.wantsComplete = true), 'No answer from the server.');
+        for (const group of byId.values()) {
+          for (const j of group) void this.followUp(j, () => (j.wantsComplete = true), 'No answer from the server.');
         }
         return;
       }
@@ -976,6 +1274,14 @@ export class UploadEngine {
         });
         return;
       case 'missing-parts': {
+        if (job.cancelRequested) {
+          // The server let go of it after all (back to UPLOADING): the officer
+          // wanted it cancelled, so cancel it now.
+          job.cancelRequested = false;
+          this.set(job, { note: undefined });
+          void this.cancel(job.item.key);
+          return;
+        }
         const session = job.session;
         job.completeCycles += 1;
         if (!session) {
@@ -986,7 +1292,7 @@ export class UploadEngine {
           this.fail(job, 'Some parts never reached storage. Retry to send them again.');
           return;
         }
-        for (const p of r.missingParts) job.done.delete(p);
+        for (const p of r.missingParts ?? []) job.done.delete(p);
         job.pending = partsToSend(session.partCount, job.done).filter((p) => !job.inflight.has(p) && !job.cooling.has(p));
         job.urls.clear();
         this.set(job, { status: 'uploading', bytesDone: bytesOf(job.done, session.partSize, job.item.source.size) });
@@ -1001,9 +1307,6 @@ export class UploadEngine {
         }
         void this.followUp(job, () => (job.wantsComplete = true), 'The server is still finishing this file.');
         return;
-      case 'retry':
-        void this.followUp(job, () => (job.wantsComplete = true), r.reason);
-        return;
       case 'expired':
       case 'not-found':
         this.reinit(job, 'The upload session expired.');
@@ -1011,7 +1314,32 @@ export class UploadEngine {
       case 'failed':
         this.fail(job, r.reason, true);
         return;
+      case 'retry':
+      default:
+        void this.followUp(job, () => (job.wantsComplete = true), (r as { reason?: string }).reason ?? 'Please try again.');
+        return;
     }
+  }
+
+  // ---- cancel ---------------------------------------------------------------
+
+  /** Ask the server to discard a session: 'aborted' (also when it is already
+   *  gone), 'finishing' (409 — it is being / has been recorded), or 'unknown'
+   *  (no answer after a few tries; the server's sweeper expires it). */
+  private async abortSession(id: string): Promise<'aborted' | 'finishing' | 'unknown'> {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await this.api((signal) => this.transport.abort(id, signal), ABORT_TIMEOUT_MS, { haltable: false });
+        return 'aborted';
+      } catch (e) {
+        const status = statusOf(e);
+        if (status === 404) return 'aborted';
+        if (status === 409) return 'finishing';
+        if (classifyApi(status) === 'fatal') return 'unknown';
+        if (attempt < 3) await this.backoff(backoffMs(attempt, this.env.random));
+      }
+    }
+    return 'unknown';
   }
 }
 

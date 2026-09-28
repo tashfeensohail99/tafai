@@ -31,14 +31,21 @@ export interface UploadTarget {
 }
 
 /** Re-throw any API failure as a TransportError carrying the HTTP status
- *  (0 = no response: offline, DNS, CORS, reset). */
-async function call<T>(path: string, init: RequestInit): Promise<T> {
+ *  (0 = no response: offline, DNS, CORS, reset, abort/timeout). A 2xx whose
+ *  body is not a JSON object (a proxy's HTML page, an empty reply) is also a
+ *  status-0 failure — never handed to the engine as data. */
+async function call<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
+  let body: unknown;
   try {
-    return await apiFetch<T>(path, { cache: 'no-store', ...init });
+    body = await apiFetch<T>(path, { cache: 'no-store', ...init, signal });
   } catch (e) {
     const status = (e as { status?: unknown } | null)?.status;
     throw new TransportError(e instanceof Error ? e.message : String(e), typeof status === 'number' ? status : 0);
   }
+  if (body === null || typeof body !== 'object') {
+    throw new TransportError('The server sent an unreadable reply.', 0);
+  }
+  return body as T;
 }
 
 const json = (body: unknown): RequestInit => ({
@@ -51,12 +58,14 @@ export function makeUploadTransport(base: DatabankBasePath, target: UploadTarget
   const q = target.userId && base === '/processing/databank' ? `?userId=${encodeURIComponent(target.userId)}` : '';
   const scope = target.personal ? { personal: true } : { clientId: target.clientId };
   return {
-    init: (files: InitUploadFile[]) => call<InitResponse>(`${base}/uploads/init${q}`, json({ ...scope, files })),
-    signParts: (id: string, partNumbers: number[]) =>
-      call<SignPartsResponse>(`${base}/uploads/${id}/parts`, json({ partNumbers })),
-    complete: (ids: string[]) => call<CompleteResponse>(`${base}/uploads/complete`, json({ ids })),
-    abort: async (id: string) => {
-      await call(`${base}/uploads/${id}`, { method: 'DELETE' });
+    init: (files: InitUploadFile[], signal: AbortSignal) =>
+      call<InitResponse>(`${base}/uploads/init${q}`, json({ ...scope, files }), signal),
+    signParts: (id: string, partNumbers: number[], signal: AbortSignal) =>
+      call<SignPartsResponse>(`${base}/uploads/${id}/parts`, json({ partNumbers }), signal),
+    complete: (ids: string[], signal: AbortSignal) =>
+      call<CompleteResponse>(`${base}/uploads/complete`, json({ ids }), signal),
+    abort: async (id: string, signal: AbortSignal) => {
+      await call(`${base}/uploads/${id}`, { method: 'DELETE' }, signal);
     },
     put: xhrPut,
   };

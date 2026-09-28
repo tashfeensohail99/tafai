@@ -17,8 +17,8 @@ import type { EngineEnv, UploadItem, UploadSource, UploadTransport } from './eng
 
 // ---- fakes ------------------------------------------------------------------
 
-type Fault = 'ok' | 'hang' | 'slow' | number; // number = HTTP status (0 = network); slow = 8 s with no progress
-type ApiFault = 'ok' | 'hang' | 'garbage' | number;
+type Fault = 'ok' | 'hang' | 'slow' | 'slow-503' | number; // number = HTTP status (0 = network); slow = 8 s with no progress
+type ApiFault = 'ok' | 'hang' | 'garbage' | 'lost' | number; // lost = the server did it, the reply never arrived
 
 interface FakeSession {
   id: string;
@@ -79,6 +79,10 @@ class FakeServer implements UploadTransport {
       if (signal.aborted) throw new TransportError('aborted', 0);
       if (typeof f === 'number') throw new TransportError(`${method} failed (${f})`, f);
       if (f === 'garbage') return (method === 'init' ? null : {}) as T;
+      if (f === 'lost') {
+        body(); // side effects happen on the server…
+        throw new TransportError('connection reset', 0); // …but the reply is lost
+      }
       return body();
     } finally {
       this.pending -= 1;
@@ -136,10 +140,16 @@ class FakeServer implements UploadTransport {
     });
   }
 
+  /** PUT start order ("session:part") and the sources their bodies came from. */
+  starts: string[] = [];
+  bodySeeds: string[] = [];
+
   async put(part: PartUrl, body: unknown, onProgress: (loaded: number) => void, signal: AbortSignal) {
     const [, , , id, n] = part.url.split('/');
     const partNumber = Number(n);
     const key = `${id}:${partNumber}`;
+    this.starts.push(key);
+    this.bodySeeds.push((body as { seed?: string }).seed ?? '');
     const attempt = (this.attempts.get(key) ?? 0) + 1;
     this.attempts.set(key, attempt);
     this.putAttempts += 1;
@@ -151,7 +161,8 @@ class FakeServer implements UploadTransport {
       const { start, end } = body as { start: number; end: number };
       const fault = this.fault({ session: id, part: partNumber, attempt });
       if (fault === 'hang') await stopped(signal);
-      if (fault === 'slow') await this.sleep(8000, signal); // e.g. a slow TLS start: no progress yet
+      if (fault === 'slow' || fault === 'slow-503') await this.sleep(8000, signal); // e.g. a slow TLS start: no progress yet
+      if (fault === 'slow-503') throw new TransportError('PUT failed (503)', 503);
       await tick();
       if (signal.aborted) throw new TransportError('aborted', 0);
       if (typeof fault === 'number') throw new TransportError(`PUT failed (${fault})`, fault);
@@ -264,7 +275,7 @@ class FakeSource implements UploadSource {
     this.sha = Buffer.from(seed).toString('hex').padEnd(64, '0').slice(0, 64);
   }
   slice(start: number, end: number) {
-    return { start, end };
+    return { start, end, seed: this.sha.slice(0, 8) };
   }
 }
 
@@ -873,4 +884,263 @@ test('an init answer that never comes fails the file after bounded follow-ups', 
   assert.equal(f.status, 'failed');
   assert.equal(f.error, 'No answer from the server.');
   assert.ok(server.calls.init > 1 && server.calls.init <= 41, `bounded (${server.calls.init} calls)`);
+});
+
+// ---- review round 2 -------------------------------------------------------------
+
+test('[review r2] the give-up window ignores time spent PAUSED (fail, pause overnight, one blip next morning)', async () => {
+  const { server, env, engine } = setup();
+  server.fault = ({ part, attempt }) => {
+    if (part !== 2) return 'ok';
+    if (attempt === 1) return 0; // fails — the give-up clock for part 2 starts
+    if (attempt === 2) {
+      queueMicrotask(() => engine.pause()); // the retry is under way when the officer pauses for the night
+      return 'hang';
+    }
+    return attempt === 3 ? 0 : 'ok'; // next morning: one blip, then fine
+  };
+  engine.add([item('night.bin', 30)]);
+  await engine.whenIdle();
+  assert.equal(engine.snapshot().paused, true);
+  assert.equal(server.attempts.get('s1:2'), 2);
+  env.clock += 13 * 3600_000; // 13 h later
+  engine.resume();
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['night.bin'], 'done', 'a paused night must not count as 13 h of failing');
+  assert.equal(server.attempts.get('s1:2'), 4);
+});
+
+test('[review r2] the give-up window ignores time the laptop was ASLEEP (a back-off that wakes 13 h late)', async () => {
+  const { server, env, engine } = setup();
+  const sleep = env.sleep;
+  let lidClosed = false;
+  server.fault = ({ part, attempt }) => {
+    if (part !== 1) return 'ok';
+    if (attempt === 1) {
+      lidClosed = true; // the lid closes during the back-off after this failure
+      return 0;
+    }
+    return attempt === 2 ? 0 : 'ok'; // on waking, one more blip before Wi-Fi reconnects
+  };
+  env.sleep = (ms, signal) => {
+    if (lidClosed && ms >= 500 && ms < 5_000) { // the back-off (not a 5 s stall-watcher tick)
+      lidClosed = false;
+      const p = sleep(ms, signal);
+      env.clock += 13 * 3600_000; // …and wakes 13 h late
+      return p;
+    }
+    return sleep(ms, signal);
+  };
+  engine.add([item('lid.bin', 30)]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['lid.bin'], 'done');
+  assert.equal(server.attempts.get('s1:1'), 3);
+});
+
+test('[review r2] a file that can no longer be read fails at once (no 12 h "waiting for the network")', async () => {
+  const { server, env, engine } = setup();
+  let gone = false;
+  env.readable = async () => !gone;
+  server.fault = ({ session }) => (session === 's1' && gone ? 0 : 'ok');
+  engine.add([item('usb.bin', 200), item('other.pdf', 9)]);
+  await until(() => server.okPuts.size >= 3);
+  gone = true; // the USB drive is unplugged mid-upload
+  const start = env.clock;
+  await engine.whenIdle();
+  const f = view(engine, 'usb.bin');
+  assert.equal(f.status, 'failed');
+  assert.match(f.error!, /no longer on this computer/);
+  assert.equal(statuses(engine)['other.pdf'], 'done');
+  assert.ok(env.clock - start < 10 * 60_000, 'failed quickly, not after hours of retries');
+  assert.equal(engine.snapshot().linkDown, false);
+});
+
+test('[review r2] while other PUTs get through, a failing part frees its slot during its back-off', async () => {
+  const { server, engine } = setup({ engine: { slots: 2, minSlots: 2, maxSlots: 2 } });
+  let fCooling = false;
+  let bigInFlight = 0;
+  let bigMaxDuringCooling = 0;
+  // f.pdf's only PUT is slow and then fails (503) — meanwhile big.bin's parts succeed on the other slot.
+  server.fault = ({ session, attempt }) => {
+    if (session === 's1') {
+      if (attempt === 1) return 'slow-503';
+      fCooling = false; // its retry starts
+    }
+    return 'ok';
+  };
+  const realPut = server.put.bind(server);
+  server.put = async (part, body, onProgress, signal) => {
+    const big = part.url.includes('/s2/');
+    if (big) {
+      bigInFlight += 1;
+      if (fCooling) bigMaxDuringCooling = Math.max(bigMaxDuringCooling, bigInFlight);
+    }
+    try {
+      return await realPut(part, body, onProgress, signal);
+    } catch (e) {
+      if (!big) fCooling = true; // f.pdf just failed: its back-off starts
+      throw e;
+    } finally {
+      if (big) bigInFlight -= 1;
+    }
+  };
+  engine.add([item('f.pdf', 9), item('big.bin', 2000)]);
+  await engine.whenIdle();
+  assert.deepEqual(statuses(engine), { 'f.pdf': 'done', 'big.bin': 'done' });
+  assert.equal(bigMaxDuringCooling, 2, "big.bin had BOTH slots while f.pdf's part cooled down");
+  exactlyOnce(server);
+});
+test('[review r2] re-dropping a failed file uses the NEW drop — its File and its destination folder', async () => {
+  const { server, engine } = setup();
+  server.fault = ({ session, part, attempt }) => (session === 's1' && part === 2 && attempt === 1 ? 400 : 'ok');
+  engine.add([item('scan.pdf', 30, { folderId: 'wrong-folder', seed: 'OLD' })]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['scan.pdf'], 'failed');
+  const before = server.bodySeeds.length;
+  engine.add([item('scan.pdf', 30, { folderId: 'right-folder', seed: 'OLD' })]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['scan.pdf'], 'done');
+  assert.equal(server.initCalls.at(-1)![0].folderId, 'right-folder');
+  const done = [...server.sessions.values()].find((x) => x.status === 'COMPLETED')!;
+  assert.match(done.identity, /^right-folder\|/);
+  assert.ok(server.bodySeeds.length > before);
+});
+
+test('[review r2] re-dropping a changed file (new size) hashes the NEW File again', async () => {
+  const { server, engine } = setup();
+  server.fault = ({ session, part, attempt }) => (session === 's1' && part === 2 && attempt === 1 ? 400 : 'ok');
+  engine.add([item('edit.pdf', 30, { seed: 'V1' })]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['edit.pdf'], 'failed');
+  engine.add([item('edit.pdf', 40, { seed: 'V2' })]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['edit.pdf'], 'done');
+  const last = server.initCalls.at(-1)![0];
+  assert.equal(last.sizeBytes, 40);
+  assert.equal(last.sha256, Buffer.from('V2').toString('hex').padEnd(64, '0').slice(0, 64));
+});
+
+test('[review r2] re-dropping a DONE file asks the server again (it may have been deleted since)', async () => {
+  const { server, engine } = setup();
+  engine.add([item('restore.pdf', 12)]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['restore.pdf'], 'done');
+  const inits = server.initCalls.length;
+  engine.add([item('restore.pdf', 12)]); // after a colleague deleted it
+  await engine.whenIdle();
+  assert.equal(server.initCalls.length, inits + 1, 'went back to the server');
+  assert.equal(statuses(engine)['restore.pdf'], 'done');
+  assert.equal(server.recorded.length, 2, 'uploaded again (the fake keeps no file rows, like a deleted file)');
+});
+
+test('[review r2] a finished copy is not a "same-drop" twin: a new copy of a done file goes to the server', async () => {
+  const { server, engine } = setup();
+  engine.add([item('a.pdf', 12, { key: 'k1', seed: 'X' })]);
+  await engine.whenIdle();
+  const existing = { id: 'f1', fileName: 'a.pdf', folderId: null, folderName: null, createdAt: '2026-01-01T00:00:00Z' };
+  server.initOverride = (_f, index) => ({ index, status: 'already-uploaded', existing });
+  engine.add([item('a.pdf', 12, { key: 'k2', seed: 'X', lastModified: 5 })]);
+  await engine.whenIdle();
+  const k2 = view(engine, 'k2');
+  assert.equal(k2.status, 'skipped');
+  assert.equal(k2.duplicateKind, 'already-uploaded', 'decided by the server, not locally');
+});
+
+test('[review r2] a failed row and a re-dropped copy sharing a session: the copy owns it, Cancel on the old row spares it', async () => {
+  const { server, engine } = setup();
+  server.fault = ({ part, attempt }) => (part === 2 && attempt === 1 ? 400 : 'ok');
+  engine.add([item('big.bin', 60, { key: 'old', seed: 'S' })]);
+  await engine.whenIdle();
+  assert.equal(view(engine, 'old').status, 'failed');
+  assert.equal(view(engine, 'old').uploadId, 's1');
+  engine.add([item('big.bin', 60, { key: 'copy', seed: 'S', lastModified: 9 })]); // resumes s1
+  await until(() => view(engine, 'copy').uploadId === 's1');
+  assert.equal(view(engine, 'old').uploadId, undefined, 'the old row let go of s1');
+  await engine.cancel('old');
+  assert.deepEqual(server.abortCalls, [], 'the live upload was not discarded');
+  await engine.whenIdle();
+  assert.equal(view(engine, 'copy').status, 'done');
+  assert.equal(server.recorded.length, 1);
+  exactlyOnce(server);
+});
+
+test('[review r2] Retry on a failed row while a copy is uploading skips it instead of racing the copy', async () => {
+  const { server, engine } = setup({ frozen: true });
+  server.fault = ({ part, attempt }) => (part === 2 && attempt === 1 ? 400 : 'hang');
+  engine.add([item('dup.bin', 60, { key: 'a', seed: 'D' })]);
+  await until(() => view(engine, 'a').status === 'failed');
+  engine.add([item('dup.bin', 60, { key: 'b', seed: 'D', lastModified: 3 })]);
+  await until(() => view(engine, 'b').status === 'uploading');
+  engine.retry('a');
+  assert.equal(view(engine, 'a').status, 'skipped');
+  assert.equal(view(engine, 'a').duplicateKind, 'same-drop');
+});
+
+test('[review r2] Cancel during an outage never claims "cancelled": it waits, then follows the server (409 → done)', async () => {
+  const { server, env, engine } = setup();
+  let down = false;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const realComplete = server.complete.bind(server);
+  server.complete = async (ids, signal) => {
+    if (server.completeCalls.length === 0) {
+      for (const id of ids) server.sessions.get(id)!.status = 'COMPLETING';
+      server.completeCalls.push(ids);
+      await gate;
+      for (const id of ids) {
+        server.sessions.get(id)!.status = 'COMPLETED';
+        server.recorded.push(id);
+      }
+      return { results: ids.map((id) => ({ id, status: 'completed' as const, file: {} })) };
+    }
+    return realComplete(ids, signal);
+  };
+  const abortAt: number[] = [];
+  server.apiFault = (method) => {
+    if (method === 'abort') abortAt.push(env.clock);
+    return method === 'abort' && down ? 0 : 'ok';
+  };
+  engine.add([item('late.pdf', 40)]);
+  await until(() => server.completeCalls.length === 1);
+  down = true;
+  engine.setOnline(false); // load-shedding: the office goes offline
+  const cancelling = engine.cancel('late.pdf');
+  await until(() => server.calls.abort >= 4);
+  // While offline the DELETE keeps being retried — but spaced by back-off, not in a hot loop.
+  assert.ok(abortAt[3] - abortAt[2] >= 1000, `retries are backed off (${abortAt[3] - abortAt[2]} ms apart)`);
+  env.clock += 60 * 60_000; // an hour offline
+  assert.equal(view(engine, 'late.pdf').status, 'cancelling', 'not claiming "cancelled" without an answer');
+  release(); // the server finishes recording it meanwhile
+  down = false;
+  engine.setOnline(true);
+  await cancelling;
+  await engine.whenIdle();
+  const f = view(engine, 'late.pdf');
+  assert.equal(f.status, 'done');
+  assert.match(f.note!, /could not be cancelled/);
+});
+
+test('[review r2] a Cancel that never gets an answer ends "failed — may still be saved", keeping the session', async () => {
+  const { server, engine } = setup({ engine: { giveUpMs: 10 * 60_000 } });
+  server.fault = () => 'hang';
+  server.apiFault = (method) => (method === 'abort' ? 0 : 'ok');
+  engine.add([item('q.bin', 200)]);
+  await until(() => server.inFlight > 0);
+  await engine.cancel('q.bin');
+  const f = view(engine, 'q.bin');
+  assert.equal(f.status, 'failed');
+  assert.match(f.error!, /may still be saved/);
+  assert.equal(f.uploadId, 's1', 'kept, so Cancel can be tried again');
+  assert.ok(server.calls.abort > 3, 'kept asking under the outage rules');
+});
+
+test('[review r2] a lost init reply (the server did it) is retried into the SAME session — one upload, recorded once', async () => {
+  const { server, engine } = setup();
+  server.apiFault = (method, call) => (method === 'init' && call === 1 ? 'lost' : 'ok');
+  engine.add([item('lost.bin', 60)]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['lost.bin'], 'done');
+  assert.equal(server.sessions.size, 1);
+  assert.equal(view(engine, 'lost.bin').resumed, true);
+  exactlyOnce(server);
 });

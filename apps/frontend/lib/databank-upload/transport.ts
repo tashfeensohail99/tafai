@@ -37,7 +37,9 @@ export interface UploadTarget {
 async function call<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
   let body: unknown;
   try {
-    body = await apiFetch<T>(path, { cache: 'no-store', ...init, signal });
+    // Race the signal too: on a 401, apiFetch awaits a token refresh that does
+    // not take our signal — a timeout / pause / cancel must still end OUR wait.
+    body = await Promise.race([apiFetch<T>(path, { cache: 'no-store', ...init, signal }), whenAborted(signal)]);
   } catch (e) {
     const status = (e as { status?: unknown } | null)?.status;
     throw new TransportError(e instanceof Error ? e.message : String(e), typeof status === 'number' ? status : 0);
@@ -46,6 +48,16 @@ async function call<T>(path: string, init: RequestInit, signal?: AbortSignal): P
     throw new TransportError('The server sent an unreadable reply.', 0);
   }
   return body as T;
+}
+
+/** Rejects (TransportError 0) once `signal` aborts; never settles otherwise. */
+function whenAborted(signal?: AbortSignal): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    if (!signal) return;
+    const fail = () => reject(new TransportError('Stopped', 0));
+    if (signal.aborted) fail();
+    else signal.addEventListener('abort', fail, { once: true });
+  });
 }
 
 const json = (body: unknown): RequestInit => ({
@@ -131,4 +143,15 @@ export const browserEnv: EngineEnv = {
     }),
   random: () => Math.random(),
   hash: (source: UploadSource, onProgress, signal) => hashFile(source as Blob, onProgress, signal),
+  // Reading one byte fails (NotReadableError / NotFoundError) once the file was
+  // moved, edited or its drive unplugged — the same failure a PUT reports as a
+  // bare network error.
+  readable: async (source: UploadSource, start: number, end: number) => {
+    try {
+      await (source as Blob).slice(start, Math.min(end, start + 1)).arrayBuffer();
+      return true;
+    } catch {
+      return false;
+    }
+  },
 };

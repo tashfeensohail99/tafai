@@ -1126,3 +1126,115 @@ test('[review r3] re-dropping a "same-drop" copy while its twin is still uploadi
   assert.equal(view(engine, 'B').status, 'skipped');
   assert.equal(view(engine, 'B').duplicateKind, 'same-drop');
 });
+
+// ---- review round 4 -------------------------------------------------------------
+
+test('[review r4] a sibling PUT landing just BEFORE an outage is no proof: a streamed file is not failed as "gone"', async () => {
+  const { server, env, engine } = setup({ engine: { slots: 2, minSlots: 2, maxSlots: 2 } });
+  let outage = false;
+  env.readable = async () => !outage; // a Drive-streamed / NAS file: unreadable while the network is down
+  server.apiFault = () => (outage ? 0 : 'ok');
+  const realPut = server.put.bind(server);
+  server.put = async (part, body, onProgress, signal) => {
+    const [, , , , n] = part.url.split('/');
+    if (outage) throw new TransportError('network down', 0);
+    if (n === '1' && (server.attempts.get('s1:1') ?? 0) === 0) {
+      server.attempts.set('s1:1', 1);
+      // part 1 is a long PUT: part 2 lands while it runs, then the outage hits it
+      await until(() => outage || signal.aborted);
+      throw new TransportError('network down', 0);
+    }
+    return realPut(part, body, onProgress, signal);
+  };
+  engine.add([item('drive.bin', 60)]);
+  await until(() => (server.okPuts.get('s1:2') ?? 0) === 1); // a sibling landed during part 1's PUT
+  outage = true;
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000);
+  assert.notEqual(statuses(engine)['drive.bin'], 'failed', 'not "no longer on this computer" during an outage');
+  outage = false;
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['drive.bin'], 'done');
+});
+
+test('[review r4] a black-holed complete fails on the real give-up window (its 120 s timeout is not "sleep")', async () => {
+  const { server, env, engine } = setup({ engine: { giveUpMs: 10 * 60_000 } });
+  server.apiFault = (method) => (method === 'complete' ? 'hang' : 'ok');
+  engine.add([item('bh.pdf', 12)]);
+  const t0 = env.clock;
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['bh.pdf'], 'failed');
+  assert.ok(env.clock - t0 < 20 * 60_000, `gave up after ${Math.round((env.clock - t0) / 60_000)} min, not ~7× the window`);
+});
+
+test('[review r4] freeing the session of a cancelled init is tracked: whenIdle waits for it', async () => {
+  const { server, engine } = setup();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const realInit = server.init.bind(server);
+  let initStarted = false;
+  server.init = async (files, signal) => {
+    initStarted = true;
+    await gate;
+    return realInit(files, signal);
+  };
+  let abortFinished = false;
+  const realAbort = server.abort.bind(server);
+  server.abort = async (id, signal) => {
+    await server.sleep(5_000, signal); // the DELETE takes a while
+    await realAbort(id, signal);
+    abortFinished = true;
+  };
+  engine.add([item('orphan.bin', 60)]);
+  await until(() => initStarted);
+  await engine.cancel('orphan.bin'); // local: no session yet
+  release(); // the init still opens a NEW session…
+  await engine.whenIdle();
+  assert.ok(abortFinished, '…which is freed BEFORE the engine reports idle');
+  assert.deepEqual(server.abortCalls, ['s1']);
+});
+
+test('[review r4] the PC clock set BACK mid-upload never hides a stall', async () => {
+  const { server, env, engine } = setup();
+  let stepped = false;
+  let steppedAt = 0;
+  let retriedAt = 0;
+  server.fault = ({ part, attempt }) => {
+    if (part === 1 && attempt === 1) {
+      if (!stepped) {
+        stepped = true;
+        env.wallSkew -= 2 * 3600_000; // Windows time sync / the officer sets the PC clock back 2 h
+        steppedAt = env.clock;
+      }
+      return 'hang';
+    }
+    if (part === 1 && attempt === 2) retriedAt = env.clock;
+    return 'ok';
+  };
+  engine.add([item('clock.bin', 30)]);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['clock.bin'], 'done', 'the stalled PUT was aborted and retried');
+  assert.equal(server.attempts.get('s1:1'), 2);
+  assert.ok(retriedAt - steppedAt < 5 * 60_000, `stall caught on time (${Math.round((retriedAt - steppedAt) / 60_000)} min), not 2 h late`);
+});
+
+test('[review r4] nothing is hashed while offline; a read that fails while online is retried before failing', async () => {
+  const { server, env, engine } = setup();
+  let hashes = 0;
+  let failNext = 2;
+  env.hash = async (source) => {
+    hashes += 1;
+    await tick();
+    if (failNext-- > 0) throw new Error('NotReadableError'); // a Drive stream hiccup, twice
+    return (source as FakeSource).sha;
+  };
+  engine.setOnline(false);
+  engine.add([item('h.pdf', 12)]);
+  await engine.whenIdle();
+  assert.equal(hashes, 0, 'no reads while offline');
+  engine.setOnline(true);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['h.pdf'], 'done');
+  assert.equal(hashes, 3, 'two failed reads were retried');
+  assert.equal(server.recorded.length, 1);
+});

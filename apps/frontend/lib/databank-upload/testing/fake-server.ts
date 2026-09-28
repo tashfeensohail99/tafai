@@ -210,7 +210,11 @@ export class FakeServer implements UploadTransport {
 }
 
 /** Virtual time (see the header). `frozen`: timers never fire (only aborts end them). */
-export function makeEnv(server: FakeServer, opts: { frozen?: boolean } = {}): EngineEnv & { clock: number } {
+/** `clock` is the MONOTONIC virtual time timers run on (a forward jump = the
+ *  machine slept: timers come due at once, like a real browser on wake);
+ *  `wallSkew` shifts only what now() reports — like the PC clock being set
+ *  back or forward, which a real setTimeout ignores. */
+export function makeEnv(server: FakeServer, opts: { frozen?: boolean } = {}): EngineEnv & { clock: number; wallSkew: number } {
   interface Timer {
     at: number;
     fire: () => void;
@@ -220,7 +224,8 @@ export function makeEnv(server: FakeServer, opts: { frozen?: boolean } = {}): En
   let driving = false;
   const env = {
     clock: 1_000_000,
-    now: () => env.clock,
+    wallSkew: 0,
+    now: () => env.clock + env.wallSkew,
     sleep: (ms: number, signal?: AbortSignal) =>
       new Promise<void>((resolve) => {
         if (signal?.aborted) return resolve();

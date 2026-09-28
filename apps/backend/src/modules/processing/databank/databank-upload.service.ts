@@ -226,7 +226,9 @@ export class DatabankUploadService {
     // NEW files to the standard upload (≤ 2 GB) — no new resumable session
     // starts. Sessions already open still finish, through init too (step 2
     // below): a file whose session is being recorded must never be uploaded a
-    // second time the standard way (that would record it twice).
+    // second time the standard way (that would record it twice). The duplicate
+    // checks (steps 3–4, read-only) still run first: the standard upload never
+    // dedupes, so a re-dropped folder would otherwise store every saved file again.
     const killSwitch = process.env.DATABANK_RESUMABLE_UPLOADS === 'off';
 
     const now = new Date();
@@ -361,17 +363,6 @@ export class DatabankUploadService {
     });
     pending.push(...startOver);
 
-    if (killSwitch) {
-      // Nothing in this batch is under way → all of it goes the standard way.
-      if (!results.some((r) => r && r.status !== 'rejected')) return { mode: 'proxy' };
-      // Some files have live sessions (answered above). The rest must not open
-      // one: the browser asks again for just those, and gets 'proxy'.
-      for (const c of pending) {
-        results[c.index] = { index: c.index, status: 'retry', reason: 'Switching to the standard upload…' };
-      }
-      return { mode: 'direct', maxBytes: this.maxBytes, results };
-    }
-
     // 3. DUPLICATES by content hash within the same scope (never across scopes,
     //    so a private file can't leak): same folder + name → already uploaded
     //    (skip silently); anywhere else → ask, unless allowDuplicate.
@@ -435,6 +426,18 @@ export class DatabankUploadService {
       };
       return false;
     });
+
+    if (killSwitch) {
+      // Every file is answered (rejected / under way / already there / duplicate)
+      // except the new ones → the whole batch goes the standard way.
+      if (!results.some((r) => r && r.status !== 'rejected')) return { mode: 'proxy' };
+      // Otherwise answer those, and send only the NEW files back: the browser
+      // asks again for just them (they get 'proxy' then). Never a new session.
+      for (const c of pending) {
+        results[c.index] = { index: c.index, status: 'retry', reason: 'Switching to the standard upload…' };
+      }
+      return { mode: 'direct', maxBytes: this.maxBytes, results };
+    }
 
     // 5. NEW sessions: start R2 multipart uploads (outside any transaction; a
     //    failure affects only that file), then insert every session in ONE

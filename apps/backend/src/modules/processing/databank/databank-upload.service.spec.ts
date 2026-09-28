@@ -278,7 +278,32 @@ describe('DatabankUploadService.init', () => {
       expect(res.results[2]).toMatchObject({ index: 2, status: 'rejected' });
       expect(storage.createMultipartUpload).not.toHaveBeenCalled();
       expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
-      expect(prisma.databankFile.findMany).not.toHaveBeenCalled(); // dedupe steps skipped: nothing new opens
+    } finally {
+      delete process.env.DATABANK_RESUMABLE_UPLOADS;
+    }
+  });
+
+  it('[killswitch dedupe] kill switch still skips files already saved (a re-dropped folder never stores them twice); new files go standard', async () => {
+    const { svc, prisma, storage } = harness();
+    prisma.databankFile.findMany
+      .mockResolvedValueOnce([{ id: 'fs', fileName: 'saved.pdf', folderId: null, createdAt: new Date(), sha256: H('a'), folder: null }])
+      .mockResolvedValueOnce([{ id: 'fl', fileName: 'legacy.pdf', folderId: null, createdAt: new Date(), fileSizeBytes: 700n, folder: null }]);
+    process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
+    try {
+      const res = await svc.init(
+        {
+          clientId: 'c1',
+          files: [file('saved.pdf', 500, 'a'), file('legacy.pdf', 700, 'c'), file('new.pdf', 10, 'b')],
+        } as never,
+        USER,
+      );
+      if (res.mode !== 'direct') throw new Error('expected direct mode: some files are already there');
+      expect(res.results.map((r) => r.status)).toEqual(['already-uploaded', 'possible-duplicate', 'retry']);
+      expect(storage.createMultipartUpload).not.toHaveBeenCalled();
+      expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
+      // the new file, asked again on its own: nothing is there → the standard way
+      const again = await svc.init({ clientId: 'c1', files: [file('new.pdf', 10, 'b')] } as never, USER);
+      expect(again).toEqual({ mode: 'proxy' });
     } finally {
       delete process.env.DATABANK_RESUMABLE_UPLOADS;
     }

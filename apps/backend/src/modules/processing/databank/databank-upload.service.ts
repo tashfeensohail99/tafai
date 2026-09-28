@@ -46,6 +46,11 @@ export const COMPLETING_STALE_MS = 15 * 60 * 1000;
 const INIT_URL_BATCH = 16;
 /** Parallel R2 calls when creating / resuming sessions in one init. */
 const R2_CONCURRENCY = 8;
+/** init's insert transaction (lock → re-check → insert: ~5 round trips to the
+ *  DB). maxWait: wait for a pool connection as long as a plain query does
+ *  (pool_timeout 10 s) — Prisma's 2 s default would fail the whole batch under
+ *  pool pressure, where a single insert just waits. */
+const INIT_TXN = { timeout: 30_000, maxWait: 10_000 };
 /** Permissions that allow writing to a databank (Processing / JR portals). */
 export const DATABANK_WRITE_PERMISSIONS = ['processing.document.upload', 'jr.artifact.author'];
 /** Parallel finalizes per complete request. */
@@ -217,10 +222,12 @@ export class DatabankUploadService {
     // Dev storage (local / supabase) has no direct-to-storage path — the client
     // falls back to the streaming multipart proxy upload.
     if (!this.storage.supportsDirectUpload) return { mode: 'proxy' };
-    // Kill switch: DATABANK_RESUMABLE_UPLOADS=off (+ a backend restart) makes
-    // every client fall back to the standard upload (≤ 2 GB) — no new resumable
-    // sessions start; ones already running can still finish.
-    if (process.env.DATABANK_RESUMABLE_UPLOADS === 'off') return { mode: 'proxy' };
+    // Kill switch: DATABANK_RESUMABLE_UPLOADS=off (+ a backend restart) sends
+    // NEW files to the standard upload (≤ 2 GB) — no new resumable session
+    // starts. Sessions already open still finish, through init too (step 2
+    // below): a file whose session is being recorded must never be uploaded a
+    // second time the standard way (that would record it twice).
+    const killSwitch = process.env.DATABANK_RESUMABLE_UPLOADS === 'off';
 
     const now = new Date();
     const results = new Array<InitResult>(dto.files.length);
@@ -354,6 +361,17 @@ export class DatabankUploadService {
     });
     pending.push(...startOver);
 
+    if (killSwitch) {
+      // Nothing in this batch is under way → all of it goes the standard way.
+      if (!results.some((r) => r && r.status !== 'rejected')) return { mode: 'proxy' };
+      // Some files have live sessions (answered above). The rest must not open
+      // one: the browser asks again for just those, and gets 'proxy'.
+      for (const c of pending) {
+        results[c.index] = { index: c.index, status: 'retry', reason: 'Switching to the standard upload…' };
+      }
+      return { mode: 'direct', maxBytes: this.maxBytes, results };
+    }
+
     // 3. DUPLICATES by content hash within the same scope (never across scopes,
     //    so a private file can't leak): same folder + name → already uploaded
     //    (skip silently); anywhere else → ask, unless allowDuplicate.
@@ -478,7 +496,7 @@ export class DatabankUploadService {
           }
           if (winners.length) await tx.databankUpload.createMany({ data: winners.map((x) => this.sessionRow(x, user, scope, sessionExpiresAt)) });
           return { winners, losers };
-        }, { timeout: 30_000 });
+        }, INIT_TXN);
         won = outcome.winners;
         lost = outcome.losers;
       } catch (e) {

@@ -263,6 +263,52 @@ describe('DatabankUploadService.init', () => {
     }
   });
 
+  it('[initrace r1] kill switch still answers a file whose session is already finishing (no second, standard upload of it); new files in the batch are sent back for the standard way', async () => {
+    const { svc, prisma, storage } = harness();
+    prisma.databankUpload.findMany.mockResolvedValueOnce([session({ status: 'COMPLETING' })]);
+    process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
+    try {
+      const res = await svc.init(
+        { clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a'), file('new.mp4', 100 * MiB, 'b'), file('virus.exe', 10, 'c')] } as never,
+        USER,
+      );
+      if (res.mode !== 'direct') throw new Error('expected direct mode');
+      expect(res.results[0]).toEqual({ index: 0, status: 'in-progress', uploadId: 's1' });
+      expect(res.results[1]).toMatchObject({ index: 1, status: 'retry' });
+      expect(res.results[2]).toMatchObject({ index: 2, status: 'rejected' });
+      expect(storage.createMultipartUpload).not.toHaveBeenCalled();
+      expect(prisma.databankUpload.createMany).not.toHaveBeenCalled();
+      expect(prisma.databankFile.findMany).not.toHaveBeenCalled(); // dedupe steps skipped: nothing new opens
+    } finally {
+      delete process.env.DATABANK_RESUMABLE_UPLOADS;
+    }
+  });
+
+  it('[initrace r1] kill switch still resumes a half-sent session (it finishes); a batch with only rejected + new files goes to the standard upload', async () => {
+    const h = harness();
+    h.prisma.databankUpload.findMany.mockResolvedValueOnce([session()]);
+    h.storage.listAllParts.mockResolvedValueOnce(parts(2));
+    process.env.DATABANK_RESUMABLE_UPLOADS = 'off';
+    try {
+      const res = await h.svc.init({ clientId: 'c1', files: [file('big.zip', 40 * MiB, 'a')] } as never, USER);
+      expect(res.mode === 'direct' && res.results[0]).toMatchObject({ status: 'upload', uploadId: 's1', resumed: true });
+      const h2 = harness();
+      const res2 = await h2.svc.init({ clientId: 'c1', files: [file('virus.exe', 10, 'c'), file('new.pdf', 10, 'd')] } as never, USER);
+      expect(res2).toEqual({ mode: 'proxy' });
+      expect(h2.storage.createMultipartUpload).not.toHaveBeenCalled();
+      expect(h2.prisma.$transaction).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.DATABANK_RESUMABLE_UPLOADS;
+    }
+  });
+
+  it('[initrace r1] the insert transaction waits for a pool connection like a plain query (maxWait 10 s, not Prisma\'s 2 s)', async () => {
+    const { svc, prisma } = harness();
+    await svc.init({ clientId: 'c1', files: [file('a.pdf', 10, 'a')] } as never, USER);
+    const call = prisma.$transaction.mock.calls.find((c: unknown[]) => typeof c[0] === 'function');
+    expect(call![1]).toMatchObject({ timeout: 30_000, maxWait: 10_000 });
+  });
+
   it('[follow-up] serialises session creation per file identity: one sorted lock statement inside the insert transaction', async () => {
     const { svc, prisma } = harness();
     await svc.init({ clientId: 'c1', files: [file('b.pdf', 10, 'b'), file('a.pdf', 10, 'a')] } as never, USER);

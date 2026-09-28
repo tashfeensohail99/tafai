@@ -19,26 +19,8 @@ import {
   File as FileIcon,
   Home,
 } from 'lucide-react';
-import {
-  fetchDatabankTree,
-  createDatabankFolder,
-  fetchPersonalDatabankTree,
-  createPersonalDatabankFolder,
-  uploadPersonalDatabankFile,
-  renameDatabankFolder,
-  moveDatabankFolder,
-  deleteDatabankFolder,
-  uploadDatabankFile,
-  directUploadDatabankFile,
-  getDatabankFileSignedUrl,
-  renameDatabankFile,
-  moveDatabankFile,
-  copyDatabankFile,
-  deleteDatabankFile,
-  type ApiDatabankFolder,
-  type ApiDatabankFile,
-  type DatabankUploadTarget,
-} from '@/lib/processing';
+import type { ApiDatabankFolder, ApiDatabankFile, DatabankUploadTarget } from '@/lib/processing';
+import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 
 /** Per-file upload cap. Uploads go STRAIGHT to R2 (presigned PUT), never through
  *  the backend, so a whole client folder can be any size (files upload one at a
@@ -126,21 +108,25 @@ const isPdf = (m: string | null) => !!m && /pdf/i.test(m);
 const isImage = (m: string | null) => !!m && /^image\//i.test(m);
 
 /**
- * The databank file explorer. Two scopes:
+ * The databank file explorer — the ONE explorer every portal uses. Two scopes:
  *  - a client's databank: pass `clientId`.
  *  - the caller's OWN personal area (their private folders): pass `personal`.
  * Folder/file rename/move/copy/delete/download are id-based, so they work the
  * same in either scope; only the tree fetch, folder-create and upload differ.
+ * `api` picks the portal's backend routes (Processing by default; JR passes
+ * jrDatabankApi) — see lib/databank-api.ts.
  */
 export function DatabankTab({
   clientId,
   personal,
   rootLabel = 'Databank',
+  api = processingDatabankApi,
 }: {
   clientId?: string;
   clientName?: string;
   personal?: boolean;
   rootLabel?: string;
+  api?: DatabankApi;
 }) {
   const [folders, setFolders] = useState<ApiDatabankFolder[]>([]);
   const [files, setFiles] = useState<ApiDatabankFile[]>([]);
@@ -175,13 +161,13 @@ export function DatabankTab({
   // area. Everything else (rename/move/copy/delete/download) is id-based and
   // identical across scopes.
   const loadTree = useCallback(
-    () => (personal ? fetchPersonalDatabankTree() : fetchDatabankTree(clientId!)),
-    [personal, clientId],
+    () => (personal ? api.fetchPersonalTree() : api.fetchTree(clientId!)),
+    [api, personal, clientId],
   );
   const makeFolder = useCallback(
     (name: string, parent: string | null) =>
-      personal ? createPersonalDatabankFolder(name, parent) : createDatabankFolder(clientId!, name, parent),
-    [personal, clientId],
+      personal ? api.createPersonalFolder(name, parent) : api.createFolder(clientId!, name, parent),
+    [api, personal, clientId],
   );
   // UPLOAD goes STRAIGHT to R2 (presigned PUT, with byte progress); CLIPBOARD
   // (small pasted screenshots) stays on the simple multipart path so its origin
@@ -190,13 +176,13 @@ export function DatabankTab({
     (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD', onProgress?: (f: number) => void) => {
       if (src === 'CLIPBOARD') {
         return personal
-          ? uploadPersonalDatabankFile(file, folder, 'CLIPBOARD')
-          : uploadDatabankFile(clientId!, file, folder, 'CLIPBOARD');
+          ? api.uploadPersonalFile(file, folder, 'CLIPBOARD')
+          : api.uploadFile(clientId!, file, folder, 'CLIPBOARD');
       }
       const target: DatabankUploadTarget = personal ? { personal: true } : { clientId: clientId! };
-      return directUploadDatabankFile(target, file, folder, onProgress);
+      return api.directUpload(target, file, folder, onProgress);
     },
-    [personal, clientId],
+    [api, personal, clientId],
   );
 
   const reload = useCallback(async () => {
@@ -381,8 +367,8 @@ export function DatabankTab({
     if (!value || readOnly) return;
     setBusy(true);
     try {
-      if (kind === 'folder') await renameDatabankFolder(id, value);
-      else await renameDatabankFile(id, value);
+      if (kind === 'folder') await api.renameFolder(id, value);
+      else await api.renameFile(id, value);
       setRenamingId(null);
       await reload();
     } catch (e) {
@@ -396,8 +382,8 @@ export function DatabankTab({
     if (!confirmDelete || readOnly) return;
     setBusy(true);
     try {
-      if (confirmDelete.kind === 'folder') await deleteDatabankFolder(confirmDelete.id);
-      else await deleteDatabankFile(confirmDelete.id);
+      if (confirmDelete.kind === 'folder') await api.deleteFolder(confirmDelete.id);
+      else await api.deleteFile(confirmDelete.id);
       setConfirmDelete(null);
       await reload();
     } catch (e) {
@@ -411,8 +397,8 @@ export function DatabankTab({
     if (!moveTarget || readOnly) return;
     setBusy(true);
     try {
-      if (moveTarget.kind === 'folder') await moveDatabankFolder(moveTarget.id, destFolderId);
-      else await moveDatabankFile(moveTarget.id, destFolderId);
+      if (moveTarget.kind === 'folder') await api.moveFolder(moveTarget.id, destFolderId);
+      else await api.moveFile(moveTarget.id, destFolderId);
       setMoveTarget(null);
       await reload();
     } catch (e) {
@@ -426,7 +412,7 @@ export function DatabankTab({
     if (readOnly) return;
     setBusy(true);
     try {
-      await copyDatabankFile(file.id, { targetFolderId: currentFolderId });
+      await api.copyFile(file.id, { targetFolderId: currentFolderId });
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Copy failed');
@@ -438,7 +424,7 @@ export function DatabankTab({
   const openPreview = async (file: ApiDatabankFile) => {
     setPreviewLoading(true);
     try {
-      const { url } = await getDatabankFileSignedUrl(file.id);
+      const { url } = await api.signedUrl(file.id);
       setPreview({ file, url });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not open the file');
@@ -449,7 +435,7 @@ export function DatabankTab({
 
   const download = async (file: ApiDatabankFile) => {
     try {
-      const { url } = await getDatabankFileSignedUrl(file.id);
+      const { url } = await api.signedUrl(file.id);
       window.open(url, '_blank', 'noopener');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not download the file');
@@ -483,10 +469,10 @@ export function DatabankTab({
         </div>
         {readOnly ? (
           <span
-            title="This client is assigned to another officer — you can view and download, but not edit."
+            title={api.readOnlyTitle}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: muted, border, borderRadius: 999, padding: '5px 12px', whiteSpace: 'nowrap' }}
           >
-            View only — assigned to another officer
+            {api.readOnlyLabel}
           </span>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -611,12 +597,16 @@ export function DatabankTab({
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '40px 0', color: muted, textAlign: 'center' }}>
             <Upload size={22} />
             <div style={{ fontSize: 14 }}>This folder is empty.</div>
-            {!readOnly ? (
-              <div style={{ fontSize: 12.5 }}>
-                Drag files or a whole folder here, use Upload / Upload folder, or paste a screenshot.
-                <br />Up to {fmtMB(MAX_FILE_BYTES)} per file.
-              </div>
-            ) : null}
+            <div style={{ fontSize: 12.5 }}>
+              {!readOnly ? (
+                <>
+                  Drag files or a whole folder here, use Upload / Upload folder, or paste a screenshot.
+                  <br />Up to {fmtMB(MAX_FILE_BYTES)} per file.
+                </>
+              ) : (
+                'You have read-only access to this databank.'
+              )}
+            </div>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10 }}>
@@ -736,8 +726,8 @@ export function DatabankTab({
           </div>
           <div style={{ fontSize: 13, color: muted, marginBottom: 16 }}>
             {confirmDelete.kind === 'folder'
-              ? 'Everything inside the folder is removed too. This can be restored by an admin.'
-              : 'The file is removed from the databank. This can be restored by an admin.'}
+              ? 'Everything inside the folder is removed from the databank too.'
+              : 'The file is removed from the databank.'}
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <button type="button" onClick={() => setConfirmDelete(null)} style={btn(false)}>

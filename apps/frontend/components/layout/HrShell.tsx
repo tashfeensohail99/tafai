@@ -19,6 +19,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 
 export interface HrUser {
   id: string;
@@ -86,7 +87,11 @@ export function HrShell({ children }: { children: ReactNode }) {
         roles: session.user.roles,
         permissions: session.user.permissions,
       },
-      logout: () => { sessionLogout(); router.replace('/login'); },
+      logout: () => {
+        if (!confirmStopUploads()) return;
+        sessionLogout();
+        router.replace('/login');
+      },
     };
   }, [session, router]);
 
@@ -137,7 +142,7 @@ export function HrShell({ children }: { children: ReactNode }) {
         </aside>
 
         {mobileOpen && (
-          <div aria-hidden="true" onClick={() => setMobileOpen(false)}
+          <div data-sos-modal="" aria-hidden="true" onClick={() => setMobileOpen(false)}
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 99 }} />
         )}
 

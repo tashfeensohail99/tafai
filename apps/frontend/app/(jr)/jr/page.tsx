@@ -217,7 +217,7 @@ function NewMatterModal({
   }
 
   return (
-    <div
+    <div data-sos-modal=""
       style={{
         position: 'fixed',
         inset: 0,

@@ -46,6 +46,7 @@ import {
   type ProcessingDashboardMetrics,
 } from '@/lib/processing';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 
 export interface ProcessingUser {
   id: string;
@@ -214,6 +215,7 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
       },
       refreshUser: async () => {},
       logout: () => {
+        if (!confirmStopUploads()) return;
         sessionLogout();
         router.replace('/login');
       },
@@ -331,7 +333,7 @@ export function ProcessingShell({ children }: { children: ReactNode }) {
 
         {/* ── Mobile overlay ───────────────────────────────────────────── */}
         {mobileOpen && (
-          <div
+          <div data-sos-modal=""
             aria-hidden="true"
             onClick={() => setMobileOpen(false)}
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 99 }}

@@ -21,6 +21,14 @@ import {
 } from 'lucide-react';
 import type { ApiDatabankFolder, ApiDatabankFile, DatabankUploadTarget } from '@/lib/processing';
 import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
+// Resumable uploads (Databank Phase 1) — these three are tiny and pure; the
+// engine itself is loaded on the first V2 upload (`import()` below).
+import { isUploadV2Enabled } from '@/lib/databank-upload/flag';
+import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
+import { createLandingReloader, mergeLandedFiles } from '@/lib/databank-upload/landing';
+import { isQueuePresent, subscribePresence } from '@/lib/databank-upload/presence';
+import { dataScopeOf } from '@/lib/databank-upload/keys';
+import type { UploadDest } from '@/lib/databank-upload-browser';
 
 /** Per-file upload cap. Uploads go STRAIGHT to R2 (presigned PUT), never through
  *  the backend, so a whole client folder can be any size (files upload one at a
@@ -91,13 +99,6 @@ const primary = 'var(--sos-text-primary, #0f172a)';
 const surface = 'var(--sos-surface, rgba(255,255,255,0.6))';
 const accent = 'var(--sos-accent, #b8860b)';
 
-function formatBytes(n: number | null): string {
-  if (!n && n !== 0) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function FileGlyph({ mime }: { mime: string | null }) {
   if (mime && /pdf/i.test(mime)) return <FileText size={22} />;
   if (mime && /^image\//i.test(mime)) return <ImageIcon size={22} />;
@@ -118,6 +119,7 @@ const isImage = (m: string | null) => !!m && /^image\//i.test(m);
  */
 export function DatabankTab({
   clientId,
+  clientName,
   personal,
   rootLabel = 'Databank',
   api = processingDatabankApi,
@@ -153,6 +155,10 @@ export function DatabankTab({
   // controls. Default writable until the tree tells us otherwise.
   const [canWrite, setCanWrite] = useState(true);
   const readOnly = !canWrite;
+  // Resumable uploads: the queue + dock, behind NEXT_PUBLIC_DATABANK_UPLOAD_V2
+  // (read after mount — it looks at localStorage and the URL).
+  const [v2, setV2] = useState(false);
+  useEffect(() => setV2(isUploadV2Enabled()), []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -184,18 +190,55 @@ export function DatabankTab({
     },
     [api, personal, clientId],
   );
+  // Where a resumable upload goes, as the upload dock names it.
+  const dest = useMemo(
+    () => ({
+      base: api.uploadBase,
+      target: personal ? { personal: true } : { clientId: clientId! },
+      label: personal ? rootLabel : clientName || 'Client databank',
+      href: personal ? undefined : api.clientHref(clientId!, clientName ?? ''),
+    }),
+    [api, personal, clientId, clientName, rootLabel],
+  );
+  const dataScope = dataScopeOf(dest.target);
 
+  // Reloads can overlap (a folder drop's debounced refresh, the end-of-drop
+  // refresh, a delete): only the LATEST applies, and files that landed while it
+  // was in flight are merged back in (the tree was read before they committed).
+  const reloadSeq = useRef(0);
+  const appliedSeq = useRef(0);
+  const landedLog = useRef<Array<{ at: number; files: unknown[] }>>([]);
+  /** A good tree that a newer reload superseded — used if that newer one fails. */
+  const spare = useRef<{ seq: number; startedAt: number; tree: Awaited<ReturnType<typeof loadTree>> } | null>(null);
   const reload = useCallback(async () => {
     setError(null);
+    const seq = ++reloadSeq.current;
+    const startedAt = Date.now();
+    const apply = (tree: Awaited<ReturnType<typeof loadTree>>, since: number, applied: number) => {
+      const late = landedLog.current.filter((x) => x.at >= since);
+      landedLog.current = late;
+      setFolders(tree.folders);
+      setFiles(late.length ? mergeLandedFiles(tree.files, late.flatMap((x) => x.files)) : tree.files);
+      setCanWrite(tree.canWrite !== false);
+      appliedSeq.current = applied;
+    };
     try {
       const tree = await loadTree();
-      setFolders(tree.folders);
-      setFiles(tree.files);
-      setCanWrite(tree.canWrite !== false);
+      if (seq !== reloadSeq.current) {
+        if (seq > appliedSeq.current && (!spare.current || spare.current.seq < seq)) spare.current = { seq, startedAt, tree };
+        return;
+      }
+      spare.current = null;
+      apply(tree, startedAt, seq);
     } catch (e) {
+      if (seq !== reloadSeq.current) return;
+      // The newest reload failed: show the newest good tree we got instead of nothing.
+      const s = spare.current;
+      spare.current = null;
+      if (s && s.seq > appliedSeq.current) apply(s.tree, s.startedAt, s.seq);
       setError(e instanceof Error ? e.message : 'Could not load the databank');
     } finally {
-      setLoading(false);
+      if (seq === reloadSeq.current) setLoading(false);
     }
   }, [loadTree]);
 
@@ -220,6 +263,53 @@ export function DatabankTab({
     }
     return path;
   }, [currentFolderId, folderById]);
+  const uploadDest = useMemo<UploadDest>(
+    () => ({ ...dest, parentLabel: [rootLabel, ...breadcrumb.map((f) => f.name)].join(' › ') }),
+    [dest, rootLabel, breadcrumb],
+  );
+
+  // Resumable uploads land in the background (the dock tracks them): merge each
+  // recorded file into the list as it lands, and refetch the tree when a folder
+  // drop created folders (debounced) and once when the drop finishes. Nothing is
+  // loaded until an upload queue exists in this tab.
+  useEffect(() => {
+    if (!v2) return;
+    let cancelled = false;
+    let attached = false;
+    let off: (() => void) | undefined;
+    const reloader = createLandingReloader({
+      timers: { set: (fn, ms) => window.setTimeout(fn, ms), clear: (h) => window.clearTimeout(h as number) },
+      now: () => Date.now(),
+      reload,
+    });
+    const attach = () => {
+      if (attached || cancelled || !isQueuePresent()) return;
+      attached = true;
+      import('@/lib/databank-upload-browser')
+        .then((m) => {
+          if (cancelled) return;
+          off = m.onLanded(dataScope, (e) => {
+            if (e.files.length) {
+              landedLog.current.push({ at: Date.now(), files: e.files });
+              setFiles((f) => mergeLandedFiles(f, e.files));
+            }
+            if (e.foldersChanged) reloader.request();
+            if (e.idle) reloader.flush();
+          });
+        })
+        .catch(() => {
+          attached = false;
+        });
+    };
+    const unsubscribe = subscribePresence(attach);
+    attach();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      off?.();
+      reloader.dispose();
+    };
+  }, [v2, dataScope, reload]);
 
   const childFolders = useMemo(
     () => folders.filter((f) => f.parentFolderId === currentFolderId).sort((a, b) => a.name.localeCompare(b.name)),
@@ -236,6 +326,21 @@ export function DatabankTab({
       if (readOnly) return;
       const arr = Array.from(list);
       if (arr.length === 0) return;
+      if (v2 && source === 'UPLOAD') {
+        // Resumable: queued in the background (any size, survives a dropped
+        // connection); the dock shows progress. If the chunk can't load, fall
+        // through to the standard upload.
+        const m = await import('@/lib/databank-upload-browser').catch(() => null);
+        if (m) {
+          setError(null);
+          try {
+            m.enqueueFiles(uploadDest, currentFolderId, arr);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : 'Could not start the upload');
+          }
+          return;
+        }
+      }
       const ok = arr.filter((f) => f.size <= MAX_FILE_BYTES);
       const tooBig = arr.filter((f) => f.size > MAX_FILE_BYTES);
       setBusy(true);
@@ -265,7 +370,7 @@ export function DatabankTab({
         setProgress(null);
       }
     },
-    [putFile, currentFolderId, reload, readOnly],
+    [putFile, currentFolderId, reload, readOnly, v2, uploadDest],
   );
 
   // Upload a whole folder (from the "Upload folder" button or a dropped
@@ -273,6 +378,21 @@ export function DatabankTab({
   const doUploadFolder = useCallback(
     async (entries: FolderEntry[]) => {
       if (readOnly || entries.length === 0) return;
+      if (v2) {
+        // Resumable: the server creates the whole folder tree in one call
+        // (merging into same-named folders, so a re-drop resumes instead of
+        // making "Passport (2)"), then the files upload in the background.
+        const m = await import('@/lib/databank-upload-browser').catch(() => null);
+        if (m) {
+          setError(null);
+          try {
+            m.enqueueFolder(uploadDest, currentFolderId, entries);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : 'Could not start the upload');
+          }
+          return;
+        }
+      }
       const ok = entries.filter((e) => e.file.size <= MAX_FILE_BYTES);
       const tooBig = entries.filter((e) => e.file.size > MAX_FILE_BYTES);
       setBusy(true);
@@ -329,12 +449,15 @@ export function DatabankTab({
         setProgress(null);
       }
     },
-    [makeFolder, putFile, currentFolderId, reload, readOnly],
+    [makeFolder, putFile, currentFolderId, reload, readOnly, v2, uploadDest],
   );
 
   // Clipboard paste of an image while the tab is mounted.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      // canWrite defaults to true until the tree loads — don't upload into a
+      // databank we haven't confirmed we may write to.
+      if (loading || readOnly) return;
       const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
       if (imgs.length) {
         e.preventDefault();
@@ -343,7 +466,7 @@ export function DatabankTab({
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [doUpload]);
+  }, [doUpload, loading, readOnly]);
 
   // ---- Folder / file operations ----
   const submitNewFolder = async () => {
@@ -601,7 +724,10 @@ export function DatabankTab({
               {!readOnly ? (
                 <>
                   Drag files or a whole folder here, use Upload / Upload folder, or paste a screenshot.
-                  <br />Up to {fmtMB(MAX_FILE_BYTES)} per file.
+                  <br />
+                  {v2
+                    ? 'Big files and whole folders are fine — if the internet drops, the upload continues by itself.'
+                    : `Up to ${fmtMB(MAX_FILE_BYTES)} per file.`}
                 </>
               ) : (
                 'You have read-only access to this databank.'
@@ -673,7 +799,7 @@ export function DatabankTab({
                       </button>
                     )}
                     <div style={{ fontSize: 11.5, color: muted, marginTop: 2 }}>
-                      {formatBytes(file.fileSizeBytes)}
+                      {file.fileSizeBytes == null ? '' : fmtSize(file.fileSizeBytes)}
                       {file.source === 'CLIPBOARD' ? ' · pasted' : file.source === 'COPIED' ? ' · copy' : ''}
                     </div>
                   </div>
@@ -843,6 +969,7 @@ function RowActions(props: {
 function Overlay({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (
     <div
+      data-sos-modal=""
       onClick={onClose}
       style={{
         position: 'fixed',

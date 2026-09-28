@@ -183,7 +183,7 @@ R2's 7-day lifecycle rule is the backstop. Uncommitted objects from the legacy s
 ## 6. Upload queue in the explorer
 
 - **Engine.** A module-level store (`lib/databank-upload/queue.ts`, read with `useSyncExternalStore`, at most 4 notifications a second). Uploads survive in-app navigation.
-- **Where the dock lives.** `UploadDock` is mounted in `app/(processing)/layout.tsx` and `app/(jr)/layout.tsx` (from ux), so it stays visible outside the explorer.
+- **Where the dock lives.** `UploadDockHost` is mounted once in the ROOT `app/layout.tsx` (as built in PR-7), so uploads stay visible — and keep running — on every page, including /admin and /sales and after the JR "Back to workspace" link. The host renders nothing until a queue exists in the tab, so users who never upload load none of the engine.
 - **API adapter.** The Phase 0 adapter gains `initUploads`, `signParts`, `completeUploads`, `abortUpload`, `listOpen` and `ensurePaths`, from one `makeUploadApi(basePath, userId?)`.
 - **Dock layout:**
   - Header: "7 files — 3 completed · 2 uploading · 2 waiting · 1 failed — 4.1 of 20.3 GB · 6.2 MB/s · ~48 min", with Pause all / Cancel all / Retry failed.
@@ -229,6 +229,15 @@ R2's 7-day lifecycle rule is the backstop. Uncommitted objects from the legacy s
 | 10 (optional) | `FileSystemFileHandle` one-click resume on Chromium | S-M |
 
 PRs 7 and 8 need the merged Phase 0 explorer.
+
+### Rollout (as built)
+
+- **Build flag** `NEXT_PUBLIC_DATABANK_UPLOAD_V2` (a Railway *build* variable on the frontend service — `next build` bakes it in; the Dockerfile passes it through):
+  - `off` (default): the standard upload everywhere; `?uploadV2=` is ignored.
+  - `pilot`: only browsers that opened any page once with `?uploadV2=1` (remembered in localStorage; `?uploadV2=0` opts out again).
+  - `on`: everyone, except browsers that opted out with `?uploadV2=0`.
+- **Backend kill switch** `DATABANK_RESUMABLE_UPLOADS=off` (+ restart): `init` sends NEW files to the standard upload (≤ 2 GB). Sessions already open still finish (resume / in-progress). The dock says "This server is using the standard upload".
+- Signing out while uploads run asks first; uploads stop, saved files stay, half-sent files resume if dropped again within 6 days.
 
 ## 10. Risks and test plan
 

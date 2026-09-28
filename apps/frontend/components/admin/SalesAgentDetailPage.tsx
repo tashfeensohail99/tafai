@@ -846,7 +846,7 @@ export function SalesAgentDetailPage({ employeeId }: { employeeId: string }) {
       </div>
 
       {reassignLead ? (
-        <div
+        <div data-sos-modal=""
           onClick={() => { if (!reassigning) setReassignLead(null); }}
           style={{
             position: 'fixed',

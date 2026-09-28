@@ -52,6 +52,8 @@ export async function directUploadJrDatabankFile(
   file: File,
   folderId: string | null = null,
   onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
+  opts: { commitKey?: string; onStored?: (storageKey: string) => void } = {},
 ): Promise<ApiDatabankFile> {
   const mimeType = file.type || 'application/octet-stream';
   const bodyBase = {
@@ -62,12 +64,24 @@ export async function directUploadJrDatabankFile(
     mimeType,
     fileSizeBytes: file.size,
   };
+  const commit = (storageKey: string) =>
+    apiFetch<ApiDatabankFile>('/jr/databank/uploads/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...bodyBase, storageKey }),
+      cache: 'no-store',
+      // No signal: once sent, the server records the file whatever the tab does —
+      // aborting would only make the dock say "Cancelled" about a saved file.
+    });
+  // Already stored (only the commit's reply was lost): record it, don't re-upload.
+  if (opts.commitKey) return commit(opts.commitKey);
 
   const presigned = await apiFetch<PresignedUploadResponse>('/jr/databank/uploads/presign', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyBase),
     cache: 'no-store',
+    signal,
   });
 
   // Dev storage (local/supabase): no direct-PUT path — stream through the backend.
@@ -80,16 +94,15 @@ export async function directUploadJrDatabankFile(
     return res;
   }
 
-  await putToStorage(presigned.url, file, presigned.headers ?? {}, (loaded, total) =>
-    onProgress?.(total ? loaded / total : 0),
+  await putToStorage(
+    presigned.url,
+    file,
+    presigned.headers ?? {},
+    (loaded, total) => onProgress?.(total ? loaded / total : 0),
+    signal,
   );
-
-  return apiFetch<ApiDatabankFile>('/jr/databank/uploads/commit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...bodyBase, storageKey: presigned.storageKey }),
-    cache: 'no-store',
-  });
+  opts.onStored?.(presigned.storageKey);
+  return commit(presigned.storageKey);
 }
 
 /** The JR-matter clients the caller may browse (flat), each with a file count.

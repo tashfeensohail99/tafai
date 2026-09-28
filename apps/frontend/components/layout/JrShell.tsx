@@ -18,6 +18,7 @@ import {
   CalendarClock,
   X,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import {
   createContext,
@@ -32,6 +33,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import { destinationForUser, logout as sessionLogout, useSession } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 
 // The console is gated on the real `jr.portal.view` permission (held by
 // jr_head / jr_associate / admin / super_admin), NOT a broad role allowlist —
@@ -164,6 +166,7 @@ export function JrShell({ children }: { children: ReactNode }) {
       },
       mode: session.user.permissions.includes('jr.matter.view_all') ? 'head' : 'assoc',
       logout: () => {
+        if (!confirmStopUploads()) return;
         sessionLogout();
         router.replace('/login');
       },
@@ -248,7 +251,7 @@ export function JrShell({ children }: { children: ReactNode }) {
 
         {/* ── Mobile overlay ───────────────────────────────────────────── */}
         {mobileOpen && (
-          <div
+          <div data-sos-modal=""
             aria-hidden="true"
             onClick={() => setMobileOpen(false)}
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 99 }}
@@ -274,12 +277,12 @@ export function JrShell({ children }: { children: ReactNode }) {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <a
+              <Link
                 href={workspaceHref}
                 style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--sos-brand-primary-strong)', textDecoration: 'none', whiteSpace: 'nowrap' }}
               >
                 Back to workspace
-              </a>
+              </Link>
               <ThemeToggle />
               <NotificationsBell iconSize={16} />
               <span className="sos-topbar__optional">

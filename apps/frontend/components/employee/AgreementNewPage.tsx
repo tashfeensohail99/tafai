@@ -138,7 +138,7 @@ export function AgreementNewPage() {
       )}
 
       {dupMatch ? (
-        <div
+        <div data-sos-modal=""
           style={{
             position: 'fixed',
             inset: 0,

@@ -300,7 +300,7 @@ export function FaceCapturesPage() {
       )}
 
       {lightbox ? (
-        <div
+        <div data-sos-modal=""
           onClick={() => setLightbox(null)}
           style={{
             position: 'fixed',

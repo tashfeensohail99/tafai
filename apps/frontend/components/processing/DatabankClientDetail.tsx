@@ -37,7 +37,7 @@ export function DatabankClientDetail({ clientId }: { clientId: string }) {
           <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--sos-text-primary, #0f172a)', marginTop: 8 }}>{name}</div>
         ) : null}
       </div>
-      <DatabankTab clientId={clientId} />
+      <DatabankTab clientId={clientId} clientName={name || undefined} />
     </div>
   );
 }

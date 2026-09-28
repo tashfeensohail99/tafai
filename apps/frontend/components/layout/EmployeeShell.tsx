@@ -36,6 +36,7 @@ import { NotificationsBell } from './NotificationsBell';
 import { PresencePill } from '@/components/whatsapp/PresencePill';
 import { PresenceWarnings } from '@/components/whatsapp/PresenceWarnings';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 import { setMyPresence, getMyMissedCallCount } from '@/lib/whatsapp';
 import { fetchMySalesStats, type MySalesStats } from '@/lib/sales-api';
 import { fetchAgreementReviewCounts } from '@/lib/agreements';
@@ -219,6 +220,7 @@ export function EmployeeShell({ children }: { children: ReactNode }) {
   const user: EmployeeUser = session.user;
 
   async function logout() {
+    if (!confirmStopUploads()) return;
     // Set presence OFFLINE before clearing the JWT so the backend call
     // is still authenticated. Best-effort — if it fails we still log out.
     try {

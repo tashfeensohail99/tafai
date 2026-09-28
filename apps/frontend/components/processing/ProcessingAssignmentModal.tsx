@@ -174,7 +174,7 @@ export function ProcessingAssignmentModal({
   /* ---- Done state ---- */
   if (done) {
     return (
-      <div style={overlayStyle}>
+      <div data-sos-modal="" style={overlayStyle}>
         <div className="sos-glass sos-glass--strong" style={panelStyle}>
           <CheckCircle2 size={38} style={{ color: 'var(--sos-status-success)', marginBottom: 12 }} />
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--sos-text-primary)', marginBottom: 6 }}>
@@ -190,7 +190,7 @@ export function ProcessingAssignmentModal({
   }
 
   return (
-    <div style={overlayStyle} onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div data-sos-modal="" style={overlayStyle} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div
         className="sos-glass sos-glass--strong"
         style={{ ...panelStyle, maxWidth: 520, textAlign: 'left', padding: 28 }}

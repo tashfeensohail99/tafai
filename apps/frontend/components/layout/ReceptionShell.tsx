@@ -28,6 +28,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { NotificationsBell } from './NotificationsBell';
 import { logout as sessionLogout, useSession } from '@/lib/session';
+import { confirmStopUploads } from '@/lib/databank-upload/presence';
 
 export interface ReceptionUser {
   id: string;
@@ -131,6 +132,7 @@ export function ReceptionShell({ children }: { children: ReactNode }) {
         permissions: session.user.permissions,
       },
       logout: () => {
+        if (!confirmStopUploads()) return;
         sessionLogout();
         router.replace('/login');
       },
@@ -202,7 +204,7 @@ export function ReceptionShell({ children }: { children: ReactNode }) {
 
         {/* ── Mobile overlay ───────────────────────────────────────────── */}
         {mobileOpen && (
-          <div
+          <div data-sos-modal=""
             aria-hidden="true"
             onClick={() => setMobileOpen(false)}
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 99 }}

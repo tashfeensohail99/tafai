@@ -91,7 +91,7 @@ Every session route also requires `createdByUserId === user.id`.
 | `GET P/uploads?open=1` | Caller's UPLOADING, COMPLETING and FAILED sessions, for the resume banner. |
 | `POST P/uploads/complete` | `{ids[≤50]}` → `results[]` per id: `completed{file, relocated?}` \| `in-progress` \| `missing-parts{missingParts}` \| `failed{reason}` \| `expired` |
 | `DELETE P/uploads/:id` | Compare-and-set UPLOADING→ABORTED, then AbortMultipartUpload (or DeleteObject for SINGLE). NoSuchUpload counts as success. Returns 409 once completion has started. |
-| `POST P/folders/ensure-paths` | `{clientId?\|personal?, parentFolderId?, paths[≤2000]}` → `{[path]: folderId}`. Get-or-create in one transaction under `pg_advisory_xact_lock(hash(scope))`: one read of the scope's folders, then `createManyAndReturn` per depth. It reuses same-name folders and never adds "(2)". |
+| `POST P/folders/ensure-paths` | `{clientId?\|personal?, parentFolderId?, paths[≤2000]}` → `{folders: {[path]: folderId}, created}`. Get-or-create in one transaction under `pg_advisory_xact_lock(hashtext(scope))`: one read of the scope's folders, then a `createMany` per ≤1,000 new folders with ids minted up front (parents first). It reuses same-name folders (exact, then case-insensitive; the oldest of duplicates) and never adds "(2)". The same scope lock is now taken by create/rename/move/delete folder, so the tree can't change under it (built in PR-4). |
 
 **How init handles each file.** One auth check per batch, then:
 1. The size cap from `DATABANK_MAX_FILE_BYTES` and `BLOCKED_EXT`.

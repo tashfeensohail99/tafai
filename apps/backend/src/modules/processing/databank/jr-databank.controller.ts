@@ -29,6 +29,7 @@ import {
   CommitUploadDto,
   CopyFileDto,
   CreateFolderDto,
+  EnsureFolderPathsDto,
   MoveFileDto,
   MoveFolderDto,
   PresignUploadDto,
@@ -184,6 +185,14 @@ export class JrDatabankController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.databank.createFolder(clientId, dto, user);
+  }
+
+  /** Get-or-create a dropped folder tree in one call (see the Processing
+   *  controller). Scope in the body: a client, or the caller's personal area. */
+  @Post('folders/ensure-paths')
+  @RequirePermissions(WRITE)
+  ensureFolderPaths(@Body() dto: EnsureFolderPathsDto, @CurrentUser() user: RequestUser) {
+    return this.databank.ensureFolderPaths(dto, user);
   }
 
   @Patch('folders/:folderId')

@@ -1,4 +1,7 @@
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsInt,
   IsOptional,
@@ -9,6 +12,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { MAX_ENSURE_PATHS } from './folder-paths';
 
 /**
  * DTOs for the per-client databank (the Google Drive replacement).
@@ -112,6 +116,35 @@ export class PresignUploadDto {
   @IsInt()
   @Min(0)
   fileSizeBytes!: number;
+}
+
+/**
+ * Get-or-create a dropped folder tree in ONE call (Databank Phase 1). `paths`
+ * are directory paths relative to `parentFolderId` ("Passport", "Passport/Scans");
+ * missing ancestors are created too, and existing same-name folders are REUSED
+ * (never "(2)"). Scope is a client (`clientId`) or `personal: true`.
+ */
+export class EnsureFolderPathsDto {
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  personal?: boolean;
+
+  /** Where the tree is dropped; omit or null = the databank root. */
+  @IsOptional()
+  @ValidateIf((o) => o.parentFolderId !== null)
+  @IsUUID()
+  parentFolderId?: string | null;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(MAX_ENSURE_PATHS)
+  @IsString({ each: true })
+  @MaxLength(4096, { each: true })
+  paths!: string[];
 }
 
 /** Commit a completed direct upload: the same scope as the presign, plus the

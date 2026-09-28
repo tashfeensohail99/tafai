@@ -5,11 +5,25 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DatabankFileSource, Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { unlink } from 'node:fs/promises';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { RequestUser } from '../../../common/types/auth.types';
-import { CommitUploadDto, CopyFileDto, CreateFolderDto, PresignUploadDto } from './databank.dto';
+import {
+  CommitUploadDto,
+  CopyFileDto,
+  CreateFolderDto,
+  EnsureFolderPathsDto,
+  PresignUploadDto,
+} from './databank.dto';
+import { FolderPathError, FolderPlan, planFolderPaths, splitFolderPath } from './folder-paths';
+
+/** Folder-structure transactions (see lockFolderScope). Generous: a caller may
+ *  queue behind a big first drop, which inserts thousands of rows ~90 ms away
+ *  in the Seoul DB (Prisma's 5 s default would abort the waiter). */
+const FOLDER_TXN = { timeout: 30_000 };
+
 
 /** Split a search box value into words (max 5). EVERY word must match
  *  somewhere, so "abdul qadir" finds first name "Abdul" + last name "Qadir" —
@@ -209,9 +223,10 @@ export class DatabankService {
   async assertFolderInScope(
     folderId: string | null | undefined,
     scope: { clientId: string | null; ownerUserId: string | null },
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<string | null> {
     if (!folderId) return null;
-    const folder = await this.prisma.databankFolder.findFirst({
+    const folder = await db.databankFolder.findFirst({
       where: {
         id: folderId,
         deletedAt: null,
@@ -583,16 +598,43 @@ export class DatabankService {
   // Folders
   // ---------------------------------------------------------------------------
 
+  // FOLDER-STRUCTURE LOCK. Every write that changes a scope's folder tree —
+  // create, rename, move, delete and ensure-paths — runs in a transaction that
+  // first takes ONE advisory lock per scope (a client's databank, or one
+  // associate's personal area). Under it the scope's folders cannot change, so:
+  // two drops of the same Drive folder can't both create "Passport"; a subtree
+  // delete can't miss folders created mid-delete (they'd be live children of a
+  // trashed parent — invisible); two crossing moves can't make a cycle. Auth
+  // runs BEFORE the transaction (it only reads), so a lock is never held across
+  // it. Costs ~3 round trips on these rare writes. Files are NOT under this
+  // lock: an upload commit reads its folder FOR SHARE instead (see deleteFolder).
+
+  private async lockFolderScope(
+    tx: Prisma.TransactionClient,
+    scope: { clientId: string | null; ownerUserId: string | null },
+  ): Promise<void> {
+    const key = scope.clientId
+      ? `databank-folders|client|${scope.clientId}`
+      : `databank-folders|user|${scope.ownerUserId}`;
+    // TWO-key form: 1145194033 ('DBF1') is this lock's namespace. (int4, int4)
+    // advisory locks live apart from the single-key hashtext() locks used
+    // elsewhere (upload-commit identity, attendance, telephony), so a 32-bit
+    // hash collision can never make this lock and an upload commit — which holds
+    // its folder FOR SHARE while it takes its own lock — wait on each other.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194033, hashtext(${key}))`;
+  }
+
+  /** Re-read a folder once its scope is locked: loadFolder ran before the lock,
+   *  so the folder may have been deleted meanwhile (its scope never changes). */
+  private async reloadFolder(tx: Prisma.TransactionClient, folderId: string) {
+    const folder = await tx.databankFolder.findFirst({ where: { id: folderId, deletedAt: null } });
+    if (!folder) throw new NotFoundException('Folder not found');
+    return folder;
+  }
+
   async createFolder(clientId: string, dto: CreateFolderDto, user: RequestUser) {
     await this.assertClientWriteAccess(clientId, user);
-    const scope = { clientId, ownerUserId: null };
-    const parentFolderId = await this.assertFolderInScope(dto.parentFolderId, scope);
-    const name = await this.uniqueFolderName(scope, parentFolderId, dto.name.trim());
-
-    return this.prisma.databankFolder.create({
-      data: { clientId, parentFolderId, name, createdByUserId: user.id },
-      select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
-    });
+    return this.createFolderIn({ clientId, ownerUserId: null }, dto, user);
   }
 
   /** Create a folder in an associate's PERSONAL databank (ownerUserId). Defaults
@@ -600,66 +642,140 @@ export class DatabankService {
   async createPersonalFolder(user: RequestUser, dto: CreateFolderDto, targetUserId?: string) {
     const ownerUserId = targetUserId ?? user.id;
     this.assertPersonalAccess(ownerUserId, user);
-    const scope = { clientId: null, ownerUserId };
-    const parentFolderId = await this.assertFolderInScope(dto.parentFolderId, scope);
-    const name = await this.uniqueFolderName(scope, parentFolderId, dto.name.trim());
+    return this.createFolderIn({ clientId: null, ownerUserId }, dto, user);
+  }
 
-    return this.prisma.databankFolder.create({
-      data: { ownerUserId, parentFolderId, name, createdByUserId: user.id },
-      select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
-    });
+  /** Create one folder in an already-AUTHORIZED scope ("Passport (2)" on a name
+   *  clash — a hand-made folder is always new; ensure-paths is what merges). */
+  private createFolderIn(
+    scope: { clientId: string | null; ownerUserId: string | null },
+    dto: CreateFolderDto,
+    user: RequestUser,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      const parentFolderId = await this.assertFolderInScope(dto.parentFolderId, scope, tx);
+      const name = await this.uniqueFolderName(scope, parentFolderId, dto.name.trim(), undefined, tx);
+      return tx.databankFolder.create({
+        data: { ...scope, parentFolderId, name, createdByUserId: user.id },
+        select: { id: true, name: true, parentFolderId: true, createdAt: true, updatedAt: true },
+      });
+    }, FOLDER_TXN);
   }
 
   async renameFolder(folderId: string, name: string, user: RequestUser) {
-    const folder = await this.loadFolder(folderId, user);
-    const unique = await this.uniqueFolderName(
-      { clientId: folder.clientId, ownerUserId: folder.ownerUserId },
-      folder.parentFolderId, name.trim(), folder.id,
-    );
-    return this.prisma.databankFolder.update({
-      where: { id: folder.id },
-      data: { name: unique },
-      select: { id: true, name: true, parentFolderId: true, updatedAt: true },
-    });
+    const authorized = await this.loadFolder(folderId, user);
+    const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      const folder = await this.reloadFolder(tx, folderId);
+      const unique = await this.uniqueFolderName(scope, folder.parentFolderId, name.trim(), folder.id, tx);
+      return tx.databankFolder.update({
+        where: { id: folder.id },
+        data: { name: unique },
+        select: { id: true, name: true, parentFolderId: true, updatedAt: true },
+      });
+    }, FOLDER_TXN);
   }
 
   async moveFolder(folderId: string, parentFolderId: string | null | undefined, user: RequestUser) {
-    const folder = await this.loadFolder(folderId, user);
-    const scope = { clientId: folder.clientId, ownerUserId: folder.ownerUserId };
-    const targetParent = await this.assertFolderInScope(parentFolderId, scope);
-    await this.assertNoCycle(folder.id, targetParent);
-    // A move can collide with an existing name in the destination — suffix it.
-    const name = await this.uniqueFolderName(scope, targetParent, folder.name, folder.id);
-    return this.prisma.databankFolder.update({
-      where: { id: folder.id },
-      data: { parentFolderId: targetParent, name },
-      select: { id: true, name: true, parentFolderId: true, updatedAt: true },
-    });
+    const authorized = await this.loadFolder(folderId, user);
+    const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      const folder = await this.reloadFolder(tx, folderId);
+      const targetParent = await this.assertFolderInScope(parentFolderId, scope, tx);
+      await this.assertNoCycle(folder.id, targetParent, tx);
+      // A move can collide with an existing name in the destination — suffix it.
+      const name = await this.uniqueFolderName(scope, targetParent, folder.name, folder.id, tx);
+      return tx.databankFolder.update({
+        where: { id: folder.id },
+        data: { parentFolderId: targetParent, name },
+        select: { id: true, name: true, parentFolderId: true, updatedAt: true },
+      });
+    }, FOLDER_TXN);
   }
 
   /** Soft-delete a folder and its ENTIRE subtree (descendant folders + all
    *  their files). Recoverable — nothing is removed from storage. */
   async deleteFolder(folderId: string, user: RequestUser) {
-    const folder = await this.loadFolder(folderId, user);
-    const ids = await this.collectSubtree(folder.id);
-    const now = new Date();
-    // Folders FIRST, then their files: trashing the folder rows takes their row
-    // locks before the file sweep. A resumable-upload commit reads its folder
-    // FOR SHARE, so either it waits for this delete (then sees the folder gone
-    // and relocates to the root), or this delete waits for it — and the file
-    // sweep below then trashes the just-recorded file together with its folder.
-    // Either way no live file is left stranded inside a trashed folder.
-    await this.prisma.$transaction([
-      this.prisma.databankFolder.updateMany({
+    const authorized = await this.loadFolder(folderId, user);
+    const scope = { clientId: authorized.clientId, ownerUserId: authorized.ownerUserId };
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockFolderScope(tx, scope);
+      const folder = await this.reloadFolder(tx, folderId);
+      // Collected UNDER the lock, so no folder can be added to the subtree
+      // between this read and the sweep below.
+      const ids = await this.collectSubtree(folder.id, tx);
+      const now = new Date();
+      // Folders FIRST, then their files: trashing the folder rows takes their
+      // row locks before the file sweep. A resumable-upload commit reads its
+      // folder FOR SHARE, so either it waits for this delete (then sees the
+      // folder gone and relocates to the root), or this delete waits for it —
+      // and the file sweep below then trashes the just-recorded file together
+      // with its folder. Either way no live file is left stranded inside a
+      // trashed folder.
+      await tx.databankFolder.updateMany({
         where: { id: { in: ids }, deletedAt: null },
         data: { deletedAt: now },
-      }),
-      this.prisma.databankFile.updateMany({
+      });
+      await tx.databankFile.updateMany({
         where: { folderId: { in: ids }, deletedAt: null },
         data: { deletedAt: now },
-      }),
-    ]);
-    return { deletedFolders: ids.length };
+      });
+      return { deletedFolders: ids.length };
+    }, FOLDER_TXN);
+  }
+
+  /**
+   * Get-or-create a dropped folder tree in ONE call (Databank Phase 1): every
+   * path (relative to `parentFolderId`) resolves to a folder id, creating only
+   * what is missing. Same-name folders are REUSED — never "(2)" — so dropping a
+   * half-uploaded Drive folder again merges into what is already there, and a
+   * retry returns the same ids. One lock, one read of the scope's folders, then
+   * one insert per ≤1,000 new folders (was one ~540 ms POST per folder).
+   */
+  async ensureFolderPaths(dto: EnsureFolderPathsDto, user: RequestUser, targetUserId?: string) {
+    const { clientId, ownerUserId } = await this.resolveWriteScope(dto, user, targetUserId);
+    const scope = { clientId, ownerUserId };
+    // Reject malformed paths before touching the database — naming the path,
+    // so the officer can find the folder to rename in a 2,000-folder drop.
+    for (const path of dto.paths) {
+      try {
+        splitFolderPath(path);
+      } catch (e) {
+        if (!(e instanceof FolderPathError)) throw e;
+        const shown = path.length > 80 ? `${path.slice(0, 77)}...` : path;
+        throw new BadRequestException(`${e.message} (folder ${JSON.stringify(shown)})`);
+      }
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        await this.lockFolderScope(tx, scope);
+        const base = await this.assertFolderInScope(dto.parentFolderId, scope, tx);
+        const existing = await tx.databankFolder.findMany({
+          where: { ...scope, deletedAt: null },
+          select: { id: true, parentFolderId: true, name: true, createdAt: true },
+        });
+        let plan: FolderPlan;
+        try {
+          plan = planFolderPaths(base, dto.paths, existing, randomUUID);
+        } catch (e) {
+          if (e instanceof FolderPathError) throw new BadRequestException(e.message);
+          throw e;
+        }
+        // Ids are minted up front, so no read-back is needed. Parents precede
+        // their children in `create`, and each chunk's foreign keys are checked
+        // at the end of its INSERT — a parent in the same or an earlier chunk.
+        for (let i = 0; i < plan.create.length; i += 1000) {
+          await tx.databankFolder.createMany({
+            data: plan.create.slice(i, i + 1000).map((f) => ({ ...f, ...scope, createdByUserId: user.id })),
+          });
+        }
+        return { folders: plan.folders, created: plan.create.length };
+      },
+      FOLDER_TXN,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1045,12 +1161,13 @@ export class DatabankService {
     parentFolderId: string | null,
     desired: string,
     excludeId?: string,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<string> {
     let name = desired;
     let n = 2;
     // eslint-disable-next-line no-await-in-loop
     while (
-      await this.prisma.databankFolder.findFirst({
+      await db.databankFolder.findFirst({
         where: {
           clientId: scope.clientId,
           ownerUserId: scope.ownerUserId,
@@ -1069,7 +1186,11 @@ export class DatabankService {
   }
 
   /** Reject a move that would put a folder inside its own subtree (a cycle). */
-  private async assertNoCycle(folderId: string, newParentId: string | null): Promise<void> {
+  private async assertNoCycle(
+    folderId: string,
+    newParentId: string | null,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<void> {
     if (!newParentId) return; // moving to root is always safe
     if (newParentId === folderId) {
       throw new BadRequestException('A folder cannot be moved into itself');
@@ -1077,7 +1198,7 @@ export class DatabankService {
     // Walk the new parent's ancestor chain in ONE recursive query (was one
     // query per level — ~90 ms each to the Seoul DB). UNION de-duplicates, so
     // the walk terminates even if a race ever left a cycle in the data.
-    const hit = await this.prisma.$queryRaw<{ id: string }[]>`
+    const hit = await db.$queryRaw<{ id: string }[]>`
       WITH RECURSIVE anc AS (
         SELECT "id", "parentFolderId" FROM "processing"."databank_folders" WHERE "id" = ${newParentId}
         UNION
@@ -1092,12 +1213,15 @@ export class DatabankService {
   }
 
   /** All live folder ids in a subtree, root included (breadth-first). */
-  private async collectSubtree(rootId: string): Promise<string[]> {
+  private async collectSubtree(
+    rootId: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<string[]> {
     // The folder + all LIVE descendants in ONE recursive query (was one query
     // per folder: ~27 s for a 300-folder Drive-migrated client at ~90 ms per
     // round trip). Same semantics as before — the root is always included,
     // descendants only while not soft-deleted. UNION stops on any cycle.
-    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+    const rows = await db.$queryRaw<{ id: string }[]>`
       WITH RECURSIVE sub AS (
         SELECT "id" FROM "processing"."databank_folders" WHERE "id" = ${rootId}
         UNION

@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test \"lib/**/*.test.ts\""
   },
   "keywords": [],
   "author": "",

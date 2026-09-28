@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HASH_STALL_MS, INIT_TIMEOUT_MS, MAX_PART_ATTEMPTS, STALL_MS, TransportError, UploadEngine } from './engine.ts';
+import { HASH_STALL_MS, INIT_TIMEOUT_MS, MAX_PART_ATTEMPTS, NO_PROOF_GIVE_UP_MS, STALL_MS, TransportError, UploadEngine } from './engine.ts';
 import type { UploadSource } from './engine.ts';
 import {
   FakeServer,
@@ -646,7 +646,7 @@ test('[review r2] the give-up window ignores time the laptop was ASLEEP (a back-
   assert.equal(server.attempts.get('s1:1'), 3);
 });
 
-test('[review r2] a file that can no longer be read fails at once (no 12 h "waiting for the network")', async () => {
+test('[review r2→r8] a file that can no longer be read — with nothing left to test its drive — fails after the short no-proof wait (not 12 h)', async () => {
   const { server, env, engine } = setup();
   let gone = false;
   const usb = item('usb.bin', 200);
@@ -659,9 +659,11 @@ test('[review r2] a file that can no longer be read fails at once (no 12 h "wait
   await engine.whenIdle();
   const f = view(engine, 'usb.bin');
   assert.equal(f.status, 'failed');
-  assert.match(f.error!, /no longer on this computer/);
+  assert.match(f.error!, /moved, edited or renamed/);
   assert.equal(statuses(engine)['other.pdf'], 'done');
-  assert.ok(env.clock - start < 10 * 60_000, 'failed quickly, not after hours of retries');
+  // (other.pdf was read long before: it may be served from a cache, so it can't prove the drive)
+  const took = env.clock - start;
+  assert.ok(took >= NO_PROOF_GIVE_UP_MS && took < NO_PROOF_GIVE_UP_MS + 10 * 60_000, `the no-proof wait, not hours (${Math.round(took / 60_000)} min)`);
   assert.equal(engine.snapshot().linkDown, false);
 });
 
@@ -1778,4 +1780,354 @@ test('[review r8] cancelling every file that waited on the drive ends the wait (
   await engine.cancel('y');
   await until(() => !engine.snapshot().readsWaiting, 10_000);
   assert.equal(engine.hasWork(), false);
+});
+
+// ---- review round 8 ------------------------------------------------------------------------
+
+/** A seeded PRNG (mulberry32): real browsers jitter every delay (Math.random). */
+function seeded(seed: number): () => number {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('[review r8] with real (jittered) delays the read wait never loses its wake-up: the only file, drive away 2 min, resumes by itself', async () => {
+  for (let seed = 1; seed <= 12; seed++) {
+    const { env, engine } = setup();
+    env.random = seeded(seed);
+    let drive = false;
+    env.readable = async () => drive;
+    env.hash = async (source) => {
+      await tick();
+      if (!drive) throw new Error('NotReadableError');
+      return (source as FakeSource).sha;
+    };
+    engine.add([item('solo.pdf', 12)]);
+    const t0 = env.clock;
+    await until(() => env.clock - t0 > 2 * 60_000, 100_000); // (a lost wake-up freezes the virtual clock here)
+    assert.equal(engine.snapshot().readsWaiting, true);
+    drive = true;
+    await until(() => statuses(engine)['solo.pdf'] === 'done', 100_000);
+  }
+});
+
+test('[review r8] with jittered delays: a NAS away 10 min under 5 queued files — the wait keeps testing and everything resumes', async () => {
+  for (let seed = 1; seed <= 6; seed++) {
+    const { env, engine } = setup();
+    env.random = seeded(seed * 7);
+    let nas = true;
+    env.readable = async () => nas;
+    env.hash = async (source) => {
+      await tick();
+      if (!nas) throw new Error('NotReadableError');
+      return (source as FakeSource).sha;
+    };
+    engine.add([item('first.pdf', 12)]);
+    await engine.whenIdle();
+    nas = false;
+    engine.add(Array.from({ length: 5 }, (_, i) => item(`q${i}.pdf`, 12, { seed: `q${i}` })));
+    const t0 = env.clock;
+    await until(() => env.clock - t0 > 10 * 60_000, 200_000);
+    assert.equal(Object.values(statuses(engine)).filter((s) => s === 'failed').length, 0);
+    nas = true;
+    await until(() => Object.values(statuses(engine)).every((s) => s === 'done'), 200_000);
+  }
+});
+
+test('[review r8] a sibling Drive for desktop still has CACHED does not prove Drive is back: the drop waits instead of failing', async () => {
+  const { env, engine } = setup();
+  const cached = item('cached.pdf', 12, { seed: 'cached' });
+  let drive = true;
+  env.readable = async (src: UploadSource) => drive || src === cached.source; // read before: served from the cache
+  env.hash = async (source) => {
+    await tick();
+    if (!drive && source !== cached.source) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  engine.add([cached]);
+  await engine.whenIdle();
+  drive = false; // Drive reconnects slower than our API
+  engine.add(Array.from({ length: 10 }, (_, i) => item(`d${i}.pdf`, 12, { seed: `d${i}` })));
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 5 * 60_000, 200_000);
+  assert.equal(Object.values(statuses(engine)).filter((s) => s === 'failed').length, 0, 'nothing failed: Drive is away, not the files');
+  assert.equal(engine.snapshot().readsWaiting, true);
+  drive = true;
+  await until(() => Object.values(statuses(engine)).every((s) => s === 'done'), 200_000);
+});
+
+test('[review r8] a sibling never read before DOES prove the drive: a file gone from it fails at once', async () => {
+  const { server, env, engine } = setup();
+  let gone = false;
+  const usb = item('usb.bin', 200);
+  let release!: () => void;
+  const slowHash = new Promise<void>((r) => (release = r));
+  const later = item('later.pdf', 9, { seed: 'later' });
+  env.readable = async (src: UploadSource) => !(gone && src === usb.source);
+  env.hash = async (source) => {
+    await tick();
+    if (source === later.source) await slowHash; // still being read: never read up to now
+    return (source as FakeSource).sha;
+  };
+  server.fault = ({ session }) => (session === 's1' && gone ? 0 : 'ok');
+  engine.add([usb, later]);
+  await until(() => server.okPuts.size >= 3);
+  gone = true;
+  const start = env.clock;
+  await until(() => statuses(engine)['usb.bin'] === 'failed', 100_000);
+  assert.match(view(engine, 'usb.bin').error!, /no longer on this computer/);
+  assert.ok(env.clock - start < 10 * 60_000, 'at once, not after the no-proof wait');
+  release();
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['later.pdf'], 'done');
+});
+
+test('[review r8] PUTs prove nothing about the drive (their bytes were read before): a sibling\'s PUT finishing AFTER the pull does not fail a file', async () => {
+  const { server, env, engine } = setup();
+  let gone = false;
+  env.readable = async () => !gone;
+  // small.pdf's one PUT is slow (its body was read when it started); big.bin's parts fail once the drive is pulled
+  server.fault = ({ session, attempt }) => (session === 's1' ? (attempt === 1 ? 'slow' : 'ok') : gone ? 0 : 'ok');
+  engine.add([item('small.pdf', 12, { seed: 'small' }), item('big.bin', 300, { seed: 'big' })]);
+  await until(() => server.okPuts.size >= 3 && server.inFlight > 0, 100_000);
+  assert.notEqual(statuses(engine)['small.pdf'], 'done', '(precondition: its PUT is still out)');
+  assert.notEqual(statuses(engine)['big.bin'], 'done', '(precondition: big.bin has parts left)');
+  gone = true; // …then small.pdf's PUT answers 200, AFTER big.bin found its part unreadable
+  const t0 = env.clock;
+  await until(() => statuses(engine)['small.pdf'] === 'done', 100_000);
+  await until(() => env.clock - t0 > 10 * 60_000, 300_000);
+  assert.notEqual(statuses(engine)['big.bin'], 'failed', 'the drive is away — a late 200 of bytes read earlier proves nothing');
+  gone = false;
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['big.bin'], 'done');
+  exactlyOnce(server);
+});
+
+test('[review r8] an empty (0-byte) file read during an outage proves nothing: the others keep waiting', async () => {
+  const { env, engine } = setup();
+  let nas = true;
+  env.readable = async (src: UploadSource) => nas || (src as FakeSource).size === 0;
+  env.hash = async (source) => {
+    await tick();
+    if (!nas && (source as FakeSource).size > 0) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('first.pdf', 12)]);
+  await engine.whenIdle();
+  nas = false;
+  engine.add([item('a.pdf', 12, { seed: 'a' }), item('empty.txt', 0, { seed: 'e' }), item('b.pdf', 12, { seed: 'b' })]);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000, 200_000);
+  assert.equal(statuses(engine)['a.pdf'], 'queued');
+  assert.equal(statuses(engine)['b.pdf'], 'queued');
+  nas = true;
+  await engine.whenIdle();
+  assert.ok(Object.values(statuses(engine)).every((s) => s === 'done'));
+});
+
+test('[review r8] the ONLY file, edited or moved after the drop (never readable again): fails after the no-proof wait with the right words — not 12 h', async () => {
+  const { env, engine } = setup();
+  env.readable = async () => false;
+  env.hash = async () => {
+    await tick();
+    throw new Error('NotReadableError');
+  };
+  engine.add([item('agreement.docx', 12)]);
+  const t0 = env.clock;
+  await until(() => statuses(engine)['agreement.docx'] === 'failed', 400_000);
+  const took = env.clock - t0;
+  assert.ok(took >= NO_PROOF_GIVE_UP_MS && took < NO_PROOF_GIVE_UP_MS + 5 * 60_000, `${Math.round(took / 60_000)} min`);
+  assert.match(view(engine, 'agreement.docx').error!, /moved, edited or renamed/);
+  assert.equal(engine.snapshot().readsWaiting, false, 'nothing waits any more');
+});
+
+test('[review r8] once given up, every file still queued behind the one test read fails together (not one per minute)', async () => {
+  const { env, engine } = setup({ engine: { giveUpMs: 30 * 60_000 } });
+  let nas = true;
+  env.readable = async () => nas;
+  env.hash = async (source) => {
+    await tick();
+    if (!nas) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  engine.add([item('first.pdf', 12)]);
+  await engine.whenIdle();
+  nas = false;
+  engine.add(Array.from({ length: 40 }, (_, i) => item(`q${i}.pdf`, 12, { seed: `q${i}` })));
+  const t0 = env.clock;
+  await until(() => Object.values(statuses(engine)).some((s) => s === 'failed'), 400_000);
+  const firstAt = env.clock;
+  await until(() => Object.values(statuses(engine)).filter((s) => s === 'failed').length === 40, 400_000);
+  assert.ok(env.clock - firstAt < 2 * 60_000, `all within ${Math.round((env.clock - firstAt) / 1000)} s of the first`);
+  assert.ok(firstAt - t0 >= 30 * 60_000);
+  assert.match(view(engine, 'q39.pdf').error!, /for hours/);
+});
+
+test('[review r8] the read wait ends when the files that waited are cancelled — even while other uploads carry on', async () => {
+  const { server, env, engine } = setup();
+  const w = item('w.pdf', 12, { seed: 'w' });
+  env.readable = async (src: UploadSource) => src !== w.source;
+  env.hash = async (source) => {
+    await tick();
+    if (source === w.source) throw new Error('NotReadableError');
+    return (source as FakeSource).sha;
+  };
+  server.fault = ({ session }) => (session === 's1' ? 'slow' : 'ok'); // big.bin keeps uploading a while
+  engine.add([item('big.bin', 900, { seed: 'big' }), w]);
+  await until(() => engine.snapshot().readsWaiting, 100_000);
+  await engine.cancel('w.pdf');
+  await until(() => !engine.snapshot().readsWaiting, 10_000);
+  assert.notEqual(statuses(engine)['big.bin'], 'done', '(precondition: big.bin was still uploading)');
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['big.bin'], 'done');
+  void env;
+});
+
+test('[review r8] paused: a file that can\'t be read does NOT make the dock say "Waiting for internet" — it waits for Resume, uncounted', async () => {
+  const { server, env, engine } = setup();
+  const gone = item('gone.pdf', 12, { seed: 'gone' });
+  let goneReads = 0;
+  env.readable = async (src: UploadSource) => src !== gone.source;
+  env.hash = async (source) => {
+    await tick();
+    if (source === gone.source) {
+      goneReads += 1;
+      throw new Error('NotReadableError');
+    }
+    return (source as FakeSource).sha;
+  };
+  engine.pause();
+  const rest = Array.from({ length: 20 }, (_, i) => item(`r${i}.pdf`, 12, { seed: `r${i}` }));
+  engine.add([item('a.pdf', 12, { seed: 'a' }), gone, item('b.pdf', 12, { seed: 'b' }), ...rest]);
+  const t0 = env.clock;
+  await until(() => rest.every((r) => statuses(engine)[r.key] === 'hashed'), 100_000);
+  assert.ok(goneReads <= 2, `the rest hashed ahead, not one test read at a time around gone.pdf (read ${goneReads}×)`);
+  await until(() => env.clock - t0 > 30 * 60_000, 100_000);
+  const snap = engine.snapshot();
+  assert.equal(snap.linkDown, false, 'no ping was sent — nothing says the internet is down');
+  assert.equal(server.calls.ping, 0);
+  assert.notEqual(statuses(engine)['gone.pdf'], 'failed', 'not judged while paused');
+  engine.resume();
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['gone.pdf'], 'failed');
+  assert.equal(statuses(engine)['a.pdf'], 'done');
+});
+
+test('[review r8] paused: a hung read is still abandoned after the stall window (the watchdog does not freeze while paused)', async () => {
+  const { env, engine } = setup();
+  let stuckReads = 0;
+  env.hash = async (source, _onProgress, signal) => {
+    if ((source as FakeSource).sha.startsWith(Buffer.from('stuck').toString('hex')) && stuckReads++ === 0) {
+      await stopped(signal!); // this read never settles (until abandoned)
+    }
+    await tick();
+    return (source as FakeSource).sha;
+  };
+  engine.pause();
+  engine.add([item('stuck.bin', 12, { seed: 'stuck' }), item('next.pdf', 12, { seed: 'next' })]);
+  const t0 = env.clock;
+  await until(() => statuses(engine)['next.pdf'] === 'hashed', 100_000);
+  assert.ok(env.clock - t0 <= HASH_STALL_MS + 2 * 60_000, `hashed ahead while paused (${Math.round((env.clock - t0) / 60_000)} min)`);
+  engine.resume();
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['next.pdf'], 'done');
+});
+
+test('[review r8] a congested uplink (every /health ping slow) forgives a bad file only a few times — then it fails', async () => {
+  const { server, env, engine } = setup();
+  const odd = item('odd.bin', 12, { seed: 'odd' });
+  env.readable = async () => true; // every 1-byte read works…
+  let reads = 0;
+  env.hash = async (source) => {
+    await tick();
+    if (source === odd.source) {
+      reads += 1;
+      throw new Error('NotReadableError'); // …but reading it in full always fails
+    }
+    return (source as FakeSource).sha;
+  };
+  // bufferbloat: the ping always takes 4 s — "link trouble" at every judgement, for good
+  const realPing = server.ping.bind(server);
+  server.ping = async (signal) => {
+    await server.sleep(4_000, signal);
+    return realPing(signal);
+  };
+  engine.add([item('fine.pdf', 12, { seed: 'fine' }), odd]);
+  await until(() => statuses(engine)['odd.bin'] === 'failed', 100_000);
+  assert.ok(reads <= 16, `bounded (${reads} reads)`);
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['fine.pdf'], 'done');
+});
+
+test('[review r8] re-reading the part of a big file that was read before (cached) proves nothing: an upload whose part is unreadable keeps waiting', async () => {
+  const { server, env, engine } = setup();
+  const MiB = 1024 * 1024;
+  const scan = item('scan.mov', 64 * MiB, { seed: 'scan' });
+  let drive = true;
+  let pulled = false;
+  // Drive goes away 20 MiB into scan.mov: those 20 MiB stay in Drive for desktop's
+  // cache; the rest (and every other file) needs Drive
+  env.readable = async (src: UploadSource, start: number) => drive || (src === scan.source && start < 20 * MiB);
+  env.hash = async (source, onProgress) => {
+    await tick();
+    if (source === scan.source) {
+      for (let at = 2 * MiB; at <= 64 * MiB; at += 2 * MiB) {
+        if (at > 20 * MiB && !pulled) {
+          pulled = true;
+          drive = false;
+        }
+        if (!drive && at > 20 * MiB) throw new Error('NotReadableError');
+        onProgress(at); // (a re-read gets through the cached 20 MiB first)
+        await tick();
+      }
+    } else if (!drive) {
+      throw new Error('NotReadableError');
+    }
+    return (source as FakeSource).sha;
+  };
+  // up.bin uploads slowly (it was hashed before the pull: its parts need Drive)
+  server.fault = ({ session }) => (session === 's1' ? (drive ? 'slow' : 0) : 'ok');
+  engine.add([item('up.bin', 300, { seed: 'up' })]);
+  await until(() => server.okPuts.size >= 2, 100_000);
+  engine.add([scan]);
+  await until(() => !drive, 100_000);
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000, 400_000);
+  assert.notEqual(statuses(engine)['up.bin'], 'failed', 'Drive is away: re-reading cached bytes is not proof that it is back');
+  drive = true;
+  await engine.whenIdle();
+  assert.equal(statuses(engine)['up.bin'], 'done');
+  assert.equal(statuses(engine)['scan.mov'], 'done');
+});
+
+test('[review r8] while an upload\'s part waits on the drive, the queued files still get their spaced-out test reads', async () => {
+  const { server, env, engine } = setup();
+  let drive = true;
+  let qReads = 0;
+  env.readable = async () => drive;
+  env.hash = async (source) => {
+    await tick();
+    if ((source as FakeSource).sha.startsWith(Buffer.from('q').toString('hex'))) {
+      qReads += 1;
+      if (!drive) throw new Error('NotReadableError');
+    } else if (!drive) {
+      throw new Error('NotReadableError');
+    }
+    return (source as FakeSource).sha;
+  };
+  server.fault = ({ session }) => (session === 's1' ? (drive ? 'slow' : 0) : 'ok');
+  engine.add([item('up.bin', 300, { seed: 'up' })]);
+  await until(() => server.okPuts.size >= 2, 100_000);
+  drive = false;
+  engine.add(Array.from({ length: 3 }, (_, i) => item(`q${i}.pdf`, 12, { seed: `q${i}` })));
+  const t0 = env.clock;
+  await until(() => env.clock - t0 > 10 * 60_000, 400_000);
+  assert.ok(qReads >= 8, `test reads kept coming, one at a time (${qReads} in 10 min)`);
+  assert.ok(qReads <= 40, `…and spaced out (${qReads} in 10 min)`);
+  drive = true;
+  await engine.whenIdle();
+  assert.ok(Object.values(statuses(engine)).every((x) => x === 'done'));
 });

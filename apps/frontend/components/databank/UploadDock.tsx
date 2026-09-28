@@ -467,7 +467,8 @@ export default function UploadDock() {
       {!snap.offline && !snap.linkDown && snap.readsWaiting && unfinished > 0 ? (
         <div className="sos-banner sos-banner--warning" style={{ margin: 8, fontSize: 12.5 }}>
           Can’t read the files right now — is the USB drive, network drive or Google Drive connected? Nothing is lost;
-          the uploads continue by themselves once it is.
+          the uploads continue by themselves once it is. If you moved, renamed or edited a file after dropping it, cancel
+          it and drop it again.
         </div>
       ) : null}
       {snap.compat ? (

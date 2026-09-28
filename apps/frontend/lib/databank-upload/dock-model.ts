@@ -139,7 +139,10 @@ export function dockHeadline(s: QueueSnapshot, now: number): Headline {
   if (s.authLost) return { title: 'Paused — you were signed out' };
   if (s.offline || s.linkDown) return { title: 'Waiting for internet…', sub: unfinished ? `${plural(unfinished, 'file')} waiting` : undefined };
   if (s.readsWaiting && unfinished) {
-    return { title: 'Can’t read the files — is the drive connected?', sub: `${plural(unfinished, 'file')} waiting — they continue by themselves` };
+    return {
+      title: 'Can’t read the files — is the drive connected?',
+      sub: `${plural(unfinished, 'file')} waiting — they continue by themselves once it is`,
+    };
   }
   if (s.paused && unfinished) return { title: `Paused — ${plural(unfinished, 'file')} waiting` };
   if (s.active) {

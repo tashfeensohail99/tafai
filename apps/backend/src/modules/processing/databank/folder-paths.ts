@@ -49,6 +49,9 @@ export interface FolderPlan {
 // Control characters (incl. NUL, which Postgres text cannot store at all).
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+// A lone UTF-16 surrogate (never valid Unicode): the DB driver would reject it
+// with an opaque 500 — refuse it here with a 400 that names the folder.
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 
 /** Normalise one relative folder path ("Passport/Scans", "/Passport/Scans/",
  *  "Passport//Scans") into its segments. Browsers separate with "/" only
@@ -67,6 +70,7 @@ export function splitFolderPath(raw: string): string[] {
   for (const s of segments) {
     if (s === '.' || s === '..') throw new FolderPathError(`"${s}" is not a valid folder name.`);
     if (CONTROL_CHARS.test(s)) throw new FolderPathError('A folder name contains a control character.');
+    if (LONE_SURROGATE.test(s)) throw new FolderPathError('A folder name contains an invalid character.');
     if (s.length > MAX_FOLDER_NAME) {
       throw new FolderPathError(`A folder name is longer than ${MAX_FOLDER_NAME} characters.`);
     }

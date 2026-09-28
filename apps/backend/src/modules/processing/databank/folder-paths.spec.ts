@@ -42,11 +42,17 @@ describe('splitFolderPath', () => {
     ['./Passport', 'not a valid'],
     ['Pass\u0000port', 'control character'],
     ['Pass\nport', 'control character'],
+    ['Pass\ud800port', 'invalid character'], // [review] a lone high surrogate
+    ['\udc00Scans', 'invalid character'], // a lone low surrogate
     ['x'.repeat(121), 'longer than 120'],
     [Array(MAX_FOLDER_DEPTH + 1).fill('d').join('/'), 'nested at most'],
   ])('rejects %j (%s)', (raw, msg) => {
     expect(() => splitFolderPath(raw)).toThrow(FolderPathError);
     expect(() => splitFolderPath(raw)).toThrow(msg);
+  });
+
+  it('accepts real astral characters (a valid surrogate PAIR)', () => {
+    expect(splitFolderPath('Visa \u{1F4C4}/Scans')).toEqual(['Visa \u{1F4C4}', 'Scans']);
   });
 
   it('accepts exactly the limits', () => {

@@ -28,22 +28,44 @@ const NO_REFRESH_PATHS = new Set(['/auth/refresh', '/auth/login', '/auth/logout'
  * three wait on the same promise. Avoids 4 racing refresh attempts where
  * 3 of them invalidate the fourth's just-rotated refresh token.
  */
-let refreshPromise: Promise<string | null> | null = null;
+let refreshPromise: Promise<RefreshOutcome> | null = null;
 
-async function attemptRefresh(): Promise<string | null> {
+/**
+ * - refreshed:   new access token minted — replay the original request.
+ * - rejected:    the server definitively refused the refresh token (or there
+ *                isn't one) — the session is over, log out.
+ * - unavailable: we couldn't get an answer (offline, timeout, 408/429/5xx
+ *                while Railway redeploys) — keep the tokens; the next request
+ *                tries the refresh again.
+ */
+type RefreshOutcome =
+  | { kind: 'refreshed'; accessToken: string }
+  | { kind: 'rejected' }
+  | { kind: 'unavailable' };
+
+/** A black-holed refresh must not hang every request queued behind it. */
+const REFRESH_TIMEOUT_MS = 20_000;
+
+async function attemptRefresh(): Promise<RefreshOutcome> {
   if (refreshPromise) return refreshPromise;
   const refreshToken = getRefreshToken();
-  if (!refreshToken) return null;
+  if (!refreshToken) return { kind: 'rejected' };
 
-  refreshPromise = (async () => {
+  refreshPromise = (async (): Promise<RefreshOutcome> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
     try {
       const res = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
         cache: 'no-store',
+        signal: controller.signal,
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        const transient = res.status === 408 || res.status === 429 || res.status >= 500;
+        return transient ? { kind: 'unavailable' } : { kind: 'rejected' };
+      }
       const tokens = (await res.json()) as {
         accessToken: string;
         refreshToken: string;
@@ -52,10 +74,12 @@ async function attemptRefresh(): Promise<string | null> {
       // import with session.ts (which itself imports from this file).
       window.sessionStorage.setItem('tafsheen-access-token', tokens.accessToken);
       window.localStorage.setItem('tafsheen-refresh-token', tokens.refreshToken);
-      return tokens.accessToken;
+      return { kind: 'refreshed', accessToken: tokens.accessToken };
     } catch {
-      return null;
+      // Network error, abort on timeout, or a body that died mid-read.
+      return { kind: 'unavailable' };
     } finally {
+      clearTimeout(timer);
       refreshPromise = null;
     }
   })();
@@ -137,14 +161,17 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     // Token-expiry recovery: if the request came back 401 AND the user
     // had an access token (i.e. it wasn't an anonymous call), try to
     // refresh once. If refresh succeeds we replay the original request
-    // with the new bearer. If refresh fails we clear state so the next
-    // navigation lands on /login instead of looping. Endpoints in
-    // NO_REFRESH_PATHS are deliberately excluded to avoid infinite loops.
+    // with the new bearer. If the server rejects the refresh token we clear
+    // state so the next navigation lands on /login instead of looping. If
+    // the refresh is merely unavailable (offline, timeout, 5xx) we keep the
+    // tokens and let this request fail with its 401 — the next request
+    // retries the refresh. Endpoints in NO_REFRESH_PATHS are deliberately
+    // excluded to avoid infinite loops.
     if (response.status === 401 && token && !NO_REFRESH_PATHS.has(path)) {
-      const newToken = await attemptRefresh();
-      if (newToken) {
-        response = await doFetch(newToken);
-      } else {
+      const refresh = await attemptRefresh();
+      if (refresh.kind === 'refreshed') {
+        response = await doFetch(refresh.accessToken);
+      } else if (refresh.kind === 'rejected') {
         // Refresh path is dead — wipe local state so the next mount of
         // useSession() sees "unauthed" and the shell redirects to login.
         clearAllTokens();
@@ -212,10 +239,10 @@ export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Bl
 
   let response = await doFetch(token);
   if (response.status === 401 && token && !NO_REFRESH_PATHS.has(path)) {
-    const newToken = await attemptRefresh();
-    if (newToken) {
-      response = await doFetch(newToken);
-    } else {
+    const refresh = await attemptRefresh();
+    if (refresh.kind === 'refreshed') {
+      response = await doFetch(refresh.accessToken);
+    } else if (refresh.kind === 'rejected') {
       clearAllTokens();
     }
   }

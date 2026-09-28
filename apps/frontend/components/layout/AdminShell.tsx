@@ -51,7 +51,7 @@ import { RoleBadge } from '@/components/sales-v2/ui/RoleBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { LoadingState } from '../shared/LoadingState';
 import { ErrorState } from '../shared/ErrorState';
-import { apiFetch, ApiClientError } from '@/lib/api-client';
+import { apiFetch, ApiClientError, isSessionRejected } from '@/lib/api-client';
 import { clearAllTokens, getAccessToken } from '@/lib/auth-client';
 import { invalidateSessionCache } from '@/lib/session';
 
@@ -224,10 +224,21 @@ export function AdminShell({ children }: { children: ReactNode }) {
       const profile = await apiFetch<AdminUser>('/auth/me');
       setUser(profile);
     } catch (err) {
-      clearAllTokens();
-      setUser(null);
-      setError(err instanceof ApiClientError ? err.message : 'Unable to verify your session');
-      router.replace('/login');
+      if (isSessionRejected(err)) {
+        clearAllTokens();
+        invalidateSessionCache();
+        setUser(null);
+        router.replace('/login');
+      } else {
+        // Transient (offline, timeout, 5xx while Railway redeploys, or a
+        // refresh that couldn't reach the server) — keep the session and
+        // offer a retry instead of logging the admin out.
+        setError(
+          err instanceof ApiClientError && !err.refreshUnavailable
+            ? err.message
+            : "Couldn't reach the server. Check your connection and try again.",
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -245,7 +256,6 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }, []);
 
   if (loading) return <LoadingState fullPage message="Loading admin portal..." />;
-  if (!user) return <LoadingState fullPage message="Redirecting to login..." />;
   if (error && !user) {
     return (
       <ErrorState
@@ -255,6 +265,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       />
     );
   }
+  if (!user) return <LoadingState fullPage message="Redirecting to login..." />;
 
   // Permission-filter every group.
   const visibleGroups = ADMIN_NAV_GROUPS.map((group) => ({

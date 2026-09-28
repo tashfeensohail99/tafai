@@ -5,6 +5,11 @@ import { clearAllTokens, getAccessToken, getRefreshToken } from './auth-client';
 export class ApiClientError extends Error {
   status: number;
   details?: unknown;
+  /**
+   * Set on a 401 whose token refresh couldn't reach the server (offline,
+   * timeout, 5xx). The session may still be valid — see isSessionRejected.
+   */
+  refreshUnavailable = false;
 
   constructor(message: string, status: number, details?: unknown) {
     super(message);
@@ -12,6 +17,15 @@ export class ApiClientError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+/**
+ * True only when the server has really ended the session: a 401 that a token
+ * refresh couldn't fix. Network errors, timeouts, 5xx and 401s whose refresh
+ * couldn't reach the server are transient — keep the session and retry.
+ */
+export function isSessionRejected(err: unknown): boolean {
+  return err instanceof ApiClientError && err.status === 401 && !err.refreshUnavailable;
 }
 
 /**
@@ -38,7 +52,7 @@ let refreshPromise: Promise<RefreshOutcome> | null = null;
  *                while Railway redeploys) — keep the tokens; the next request
  *                tries the refresh again.
  */
-type RefreshOutcome =
+export type RefreshOutcome =
   | { kind: 'refreshed'; accessToken: string }
   | { kind: 'rejected' }
   | { kind: 'unavailable' };
@@ -46,7 +60,7 @@ type RefreshOutcome =
 /** A black-holed refresh must not hang every request queued behind it. */
 const REFRESH_TIMEOUT_MS = 20_000;
 
-async function attemptRefresh(): Promise<RefreshOutcome> {
+export async function attemptRefresh(): Promise<RefreshOutcome> {
   if (refreshPromise) return refreshPromise;
   const refreshToken = getRefreshToken();
   if (!refreshToken) return { kind: 'rejected' };
@@ -167,8 +181,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     // tokens and let this request fail with its 401 — the next request
     // retries the refresh. Endpoints in NO_REFRESH_PATHS are deliberately
     // excluded to avoid infinite loops.
+    let refreshUnavailable = false;
     if (response.status === 401 && token && !NO_REFRESH_PATHS.has(path)) {
       const refresh = await attemptRefresh();
+      refreshUnavailable = refresh.kind === 'unavailable';
       if (refresh.kind === 'refreshed') {
         response = await doFetch(refresh.accessToken);
       } else if (refresh.kind === 'rejected') {
@@ -188,7 +204,9 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
         typeof body === 'object' && body && 'message' in body
           ? String((body as { message?: unknown }).message)
           : `Request failed with status ${response.status}`;
-      throw new ApiClientError(message, response.status, body);
+      const error = new ApiClientError(message, response.status, body);
+      error.refreshUnavailable = refreshUnavailable;
+      throw error;
     }
 
     return body as T;
@@ -238,8 +256,10 @@ export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Bl
   }
 
   let response = await doFetch(token);
+  let refreshUnavailable = false;
   if (response.status === 401 && token && !NO_REFRESH_PATHS.has(path)) {
     const refresh = await attemptRefresh();
+    refreshUnavailable = refresh.kind === 'unavailable';
     if (refresh.kind === 'refreshed') {
       response = await doFetch(refresh.accessToken);
     } else if (refresh.kind === 'rejected') {
@@ -248,11 +268,13 @@ export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Bl
   }
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new ApiClientError(
+    const error = new ApiClientError(
       text || `Request failed with status ${response.status}`,
       response.status,
       text,
     );
+    error.refreshUnavailable = refreshUnavailable;
+    throw error;
   }
   return response.blob();
 }

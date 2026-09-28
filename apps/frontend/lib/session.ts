@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { apiFetch, invalidateApiCache } from './api-client';
+import { apiFetch, attemptRefresh, invalidateApiCache, isSessionRejected } from './api-client';
 import {
   clearAllTokens,
   getAccessToken,
@@ -71,6 +71,17 @@ export function useSession() {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retries = 0;
+
+    // The server couldn't be reached (offline, timeout, 5xx while Railway
+    // redeploys) — keep the tokens and stay on the loader, retrying after
+    // 2s, 4s, 8s, 16s, then every 30s, instead of logging the user out.
+    const retryLater = (): void => {
+      if (cancelled) return;
+      const delay = Math.min(30_000, 2_000 * 2 ** retries++);
+      retryTimer = setTimeout(() => void bootstrap(), delay);
+    };
 
     const bootstrap = async (): Promise<void> => {
       let token = getAccessToken();
@@ -80,7 +91,13 @@ export function useSession() {
       // unauthed — otherwise closing the tab and reopening it always
       // forces a re-login even though the 7-day refresh window is open.
       if (!token && getRefreshToken()) {
-        token = await refreshTokens();
+        const refresh = await attemptRefresh();
+        if (refresh.kind === 'unavailable') {
+          retryLater();
+          return;
+        }
+        if (refresh.kind === 'rejected') clearAllTokens();
+        else token = refresh.accessToken;
       }
       if (!token) {
         if (!cancelled) setState({ status: 'unauthed' });
@@ -94,16 +111,25 @@ export function useSession() {
       try {
         const user = await fetchMe();
         if (!cancelled) setState({ status: 'authed', user });
-      } catch {
-        clearAllTokens();
-        invalidateSessionCache();
-        if (!cancelled) setState({ status: 'unauthed' });
+      } catch (err) {
+        if (isSessionRejected(err)) {
+          clearAllTokens();
+          invalidateSessionCache();
+          if (!cancelled) setState({ status: 'unauthed' });
+        } else if (cachedUser) {
+          // Transient failure, but this tab already verified the user — keep
+          // them signed in on the (slightly stale) copy.
+          if (!cancelled) setState({ status: 'authed', user: cachedUser });
+        } else {
+          retryLater();
+        }
       }
     };
 
     void bootstrap();
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
     };
   }, []);
 
@@ -132,41 +158,14 @@ export async function login(email: string, password: string): Promise<SessionUse
 }
 
 /**
- * Exchange a refresh token for a fresh access token. Called by api-client
- * when a request comes back 401, before retrying the original request.
- * Returns the new access token, or null if the refresh failed (refresh
- * token expired, revoked, or never existed). On failure the caller is
- * responsible for clearing tokens + bouncing to /login.
- *
- * Coalesces concurrent refresh attempts so a page-load that fires 5
- * parallel API calls (all hitting 401 simultaneously) only spends one
- * refresh round-trip instead of racing 5 of them.
+ * Exchange the stored refresh token for a fresh access token. Returns the
+ * new access token, or null if the refresh was rejected or couldn't reach
+ * the server. Shares api-client's single-flight refresh (and its timeout),
+ * so it never races the automatic refresh apiFetch does on a 401.
  */
-let refreshInflight: Promise<string | null> | null = null;
-export function refreshTokens(): Promise<string | null> {
-  if (refreshInflight) return refreshInflight;
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return Promise.resolve(null);
-
-  refreshInflight = apiFetch<LoginResult>('/auth/refresh', {
-    method: 'POST',
-    body: JSON.stringify({ refreshToken }),
-    cache: 'no-store',
-  })
-    .then((tokens) => {
-      setAccessToken(tokens.accessToken);
-      setRefreshToken(tokens.refreshToken);
-      return tokens.accessToken;
-    })
-    .catch(() => {
-      // Refresh failed — token is gone for good, surface that to the
-      // caller. They'll clear state and redirect.
-      return null;
-    })
-    .finally(() => {
-      refreshInflight = null;
-    });
-  return refreshInflight;
+export async function refreshTokens(): Promise<string | null> {
+  const refresh = await attemptRefresh();
+  return refresh.kind === 'refreshed' ? refresh.accessToken : null;
 }
 
 export function logout() {

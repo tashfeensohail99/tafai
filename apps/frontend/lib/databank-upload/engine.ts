@@ -173,6 +173,9 @@ export interface EngineSnapshot {
   offline: boolean;
   /** Several requests in a row got no answer and nothing got through: "Waiting for the network…". */
   linkDown: boolean;
+  /** Files can't be read and nothing shows the drive / Google Drive works: the
+   *  engine waits (one test read at a time) — "Is the drive connected?". */
+  readsWaiting: boolean;
   slots: number;
 }
 
@@ -212,6 +215,14 @@ const LINK_DOWN_FRESH_MS = 180_000;
 export const HASH_STALL_MS = 5 * 60_000;
 const HASH_CHECK_MS = 30_000;
 const PING_TIMEOUT_MS = 20_000;
+/** While no file can be read (the drive / NAS / Drive client is away): ONE test
+ *  read at a time, this far apart, doubling up to READ_WAIT_MAX_MS. */
+export const READ_WAIT_MS = 5_000;
+const READ_WAIT_MAX_MS = 60_000;
+/** A read that fails, yet reads fine at that spot right after, this many times
+ *  in a row, counts anyway (a file that only fails when read in full). */
+const READ_OK_BUT_FAILED_MAX = 3;
+const PROBE_TIMEOUT_MS = 30_000;
 /** A back-off that wakes this much later than asked means the machine slept
  *  (or the tab was frozen): that time is not "trying" and never counts toward
  *  the give-up window. (Hidden tabs throttle timers to ~1/min, hence the margin.) */
@@ -310,6 +321,8 @@ interface Job {
   /** Reads that failed while online (the file may be gone — or streamed from
    *  a network drive): a few are retried before the file fails. */
   hashFailures: number;
+  /** Reads that failed although the same spot read fine right after. */
+  readOkButFailed: number;
   hashCtrl?: AbortController;
 }
 
@@ -368,6 +381,28 @@ export class UploadEngine {
   private readonly lastSuccessAt: Record<Channel, number> = { storage: -Infinity, api: -Infinity };
   private readonly failuresInARow: Record<Channel, number> = { storage: 0, api: 0 };
   private readonly lastFailureAt: Record<Channel, number> = { storage: -Infinity, api: -Infinity };
+  /** The SOURCE (the drive / NAS / Drive client the files come from): when a
+   *  file was last read successfully (a hash slice, a probe, a PUT that sent
+   *  bytes), and which one — a sibling to test when a read fails. */
+  /** When the link last showed trouble (a request failed, a ping failed or
+   *  hung): a read that failed after that may have been a blip, not the file. */
+  private lastLinkTroubleAt = -Infinity;
+  /** When a read wait (the source away) last ended. */
+  private readWaitEndedAt = -Infinity;
+  private lastRead: { job: Job; at: number } | null = null;
+  /** The most recent read of a DIFFERENT file than lastRead's. */
+  private lastOtherRead: { job: Job; at: number } | null = null;
+  /** Reads fail and nothing proves the link / the source works: hashing is
+   *  gated to one test read at a time (rotating over the files), spaced out.
+   *  `wake` ends every read-wait sleep the moment any read succeeds. */
+  private readWait: {
+    cause: 'link' | 'source';
+    streak: number;
+    nextAt: number;
+    sinceActive: number;
+    tried: Set<Job>;
+    wake: AbortController;
+  } | null = null;
   /** A timer that tells listeners when a stale "link down" stops holding. */
   private linkExpiryArmed = false;
   /** The one ping in flight (see linkProvenSince). */
@@ -480,6 +515,7 @@ export class UploadEngine {
         cancelUnconfirmed: false,
         unreadableSince: new Map(),
         hashFailures: 0,
+        readOkButFailed: 0,
       };
       this.jobs.push(job);
       this.byKey.set(item.key, job);
@@ -515,11 +551,19 @@ export class UploadEngine {
    * server is already recording the file (409), the row follows it to "done"
    * with a note instead of pretending it was cancelled.
    */
-  async cancel(key: string): Promise<void> {
+  async cancel(key: string, opts: { keepSession?: boolean } = {}): Promise<void> {
     const job = this.byKey.get(key);
     if (!job) return;
     const s = job.view.status;
     if (s === 'cancelling' || (TERMINAL.has(s) && s !== 'failed')) return;
+    if (opts.keepSession) {
+      // Stop this row here only. The server session stays (another copy may be
+      // uploading on it; else it expires on its own — or resumes on a re-drop).
+      this.reset(job);
+      this.set(job, { status: 'cancelled' });
+      this.schedule();
+      return;
+    }
     const sessionId = job.session?.id ?? job.view.uploadId;
     // No session — or another live row (a re-dropped copy) is using this very
     // session: cancel THIS row only; discarding the session would kill the other.
@@ -634,9 +678,17 @@ export class UploadEngine {
       files: this.jobs.map((j) => ({ ...j.view })),
       paused: this.paused,
       offline: this.offline,
-      linkDown: this.linkLooksDown(),
+      // (a read wait whose ping failed: no internet — say so)
+      linkDown: this.linkLooksDown() || this.readWait?.cause === 'link',
+      readsWaiting: this.readWait?.cause === 'source',
       slots: this.slots,
     };
+  }
+
+  /** One file's view (a copy); undefined when the key is not in this engine. */
+  file(key: string): FileView | undefined {
+    const job = this.byKey.get(key);
+    return job ? { ...job.view } : undefined;
   }
 
   subscribe(fn: () => void): () => void {
@@ -711,9 +763,13 @@ export class UploadEngine {
     // OFFLINE: a file streamed from a network drive can't be read then, and a
     // whole drop must not fail in a burst.
     if (!this.offline) {
-      for (const job of this.jobs) {
-        if (this.hashing >= this.hashConcurrency) break;
-        if (job.view.status === 'queued' && !job.parked) void this.hashJob(job);
+      if (this.readWait) {
+        this.pumpReadWait();
+      } else {
+        for (const job of this.jobs) {
+          if (this.hashing >= this.hashConcurrency) break;
+          if (job.view.status === 'queued' && !job.parked) void this.hashJob(job);
+        }
       }
     }
     if (!this.halted) {
@@ -971,6 +1027,7 @@ export class UploadEngine {
     if (proven()) return true;
     if (!this.transport.ping) return true;
     if (this.halted) return false;
+    const pingStart = this.now();
     this.pinging ??= this.api((signal) => this.transport.ping!(signal), PING_TIMEOUT_MS)
       .then(
         () => undefined,
@@ -980,7 +1037,114 @@ export class UploadEngine {
         this.pinging = undefined;
       });
     await this.pinging;
+    // A ping that failed, or only answered after a while: the link was down.
+    if (!proven() || this.now() - pingStart > 3_000) this.lastLinkTroubleAt = this.now();
     return proven();
+  }
+
+  /** A file was read successfully: the source works. Ends a read wait. */
+  private noteReadOk(job: Job): void {
+    const at = this.now();
+    if (this.lastRead && this.lastRead.job !== job) this.lastOtherRead = this.lastRead;
+    this.lastRead = { job, at };
+    if (this.readWait) {
+      this.readWait.wake.abort(); // every file waiting on the source goes again now
+      this.readWait = null;
+      this.readWaitEndedAt = at;
+      this.notify();
+      this.schedule();
+    }
+  }
+
+  /** Was any file read successfully AFTER `t`? If not, test a file that WAS
+   *  readable (a sibling) with a 1-byte read: that tells "this file is gone"
+   *  from "the drive / NAS / Drive client is away". Without a read probe we
+   *  can't tell — assume it works (the failure counts, as before). */
+  private async sourceProvenSince(t: number, job: Job): Promise<boolean> {
+    if (!this.env.readable) return true;
+    // Only ANOTHER file proves the source (this file's own parts still in flight
+    // when its drive was unplugged prove nothing).
+    const other = this.lastRead && this.lastRead.job !== job ? this.lastRead : this.lastOtherRead;
+    if (!other || other.job === job) return false;
+    if (other.at > t) return true;
+    if (other.job.item.source.size <= 0) return false;
+    return (await this.probe(other.job, 0, 1)) === 'ok';
+  }
+
+  /** Nothing can be read right now (and nothing proves the source works):
+   *  gate hashing to one test read at a time — a 20k-file drop must not spin. */
+  private enterReadWait(cause: 'link' | 'source'): void {
+    if (this.readWait) {
+      this.readWait.streak += 1;
+      this.readWait.nextAt = this.now() + this.readWaitDelay();
+      if (this.readWait.cause !== cause) {
+        this.readWait.cause = cause;
+        this.notify();
+      }
+      return;
+    }
+    this.readWait = {
+      cause,
+      streak: 1,
+      nextAt: this.now() + READ_WAIT_MS,
+      sinceActive: this.activeNow(),
+      tried: new Set(),
+      wake: new AbortController(),
+    };
+    this.notify();
+    this.armReadWait();
+  }
+
+  /** Sleep that counts as work, ended early when the job resets or any file
+   *  reads again (the source is back). */
+  private async waitForSource(job: Job, ms: number): Promise<void> {
+    this.sleeping += 1;
+    const ctrl = new AbortController();
+    const unlink = link([job.wake.signal, this.readWait?.wake.signal], () => ctrl.abort());
+    try {
+      await this.nap(ms, ctrl.signal);
+    } finally {
+      unlink();
+      this.sleeping -= 1;
+    }
+  }
+
+  private readWaitDelay(): number {
+    const streak = this.readWait?.streak ?? 1;
+    const base = Math.min(READ_WAIT_MAX_MS, READ_WAIT_MS * 2 ** Math.min(10, streak - 1));
+    return Math.round(base * (0.75 + this.env.random() * 0.5));
+  }
+
+  /** Wake the pump when the next test read is due. */
+  private armReadWait(): void {
+    const w = this.readWait;
+    if (!w) return;
+    void this.nap(Math.max(0, w.nextAt - this.now()), w.wake.signal).then(() => {
+      if (this.readWait === w) this.schedule();
+    });
+  }
+
+  /** In a read wait: start ONE test read when it is due, rotating over the
+   *  queued files (a file that is really gone can't block the others). */
+  private pumpReadWait(): void {
+    const w = this.readWait!;
+    if (this.hashing > 0 || this.now() < w.nextAt) return;
+    const queued = this.jobs.filter((j) => j.view.status === 'queued' && !j.parked);
+    if (!queued.length) return;
+    let next = queued.find((j) => !w.tried.has(j));
+    if (!next) {
+      w.tried.clear();
+      next = queued[0];
+    }
+    w.tried.add(next);
+    w.nextAt = this.now() + this.readWaitDelay();
+    this.armReadWait();
+    void this.hashJob(next);
+  }
+
+  /** Given up waiting on the source (the active clock, like every other wait). */
+  private readWaitExpired(): boolean {
+    return !!this.readWait && this.activeNow() - this.readWait.sinceActive >= this.giveUpMs;
   }
 
   private succeeded(channel: Channel): void {
@@ -1001,6 +1165,7 @@ export class UploadEngine {
     budget.firstFailureAt ??= active;
     this.failuresInARow[channel] += 1;
     this.lastFailureAt[channel] = this.now();
+    this.lastLinkTroubleAt = this.now();
     this.armLinkExpiry();
     if (this.lastSuccessAt[channel] > startedAt) budget.counted += 1;
     if (budget.counted >= max || active - budget.firstFailureAt >= this.giveUpMs) {
@@ -1018,9 +1183,11 @@ export class UploadEngine {
     const ctrl = new AbortController();
     job.hashCtrl = ctrl;
     this.set(job, { status: 'hashing', hashedBytes: 0 });
+    const readStartedAt = this.now();
     // Watchdog: no progress for HASH_STALL_MS (a stalled network share) ⇒ give
     // up on this read — the slot is freed even if the read never settles.
-    let lastProgressAt = this.now();
+    // On the ACTIVE clock: a laptop asleep mid-hash is not a stalled read.
+    let lastProgressAt = this.activeNow();
     const stopWatch = new AbortController();
     let onStall!: (e: Error) => void;
     const stalled = new Promise<never>((_, reject) => (onStall = reject));
@@ -1029,7 +1196,7 @@ export class UploadEngine {
       while (!stopWatch.signal.aborted) {
         await this.nap(HASH_CHECK_MS, stopWatch.signal);
         if (stopWatch.signal.aborted) return;
-        if (this.now() - lastProgressAt > HASH_STALL_MS) {
+        if (this.activeNow() - lastProgressAt > HASH_STALL_MS) {
           ctrl.abort();
           onStall(new Error('reading it stopped responding'));
           return;
@@ -1041,7 +1208,8 @@ export class UploadEngine {
         this.env.hash(
           job.item.source,
           (bytes) => {
-            lastProgressAt = this.now();
+            lastProgressAt = this.activeNow();
+            if (bytes > 0) this.noteReadOk(job);
             if (job.gen === gen) job.view.hashedBytes = bytes;
             this.notify();
           },
@@ -1050,8 +1218,10 @@ export class UploadEngine {
         stalled,
       ]);
       if (job.gen !== gen) return;
+      this.noteReadOk(job);
       job.sha256 = hex;
       job.hashFailures = 0;
+      job.readOkButFailed = 0;
       this.set(job, { hashedBytes: job.item.source.size });
       // Only a copy still IN PROGRESS counts — a finished one says nothing about
       // what the databank holds now (it may have been deleted): ask the server.
@@ -1068,9 +1238,10 @@ export class UploadEngine {
       }
     } catch (e) {
       if (job.gen !== gen) return;
+      const at = job.view.hashedBytes; // where the read failed
       this.set(job, { status: 'queued', hashedBytes: 0 });
       if (this.offline) return; // hashed again once back online
-      void this.judgeRead(job, gen, this.now(), e);
+      void this.judgeRead(job, gen, readStartedAt, this.now(), at, e);
     } finally {
       stopWatch.abort();
       this.hashing -= 1;
@@ -1080,19 +1251,44 @@ export class UploadEngine {
     }
   }
 
-  /** A read failed while online. It is only the FILE's fault if the link is
-   *  proven up AFTER the failure (a Drive-streamed / network-share file is also
-   *  unreadable during an ISP outage): then it counts, and the 3rd counted
-   *  failure fails the file. No proof ⇒ wait outage-style and read it again,
-   *  uncounted. Parked meanwhile, so the next file hashes. */
-  private async judgeRead(job: Job, gen: number, failedAt: number, e: unknown): Promise<void> {
+  /** A read failed while online. It is only the FILE's fault if, AFTER the
+   *  failure, (1) the link is proven up (a Drive-streamed file is unreadable
+   *  during an ISP outage), (2) the SOURCE is proven up (another file read
+   *  fine — else the drive / NAS / Drive client itself is away), and (3) the
+   *  file still can't be read at the spot where it failed (the verdict right
+   *  after the proof — it may have failed during a blip that is over). Then it
+   *  counts; the 3rd counted failure fails the file. Otherwise: not counted —
+   *  with no proof, the engine enters a read wait (one test read at a time). */
+  private async judgeRead(job: Job, gen: number, readStartedAt: number, failedAt: number, at: number, e: unknown): Promise<void> {
     job.parked = true;
     try {
-      const proven = await this.linkProvenSince(failedAt);
+      const link = await this.linkProvenSince(failedAt);
       if (job.gen !== gen) return;
-      if (!proven) {
-        await this.backoff(backoffMs(5, this.env.random), job, false);
+      const source = link && (await this.sourceProvenSince(failedAt, job));
+      if (job.gen !== gen) return;
+      if (!link || !source) {
+        if (this.readWaitExpired()) {
+          this.fail(job, `Could not read this file for hours (${errorMessage(e)}). Is the drive / Google Drive connected?`, true);
+          return;
+        }
+        this.enterReadWait(link ? 'source' : 'link');
+        await this.waitForSource(job, this.readWaitDelay());
         return;
+      }
+      // Proven: can THIS file be read now, where it failed?
+      const size = job.item.source.size;
+      const again = this.env.readable && size > 0 ? await this.probe(job, Math.min(at, size - 1), Math.min(at, size - 1) + 1) : 'unreadable';
+      if (job.gen !== gen) return;
+      if (again === 'ok') {
+        // It reads fine now. If the link (or the source) had trouble while it
+        // was being read, that failure was a blip — uncounted, read it again.
+        // With no trouble anywhere, a file that fails in full yet reads fine at
+        // that spot is broken: that counts after a few tries.
+        const blip = this.lastLinkTroubleAt >= readStartedAt || this.readWaitEndedAt >= readStartedAt;
+        if (blip || (job.readOkButFailed += 1) < READ_OK_BUT_FAILED_MAX) {
+          await this.backoff(backoffMs(2, this.env.random), job, false);
+          return;
+        }
       }
       job.hashFailures += 1;
       if (job.hashFailures >= 3) {
@@ -1351,18 +1547,38 @@ export class UploadEngine {
           if (job.gen !== gen) return;
           if (f.reason) throw new TransportError('stopped', 0);
           if (verdict === 'unreadable') {
-            this.fail(job, 'This file changed or is no longer on this computer — drop it again to continue (finished parts are kept).');
+            // The link works — but does the SOURCE? (A NAS switched off, Drive
+            // not reconnected yet: every file is unreadable, none is "gone".)
+            const source = await this.sourceProvenSince(since, job);
+            if (job.gen !== gen) return;
+            if (source || this.readWaitExpired()) {
+              this.fail(job, 'This file changed or is no longer on this computer — drop it again to continue (finished parts are kept).');
+              return;
+            }
+            // Wait for the source: keep the mark, free the slot, come back later.
+            this.enterReadWait('source');
+            job.inflight.delete(n);
+            this.refreshInFlight(job);
+            job.cooling.add(n);
+            job.urls.delete(n);
+            void this.coolOff(job, gen, n, this.readWaitDelay());
             return;
           }
           if (verdict === 'ok') job.unreadableSince.delete(n);
         }
       }
       startedAt = this.now();
+      let read = false;
       await this.putWatched(f, url, job.item.source.slice(start, end), () => {
+        if (!read && f.loaded > 0) {
+          read = true;
+          this.noteReadOk(job); // it sent bytes: the file (and its drive) reads fine
+        }
         if (job.gen === gen) this.refreshInFlight(job);
       });
       if (job.gen !== gen) return;
       this.succeeded('storage');
+      this.noteReadOk(job);
       job.inflight.delete(n);
       if (!job.done.has(n)) {
         job.done.add(n);
@@ -1475,9 +1691,11 @@ export class UploadEngine {
       () => 'unreadable' as const,
     );
     const stop = new AbortController();
-    const timeout = this.nap(30_000, stop.signal).then(() => 'unknown' as const);
+    const timeout = this.nap(PROBE_TIMEOUT_MS, stop.signal).then(() => 'unknown' as const);
     try {
-      return await Promise.race([read, timeout]);
+      const verdict = await Promise.race([read, timeout]);
+      if (verdict === 'ok') this.noteReadOk(job);
+      return verdict;
     } finally {
       stop.abort();
     }

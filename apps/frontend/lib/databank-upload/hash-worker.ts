@@ -5,7 +5,7 @@
  */
 import { Sha256 } from './sha256.ts';
 
-const SLICE = 8 * 1024 * 1024;
+const SLICE = 2 * 1024 * 1024; // progress often enough for the engine's stall watchdog
 
 // Typed loosely on purpose: the app's tsconfig uses the DOM lib, and pulling
 // in the "webworker" lib alongside it conflicts.

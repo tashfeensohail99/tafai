@@ -15,6 +15,8 @@ import {
   moveDatabankFolder,
   renameDatabankFile,
   renameDatabankFolder,
+  searchDatabankFiles,
+  updateDatabankFile,
   uploadDatabankFile,
   uploadPersonalDatabankFile,
   type ApiDatabankByAssociate,
@@ -22,6 +24,8 @@ import {
   type ApiDatabankFolder,
   type ApiDatabankTree,
   type DatabankFileSource,
+  type DatabankSearchParams,
+  type DatabankSearchResult,
   type DatabankUploadTarget,
 } from './processing';
 import {
@@ -39,6 +43,8 @@ import {
   moveJrDatabankFolder,
   renameJrDatabankFile,
   renameJrDatabankFolder,
+  searchJrDatabankFiles,
+  updateJrDatabankFile,
   uploadJrDatabankFile,
   uploadJrPersonalFile,
 } from './jr-databank';
@@ -87,6 +93,13 @@ export interface DatabankApi {
   deleteFolder(folderId: string): Promise<unknown>;
   signedUrl(fileId: string): Promise<{ url: string; fileName: string; mimeType: string | null }>;
   renameFile(fileId: string, fileName: string): Promise<ApiDatabankFile>;
+  /** Rename AND/OR set metadata (description, tags) in one PATCH. */
+  updateFile(
+    fileId: string,
+    patch: { fileName?: string; description?: string | null; tags?: string[] },
+  ): Promise<ApiDatabankFile>;
+  /** Full-text / fuzzy file search with server-side pagination + type facets. */
+  search(params: DatabankSearchParams): Promise<DatabankSearchResult>;
   moveFile(fileId: string, folderId: string | null): Promise<ApiDatabankFile>;
   copyFile(fileId: string, opts?: { targetClientId?: string; targetFolderId?: string | null }): Promise<ApiDatabankFile>;
   deleteFile(fileId: string): Promise<unknown>;
@@ -111,6 +124,8 @@ export const processingDatabankApi: DatabankApi = {
   deleteFolder: deleteDatabankFolder,
   signedUrl: getDatabankFileSignedUrl,
   renameFile: renameDatabankFile,
+  updateFile: updateDatabankFile,
+  search: searchDatabankFiles,
   moveFile: moveDatabankFile,
   copyFile: copyDatabankFile,
   deleteFile: deleteDatabankFile,
@@ -135,6 +150,8 @@ export const jrDatabankApi: DatabankApi = {
   deleteFolder: deleteJrDatabankFolder,
   signedUrl: jrDatabankFileSignedUrl,
   renameFile: renameJrDatabankFile,
+  updateFile: updateJrDatabankFile,
+  search: searchJrDatabankFiles,
   moveFile: moveJrDatabankFile,
   copyFile: copyJrDatabankFile,
   deleteFile: deleteJrDatabankFile,

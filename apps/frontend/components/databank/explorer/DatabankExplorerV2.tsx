@@ -10,11 +10,13 @@ import {
   Home,
   Loader2,
   Pencil,
+  Search,
+  X,
   FileText,
   Image as ImageIcon,
   File as FileIcon,
 } from 'lucide-react';
-import type { ApiDatabankFolder, ApiDatabankFile } from '@/lib/processing';
+import type { ApiDatabankFolder, ApiDatabankFile, DatabankSearchFacets } from '@/lib/processing';
 import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
 
@@ -43,6 +45,19 @@ function FileGlyph({ mime }: { mime: string | null }) {
   if (mime && /^image\//i.test(mime)) return <ImageIcon size={20} />;
   return <FileIcon size={20} />;
 }
+
+// The six facet buckets the search endpoint returns, in display order.
+const TYPE_BUCKETS = ['image', 'pdf', 'video', 'audio', 'office', 'other'] as const;
+type TypeBucket = (typeof TYPE_BUCKETS)[number];
+const TYPE_LABEL: Record<TypeBucket, string> = {
+  image: 'Images',
+  pdf: 'PDFs',
+  video: 'Video',
+  audio: 'Audio',
+  office: 'Docs',
+  other: 'Other',
+};
+const SEARCH_PAGE_SIZE = 50;
 
 /** Nested tree node built from the flat folder list. */
 type FolderNode = { id: string; name: string; children: FolderNode[] };
@@ -188,6 +203,102 @@ export function DatabankExplorerV2({
       }
     },
     [api],
+  );
+
+  // ---- Search (Databank P2) -----------------------------------------------
+  // A non-empty query flips the MAIN pane from the selected folder's file list
+  // to server-side search RESULTS across the whole scope, with type facets +
+  // "Load more" paging. Clearing the box returns to the folder view.
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [selectedTypes, setSelectedTypes] = useState<TypeBucket[]>([]);
+  const [searchResults, setSearchResults] = useState<ApiDatabankFile[]>([]);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchFacets, setSearchFacets] = useState<DatabankSearchFacets | null>(null);
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const trimmedQuery = debouncedQuery.trim();
+  const isSearching = trimmedQuery.length > 0;
+
+  // Debounce the raw input ~300ms into the query that actually fires a request.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Only the latest search applies (a stale query/type/scope reply is dropped).
+  const searchSeq = useRef(0);
+  const runSearch = useCallback(
+    async (page: number, replace: boolean) => {
+      const q = debouncedQuery.trim();
+      if (!q) return;
+      const seq = ++searchSeq.current;
+      setSearchLoading(true);
+      setSearchError(null);
+      try {
+        const scope = personal ? { personal: true } : { clientId };
+        const res = await api.search({ ...scope, q, types: selectedTypes, page, pageSize: SEARCH_PAGE_SIZE });
+        if (seq !== searchSeq.current) return;
+        setSearchResults((prev) => (replace ? res.results : [...prev, ...res.results]));
+        setSearchTotal(res.total);
+        setSearchFacets(res.facets);
+        setSearchPage(page);
+      } catch (e) {
+        if (seq !== searchSeq.current) return;
+        setSearchError(e instanceof Error ? e.message : 'Search failed');
+      } finally {
+        if (seq === searchSeq.current) setSearchLoading(false);
+      }
+    },
+    [api, personal, clientId, debouncedQuery, selectedTypes],
+  );
+
+  // Query / type-filter / scope change → fetch page 1 (replace). Empty query
+  // resets to the folder view and drops any in-flight search.
+  useEffect(() => {
+    if (!debouncedQuery.trim()) {
+      searchSeq.current++;
+      setSearchResults([]);
+      setSearchTotal(0);
+      setSearchFacets(null);
+      setSearchError(null);
+      setSearchLoading(false);
+      setSearchPage(1);
+      return;
+    }
+    void runSearch(1, true);
+  }, [runSearch, debouncedQuery]);
+
+  const clearSearch = useCallback(() => {
+    setQuery('');
+    setDebouncedQuery('');
+    setSelectedTypes([]);
+  }, []);
+
+  const toggleType = useCallback((t: TypeBucket) => {
+    setSelectedTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
+  }, []);
+
+  // "Client / Folder / Sub-folder" hint for a search result row (root → scope name).
+  const scopeRootLabel = personal ? rootLabel : clientName || rootLabel;
+  const folderPathOf = useCallback(
+    (fid: string | null) => {
+      if (!fid) return scopeRootLabel;
+      const parts: string[] = [];
+      let cursor: string | null = fid;
+      const guard = new Set<string>();
+      while (cursor && !guard.has(cursor)) {
+        guard.add(cursor);
+        const f = folderById.get(cursor);
+        if (!f) break;
+        parts.unshift(f.name);
+        cursor = f.parentFolderId;
+      }
+      return parts.length ? parts.join(' / ') : scopeRootLabel;
+    },
+    [folderById, scopeRootLabel],
   );
 
   // Measure the tree box — react-arborist (react-window) needs numeric sizes.
@@ -384,22 +495,93 @@ export function DatabankExplorerV2({
           </div>
         </div>
 
-        {/* MAIN — breadcrumbs + basic file list */}
+        {/* MAIN — search + breadcrumbs + file list (or search results) */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: muted, flexWrap: 'wrap' }}>
-              <button type="button" onClick={() => setSelectedFolderId(null)} style={crumbBtn(selectedFolderId === null)}>
-                <Home size={14} /> {rootLabel}
-              </button>
-              {breadcrumb.map((f) => (
-                <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <ChevronRight size={13} style={{ opacity: 0.5 }} />
-                  <button type="button" onClick={() => setSelectedFolderId(f.id)} style={crumbBtn(selectedFolderId === f.id)}>
-                    {f.name}
-                  </button>
-                </span>
-              ))}
+          {/* Search box (debounced) — a non-empty query searches the whole scope. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
+              <Search size={15} style={{ position: 'absolute', left: 10, color: muted, pointerEvents: 'none' }} />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Search ${scopeRootLabel}…`}
+                aria-label="Search files"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border,
+                  borderRadius: 10,
+                  padding: '8px 32px',
+                  fontSize: 13,
+                  background: 'var(--sos-surface-solid, #fff)',
+                  color: primary,
+                  outline: 'none',
+                }}
+              />
+              {query ? (
+                <button
+                  type="button"
+                  title="Clear search"
+                  onClick={clearSearch}
+                  style={{
+                    position: 'absolute',
+                    right: 6,
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: muted,
+                    padding: 4,
+                    borderRadius: 6,
+                    display: 'inline-flex',
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
             </div>
+            {isSearching && searchLoading ? (
+              <Loader2 size={16} className="animate-spin" style={{ color: muted, flexShrink: 0 }} />
+            ) : null}
+          </div>
+
+          {/* Type facets — toggle chips with counts (search mode only). */}
+          {isSearching ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {TYPE_BUCKETS.map((t) => {
+                const active = selectedTypes.includes(t);
+                return (
+                  <button key={t} type="button" onClick={() => toggleType(t)} style={chipStyle(active)}>
+                    {TYPE_LABEL[t]}
+                    <span style={{ opacity: 0.7 }}>{searchFacets?.byType[t] ?? 0}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            {isSearching ? (
+              <div style={{ fontSize: 13, color: muted }}>
+                {searchLoading && searchResults.length === 0
+                  ? 'Searching…'
+                  : `${searchTotal} ${searchTotal === 1 ? 'result' : 'results'} for “${trimmedQuery}”`}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: muted, flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => setSelectedFolderId(null)} style={crumbBtn(selectedFolderId === null)}>
+                  <Home size={14} /> {rootLabel}
+                </button>
+                {breadcrumb.map((f) => (
+                  <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <ChevronRight size={13} style={{ opacity: 0.5 }} />
+                    <button type="button" onClick={() => setSelectedFolderId(f.id)} style={crumbBtn(selectedFolderId === f.id)}>
+                      {f.name}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             {readOnly ? (
               <span
                 title={api.readOnlyTitle}
@@ -420,11 +602,84 @@ export function DatabankExplorerV2({
             ) : null}
           </div>
 
-          {/* PR-3: replace this basic list with a TanStack table fed by the
-              search endpoint (filter/sort/paginate), plus a right-click context
-              menu, multi-select bulk actions and a file-details side panel. */}
+          {/* PR-3b: this basic list (folder view AND search results) still needs
+              the TanStack table (sort/columns) + a right-click context menu +
+              multi-select bulk actions + a file-details side panel — those
+              replace this list in a follow-up. */}
           <div style={{ border, borderRadius: 12, background: surface, minHeight: 300, padding: 6 }}>
-            {loading ? (
+            {isSearching ? (
+              searchError ? (
+                <div style={{ color: 'var(--sos-danger, #dc2626)', fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
+                  {searchError}
+                </div>
+              ) : searchLoading && searchResults.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: 16 }}>
+                  <Loader2 size={14} className="animate-spin" /> Searching…
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div style={{ color: muted, fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
+                  No files match your search.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {searchResults.map((file) => (
+                    <div
+                      key={file.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, minWidth: 0 }}
+                    >
+                      <span style={{ color: muted, flexShrink: 0 }}>
+                        <FileGlyph mime={file.mimeType} />
+                      </span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
+                          style={{ fontSize: 13.5, color: primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={file.fileName}
+                        >
+                          {file.fileName}
+                        </div>
+                        <div
+                          style={{ fontSize: 11.5, color: muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={folderPathOf(file.folderId)}
+                        >
+                          {folderPathOf(file.folderId)}
+                          {file.fileSizeBytes == null ? '' : ` · ${fmtSize(file.fileSizeBytes)}`}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        title="Download"
+                        onClick={() => void download(file)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: muted, padding: 6, borderRadius: 7, display: 'inline-flex', flexShrink: 0 }}
+                      >
+                        <Download size={15} />
+                      </button>
+                    </div>
+                  ))}
+                  {searchResults.length < searchTotal ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}>
+                      <button
+                        type="button"
+                        disabled={searchLoading}
+                        onClick={() => void runSearch(searchPage + 1, false)}
+                        style={{
+                          border,
+                          borderRadius: 8,
+                          background: 'transparent',
+                          color: primary,
+                          cursor: searchLoading ? 'default' : 'pointer',
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          padding: '7px 16px',
+                          opacity: searchLoading ? 0.6 : 1,
+                        }}
+                      >
+                        {searchLoading ? 'Loading…' : `Load more (${searchResults.length} of ${searchTotal})`}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              )
+            ) : loading ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: 16 }}>
                 <Loader2 size={14} className="animate-spin" /> Loading databank…
               </div>
@@ -501,6 +756,24 @@ function crumbBtn(active: boolean): React.CSSProperties {
     fontSize: 13,
     fontWeight: active ? 700 : 500,
     color: active ? 'var(--sos-text-primary, #0f172a)' : 'var(--sos-text-muted, #64748b)',
+  };
+}
+
+/** A type-facet toggle chip. Active = the bucket is included in the search. */
+function chipStyle(active: boolean): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    cursor: 'pointer',
+    border,
+    borderColor: active ? accent : undefined,
+    borderRadius: 999,
+    padding: '4px 11px',
+    fontSize: 12,
+    fontWeight: active ? 600 : 500,
+    color: active ? primary : muted,
+    background: active ? accentSoft : 'transparent',
   };
 }
 

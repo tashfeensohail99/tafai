@@ -1,7 +1,7 @@
 'use client';
 
 import { apiFetch } from './api-client';
-import { putToStorage } from './processing';
+import { databankSearchQuery, putToStorage } from './processing';
 import type {
   ApiDatabankAssociate,
   ApiDatabankByAssociate,
@@ -10,6 +10,8 @@ import type {
   ApiDatabankFolder,
   ApiDatabankTree,
   DatabankFileSource,
+  DatabankSearchParams,
+  DatabankSearchResult,
   DatabankUploadTarget,
   PresignedUploadResponse,
 } from './processing';
@@ -36,6 +38,8 @@ export type {
   ApiDatabankFolder,
   ApiDatabankTree,
   DatabankFileSource,
+  DatabankSearchParams,
+  DatabankSearchResult,
   DatabankUploadTarget,
 };
 
@@ -259,6 +263,29 @@ export function renameJrDatabankFile(fileId: string, fileName: string): Promise<
     body: JSON.stringify({ fileName }),
     cache: 'no-store',
   });
+}
+
+/** Rename AND/OR set metadata (description, tags). JR twin of
+ *  `updateDatabankFile`. */
+export function updateJrDatabankFile(
+  fileId: string,
+  patch: { fileName?: string; description?: string | null; tags?: string[] },
+): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/jr/databank/files/${fileId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+    cache: 'no-store',
+  });
+}
+
+/** File search over ONE scope (a JR-matter client or the caller's personal
+ *  area). JR twin of `searchDatabankFiles`. */
+export function searchJrDatabankFiles(params: DatabankSearchParams): Promise<DatabankSearchResult> {
+  return apiFetch<DatabankSearchResult>(
+    `/jr/databank/search${databankSearchQuery(params)}`,
+    { cache: 'no-store' },
+  );
 }
 
 export function moveJrDatabankFile(fileId: string, folderId: string | null): Promise<ApiDatabankFile> {

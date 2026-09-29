@@ -24,6 +24,8 @@ import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 // Resumable uploads (Databank Phase 1) — these three are tiny and pure; the
 // engine itself is loaded on the first V2 upload (`import()` below).
 import { isUploadV2Enabled } from '@/lib/databank-upload/flag';
+import { isDatabankExplorerV2Enabled } from '@/lib/databank-explorer/flag';
+import { DatabankExplorerV2 } from '@/components/databank/explorer/DatabankExplorerV2';
 import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
 import { createLandingReloader, mergeLandedFiles } from '@/lib/databank-upload/landing';
 import { isQueuePresent, subscribePresence } from '@/lib/databank-upload/presence';
@@ -159,6 +161,11 @@ export function DatabankTab({
   // (read after mount — it looks at localStorage and the URL).
   const [v2, setV2] = useState(false);
   useEffect(() => setV2(isUploadV2Enabled()), []);
+  // Rebuilt explorer (Databank Phase 2), behind NEXT_PUBLIC_DATABANK_EXPLORER_V2
+  // — read after mount (localStorage + URL); false during SSR. When on, the
+  // whole legacy body below is replaced by DatabankExplorerV2.
+  const [explorerV2, setExplorerV2] = useState(false);
+  useEffect(() => setExplorerV2(isDatabankExplorerV2Enabled()), []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -564,6 +571,20 @@ export function DatabankTab({
       setError(e instanceof Error ? e.message : 'Could not download the file');
     }
   };
+
+  // Flag branch: the rebuilt explorer takes over the whole tab (both Processing
+  // and JR render this component through the shared api, so both pick it up).
+  if (explorerV2) {
+    return (
+      <DatabankExplorerV2
+        clientId={clientId}
+        clientName={clientName}
+        personal={personal}
+        rootLabel={rootLabel}
+        api={api}
+      />
+    );
+  }
 
   if (loading) {
     return (

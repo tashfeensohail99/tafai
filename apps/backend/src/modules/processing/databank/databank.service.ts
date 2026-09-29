@@ -16,6 +16,7 @@ import {
   CreateFolderDto,
   EnsureFolderPathsDto,
   PresignUploadDto,
+  UpdateFileDto,
 } from './databank.dto';
 import { FolderPathError, FolderPlan, planFolderPaths, splitFolderPath } from './folder-paths';
 
@@ -292,6 +293,198 @@ export class DatabankService {
       }),
     ]);
     return { ownerUserId, folders, files, canWrite };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Search (full-text + fuzzy, server-paginated) — Databank P2
+  // ---------------------------------------------------------------------------
+
+  /** The type-facet buckets, in display order. Each maps to a mime-prefix
+   *  predicate; the buckets are mutually exclusive and 'other' is their
+   *  complement, so they partition every file exactly. That lets a type-filtered
+   *  `total` be summed from the selected buckets' facet counts — one facet query,
+   *  no extra COUNT. */
+  private static readonly TYPE_BUCKETS = ['image', 'pdf', 'video', 'audio', 'office', 'other'] as const;
+
+  /** SQL predicate matching a file's "mimeType" to a type bucket. 'other' is the
+   *  negation of every known bucket, so a NULL mimeType counts as 'other' too. */
+  private static bucketSql(bucket: string): Prisma.Sql {
+    switch (bucket) {
+      case 'image':
+        return Prisma.sql`"mimeType" ILIKE 'image/%'`;
+      case 'pdf':
+        return Prisma.sql`"mimeType" = 'application/pdf'`;
+      case 'video':
+        return Prisma.sql`"mimeType" ILIKE 'video/%'`;
+      case 'audio':
+        return Prisma.sql`"mimeType" ILIKE 'audio/%'`;
+      case 'office':
+        return Prisma.sql`("mimeType" ILIKE 'application/vnd%' OR "mimeType" = 'application/msword' OR "mimeType" ILIKE 'text/%')`;
+      case 'other': {
+        const known = ['image', 'pdf', 'video', 'audio', 'office'].map((b) => DatabankService.bucketSql(b));
+        return Prisma.sql`NOT COALESCE((${Prisma.join(known, ' OR ')}), false)`;
+      }
+      default:
+        // Unknown bucket → never matches (callers already filter these out).
+        return Prisma.sql`false`;
+    }
+  }
+
+  /**
+   * Full-text + substring file search across ONE scope (a client's databank OR
+   * the caller's personal area), with server-side pagination and type facets.
+   *
+   * Scope is resolved and AUTHORIZED exactly like the rest of the service:
+   * clientId → assertClientReadAccess (team-wide read), personal →
+   * assertPersonalAccess (owner or manager). Exactly one must be given.
+   *
+   * `q` (when non-empty) matches the generated "searchVector" via
+   * websearch_to_tsquery OR a "fileName" ILIKE substring, and orders by ts_rank
+   * then recency. ts_rank ONLY (no similarity()) so the hot query never depends
+   * on the pg_trgm extension — substring hits come from the ILIKE. Facets are
+   * computed over the same scope+q filter WITHOUT the type filter, so each bucket
+   * count shows what selecting that type would yield. q is ALWAYS a bound
+   * parameter (Prisma.sql tagged template) — never concatenated into SQL.
+   */
+  async searchDatabank(
+    user: RequestUser,
+    params: {
+      clientId?: string;
+      personal?: boolean;
+      q?: string;
+      folderId?: string | null;
+      types?: string[];
+      page?: number;
+      pageSize?: number;
+    },
+  ) {
+    if (params.clientId && params.personal) {
+      throw new BadRequestException('Provide either clientId or personal: true, not both.');
+    }
+    let scope: Prisma.Sql;
+    if (params.clientId) {
+      await this.assertClientReadAccess(params.clientId, user);
+      scope = Prisma.sql`"clientId" = ${params.clientId}`;
+    } else if (params.personal) {
+      this.assertPersonalAccess(user.id, user);
+      scope = Prisma.sql`"ownerUserId" = ${user.id}`;
+    } else {
+      throw new BadRequestException('Provide either clientId or personal: true.');
+    }
+
+    // Scope + q filter, WITHOUT the type filter — the facets are computed over
+    // this set so each bucket count reflects what picking that type would yield.
+    const filters: Prisma.Sql[] = [Prisma.sql`"deletedAt" IS NULL`, scope];
+    if (params.folderId !== undefined) {
+      filters.push(
+        params.folderId === null
+          ? Prisma.sql`"folderId" IS NULL`
+          : Prisma.sql`"folderId" = ${params.folderId}`,
+      );
+    }
+    const q = (params.q ?? '').trim();
+    const hasQ = q.length > 0;
+    if (hasQ) {
+      filters.push(
+        // fileName + tags carry 'simple' (unstemmed) lexemes but the query is
+        // 'english' (good for the description), so an inflected term won't match
+        // them via @@ — a substring fallback on the name AND the joined tags keeps
+        // exact-term name/tag hits working regardless of stemming.
+        Prisma.sql`("searchVector" @@ websearch_to_tsquery('english', ${q}) OR "fileName" ILIKE ${`%${q}%`} OR array_to_string("tags", ' ') ILIKE ${`%${q}%`})`,
+      );
+    }
+    const facetWhere = Prisma.join(filters, ' AND ');
+
+    // Requested type buckets (unknown values ignored); the results + total add
+    // this on top of the facet filter.
+    const selected = [
+      ...new Set(
+        (params.types ?? [])
+          .map((t) => t.trim().toLowerCase())
+          .filter((t) => (DatabankService.TYPE_BUCKETS as readonly string[]).includes(t)),
+      ),
+    ];
+    const resultFilters = [...filters];
+    if (selected.length) {
+      resultFilters.push(
+        Prisma.sql`(${Prisma.join(selected.map((t) => DatabankService.bucketSql(t)), ' OR ')})`,
+      );
+    }
+    const resultWhere = Prisma.join(resultFilters, ' AND ');
+
+    const page = Math.max(1, Math.floor(params.page ?? 1));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(params.pageSize ?? 50)));
+    const offset = (page - 1) * pageSize;
+
+    // "id" is the final, unique tiebreaker so LIMIT/OFFSET paging is stable when
+    // ts_rank / createdAt tie (else a page boundary could drop or repeat a row).
+    const orderBy = hasQ
+      ? Prisma.sql`ORDER BY ts_rank("searchVector", websearch_to_tsquery('english', ${q})) DESC, "createdAt" DESC, "id" DESC`
+      : Prisma.sql`ORDER BY "createdAt" DESC, "id" DESC`;
+
+    type FileRow = {
+      id: string;
+      folderId: string | null;
+      fileName: string;
+      mimeType: string | null;
+      fileSizeBytes: bigint | null;
+      description: string | null;
+      tags: string[];
+      source: string;
+      uploadedByUserId: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+
+    const [rows, facetRows] = await Promise.all([
+      this.prisma.$queryRaw<FileRow[]>(Prisma.sql`
+        SELECT "id", "folderId", "fileName", "mimeType", "fileSizeBytes",
+               "description", "tags", "source"::text AS "source",
+               "uploadedByUserId", "createdAt", "updatedAt"
+          FROM "processing"."databank_files"
+         WHERE ${resultWhere}
+         ${orderBy}
+         LIMIT ${pageSize} OFFSET ${offset}
+      `),
+      this.prisma.$queryRaw<
+        Array<{ image: number; pdf: number; video: number; audio: number; office: number; other: number; total: number }>
+      >(Prisma.sql`
+        SELECT
+          COUNT(*) FILTER (WHERE ${DatabankService.bucketSql('image')})::int  AS "image",
+          COUNT(*) FILTER (WHERE ${DatabankService.bucketSql('pdf')})::int    AS "pdf",
+          COUNT(*) FILTER (WHERE ${DatabankService.bucketSql('video')})::int  AS "video",
+          COUNT(*) FILTER (WHERE ${DatabankService.bucketSql('audio')})::int  AS "audio",
+          COUNT(*) FILTER (WHERE ${DatabankService.bucketSql('office')})::int AS "office",
+          COUNT(*) FILTER (WHERE ${DatabankService.bucketSql('other')})::int  AS "other",
+          COUNT(*)::int AS "total"
+          FROM "processing"."databank_files"
+         WHERE ${facetWhere}
+      `),
+    ]);
+
+    const f = facetRows[0] ?? { image: 0, pdf: 0, video: 0, audio: 0, office: 0, other: 0, total: 0 };
+    const byType = {
+      image: Number(f.image) || 0,
+      pdf: Number(f.pdf) || 0,
+      video: Number(f.video) || 0,
+      audio: Number(f.audio) || 0,
+      office: Number(f.office) || 0,
+      other: Number(f.other) || 0,
+    };
+    const facetTotal = Number(f.total) || 0;
+    // Buckets partition the set, so a type-filtered total is the sum of the
+    // selected buckets' facet counts — no separate COUNT query needed.
+    const total = selected.length
+      ? selected.reduce((s, t) => s + (byType as Record<string, number>)[t], 0)
+      : facetTotal;
+
+    return {
+      results: rows,
+      total,
+      page,
+      pageSize,
+      facets: { byType, total: facetTotal },
+    };
   }
 
   /** Clients for the cross-client landing page. Every processing user sees ALL
@@ -1045,6 +1238,51 @@ export class DatabankService {
       data: { fileName: name },
       select: this.fileSelect,
     });
+  }
+
+  /**
+   * Update a file's metadata — rename AND/OR set description/tags (Databank P2).
+   * Every field is optional; a `fileName`-only body is exactly the old rename.
+   * Tags are trimmed, empties dropped, de-duplicated and capped at 50; an
+   * explicit `description: null` clears it. Reuses the SAME write-access check
+   * as rename (loadFile → authorizeRow 'write'), so the file's scope decides who
+   * may modify it. Returns fileSelect + description/tags so the UI reflects the
+   * new metadata without a re-fetch.
+   */
+  async updateFile(fileId: string, dto: UpdateFileDto, user: RequestUser) {
+    const file = await this.loadFile(fileId, user);
+    const data: Prisma.DatabankFileUpdateInput = {};
+    if (dto.fileName !== undefined) {
+      // Same extension rule as rename/upload — check the EXACT value we store.
+      const name = dto.fileName.trim();
+      this.assertSafeFileName(name);
+      data.fileName = name;
+    }
+    if (dto.description !== undefined) {
+      data.description = dto.description === null ? null : dto.description.trim();
+    }
+    if (dto.tags !== undefined) {
+      data.tags = this.normalizeTags(dto.tags);
+    }
+    return this.prisma.databankFile.update({
+      where: { id: file.id },
+      data,
+      select: { ...this.fileSelect, description: true, tags: true },
+    });
+  }
+
+  /** Trim tags, drop empties, de-duplicate (first-seen wins) and cap at 50. */
+  private normalizeTags(tags: string[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of tags) {
+      const t = (raw ?? '').trim();
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+      if (out.length >= 50) break;
+    }
+    return out;
   }
 
   async moveFile(fileId: string, folderId: string | null | undefined, user: RequestUser) {

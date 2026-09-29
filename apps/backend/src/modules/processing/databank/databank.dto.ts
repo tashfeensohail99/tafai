@@ -1,3 +1,4 @@
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -58,6 +59,35 @@ export class RenameFileDto {
   @MinLength(1)
   @MaxLength(255)
   fileName!: string;
+}
+
+/**
+ * PATCH files/:fileId — rename AND/OR set metadata (description, tags). Every
+ * field is optional: a `fileName`-only body is a plain rename (the old
+ * behaviour). An explicit `description: null` clears the description — the
+ * `@ValidateIf(o.description !== null)` guard lets null through while still
+ * requiring a string when a value is present. Tags are validated here (≤ 50,
+ * each ≤ 64 chars) and trimmed/de-duplicated in the service.
+ */
+export class UpdateFileDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  fileName?: string;
+
+  @IsOptional()
+  @ValidateIf((o) => o.description !== null)
+  @IsString()
+  @MaxLength(2000)
+  description?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  tags?: string[];
 }
 
 export class MoveFileDto {
@@ -154,4 +184,55 @@ export class CommitUploadDto extends PresignUploadDto {
   @MinLength(1)
   @MaxLength(512)
   storageKey!: string;
+}
+
+/**
+ * GET processing/databank/search — full-text/fuzzy file search with server-side
+ * pagination and type facets (Databank P2). All fields arrive as query-string
+ * values, so booleans/numbers are coerced (the global ValidationPipe runs with
+ * `transform` + `enableImplicitConversion`, and `forbidNonWhitelisted`, so every
+ * accepted field must be declared here). Scope is EITHER `clientId` OR
+ * `personal: true` — exactly one, enforced in the service.
+ */
+export class SearchDatabankDto {
+  /** Client-scoped search. Omit when `personal` is set. */
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
+
+  /** Search the caller's personal databank instead of a client's. */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  personal?: boolean;
+
+  /** Free-text query (fileName + description + tags). Empty = list, no ranking. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  q?: string;
+
+  /** Folder to scope to; 'null'/'root'/'' = the databank root; omit = any folder. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  folderId?: string;
+
+  /** Comma-separated type buckets (image,pdf,video,audio,office,other). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  types?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pageSize?: number;
 }

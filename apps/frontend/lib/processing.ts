@@ -2039,8 +2039,61 @@ export interface ApiDatabankFile {
   fileSizeBytes: number | null;
   source: DatabankFileSource;
   uploadedByUserId: string | null;
+  // Searchable metadata (Databank P2). Optional: the tree payload may omit them.
+  description?: string | null;
+  tags?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** The six type buckets the search facets are grouped into. */
+export interface DatabankSearchFacets {
+  byType: {
+    image: number;
+    pdf: number;
+    video: number;
+    audio: number;
+    office: number;
+    other: number;
+  };
+  total: number;
+}
+
+/** Server-paginated file-search result (Databank P2). */
+export interface DatabankSearchResult {
+  results: ApiDatabankFile[];
+  total: number;
+  page: number;
+  pageSize: number;
+  facets: DatabankSearchFacets;
+}
+
+/** One scope (a client OR the caller's personal area) + optional filters. */
+export interface DatabankSearchParams {
+  clientId?: string;
+  personal?: boolean;
+  q?: string;
+  /** null / 'root' scopes to the databank root; omit for "any folder". */
+  folderId?: string | null;
+  types?: string[];
+  page?: number;
+  pageSize?: number;
+}
+
+/** Build the query string for a databank search (shared by both portals). A
+ *  `folderId` of null becomes 'null' (root); an omitted folderId is left off, so
+ *  the search spans every folder in the scope. */
+export function databankSearchQuery(params: DatabankSearchParams): string {
+  const sp = new URLSearchParams();
+  if (params.clientId) sp.set('clientId', params.clientId);
+  if (params.personal) sp.set('personal', 'true');
+  if (params.q && params.q.trim()) sp.set('q', params.q.trim());
+  if (params.folderId !== undefined) sp.set('folderId', params.folderId === null ? 'null' : params.folderId);
+  if (params.types && params.types.length) sp.set('types', params.types.join(','));
+  if (params.page) sp.set('page', String(params.page));
+  if (params.pageSize) sp.set('pageSize', String(params.pageSize));
+  const s = sp.toString();
+  return s ? `?${s}` : '';
 }
 
 export interface ApiDatabankTree {
@@ -2357,6 +2410,29 @@ export function renameDatabankFile(fileId: string, fileName: string): Promise<Ap
     body: JSON.stringify({ fileName }),
     cache: 'no-store',
   });
+}
+
+/** Rename AND/OR set metadata (description, tags) in one PATCH. `fileName`-only
+ *  is a plain rename. Mirrors the backend UpdateFileDto. */
+export function updateDatabankFile(
+  fileId: string,
+  patch: { fileName?: string; description?: string | null; tags?: string[] },
+): Promise<ApiDatabankFile> {
+  return apiFetch<ApiDatabankFile>(`/processing/databank/files/${fileId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+    cache: 'no-store',
+  });
+}
+
+/** Full-text / fuzzy file search over ONE scope (a client or the caller's
+ *  personal area) with server-side pagination + type facets (Databank P2). */
+export function searchDatabankFiles(params: DatabankSearchParams): Promise<DatabankSearchResult> {
+  return apiFetch<DatabankSearchResult>(
+    `/processing/databank/search${databankSearchQuery(params)}`,
+    { cache: 'no-store' },
+  );
 }
 
 export function moveDatabankFile(fileId: string, folderId: string | null): Promise<ApiDatabankFile> {

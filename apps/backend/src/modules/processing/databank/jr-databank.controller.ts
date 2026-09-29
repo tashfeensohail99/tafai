@@ -33,9 +33,19 @@ import {
   MoveFileDto,
   MoveFolderDto,
   PresignUploadDto,
-  RenameFileDto,
   RenameFolderDto,
+  SearchDatabankDto,
+  UpdateFileDto,
 } from './databank.dto';
+
+/** Query folderId → the service's `string | null | undefined`: 'null'/'root'/''
+ *  mean the databank root; an absent param means "any folder". */
+function parseFolderId(v?: string): string | null | undefined {
+  if (v === undefined) return undefined;
+  const t = v.trim().toLowerCase();
+  if (t === '' || t === 'null' || t === 'root') return null;
+  return v;
+}
 
 /**
  * JR view onto the SAME per-client databank the Processing team uses. A JR
@@ -87,6 +97,30 @@ export class JrDatabankController {
   @RequirePermissions(READ)
   getTree(@Param('clientId', ParseUUIDPipe) clientId: string, @CurrentUser() user: RequestUser) {
     return this.databank.getTree(clientId, user);
+  }
+
+  /**
+   * Full-text / fuzzy file search with server-side pagination + type facets,
+   * over ONE scope: a client (`clientId`) OR the caller's personal area
+   * (`personal=true`). Delegates to the SAME shared DatabankService the
+   * Processing databank uses; access is enforced there. `types` is a
+   * comma-separated list of buckets (image,pdf,video,audio,office,other);
+   * `folderId` scopes to one folder ('null'/'root'/'' = the databank root).
+   */
+  @Get('search')
+  @RequirePermissions(READ)
+  search(@Query() dto: SearchDatabankDto, @CurrentUser() user: RequestUser) {
+    return this.databank.searchDatabank(user, {
+      clientId: dto.clientId,
+      personal: dto.personal,
+      q: dto.q,
+      folderId: parseFolderId(dto.folderId),
+      types: dto.types
+        ? dto.types.split(',').map((t) => t.trim()).filter(Boolean)
+        : undefined,
+      page: dto.page,
+      pageSize: dto.pageSize,
+    });
   }
 
   // ---- My workspace (the caller's OWN personal folders, not tied to a client)
@@ -252,14 +286,16 @@ export class JrDatabankController {
     return this.databank.getSignedUrl(fileId, user);
   }
 
+  /** Rename AND/OR set metadata (description, tags). A `fileName`-only body is a
+   *  plain rename — the previous behaviour is unchanged. */
   @Patch('files/:fileId')
   @RequirePermissions(WRITE)
-  renameFile(
+  updateFile(
     @Param('fileId', ParseUUIDPipe) fileId: string,
-    @Body() dto: RenameFileDto,
+    @Body() dto: UpdateFileDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.databank.renameFile(fileId, dto.fileName, user);
+    return this.databank.updateFile(fileId, dto, user);
   }
 
   @Patch('files/:fileId/move')

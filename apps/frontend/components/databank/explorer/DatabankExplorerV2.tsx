@@ -27,11 +27,21 @@ import {
   Image as ImageIcon,
   File as FileIcon,
   FolderInput,
+  FolderPlus,
+  FolderUp,
+  Upload,
   Trash2,
 } from 'lucide-react';
-import type { ApiDatabankFolder, ApiDatabankFile, DatabankSearchFacets } from '@/lib/processing';
+import type { ApiDatabankFolder, ApiDatabankFile, DatabankSearchFacets, DatabankUploadTarget } from '@/lib/processing';
 import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
+// Uploads + new folder (Databank P2, PR-4) — mirrors the legacy DatabankTab.
+import { isUploadV2Enabled } from '@/lib/databank-upload/flag';
+import { createLandingReloader, mergeLandedFiles } from '@/lib/databank-upload/landing';
+import { isQueuePresent, subscribePresence } from '@/lib/databank-upload/presence';
+import { dataScopeOf } from '@/lib/databank-upload/keys';
+import { MAX_FILE_BYTES, fmtMB, walkEntry, type FolderEntry } from '@/lib/databank-upload/folder-walk';
+import type { UploadDest } from '@/lib/databank-upload-browser';
 
 /**
  * Databank explorer, rebuilt (Databank Phase 2) — behind
@@ -154,6 +164,19 @@ export function DatabankExplorerV2({
   const readOnly = !canWrite;
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
 
+  // ---- Upload / new-folder state (Databank P2, PR-4) ----
+  const [busy, setBusy] = useState(false);
+  // Direct-path (non-V2) byte progress: which file of `total`, its name + pct.
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string; pct: number } | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  // Resumable uploads (the dock), behind NEXT_PUBLIC_DATABANK_UPLOAD_V2 — read
+  // after mount (localStorage + URL); false during SSR.
+  const [v2, setV2] = useState(false);
+  useEffect(() => setV2(isUploadV2Enabled()), []);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+
   // react-arborist (react-dnd) touches the DOM on mount — only render the Tree
   // in the browser so SSR / static prerender never trips over it.
   const [mounted, setMounted] = useState(false);
@@ -174,27 +197,49 @@ export function DatabankExplorerV2({
     () => (personal ? api.fetchPersonalTree() : api.fetchTree(clientId!)),
     [api, personal, clientId],
   );
-  // Only the latest load applies (a stale scope's reply is dropped).
-  const loadSeq = useRef(0);
+
+  // Reloads can overlap (a background landing refresh + a folder move): only the
+  // LATEST applies, and files that landed while it was in flight are merged back
+  // in (the tree was read before they committed). Mirrors the legacy DatabankTab.
+  const reloadSeq = useRef(0);
+  const appliedSeq = useRef(0);
+  const landedLog = useRef<Array<{ at: number; files: unknown[] }>>([]);
+  /** A good tree that a newer reload superseded — used if that newer one fails. */
+  const spare = useRef<{ seq: number; startedAt: number; tree: Awaited<ReturnType<typeof load>> } | null>(null);
   const reload = useCallback(async () => {
-    const seq = ++loadSeq.current;
-    setLoading(true);
     setError(null);
+    const seq = ++reloadSeq.current;
+    const startedAt = Date.now();
+    const apply = (tree: Awaited<ReturnType<typeof load>>, since: number, applied: number) => {
+      const late = landedLog.current.filter((x) => x.at >= since);
+      landedLog.current = late;
+      setFolders(tree.folders);
+      setFiles(late.length ? mergeLandedFiles(tree.files, late.flatMap((x) => x.files)) : tree.files);
+      setCanWrite(tree.canWrite !== false);
+      appliedSeq.current = applied;
+    };
     try {
       const tree = await load();
-      if (seq !== loadSeq.current) return;
-      setFolders(tree.folders);
-      setFiles(tree.files);
-      setCanWrite(tree.canWrite !== false);
+      if (seq !== reloadSeq.current) {
+        if (seq > appliedSeq.current && (!spare.current || spare.current.seq < seq)) spare.current = { seq, startedAt, tree };
+        return;
+      }
+      spare.current = null;
+      apply(tree, startedAt, seq);
     } catch (e) {
-      if (seq !== loadSeq.current) return;
+      if (seq !== reloadSeq.current) return;
+      // The newest reload failed: show the newest good tree we got instead of nothing.
+      const s = spare.current;
+      spare.current = null;
+      if (s && s.seq > appliedSeq.current) apply(s.tree, s.startedAt, s.seq);
       setError(e instanceof Error ? e.message : 'Could not load the databank');
     } finally {
-      if (seq === loadSeq.current) setLoading(false);
+      if (seq === reloadSeq.current) setLoading(false);
     }
   }, [load]);
 
   useEffect(() => {
+    setLoading(true);
     setSelectedFolderId(null);
     void reload();
   }, [reload]);
@@ -255,6 +300,246 @@ export function DatabankExplorerV2({
   const currentFiles = useMemo(
     () => files.filter((f) => f.folderId === selectedFolderId),
     [files, selectedFolderId],
+  );
+
+  // ---- Uploads + new folder (Databank P2, PR-4) — mirrors the legacy tab -----
+  // UPLOAD goes STRAIGHT to R2 (presigned PUT, with byte progress); CLIPBOARD
+  // (small pasted screenshots) stays on the simple multipart path so its origin
+  // is recorded as CLIPBOARD. Both target the SELECTED folder (root when none).
+  const putFile = useCallback(
+    (file: File, folder: string | null, src: 'UPLOAD' | 'CLIPBOARD', onProgress?: (f: number) => void) => {
+      if (src === 'CLIPBOARD') {
+        return personal
+          ? api.uploadPersonalFile(file, folder, 'CLIPBOARD')
+          : api.uploadFile(clientId!, file, folder, 'CLIPBOARD');
+      }
+      const target: DatabankUploadTarget = personal ? { personal: true } : { clientId: clientId! };
+      return api.directUpload(target, file, folder, onProgress);
+    },
+    [api, personal, clientId],
+  );
+  const makeFolder = useCallback(
+    (name: string, parent: string | null) =>
+      personal ? api.createPersonalFolder(name, parent) : api.createFolder(clientId!, name, parent),
+    [api, personal, clientId],
+  );
+  // Where a resumable upload goes, as the upload dock names it.
+  const dest = useMemo(
+    () => ({
+      base: api.uploadBase,
+      target: (personal ? { personal: true } : { clientId: clientId! }) as DatabankUploadTarget,
+      label: personal ? rootLabel : clientName || 'Client databank',
+      href: personal ? undefined : api.clientHref(clientId!, clientName ?? ''),
+    }),
+    [api, personal, clientId, clientName, rootLabel],
+  );
+  const dataScope = dataScopeOf(dest.target);
+  const uploadDest = useMemo<UploadDest>(
+    () => ({ ...dest, parentLabel: [rootLabel, ...breadcrumb.map((f) => f.name)].join(' › ') }),
+    [dest, rootLabel, breadcrumb],
+  );
+
+  // Loose files (button, drag-drop, clipboard paste).
+  const doUpload = useCallback(
+    async (list: FileList | File[], source: 'UPLOAD' | 'CLIPBOARD') => {
+      if (readOnly) return;
+      const arr = Array.from(list);
+      if (arr.length === 0) return;
+      if (v2 && source === 'UPLOAD') {
+        // Resumable: queued in the background (any size, survives a dropped
+        // connection); the dock shows progress. If the chunk can't load, fall
+        // through to the standard upload.
+        const m = await import('@/lib/databank-upload-browser').catch(() => null);
+        if (m) {
+          setError(null);
+          try {
+            m.enqueueFiles(uploadDest, selectedFolderId, arr);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : 'Could not start the upload');
+          }
+          return;
+        }
+      }
+      const ok = arr.filter((f) => f.size <= MAX_FILE_BYTES);
+      const tooBig = arr.filter((f) => f.size > MAX_FILE_BYTES);
+      setBusy(true);
+      setError(null);
+      try {
+        for (let i = 0; i < ok.length; i++) {
+          const f = ok[i];
+          setProgress({ done: i, total: ok.length, name: f.name, pct: 0 });
+          // eslint-disable-next-line no-await-in-loop
+          await putFile(f, selectedFolderId, source, (frac) =>
+            setProgress({ done: i, total: ok.length, name: f.name, pct: Math.round(frac * 100) }),
+          );
+        }
+        await reload();
+        if (tooBig.length) {
+          setError(
+            `Skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit: ${tooBig
+              .slice(0, 5)
+              .map((f) => f.name)
+              .join(', ')}${tooBig.length > 5 ? '…' : ''}`,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Upload failed');
+      } finally {
+        setBusy(false);
+        setProgress(null);
+      }
+    },
+    [putFile, selectedFolderId, reload, readOnly, v2, uploadDest],
+  );
+
+  // Upload a whole folder (from the "Upload folder" button or a dropped
+  // directory), recreating its subfolder tree under the selected folder.
+  const doUploadFolder = useCallback(
+    async (entries: FolderEntry[]) => {
+      if (readOnly || entries.length === 0) return;
+      if (v2) {
+        // Resumable: the server creates the whole folder tree in one call
+        // (merging into same-named folders, so a re-drop resumes instead of
+        // making "Passport (2)"), then the files upload in the background.
+        const m = await import('@/lib/databank-upload-browser').catch(() => null);
+        if (m) {
+          setError(null);
+          try {
+            m.enqueueFolder(uploadDest, selectedFolderId, entries);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : 'Could not start the upload');
+          }
+          return;
+        }
+      }
+      const ok = entries.filter((e) => e.file.size <= MAX_FILE_BYTES);
+      const tooBig = entries.filter((e) => e.file.size > MAX_FILE_BYTES);
+      setBusy(true);
+      setError(null);
+      try {
+        // 1. Every distinct directory path in the selection, shallowest first.
+        const dirSet = new Set<string>();
+        for (const { relPath } of ok) {
+          const parts = relPath.split('/');
+          parts.pop(); // drop the filename
+          let acc = '';
+          for (const seg of parts) {
+            acc = acc ? `${acc}/${seg}` : seg;
+            dirSet.add(acc);
+          }
+        }
+        const dirs = [...dirSet].sort(
+          (a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b),
+        );
+        // 2. Create the folders top-down, mapping each path to its new id.
+        const pathToId = new Map<string, string>();
+        for (const d of dirs) {
+          const segs = d.split('/');
+          const parentPath = segs.slice(0, -1).join('/');
+          const parentId = parentPath ? pathToId.get(parentPath) ?? selectedFolderId : selectedFolderId;
+          const name = segs[segs.length - 1];
+          // eslint-disable-next-line no-await-in-loop
+          const created = await makeFolder(name, parentId);
+          pathToId.set(d, created.id);
+        }
+        // 3. Upload each file into the folder its path resolves to.
+        for (let i = 0; i < ok.length; i++) {
+          const { file, relPath } = ok[i];
+          const parts = relPath.split('/');
+          parts.pop();
+          const dirPath = parts.join('/');
+          const target = dirPath ? pathToId.get(dirPath) ?? selectedFolderId : selectedFolderId;
+          setProgress({ done: i, total: ok.length, name: file.name, pct: 0 });
+          // eslint-disable-next-line no-await-in-loop
+          await putFile(file, target, 'UPLOAD', (frac) =>
+            setProgress({ done: i, total: ok.length, name: file.name, pct: Math.round(frac * 100) }),
+          );
+        }
+        await reload();
+        if (tooBig.length) {
+          setError(
+            `Uploaded the folder, but skipped ${tooBig.length} file(s) over the ${fmtMB(MAX_FILE_BYTES)} limit.`,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Folder upload failed');
+      } finally {
+        setBusy(false);
+        setProgress(null);
+      }
+    },
+    [makeFolder, putFile, selectedFolderId, reload, readOnly, v2, uploadDest],
+  );
+
+  // Clipboard paste of an image while the explorer is mounted.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      // canWrite defaults to true until the tree loads — don't upload into a
+      // databank we haven't confirmed we may write to.
+      if (loading || readOnly) return;
+      const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
+      if (imgs.length) {
+        e.preventDefault();
+        void doUpload(imgs, 'CLIPBOARD');
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [doUpload, loading, readOnly]);
+
+  // Resumable uploads land in the background (the dock tracks them): merge each
+  // recorded file into the list as it lands, and refetch the tree when a folder
+  // drop created folders (debounced) and once when the drop finishes. Nothing is
+  // loaded until an upload queue exists in this tab.
+  useEffect(() => {
+    if (!v2) return;
+    let cancelled = false;
+    let attached = false;
+    let off: (() => void) | undefined;
+    const reloader = createLandingReloader({
+      timers: { set: (fn, ms) => window.setTimeout(fn, ms), clear: (h) => window.clearTimeout(h as number) },
+      now: () => Date.now(),
+      reload,
+    });
+    const attach = () => {
+      if (attached || cancelled || !isQueuePresent()) return;
+      attached = true;
+      import('@/lib/databank-upload-browser')
+        .then((m) => {
+          if (cancelled) return;
+          off = m.onLanded(dataScope, (e) => {
+            if (e.files.length) {
+              landedLog.current.push({ at: Date.now(), files: e.files });
+              setFiles((f) => mergeLandedFiles(f, e.files));
+            }
+            if (e.foldersChanged) reloader.request();
+            if (e.idle) reloader.flush();
+          });
+        })
+        .catch(() => {
+          attached = false;
+        });
+    };
+    const unsubscribe = subscribePresence(attach);
+    attach();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      off?.();
+      reloader.dispose();
+    };
+  }, [v2, dataScope, reload]);
+
+  // Create a folder under the selected folder, then reload + select it.
+  const submitNewFolder = useCallback(
+    async (name: string) => {
+      const value = name.trim();
+      if (!value || readOnly) return;
+      const created = await makeFolder(value, selectedFolderId);
+      await reload();
+      setSelectedFolderId(created.id);
+    },
+    [makeFolder, selectedFolderId, reload, readOnly],
   );
 
   // ---- Tree handlers (id-based, identical across scopes) ----
@@ -737,8 +1022,124 @@ export function DatabankExplorerV2({
           </div>
         </div>
 
-        {/* MAIN — search + breadcrumbs + table (or search results) + details */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* MAIN — toolbar + search + breadcrumbs + table (or search results) + details */}
+        <div
+          style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10, position: 'relative' }}
+          onDragOver={
+            readOnly
+              ? undefined
+              : (e) => {
+                  e.preventDefault();
+                  setDragActive(true);
+                }
+          }
+          onDragLeave={readOnly ? undefined : () => setDragActive(false)}
+          onDrop={
+            readOnly
+              ? undefined
+              : (e) => {
+                  e.preventDefault();
+                  setDragActive(false);
+                  // Capture entries synchronously (the DataTransfer is cleared once the
+                  // handler returns). If any dropped item is a directory, walk the tree;
+                  // otherwise fall back to the flat file list.
+                  const items = e.dataTransfer.items;
+                  const entries =
+                    items && items.length && typeof items[0]?.webkitGetAsEntry === 'function'
+                      ? Array.from(items)
+                          .map((it) => it.webkitGetAsEntry())
+                          .filter(Boolean)
+                      : [];
+                  if (entries.some((en) => (en as { isDirectory?: boolean } | null)?.isDirectory)) {
+                    void (async () => {
+                      const collected: FolderEntry[] = [];
+                      for (const en of entries) {
+                        // eslint-disable-next-line no-await-in-loop
+                        await walkEntry(en, '', collected);
+                      }
+                      await doUploadFolder(collected);
+                    })();
+                    return;
+                  }
+                  if (e.dataTransfer.files?.length) void doUpload(e.dataTransfer.files, 'UPLOAD');
+                }
+          }
+        >
+          {/* Toolbar — upload / new folder, targeting the selected folder (hidden when read-only). */}
+          {!readOnly ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} style={toolbarBtn(true)}>
+                <Upload size={15} /> Upload files
+              </button>
+              <button type="button" onClick={() => folderInputRef.current?.click()} disabled={busy} style={toolbarBtn(false)}>
+                <FolderUp size={15} /> Upload folder
+              </button>
+              <button type="button" onClick={() => setNewFolderOpen(true)} disabled={busy} style={toolbarBtn(false)}>
+                <FolderPlus size={15} /> New folder
+              </button>
+              <span style={{ fontSize: 12, color: muted, whiteSpace: 'nowrap' }}>
+                into {selectedFolderId ? breadcrumb[breadcrumb.length - 1]?.name ?? rootLabel : rootLabel}
+              </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) void doUpload(e.target.files, 'UPLOAD');
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={(el) => {
+                  folderInputRef.current = el;
+                  // webkitdirectory/directory aren't standard React props — set them
+                  // on the DOM node so the picker selects a whole folder tree.
+                  if (el) {
+                    el.setAttribute('webkitdirectory', '');
+                    el.setAttribute('directory', '');
+                  }
+                }}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const picked = e.target.files ? Array.from(e.target.files) : [];
+                  const entries: FolderEntry[] = picked.map((f) => ({
+                    file: f,
+                    relPath: (f as unknown as { webkitRelativePath?: string }).webkitRelativePath || f.name,
+                  }));
+                  if (entries.length) void doUploadFolder(entries);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+          ) : null}
+
+          {/* Direct-path (non-V2) upload progress. */}
+          {busy ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, color: muted }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Loader2 size={13} className="animate-spin" />
+                {progress
+                  ? `Uploading ${progress.done + 1} of ${progress.total} — ${progress.name} (${progress.pct}%)`
+                  : 'Working…'}
+              </div>
+              {progress ? (
+                <div style={{ height: 4, borderRadius: 999, background: 'var(--sos-border, rgba(148,163,184,0.25))', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${progress.total ? Math.round(((progress.done + progress.pct / 100) / progress.total) * 100) : 0}%`,
+                      background: accent,
+                      transition: 'width 0.2s',
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* Search box (debounced) — a non-empty query searches the whole scope. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
@@ -1130,10 +1531,42 @@ export function DatabankExplorerV2({
               />
             ) : null}
           </div>
+
+          {/* Drag-and-drop overlay (shown while dragging over the main pane). */}
+          {!readOnly && dragActive ? (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 5,
+                pointerEvents: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                border: `2px dashed ${accent}`,
+                borderRadius: 14,
+                background: 'var(--sos-accent-soft, rgba(184,134,11,0.10))',
+                color: primary,
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              <Upload size={26} style={{ color: accent }} />
+              Drop files here
+              <span style={{ fontSize: 12, fontWeight: 500, color: muted }}>
+                into {selectedFolderId ? breadcrumb[breadcrumb.length - 1]?.name ?? rootLabel : rootLabel}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
 
       {/* Dialogs (Radix, our own CSS) */}
+      {newFolderOpen ? (
+        <NewFolderDialog onClose={() => setNewFolderOpen(false)} onSubmit={submitNewFolder} />
+      ) : null}
       {renameTarget ? (
         <RenameDialog file={renameTarget} onClose={() => setRenameTarget(null)} onSubmit={doRename} />
       ) : null}
@@ -1387,6 +1820,68 @@ function DialogShell({
   );
 }
 
+function NewFolderDialog({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    const value = name.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit(value);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not create the folder');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell
+      title="New folder"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} style={ghostBtn}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={busy || !name.trim()}
+            style={{ ...primaryBtn, opacity: busy || !name.trim() ? 0.6 : 1 }}
+          >
+            {busy ? 'Creating…' : 'Create'}
+          </button>
+        </>
+      }
+    >
+      <input
+        autoFocus
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void submit();
+        }}
+        placeholder="Folder name"
+        aria-label="Folder name"
+        style={{ width: '100%', border, borderRadius: 8, padding: '9px 10px', fontSize: 13.5, color: primary, background: surfaceSolid, outline: 'none' }}
+      />
+      {err ? <div style={{ fontSize: 12.5, color: danger, marginTop: 8 }}>{err}</div> : null}
+    </DialogShell>
+  );
+}
+
 function RenameDialog({
   file,
   onClose,
@@ -1610,6 +2105,24 @@ function crumbBtn(active: boolean): React.CSSProperties {
     fontSize: 13,
     fontWeight: active ? 700 : 500,
     color: active ? 'var(--sos-text-primary, #0f172a)' : 'var(--sos-text-muted, #64748b)',
+  };
+}
+
+/** Toolbar button — filled = the primary "Upload files" action. */
+function toolbarBtn(filled: boolean): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 13,
+    fontWeight: 600,
+    padding: '7px 12px',
+    borderRadius: 9,
+    cursor: 'pointer',
+    border,
+    background: filled ? accent : surfaceSolid,
+    color: filled ? '#fff' : primary,
+    borderColor: filled ? accent : undefined,
   };
 }
 

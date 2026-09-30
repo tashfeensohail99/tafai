@@ -3,18 +3,21 @@
  *
  * Build-time mode `NEXT_PUBLIC_DATABANK_EXPLORER_V2` (baked in by `next build` —
  * Railway needs the Dockerfile ARG) × a per-browser choice:
- *   off → the legacy explorer everywhere (default; `?explorerV2=` is ignored)
- *   on  → the rebuilt explorer for everyone, except browsers that opted out
- *         with `?explorerV2=0`
+ *   off   → the legacy explorer everywhere (default; `?explorerV2=` is ignored)
+ *   pilot → the rebuilt explorer only for browsers that opted in once with
+ *           `?explorerV2=1`
+ *   on    → the rebuilt explorer for everyone, except browsers that opted out
+ *           with `?explorerV2=0`
  * The per-browser choice is remembered in localStorage.
  */
 
-export type ExplorerV2Mode = 'off' | 'on';
+export type ExplorerV2Mode = 'off' | 'pilot' | 'on';
 
 const STORAGE_KEY = 'databank.explorerV2';
 
 export function parseExplorerMode(raw: string | undefined): ExplorerV2Mode {
   const v = (raw ?? '').trim().toLowerCase();
+  if (v === 'pilot') return 'pilot';
   if (v === 'on' || v === '1' || v === 'true') return 'on';
   return 'off';
 }
@@ -29,7 +32,7 @@ export function resolveExplorerV2(
   if (mode === 'off') return { enabled: false, persist: null };
   const q = query === '1' || query === '0' ? query : null;
   const effective = q ?? stored;
-  const enabled = effective !== '0';
+  const enabled = mode === 'pilot' ? effective === '1' : effective !== '0';
   return { enabled, persist: q };
 }
 

@@ -3,6 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Tree, type NodeApi, type NodeRendererProps } from 'react-arborist';
 import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  type ColumnDef,
+  type SortingState,
+  type RowSelectionState,
+} from '@tanstack/react-table';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import * as Dialog from '@radix-ui/react-dialog';
+import {
   Folder,
   ChevronRight,
   ChevronDown,
@@ -15,21 +26,26 @@ import {
   FileText,
   Image as ImageIcon,
   File as FileIcon,
+  FolderInput,
+  Trash2,
 } from 'lucide-react';
 import type { ApiDatabankFolder, ApiDatabankFile, DatabankSearchFacets } from '@/lib/processing';
 import { processingDatabankApi, type DatabankApi } from '@/lib/databank-api';
 import { formatBytes as fmtSize } from '@/lib/databank-upload/summary';
 
 /**
- * Databank explorer, rebuilt (Databank Phase 2, PR-2) — behind
+ * Databank explorer, rebuilt (Databank Phase 2) — behind
  * NEXT_PUBLIC_DATABANK_EXPLORER_V2. A LEFT folder tree (react-arborist:
- * expand/collapse, inline rename, drag-to-move) plus a MAIN pane with
- * breadcrumbs and a basic file list for the selected folder.
+ * expand/collapse, inline rename, drag-to-move) plus a MAIN pane with a search
+ * box, type facets and a TanStack-table (PR-3b) file grid that drives:
+ *   - sortable, virtualized columns (Name / Size / Type / Modified),
+ *   - a right-click context menu (Open, Rename, Move, Delete),
+ *   - multi-select + a bulk-action bar,
+ *   - a file-details side panel (description + tags, editable).
+ * The same table serves both the folder-file view and the search-results view.
  *
  * Same props and the same portal-agnostic `DatabankApi` as the legacy
- * DatabankTab, so Processing and JR both pick it up unchanged. This is the
- * deliberately-basic first cut — PR-3 replaces the file list with a TanStack
- * table + the search endpoint + context menu + bulk actions + a details panel.
+ * DatabankTab, so Processing and JR both pick it up unchanged.
  */
 
 // Match the legacy tab's palette (CSS vars, with light-mode fallbacks).
@@ -37,13 +53,48 @@ const border = '1px solid var(--sos-border, rgba(148,163,184,0.25))';
 const muted = 'var(--sos-text-muted, #64748b)';
 const primary = 'var(--sos-text-primary, #0f172a)';
 const surface = 'var(--sos-surface, rgba(255,255,255,0.6))';
+const surfaceSolid = 'var(--sos-surface-solid, #fff)';
 const accent = 'var(--sos-accent, #b8860b)';
 const accentSoft = 'var(--sos-accent-soft, rgba(184,134,11,0.10))';
+const danger = 'var(--sos-danger, #dc2626)';
 
-function FileGlyph({ mime }: { mime: string | null }) {
-  if (mime && /pdf/i.test(mime)) return <FileText size={20} />;
-  if (mime && /^image\//i.test(mime)) return <ImageIcon size={20} />;
-  return <FileIcon size={20} />;
+function FileGlyph({ mime, size = 20 }: { mime: string | null; size?: number }) {
+  if (mime && /pdf/i.test(mime)) return <FileText size={size} />;
+  if (mime && /^image\//i.test(mime)) return <ImageIcon size={size} />;
+  return <FileIcon size={size} />;
+}
+
+/** Short label for the Type column, derived from the mime type. */
+function typeLabel(mime: string | null): string {
+  if (!mime) return 'File';
+  if (/pdf/i.test(mime)) return 'PDF';
+  if (/^image\//i.test(mime)) return 'Image';
+  if (/^video\//i.test(mime)) return 'Video';
+  if (/^audio\//i.test(mime)) return 'Audio';
+  if (/word|excel|powerpoint|officedocument|msword|ms-excel|ms-powerpoint|opendocument|spreadsheet|presentation|text\/|rtf|csv/i.test(mime))
+    return 'Doc';
+  return 'File';
+}
+
+/** Short "12 Aug 2026"-style date for the Modified column. */
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/** Run `fn` over `items` with at most `limit` in flight at once. */
+async function runLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  const queue = items.slice();
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, queue.length)) }, async () => {
+    for (;;) {
+      const next = queue.shift();
+      if (next === undefined) return;
+      await fn(next);
+    }
+  });
+  await Promise.all(workers);
 }
 
 // The six facet buckets the search endpoint returns, in display order.
@@ -59,8 +110,28 @@ const TYPE_LABEL: Record<TypeBucket, string> = {
 };
 const SEARCH_PAGE_SIZE = 50;
 
+// Table geometry.
+const TABLE_H = 440;
+const ROW_H = 44;
+const ROW_H_SEARCH = 54;
+
+/** Scoped CSS for the headless Radix menus + dialogs (plain CSS, no Tailwind). */
+const EXPLORER_CSS = `
+.dbx-menu { min-width: 190px; background: ${surfaceSolid}; border: ${border}; border-radius: 10px; padding: 6px; box-shadow: 0 12px 32px rgba(15,23,42,0.18); z-index: 60; }
+.dbx-item { display: flex; align-items: center; gap: 9px; font-size: 13px; color: ${primary}; padding: 7px 10px; border-radius: 7px; cursor: pointer; outline: none; user-select: none; }
+.dbx-item[data-highlighted] { background: ${accentSoft}; }
+.dbx-item[data-danger] { color: ${danger}; }
+.dbx-item[data-danger][data-highlighted] { background: rgba(220,38,38,0.10); }
+.dbx-sep { height: 1px; margin: 5px 4px; background: var(--sos-border, rgba(148,163,184,0.25)); }
+.dbx-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.38); z-index: 70; }
+.dbx-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; background: ${surfaceSolid}; border: ${border}; border-radius: 14px; padding: 18px; z-index: 71; box-shadow: 0 24px 60px rgba(15,23,42,0.28); }
+`;
+
 /** Nested tree node built from the flat folder list. */
 type FolderNode = { id: string; name: string; children: FolderNode[] };
+
+/** One "Databank root" + indented-path option for a move picker. */
+type FolderOption = { id: string | null; label: string; depth: number };
 
 export function DatabankExplorerV2({
   clientId,
@@ -87,6 +158,16 @@ export function DatabankExplorerV2({
   // in the browser so SSR / static prerender never trips over it.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // Stack the tree above the pane / the details panel below the table on
+  // narrow (phone) widths so nothing forces a horizontal page scroll.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 860);
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Scope-aware load — a client's databank or the caller's own personal area.
   const load = useCallback(
@@ -134,6 +215,26 @@ export function DatabankExplorerV2({
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((f) => ({ id: f.id, name: f.name, children: build(f.id) }));
     return build(null);
+  }, [folders]);
+
+  // Depth-first list of folders, for the "Move to…" picker (indented paths).
+  const folderOptions = useMemo<FolderOption[]>(() => {
+    const byParent = new Map<string | null, ApiDatabankFolder[]>();
+    for (const f of folders) {
+      const arr = byParent.get(f.parentFolderId);
+      if (arr) arr.push(f);
+      else byParent.set(f.parentFolderId, [f]);
+    }
+    const out: FolderOption[] = [];
+    const walk = (parentId: string | null, depth: number) => {
+      const kids = (byParent.get(parentId) ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+      for (const f of kids) {
+        out.push({ id: f.id, label: f.name, depth });
+        walk(f.id, depth + 1);
+      }
+    };
+    walk(null, 0);
+    return out;
   }, [folders]);
 
   // Breadcrumb: walk up from the selected folder to the root.
@@ -301,6 +402,135 @@ export function DatabankExplorerV2({
     [folderById, scopeRootLabel],
   );
 
+  // ---- Local-state mutation helpers (keep the UI in sync without a reload) --
+  const patchFile = useCallback((id: string, patch: Partial<ApiDatabankFile>) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+    setSearchResults((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+    setDetailsFile((prev) => (prev && prev.id === id ? { ...prev, ...patch } : prev));
+  }, []);
+
+  const removeFilesByIds = useCallback((ids: Set<string>) => {
+    setFiles((prev) => prev.filter((f) => !ids.has(f.id)));
+    setSearchResults((prev) => {
+      const removedInResults = prev.filter((f) => ids.has(f.id)).length;
+      if (removedInResults) setSearchTotal((t) => Math.max(0, t - removedInResults));
+      return prev.filter((f) => !ids.has(f.id));
+    });
+    setDetailsFile((prev) => (prev && ids.has(prev.id) ? null : prev));
+  }, []);
+
+  // ---- Table (TanStack v8) — shared by folder view AND search results -------
+  const tableData = isSearching ? searchResults : currentFiles;
+
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [detailsFile, setDetailsFile] = useState<ApiDatabankFile | null>(null);
+
+  // Switching folder or flipping between folder/search view clears selection.
+  useEffect(() => {
+    setRowSelection({});
+  }, [selectedFolderId, trimmedQuery, personal, clientId]);
+
+  const columns = useMemo<ColumnDef<ApiDatabankFile>[]>(() => {
+    const cols: ColumnDef<ApiDatabankFile>[] = [];
+    if (!readOnly) cols.push({ id: 'select', enableSorting: false });
+    cols.push({ id: 'name', header: 'Name', accessorFn: (r) => r.fileName, sortingFn: 'text' });
+    cols.push({ id: 'size', header: 'Size', accessorFn: (r) => r.fileSizeBytes ?? -1 });
+    cols.push({ id: 'type', header: 'Type', accessorFn: (r) => typeLabel(r.mimeType), sortingFn: 'text' });
+    cols.push({ id: 'modified', header: 'Modified', accessorFn: (r) => Date.parse(r.updatedAt) || 0 });
+    return cols;
+  }, [readOnly]);
+
+  const table = useReactTable({
+    data: tableData,
+    columns,
+    state: { sorting, rowSelection },
+    onSortingChange: setSorting,
+    onRowSelectionChange: setRowSelection,
+    getRowId: (row) => row.id,
+    enableRowSelection: true,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  const rows = table.getRowModel().rows;
+  const selectedFiles = table.getSelectedRowModel().rows.map((r) => r.original);
+  const selectionCount = selectedFiles.length;
+
+  const gridCols = readOnly
+    ? 'minmax(0,1fr) 96px 78px 118px'
+    : '38px minmax(0,1fr) 96px 78px 118px';
+  const tableMinWidth = readOnly ? 430 : 468;
+  const rowHeight = isSearching ? ROW_H_SEARCH : ROW_H;
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 12,
+  });
+  // Row-height changes with the mode; re-measure so positions stay correct.
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowHeight, rowVirtualizer]);
+
+  // ---- Mutations (context menu + bulk share these) -------------------------
+  const [renameTarget, setRenameTarget] = useState<ApiDatabankFile | null>(null);
+  const [moveTargets, setMoveTargets] = useState<ApiDatabankFile[] | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<ApiDatabankFile[] | null>(null);
+
+  const doRename = useCallback(
+    async (file: ApiDatabankFile, name: string) => {
+      const updated = await api.renameFile(file.id, name);
+      patchFile(file.id, { fileName: updated?.fileName ?? name });
+    },
+    [api, patchFile],
+  );
+
+  const doMove = useCallback(
+    async (targets: ApiDatabankFile[], folderId: string | null) => {
+      await runLimited(targets, 4, async (f) => {
+        await api.moveFile(f.id, folderId);
+      });
+      const ids = new Set(targets.map((t) => t.id));
+      setFiles((prev) => prev.map((f) => (ids.has(f.id) ? { ...f, folderId } : f)));
+      setSearchResults((prev) => prev.map((f) => (ids.has(f.id) ? { ...f, folderId } : f)));
+      setDetailsFile((prev) => (prev && ids.has(prev.id) ? { ...prev, folderId } : prev));
+      setRowSelection({});
+    },
+    [api],
+  );
+
+  const doDelete = useCallback(
+    async (targets: ApiDatabankFile[]) => {
+      await runLimited(targets, 4, async (f) => {
+        await api.deleteFile(f.id);
+      });
+      removeFilesByIds(new Set(targets.map((t) => t.id)));
+      setRowSelection({});
+    },
+    [api, removeFilesByIds],
+  );
+
+  const saveDetails = useCallback(
+    async (file: ApiDatabankFile, patch: { description: string | null; tags: string[] }) => {
+      const updated = await api.updateFile(file.id, patch);
+      patchFile(file.id, {
+        description: updated?.description ?? patch.description,
+        tags: updated?.tags ?? patch.tags,
+      });
+    },
+    [api, patchFile],
+  );
+
+  const downloadAll = useCallback(
+    async (targets: ApiDatabankFile[]) => {
+      await runLimited(targets, 3, (f) => download(f));
+    },
+    [download],
+  );
+
   // Measure the tree box — react-arborist (react-window) needs numeric sizes.
   const treeBoxRef = useRef<HTMLDivElement>(null);
   const [treeSize, setTreeSize] = useState({ width: 258, height: 420 });
@@ -366,7 +596,7 @@ export function DatabankExplorerV2({
                 borderRadius: 6,
                 padding: '2px 6px',
                 fontSize: 13,
-                background: 'var(--sos-surface-solid, #fff)',
+                background: surfaceSolid,
                 color: primary,
                 outline: 'none',
               }}
@@ -407,15 +637,18 @@ export function DatabankExplorerV2({
     [selectedFolderId, readOnly],
   );
 
+  const showTable = rows.length > 0 && !(isSearching ? searchError : loading);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <style>{EXPLORER_CSS}</style>
       {error ? (
         <div
           style={{
             fontSize: 13,
-            color: 'var(--sos-danger, #dc2626)',
+            color: danger,
             border,
-            borderColor: 'var(--sos-danger, #dc2626)',
+            borderColor: danger,
             borderRadius: 10,
             padding: '8px 12px',
           }}
@@ -424,11 +657,19 @@ export function DatabankExplorerV2({
         </div>
       ) : null}
 
-      <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', minHeight: 460 }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 16,
+          alignItems: 'stretch',
+          minHeight: 460,
+          flexWrap: narrow ? 'wrap' : 'nowrap',
+        }}
+      >
         {/* LEFT — folder tree */}
         <div
           style={{
-            width: 280,
+            width: narrow ? '100%' : 280,
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
@@ -436,6 +677,7 @@ export function DatabankExplorerV2({
             borderRadius: 12,
             background: surface,
             overflow: 'hidden',
+            minHeight: narrow ? 240 : undefined,
           }}
         >
           {/* Synthetic root row — selects folderId = null */}
@@ -495,7 +737,7 @@ export function DatabankExplorerV2({
           </div>
         </div>
 
-        {/* MAIN — search + breadcrumbs + file list (or search results) */}
+        {/* MAIN — search + breadcrumbs + table (or search results) + details */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {/* Search box (debounced) — a non-empty query searches the whole scope. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -514,7 +756,7 @@ export function DatabankExplorerV2({
                   borderRadius: 10,
                   padding: '8px 32px',
                   fontSize: 13,
-                  background: 'var(--sos-surface-solid, #fff)',
+                  background: surfaceSolid,
                   color: primary,
                   outline: 'none',
                 }}
@@ -602,144 +844,756 @@ export function DatabankExplorerV2({
             ) : null}
           </div>
 
-          {/* PR-3b: this basic list (folder view AND search results) still needs
-              the TanStack table (sort/columns) + a right-click context menu +
-              multi-select bulk actions + a file-details side panel — those
-              replace this list in a follow-up. */}
-          <div style={{ border, borderRadius: 12, background: surface, minHeight: 300, padding: 6 }}>
-            {isSearching ? (
-              searchError ? (
-                <div style={{ color: 'var(--sos-danger, #dc2626)', fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
-                  {searchError}
-                </div>
-              ) : searchLoading && searchResults.length === 0 ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: 16 }}>
-                  <Loader2 size={14} className="animate-spin" /> Searching…
-                </div>
-              ) : searchResults.length === 0 ? (
-                <div style={{ color: muted, fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
-                  No files match your search.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {searchResults.map((file) => (
+          {/* Bulk-action bar (hidden when read-only). */}
+          {!readOnly && selectionCount > 0 ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+                border,
+                borderColor: accent,
+                borderRadius: 10,
+                background: accentSoft,
+                padding: '8px 12px',
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: primary }}>
+                {selectionCount} selected
+              </span>
+              <button type="button" onClick={() => setRowSelection({})} style={linkBtn}>
+                Clear
+              </button>
+              <div style={{ flex: 1 }} />
+              <button type="button" onClick={() => void downloadAll(selectedFiles)} style={barBtn}>
+                <Download size={14} /> Download all
+              </button>
+              <button type="button" onClick={() => setMoveTargets(selectedFiles)} style={barBtn}>
+                <FolderInput size={14} /> Move…
+              </button>
+              <button type="button" onClick={() => setDeleteTargets(selectedFiles)} style={{ ...barBtn, color: danger, borderColor: danger }}>
+                <Trash2 size={14} /> Delete
+              </button>
+            </div>
+          ) : null}
+
+          {/* Table + details panel row. */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              minWidth: 0,
+              flexDirection: narrow ? 'column' : 'row',
+              alignItems: 'stretch',
+            }}
+          >
+            {/* Table (folder view AND search results — one component, two data sources). */}
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div
+                ref={scrollRef}
+                style={{
+                  border,
+                  borderRadius: 12,
+                  background: surface,
+                  height: TABLE_H,
+                  overflow: 'auto',
+                  position: 'relative',
+                }}
+              >
+                {isSearching && searchError ? (
+                  <div style={{ color: danger, fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
+                    {searchError}
+                  </div>
+                ) : (isSearching ? searchLoading && searchResults.length === 0 : loading) ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: 16 }}>
+                    <Loader2 size={14} className="animate-spin" /> {isSearching ? 'Searching…' : 'Loading databank…'}
+                  </div>
+                ) : rows.length === 0 ? (
+                  <div style={{ color: muted, fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
+                    {isSearching ? 'No files match your search.' : 'No files in this folder.'}
+                  </div>
+                ) : (
+                  <div style={{ minWidth: tableMinWidth }}>
+                    {/* Sticky, sortable header */}
                     <div
-                      key={file.id}
-                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, minWidth: 0 }}
-                    >
-                      <span style={{ color: muted, flexShrink: 0 }}>
-                        <FileGlyph mime={file.mimeType} />
-                      </span>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div
-                          style={{ fontSize: 13.5, color: primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                          title={file.fileName}
-                        >
-                          {file.fileName}
-                        </div>
-                        <div
-                          style={{ fontSize: 11.5, color: muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                          title={folderPathOf(file.folderId)}
-                        >
-                          {folderPathOf(file.folderId)}
-                          {file.fileSizeBytes == null ? '' : ` · ${fmtSize(file.fileSizeBytes)}`}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        title="Download"
-                        onClick={() => void download(file)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: muted, padding: 6, borderRadius: 7, display: 'inline-flex', flexShrink: 0 }}
-                      >
-                        <Download size={15} />
-                      </button>
-                    </div>
-                  ))}
-                  {searchResults.length < searchTotal ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}>
-                      <button
-                        type="button"
-                        disabled={searchLoading}
-                        onClick={() => void runSearch(searchPage + 1, false)}
-                        style={{
-                          border,
-                          borderRadius: 8,
-                          background: 'transparent',
-                          color: primary,
-                          cursor: searchLoading ? 'default' : 'pointer',
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          padding: '7px 16px',
-                          opacity: searchLoading ? 0.6 : 1,
-                        }}
-                      >
-                        {searchLoading ? 'Loading…' : `Load more (${searchResults.length} of ${searchTotal})`}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              )
-            ) : loading ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: muted, fontSize: 13, padding: 16 }}>
-                <Loader2 size={14} className="animate-spin" /> Loading databank…
-              </div>
-            ) : currentFiles.length === 0 ? (
-              <div style={{ color: muted, fontSize: 13, padding: '32px 12px', textAlign: 'center' }}>
-                No files in this folder.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {currentFiles.map((file) => (
-                  <div
-                    key={file.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '9px 10px',
-                      borderRadius: 8,
-                      minWidth: 0,
-                    }}
-                  >
-                    <span style={{ color: muted, flexShrink: 0 }}>
-                      <FileGlyph mime={file.mimeType} />
-                    </span>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div
-                        style={{ fontSize: 13.5, color: primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={file.fileName}
-                      >
-                        {file.fileName}
-                      </div>
-                      <div style={{ fontSize: 11.5, color: muted, marginTop: 2 }}>
-                        {file.fileSizeBytes == null ? '' : fmtSize(file.fileSizeBytes)}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      title="Download"
-                      onClick={() => void download(file)}
                       style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: muted,
-                        padding: 6,
-                        borderRadius: 7,
-                        display: 'inline-flex',
-                        flexShrink: 0,
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 2,
+                        display: 'grid',
+                        gridTemplateColumns: gridCols,
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '0 12px',
+                        height: 38,
+                        background: surfaceSolid,
+                        borderBottom: border,
                       }}
                     >
-                      <Download size={15} />
-                    </button>
+                      {table.getHeaderGroups()[0]?.headers.map((header) => {
+                        const col = header.column;
+                        if (col.id === 'select') {
+                          return (
+                            <IndeterminateCheckbox
+                              key={header.id}
+                              checked={table.getIsAllRowsSelected()}
+                              indeterminate={table.getIsSomeRowsSelected()}
+                              onChange={table.getToggleAllRowsSelectedHandler()}
+                              ariaLabel="Select all files"
+                            />
+                          );
+                        }
+                        const dir = col.getIsSorted();
+                        const label = String(col.columnDef.header ?? '');
+                        const alignRight = col.id === 'size';
+                        return (
+                          <button
+                            key={header.id}
+                            type="button"
+                            onClick={col.getToggleSortingHandler()}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              justifyContent: alignRight ? 'flex-end' : 'flex-start',
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              padding: 0,
+                              fontSize: 11.5,
+                              fontWeight: 700,
+                              letterSpacing: 0.3,
+                              textTransform: 'uppercase',
+                              color: dir ? primary : muted,
+                              minWidth: 0,
+                            }}
+                          >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                            <span style={{ width: 10, flexShrink: 0 }}>{dir === 'asc' ? '▲' : dir === 'desc' ? '▼' : ''}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Virtualized rows */}
+                    <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+                      {rowVirtualizer.getVirtualItems().map((vi) => {
+                        const row = rows[vi.index];
+                        const file = row.original;
+                        const isSelected = row.getIsSelected();
+                        return (
+                          <ContextMenu.Root key={row.id}>
+                            <ContextMenu.Trigger asChild>
+                              <div
+                                onClick={() => setDetailsFile(file)}
+                                style={{
+                                  position: 'absolute',
+                                  top: vi.start,
+                                  left: 0,
+                                  right: 0,
+                                  height: vi.size,
+                                  display: 'grid',
+                                  gridTemplateColumns: gridCols,
+                                  alignItems: 'center',
+                                  gap: 10,
+                                  padding: '0 12px',
+                                  cursor: 'pointer',
+                                  background:
+                                    detailsFile?.id === file.id
+                                      ? accentSoft
+                                      : isSelected
+                                        ? 'var(--sos-surface-hover, rgba(148,163,184,0.10))'
+                                        : 'transparent',
+                                  borderBottom: border,
+                                  minWidth: 0,
+                                }}
+                              >
+                                {!readOnly ? (
+                                  <div
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{ display: 'inline-flex', alignItems: 'center' }}
+                                  >
+                                    <IndeterminateCheckbox
+                                      checked={isSelected}
+                                      indeterminate={false}
+                                      onChange={row.getToggleSelectedHandler()}
+                                      ariaLabel={`Select ${file.fileName}`}
+                                    />
+                                  </div>
+                                ) : null}
+
+                                {/* Name */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                  <span style={{ color: muted, flexShrink: 0, display: 'inline-flex' }}>
+                                    <FileGlyph mime={file.mimeType} />
+                                  </span>
+                                  <div style={{ minWidth: 0, flex: 1 }}>
+                                    <div
+                                      style={{ fontSize: 13.5, color: primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                      title={file.fileName}
+                                    >
+                                      {file.fileName}
+                                    </div>
+                                    {isSearching ? (
+                                      <div
+                                        style={{ fontSize: 11.5, color: muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                        title={folderPathOf(file.folderId)}
+                                      >
+                                        {folderPathOf(file.folderId)}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+
+                                {/* Size */}
+                                <div style={{ fontSize: 12.5, color: muted, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                  {file.fileSizeBytes == null ? '—' : fmtSize(file.fileSizeBytes)}
+                                </div>
+
+                                {/* Type */}
+                                <div style={{ fontSize: 12.5, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {typeLabel(file.mimeType)}
+                                </div>
+
+                                {/* Modified */}
+                                <div style={{ fontSize: 12.5, color: muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {fmtDate(file.updatedAt)}
+                                </div>
+                              </div>
+                            </ContextMenu.Trigger>
+                            <ContextMenu.Portal>
+                              <ContextMenu.Content className="dbx-menu" collisionPadding={8}>
+                                <ContextMenu.Item className="dbx-item" onSelect={() => void download(file)}>
+                                  <Download size={15} /> Open / Download
+                                </ContextMenu.Item>
+                                {!readOnly ? (
+                                  <>
+                                    <ContextMenu.Item className="dbx-item" onSelect={() => setRenameTarget(file)}>
+                                      <Pencil size={15} /> Rename…
+                                    </ContextMenu.Item>
+                                    <ContextMenu.Item className="dbx-item" onSelect={() => setMoveTargets([file])}>
+                                      <FolderInput size={15} /> Move to…
+                                    </ContextMenu.Item>
+                                    <ContextMenu.Separator className="dbx-sep" />
+                                    <ContextMenu.Item className="dbx-item" data-danger="" onSelect={() => setDeleteTargets([file])}>
+                                      <Trash2 size={15} /> Delete
+                                    </ContextMenu.Item>
+                                  </>
+                                ) : null}
+                              </ContextMenu.Content>
+                            </ContextMenu.Portal>
+                          </ContextMenu.Root>
+                        );
+                      })}
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
-            )}
+
+              {/* "Load more" (search mode) — appends the next page to the table. */}
+              {isSearching && showTable && searchResults.length < searchTotal ? (
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    type="button"
+                    disabled={searchLoading}
+                    onClick={() => void runSearch(searchPage + 1, false)}
+                    style={{
+                      border,
+                      borderRadius: 8,
+                      background: 'transparent',
+                      color: primary,
+                      cursor: searchLoading ? 'default' : 'pointer',
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      padding: '7px 16px',
+                      opacity: searchLoading ? 0.6 : 1,
+                    }}
+                  >
+                    {searchLoading ? 'Loading…' : `Load more (${searchResults.length} of ${searchTotal})`}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Details side panel (opens on row click). */}
+            {detailsFile ? (
+              <DetailsPanel
+                key={detailsFile.id}
+                file={detailsFile}
+                readOnly={readOnly}
+                narrow={narrow}
+                pathLabel={folderPathOf(detailsFile.folderId)}
+                onClose={() => setDetailsFile(null)}
+                onDownload={() => void download(detailsFile)}
+                onSave={(patch) => saveDetails(detailsFile, patch)}
+              />
+            ) : null}
           </div>
         </div>
       </div>
+
+      {/* Dialogs (Radix, our own CSS) */}
+      {renameTarget ? (
+        <RenameDialog file={renameTarget} onClose={() => setRenameTarget(null)} onSubmit={doRename} />
+      ) : null}
+      {moveTargets ? (
+        <MoveDialog
+          targets={moveTargets}
+          options={folderOptions}
+          rootLabel={scopeRootLabel}
+          onClose={() => setMoveTargets(null)}
+          onSubmit={doMove}
+        />
+      ) : null}
+      {deleteTargets ? (
+        <DeleteDialog targets={deleteTargets} onClose={() => setDeleteTargets(null)} onSubmit={doDelete} />
+      ) : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Details side panel
+// ---------------------------------------------------------------------------
+function DetailsPanel({
+  file,
+  readOnly,
+  narrow,
+  pathLabel,
+  onClose,
+  onDownload,
+  onSave,
+}: {
+  file: ApiDatabankFile;
+  readOnly: boolean;
+  narrow: boolean;
+  pathLabel: string;
+  onClose: () => void;
+  onDownload: () => void;
+  onSave: (patch: { description: string | null; tags: string[] }) => Promise<void>;
+}) {
+  const [desc, setDesc] = useState(file.description ?? '');
+  const [tagsText, setTagsText] = useState((file.tags ?? []).join(', '));
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setErr(null);
+    setSavedAt(false);
+    try {
+      const tags = tagsText.split(',').map((t) => t.trim()).filter(Boolean);
+      const description = desc.trim() ? desc.trim() : null;
+      await onSave({ description, tags });
+      setSavedAt(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        width: narrow ? '100%' : 300,
+        flexShrink: 0,
+        border,
+        borderRadius: 12,
+        background: surfaceSolid,
+        height: narrow ? undefined : TABLE_H,
+        maxHeight: narrow ? 420 : undefined,
+        overflow: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 12px 8px', borderBottom: border }}>
+        <span style={{ color: accent, flexShrink: 0, display: 'inline-flex', marginTop: 2 }}>
+          <FileGlyph mime={file.mimeType} size={22} />
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: primary, wordBreak: 'break-word' }} title={file.fileName}>
+            {file.fileName}
+          </div>
+          <div style={{ fontSize: 11.5, color: muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pathLabel}>
+            {pathLabel}
+          </div>
+        </div>
+        <button
+          type="button"
+          title="Close"
+          onClick={onClose}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: muted, padding: 4, borderRadius: 6, display: 'inline-flex', flexShrink: 0 }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
+        <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px', fontSize: 12.5 }}>
+          <dt style={{ color: muted }}>Size</dt>
+          <dd style={{ margin: 0, color: primary }}>{file.fileSizeBytes == null ? '—' : fmtSize(file.fileSizeBytes)}</dd>
+          <dt style={{ color: muted }}>Type</dt>
+          <dd style={{ margin: 0, color: primary }}>{typeLabel(file.mimeType)}</dd>
+          <dt style={{ color: muted }}>Modified</dt>
+          <dd style={{ margin: 0, color: primary }}>{fmtDate(file.updatedAt) || '—'}</dd>
+        </dl>
+
+        <button
+          type="button"
+          onClick={onDownload}
+          style={{ ...barBtn, justifyContent: 'center', width: '100%' }}
+        >
+          <Download size={14} /> Download
+        </button>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 700, color: muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+            Description
+          </label>
+          {readOnly ? (
+            <div style={{ fontSize: 13, color: file.description ? primary : muted, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {file.description || 'No description.'}
+            </div>
+          ) : (
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              rows={4}
+              placeholder="Add a description…"
+              style={{
+                border,
+                borderRadius: 8,
+                padding: '7px 9px',
+                fontSize: 13,
+                color: primary,
+                background: surfaceSolid,
+                resize: 'vertical',
+                outline: 'none',
+                fontFamily: 'inherit',
+              }}
+            />
+          )}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 700, color: muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+            Tags
+          </label>
+          {readOnly ? (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {(file.tags ?? []).length ? (
+                (file.tags ?? []).map((t) => (
+                  <span key={t} style={tagChip}>
+                    {t}
+                  </span>
+                ))
+              ) : (
+                <span style={{ fontSize: 13, color: muted }}>No tags.</span>
+              )}
+            </div>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={tagsText}
+                onChange={(e) => setTagsText(e.target.value)}
+                placeholder="comma, separated, tags"
+                style={{
+                  border,
+                  borderRadius: 8,
+                  padding: '7px 9px',
+                  fontSize: 13,
+                  color: primary,
+                  background: surfaceSolid,
+                  outline: 'none',
+                }}
+              />
+              {tagsText.trim() ? (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                  {tagsText
+                    .split(',')
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                    .map((t, i) => (
+                      <span key={`${t}-${i}`} style={tagChip}>
+                        {t}
+                      </span>
+                    ))}
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {!readOnly ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 'auto' }}>
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={saving}
+              style={{ ...primaryBtn, opacity: saving ? 0.6 : 1, cursor: saving ? 'default' : 'pointer' }}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            {savedAt ? <span style={{ fontSize: 12, color: muted }}>Saved</span> : null}
+            {err ? <span style={{ fontSize: 12, color: danger }}>{err}</span> : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dialogs
+// ---------------------------------------------------------------------------
+function DialogShell({
+  title,
+  onClose,
+  children,
+  footer,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer: React.ReactNode;
+}) {
+  return (
+    <Dialog.Root open onOpenChange={(o: boolean) => (!o ? onClose() : undefined)}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dbx-overlay" />
+        <Dialog.Content className="dbx-dialog" aria-describedby={undefined}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            <Dialog.Title style={{ margin: 0, fontSize: 15, fontWeight: 700, color: primary, flex: 1 }}>{title}</Dialog.Title>
+            <Dialog.Close asChild>
+              <button
+                type="button"
+                title="Close"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: muted, padding: 4, borderRadius: 6, display: 'inline-flex' }}
+              >
+                <X size={16} />
+              </button>
+            </Dialog.Close>
+          </div>
+          {children}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>{footer}</div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function RenameDialog({
+  file,
+  onClose,
+  onSubmit,
+}: {
+  file: ApiDatabankFile;
+  onClose: () => void;
+  onSubmit: (file: ApiDatabankFile, name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(file.fileName);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    const value = name.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit(file, value);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Rename failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell
+      title="Rename file"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} style={ghostBtn}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => void submit()} disabled={busy || !name.trim()} style={{ ...primaryBtn, opacity: busy || !name.trim() ? 0.6 : 1 }}>
+            {busy ? 'Saving…' : 'Rename'}
+          </button>
+        </>
+      }
+    >
+      <input
+        autoFocus
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void submit();
+        }}
+        aria-label="File name"
+        style={{ width: '100%', border, borderRadius: 8, padding: '9px 10px', fontSize: 13.5, color: primary, background: surfaceSolid, outline: 'none' }}
+      />
+      {err ? <div style={{ fontSize: 12.5, color: danger, marginTop: 8 }}>{err}</div> : null}
+    </DialogShell>
+  );
+}
+
+function MoveDialog({
+  targets,
+  options,
+  rootLabel,
+  onClose,
+  onSubmit,
+}: {
+  targets: ApiDatabankFile[];
+  options: FolderOption[];
+  rootLabel: string;
+  onClose: () => void;
+  onSubmit: (targets: ApiDatabankFile[], folderId: string | null) => Promise<void>;
+}) {
+  // '' encodes the databank root (folderId = null).
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit(targets, value === '' ? null : value);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Move failed');
+      setBusy(false);
+    }
+  };
+
+  const noun = targets.length === 1 ? `“${targets[0].fileName}”` : `${targets.length} files`;
+
+  return (
+    <DialogShell
+      title="Move to…"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} style={ghostBtn}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => void submit()} disabled={busy} style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }}>
+            {busy ? 'Moving…' : 'Move'}
+          </button>
+        </>
+      }
+    >
+      <div style={{ fontSize: 13, color: muted, marginBottom: 10 }}>Move {noun} to:</div>
+      <select
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        aria-label="Destination folder"
+        style={{ width: '100%', border, borderRadius: 8, padding: '9px 10px', fontSize: 13.5, color: primary, background: surfaceSolid, outline: 'none' }}
+      >
+        <option value="">{rootLabel} (root)</option>
+        {options.map((o) => (
+          <option key={o.id ?? 'root'} value={o.id ?? ''}>
+            {`${'   '.repeat(o.depth)}${o.depth ? '↳ ' : ''}${o.label}`}
+          </option>
+        ))}
+      </select>
+      {err ? <div style={{ fontSize: 12.5, color: danger, marginTop: 8 }}>{err}</div> : null}
+    </DialogShell>
+  );
+}
+
+function DeleteDialog({
+  targets,
+  onClose,
+  onSubmit,
+}: {
+  targets: ApiDatabankFile[];
+  onClose: () => void;
+  onSubmit: (targets: ApiDatabankFile[]) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit(targets);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Delete failed');
+      setBusy(false);
+    }
+  };
+
+  const noun = targets.length === 1 ? `“${targets[0].fileName}”` : `${targets.length} files`;
+
+  return (
+    <DialogShell
+      title={targets.length === 1 ? 'Delete file' : 'Delete files'}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} style={ghostBtn}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={busy}
+            style={{ ...primaryBtn, background: danger, borderColor: danger, opacity: busy ? 0.6 : 1 }}
+          >
+            {busy ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      }
+    >
+      <div style={{ fontSize: 13.5, color: primary }}>
+        Delete {noun}? This cannot be undone.
+      </div>
+      {err ? <div style={{ fontSize: 12.5, color: danger, marginTop: 8 }}>{err}</div> : null}
+    </DialogShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small shared bits
+// ---------------------------------------------------------------------------
+function IndeterminateCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: (e: unknown) => void;
+  ariaLabel: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !checked && indeterminate;
+  }, [checked, indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      aria-label={ariaLabel}
+      style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#b8860b' }}
+    />
   );
 }
 
@@ -776,5 +1630,62 @@ function chipStyle(active: boolean): React.CSSProperties {
     background: active ? accentSoft : 'transparent',
   };
 }
+
+const barBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  border,
+  borderRadius: 8,
+  background: surfaceSolid,
+  color: primary,
+  cursor: 'pointer',
+  fontSize: 12.5,
+  fontWeight: 600,
+  padding: '6px 12px',
+};
+
+const linkBtn: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  color: accent,
+  fontSize: 12.5,
+  fontWeight: 600,
+  padding: 0,
+};
+
+const primaryBtn: React.CSSProperties = {
+  border: `1px solid ${accent}`,
+  borderRadius: 8,
+  background: accent,
+  color: '#fff',
+  cursor: 'pointer',
+  fontSize: 13,
+  fontWeight: 600,
+  padding: '8px 16px',
+};
+
+const ghostBtn: React.CSSProperties = {
+  border,
+  borderRadius: 8,
+  background: 'transparent',
+  color: primary,
+  cursor: 'pointer',
+  fontSize: 13,
+  fontWeight: 600,
+  padding: '8px 16px',
+};
+
+const tagChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  fontSize: 11.5,
+  color: primary,
+  background: accentSoft,
+  border,
+  borderRadius: 999,
+  padding: '2px 9px',
+};
 
 export default DatabankExplorerV2;

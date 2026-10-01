@@ -300,6 +300,9 @@ function sweeperHarness() {
       findMany: jest.fn().mockResolvedValue([]),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    // The folder pass resolves each aged root's FULL cascade reach (recursive CTE)
+    // so it can free the bytes of descendant files the FK cascade removes.
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const storage = { delete: jest.fn().mockResolvedValue(undefined) };
   const sweeper = new DatabankTrashSweeperService(prisma as never, storage as never);
@@ -348,6 +351,52 @@ describe('DatabankTrashSweeperService', () => {
       expect(h.prisma.databankFolder.findMany.mock.calls[0][0].where).toEqual({
         deletedAt: { not: null, lt: cutoff },
       });
+    });
+  });
+
+  it('frees a descendant file under the FULL cascade reach of an aged folder (not just the batch roots)', async () => {
+    await withEnv('DATABANK_TRASH_RETENTION_DAYS', '30', async () => {
+      const h = sweeperHarness();
+      // purgeAgedFiles finds no loose aged files → the folder pass runs.
+      h.prisma.databankFile.findMany
+        .mockResolvedValueOnce([]) // purgeAgedFiles: no aged files
+        .mockResolvedValueOnce([{ id: 'x', storageKey: 'kx' }]) // reach capture: a file under descendant B
+        .mockResolvedValueOnce([]); // survivors: x is gone (cascade removed it)
+      h.prisma.databankFolder.findMany
+        .mockResolvedValueOnce([{ id: 'A' }]) // one aged root
+        .mockResolvedValueOnce([]); // drained
+      // A's cascade reach is A + its descendant B (B is NOT in the flat batch).
+      h.prisma.$queryRaw.mockResolvedValueOnce([{ id: 'A' }, { id: 'B' }]);
+      h.prisma.databankFolder.deleteMany.mockResolvedValueOnce({ count: 1 });
+
+      await h.sweeper.sweep(NOW);
+
+      // The reach capture covers the descendant folder B, not just root A.
+      expect(h.prisma.databankFile.findMany.mock.calls[1][0].where).toEqual({
+        folderId: { in: ['A', 'B'] },
+        deletedAt: { not: null },
+      });
+      // Only the aged ROOTS are deleted (compare-and-set); the cascade clears B.
+      const cutoff = new Date(NOW.getTime() - 30 * DAY);
+      expect(h.prisma.databankFolder.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ['A'] }, deletedAt: { not: null, lt: cutoff } },
+      });
+      // The descendant file's bytes are freed — the #3 leak is closed.
+      expect(h.storage.delete).toHaveBeenCalledWith('kx');
+    });
+  });
+
+  it('the folder pass does NOT relocate (never yanks a just-restored folder’s live files to the root)', async () => {
+    await withEnv('DATABANK_TRASH_RETENTION_DAYS', '30', async () => {
+      const h = sweeperHarness();
+      h.prisma.databankFile.findMany.mockResolvedValue([]); // nothing aged anywhere
+      h.prisma.databankFolder.findMany
+        .mockResolvedValueOnce([{ id: 'A' }])
+        .mockResolvedValueOnce([]);
+      h.prisma.$queryRaw.mockResolvedValueOnce([{ id: 'A' }]);
+      await h.sweeper.sweep(NOW);
+      // The removed relocate was a databankFile.updateMany({ folderId: null }).
+      expect((h.prisma.databankFile as any).updateMany).toBeUndefined();
     });
   });
 

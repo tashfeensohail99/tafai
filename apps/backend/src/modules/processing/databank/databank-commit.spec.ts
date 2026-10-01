@@ -74,7 +74,13 @@ function harness(opts: { headDelayTicks?: number } = {}) {
         return pick(row, a.select) as any;
       }),
     },
-    $transaction: jest.fn(),
+    // The commit now records the row inside a transaction so it can take FOR
+    // SHARE on its live destination folder (lockLiveDestinationFolder) and
+    // serialize against a concurrent subtree delete/purge. The fake runs the
+    // callback against this same prisma (shared rows/log), and $queryRaw backs
+    // the FOR SHARE probe — not reached for a root (null) folder.
+    $queryRaw: jest.fn(async (): Promise<unknown[]> => []),
+    $transaction: jest.fn(async (fn: (t: unknown) => unknown): Promise<unknown> => fn(prisma)),
   };
   const storage = {
     headObjectMeta: jest.fn(async () => {
@@ -91,11 +97,14 @@ function harness(opts: { headDelayTicks?: number } = {}) {
 }
 
 describe('DatabankService.commitDirectUpload — one row per key', () => {
-  it('records the file with one plain insert (no transaction, no extra round trips)', async () => {
+  it('records the file with one insert inside a transaction (FOR SHARE on a root folder is a no-op)', async () => {
     const { svc, prisma, log, rows, shape } = harness();
     const out = await svc.commitDirectUpload(DTO as never, USER);
+    // One existing-row look, then the insert inside the txn. A root (null) folder
+    // short-circuits lockLiveDestinationFolder, so no FOR SHARE probe is issued.
     expect(log).toEqual(['findFirst', 'create']);
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect(rows).toHaveLength(1);
     expect(Object.keys(out).sort()).toEqual(shape);
     expect(out).toMatchObject({ id: rows[0].id, clientId: 'c1', fileName: 'passport.pdf' });
@@ -144,6 +153,27 @@ describe('DatabankService.commitDirectUpload — one row per key', () => {
     expect(Object.keys(out).sort()).toEqual(shape);
     expect(storage.headObjectMeta).not.toHaveBeenCalled();
     expect(prisma.databankFile.create).not.toHaveBeenCalled();
+  });
+
+  it('a commit into a LIVE folder takes FOR SHARE on it and records the row THERE', async () => {
+    const { svc, prisma, rows } = harness();
+    (svc as any).assertFolderInScope = jest.fn(async () => 'F1');
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'F1' }]); // folder live + now share-locked
+    const out = await svc.commitDirectUpload({ ...DTO, folderId: 'F1' } as never, USER);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1); // the FOR SHARE probe
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(rows[0].folderId).toBe('F1');
+    expect(out.folderId).toBe('F1');
+  });
+
+  it('a commit RACING a delete of its folder (FOR SHARE finds it gone) lands at the ROOT, never stranded', async () => {
+    const { svc, prisma, rows } = harness();
+    (svc as any).assertFolderInScope = jest.fn(async () => 'F1'); // live at the pre-txn check
+    prisma.$queryRaw.mockResolvedValueOnce([]); // …but trashed/removed by the time we lock it
+    const out = await svc.commitDirectUpload({ ...DTO, folderId: 'F1' } as never, USER);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(rows[0].folderId).toBeNull(); // relocated to root — not left inside the trashed folder
+    expect(out.folderId).toBeNull();
   });
 
   it('the database enforces it: storageKey is UNIQUE in the schema and a migration makes it so', () => {

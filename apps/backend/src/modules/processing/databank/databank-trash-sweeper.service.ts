@@ -1,4 +1,5 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 
@@ -148,10 +149,26 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
     return purged;
   }
 
-  /** Hard-delete trashed folders older than `cutoff`. Their files were already
-   *  freed by purgeAgedFiles; the FK cascade removes any nested trashed folder
-   *  rows. Defensively frees any file still under a batch folder first, so a
-   *  cascade can never orphan a storage object. */
+  /** Hard-delete trashed folders older than `cutoff`. purgeAgedFiles has already
+   *  freed + removed every aged trashed FILE, and a trashed child is never newer
+   *  than its parent, so by the time this runs an aged folder's subtree holds no
+   *  files to orphan. The upload paths take FOR SHARE on their live destination
+   *  (DatabankService.lockLiveDestinationFolder), so no LIVE file is ever stranded
+   *  under a trashed folder either — the FK cascade below only ever removes
+   *  trashed rows.
+   *
+   *  Deletes the aged ROOTS and lets the self-FK cascade clear their (trashed)
+   *  subtree — folders AND files — in one shot. Two safeguards, no relocate:
+   *   - a compare-and-set on deletedAt skips a folder RESTORED since the scan;
+   *     restoreFolder reparents a restored subtree to the root, so it also leaves
+   *     a trashed ancestor's cascade reach and is never swept with it. (The old
+   *     relocate-live-files-to-root step is gone: it could yank a just-restored
+   *     folder's live files to the root.)
+   *   - before deleting, capture every trashed file in each root's FULL cascade
+   *     reach (the recursive subtree, matching what Postgres cascades) and free
+   *     the bytes of any the cascade truly removed — survivor-checked, so a file
+   *     restored since the capture keeps both its row and its bytes. This closes
+   *     the leak where the cascade reaches a descendant folder OUTSIDE the batch. */
   private async purgeAgedFolders(cutoff: Date, deadline: number): Promise<number> {
     let purged = 0;
     while (this.clock() < deadline) {
@@ -163,42 +180,49 @@ export class DatabankTrashSweeperService implements OnModuleInit, OnModuleDestro
         select: { id: true },
       });
       if (!batch.length) break;
-      const ids = batch.map((f) => f.id);
-      // A LIVE file stranded under a trashed folder (a direct-upload commit that
-      // raced the delete) must survive the folder's FK cascade — move it to the
-      // root first.
+      const rootIds = batch.map((f) => f.id);
+      // The full set of folders the delete will remove: the roots plus ALL
+      // descendants (any age) reachable through the parentFolderId self-FK — the
+      // exact set Postgres cascades through — so the file capture below covers
+      // every file the cascade can take, not just those directly under a root.
       // eslint-disable-next-line no-await-in-loop
-      await this.prisma.databankFile.updateMany({
-        where: { folderId: { in: ids }, deletedAt: null },
-        data: { folderId: null },
-      });
-      // Only TRASHED files under these folders — never a live/restored one — and
-      // free storage only for files actually deleted (a file restored since the
-      // scan keeps both its row AND its bytes). Mirrors purgeAgedFiles.
+      const reach = await this.prisma.$queryRaw<{ id: string }[]>`
+        WITH RECURSIVE sub AS (
+          SELECT "id" FROM "processing"."databank_folders" WHERE "id" IN (${Prisma.join(rootIds)})
+          UNION
+          SELECT f."id" FROM "processing"."databank_folders" f JOIN sub ON f."parentFolderId" = sub."id"
+        )
+        SELECT "id" FROM sub`;
+      const reachIds = reach.map((r) => r.id);
+      // Trashed files anywhere in that reach — never a live/restored one (a
+      // restored file is reparented to the root, out of this reach). Captured so
+      // the cascade below can't orphan their storage objects.
       // eslint-disable-next-line no-await-in-loop
       const files = await this.prisma.databankFile.findMany({
-        where: { folderId: { in: ids }, deletedAt: { not: null } },
+        where: { folderId: { in: reachIds }, deletedAt: { not: null } },
         select: { id: true, storageKey: true },
       });
-      const fileIds = files.map((f) => f.id);
-      if (fileIds.length) {
-        // eslint-disable-next-line no-await-in-loop
-        await this.prisma.databankFile.deleteMany({ where: { id: { in: fileIds }, deletedAt: { not: null } } });
-      }
+      // Delete the aged roots; the FK cascade removes the rest of each (trashed)
+      // subtree. Compare-and-set skips a root restored since the scan.
       // eslint-disable-next-line no-await-in-loop
       const removed = await this.prisma.databankFolder.deleteMany({
-        where: { id: { in: ids }, deletedAt: { not: null, lt: cutoff } },
+        where: { id: { in: rootIds }, deletedAt: { not: null, lt: cutoff } },
       });
-      const survivors = fileIds.length
-        ? new Set(
-            // eslint-disable-next-line no-await-in-loop
-            (await this.prisma.databankFile.findMany({ where: { id: { in: fileIds } }, select: { id: true } })).map(
-              (s) => s.id,
-            ),
-          )
-        : new Set<string>();
-      // eslint-disable-next-line no-await-in-loop
-      await this.freeStorage(files.filter((f) => !survivors.has(f.id)).map((f) => f.storageKey));
+      // Free storage ONLY for captured files now truly gone (a file restored
+      // since the capture keeps both its row AND its bytes). Mirrors purgeAgedFiles.
+      if (files.length) {
+        // eslint-disable-next-line no-await-in-loop
+        const survivors = new Set(
+          (
+            await this.prisma.databankFile.findMany({
+              where: { id: { in: files.map((f) => f.id) } },
+              select: { id: true },
+            })
+          ).map((s) => s.id),
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await this.freeStorage(files.filter((f) => !survivors.has(f.id)).map((f) => f.storageKey));
+      }
       purged += removed.count;
       if (batch.length < DatabankTrashSweeperService.BATCH) break;
     }

@@ -820,6 +820,40 @@ export class DatabankService {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1145194033, hashtext(${key}))`;
   }
 
+  /**
+   * Serialize a file INSERT against a concurrent subtree delete / purge of its
+   * destination folder, so no LIVE file is ever stranded inside a trashed (or
+   * already-removed) folder. Inside the caller's transaction, take a SHARED row
+   * lock on the live destination folder BEFORE the row is created: deleteFolder
+   * stamps its deletedAt (an UPDATE → FOR UPDATE) and purgeFolder / the sweeper
+   * hard-delete the row (DELETE → FOR UPDATE), both of which conflict with this
+   * FOR SHARE, so the two serialize on the folder row:
+   *   - the delete wins   → the folder is already gone / trashed here, so the
+   *     row falls back to the root (null) and lands LIVE at the top, never
+   *     stranded inside a folder that is being removed.
+   *   - this insert wins  → the folder is still live and held; the delete then
+   *     waits and trashes this freshly-recorded file together with its folder.
+   * The root (null) can never be trashed, so it needs no lock. Returns the
+   * folder id to store (or null for the root). This is a shared ROW lock, NOT
+   * the per-scope advisory lock, so it never blocks another upload to the same
+   * folder — only a delete/purge of that exact folder.
+   */
+  private async lockLiveDestinationFolder(
+    tx: Prisma.TransactionClient,
+    folderId: string | null,
+    scope: { clientId: string | null; ownerUserId: string | null },
+  ): Promise<string | null> {
+    if (!folderId) return null;
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "processing"."databank_folders"
+      WHERE "id" = ${folderId}
+        AND "deletedAt" IS NULL
+        AND "clientId" IS NOT DISTINCT FROM ${scope.clientId}
+        AND "ownerUserId" IS NOT DISTINCT FROM ${scope.ownerUserId}
+      FOR SHARE`;
+    return rows.length ? folderId : null;
+  }
+
   /** Re-read a folder once its scope is locked: loadFolder ran before the lock,
    *  so the folder may have been deleted meanwhile (its scope never changes). */
   private async reloadFolder(tx: Prisma.TransactionClient, folderId: string) {
@@ -1098,20 +1132,29 @@ export class DatabankService {
       ownerUserId: scope.ownerUserId,
     });
     try {
-      return await this.prisma.databankFile.create({
-        data: {
+      return await this.prisma.$transaction(async (tx) => {
+        // Serialize against a concurrent subtree delete/purge of the destination
+        // folder (see lockLiveDestinationFolder): if it is being trashed, the
+        // row lands at the root instead of stranded inside a removed folder.
+        const folderId = await this.lockLiveDestinationFolder(tx, targetFolder, {
           clientId: scope.clientId,
           ownerUserId: scope.ownerUserId,
-          folderId: targetFolder,
-          fileName: dto.fileName,
-          storageKey: dto.storageKey,
-          mimeType: dto.mimeType,
-          fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
-          source: DatabankFileSource.UPLOAD,
-          uploadedByUserId: user.id,
-        },
-        select: this.fileSelect,
-      });
+        });
+        return tx.databankFile.create({
+          data: {
+            clientId: scope.clientId,
+            ownerUserId: scope.ownerUserId,
+            folderId,
+            fileName: dto.fileName,
+            storageKey: dto.storageKey,
+            mimeType: dto.mimeType,
+            fileSizeBytes: head.sizeBytes ?? dto.fileSizeBytes,
+            source: DatabankFileSource.UPLOAD,
+            uploadedByUserId: user.id,
+          },
+          select: this.fileSelect,
+        });
+      }, FOLDER_TXN);
     } catch (e) {
       // Two commits of one key can overlap — a retry whose first reply was lost
       // while the server was still recording it — and both pass the look above.
@@ -1158,19 +1201,27 @@ export class DatabankService {
         file!.originalname,
       );
 
-      return await this.prisma.databankFile.create({
-        data: {
-          clientId,
-          folderId: targetFolder,
-          fileName: file!.originalname,
-          storageKey: uploaded.key,
-          mimeType: file!.mimetype,
-          fileSizeBytes: uploaded.sizeBytes,
-          source: fileSource,
-          uploadedByUserId: user.id,
-        },
-        select: this.fileSelect,
-      });
+      // Record the row under the per-folder serialization (FOR SHARE on the
+      // destination) AFTER the stream, so a subtree delete/purge racing this
+      // upload can't strand the new file inside a trashed folder — it lands at
+      // the root instead. The lock is taken only for the quick insert, never
+      // across the (possibly multi-second) stream above.
+      return await this.prisma.$transaction(async (tx) => {
+        const dest = await this.lockLiveDestinationFolder(tx, targetFolder, { clientId, ownerUserId: null });
+        return tx.databankFile.create({
+          data: {
+            clientId,
+            folderId: dest,
+            fileName: file!.originalname,
+            storageKey: uploaded.key,
+            mimeType: file!.mimetype,
+            fileSizeBytes: uploaded.sizeBytes,
+            source: fileSource,
+            uploadedByUserId: user.id,
+          },
+          select: this.fileSelect,
+        });
+      }, FOLDER_TXN);
     } finally {
       if (file?.path) await unlink(file.path).catch(() => undefined);
     }
@@ -1203,19 +1254,25 @@ export class DatabankService {
         file!.originalname,
       );
 
-      return await this.prisma.databankFile.create({
-        data: {
-          ownerUserId,
-          folderId: targetFolder,
-          fileName: file!.originalname,
-          storageKey: uploaded.key,
-          mimeType: file!.mimetype,
-          fileSizeBytes: uploaded.sizeBytes,
-          source: fileSource,
-          uploadedByUserId: user.id,
-        },
-        select: this.fileSelect,
-      });
+      // Same per-folder serialization as uploadFile — land at the root rather
+      // than strand the row inside a folder being trashed. Lock only for the
+      // insert, never across the stream above.
+      return await this.prisma.$transaction(async (tx) => {
+        const dest = await this.lockLiveDestinationFolder(tx, targetFolder, { clientId: null, ownerUserId });
+        return tx.databankFile.create({
+          data: {
+            ownerUserId,
+            folderId: dest,
+            fileName: file!.originalname,
+            storageKey: uploaded.key,
+            mimeType: file!.mimetype,
+            fileSizeBytes: uploaded.sizeBytes,
+            source: fileSource,
+            uploadedByUserId: user.id,
+          },
+          select: this.fileSelect,
+        });
+      }, FOLDER_TXN);
     } finally {
       if (file?.path) await unlink(file.path).catch(() => undefined);
     }
@@ -1618,11 +1675,14 @@ export class DatabankService {
       await this.lockFolderScope(tx, scope);
       const folder = await this.reloadTrashedFolder(tx, folderId);
       const ids = await this.collectSubtreeWithTrashed(folder.id, tx);
-      // A LIVE file can sit under a trashed folder only if a direct-upload commit
-      // raced the delete (committed into a folder being trashed). The user purged
-      // a TRASHED folder — they never asked to destroy a live file — so move any
-      // such file to the root rather than let the folder delete FK-cascade it
-      // away. (restoreFile holds the same scope lock, so it can't add one here.)
+      // Belt-and-braces: uploads now take FOR SHARE on their live destination
+      // folder (lockLiveDestinationFolder), so a commit can no longer strand a
+      // LIVE file inside a folder being trashed — there should be none here. Keep
+      // the relocate anyway: if the invariant ever slipped, move a stray live
+      // file to the root rather than let the folder delete FK-cascade (permanently
+      // destroy) it. The user purged a TRASHED folder — never a live file.
+      // restoreFile/restoreFolder hold this same scope lock, so they can't add or
+      // resurrect one mid-purge.
       await tx.databankFile.updateMany({
         where: { folderId: { in: ids }, deletedAt: null },
         data: { folderId: null },

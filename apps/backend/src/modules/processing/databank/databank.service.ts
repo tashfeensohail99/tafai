@@ -1804,6 +1804,26 @@ export class DatabankService {
     return [...new Set(keys.filter((k): k is string => !!k))];
   }
 
+  /** Free objects best-effort, but ONLY after re-confirming no live row still
+   *  references the key. Used by deleteVersion, whose file stays LIVE: between its
+   *  commit and this free a concurrent commitNewVersion could re-adopt the just-
+   *  removed key (an adversarial key replay), and an unconditional free would then
+   *  destroy the file's current bytes. (purgeFile / purgeFolder / the sweeper free
+   *  keys of rows that are GONE and whose file is trashed→unreachable by a live
+   *  commit, so they free directly.) */
+  private async freeStorageIfUnreferenced(storageKeys: string[]): Promise<void> {
+    for (const key of this.dedupeKeys(storageKeys)) {
+      // eslint-disable-next-line no-await-in-loop
+      const ver = await this.prisma.databankFileVersion.findUnique({ where: { storageKey: key }, select: { id: true } });
+      if (ver) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const file = await this.prisma.databankFile.findFirst({ where: { storageKey: key }, select: { id: true } });
+      if (file) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await this.freeStorage([key]);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // File versions (Databank P3-2). A file keeps a history of its bytes. Every
   // stored object is owned by exactly ONE DatabankFileVersion row; the file's
@@ -1899,6 +1919,22 @@ export class DatabankService {
 
     return this.prisma.$transaction(async (tx) => {
       await this.lockFileVersions(tx, fileId);
+      // In-txn version-aware idempotency UNDER THE LOCK. The pre-txn check above is
+      // a TOCTOU: a CONCURRENT commit of the SAME key (a lost-reply/double-submit
+      // retry of one presign+PUT) can land while we wait for the lock. Once a
+      // version row owns dto.storageKey it is a LIVE/referenced object — never
+      // delete it. If it's this file's version, the concurrent/retry commit already
+      // succeeded → return the file unchanged. If another file's, it's misuse → 400.
+      const adopted = await tx.databankFileVersion.findUnique({
+        where: { storageKey: dto.storageKey },
+        select: { fileId: true },
+      });
+      if (adopted) {
+        if (adopted.fileId === fileId) {
+          return tx.databankFile.findUniqueOrThrow({ where: { id: fileId }, select: this.fileSelect });
+        }
+        throw new BadRequestException('This upload has already been used.');
+      }
       // SELECT … FOR UPDATE on the (live) file — serialises against deleteFile /
       // purge and reads the mirror under the lock so current can't move.
       const rows = await tx.$queryRaw<
@@ -1920,21 +1956,30 @@ export class DatabankService {
          WHERE "id" = ${fileId} AND "deletedAt" IS NULL
          FOR UPDATE`;
       const current = rows[0];
+      // Delete our OWN just-uploaded object only when NO row references it — the
+      // `adopted` check above excluded any version row; this also refuses the live
+      // current mirror (belt-and-braces), so a concurrent commit that turned
+      // dto.storageKey into the current object can never have it deleted here.
+      const deleteOwnUpload = async () => {
+        if (!current || current.storageKey !== dto.storageKey) {
+          await this.storage.delete(dto.storageKey).catch(() => undefined);
+        }
+      };
       if (!current) {
         // Destination no longer exists / was trashed meanwhile: free our own
         // just-uploaded object and abort (mirrors commit()).
-        await this.storage.delete(dto.storageKey).catch(() => undefined);
+        await deleteOwnUpload();
         throw new NotFoundException('File not found');
       }
       if (expectedSeq !== undefined && expectedSeq !== current.versionSeq) {
-        await this.storage.delete(dto.storageKey).catch(() => undefined);
+        await deleteOwnUpload();
         throw new PreconditionFailedException('The file version history changed since you loaded it.');
       }
       // sha256 no-op gating vs the CURRENT version only (a null current never
       // matches, so a first version always lands). Holding the lock + FOR UPDATE,
       // current can't move between this compare and the delete.
       if (dto.sha256 && current.sha256 && dto.sha256 === current.sha256) {
-        await this.storage.delete(dto.storageKey).catch(() => undefined);
+        await deleteOwnUpload();
         return tx.databankFile.findUniqueOrThrow({ where: { id: fileId }, select: this.fileSelect });
       }
       // Materialise the implicit v1 from the file's mirror on first version.
@@ -2116,7 +2161,10 @@ export class DatabankService {
       });
       return version.storageKey;
     }, FOLDER_TXN);
-    await this.freeStorage([freedKey]);
+    // Re-confirm nothing references the key before freeing: a concurrent
+    // commitNewVersion replaying this key could have re-adopted it between the
+    // commit above and this free (see freeStorageIfUnreferenced).
+    await this.freeStorageIfUnreferenced([freedKey]);
     return { id: versionId, deleted: true };
   }
 

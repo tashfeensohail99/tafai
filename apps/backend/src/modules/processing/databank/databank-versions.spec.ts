@@ -49,6 +49,9 @@ function harness(file = CLIENT_FILE) {
       findUniqueOrThrow: jest.fn(async (a: any) => (order.push('tx.file.findUniqueOrThrow'), { id: a.where.id })),
     },
     databankFileVersion: {
+      // In-txn version-aware idempotency guard (under the per-file lock). Default
+      // null = the key is NOT yet a version row → normal flow.
+      findUnique: jest.fn(async () => (order.push('tx.version.findUnique'), null)),
       aggregate: jest.fn(async () => (order.push('tx.version.aggregate'), { _max: { versionNumber: maxVersion } })),
       create: jest.fn(async (a: any) => {
         order.push(`tx.version.create:v${a.data.versionNumber}`);
@@ -143,6 +146,28 @@ describe('DatabankService — commitNewVersion', () => {
     await expect(b.svc.commitNewVersion('F1', COMMIT_DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('a CONCURRENT same-key commit that adopted the key while we waited for the lock is a no-op (never deletes the now-live object)', async () => {
+    // The pre-txn idempotency check passes (key not yet a version row), so we open
+    // the txn — but under the lock a concurrent commit A has already made this key a
+    // version of THIS file. We MUST return the file unchanged and delete NOTHING
+    // (the key is now the live current object). Regression for the TOCTOU HIGH.
+    const { svc, tx, storage } = harness();
+    tx.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'F1' }); // adopted by A
+    const out = await svc.commitNewVersion('F1', COMMIT_DTO as never, USER);
+    expect(out.id).toBe('F1');
+    expect(storage.delete).not.toHaveBeenCalled(); // the live object is never freed
+    expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
+    expect(tx.databankFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a CONCURRENT commit that adopted the key for ANOTHER file is a 400 — and still deletes nothing', async () => {
+    const { svc, tx, storage } = harness();
+    tx.databankFileVersion.findUnique.mockResolvedValueOnce({ fileId: 'OTHER' });
+    await expect(svc.commitNewVersion('F1', COMMIT_DTO as never, USER)).rejects.toBeInstanceOf(BadRequestException);
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(tx.databankFileVersion.create).not.toHaveBeenCalled();
+  });
+
   it('sha256 == CURRENT is a no-op: deletes the redundant object, creates no version, returns the file', async () => {
     const { svc, tx, storage } = harness();
     const out = await svc.commitNewVersion('F1', { ...COMMIT_DTO, sha256: 'oldhash' } as never, USER);
@@ -217,6 +242,25 @@ describe('DatabankService — deleteVersion (storage reclaim)', () => {
   it('If-Match mismatch → 412', async () => {
     const { svc } = harness(MAT);
     await expect(svc.deleteVersion('F1', 'vOld', USER, '5')).rejects.toBeInstanceOf(PreconditionFailedException);
+  });
+
+  it('does NOT free the key if a concurrent commit re-adopted it between the delete-commit and the free', async () => {
+    // Regression: deleteVersion frees after its txn. A racing commitNewVersion that
+    // re-adopted the key (now a live version row) must keep its bytes.
+    const { svc, tx, prisma, storage } = harness(MAT);
+    tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vOld', storageKey: 'kold' });
+    prisma.databankFileVersion.findUnique.mockResolvedValueOnce({ id: 'vReadopted' }); // kold is referenced again
+    await svc.deleteVersion('F1', 'vOld', USER);
+    expect(storage.delete).not.toHaveBeenCalled();
+  });
+
+  it('does NOT free the key if it was re-adopted as a file mirror', async () => {
+    const { svc, tx, prisma, storage } = harness(MAT);
+    tx.databankFileVersion.findFirst.mockResolvedValueOnce({ id: 'vOld', storageKey: 'kold' });
+    prisma.databankFileVersion.findUnique.mockResolvedValueOnce(null); // no version row…
+    prisma.databankFile.findFirst.mockResolvedValueOnce({ id: 'Freadopt' }); // …but a file mirror now points at it
+    await svc.deleteVersion('F1', 'vOld', USER);
+    expect(storage.delete).not.toHaveBeenCalled();
   });
 });
 
